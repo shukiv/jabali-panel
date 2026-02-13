@@ -1,0 +1,421 @@
+#!/bin/bash
+#
+# Jabali Demo Data Population Script
+# Creates fictitious users, domains, WordPress sites, emails, databases, etc.
+# For presentation and demo purposes on a fresh Jabali installation.
+#
+# Usage: ./populate-demo-data [--clean]
+#   --clean  Remove all demo data before creating new data
+#
+# Run this script as root on a Jabali server.
+#
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Configuration
+JABALI_DIR="/var/www/jabali"
+SOCKET_PATH="/var/run/jabali/agent.sock"
+
+# Print colored status messages
+print_status() {
+    echo -e "${BLUE}[*]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[✓]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[!]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[✗]${NC} $1"
+}
+
+print_header() {
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  $1${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+}
+
+# Check if running as root
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        print_error "This script must be run as root"
+        exit 1
+    fi
+}
+
+# Check prerequisites
+check_prereqs() {
+    if [[ ! -S "$SOCKET_PATH" ]]; then
+        print_error "Jabali agent socket not found. Starting agent..."
+        systemctl start jabali-agent
+        sleep 2
+    fi
+}
+
+# Run PHP command that talks to agent
+run_php() {
+    cd "$JABALI_DIR" && php -r "$1"
+}
+
+# Run artisan tinker command
+artisan_tinker() {
+    cd "$JABALI_DIR" && php artisan tinker --execute="$1" 2>/dev/null || true
+}
+
+# Send command to agent via PHP
+agent_cmd() {
+    local action="$1"
+    local params="$2"
+
+    run_php "
+        require_once 'vendor/autoload.php';
+        \$client = new App\Services\Agent\AgentClient();
+        try {
+            \$result = \$client->send('$action', $params);
+            echo json_encode(\$result);
+        } catch (Exception \$e) {
+            echo json_encode(['error' => \$e->getMessage()]);
+        }
+    "
+}
+
+# Demo data
+declare -A DEMO_USERS=(
+    ["acme"]="Acme Corporation|acme@example.com"
+    ["techstart"]="TechStart Inc|hello@techstart.io"
+    ["greenleaf"]="GreenLeaf Organic|info@greenleaf.eco"
+    ["bluewave"]="BlueWave Media|contact@bluewave.media"
+    ["skyline"]="Skyline Properties|sales@skyline.realty"
+)
+
+DEMO_DOMAINS=(
+    "acme:acme-corp.demo"
+    "acme:shop.acme-corp.demo"
+    "techstart:techstart.demo"
+    "techstart:app.techstart.demo"
+    "techstart:docs.techstart.demo"
+    "greenleaf:greenleaf-organic.demo"
+    "greenleaf:store.greenleaf.demo"
+    "bluewave:bluewave-media.demo"
+    "bluewave:portfolio.bluewave.demo"
+    "skyline:skyline-properties.demo"
+    "skyline:listings.skyline.demo"
+    "skyline:agents.skyline.demo"
+)
+
+DEMO_WORDPRESS=(
+    "acme:acme-corp.demo:Acme Corporation"
+    "acme:shop.acme-corp.demo:Acme Shop"
+    "techstart:techstart.demo:TechStart Innovation Hub"
+    "greenleaf:greenleaf-organic.demo:GreenLeaf Organic Foods"
+    "greenleaf:store.greenleaf.demo:GreenLeaf Store"
+    "bluewave:bluewave-media.demo:BlueWave Creative Agency"
+    "bluewave:portfolio.bluewave.demo:Our Portfolio"
+    "skyline:skyline-properties.demo:Skyline Real Estate"
+    "skyline:listings.skyline.demo:Property Listings"
+)
+
+DEMO_EMAILS=(
+    "acme:acme-corp.demo:info"
+    "acme:acme-corp.demo:support"
+    "acme:acme-corp.demo:sales"
+    "techstart:techstart.demo:hello"
+    "techstart:techstart.demo:dev"
+    "greenleaf:greenleaf-organic.demo:info"
+    "greenleaf:greenleaf-organic.demo:orders"
+    "bluewave:bluewave-media.demo:contact"
+    "bluewave:bluewave-media.demo:projects"
+    "skyline:skyline-properties.demo:info"
+    "skyline:skyline-properties.demo:agents"
+)
+
+DEMO_DATABASES=(
+    "acme:crm"
+    "acme:inventory"
+    "techstart:analytics"
+    "greenleaf:orders"
+    "bluewave:projects"
+    "skyline:listings"
+)
+
+# Clean demo data
+clean_demo_data() {
+    print_header "Cleaning Demo Data"
+
+    for username in "${!DEMO_USERS[@]}"; do
+        print_status "Removing user: $username"
+
+        # Delete system user via agent
+        agent_cmd "user.delete" "{\"username\": \"$username\", \"remove_home\": true}" > /dev/null 2>&1 || true
+
+        # Clean database - query models directly since User doesn't have all relationships
+        artisan_tinker "\$user = App\\Models\\User::where('username', '$username')->first(); if (\$user) { App\\Models\\Domain::where('user_id', \$user->id)->delete(); App\\Models\\Mailbox::where('user_id', \$user->id)->delete(); App\\Models\\CronJob::where('user_id', \$user->id)->delete(); App\\Models\\MysqlCredential::where('user_id', \$user->id)->delete(); App\\Models\\Backup::where('user_id', \$user->id)->delete(); App\\Models\\EmailDomain::where('user_id', \$user->id)->delete(); \$user->delete(); }"
+
+        print_success "Removed: $username"
+    done
+
+    print_success "Demo data cleaned"
+}
+
+# Create demo users
+create_users() {
+    print_header "Creating Demo Users"
+
+    for username in "${!DEMO_USERS[@]}"; do
+        IFS='|' read -r name email <<< "${DEMO_USERS[$username]}"
+
+        print_status "Creating user: $username ($name)"
+
+        # Generate password
+        password=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
+
+        # Create system user via agent
+        result=$(agent_cmd "user.create" "{\"username\": \"$username\", \"password\": \"$password\"}")
+
+        if echo "$result" | grep -q '"error"'; then
+            if echo "$result" | grep -qi "exists"; then
+                print_warning "System user $username already exists"
+            else
+                print_warning "Agent: $(echo "$result" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)"
+            fi
+        fi
+
+        # Create in database (escape single quotes in name)
+        escaped_name=$(echo "$name" | sed "s/'/\\\\'/g")
+        artisan_tinker "App\\Models\\User::updateOrCreate(['username' => '$username'], ['name' => '$escaped_name', 'email' => '$email', 'password' => bcrypt('$password'), 'is_admin' => false, 'is_active' => true, 'disk_quota_mb' => 10240]);"
+
+        print_success "Created: $username (password: $password)"
+    done
+}
+
+# Create demo domains
+create_domains() {
+    print_header "Creating Demo Domains"
+
+    for domain_data in "${DEMO_DOMAINS[@]}"; do
+        IFS=':' read -r username domain <<< "$domain_data"
+
+        print_status "Creating domain: $domain for $username"
+
+        # Create via agent
+        result=$(agent_cmd "domain.create" "{\"username\": \"$username\", \"domain\": \"$domain\"}")
+
+        if echo "$result" | grep -q '"error"'; then
+            if echo "$result" | grep -qi "exists"; then
+                print_warning "Domain $domain already exists"
+            else
+                print_warning "$(echo "$result" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)"
+            fi
+        fi
+
+        # Ensure in database
+        artisan_tinker "\$user = App\\Models\\User::where('username', '$username')->first(); if (\$user) { App\\Models\\Domain::updateOrCreate(['name' => '$domain'], ['name' => '$domain', 'user_id' => \$user->id, 'document_root' => '/home/$username/domains/$domain/public_html', 'is_active' => true]); }"
+
+        print_success "Created domain: $domain"
+    done
+}
+
+# Create WordPress installations
+create_wordpress() {
+    print_header "Installing WordPress Sites"
+
+    for wp_data in "${DEMO_WORDPRESS[@]}"; do
+        IFS=':' read -r username domain title <<< "$wp_data"
+
+        print_status "Installing WordPress: $title on $domain"
+
+        # Generate credentials
+        admin_pass=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
+        admin_email="admin@${domain}"
+
+        # Install via agent
+        result=$(agent_cmd "wp.install" "{
+            \"username\": \"$username\",
+            \"domain\": \"$domain\",
+            \"site_title\": \"$title\",
+            \"admin_user\": \"admin\",
+            \"admin_password\": \"$admin_pass\",
+            \"admin_email\": \"$admin_email\"
+        }")
+
+        if echo "$result" | grep -q '"error"'; then
+            print_error "Failed: $(echo "$result" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)"
+            continue
+        fi
+
+        print_success "WordPress installed: $domain"
+        echo -e "         Admin: ${GREEN}admin${NC} / ${GREEN}$admin_pass${NC}"
+
+        sleep 1
+    done
+}
+
+# Create email accounts
+create_emails() {
+    print_header "Creating Email Accounts"
+
+    declare -A enabled_domains
+
+    for email_data in "${DEMO_EMAILS[@]}"; do
+        IFS=':' read -r username domain localpart <<< "$email_data"
+        email="${localpart}@${domain}"
+
+        # Enable email domain if not done
+        if [[ -z "${enabled_domains[$domain]}" ]]; then
+            print_status "Enabling email for: $domain"
+            agent_cmd "email.enable_domain" "{\"username\": \"$username\", \"domain\": \"$domain\"}" > /dev/null 2>&1 || true
+
+            artisan_tinker "\$user = App\\Models\\User::where('username', '$username')->first(); \$dom = App\\Models\\Domain::where('name', '$domain')->first(); if (\$user && \$dom) { App\\Models\\EmailDomain::updateOrCreate(['domain_id' => \$dom->id], ['user_id' => \$user->id, 'is_active' => true]); }"
+            enabled_domains[$domain]=1
+        fi
+
+        print_status "Creating mailbox: $email"
+
+        result=$(agent_cmd "email.mailbox_create" "{
+            \"username\": \"$username\",
+            \"email\": \"$email\",
+            \"password\": \"Demo123!\",
+            \"quota_bytes\": 1073741824
+        }")
+
+        if echo "$result" | grep -q '"error"'; then
+            if echo "$result" | grep -qi "exists"; then
+                print_warning "Mailbox exists"
+            else
+                print_warning "$(echo "$result" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)"
+            fi
+            continue
+        fi
+
+        # Add to database
+        artisan_tinker "\$user = App\\Models\\User::where('username', '$username')->first(); \$emailDom = App\\Models\\EmailDomain::whereHas('domain', fn(\$q) => \$q->where('name', '$domain'))->first(); if (\$user && \$emailDom) { App\\Models\\Mailbox::updateOrCreate(['email' => '$email'], ['user_id' => \$user->id, 'email_domain_id' => \$emailDom->id, 'quota_bytes' => 1073741824, 'is_active' => true]); }"
+
+        print_success "Created: $email"
+    done
+}
+
+# Create databases
+create_databases() {
+    print_header "Creating Databases"
+
+    for db_data in "${DEMO_DATABASES[@]}"; do
+        IFS=':' read -r username dbsuffix <<< "$db_data"
+        dbname="${username}_${dbsuffix}"
+
+        print_status "Creating database: $dbname"
+
+        result=$(agent_cmd "mysql.create_database" "{\"username\": \"$username\", \"database\": \"$dbname\"}")
+
+        if echo "$result" | grep -q '"error"'; then
+            if echo "$result" | grep -qi "exists"; then
+                print_warning "Database exists"
+            else
+                print_warning "$(echo "$result" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)"
+            fi
+            continue
+        fi
+
+        artisan_tinker "\$user = App\\Models\\User::where('username', '$username')->first(); if (\$user) { App\\Models\\MysqlCredential::updateOrCreate(['database_name' => '$dbname'], ['user_id' => \$user->id, 'db_user' => '$username', 'db_host' => 'localhost']); }"
+
+        print_success "Created: $dbname"
+    done
+}
+
+# Create SSL certificates
+create_ssl() {
+    print_header "Creating SSL Certificates"
+
+    for domain_data in "${DEMO_DOMAINS[@]}"; do
+        IFS=':' read -r username domain <<< "$domain_data"
+
+        print_status "SSL for: $domain"
+
+        result=$(agent_cmd "ssl.generate_self_signed" "{\"domain\": \"$domain\", \"username\": \"$username\", \"days\": 365}")
+
+        if echo "$result" | grep -q '"error"'; then
+            print_warning "SSL skipped for $domain"
+            continue
+        fi
+
+        artisan_tinker "\$dom = App\\Models\\Domain::where('name', '$domain')->first(); if (\$dom) { App\\Models\\SslCertificate::updateOrCreate(['domain_id' => \$dom->id], ['type' => 'self-signed', 'status' => 'active', 'issued_at' => now(), 'expires_at' => now()->addYear(), 'auto_renew' => false]); }"
+
+        print_success "SSL: $domain"
+    done
+}
+
+# Create backup records
+create_backups() {
+    print_header "Creating Backup Records"
+
+    for username in "${!DEMO_USERS[@]}"; do
+        print_status "Backup records for: $username"
+
+        artisan_tinker "\$user = App\\Models\\User::where('username', '$username')->first(); if (\$user) { for (\$i = 0; \$i < 3; \$i++) { App\\Models\\Backup::create(['user_id' => \$user->id, 'name' => 'backup_' . date('Y-m-d', strtotime('-' . (\$i * 7) . ' days')), 'type' => 'full', 'size' => rand(50000000, 500000000), 'path' => '/var/backups/users/$username/backup_' . date('Y-m-d', strtotime('-' . (\$i * 7) . ' days')) . '.tar.gz', 'status' => 'completed', 'created_at' => now()->subDays(\$i * 7)]); } }"
+
+        print_success "Backups: $username"
+    done
+}
+
+# Print summary
+print_summary() {
+    print_header "Demo Data Complete"
+
+    echo -e "${GREEN}Created:${NC}"
+    echo "  - Users: ${#DEMO_USERS[@]}"
+    echo "  - Domains: ${#DEMO_DOMAINS[@]}"
+    echo "  - WordPress: ${#DEMO_WORDPRESS[@]}"
+    echo "  - Emails: ${#DEMO_EMAILS[@]}"
+    echo "  - Databases: ${#DEMO_DATABASES[@]}"
+    echo ""
+    echo -e "${YELLOW}Note:${NC} Domains use .demo TLD - add to /etc/hosts for testing"
+    echo -e "${GREEN}Email password:${NC} Demo123!"
+    echo ""
+}
+
+# Main
+main() {
+    echo ""
+    echo -e "${CYAN}╔═════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║       ${GREEN}Jabali Demo Data Population Script${CYAN}                  ║${NC}"
+    echo -e "${CYAN}╚═════════════════════════════════════════════════════════════╝${NC}"
+
+    check_root
+    check_prereqs
+
+    if [[ "$1" == "--clean" ]]; then
+        clean_demo_data
+        echo ""
+        read -p "Repopulate demo data? (y/n) " -n 1 -r
+        echo ""
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 0
+    fi
+
+    create_users
+    create_domains
+    create_wordpress
+    create_emails
+    create_databases
+    create_ssl
+    create_backups
+
+    print_status "Clearing caches..."
+    cd "$JABALI_DIR" && php artisan optimize:clear > /dev/null 2>&1 || true
+
+    print_summary
+}
+
+main "$@"

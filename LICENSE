@@ -1,0 +1,75 @@
+JABALI PROPRIETARY LICENSE
+Version 1.0
+
+Copyright (c) 2024-2026 Jabali. All Rights Reserved.
+
+TERMS AND CONDITIONS
+
+1. DEFINITIONS
+   "Software" refers to Jabali and all associated source code, documentation,
+   and related materials.
+   "Licensor" refers to the copyright holder of Jabali.
+   "User" refers to any individual or entity using the Software.
+
+2. GRANT OF LICENSE
+   Subject to the terms of this license, the Licensor grants you a limited,
+   non-exclusive, non-transferable license to:
+   - Use the Software for your own hosting purposes
+   - Install the Software on servers you own or control
+
+3. RESTRICTIONS
+   You are expressly prohibited from:
+
+   a) FORKING: Creating any derivative work, fork, or copy of the Software
+      for distribution or public availability.
+
+   b) REDISTRIBUTION: Distributing, selling, sublicensing, or transferring
+      the Software or any portion thereof to any third party.
+
+   c) MODIFICATION FOR DISTRIBUTION: Modifying the Software for the purpose
+      of creating a competing product or service.
+
+   d) REVERSE ENGINEERING: Decompiling, disassembling, or reverse engineering
+      the Software for the purpose of creating a similar product.
+
+   e) REMOVAL OF NOTICES: Removing, altering, or obscuring any copyright,
+      trademark, or other proprietary notices from the Software.
+
+   f) PUBLIC REPOSITORIES: Publishing the Software or any derivative work
+      to any public repository (GitHub, GitLab, Bitbucket, etc.).
+
+4. INTELLECTUAL PROPERTY
+   The Software and all copies thereof are proprietary to the Licensor and
+   title thereto remains exclusively with the Licensor. All rights in the
+   Software not specifically granted in this license are reserved to the
+   Licensor.
+
+5. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+6. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+7. TERMINATION
+   This license is effective until terminated. It will terminate automatically
+   if you fail to comply with any term of this license. Upon termination, you
+   must destroy all copies of the Software in your possession.
+
+8. ENFORCEMENT
+   Any unauthorized use, reproduction, or distribution of the Software may
+   result in civil and criminal penalties, and will be prosecuted to the
+   maximum extent possible under the law.
+
+9. GOVERNING LAW
+   This license shall be governed by and construed in accordance with
+   applicable copyright and intellectual property laws.
+
+For licensing inquiries, contact: license@jabali.io
+
+---
+
+BY USING THIS SOFTWARE, YOU ACKNOWLEDGE THAT YOU HAVE READ THIS LICENSE,
+UNDERSTAND IT, AND AGREE TO BE BOUND BY ITS TERMS AND CONDITIONS.

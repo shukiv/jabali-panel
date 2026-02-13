@@ -1,0 +1,120 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Http\Controllers;
+
+use App\Models\Backup;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+
+class BackupDownloadController extends Controller
+{
+    public function download(Request $request): BinaryFileResponse
+    {
+        $encodedPath = (string) $request->query('path', '');
+        $decodedPath = base64_decode($encodedPath, true);
+
+        if ($decodedPath === false || $decodedPath === '') {
+            abort(404, 'Backup file not found');
+        }
+
+        $realPath = realpath($decodedPath);
+
+        if ($realPath === false || ! is_file($realPath)) {
+            abort(404, 'Backup file not found');
+        }
+
+        // Verify the user owns this backup (path should be in their home directory)
+        $user = Auth::guard('web')->user();
+        if (! $user) {
+            abort(403, 'Unauthorized');
+        }
+
+        $homeDirectory = $user->home_directory ?: "/home/{$user->username}";
+        $backupDirectory = rtrim($homeDirectory, '/').'/backups';
+        $backupRealPath = realpath($backupDirectory);
+
+        if ($backupRealPath === false) {
+            abort(404, 'Backup directory not found');
+        }
+
+        if ($realPath !== $backupRealPath && ! str_starts_with($realPath, $backupRealPath.DIRECTORY_SEPARATOR)) {
+            abort(403, 'Unauthorized access to this backup');
+        }
+
+        return response()->download($realPath);
+    }
+
+    public function adminDownload(Request $request): BinaryFileResponse|StreamedResponse
+    {
+        $backupId = $request->query('id');
+
+        if (empty($backupId)) {
+            abort(404, 'Backup ID required');
+        }
+
+        // Verify admin access
+        $user = Auth::guard('web')->user();
+        if (! $user || ! $user->is_admin) {
+            abort(403, 'Unauthorized');
+        }
+
+        $backup = Backup::find($backupId);
+        if (! $backup) {
+            abort(404, 'Backup not found');
+        }
+
+        $path = $backup->local_path;
+
+        if (empty($path)) {
+            abort(404, 'Backup file not found on disk');
+        }
+
+        $realPath = realpath($path);
+
+        if ($realPath === false) {
+            abort(404, 'Backup file not found on disk');
+        }
+
+        // Handle directory backups by creating a zip archive on-the-fly
+        if (is_dir($realPath)) {
+            $backupName = basename($realPath).'.zip';
+
+            return response()->streamDownload(function () use ($realPath) {
+                $zip = new \ZipArchive;
+                $tempFile = tempnam(sys_get_temp_dir(), 'backup_');
+                $zip->open($tempFile, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
+
+                $files = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator($realPath, \RecursiveDirectoryIterator::SKIP_DOTS),
+                    \RecursiveIteratorIterator::LEAVES_ONLY
+                );
+
+                foreach ($files as $file) {
+                    if (! $file->isDir()) {
+                        $filePath = $file->getRealPath();
+                        $relativePath = substr($filePath, strlen($realPath) + 1);
+                        $zip->addFile($filePath, $relativePath);
+                    }
+                }
+
+                $zip->close();
+
+                readfile($tempFile);
+                unlink($tempFile);
+            }, $backupName, [
+                'Content-Type' => 'application/zip',
+            ]);
+        }
+
+        // For single file backups (tar.gz)
+        if (! is_file($realPath)) {
+            abort(404, 'Backup file not found on disk');
+        }
+
+        return response()->download($realPath);
+    }
+}

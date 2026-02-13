@@ -1,0 +1,37 @@
+---
+title: Jabali Panel Documentation
+description: Feature overview and screenshots for the Jabali hosting panel.
+---
+
+Welcome to the Jabali Panel documentation site. This site focuses on product features and provides up-to-date screenshots for both the admin and user panels.
+
+## Start here
+
+- Read the [Overview](/overview) for a quick product tour.
+- Browse the [Admin Panel](/admin/dashboard) features.
+- Browse the [User Panel](/user/dashboard) features.
+- Learn about platform services under [Platform](/platform/stack).
+
+## Feature highlights
+
+### Admin panel
+
+![Admin Dashboard](/screenshots/admin-dashboard.png)
+
+### User panel
+
+![User Dashboard](/screenshots/user-dashboard.png)
+
+## Screenshot library
+
+All screenshots are generated from the live panel using the repo script:
+
+~~~
+node tests/take-screenshots.cjs --output-dir=docs/screenshots
+~~~
+
+The documentation site uses a copy of those images at:
+
+~~~
+/var/www/jabali/doccs/site/public/screenshots
+~~~

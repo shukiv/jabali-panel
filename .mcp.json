@@ -1,0 +1,36 @@
+{
+    "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/mcp.schema.json",
+    "mcpServers": {
+        "filesystem": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@anthropic-ai/mcp-server-filesystem@latest",
+                "/var/www/jabali",
+                "/home",
+                "/etc/nginx",
+                "/var/log"
+            ],
+            "description": "File system access for Jabali project and server configs"
+        },
+        "mysql": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@anthropic-ai/mcp-server-mysql@latest"
+            ],
+            "env": {
+                "MYSQL_HOST": "localhost",
+                "MYSQL_USER": "root"
+            },
+            "description": "MySQL database access for development"
+        },
+        "laravel-boost": {
+            "command": "php",
+            "args": [
+                "artisan",
+                "boost:mcp"
+            ]
+        }
+    }
+}

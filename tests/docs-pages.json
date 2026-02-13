@@ -1,0 +1,497 @@
+[
+  {
+    "panel": "admin",
+    "uri": "jabali-admin",
+    "name": "filament.admin.home",
+    "label": "jabali-admin",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/automation-api",
+    "name": "filament.admin.pages.automation-api",
+    "label": "API Access",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/backup-download",
+    "name": "filament.admin.pages.backup-download",
+    "label": "jabali-admin/backup-download",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/backups",
+    "name": "filament.admin.pages.backups",
+    "label": "Backups",
+    "tabs": [
+      "Destinations",
+      "Schedules",
+      "Backups"
+    ]
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/cpanel-migration",
+    "name": "filament.admin.pages.cpanel-migration",
+    "label": "cPanel Migration",
+    "tabs": [
+      "Domains",
+      "Databases",
+      "Mailboxes",
+      "Forwarders",
+      "SSL"
+    ]
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/dashboard",
+    "name": "filament.admin.pages.dashboard",
+    "label": "Dashboard",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/database-tuning",
+    "name": "filament.admin.pages.database-tuning",
+    "label": "Database Tuning",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/dns-zones",
+    "name": "filament.admin.pages.dns-zones",
+    "label": "DNS Zones",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/email-logs",
+    "name": "filament.admin.pages.email-logs",
+    "label": "Email Logs",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/email-queue",
+    "name": "filament.admin.pages.email-queue",
+    "label": "Email Queue",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/geo-block-rules",
+    "name": "filament.admin.resources.geo-block-rules.index",
+    "label": "jabali-admin/geo-block-rules",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/geo-block-rules/create",
+    "name": "filament.admin.resources.geo-block-rules.create",
+    "label": "jabali-admin/geo-block-rules/create",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/geo-block-rules/{record}/edit",
+    "name": "filament.admin.resources.geo-block-rules.edit",
+    "label": "jabali-admin/geo-block-rules/{record}/edit",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/hosting-packages",
+    "name": "filament.admin.resources.hosting-packages.index",
+    "label": "jabali-admin/hosting-packages",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/hosting-packages/create",
+    "name": "filament.admin.resources.hosting-packages.create",
+    "label": "jabali-admin/hosting-packages/create",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/hosting-packages/{record}/edit",
+    "name": "filament.admin.resources.hosting-packages.edit",
+    "label": "jabali-admin/hosting-packages/{record}/edit",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/ip-addresses",
+    "name": "filament.admin.pages.ip-addresses",
+    "label": "IP Addresses",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/login",
+    "name": "filament.admin.auth.login",
+    "label": "jabali-admin/login",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/migration",
+    "name": "filament.admin.pages.migration",
+    "label": "Migration",
+    "tabs": [
+      "cPanel Migration",
+      "WHM Migration"
+    ]
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/password-reset/request",
+    "name": "filament.admin.auth.password-reset.request",
+    "label": "jabali-admin/password-reset/request",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/password-reset/reset",
+    "name": "filament.admin.auth.password-reset.reset",
+    "label": "jabali-admin/password-reset/reset",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/php-manager",
+    "name": "filament.admin.pages.php-manager",
+    "label": "PHP Manager",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/security",
+    "name": "filament.admin.pages.security",
+    "label": "Security",
+    "tabs": [
+      "Overview",
+      "Firewall",
+      "ModSecurity / WAF",
+      "Fail2ban",
+      "Antivirus",
+      "SSH",
+      "Vulnerability Scanner"
+    ]
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/server-settings",
+    "name": "filament.admin.pages.server-settings",
+    "label": "Server Settings",
+    "tabs": [
+      "General",
+      "DNS",
+      "Storage",
+      "Email",
+      "Notifications",
+      "PHP-FPM",
+      "Database Tuning"
+    ]
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/server-status",
+    "name": "filament.admin.pages.server-status",
+    "label": "Server Status",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/server-updates",
+    "name": "filament.admin.pages.server-updates",
+    "label": "System Updates",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/services",
+    "name": "filament.admin.pages.services",
+    "label": "Services",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/ssl-manager",
+    "name": "filament.admin.pages.ssl-manager",
+    "label": "SSL Manager",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/two-factor-challenge",
+    "name": "filament.admin.auth.two-factor-challenge",
+    "label": "jabali-admin/two-factor-challenge",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/users",
+    "name": "filament.admin.resources.users.index",
+    "label": "jabali-admin/users",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/users/create",
+    "name": "filament.admin.resources.users.create",
+    "label": "jabali-admin/users/create",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/users/{record}/edit",
+    "name": "filament.admin.resources.users.edit",
+    "label": "jabali-admin/users/{record}/edit",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/waf",
+    "name": "filament.admin.pages.waf",
+    "label": "ModSecurity / WAF",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/webhook-endpoints",
+    "name": "filament.admin.resources.webhook-endpoints.index",
+    "label": "jabali-admin/webhook-endpoints",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/webhook-endpoints/create",
+    "name": "filament.admin.resources.webhook-endpoints.create",
+    "label": "jabali-admin/webhook-endpoints/create",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/webhook-endpoints/{record}/edit",
+    "name": "filament.admin.resources.webhook-endpoints.edit",
+    "label": "jabali-admin/webhook-endpoints/{record}/edit",
+    "tabs": []
+  },
+  {
+    "panel": "admin",
+    "uri": "jabali-admin/whm-migration",
+    "name": "filament.admin.pages.whm-migration",
+    "label": "WHM Migration",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel",
+    "name": "filament.jabali.pages.dashboard",
+    "label": "Dashboard",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/backup-download",
+    "name": "filament.jabali.pages.backup-download",
+    "label": "jabali-panel/backup-download",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/backups",
+    "name": "filament.jabali.pages.backups",
+    "label": "Backups",
+    "tabs": [
+      "My Backups",
+      "Server Backups",
+      "SFTP Destinations",
+      "Restore History"
+    ]
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/cdn-integration",
+    "name": "filament.jabali.pages.cdn-integration",
+    "label": "CDN Integration",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/cpanel-migration",
+    "name": "filament.jabali.pages.cpanel-migration",
+    "label": "cPanel Migration",
+    "tabs": [
+      "Domains",
+      "Databases",
+      "Mailboxes",
+      "Forwarders",
+      "SSL"
+    ]
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/cron-jobs",
+    "name": "filament.jabali.pages.cron-jobs",
+    "label": "Cron Jobs",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/databases",
+    "name": "filament.jabali.pages.databases",
+    "label": "Databases",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/dns-records",
+    "name": "filament.jabali.pages.dns-records",
+    "label": "DNS Records",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/domains",
+    "name": "filament.jabali.pages.domains",
+    "label": "Domains",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/email",
+    "name": "filament.jabali.pages.email",
+    "label": "Email",
+    "tabs": [
+      "Mailboxes",
+      "Forwarders",
+      "Autoresponders",
+      "Catch-All",
+      "Logs",
+      "Spam Settings"
+    ]
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/files",
+    "name": "filament.jabali.pages.files",
+    "label": "Files",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/git-deployment",
+    "name": "filament.jabali.pages.git-deployment",
+    "label": "Git Deployment",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/image-optimization",
+    "name": "filament.jabali.pages.image-optimization",
+    "label": "Image Optimization",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/login",
+    "name": "filament.jabali.auth.login",
+    "label": "jabali-panel/login",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/logs",
+    "name": "filament.jabali.pages.logs",
+    "label": "Logs & Statistics",
+    "tabs": [
+      "Logs",
+      "Statistics",
+      "Activity Log"
+    ]
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/mailing-lists",
+    "name": "filament.jabali.pages.mailing-lists",
+    "label": "Mailing Lists",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/password-reset/request",
+    "name": "filament.jabali.auth.password-reset.request",
+    "label": "jabali-panel/password-reset/request",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/password-reset/reset",
+    "name": "filament.jabali.auth.password-reset.reset",
+    "label": "jabali-panel/password-reset/reset",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/php-settings",
+    "name": "filament.jabali.pages.php-settings",
+    "label": "PHP Settings",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/postgresql",
+    "name": "filament.jabali.pages.postgresql",
+    "label": "PostgreSQL",
+    "tabs": [
+      "Databases",
+      "Users"
+    ]
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/profile",
+    "name": "filament.jabali.auth.profile",
+    "label": "jabali-panel/profile",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/protected-directories",
+    "name": "filament.jabali.pages.protected-directories",
+    "label": "Protected Directories",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/ssh-keys",
+    "name": "filament.jabali.pages.ssh-keys",
+    "label": "SSH & SFTP",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/ssl",
+    "name": "filament.jabali.pages.ssl",
+    "label": "SSL Certificates",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/two-factor-challenge",
+    "name": "filament.jabali.auth.two-factor-challenge",
+    "label": "jabali-panel/two-factor-challenge",
+    "tabs": []
+  },
+  {
+    "panel": "jabali",
+    "uri": "jabali-panel/wordpress",
+    "name": "filament.jabali.pages.wordpress",
+    "label": "WordPress",
+    "tabs": []
+  }
+]

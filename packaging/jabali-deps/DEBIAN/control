@@ -1,0 +1,26 @@
+Package: jabali-deps
+Version: 0.9-rc36
+Section: admin
+Priority: optional
+Architecture: all
+Maintainer: Jabali Panel <admin@jabali.lan>
+Depends: nginx, nginx-common, mariadb-server, mariadb-client, redis-server,
+ certbot, python3-certbot-nginx, nodejs, git, curl, wget, zip, unzip, htop,
+ net-tools, dnsutils, acl, socat, sshpass, pigz, locales, fail2ban,
+ libnginx-mod-http-geoip2, chromium, build-essential, quota, goaccess, sysstat,
+ software-properties-common, apt-transport-https, ca-certificates, gnupg,
+ lsb-release, sudo, php8.4, php8.4-fpm, php8.4-cli, php8.4-common,
+ php8.4-mysql, php8.4-pgsql, php8.4-sqlite3, php8.4-curl, php8.4-gd,
+ php8.4-mbstring, php8.4-xml, php8.4-zip, php8.4-bcmath, php8.4-intl,
+ php8.4-readline, php8.4-soap, php8.4-imap, php8.4-ldap, php8.4-imagick,
+ php8.4-redis, php8.4-opcache, postfix, postfix-mysql, dovecot-core,
+ dovecot-imapd, dovecot-pop3d, dovecot-lmtpd, dovecot-mysql, dovecot-sqlite,
+ opendkim, opendkim-tools, rspamd, roundcube, roundcube-core,
+ roundcube-sqlite3, roundcube-plugins, sqlite3, bind9, bind9-utils, ufw,
+ clamav, clamav-daemon, clamav-freshclam, lynis, ruby, ruby-dev,
+ libnginx-mod-http-modsecurity | libnginx-mod-http-modsecurity2 | nginx-extras,
+ libmodsecurity3t64 | libmodsecurity3, modsecurity-crs
+Description: Jabali Panel system dependency meta-package
+ Installs the full stack required by Jabali Panel (web, mail, DNS, security,
+ and PHP). Some tools (e.g., geoipupdate binary, Nikto, WPScan) are installed
+ by install.sh rather than apt.

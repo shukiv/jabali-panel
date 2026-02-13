@@ -1,0 +1,58 @@
+#!/bin/bash
+# Pre-commit hook for Jabali
+# To enable: git config core.hooksPath .githooks
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Get staged PHP files
+STAGED_PHP=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.php$' || true)
+
+if [ -n "$STAGED_PHP" ]; then
+    echo "Checking PHP syntax..."
+    for FILE in $STAGED_PHP; do
+        if [ -f "$FILE" ]; then
+            php -l "$FILE" > /dev/null 2>&1 || {
+                echo "Syntax error in $FILE"
+                exit 1
+            }
+        fi
+    done
+    echo "PHP syntax OK"
+
+    # Run Pint on staged files only
+    if [ -f "./vendor/bin/pint" ]; then
+        echo "Running Laravel Pint..."
+        ./vendor/bin/pint --test $STAGED_PHP || {
+            echo ""
+            echo "Code style issues found. Run 'make fix' to auto-fix."
+            exit 1
+        }
+        echo "Code style OK"
+    fi
+fi
+
+# Check for debug statements
+DEBUG_PATTERNS="dd(|dump(|var_dump(|print_r(|ray(|Log::debug("
+if git diff --cached --diff-filter=ACMR | grep -E "$DEBUG_PATTERNS" > /dev/null 2>&1; then
+    echo ""
+    echo "WARNING: Debug statements found in staged changes:"
+    git diff --cached --diff-filter=ACMR | grep -n -E "$DEBUG_PATTERNS" | head -10
+    echo ""
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# Check for hardcoded credentials patterns
+CREDENTIAL_PATTERNS="password.*=.*['\"][^'\"]+['\"]|api_key.*=.*['\"][^'\"]+['\"]|secret.*=.*['\"][^'\"]+['\"]"
+if git diff --cached --diff-filter=ACMR | grep -iE "$CREDENTIAL_PATTERNS" > /dev/null 2>&1; then
+    echo ""
+    echo "WARNING: Possible hardcoded credentials detected!"
+    echo "Please review the staged changes carefully."
+fi
+
+echo "Pre-commit checks passed!"

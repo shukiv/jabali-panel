@@ -1,0 +1,603 @@
+# Jabali Agent Functions Reference
+# Communication via Unix socket: /var/run/jabali/agent.sock
+# Request format: {"action": "category.action", "params": {...}}
+
+user:
+  create:
+    description: Create a new system user
+    params:
+      username: string (required) - Lowercase alphanumeric, max 32 chars
+      password: string (optional) - If not provided, generates random
+    returns: {success: bool, username: string, home: string}
+
+  delete:
+    description: Delete a system user and their data
+    params:
+      username: string (required)
+    returns: {success: bool}
+
+  exists:
+    description: Check if user exists
+    params:
+      username: string (required)
+    returns: {success: bool, exists: bool}
+
+  password:
+    description: Set user password
+    params:
+      username: string (required)
+      password: string (required)
+    returns: {success: bool}
+
+domain:
+  create:
+    description: Create a new domain with nginx vhost
+    params:
+      username: string (required)
+      domain: string (required) - Valid domain name
+      php_version: string (optional) - e.g., "8.4"
+    returns: {success: bool, domain: string, document_root: string}
+
+  delete:
+    description: Delete a domain
+    params:
+      username: string (required)
+      domain: string (required)
+    returns: {success: bool}
+
+  list:
+    description: List domains for a user
+    params:
+      username: string (required)
+    returns: {success: bool, domains: array}
+
+  toggle:
+    description: Enable/disable a domain
+    params:
+      username: string (required)
+      domain: string (required)
+      enabled: bool (required)
+    returns: {success: bool}
+
+wp:
+  install:
+    description: Install WordPress
+    params:
+      username: string (required)
+      domain: string (required)
+      path: string (optional) - Subdirectory, default ""
+      title: string (required)
+      admin_user: string (required)
+      admin_password: string (required)
+      admin_email: string (required)
+      enable_auto_update: bool (optional) - Default false
+    returns: {success: bool, url: string}
+
+  list:
+    description: List WordPress installations
+    params:
+      username: string (required)
+    returns: {success: bool, installations: array}
+
+  delete:
+    description: Delete WordPress installation
+    params:
+      username: string (required)
+      domain: string (required)
+      path: string (optional)
+    returns: {success: bool}
+
+  auto_login:
+    description: Generate auto-login URL
+    params:
+      username: string (required)
+      domain: string (required)
+      path: string (optional)
+    returns: {success: bool, url: string}
+
+  update:
+    description: Update WordPress core
+    params:
+      username: string (required)
+      domain: string (required)
+      path: string (optional)
+    returns: {success: bool, version: string}
+
+  scan:
+    description: Security scan via WPScan API
+    params:
+      url: string (required)
+    returns: {success: bool, vulnerabilities: array, plugins: array}
+
+  toggle_debug:
+    description: Toggle WP_DEBUG mode
+    params:
+      username: string (required)
+      domain: string (required)
+      path: string (optional)
+      enabled: bool (required)
+    returns: {success: bool, debug_enabled: bool}
+
+  toggle_auto_update:
+    description: Toggle auto-updates
+    params:
+      username: string (required)
+      domain: string (required)
+      path: string (optional)
+      enabled: bool (required)
+    returns: {success: bool, auto_update: bool}
+
+  create_staging:
+    description: Create staging environment
+    params:
+      username: string (required)
+      domain: string (required)
+      path: string (optional)
+      staging_subdomain: string (required) - e.g., "staging"
+    returns: {success: bool, staging_url: string}
+
+email:
+  enable_domain:
+    description: Enable email for a domain
+    params:
+      domain: string (required)
+    returns: {success: bool}
+
+  disable_domain:
+    description: Disable email for a domain
+    params:
+      domain: string (required)
+    returns: {success: bool}
+
+  generate_dkim:
+    description: Generate DKIM keys for domain
+    params:
+      domain: string (required)
+    returns: {success: bool, dkim_record: string}
+
+  mailbox_create:
+    description: Create an email mailbox
+    params:
+      domain: string (required)
+      username: string (required) - Local part of email
+      password: string (required)
+      quota: int (optional) - MB, default 1024
+    returns: {success: bool, email: string}
+
+  mailbox_delete:
+    description: Delete a mailbox
+    params:
+      domain: string (required)
+      username: string (required)
+    returns: {success: bool}
+
+  mailbox_change_password:
+    description: Change mailbox password
+    params:
+      domain: string (required)
+      username: string (required)
+      password: string (required)
+    returns: {success: bool}
+
+  forwarder_create:
+    description: Create email forwarder
+    params:
+      domain: string (required)
+      source: string (required) - Local part or full address
+      destination: string (required) - Comma-separated destinations
+    returns: {success: bool}
+
+mysql:
+  list_databases:
+    description: List databases for a user
+    params:
+      username: string (required)
+    returns: {success: bool, databases: array}
+
+  create_database:
+    description: Create a new database
+    params:
+      username: string (required)
+      database: string (required)
+    returns: {success: bool, database: string}
+
+  delete_database:
+    description: Delete a database
+    params:
+      username: string (required)
+      database: string (required)
+    returns: {success: bool}
+
+  create_user:
+    description: Create a database user
+    params:
+      username: string (required) - DB username
+      password: string (required)
+      host: string (optional) - Default "localhost"
+    returns: {success: bool}
+
+  grant_privileges:
+    description: Grant privileges to user
+    params:
+      username: string (required)
+      database: string (required)
+      privileges: array (optional) - Default ALL
+    returns: {success: bool}
+
+  import_database:
+    description: Import SQL file
+    params:
+      username: string (required)
+      database: string (required)
+      file: string (required) - Path to SQL file
+    returns: {success: bool}
+
+  export_database:
+    description: Export database to file
+    params:
+      username: string (required)
+      database: string (required)
+      file: string (required) - Output path
+    returns: {success: bool}
+
+ssl:
+  check:
+    description: Check SSL certificate status
+    params:
+      domain: string (required)
+    returns: {success: bool, valid: bool, expires: string, issuer: string}
+
+  issue:
+    description: Issue Let's Encrypt certificate
+    params:
+      domain: string (required)
+      email: string (required)
+    returns: {success: bool, expires: string}
+
+  install:
+    description: Install custom certificate
+    params:
+      domain: string (required)
+      cert: string (required) - PEM certificate
+      key: string (required) - Private key
+      chain: string (optional) - CA chain
+    returns: {success: bool}
+
+  renew:
+    description: Renew certificate
+    params:
+      domain: string (required)
+    returns: {success: bool}
+
+backup:
+  create:
+    description: Create user backup
+    params:
+      username: string (required)
+      include_databases: bool (optional) - Default true
+      include_email: bool (optional) - Default true
+    returns: {success: bool, backup_file: string, size: int}
+
+  restore:
+    description: Restore from backup
+    params:
+      username: string (required)
+      backup_file: string (required)
+    returns: {success: bool}
+
+  list:
+    description: List backups for user
+    params:
+      username: string (required)
+    returns: {success: bool, backups: array}
+
+  delete:
+    description: Delete a backup
+    params:
+      backup_file: string (required)
+    returns: {success: bool}
+
+dns:
+  create_zone:
+    description: Create DNS zone file
+    params:
+      domain: string (required)
+      ip: string (required) - Primary IP
+      ns1: string (optional) - Nameserver 1
+      ns2: string (optional) - Nameserver 2
+    returns: {success: bool}
+
+  sync_zone:
+    description: Sync zone from database records
+    params:
+      domain: string (required)
+    returns: {success: bool}
+
+  delete_zone:
+    description: Delete DNS zone
+    params:
+      domain: string (required)
+    returns: {success: bool}
+
+  reload:
+    description: Reload BIND configuration
+    params: {}
+    returns: {success: bool}
+
+service:
+  list:
+    description: List managed services
+    params: {}
+    returns: {success: bool, services: array}
+
+  start:
+    description: Start a service
+    params:
+      service: string (required)
+    returns: {success: bool}
+
+  stop:
+    description: Stop a service
+    params:
+      service: string (required)
+    returns: {success: bool}
+
+  restart:
+    description: Restart a service
+    params:
+      service: string (required)
+    returns: {success: bool}
+
+  status:
+    description: Get service status
+    params:
+      service: string (required)
+    returns: {success: bool, running: bool, enabled: bool}
+
+ufw:
+  status:
+    description: Get firewall status
+    params: {}
+    returns: {success: bool, enabled: bool, default_policy: string}
+
+  list_rules:
+    description: List firewall rules
+    params: {}
+    returns: {success: bool, rules: array}
+
+  allow_port:
+    description: Allow a port
+    params:
+      port: int (required)
+      protocol: string (optional) - tcp/udp, default both
+    returns: {success: bool}
+
+  deny_port:
+    description: Deny a port
+    params:
+      port: int (required)
+    returns: {success: bool}
+
+  allow_ip:
+    description: Allow an IP address
+    params:
+      ip: string (required)
+    returns: {success: bool}
+
+  deny_ip:
+    description: Deny an IP address
+    params:
+      ip: string (required)
+    returns: {success: bool}
+
+file:
+  list:
+    description: List directory contents
+    params:
+      username: string (required)
+      path: string (required)
+    returns: {success: bool, files: array}
+
+  read:
+    description: Read file contents
+    params:
+      username: string (required)
+      path: string (required)
+    returns: {success: bool, content: string}
+
+  write:
+    description: Write file
+    params:
+      username: string (required)
+      path: string (required)
+      content: string (required)
+    returns: {success: bool}
+
+  delete:
+    description: Delete file or directory
+    params:
+      username: string (required)
+      path: string (required)
+    returns: {success: bool}
+
+  extract:
+    description: Extract archive
+    params:
+      username: string (required)
+      path: string (required) - Archive path
+      destination: string (optional) - Extract destination
+    returns: {success: bool}
+
+ssh:
+  list_keys:
+    description: List authorized SSH keys
+    params:
+      username: string (required)
+    returns: {success: bool, keys: array}
+
+  add_key:
+    description: Add SSH public key
+    params:
+      username: string (required)
+      key: string (required) - Public key content
+      name: string (optional) - Key name/comment
+    returns: {success: bool}
+
+  delete_key:
+    description: Remove SSH key
+    params:
+      username: string (required)
+      fingerprint: string (required)
+    returns: {success: bool}
+
+  enable_shell:
+    description: Enable shell access for user
+    params:
+      username: string (required)
+    returns: {success: bool}
+
+  disable_shell:
+    description: Disable shell access (set to /bin/false)
+    params:
+      username: string (required)
+    returns: {success: bool}
+
+cron:
+  list:
+    description: List cron jobs
+    params:
+      username: string (required)
+    returns: {success: bool, jobs: array}
+
+  create:
+    description: Create cron job
+    params:
+      username: string (required)
+      minute: string (required)
+      hour: string (required)
+      day: string (required)
+      month: string (required)
+      weekday: string (required)
+      command: string (required)
+    returns: {success: bool}
+
+  delete:
+    description: Delete cron job
+    params:
+      username: string (required)
+      id: int (required)
+    returns: {success: bool}
+
+  toggle:
+    description: Enable/disable cron job
+    params:
+      username: string (required)
+      id: int (required)
+      enabled: bool (required)
+    returns: {success: bool}
+
+php:
+  list_versions:
+    description: List installed PHP versions
+    params: {}
+    returns: {success: bool, versions: array, default: string}
+
+  install:
+    description: Install PHP version
+    params:
+      version: string (required) - e.g., "8.3"
+    returns: {success: bool}
+
+  uninstall:
+    description: Uninstall PHP version
+    params:
+      version: string (required)
+    returns: {success: bool}
+
+  set_default:
+    description: Set default PHP version
+    params:
+      version: string (required)
+    returns: {success: bool}
+
+  reload_fpm:
+    description: Reload PHP-FPM for version
+    params:
+      version: string (required)
+    returns: {success: bool}
+
+  restart_fpm:
+    description: Reload PHP-FPM for version (legacy alias)
+    params:
+      version: string (required)
+    returns: {success: bool}
+
+metrics:
+  overview:
+    description: Get system overview
+    params: {}
+    returns: {success: bool, cpu: object, memory: object, disk: object, uptime: string}
+
+  cpu:
+    description: Get CPU usage
+    params: {}
+    returns: {success: bool, usage: float, cores: int, load: array}
+
+  memory:
+    description: Get memory usage
+    params: {}
+    returns: {success: bool, total: int, used: int, free: int, percent: float}
+
+  disk:
+    description: Get disk usage
+    params: {}
+    returns: {success: bool, filesystems: array}
+
+  processes:
+    description: Get top processes
+    params:
+      limit: int (optional) - Default 10
+    returns: {success: bool, processes: array}
+
+quota:
+  status:
+    description: Get quota system status
+    params: {}
+    returns: {success: bool, enabled: bool}
+
+  enable:
+    description: Enable disk quotas
+    params: {}
+    returns: {success: bool}
+
+  set:
+    description: Set user quota
+    params:
+      username: string (required)
+      soft: int (required) - Soft limit in MB
+      hard: int (required) - Hard limit in MB
+    returns: {success: bool}
+
+  get:
+    description: Get user quota usage
+    params:
+      username: string (required)
+    returns: {success: bool, used: int, soft: int, hard: int}
+
+clamav:
+  status:
+    description: Get ClamAV status
+    params: {}
+    returns: {success: bool, installed: bool, running: bool, signatures: int}
+
+  scan:
+    description: Scan path for malware
+    params:
+      path: string (required)
+      recursive: bool (optional) - Default true
+    returns: {success: bool, infected_files: array, scanned: int}
+
+  update_signatures:
+    description: Update virus signatures
+    params: {}
+    returns: {success: bool}
