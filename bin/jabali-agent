@@ -710,6 +710,7 @@ function handleAction(array $request): array
         'scanner.status' => scannerStatus($params),
         'scanner.run_lynis' => scannerRunLynis($params),
         'scanner.run_nikto' => scannerRunNikto($params),
+        'scanner.run_wpscan' => scannerRunWpscan($params),
         'scanner.start_lynis' => scannerStartLynis($params),
         'scanner.get_scan_status' => scannerGetScanStatus($params),
         // Log analysis
@@ -21681,6 +21682,121 @@ function scannerRunNikto(array $params): array
         'results' => $results,
         'vulnerabilities_count' => count($results['vulnerabilities'] ?? []),
         'info_count' => count($results['info'] ?? []),
+    ];
+}
+
+function scannerRunWpscan(array $params): array
+{
+    $url = trim((string) ($params['url'] ?? ''));
+
+    if ($url === '') {
+        return ['success' => false, 'error' => 'URL required'];
+    }
+
+    if (! filter_var($url, FILTER_VALIDATE_URL)) {
+        return ['success' => false, 'error' => 'Invalid URL'];
+    }
+
+    $parts = parse_url($url);
+    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+    if (! in_array($scheme, ['http', 'https'], true)) {
+        return ['success' => false, 'error' => 'Invalid URL scheme'];
+    }
+
+    // Check if wpscan is installed
+    exec('which wpscan 2>/dev/null', $checkOutput, $code);
+    if ($code !== 0) {
+        return ['success' => false, 'error' => 'WPScan is not installed'];
+    }
+
+    // Create scan output directory
+    $scanDir = '/var/www/jabali/storage/app/security-scans';
+    if (! is_dir($scanDir)) {
+        mkdir($scanDir, 0755, true);
+    }
+
+    $statusFile = "$scanDir/wpscan-status.json";
+    $liveLogFile = "$scanDir/wpscan-live.log";
+
+    $status = [
+        'status' => 'running',
+        'started_at' => date('Y-m-d H:i:s'),
+        'target_url' => $url,
+    ];
+    file_put_contents($statusFile, json_encode($status));
+    chown($statusFile, 'www-data');
+
+    file_put_contents($liveLogFile, '');
+    chown($liveLogFile, 'www-data');
+
+    $cmd = sprintf(
+        'timeout 300 HOME=/var/www wpscan --url %s --format json --no-banner 2>&1',
+        escapeshellarg($url),
+    );
+
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+
+    $process = proc_open($cmd, $descriptors, $pipes);
+
+    if (! is_resource($process)) {
+        return ['success' => false, 'error' => 'Failed to start WPScan'];
+    }
+
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $rawOutput = '';
+    while (true) {
+        $stdout = fgets($pipes[1]);
+        $stderr = fgets($pipes[2]);
+
+        if ($stdout !== false) {
+            $rawOutput .= $stdout;
+            file_put_contents($liveLogFile, $stdout, FILE_APPEND);
+        }
+        if ($stderr !== false) {
+            $rawOutput .= $stderr;
+            file_put_contents($liveLogFile, $stderr, FILE_APPEND);
+        }
+
+        $procStatus = proc_get_status($process);
+        if (! $procStatus['running'] && $stdout === false && $stderr === false) {
+            break;
+        }
+
+        usleep(10000);
+    }
+
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($process);
+
+    $results = json_decode($rawOutput, true);
+    if (! is_array($results)) {
+        $results = [
+            'error' => 'Failed to parse WPScan output',
+        ];
+    }
+
+    $results['scan_time'] = date('Y-m-d H:i:s');
+    $results['target_url'] = $url;
+    $results['raw_output'] = $rawOutput;
+
+    file_put_contents("$scanDir/wpscan-latest.json", json_encode($results, JSON_PRETTY_PRINT));
+    chown("$scanDir/wpscan-latest.json", 'www-data');
+
+    $status['status'] = 'completed';
+    $status['completed_at'] = date('Y-m-d H:i:s');
+    file_put_contents($statusFile, json_encode($status));
+
+    return [
+        'success' => true,
+        'results' => $results,
     ];
 }
 

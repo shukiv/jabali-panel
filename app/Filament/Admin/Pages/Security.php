@@ -12,6 +12,11 @@ use App\Filament\Admin\Widgets\Security\NiktoResultsTable;
 use App\Filament\Admin\Widgets\Security\QuarantinedFilesTable;
 use App\Filament\Admin\Widgets\Security\ThreatsTable;
 use App\Filament\Admin\Widgets\Security\WpscanResultsTable;
+use App\Jobs\InstallScannerTool;
+use App\Jobs\RunClamavScan;
+use App\Jobs\RunLynisScan;
+use App\Jobs\RunNiktoScan;
+use App\Jobs\RunWpscanScan;
 use App\Models\AuditLog;
 use App\Models\Setting;
 use App\Models\User;
@@ -2076,25 +2081,22 @@ class Security extends Page implements HasActions, HasForms, HasTable
     // Scanner methods
     protected function checkScannerToolStatus(): void
     {
-        exec('which lynis 2>/dev/null', $output, $code);
-        $this->lynisInstalled = $code === 0;
-        if ($this->lynisInstalled) {
-            exec('lynis --version 2>/dev/null | head -1', $versionOutput);
-            $this->lynisVersion = trim($versionOutput[0] ?? 'Unknown');
-        }
+        try {
+            $status = $this->getAgent()->send('scanner.status');
 
-        exec('which wpscan 2>/dev/null', $output2, $code2);
-        $this->wpscanInstalled = $code2 === 0;
-        if ($this->wpscanInstalled) {
-            exec("wpscan --version 2>/dev/null | grep -i 'version' | tail -1", $versionOutput2);
-            $this->wpscanVersion = trim($versionOutput2[0] ?? 'Unknown');
-        }
+            $lynis = $status['lynis'] ?? [];
+            $this->lynisInstalled = (bool) ($lynis['installed'] ?? false);
+            $this->lynisVersion = (string) ($lynis['version'] ?? '');
 
-        exec('which nikto 2>/dev/null', $output3, $code3);
-        $this->niktoInstalled = $code3 === 0;
-        if ($this->niktoInstalled) {
-            exec('nikto -Version 2>/dev/null | grep -i version | head -1', $versionOutput3);
-            $this->niktoVersion = trim($versionOutput3[0] ?? 'Unknown');
+            $wpscan = $status['wpscan'] ?? [];
+            $this->wpscanInstalled = (bool) ($wpscan['installed'] ?? false);
+            $this->wpscanVersion = (string) ($wpscan['version'] ?? '');
+
+            $nikto = $status['nikto'] ?? [];
+            $this->niktoInstalled = (bool) ($nikto['installed'] ?? false);
+            $this->niktoVersion = (string) ($nikto['version'] ?? '');
+        } catch (Exception) {
+            // Keep previous values if the agent is unavailable.
         }
     }
 
@@ -2120,47 +2122,34 @@ class Security extends Page implements HasActions, HasForms, HasTable
 
     public function installLynis(): void
     {
-        Notification::make()->title(__('Installing Lynis...'))->info()->send();
-        exec('apt-get update && apt-get install -y lynis 2>&1', $output, $code);
-
-        if ($code === 0) {
-            Notification::make()->title(__('Lynis installed successfully'))->success()->send();
-        } else {
-            Notification::make()->title(__('Installation failed'))->body(implode("\n", array_slice($output, -5)))->danger()->send();
-        }
+        InstallScannerTool::dispatch('lynis');
+        Notification::make()
+            ->title(__('Lynis installation queued'))
+            ->body(__('It will run in the background. Refresh in a minute to see the updated status.'))
+            ->info()
+            ->send();
         $this->checkScannerToolStatus();
     }
 
     public function installWpscan(): void
     {
-        Notification::make()->title(__('Installing WPScan...'))->body(__('This may take a few minutes.'))->info()->send();
-
-        exec('which ruby 2>/dev/null', $rubyCheck, $rubyCode);
-        if ($rubyCode !== 0) {
-            exec('apt-get update && apt-get install -y ruby ruby-dev build-essential libcurl4-openssl-dev libxml2 libxml2-dev libxslt1-dev 2>&1', $output, $code);
-        }
-
-        exec('gem install wpscan 2>&1', $output, $code);
-
-        if ($code === 0) {
-            exec('wpscan --update 2>&1');
-            Notification::make()->title(__('WPScan installed successfully'))->success()->send();
-        } else {
-            Notification::make()->title(__('Installation failed'))->body(implode("\n", array_slice($output, -5)))->danger()->send();
-        }
+        InstallScannerTool::dispatch('wpscan');
+        Notification::make()
+            ->title(__('WPScan installation queued'))
+            ->body(__('It will run in the background. Refresh in a minute to see the updated status.'))
+            ->info()
+            ->send();
         $this->checkScannerToolStatus();
     }
 
     public function installNikto(): void
     {
-        Notification::make()->title(__('Installing Nikto...'))->info()->send();
-        exec('apt-get update && apt-get install -y nikto 2>&1', $output, $code);
-
-        if ($code === 0) {
-            Notification::make()->title(__('Nikto installed successfully'))->success()->send();
-        } else {
-            Notification::make()->title(__('Installation failed'))->body(implode("\n", array_slice($output, -5)))->danger()->send();
-        }
+        InstallScannerTool::dispatch('nikto');
+        Notification::make()
+            ->title(__('Nikto installation queued'))
+            ->body(__('It will run in the background. Refresh in a minute to see the updated status.'))
+            ->info()
+            ->send();
         $this->checkScannerToolStatus();
     }
 
@@ -2172,37 +2161,13 @@ class Security extends Page implements HasActions, HasForms, HasTable
             return;
         }
 
-        $this->isScanning = true;
-        $this->currentScan = 'lynis';
-        $this->scanOutput = __('Running Lynis system audit...')."\n";
-
-        $scanDir = storage_path('app/security-scans');
-        if (! is_dir($scanDir)) {
-            mkdir($scanDir, 0755, true);
-        }
-
-        exec('lynis audit system --no-colors --quick 2>&1', $output, $code);
-        $this->scanOutput = implode("\n", $output);
-
-        $results = $this->parseLynisOutput($output);
-        $results['scan_time'] = date('Y-m-d H:i:s');
-        $results['raw_output'] = $this->scanOutput;
-
-        file_put_contents("$scanDir/lynis-latest.json", json_encode($results, JSON_PRETTY_PRINT));
-
-        $this->lynisResults = $results;
-        $this->lastLynisScan = $results['scan_time'];
-        $this->isScanning = false;
-        $this->currentScan = '';
-
-        $warningCount = count($results['warnings'] ?? []);
-        $suggestionCount = count($results['suggestions'] ?? []);
-
         Notification::make()
-            ->title(__('Lynis scan completed'))
-            ->body(__('Found :warnings warnings and :suggestions suggestions', ['warnings' => $warningCount, 'suggestions' => $suggestionCount]))
-            ->success()
+            ->title(__('Lynis scan queued'))
+            ->body(__('It will run in the background. Refresh in a few minutes to see results.'))
+            ->info()
             ->send();
+
+        RunLynisScan::dispatch();
     }
 
     protected function parseLynisOutput(array $output): array
@@ -2272,45 +2237,13 @@ class Security extends Page implements HasActions, HasForms, HasTable
 
         $url = 'https://'.$this->selectedWpSiteId;
 
-        $this->isScanning = true;
-        $this->currentScan = 'wpscan';
-        $this->scanOutput = __('Scanning WordPress site: :url', ['url' => $url])."\n";
-
-        $scanDir = storage_path('app/security-scans');
-        if (! is_dir($scanDir)) {
-            mkdir($scanDir, 0755, true);
-        }
-
-        // Set HOME to writable directory for wpscan cache
-        $wpscanCmd = 'HOME=/var/www wpscan --url '.escapeshellarg($url).' --format json --no-banner 2>&1';
-        exec($wpscanCmd, $output, $code);
-
-        $jsonOutput = implode("\n", $output);
-        $this->scanOutput = $jsonOutput;
-
-        $results = json_decode($jsonOutput, true);
-        if (! $results) {
-            $results = [
-                'error' => __('Failed to parse scan results'),
-                'raw_output' => $jsonOutput,
-            ];
-        }
-
-        $results['scan_time'] = date('Y-m-d H:i:s');
-        $results['target_url'] = $url;
-
-        file_put_contents("$scanDir/wpscan-latest.json", json_encode($results, JSON_PRETTY_PRINT));
-
-        $this->wpscanResults = $results;
-        $this->lastWpscanScan = $results['scan_time'];
-        $this->isScanning = false;
-        $this->currentScan = '';
-
         Notification::make()
-            ->title(__('WPScan completed'))
-            ->body(__('Scan finished for :url', ['url' => $url]))
-            ->success()
+            ->title(__('WPScan queued'))
+            ->body(__('It will run in the background. Refresh in a few minutes to see results.'))
+            ->info()
             ->send();
+
+        RunWpscanScan::dispatch($url);
     }
 
     public function runNiktoScan(): void
@@ -2321,49 +2254,13 @@ class Security extends Page implements HasActions, HasForms, HasTable
             return;
         }
 
-        $target = 'localhost';
-
-        $this->isScanning = true;
-        $this->currentScan = 'nikto';
-        $this->scanOutput = __('Scanning local web server...')."\n";
-
-        $scanDir = storage_path('app/security-scans');
-        if (! is_dir($scanDir)) {
-            mkdir($scanDir, 0755, true);
-        }
-
-        $jsonFile = "$scanDir/nikto-".date('Y-m-d-His').'.json';
-        // Use full path for nikto since timeout command has restricted PATH
-        $niktoPath = file_exists('/usr/bin/nikto') ? '/usr/bin/nikto' : '/usr/local/bin/nikto';
-        exec("timeout 300 {$niktoPath} -h localhost -Format json -output {$jsonFile} 2>&1", $output, $code);
-
-        $this->scanOutput = implode("\n", $output);
-
-        $results = [];
-        if (file_exists($jsonFile)) {
-            $results = json_decode(file_get_contents($jsonFile), true) ?? [];
-        }
-
-        if (empty($results)) {
-            $results = $this->parseNiktoTextOutput($output);
-        }
-
-        $results['scan_time'] = date('Y-m-d H:i:s');
-        $results['target'] = $target;
-        $results['raw_output'] = $this->scanOutput;
-
-        file_put_contents("$scanDir/nikto-latest.json", json_encode($results, JSON_PRETTY_PRINT));
-
-        $this->niktoResults = $results;
-        $this->lastNiktoScan = $results['scan_time'];
-        $this->isScanning = false;
-        $this->currentScan = '';
-
         Notification::make()
-            ->title(__('Nikto scan completed'))
-            ->body(__('Local web server scan finished'))
-            ->success()
+            ->title(__('Nikto scan queued'))
+            ->body(__('It will run in the background. Refresh in a few minutes to see results.'))
+            ->info()
             ->send();
+
+        RunNiktoScan::dispatch('localhost');
     }
 
     protected function parseNiktoTextOutput(array $output): array
@@ -2414,50 +2311,15 @@ class Security extends Page implements HasActions, HasForms, HasTable
             return;
         }
 
-        $this->isScanning = true;
-        $this->currentScan = 'clamav';
-        $this->scanOutput = __('Scanning user directory: /home/:user', ['user' => $this->selectedClamUser])."\n";
-
-        $scanDir = storage_path('app/security-scans');
-        if (! is_dir($scanDir)) {
-            mkdir($scanDir, 0755, true);
-        }
-
         $userDir = "/home/{$this->selectedClamUser}";
-        $logFile = "$scanDir/clamscan-{$this->selectedClamUser}-".date('Y-m-d-His').'.log';
-
-        $cmd = "clamscan -r --infected --log={$logFile} ".
-               "--exclude-dir='^/home/{$this->selectedClamUser}/\\.cache' ".
-               "--exclude-dir='^/home/{$this->selectedClamUser}/\\.local' ".
-               escapeshellarg($userDir).' 2>&1';
-
-        exec($cmd, $output, $code);
-        $this->scanOutput = implode("\n", $output);
-
-        $results = $this->parseClamScanOutput($output);
-        $results['scan_time'] = date('Y-m-d H:i:s');
-        $results['scan_type'] = 'user';
-        $results['target'] = $userDir;
-        $results['username'] = $this->selectedClamUser;
-        $results['raw_output'] = $this->scanOutput;
-
-        file_put_contents("$scanDir/clamscan-latest.json", json_encode($results, JSON_PRETTY_PRINT));
-
-        $this->clamScanResults = $results;
-        $this->lastClamScan = $results['scan_time'];
-        $this->isScanning = false;
-        $this->currentScan = '';
-
-        $infected = $results['infected_files'] ?? 0;
-        $message = $infected > 0
-            ? __('Found :count infected file(s)', ['count' => $infected])
-            : __('No threats detected');
 
         Notification::make()
-            ->title(__('ClamAV scan completed'))
-            ->body($message)
-            ->color($infected > 0 ? 'danger' : 'success')
+            ->title(__('ClamAV scan queued'))
+            ->body(__('It will run in the background. Refresh in a few minutes to see results.'))
+            ->info()
             ->send();
+
+        RunClamavScan::dispatch($userDir, 'user', $this->selectedClamUser);
     }
 
     public function runClamScanServer(): void
@@ -2468,49 +2330,13 @@ class Security extends Page implements HasActions, HasForms, HasTable
             return;
         }
 
-        $this->isScanning = true;
-        $this->currentScan = 'clamav';
-        $this->scanOutput = __('Scanning server-wide: /home')."\n".
-                           __('This may take a while...')."\n";
-
-        $scanDir = storage_path('app/security-scans');
-        if (! is_dir($scanDir)) {
-            mkdir($scanDir, 0755, true);
-        }
-
-        $logFile = "$scanDir/clamscan-server-".date('Y-m-d-His').'.log';
-
-        $cmd = "clamscan -r --infected --log={$logFile} ".
-               "--exclude-dir='^\\.cache' ".
-               "--exclude-dir='^\\.local' ".
-               '/home 2>&1';
-
-        exec($cmd, $output, $code);
-        $this->scanOutput = implode("\n", $output);
-
-        $results = $this->parseClamScanOutput($output);
-        $results['scan_time'] = date('Y-m-d H:i:s');
-        $results['scan_type'] = 'server';
-        $results['target'] = '/home';
-        $results['raw_output'] = $this->scanOutput;
-
-        file_put_contents("$scanDir/clamscan-latest.json", json_encode($results, JSON_PRETTY_PRINT));
-
-        $this->clamScanResults = $results;
-        $this->lastClamScan = $results['scan_time'];
-        $this->isScanning = false;
-        $this->currentScan = '';
-
-        $infected = $results['infected_files'] ?? 0;
-        $message = $infected > 0
-            ? __('Found :count infected file(s)', ['count' => $infected])
-            : __('No threats detected');
-
         Notification::make()
-            ->title(__('Server-wide scan completed'))
-            ->body($message)
-            ->color($infected > 0 ? 'danger' : 'success')
+            ->title(__('Server-wide scan queued'))
+            ->body(__('It will run in the background. Refresh in a few minutes to see results.'))
+            ->info()
             ->send();
+
+        RunClamavScan::dispatch('/home', 'server', null);
     }
 
     protected function parseClamScanOutput(array $output): array

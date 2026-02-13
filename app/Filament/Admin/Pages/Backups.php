@@ -953,11 +953,20 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         }
 
         // Delete local file/folder
-        if ($backup->local_path && file_exists($backup->local_path)) {
-            if (is_file($backup->local_path)) {
-                unlink($backup->local_path);
-            } else {
-                exec('rm -rf '.escapeshellarg($backup->local_path));
+        if ($backup->local_path) {
+            try {
+                $result = $this->getAgent()->backupDeleteServer($backup->local_path);
+                if (! ($result['success'] ?? false)) {
+                    throw new Exception($result['error'] ?? __('Failed to delete local backup'));
+                }
+            } catch (Exception $e) {
+                Notification::make()
+                    ->title(__('Failed to delete local backup'))
+                    ->body($e->getMessage())
+                    ->danger()
+                    ->send();
+
+                return;
             }
         }
 
