@@ -1,0 +1,154 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Filament\Admin\Pages;
+
+use App\Services\Agent\AgentClient;
+use BackedEnum;
+use Filament\Actions\Action;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
+use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
+use Filament\Pages\Page;
+use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Concerns\InteractsWithTable;
+use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Table;
+use Illuminate\Contracts\Support\Htmlable;
+
+class DatabaseTuning extends Page implements HasActions, HasTable
+{
+    use InteractsWithActions;
+    use InteractsWithTable;
+
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedCircleStack;
+
+    protected static ?int $navigationSort = 19;
+
+    protected static ?string $slug = 'database-tuning';
+
+    protected static bool $shouldRegisterNavigation = false;
+
+    protected string $view = 'filament.admin.pages.database-tuning';
+
+    public array $variables = [];
+
+    public function getTitle(): string|Htmlable
+    {
+        return __('Database Tuning');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('Database Tuning');
+    }
+
+    public function mount(): void
+    {
+        $this->loadVariables();
+    }
+
+    protected function getAgent(): AgentClient
+    {
+        return app(AgentClient::class);
+    }
+
+    public function loadVariables(): void
+    {
+        $names = [
+            'innodb_buffer_pool_size',
+            'max_connections',
+            'tmp_table_size',
+            'max_heap_table_size',
+            'innodb_log_file_size',
+            'innodb_flush_log_at_trx_commit',
+        ];
+
+        try {
+            $result = $this->getAgent()->databaseGetVariables($names);
+            if (! ($result['success'] ?? false)) {
+                throw new \RuntimeException($result['error'] ?? __('Unable to load variables'));
+            }
+
+            $this->variables = collect($result['variables'] ?? [])->map(function (array $row) {
+                return [
+                    'name' => $row['name'] ?? '',
+                    'value' => $row['value'] ?? '',
+                ];
+            })->toArray();
+        } catch (\Exception $e) {
+            $this->variables = [];
+            Notification::make()
+                ->title(__('Unable to load database variables'))
+                ->body($e->getMessage())
+                ->warning()
+                ->send();
+        }
+
+        $this->resetTable();
+    }
+
+    public function table(Table $table): Table
+    {
+        return $table
+            ->records(fn () => $this->variables)
+            ->columns([
+                TextColumn::make('name')
+                    ->label(__('Variable'))
+                    ->fontFamily('mono'),
+                TextColumn::make('value')
+                    ->label(__('Current Value'))
+                    ->fontFamily('mono'),
+            ])
+            ->recordActions([
+                Action::make('update')
+                    ->label(__('Update'))
+                    ->icon('heroicon-o-pencil-square')
+                    ->form([
+                        TextInput::make('value')
+                            ->label(__('New Value'))
+                            ->required(),
+                    ])
+                    ->action(function (array $record, array $data): void {
+                        try {
+                            try {
+                                $agent = $this->getAgent();
+                                $setResult = $agent->databaseSetGlobal($record['name'], (string) $data['value']);
+                                if (! ($setResult['success'] ?? false)) {
+                                    throw new \RuntimeException($setResult['error'] ?? __('Update failed'));
+                                }
+
+                                $persistResult = $agent->databasePersistTuning($record['name'], (string) $data['value']);
+                                if (! ($persistResult['success'] ?? false)) {
+                                    Notification::make()
+                                        ->title(__('Variable updated, but not persisted'))
+                                        ->body($persistResult['error'] ?? __('Unable to persist value'))
+                                        ->warning()
+                                        ->send();
+                                } else {
+                                    Notification::make()
+                                        ->title(__('Variable updated'))
+                                        ->success()
+                                        ->send();
+                                }
+                            } catch (\Exception $e) {
+                                Notification::make()
+                                    ->title(__('Update failed'))
+                                    ->body($e->getMessage())
+                                    ->danger()
+                                    ->send();
+                            }
+                        } catch (\Exception $e) {
+                            Notification::make()->title(__('Update failed'))->body($e->getMessage())->danger()->send();
+                        }
+
+                        $this->loadVariables();
+                    }),
+            ])
+            ->emptyStateHeading(__('No variables found'))
+            ->emptyStateDescription(__('Database variables could not be loaded.'));
+    }
+}

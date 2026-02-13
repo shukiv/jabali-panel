@@ -1,0 +1,65 @@
+#!/bin/bash
+# Screenshot capture wrapper for Chromium
+# Usage: screenshot <url> <output_path>
+
+URL="$1"
+OUTPUT="$2"
+
+if [[ -z "$URL" || -z "$OUTPUT" ]]; then
+    echo "Usage: screenshot <url> <output_path>"
+    exit 1
+fi
+
+# Create temp directory for this run
+TMPDIR="/tmp/chromium-screenshot-$$"
+mkdir -p "$TMPDIR/data"
+
+# Set environment
+export HOME="$TMPDIR"
+export XDG_CONFIG_HOME="$TMPDIR"
+export XDG_CACHE_HOME="$TMPDIR"
+export XDG_RUNTIME_DIR="$TMPDIR"
+
+# Find chromium binary
+CHROME=""
+for bin in /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome /snap/bin/chromium; do
+    if [[ -x "$bin" ]]; then
+        CHROME="$bin"
+        break
+    fi
+done
+
+if [[ -z "$CHROME" ]]; then
+    echo "Chromium not found"
+    rm -rf "$TMPDIR" 2>/dev/null
+    exit 1
+fi
+
+# Use old headless mode which is more stable
+"$CHROME" \
+    --headless \
+    --disable-gpu \
+    --no-sandbox \
+    --disable-setuid-sandbox \
+    --single-process \
+    --disable-dev-shm-usage \
+    --disable-software-rasterizer \
+    --disable-extensions \
+    --user-data-dir="$TMPDIR/data" \
+    --ignore-certificate-errors \
+    --window-size=1280,800 \
+    --hide-scrollbars \
+    --screenshot="$OUTPUT" \
+    "$URL" 2>/dev/null
+
+RESULT=$?
+
+# Clean up temp directory
+rm -rf "$TMPDIR" 2>/dev/null
+
+# Check if screenshot was created
+if [[ -f "$OUTPUT" ]] && [[ $(stat -c%s "$OUTPUT" 2>/dev/null || echo 0) -gt 1000 ]]; then
+    exit 0
+else
+    exit 1
+fi

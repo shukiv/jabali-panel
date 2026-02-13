@@ -1,0 +1,23 @@
+[Unit]
+Description=Jabali Health Monitor - Automatic service recovery
+Documentation=https://github.com/shukiv/jabali-panel
+After=network.target jabali-agent.service
+Wants=jabali-agent.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/php /var/www/jabali/bin/jabali-health-monitor
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jabali-health-monitor
+
+# Resource limits
+LimitNOFILE=65535
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

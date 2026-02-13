@@ -1,0 +1,6 @@
+vendor/
+node_modules/
+public/build/
+public/vendor/
+public/fonts/
+public/css/filament/

@@ -1,0 +1,3280 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+/**
+ * Jabali CLI - Command Line Interface for Jabali Panel
+ */
+
+define('JABALI_ROOT', dirname(__DIR__));
+define('AGENT_SOCKET', '/var/run/jabali/agent.sock');
+
+// Read version from VERSION file
+$versionFile = JABALI_ROOT . '/VERSION';
+$version = '1.0.1';
+if (file_exists($versionFile)) {
+    $content = file_get_contents($versionFile);
+    if (preg_match('/VERSION=(.+)/', $content, $m)) {
+        $version = trim($m[1]);
+    }
+}
+define('VERSION', $version);
+
+// Colors
+define('C_RESET', "\033[0m");
+define('C_RED', "\033[31m");
+define('C_GREEN', "\033[32m");
+define('C_YELLOW', "\033[33m");
+define('C_BLUE', "\033[34m");
+define('C_MAGENTA', "\033[35m");
+define('C_CYAN', "\033[36m");
+define('C_WHITE', "\033[37m");
+define('C_BOLD', "\033[1m");
+define('C_DIM', "\033[2m");
+
+chdir(JABALI_ROOT);
+
+// Bootstrap Laravel for database access
+require 'vendor/autoload.php';
+$app = require 'bootstrap/app.php';
+$kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
+$kernel->bootstrap();
+
+// Parse arguments
+$args = $_SERVER['argv'];
+array_shift($args); // Remove script name
+
+$command = $args[0] ?? '';
+$subcommand = $args[1] ?? '';
+$options = parseOptions(array_slice($args, 2));
+
+// Route commands
+switch ($command) {
+    case '':
+    case 'list':
+    case '--help':
+    case '-h':
+        showHelp();
+        break;
+    case '--help-full':
+    case 'help-full':
+        showHelpFull();
+        break;
+    case 'user':
+        handleUser($subcommand, $options);
+        break;
+    case 'domain':
+        handleDomain($subcommand, $options);
+        break;
+    case 'service':
+        handleService($subcommand, $options);
+        break;
+    case 'wp':
+    case 'wordpress':
+        handleWordPress($subcommand, $options);
+        break;
+    case 'db':
+    case 'database':
+        handleDatabase($subcommand, $options);
+        break;
+    case 'mail':
+    case 'email':
+        handleEmail($subcommand, $options);
+        break;
+    case 'backup':
+        handleBackup($subcommand, $options);
+        break;
+    case 'cpanel':
+        handleCpanel($subcommand, $options);
+        break;
+    case 'system':
+        handleSystem($subcommand, $options);
+        break;
+    case 'agent':
+        handleAgent($subcommand, $options);
+        break;
+    case 'php':
+        handlePhp($subcommand, $options);
+        break;
+    case 'firewall':
+    case 'fw':
+        handleFirewall($subcommand, $options);
+        break;
+    case 'ssl':
+        handleSsl($subcommand, $options);
+        break;
+    case '--version':
+    case '-v':
+        echo "Jabali CLI v" . VERSION . "\n";
+        break;
+    default:
+        error("Unknown command: $command");
+        echo "Run 'jabali --help' for usage information.\n";
+        exit(1);
+}
+
+exit(0);
+
+// ============ HELPER FUNCTIONS ============
+
+function parseOptions(array $args): array
+{
+    $options = ['_args' => []];
+    foreach ($args as $arg) {
+        if (strpos($arg, '--') === 0) {
+            $arg = substr($arg, 2);
+            if (strpos($arg, '=') !== false) {
+                [$key, $value] = explode('=', $arg, 2);
+                $options[$key] = $value;
+            } else {
+                $options[$arg] = true;
+            }
+        } elseif (strpos($arg, '-') === 0) {
+            $options[substr($arg, 1)] = true;
+        } else {
+            $options['_args'][] = $arg;
+        }
+    }
+    return $options;
+}
+
+function showHelp(): void
+{
+    echo "\n" . C_YELLOW . "░░░░░██╗░█████╗░██████╗░░█████╗░██╗░░░░░██╗" . C_RESET . "\n";
+    echo C_YELLOW . "░░░░░██║██╔══██╗██╔══██╗██╔══██╗██║░░░░░██║" . C_RESET . "\n";
+    echo C_YELLOW . "░░░░░██║███████║██████╦╝███████║██║░░░░░██║" . C_RESET . "\n";
+    echo C_YELLOW . "██╗░░██║██╔══██║██╔══██╗██╔══██║██║░░░░░██║" . C_RESET . "\n";
+    echo C_YELLOW . "╚█████╔╝██║░░██║██████╦╝██║░░██║███████╗██║" . C_RESET . "\n";
+    echo C_YELLOW . "░╚════╝░╚═╝░░╚═╝╚═════╝░╚═╝░░╚═╝╚══════╝╚═╝" . C_RESET . "\n\n";
+    echo "  " . C_GREEN . C_BOLD . "Jabali CLI" . C_RESET . " v" . VERSION . " - " . C_CYAN . "Modern Web Hosting Control Panel" . C_RESET . "\n\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali <command> <subcommand> [options]\n\n";
+
+    echo C_YELLOW . C_BOLD . "User Management:" . C_RESET . "\n";
+    echo "  " . C_GREEN . "user list" . C_RESET . "                     List all users\n";
+    echo "  " . C_GREEN . "user create <username>" . C_RESET . "        Create a new user\n";
+    echo "  " . C_GREEN . "user show <username>" . C_RESET . "          Show user details\n";
+    echo "  " . C_GREEN . "user delete <username>" . C_RESET . "        Delete a user\n";
+    echo "  " . C_GREEN . "user password <username>" . C_RESET . "      Change user password\n";
+    echo "  " . C_GREEN . "user suspend <username>" . C_RESET . "       Suspend a user\n";
+    echo "  " . C_GREEN . "user unsuspend <username>" . C_RESET . "     Unsuspend a user\n\n";
+
+    echo C_YELLOW . C_BOLD . "Domain Management:" . C_RESET . "\n";
+    echo "  " . C_GREEN . "domain list [--user=<user>]" . C_RESET . "   List domains\n";
+    echo "  " . C_GREEN . "domain create <domain>" . C_RESET . "        Create a domain\n";
+    echo "  " . C_GREEN . "domain show <domain>" . C_RESET . "          Show domain details\n";
+    echo "  " . C_GREEN . "domain delete <domain>" . C_RESET . "        Delete a domain\n";
+    echo "  " . C_GREEN . "domain enable <domain>" . C_RESET . "        Enable a domain\n";
+    echo "  " . C_GREEN . "domain disable <domain>" . C_RESET . "       Disable a domain\n\n";
+
+    echo C_DIM . "More commands: service, wp, db, mail, backup, cpanel, system, agent, php, firewall, ssl\n" . C_RESET;
+    echo C_DIM . "Run " . C_RESET . C_CYAN . "jabali --help-full" . C_RESET . C_DIM . " for the full command list.\n\n" . C_RESET;
+
+    echo C_YELLOW . C_BOLD . "Options:" . C_RESET . "\n";
+    echo "  " . C_GREEN . "-h, --help" . C_RESET . "                    Show this help\n";
+    echo "  " . C_GREEN . "--help-full" . C_RESET . "                    Show all commands\n";
+    echo "  " . C_GREEN . "-v, --version" . C_RESET . "                 Show version\n";
+    echo "  " . C_GREEN . "-y, --yes" . C_RESET . "                     Auto-confirm prompts\n";
+    echo "  " . C_GREEN . "-q, --quiet" . C_RESET . "                   Quiet mode\n\n";
+}
+
+function showHelpFull(): void
+{
+    echo "\n" . C_YELLOW . "░░░░░██╗░█████╗░██████╗░░█████╗░██╗░░░░░██╗" . C_RESET . "\n";
+    echo C_YELLOW . "░░░░░██║██╔══██╗██╔══██╗██╔══██╗██║░░░░░██║" . C_RESET . "\n";
+    echo C_YELLOW . "░░░░░██║███████║██████╦╝███████║██║░░░░░██║" . C_RESET . "\n";
+    echo C_YELLOW . "██╗░░██║██╔══██║██╔══██╗██╔══██║██║░░░░░██║" . C_RESET . "\n";
+    echo C_YELLOW . "╚█████╔╝██║░░██║██████╦╝██║░░██║███████╗██║" . C_RESET . "\n";
+    echo C_YELLOW . "░╚════╝░╚═╝░░╚═╝╚═════╝░╚═╝░░╚═╝╚══════╝╚═╝" . C_RESET . "\n\n";
+    echo "  " . C_GREEN . C_BOLD . "Jabali CLI" . C_RESET . " v" . VERSION . " - " . C_CYAN . "Full Command Reference" . C_RESET . "\n\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali <command> <subcommand> [options]\n\n";
+
+    // Two-column layout helper
+    $col1Width = 40;
+    $printRow = function($left, $right) use ($col1Width) {
+        $leftClean = preg_replace('/\e\[[0-9;]*m/', '', $left);
+        $padding = max(1, $col1Width - strlen($leftClean));
+        echo "  " . $left . str_repeat(' ', $padding) . $right . "\n";
+    };
+
+    echo C_YELLOW . C_BOLD . "User Management" . C_RESET . "                             " . C_YELLOW . C_BOLD . "Domain Management" . C_RESET . "\n";
+    $printRow(C_GREEN . "user list" . C_RESET . " - List users", C_GREEN . "domain list" . C_RESET . " - List domains");
+    $printRow(C_GREEN . "user create <user>" . C_RESET . " - Create user", C_GREEN . "domain create <d>" . C_RESET . " - Create domain");
+    $printRow(C_GREEN . "user show <user>" . C_RESET . " - Show details", C_GREEN . "domain show <d>" . C_RESET . " - Show details");
+    $printRow(C_GREEN . "user delete <user>" . C_RESET . " - Delete user", C_GREEN . "domain delete <d>" . C_RESET . " - Delete domain");
+    $printRow(C_GREEN . "user password <user>" . C_RESET . " - Set password", C_GREEN . "domain enable <d>" . C_RESET . " - Enable domain");
+    $printRow(C_GREEN . "user suspend <user>" . C_RESET . " - Suspend", C_GREEN . "domain disable <d>" . C_RESET . " - Disable domain");
+    $printRow(C_GREEN . "user unsuspend <user>" . C_RESET . " - Unsuspend", "");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "Database Management" . C_RESET . "                         " . C_YELLOW . C_BOLD . "Email Management" . C_RESET . "\n";
+    $printRow(C_GREEN . "db list" . C_RESET . " - List databases", C_GREEN . "mail list" . C_RESET . " - List mailboxes");
+    $printRow(C_GREEN . "db create <name>" . C_RESET . " - Create database", C_GREEN . "mail create <email>" . C_RESET . " - Create mailbox");
+    $printRow(C_GREEN . "db delete <name>" . C_RESET . " - Delete database", C_GREEN . "mail delete <email>" . C_RESET . " - Delete mailbox");
+    $printRow(C_GREEN . "db users" . C_RESET . " - List db users", C_GREEN . "mail password <email>" . C_RESET . " - Set password");
+    $printRow(C_GREEN . "db user-create <name>" . C_RESET . " - Create db user", C_GREEN . "mail quota <email> <MB>" . C_RESET . " - Set quota");
+    $printRow(C_GREEN . "db user-delete <name>" . C_RESET . " - Delete db user", C_GREEN . "mail domains" . C_RESET . " - List mail domains");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "Service Management" . C_RESET . "                          " . C_YELLOW . C_BOLD . "WordPress Management" . C_RESET . "\n";
+    $printRow(C_GREEN . "service list" . C_RESET . " - List services", C_GREEN . "wp list <user>" . C_RESET . " - List WP sites");
+    $printRow(C_GREEN . "service status <name>" . C_RESET . " - Show status", C_GREEN . "wp install <user> <d>" . C_RESET . " - Install WP");
+    $printRow(C_GREEN . "service start <name>" . C_RESET . " - Start service", C_GREEN . "wp scan <user>" . C_RESET . " - Scan for WP sites");
+    $printRow(C_GREEN . "service stop <name>" . C_RESET . " - Stop service", C_GREEN . "wp import <user> <path>" . C_RESET . " - Import WP");
+    $printRow(C_GREEN . "service restart <name>" . C_RESET . " - Restart", C_GREEN . "wp delete <user> <id>" . C_RESET . " - Delete WP site");
+    $printRow(C_GREEN . "service enable <name>" . C_RESET . " - Enable on boot", C_GREEN . "wp update <user> <id>" . C_RESET . " - Update WP");
+    $printRow(C_GREEN . "service disable <name>" . C_RESET . " - Disable on boot", "");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "System Management" . C_RESET . "                           " . C_YELLOW . C_BOLD . "Agent Management" . C_RESET . "\n";
+    $printRow(C_GREEN . "system info" . C_RESET . " - System information", C_GREEN . "agent status" . C_RESET . " - Agent status");
+    $printRow(C_GREEN . "system status" . C_RESET . " - Services status", C_GREEN . "agent start" . C_RESET . " - Start agent");
+    $printRow(C_GREEN . "system hostname [name]" . C_RESET . " - Get/set hostname", C_GREEN . "agent stop" . C_RESET . " - Stop agent");
+    $printRow(C_GREEN . "system disk" . C_RESET . " - Disk usage", C_GREEN . "agent restart" . C_RESET . " - Restart agent");
+    $printRow(C_GREEN . "system memory" . C_RESET . " - Memory usage", C_GREEN . "agent ping" . C_RESET . " - Ping agent");
+    $printRow("", C_GREEN . "agent log [--lines=N]" . C_RESET . " - View logs");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "PHP Management" . C_RESET . "                              " . C_YELLOW . C_BOLD . "Firewall Management" . C_RESET . "\n";
+    $printRow(C_GREEN . "php list" . C_RESET . " - List PHP versions", C_GREEN . "firewall status" . C_RESET . " - Show status");
+    $printRow(C_GREEN . "php install <ver>" . C_RESET . " - Install PHP", C_GREEN . "firewall enable" . C_RESET . " - Enable firewall");
+    $printRow(C_GREEN . "php uninstall <ver>" . C_RESET . " - Uninstall PHP", C_GREEN . "firewall disable" . C_RESET . " - Disable firewall");
+    $printRow(C_GREEN . "php default [ver]" . C_RESET . " - Get/set default", C_GREEN . "firewall rules" . C_RESET . " - List rules");
+    $printRow(C_GREEN . "php status" . C_RESET . " - PHP-FPM status", C_GREEN . "firewall allow <port>" . C_RESET . " - Allow port");
+    $printRow("", C_GREEN . "firewall deny <port>" . C_RESET . " - Deny port");
+    $printRow("", C_GREEN . "firewall delete <rule>" . C_RESET . " - Delete rule");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "Backup Management" . C_RESET . "                           " . C_YELLOW . C_BOLD . "SSL Management" . C_RESET . "\n";
+    $printRow(C_GREEN . "backup list [--user=<u>]" . C_RESET . " - List backups", C_GREEN . "ssl check" . C_RESET . " - Check/issue/renew certs");
+    $printRow(C_GREEN . "backup create <user>" . C_RESET . " - Create user backup", C_GREEN . "ssl issue <domain>" . C_RESET . " - Issue certificate");
+    $printRow(C_GREEN . "backup restore <path>" . C_RESET . " - Restore backup", C_GREEN . "ssl renew <domain>" . C_RESET . " - Renew certificate");
+    $printRow(C_GREEN . "backup info <path>" . C_RESET . " - Show backup info", C_GREEN . "ssl status <domain>" . C_RESET . " - Show cert status");
+    $printRow(C_GREEN . "backup verify <path>" . C_RESET . " - Verify backup", C_GREEN . "ssl list" . C_RESET . " - List all certificates");
+    $printRow(C_GREEN . "backup server" . C_RESET . " - Create server backup", "");
+    $printRow(C_GREEN . "backup history" . C_RESET . " - Show backup history", "");
+    $printRow(C_GREEN . "backup schedules" . C_RESET . " - List schedules", "");
+    $printRow(C_GREEN . "backup destinations" . C_RESET . " - List destinations", "");
+    $printRow(C_GREEN . "backup help" . C_RESET . " - Show all backup cmds", "");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "Migration & Restore" . C_RESET . "\n";
+    $printRow(C_GREEN . "cpanel analyze <file>" . C_RESET . " - Analyze backup", C_GREEN . "cpanel restore <file> <user>" . C_RESET . " - Restore backup");
+    $printRow(C_GREEN . "cpanel fix-permissions <file>" . C_RESET . " - Fix backup perms", "");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "Options" . C_RESET . "\n";
+    echo "  " . C_GREEN . "-h, --help" . C_RESET . "      Show basic help      " . C_GREEN . "-v, --version" . C_RESET . "   Show version\n";
+    echo "  " . C_GREEN . "--help-full" . C_RESET . "     Show full help       " . C_GREEN . "-y, --yes" . C_RESET . "       Auto-confirm\n";
+    echo "  " . C_GREEN . "-q, --quiet" . C_RESET . "     Quiet mode\n";
+    echo "\n";
+}
+
+function success(string $message): void
+{
+    echo C_GREEN . "✓ " . C_RESET . $message . "\n";
+}
+
+function error(string $message): void
+{
+    echo C_RED . "✗ " . C_RESET . $message . "\n";
+}
+
+function info(string $message): void
+{
+    echo C_CYAN . "ℹ " . C_RESET . $message . "\n";
+}
+
+function warning(string $message): void
+{
+    echo C_YELLOW . "⚠ " . C_RESET . $message . "\n";
+}
+
+function confirm(string $message, array $options): bool
+{
+    if (isset($options['y']) || isset($options['yes'])) {
+        return true;
+    }
+    echo $message . " [y/N]: ";
+    $handle = fopen("php://stdin", "r");
+    $line = fgets($handle);
+    fclose($handle);
+    return strtolower(trim($line)) === 'y';
+}
+
+function prompt(string $message, bool $hidden = false): string
+{
+    echo $message . ": ";
+    if ($hidden) {
+        system('stty -echo');
+    }
+    $handle = fopen("php://stdin", "r");
+    $line = trim(fgets($handle));
+    fclose($handle);
+    if ($hidden) {
+        system('stty echo');
+        echo "\n";
+    }
+    return $line;
+}
+
+function generateSecurePassword(int $length = 16): string
+{
+    $lower = 'abcdefghijklmnopqrstuvwxyz';
+    $upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    $numbers = '0123456789';
+    $special = '!@#$%^&*';
+    $password = $lower[random_int(0, 25)] . $upper[random_int(0, 25)] . $numbers[random_int(0, 9)] . $special[random_int(0, 7)];
+    $all = $lower . $upper . $numbers . $special;
+    for ($i = 4; $i < $length; $i++) $password .= $all[random_int(0, strlen($all) - 1)];
+    return str_shuffle($password);
+}
+
+function validatePassword(string $password): ?string
+{
+    if (strlen($password) < 8) return 'Password must be at least 8 characters';
+    if (!preg_match('/[a-z]/', $password)) return 'Password must contain a lowercase letter';
+    if (!preg_match('/[A-Z]/', $password)) return 'Password must contain an uppercase letter';
+    if (!preg_match('/[0-9]/', $password)) return 'Password must contain a number';
+    return null;
+}
+
+function promptPassword(string $message = "Password", bool $allowAutoGenerate = false): string
+{
+    $hint = $allowAutoGenerate ? " (enter to auto-generate)" : "";
+    while (true) {
+        $password = prompt($message . $hint, true);
+        if ($allowAutoGenerate && $password === '') {
+            $password = generateSecurePassword();
+            echo C_GREEN . "Generated password: " . C_RESET . $password . "\n";
+            return $password;
+        }
+        if ($error = validatePassword($password)) {
+            error($error);
+            continue;
+        }
+        return $password;
+    }
+}
+
+function agentSend(string $action, array $params = []): array
+{
+    return agentSendWithTimeout($action, $params, 60);
+}
+
+function agentSendWithTimeout(string $action, array $params = [], int $timeoutSeconds = 60): array
+{
+    if (!file_exists(AGENT_SOCKET)) {
+        return ['success' => false, 'error' => 'Agent socket not found. Is the agent running?'];
+    }
+
+    $socket = @socket_create(AF_UNIX, SOCK_STREAM, 0);
+    if (!$socket) {
+        return ['success' => false, 'error' => 'Failed to create socket'];
+    }
+
+    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $timeoutSeconds, 'usec' => 0]);
+    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => $timeoutSeconds, 'usec' => 0]);
+
+    if (!@socket_connect($socket, AGENT_SOCKET)) {
+        socket_close($socket);
+        return ['success' => false, 'error' => 'Failed to connect to agent'];
+    }
+
+    $request = json_encode(['action' => $action, 'params' => $params]);
+    socket_write($socket, $request, strlen($request));
+
+    $response = '';
+    while ($buf = socket_read($socket, 8192)) {
+        $response .= $buf;
+    }
+    socket_close($socket);
+
+    return json_decode($response, true) ?: ['success' => false, 'error' => 'Invalid response from agent'];
+}
+
+function table(array $headers, array $rows): void
+{
+    if (empty($rows)) {
+        echo C_DIM . "No data to display." . C_RESET . "\n";
+        return;
+    }
+
+    // Calculate column widths
+    $widths = [];
+    foreach ($headers as $i => $header) {
+        $widths[$i] = strlen($header);
+    }
+    foreach ($rows as $row) {
+        foreach ($row as $i => $cell) {
+            $widths[$i] = max($widths[$i] ?? 0, strlen((string)$cell));
+        }
+    }
+
+    // Print header
+    echo C_BOLD;
+    foreach ($headers as $i => $header) {
+        echo str_pad($header, $widths[$i] + 2);
+    }
+    echo C_RESET . "\n";
+
+    // Print separator
+    foreach ($widths as $width) {
+        echo str_repeat('─', $width + 2);
+    }
+    echo "\n";
+
+    // Print rows
+    foreach ($rows as $row) {
+        foreach ($row as $i => $cell) {
+            echo str_pad((string)$cell, $widths[$i] + 2);
+        }
+        echo "\n";
+    }
+}
+
+// ============ USER COMMANDS ============
+
+function handleUser(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'list':
+            $users = App\Models\User::all();
+            $rows = [];
+            foreach ($users as $user) {
+                $rows[] = [
+                    $user->id,
+                    $user->username ?? $user->name,
+                    $user->email,
+                    $user->is_admin ? 'Admin' : 'User',
+                    $user->suspended ? C_RED . 'Suspended' . C_RESET : C_GREEN . 'Active' . C_RESET,
+                    $user->created_at->format('Y-m-d'),
+                ];
+            }
+            table(['ID', 'Username', 'Email', 'Role', 'Status', 'Created'], $rows);
+            break;
+
+        case 'create':
+            $username = $options['_args'][0] ?? prompt("Username");
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            $email = $options['email'] ?? prompt("Email");
+            if (isset($options['password'])) {
+                $password = $options['password'];
+                if ($err = validatePassword($password)) { error($err); exit(1); }
+            } else {
+                $password = promptPassword("Password");
+            }
+
+            // Create system user via agent
+            $result = agentSend('user.create', ['username' => $username, 'password' => $password]);
+            if (!($result['success'] ?? false)) {
+                error("Failed to create system user: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+
+            // Create database user
+            $user = App\Models\User::create([
+                'name' => $username,
+                'username' => $username,
+                'email' => $email,
+                'password' => bcrypt($password),
+            ]);
+
+            success("User '$username' created successfully (ID: {$user->id})");
+            break;
+
+        case 'show':
+            $username = $options['_args'][0] ?? null;
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            $user = App\Models\User::where('username', $username)->orWhere('name', $username)->first();
+            if (!$user) {
+                error("User not found: $username");
+                exit(1);
+            }
+            echo "\n" . C_BOLD . "User Details" . C_RESET . "\n";
+            echo str_repeat('─', 40) . "\n";
+            echo C_CYAN . "ID:" . C_RESET . "         {$user->id}\n";
+            echo C_CYAN . "Username:" . C_RESET . "   " . ($user->username ?? $user->name) . "\n";
+            echo C_CYAN . "Email:" . C_RESET . "      {$user->email}\n";
+            echo C_CYAN . "Role:" . C_RESET . "       " . ($user->is_admin ? 'Admin' : 'User') . "\n";
+            echo C_CYAN . "Status:" . C_RESET . "     " . ($user->suspended ? 'Suspended' : 'Active') . "\n";
+            echo C_CYAN . "Created:" . C_RESET . "    {$user->created_at}\n";
+            $domainCount = App\Models\Domain::where('user_id', $user->id)->count();
+            echo C_CYAN . "Domains:" . C_RESET . "    $domainCount\n";
+            break;
+
+        case 'delete':
+            $username = $options['_args'][0] ?? null;
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            $user = App\Models\User::where('username', $username)->orWhere('name', $username)->first();
+            if (!$user) {
+                error("User not found: $username");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to delete user '$username'? This cannot be undone.", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            // Delete system user
+            $result = agentSend('user.delete', ['username' => $username]);
+            if (!($result['success'] ?? false)) {
+                warning("Could not delete system user: " . ($result['error'] ?? 'Unknown error'));
+            }
+
+            $user->delete();
+            success("User '$username' deleted");
+            break;
+
+        case 'password':
+            $username = $options['_args'][0] ?? null;
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            $user = App\Models\User::where('username', $username)->orWhere('name', $username)->first();
+            if (!$user) {
+                error("User not found: $username");
+                exit(1);
+            }
+            if (isset($options['password'])) {
+                $password = $options['password'];
+                if ($err = validatePassword($password)) { error($err); exit(1); }
+            } else {
+                $password = promptPassword("New password", true);
+            }
+            $user->password = bcrypt($password);
+            $user->save();
+
+            // Update system user password
+            agentSend('user.password', ['username' => $username, 'password' => $password]);
+
+            success("Password updated for '$username'");
+            break;
+
+        case 'suspend':
+            $username = $options['_args'][0] ?? null;
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            $user = App\Models\User::where('username', $username)->orWhere('name', $username)->first();
+            if (!$user) {
+                error("User not found: $username");
+                exit(1);
+            }
+            $user->suspended = true;
+            $user->save();
+            success("User '$username' suspended");
+            break;
+
+        case 'unsuspend':
+            $username = $options['_args'][0] ?? null;
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            $user = App\Models\User::where('username', $username)->orWhere('name', $username)->first();
+            if (!$user) {
+                error("User not found: $username");
+                exit(1);
+            }
+            $user->suspended = false;
+            $user->save();
+            success("User '$username' unsuspended");
+            break;
+
+        default:
+            error("Unknown user command: $subcommand");
+            echo "Run 'jabali user --help' for available commands.\n";
+            exit(1);
+    }
+}
+
+// ============ DOMAIN COMMANDS ============
+
+function handleDomain(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'list':
+            $query = App\Models\Domain::with('user');
+            if (isset($options['user'])) {
+                $user = App\Models\User::where('username', $options['user'])->orWhere('name', $options['user'])->first();
+                if ($user) {
+                    $query->where('user_id', $user->id);
+                }
+            }
+            $domains = $query->get();
+            $rows = [];
+            foreach ($domains as $domain) {
+                $rows[] = [
+                    $domain->id,
+                    $domain->domain,
+                    $domain->user->username ?? $domain->user->name ?? 'N/A',
+                    $domain->is_active ? C_GREEN . 'Active' . C_RESET : C_RED . 'Inactive' . C_RESET,
+                    $domain->ssl_enabled ? C_GREEN . 'SSL' . C_RESET : C_DIM . 'No SSL' . C_RESET,
+                    $domain->created_at->format('Y-m-d'),
+                ];
+            }
+            table(['ID', 'Domain', 'User', 'Status', 'SSL', 'Created'], $rows);
+            break;
+
+        case 'create':
+            $domain = $options['_args'][0] ?? prompt("Domain name");
+            if (!$domain) {
+                error("Domain name is required");
+                exit(1);
+            }
+            $username = $options['user'] ?? prompt("Username");
+            $user = App\Models\User::where('username', $username)->orWhere('name', $username)->first();
+            if (!$user) {
+                error("User not found: $username");
+                exit(1);
+            }
+
+            $result = agentSend('domain.create', [
+                'username' => $username,
+                'domain' => $domain,
+            ]);
+
+            if ($result['success'] ?? false) {
+                $domainModel = App\Models\Domain::create([
+                    'user_id' => $user->id,
+                    'domain' => $domain,
+                    'is_active' => true,
+                ]);
+                success("Domain '$domain' created (ID: {$domainModel->id})");
+            } else {
+                error("Failed to create domain: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'show':
+            $domain = $options['_args'][0] ?? null;
+            if (!$domain) {
+                error("Domain name is required");
+                exit(1);
+            }
+            $domainModel = App\Models\Domain::where('domain', $domain)->with('user')->first();
+            if (!$domainModel) {
+                error("Domain not found: $domain");
+                exit(1);
+            }
+            echo "\n" . C_BOLD . "Domain Details" . C_RESET . "\n";
+            echo str_repeat('─', 40) . "\n";
+            echo C_CYAN . "ID:" . C_RESET . "         {$domainModel->id}\n";
+            echo C_CYAN . "Domain:" . C_RESET . "     {$domainModel->domain}\n";
+            echo C_CYAN . "User:" . C_RESET . "       " . ($domainModel->user->username ?? $domainModel->user->name) . "\n";
+            echo C_CYAN . "Status:" . C_RESET . "     " . ($domainModel->is_active ? 'Active' : 'Inactive') . "\n";
+            echo C_CYAN . "SSL:" . C_RESET . "        " . ($domainModel->ssl_enabled ? 'Enabled' : 'Disabled') . "\n";
+            echo C_CYAN . "Created:" . C_RESET . "    {$domainModel->created_at}\n";
+            break;
+
+        case 'delete':
+            $domain = $options['_args'][0] ?? null;
+            if (!$domain) {
+                error("Domain name is required");
+                exit(1);
+            }
+            $domainModel = App\Models\Domain::where('domain', $domain)->with('user')->first();
+            if (!$domainModel) {
+                error("Domain not found: $domain");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to delete domain '$domain'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            $username = $domainModel->user->username ?? $domainModel->user->name;
+            $result = agentSend('domain.delete', ['username' => $username, 'domain' => $domain]);
+
+            $domainModel->delete();
+            success("Domain '$domain' deleted");
+            break;
+
+        case 'enable':
+            $domain = $options['_args'][0] ?? null;
+            if (!$domain) {
+                error("Domain name is required");
+                exit(1);
+            }
+            $domainModel = App\Models\Domain::where('domain', $domain)->first();
+            if (!$domainModel) {
+                error("Domain not found: $domain");
+                exit(1);
+            }
+            $domainModel->is_active = true;
+            $domainModel->save();
+            success("Domain '$domain' enabled");
+            break;
+
+        case 'disable':
+            $domain = $options['_args'][0] ?? null;
+            if (!$domain) {
+                error("Domain name is required");
+                exit(1);
+            }
+            $domainModel = App\Models\Domain::where('domain', $domain)->first();
+            if (!$domainModel) {
+                error("Domain not found: $domain");
+                exit(1);
+            }
+            $domainModel->is_active = false;
+            $domainModel->save();
+            success("Domain '$domain' disabled");
+            break;
+
+        default:
+            error("Unknown domain command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ SERVICE COMMANDS ============
+
+function handleService(string $subcommand, array $options): void
+{
+    $services = [
+        'nginx', 'mariadb', 'redis-server', 'postfix', 'dovecot',
+        'rspamd', 'clamav-daemon', 'named', 'opendkim', 'fail2ban',
+        'ssh', 'cron'
+    ];
+
+    // Add PHP-FPM versions
+    exec('ls /lib/systemd/system/php*-fpm.service 2>/dev/null', $phpServices);
+    foreach ($phpServices as $svc) {
+        if (preg_match('/php[\d.]+-fpm/', basename($svc, '.service'), $m)) {
+            $services[] = $m[0];
+        }
+    }
+
+    switch ($subcommand) {
+        case 'list':
+            $result = agentSend('service.list', ['services' => $services]);
+            if (!($result['success'] ?? false)) {
+                error("Failed to get service list: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            $rows = [];
+            foreach ($result['services'] ?? [] as $name => $status) {
+                $rows[] = [
+                    $name,
+                    $status['is_active'] ? C_GREEN . 'Running' . C_RESET : C_RED . 'Stopped' . C_RESET,
+                    $status['is_enabled'] ? C_GREEN . 'Enabled' . C_RESET : C_DIM . 'Disabled' . C_RESET,
+                ];
+            }
+            table(['Service', 'Status', 'Boot'], $rows);
+            break;
+
+        case 'status':
+            $service = $options['_args'][0] ?? null;
+            if (!$service) {
+                error("Service name is required");
+                exit(1);
+            }
+            $result = agentSend('service.list', ['services' => [$service]]);
+            if ($result['success'] ?? false) {
+                $status = $result['services'][$service] ?? null;
+                if ($status) {
+                    echo C_BOLD . $service . C_RESET . ": ";
+                    echo ($status['is_active'] ? C_GREEN . 'Running' . C_RESET : C_RED . 'Stopped' . C_RESET);
+                    echo " (Boot: " . ($status['is_enabled'] ? 'Enabled' : 'Disabled') . ")\n";
+                } else {
+                    error("Service not found: $service");
+                }
+            }
+            break;
+
+        case 'start':
+            $service = $options['_args'][0] ?? null;
+            if (!$service) {
+                error("Service name is required");
+                exit(1);
+            }
+            $result = agentSend('service.start', ['service' => $service]);
+            if ($result['success'] ?? false) {
+                success("Service '$service' started");
+            } else {
+                error("Failed to start '$service': " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'stop':
+            $service = $options['_args'][0] ?? null;
+            if (!$service) {
+                error("Service name is required");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to stop '$service'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+            $result = agentSend('service.stop', ['service' => $service]);
+            if ($result['success'] ?? false) {
+                success("Service '$service' stopped");
+            } else {
+                error("Failed to stop '$service': " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'restart':
+            $service = $options['_args'][0] ?? null;
+            if (!$service) {
+                error("Service name is required");
+                exit(1);
+            }
+            $result = agentSend('service.restart', ['service' => $service]);
+            if ($result['success'] ?? false) {
+                success("Service '$service' restarted");
+            } else {
+                error("Failed to restart '$service': " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'enable':
+            $service = $options['_args'][0] ?? null;
+            if (!$service) {
+                error("Service name is required");
+                exit(1);
+            }
+            $result = agentSend('service.enable', ['service' => $service]);
+            if ($result['success'] ?? false) {
+                success("Service '$service' enabled on boot");
+            } else {
+                error("Failed to enable '$service': " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'disable':
+            $service = $options['_args'][0] ?? null;
+            if (!$service) {
+                error("Service name is required");
+                exit(1);
+            }
+            $result = agentSend('service.disable', ['service' => $service]);
+            if ($result['success'] ?? false) {
+                success("Service '$service' disabled on boot");
+            } else {
+                error("Failed to disable '$service': " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        default:
+            error("Unknown service command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ WORDPRESS COMMANDS ============
+
+function handleWordPress(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'list':
+            $username = $options['_args'][0] ?? null;
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            $result = agentSend('wp.list', ['username' => $username]);
+            if (!($result['success'] ?? false)) {
+                error("Failed to list WordPress sites: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            $rows = [];
+            foreach ($result['sites'] ?? [] as $site) {
+                $rows[] = [
+                    $site['id'],
+                    $site['domain'] ?? 'N/A',
+                    $site['version'] ?? 'N/A',
+                    $site['url'] ?? 'N/A',
+                ];
+            }
+            table(['ID', 'Domain', 'Version', 'URL'], $rows);
+            break;
+
+        case 'install':
+            $username = $options['_args'][0] ?? null;
+            $domain = $options['_args'][1] ?? null;
+            if (!$username || !$domain) {
+                error("Usage: jabali wp install <username> <domain>");
+                exit(1);
+            }
+            $title = $options['title'] ?? 'My WordPress Site';
+            $adminUser = $options['admin'] ?? 'admin';
+            $adminEmail = $options['email'] ?? prompt("Admin email");
+            $adminPass = $options['password'] ?? null;
+
+            info("Installing WordPress for $username on $domain...");
+            $result = agentSend('wp.install', [
+                'username' => $username,
+                'domain' => $domain,
+                'title' => $title,
+                'admin_user' => $adminUser,
+                'admin_email' => $adminEmail,
+                'admin_password' => $adminPass,
+            ]);
+
+            if ($result['success'] ?? false) {
+                success("WordPress installed successfully!");
+                echo C_CYAN . "URL:" . C_RESET . "      https://$domain\n";
+                echo C_CYAN . "Admin:" . C_RESET . "    https://$domain/wp-admin/\n";
+                echo C_CYAN . "Username:" . C_RESET . " $adminUser\n";
+                if (isset($result['admin_password'])) {
+                    echo C_CYAN . "Password:" . C_RESET . " {$result['admin_password']}\n";
+                }
+            } else {
+                error("Failed to install WordPress: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'scan':
+            $username = $options['_args'][0] ?? null;
+            if (!$username) {
+                error("Username is required");
+                exit(1);
+            }
+            info("Scanning for WordPress installations...");
+            $result = agentSend('wp.scan', ['username' => $username]);
+            if (!($result['success'] ?? false)) {
+                error("Failed to scan: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            $found = $result['found'] ?? [];
+            if (empty($found)) {
+                info("No untracked WordPress installations found.");
+            } else {
+                success("Found " . count($found) . " WordPress installation(s):");
+                $rows = [];
+                foreach ($found as $site) {
+                    $rows[] = [
+                        $site['path'],
+                        $site['version'] ?? 'N/A',
+                        $site['site_url'] ?? 'N/A',
+                    ];
+                }
+                table(['Path', 'Version', 'URL'], $rows);
+            }
+            break;
+
+        case 'import':
+            $username = $options['_args'][0] ?? null;
+            $path = $options['_args'][1] ?? null;
+            if (!$username || !$path) {
+                error("Usage: jabali wp import <username> <path>");
+                exit(1);
+            }
+            $result = agentSend('wp.import', ['username' => $username, 'path' => $path]);
+            if ($result['success'] ?? false) {
+                success("WordPress site imported: " . ($result['site_id'] ?? ''));
+            } else {
+                error("Failed to import: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'delete':
+            $username = $options['_args'][0] ?? null;
+            $siteId = $options['_args'][1] ?? null;
+            if (!$username || !$siteId) {
+                error("Usage: jabali wp delete <username> <site_id>");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to delete this WordPress site?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+            $result = agentSend('wp.delete', [
+                'username' => $username,
+                'site_id' => $siteId,
+                'delete_files' => isset($options['files']),
+                'delete_database' => isset($options['database']),
+            ]);
+            if ($result['success'] ?? false) {
+                success("WordPress site deleted");
+            } else {
+                error("Failed to delete: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'update':
+            $username = $options['_args'][0] ?? null;
+            $siteId = $options['_args'][1] ?? null;
+            if (!$username || !$siteId) {
+                error("Usage: jabali wp update <username> <site_id>");
+                exit(1);
+            }
+            info("Updating WordPress...");
+            $result = agentSend('wp.update', ['username' => $username, 'site_id' => $siteId]);
+            if ($result['success'] ?? false) {
+                success("WordPress updated to " . ($result['new_version'] ?? 'latest'));
+            } else {
+                error("Failed to update: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        default:
+            error("Unknown WordPress command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ DATABASE COMMANDS ============
+
+function handleDatabase(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'list':
+            $username = $options['user'] ?? null;
+            $result = agentSend('mysql.list_databases', ['username' => $username ?? 'admin']);
+            if (!($result['success'] ?? false)) {
+                error("Failed to list databases: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            $rows = [];
+            foreach ($result['databases'] ?? [] as $db) {
+                $rows[] = [
+                    is_array($db) ? ($db['name'] ?? $db) : $db,
+                ];
+            }
+            table(['Database'], $rows);
+            break;
+
+        case 'create':
+            $dbName = $options['_args'][0] ?? prompt("Database name");
+            if (!$dbName) {
+                error("Database name is required");
+                exit(1);
+            }
+            $username = $options['user'] ?? 'admin';
+            $result = agentSend('mysql.create_database', [
+                'username' => $username,
+                'database' => $dbName,
+            ]);
+            if ($result['success'] ?? false) {
+                success("Database '$dbName' created");
+            } else {
+                error("Failed to create database: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'delete':
+            $dbName = $options['_args'][0] ?? null;
+            if (!$dbName) {
+                error("Database name is required");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to delete database '$dbName'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+            $result = agentSend('mysql.delete_database', ['database' => $dbName]);
+            if ($result['success'] ?? false) {
+                success("Database '$dbName' deleted");
+            } else {
+                error("Failed to delete database: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'users':
+            $username = $options['user'] ?? 'admin';
+            $result = agentSend('mysql.list_users', ['username' => $username]);
+            if (!($result['success'] ?? false)) {
+                error("Failed to list users: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            $rows = [];
+            foreach ($result['users'] ?? [] as $user) {
+                $rows[] = [
+                    is_array($user) ? ($user['user'] ?? $user['name'] ?? $user) : $user,
+                    is_array($user) ? ($user['host'] ?? 'localhost') : 'localhost',
+                ];
+            }
+            table(['User', 'Host'], $rows);
+            break;
+
+        case 'user-create':
+            $dbUser = $options['_args'][0] ?? prompt("Username");
+            if (isset($options['password'])) {
+                $password = $options['password'];
+                if ($err = validatePassword($password)) { error($err); exit(1); }
+            } else {
+                $password = promptPassword("Password");
+            }
+            $host = $options['host'] ?? 'localhost';
+            $result = agentSend('mysql.create_user', [
+                'username' => $dbUser,
+                'password' => $password,
+                'host' => $host,
+            ]);
+            if ($result['success'] ?? false) {
+                success("Database user '$dbUser' created");
+            } else {
+                error("Failed to create user: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'user-delete':
+            $dbUser = $options['_args'][0] ?? null;
+            if (!$dbUser) {
+                error("Username is required");
+                exit(1);
+            }
+            $host = $options['host'] ?? 'localhost';
+            if (!confirm("Are you sure you want to delete database user '$dbUser'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+            $result = agentSend('mysql.delete_user', ['username' => $dbUser, 'host' => $host]);
+            if ($result['success'] ?? false) {
+                success("Database user '$dbUser' deleted");
+            } else {
+                error("Failed to delete user: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        default:
+            error("Unknown database command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ EMAIL COMMANDS ============
+
+function handleEmail(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'list':
+            $query = App\Models\Mailbox::query();
+            if (isset($options['domain'])) {
+                $query->where('domain', $options['domain']);
+            }
+            $mailboxes = $query->get();
+            $rows = [];
+            foreach ($mailboxes as $mb) {
+                $rows[] = [
+                    $mb->id,
+                    $mb->local_part . '@' . $mb->domain,
+                    $mb->quota_mb . ' MB',
+                    $mb->is_active ? C_GREEN . 'Active' . C_RESET : C_RED . 'Inactive' . C_RESET,
+                ];
+            }
+            table(['ID', 'Email', 'Quota', 'Status'], $rows);
+            break;
+
+        case 'create':
+            $email = $options['_args'][0] ?? prompt("Email address");
+            if (!$email || !strpos($email, '@')) {
+                error("Valid email address is required");
+                exit(1);
+            }
+            [$localPart, $domain] = explode('@', $email);
+            if (isset($options['password'])) {
+                $password = $options['password'];
+                if ($err = validatePassword($password)) { error($err); exit(1); }
+            } else {
+                $password = promptPassword("Password");
+            }
+            $quota = $options['quota'] ?? 1024;
+
+            $domainModel = App\Models\Domain::where('domain', $domain)->first();
+            if (!$domainModel) {
+                error("Domain not found: $domain");
+                exit(1);
+            }
+
+            $result = agentSend('email.mailbox_create', [
+                'username' => $domainModel->user->username ?? $domainModel->user->name,
+                'domain' => $domain,
+                'local_part' => $localPart,
+                'password' => $password,
+                'quota_mb' => (int)$quota,
+            ]);
+
+            if ($result['success'] ?? false) {
+                App\Models\Mailbox::create([
+                    'domain_id' => $domainModel->id,
+                    'local_part' => $localPart,
+                    'domain' => $domain,
+                    'password_hash' => $result['password_hash'] ?? '',
+                    'quota_mb' => (int)$quota,
+                    'is_active' => true,
+                ]);
+                success("Mailbox '$email' created");
+            } else {
+                error("Failed to create mailbox: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'delete':
+            $email = $options['_args'][0] ?? null;
+            if (!$email) {
+                error("Email address is required");
+                exit(1);
+            }
+            [$localPart, $domain] = explode('@', $email);
+            $mailbox = App\Models\Mailbox::where('local_part', $localPart)->where('domain', $domain)->first();
+            if (!$mailbox) {
+                error("Mailbox not found: $email");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to delete mailbox '$email'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            $domainModel = App\Models\Domain::where('domain', $domain)->first();
+            $username = $domainModel ? ($domainModel->user->username ?? $domainModel->user->name) : 'admin';
+
+            agentSend('email.mailbox_delete', [
+                'username' => $username,
+                'domain' => $domain,
+                'local_part' => $localPart,
+            ]);
+
+            $mailbox->delete();
+            success("Mailbox '$email' deleted");
+            break;
+
+        case 'password':
+            $email = $options['_args'][0] ?? null;
+            if (!$email) {
+                error("Email address is required");
+                exit(1);
+            }
+            [$localPart, $domain] = explode('@', $email);
+            $mailbox = App\Models\Mailbox::where('local_part', $localPart)->where('domain', $domain)->first();
+            if (!$mailbox) {
+                error("Mailbox not found: $email");
+                exit(1);
+            }
+            if (isset($options['password'])) {
+                $password = $options['password'];
+                if ($err = validatePassword($password)) { error($err); exit(1); }
+            } else {
+                $password = promptPassword("New password", true);
+            }
+
+            $domainModel = App\Models\Domain::where('domain', $domain)->first();
+            $username = $domainModel ? ($domainModel->user->username ?? $domainModel->user->name) : 'admin';
+
+            $result = agentSend('email.mailbox_change_password', [
+                'username' => $username,
+                'domain' => $domain,
+                'local_part' => $localPart,
+                'password' => $password,
+            ]);
+
+            if ($result['success'] ?? false) {
+                if (isset($result['password_hash'])) {
+                    $mailbox->password_hash = $result['password_hash'];
+                    $mailbox->save();
+                }
+                success("Password updated for '$email'");
+            } else {
+                error("Failed to update password: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'quota':
+            $email = $options['_args'][0] ?? null;
+            $quota = $options['_args'][1] ?? null;
+            if (!$email || !$quota) {
+                error("Usage: jabali mail quota <email> <size_mb>");
+                exit(1);
+            }
+            [$localPart, $domain] = explode('@', $email);
+            $mailbox = App\Models\Mailbox::where('local_part', $localPart)->where('domain', $domain)->first();
+            if (!$mailbox) {
+                error("Mailbox not found: $email");
+                exit(1);
+            }
+
+            $domainModel = App\Models\Domain::where('domain', $domain)->first();
+            $username = $domainModel ? ($domainModel->user->username ?? $domainModel->user->name) : 'admin';
+
+            $result = agentSend('email.mailbox_set_quota', [
+                'username' => $username,
+                'domain' => $domain,
+                'local_part' => $localPart,
+                'quota_mb' => (int)$quota,
+            ]);
+
+            if ($result['success'] ?? false) {
+                $mailbox->quota_mb = (int)$quota;
+                $mailbox->save();
+                success("Quota set to {$quota}MB for '$email'");
+            } else {
+                error("Failed to set quota: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'domains':
+            $domains = App\Models\Domain::where('mail_enabled', true)->get();
+            $rows = [];
+            foreach ($domains as $d) {
+                $mailboxCount = App\Models\Mailbox::where('domain', $d->domain)->count();
+                $rows[] = [
+                    $d->domain,
+                    $mailboxCount,
+                    $d->dkim_enabled ? C_GREEN . 'Yes' . C_RESET : C_DIM . 'No' . C_RESET,
+                ];
+            }
+            table(['Domain', 'Mailboxes', 'DKIM'], $rows);
+            break;
+
+        default:
+            error("Unknown email command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ BACKUP COMMANDS ============
+
+function handleBackup(string $subcommand, array $options): void
+{
+    $backupDir = '/var/backups/jabali';
+
+    switch ($subcommand) {
+        case 'list':
+        case 'user-list':
+            $username = $options['user'] ?? $options['username'] ?? $options['_args'][0] ?? null;
+
+            if ($username !== null && !is_string($username)) {
+                error("Username is required");
+                exit(1);
+            }
+            if (is_string($username)) {
+                $username = trim($username);
+                if ($username === '') {
+                    $username = null;
+                }
+            }
+            if ($subcommand === 'user-list' && $username === null) {
+                error("Username is required");
+                exit(1);
+            }
+
+            if ($subcommand === 'user-list' || $username !== null) {
+                if (!$username) {
+                    error("Username is required");
+                    exit(1);
+                }
+
+                $path = $options['path'] ?? '';
+                $result = agentSend('backup.list', [
+                    'username' => $username,
+                    'path' => $path,
+                ]);
+
+                if (!($result['success'] ?? false)) {
+                    error("Failed to list backups: " . ($result['error'] ?? 'Unknown error'));
+                    exit(1);
+                }
+
+                $backups = $result['backups'] ?? [];
+                if (empty($backups)) {
+                    info("No backups found for $username.");
+                    exit(0);
+                }
+
+                $rows = [];
+                foreach ($backups as $backup) {
+                    $manifest = $backup['manifest'] ?? [];
+                    $createdAt = $backup['created_at'] ?? null;
+
+                    $rows[] = [
+                        $backup['name'] ?? '-',
+                        $backup['type'] ?? '-',
+                        formatBytes((int) ($backup['size'] ?? 0)),
+                        is_array($manifest['domains'] ?? null) ? count($manifest['domains']) : '-',
+                        is_array($manifest['databases'] ?? null) ? count($manifest['databases']) : '-',
+                        is_array($manifest['mailboxes'] ?? null) ? count($manifest['mailboxes']) : '-',
+                        $createdAt ? date('Y-m-d H:i', strtotime($createdAt)) : '-',
+                    ];
+                }
+
+                table(['Name', 'Type', 'Size', 'Domains', 'DBs', 'Mailboxes', 'Created'], $rows);
+                break;
+            }
+
+            if (!is_dir($backupDir)) {
+                info("No local backups found.");
+                exit(0);
+            }
+
+            $files = array_merge(
+                glob("$backupDir/*.tar.gz") ?: [],
+                glob("$backupDir/*", GLOB_ONLYDIR) ?: []
+            );
+            $files = array_filter($files, fn($f) => basename($f) !== '.' && basename($f) !== '..');
+            if (empty($files)) {
+                info("No local backups found.");
+                exit(0);
+            }
+
+            $rows = [];
+            foreach ($files as $file) {
+                if (is_dir($file)) {
+                    $size = trim(shell_exec("du -sh " . escapeshellarg($file) . " 2>/dev/null | cut -f1") ?: '0');
+                    $rows[] = [
+                        basename($file) . '/',
+                        $size,
+                        date('Y-m-d H:i', filemtime($file)),
+                        'server',
+                    ];
+                } else {
+                    $rows[] = [
+                        basename($file),
+                        formatBytes((int) filesize($file)),
+                        date('Y-m-d H:i', filemtime($file)),
+                        'user',
+                    ];
+                }
+            }
+            table(['Filename', 'Size', 'Created', 'Type'], $rows);
+            break;
+
+        case 'create':
+            $username = $options['_args'][0] ?? $options['user'] ?? $options['username'] ?? null;
+            if (!is_string($username)) {
+                error("Username is required");
+                exit(1);
+            }
+            $username = trim($username);
+            if ($username === '') {
+                error("Username is required");
+                exit(1);
+            }
+            $exists = agentSend('user.exists', ['username' => $username]);
+            if (!($exists['success'] ?? false) || !($exists['exists'] ?? false)) {
+                error("User not found: $username");
+                exit(1);
+            }
+
+            $backupType = $options['type'] ?? 'full';
+            if (!in_array($backupType, ['full', 'incremental'], true)) {
+                error("Invalid backup type: $backupType (use full or incremental)");
+                exit(1);
+            }
+
+            $timestamp = date('Y-m-d_His');
+            $outputPath = $options['output'] ?? $options['path'] ?? null;
+            if ($outputPath !== null && !is_string($outputPath)) {
+                error("Output path is required");
+                exit(1);
+            }
+            if (is_string($outputPath)) {
+                $outputPath = trim($outputPath);
+                if ($outputPath === '') {
+                    $outputPath = null;
+                }
+            }
+            if ($outputPath === null) {
+                $outputPath = $backupType === 'incremental'
+                    ? "/home/$username/backups/{$username}_{$timestamp}"
+                    : "/home/$username/backups/{$username}_{$timestamp}.tar.gz";
+            }
+
+            $params = [
+                'username' => $username,
+                'output_path' => $outputPath,
+                'backup_type' => $backupType,
+                'include_files' => !isset($options['no-files']),
+                'include_databases' => !isset($options['no-databases']),
+                'include_mailboxes' => !isset($options['no-mailboxes']),
+                'include_dns' => !isset($options['no-dns']),
+                'include_ssl' => !isset($options['no-ssl']),
+                'domains' => parseListOption($options['domains'] ?? null),
+                'databases' => parseListOption($options['databases'] ?? null),
+                'mailboxes' => parseListOption($options['mailboxes'] ?? null),
+            ];
+
+            if (!empty($options['incremental-base'])) {
+                $params['incremental_base'] = $options['incremental-base'];
+            }
+
+            info("Creating backup for $username...");
+
+            $timeout = (int) ($options['timeout'] ?? 7200);
+            $result = agentSendWithTimeout('backup.create', $params, $timeout);
+
+            if ($result['success'] ?? false) {
+                $size = formatBytes((int) ($result['size'] ?? 0));
+                success("Backup created: {$result['path']} ($size)");
+                if (!empty($result['checksum'])) {
+                    info("Checksum: {$result['checksum']}");
+                }
+                if (isset($result['domains'])) {
+                    info("Domains: " . count($result['domains']));
+                }
+                if (isset($result['databases'])) {
+                    info("Databases: " . count($result['databases']));
+                }
+                if (isset($result['mailboxes'])) {
+                    info("Mailboxes: " . count($result['mailboxes']));
+                }
+            } else {
+                error("Backup failed: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'restore':
+            $backupPath = $options['_args'][0] ?? $options['file'] ?? null;
+            $username = $options['_args'][1] ?? $options['user'] ?? $options['username'] ?? null;
+
+            if (!is_string($backupPath)) {
+                error("Backup path is required");
+                exit(1);
+            }
+            $backupPath = trim($backupPath);
+            if ($backupPath === '') {
+                error("Backup path is required");
+                exit(1);
+            }
+
+            if ($username !== null && !is_string($username)) {
+                $username = null;
+            }
+            if (is_string($username)) {
+                $username = trim($username);
+                if ($username === '') {
+                    $username = null;
+                }
+            }
+
+            $backupPath = resolveBackupPath($backupPath, $backupDir);
+            if (!file_exists($backupPath) && $username !== null) {
+                $backupPath = resolveBackupPath($backupPath, "/home/$username/backups");
+            }
+
+            if (!file_exists($backupPath)) {
+                error("Backup not found: $backupPath");
+                exit(1);
+            }
+
+            if ($username === null) {
+                $infoResult = agentSend('backup.get_info', ['backup_path' => $backupPath]);
+                if ($infoResult['success'] ?? false) {
+                    $manifest = $infoResult['manifest'] ?? [];
+                    $username = $manifest['username'] ?? null;
+                }
+            }
+
+            if ($username === null) {
+                error("Username is required for restore. Use --user=<username>.");
+                exit(1);
+            }
+
+            if (!confirm("Restore backup '$backupPath' for user '$username'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            $params = [
+                'username' => $username,
+                'backup_path' => $backupPath,
+                'restore_files' => !isset($options['no-files']),
+                'restore_databases' => !isset($options['no-databases']),
+                'restore_mailboxes' => !isset($options['no-mailboxes']),
+                'restore_dns' => !isset($options['no-dns']),
+                'restore_ssl' => !isset($options['no-ssl']),
+                'selected_domains' => parseListOption($options['domains'] ?? null),
+                'selected_databases' => parseListOption($options['databases'] ?? null),
+                'selected_mailboxes' => parseListOption($options['mailboxes'] ?? null),
+            ];
+
+            info("Restoring backup...");
+
+            $timeout = (int) ($options['timeout'] ?? 7200);
+            $result = agentSendWithTimeout('backup.restore', $params, $timeout);
+
+            if ($result['success'] ?? false) {
+                success("Backup restored successfully");
+            } else {
+                error("Restore failed: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'info':
+            $backupPath = $options['_args'][0] ?? $options['file'] ?? null;
+            $username = $options['user'] ?? $options['username'] ?? null;
+
+            if (!is_string($backupPath)) {
+                error("Backup path is required");
+                exit(1);
+            }
+            $backupPath = trim($backupPath);
+            if ($backupPath === '') {
+                error("Backup path is required");
+                exit(1);
+            }
+
+            if ($username !== null && !is_string($username)) {
+                $username = null;
+            }
+            if (is_string($username)) {
+                $username = trim($username);
+                if ($username === '') {
+                    $username = null;
+                }
+            }
+
+            $backupPath = resolveBackupPath($backupPath, $backupDir);
+            if (!file_exists($backupPath) && $username !== null) {
+                $backupPath = resolveBackupPath($backupPath, "/home/$username/backups");
+            }
+
+            if (!file_exists($backupPath)) {
+                error("Backup not found: $backupPath");
+                exit(1);
+            }
+
+            $result = agentSend('backup.get_info', ['backup_path' => $backupPath]);
+            if (!($result['success'] ?? false)) {
+                error("Failed to read backup info: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+
+            $manifest = $result['manifest'] ?? null;
+
+            echo "\n" . C_BOLD . "Backup Info" . C_RESET . "\n";
+            echo str_repeat('─', 60) . "\n";
+            echo C_CYAN . "Path:" . C_RESET . " $backupPath\n";
+            echo C_CYAN . "Type:" . C_RESET . " " . ($result['type'] ?? '-') . "\n";
+            echo C_CYAN . "Size:" . C_RESET . " " . formatBytes((int) ($result['size'] ?? 0)) . "\n";
+            echo C_CYAN . "Modified:" . C_RESET . " " . ($result['modified_at'] ?? '-') . "\n";
+
+            if (is_array($manifest)) {
+                if (!empty($manifest['username'])) {
+                    echo C_CYAN . "User:" . C_RESET . " {$manifest['username']}\n";
+                }
+                if (!empty($manifest['backup_type'])) {
+                    echo C_CYAN . "Backup Type:" . C_RESET . " {$manifest['backup_type']}\n";
+                }
+                if (!empty($manifest['includes']) && is_array($manifest['includes'])) {
+                    $includes = array_keys(array_filter($manifest['includes'], fn($value) => $value));
+                    echo C_CYAN . "Includes:" . C_RESET . " " . (empty($includes) ? '-' : implode(', ', $includes)) . "\n";
+                }
+                if (isset($manifest['domains'])) {
+                    echo C_CYAN . "Domains:" . C_RESET . " " . count($manifest['domains']) . "\n";
+                }
+                if (isset($manifest['databases'])) {
+                    echo C_CYAN . "Databases:" . C_RESET . " " . count($manifest['databases']) . "\n";
+                }
+                if (isset($manifest['mailboxes'])) {
+                    echo C_CYAN . "Mailboxes:" . C_RESET . " " . count($manifest['mailboxes']) . "\n";
+                }
+            }
+
+            echo "\n";
+            break;
+
+        case 'verify':
+            $backupPath = $options['_args'][0] ?? $options['file'] ?? null;
+            $username = $options['user'] ?? $options['username'] ?? null;
+
+            if (!is_string($backupPath)) {
+                error("Backup path is required");
+                exit(1);
+            }
+            $backupPath = trim($backupPath);
+            if ($backupPath === '') {
+                error("Backup path is required");
+                exit(1);
+            }
+
+            if ($username !== null && !is_string($username)) {
+                $username = null;
+            }
+            if (is_string($username)) {
+                $username = trim($username);
+                if ($username === '') {
+                    $username = null;
+                }
+            }
+
+            $backupPath = resolveBackupPath($backupPath, $backupDir);
+            if (!file_exists($backupPath) && $username !== null) {
+                $backupPath = resolveBackupPath($backupPath, "/home/$username/backups");
+            }
+
+            if (!file_exists($backupPath)) {
+                error("Backup not found: $backupPath");
+                exit(1);
+            }
+
+            $result = agentSend('backup.verify', ['backup_path' => $backupPath]);
+            if ($result['success'] ?? false) {
+                success("Backup verified successfully");
+                if (!empty($result['checksum'])) {
+                    info("Checksum: {$result['checksum']}");
+                }
+            } else {
+                error("Backup verification failed");
+                $issues = $result['issues'] ?? [];
+                foreach ($issues as $issue) {
+                    echo "  - $issue\n";
+                }
+                exit(1);
+            }
+            break;
+
+        case 'delete':
+            $file = $options['_args'][0] ?? null;
+            $username = $options['user'] ?? $options['username'] ?? null;
+
+            if ($file === null) {
+                error("Backup file or ID is required");
+                exit(1);
+            }
+            if (is_string($file)) {
+                $file = trim($file);
+            }
+            if ($file === '') {
+                error("Backup file or ID is required");
+                exit(1);
+            }
+            if (!is_string($file) && !is_numeric($file)) {
+                error("Backup file or ID is required");
+                exit(1);
+            }
+
+            if ($username !== null && !is_string($username)) {
+                error("Username is required");
+                exit(1);
+            }
+            if (is_string($username)) {
+                $username = trim($username);
+                if ($username === '') {
+                    $username = null;
+                }
+            }
+
+            if ($username !== null) {
+                $backupPath = resolveBackupPath($file, "/home/$username/backups");
+                if (!file_exists($backupPath)) {
+                    error("Backup file not found: $backupPath");
+                    exit(1);
+                }
+                if (!confirm("Are you sure you want to delete '$backupPath'?", $options)) {
+                    info("Operation cancelled");
+                    exit(0);
+                }
+
+                $result = agentSend('backup.delete', [
+                    'username' => $username,
+                    'backup_path' => $backupPath,
+                ]);
+
+                if ($result['success'] ?? false) {
+                    success("Backup deleted: $backupPath");
+                } else {
+                    error("Delete failed: " . ($result['error'] ?? 'Unknown error'));
+                    exit(1);
+                }
+                break;
+            }
+
+            if (is_numeric($file)) {
+                $backup = App\Models\Backup::find($file);
+                if (!$backup) {
+                    error("Backup ID not found: $file");
+                    exit(1);
+                }
+                if (!confirm("Delete backup '{$backup->name}'?", $options)) {
+                    info("Operation cancelled");
+                    exit(0);
+                }
+
+                if ($backup->local_path && file_exists($backup->local_path)) {
+                    if (is_dir($backup->local_path)) {
+                        exec("rm -rf " . escapeshellarg($backup->local_path));
+                    } else {
+                        unlink($backup->local_path);
+                    }
+                }
+
+                if ($backup->remote_path && $backup->destination) {
+                    info("Deleting remote backup...");
+                    try {
+                        $config = array_merge($backup->destination->config ?? [], ['type' => $backup->destination->type]);
+                        agentSend('backup.delete_remote', [
+                            'remote_path' => $backup->remote_path,
+                            'destination' => $config,
+                        ]);
+                    } catch (Exception $e) {
+                        warning("Failed to delete remote: " . $e->getMessage());
+                    }
+                }
+
+                $backup->delete();
+                success("Backup deleted: {$backup->name}");
+            } else {
+                $file = resolveBackupPath($file, $backupDir);
+                if (!file_exists($file)) {
+                    error("Backup file not found: $file");
+                    exit(1);
+                }
+                if (!confirm("Are you sure you want to delete '$file'?", $options)) {
+                    info("Operation cancelled");
+                    exit(0);
+                }
+                if (is_dir($file)) {
+                    exec("rm -rf " . escapeshellarg($file));
+                } else {
+                    unlink($file);
+                }
+                success("Backup deleted: $file");
+            }
+            break;
+
+        // ========== SERVER BACKUPS ==========
+        case 'server':
+        case 'server-backup':
+            $backupType = $options['type'] ?? 'full';
+            $users = parseListOption($options['users'] ?? null);
+            $destId = $options['destination'] ?? $options['dest'] ?? null;
+            $includeFiles = !isset($options['no-files']);
+            $includeDatabases = !isset($options['no-databases']);
+            $includeMailboxes = !isset($options['no-mailboxes']);
+            $includeDns = !isset($options['no-dns']);
+
+            info("Creating server backup ($backupType)...");
+
+            $timestamp = date('Y-m-d_His');
+            $outputPath = "$backupDir/$timestamp";
+
+            // Get destination if specified
+            $destination = null;
+            if ($destId) {
+                $destination = App\Models\BackupDestination::find($destId);
+                if (!$destination) {
+                    error("Destination not found: $destId");
+                    exit(1);
+                }
+            }
+
+            // Create backup record
+            $backup = App\Models\Backup::create([
+                'name' => "CLI Server Backup - " . now()->format('M j, Y H:i'),
+                'filename' => $timestamp,
+                'type' => 'server',
+                'status' => 'running',
+                'local_path' => $outputPath,
+                'destination_id' => $destination?->id,
+                'include_files' => $includeFiles,
+                'include_databases' => $includeDatabases,
+                'include_mailboxes' => $includeMailboxes,
+                'include_dns' => $includeDns,
+                'users' => $users,
+                'started_at' => now(),
+                'metadata' => ['backup_type' => $backupType],
+            ]);
+
+            // Dispatch the job
+            App\Jobs\RunServerBackup::dispatch($backup->id);
+
+            success("Server backup queued (ID: {$backup->id})");
+            info("Monitor progress: jabali backup history");
+            break;
+
+        case 'server-list':
+            // List server backups from database
+            $backups = App\Models\Backup::where('type', 'server')
+                ->orderByDesc('created_at')
+                ->limit(20)
+                ->get();
+
+            if ($backups->isEmpty()) {
+                info("No server backups found.");
+                exit(0);
+            }
+
+            $rows = [];
+            foreach ($backups as $backup) {
+                $rows[] = [
+                    $backup->id,
+                    $backup->name,
+                    formatBytes((int) ($backup->size_bytes ?? 0)),
+                    $backup->status,
+                    $backup->created_at->format('Y-m-d H:i'),
+                ];
+            }
+            table(['ID', 'Name', 'Size', 'Status', 'Created'], $rows);
+            break;
+
+        // ========== BACKUP HISTORY (DATABASE) ==========
+        case 'history':
+            $limit = $options['limit'] ?? 20;
+            $status = $options['status'] ?? null;
+            $type = $options['type'] ?? null;
+
+            $query = App\Models\Backup::orderByDesc('created_at')->limit($limit);
+            if ($status) {
+                $query->where('status', $status);
+            }
+            if ($type) {
+                $query->where('type', $type);
+            }
+
+            $backups = $query->get();
+
+            if ($backups->isEmpty()) {
+                info("No backups found.");
+                exit(0);
+            }
+
+            $rows = [];
+            foreach ($backups as $backup) {
+                $location = [];
+                if ($backup->local_path) {
+                    $location[] = 'local';
+                }
+                if ($backup->remote_path) {
+                    $location[] = 'remote';
+                }
+
+                $rows[] = [
+                    $backup->id,
+                    strlen($backup->name) > 30 ? substr($backup->name, 0, 27) . '...' : $backup->name,
+                    $backup->type,
+                    formatBytes((int) ($backup->size_bytes ?? 0)),
+                    $backup->status,
+                    implode('+', $location) ?: '-',
+                    $backup->created_at->format('Y-m-d H:i'),
+                ];
+            }
+            table(['ID', 'Name', 'Type', 'Size', 'Status', 'Location', 'Created'], $rows);
+            break;
+
+        case 'show':
+            $id = $options['_args'][0] ?? null;
+            if (!$id) {
+                error("Backup ID is required");
+                exit(1);
+            }
+
+            $backup = App\Models\Backup::with(['destination', 'schedule'])->find($id);
+            if (!$backup) {
+                error("Backup not found: $id");
+                exit(1);
+            }
+
+            echo "\n" . C_BOLD . "Backup Details" . C_RESET . "\n";
+            echo str_repeat('─', 50) . "\n";
+            echo C_CYAN . "ID:" . C_RESET . "           $backup->id\n";
+            echo C_CYAN . "Name:" . C_RESET . "         $backup->name\n";
+            echo C_CYAN . "Type:" . C_RESET . "         $backup->type\n";
+            echo C_CYAN . "Status:" . C_RESET . "       " . statusColor((string) ($backup->status ?? '')) . "\n";
+            echo C_CYAN . "Size:" . C_RESET . "         " . formatBytes((int) ($backup->size_bytes ?? 0)) . "\n";
+            if ($backup->local_path) {
+                echo C_CYAN . "Local Path:" . C_RESET . "   $backup->local_path\n";
+            }
+            if ($backup->remote_path) {
+                echo C_CYAN . "Remote Path:" . C_RESET . "  $backup->remote_path\n";
+            }
+            if ($backup->destination) {
+                echo C_CYAN . "Destination:" . C_RESET . "  {$backup->destination->name} ({$backup->destination->type})\n";
+            }
+            if ($backup->schedule) {
+                echo C_CYAN . "Schedule:" . C_RESET . "     {$backup->schedule->name}\n";
+            }
+            echo C_CYAN . "Created:" . C_RESET . "      " . $backup->created_at->format('Y-m-d H:i:s') . "\n";
+            if ($backup->started_at) {
+                echo C_CYAN . "Started:" . C_RESET . "      " . $backup->started_at->format('Y-m-d H:i:s') . "\n";
+            }
+            if ($backup->completed_at) {
+                echo C_CYAN . "Completed:" . C_RESET . "    " . $backup->completed_at->format('Y-m-d H:i:s') . "\n";
+            }
+            if ($backup->error_message) {
+                echo C_CYAN . "Error:" . C_RESET . "        " . C_RED . $backup->error_message . C_RESET . "\n";
+            }
+            echo "\n";
+            break;
+
+        // ========== SCHEDULES ==========
+        case 'schedules':
+        case 'schedule-list':
+            $schedules = App\Models\BackupSchedule::with('destination')
+                ->orderBy('name')
+                ->get();
+
+            if ($schedules->isEmpty()) {
+                info("No backup schedules found.");
+                exit(0);
+            }
+
+            $rows = [];
+            foreach ($schedules as $schedule) {
+                $rows[] = [
+                    $schedule->id,
+                    $schedule->name,
+                    $schedule->frequency,
+                    $schedule->is_active ? C_GREEN . 'active' . C_RESET : C_DIM . 'inactive' . C_RESET,
+                    $schedule->retention_count,
+                    $schedule->destination?->name ?? 'local',
+                    $schedule->next_run_at?->format('Y-m-d H:i') ?? '-',
+                ];
+            }
+            table(['ID', 'Name', 'Frequency', 'Status', 'Retention', 'Destination', 'Next Run'], $rows);
+            break;
+
+        case 'schedule-create':
+            $name = $options['name'] ?? $options['_args'][0] ?? null;
+            if (!$name) {
+                error("Schedule name is required (--name=<name>)");
+                exit(1);
+            }
+
+            $schedule = App\Models\BackupSchedule::create([
+                'name' => $name,
+                'frequency' => $options['frequency'] ?? 'daily',
+                'time' => $options['time'] ?? '02:00',
+                'day_of_week' => $options['day'] ?? null,
+                'day_of_month' => $options['date'] ?? null,
+                'is_active' => true,
+                'is_server_backup' => ($options['type'] ?? 'server') === 'server',
+                'retention_count' => (int)($options['retention'] ?? 7),
+                'destination_id' => $options['destination'] ?? $options['dest'] ?? null,
+                'include_files' => !isset($options['no-files']),
+                'include_databases' => !isset($options['no-databases']),
+                'include_mailboxes' => !isset($options['no-mailboxes']),
+                'include_dns' => !isset($options['no-dns']),
+                'metadata' => ['backup_type' => $options['backup-type'] ?? 'full'],
+            ]);
+
+            $schedule->calculateNextRun();
+            $schedule->save();
+
+            success("Schedule created: {$schedule->name} (ID: {$schedule->id})");
+            info("Next run: " . $schedule->next_run_at?->format('Y-m-d H:i'));
+            break;
+
+        case 'schedule-run':
+            $id = $options['_args'][0] ?? null;
+            if (!$id) {
+                error("Schedule ID is required");
+                exit(1);
+            }
+
+            $schedule = App\Models\BackupSchedule::find($id);
+            if (!$schedule) {
+                error("Schedule not found: $id");
+                exit(1);
+            }
+
+            info("Running schedule: {$schedule->name}...");
+
+            // Create backup record and dispatch job
+            $timestamp = now()->format('Y-m-d_His');
+            $backupType = $schedule->metadata['backup_type'] ?? 'full';
+
+            $backup = App\Models\Backup::create([
+                'user_id' => $schedule->user_id,
+                'destination_id' => $schedule->destination_id,
+                'schedule_id' => $schedule->id,
+                'name' => "{$schedule->name} - " . now()->format('M j, Y H:i'),
+                'filename' => $timestamp,
+                'type' => $schedule->is_server_backup ? 'server' : 'partial',
+                'include_files' => $schedule->include_files,
+                'include_databases' => $schedule->include_databases,
+                'include_mailboxes' => $schedule->include_mailboxes,
+                'include_dns' => $schedule->include_dns,
+                'users' => $schedule->users,
+                'status' => 'pending',
+                'local_path' => "/var/backups/jabali/$timestamp",
+                'metadata' => ['backup_type' => $backupType, 'schedule_id' => $schedule->id],
+            ]);
+
+            App\Jobs\RunServerBackup::dispatch($backup->id);
+
+            success("Backup queued (ID: {$backup->id})");
+            break;
+
+        case 'schedule-enable':
+            $id = $options['_args'][0] ?? null;
+            if (!$id) {
+                error("Schedule ID is required");
+                exit(1);
+            }
+
+            $schedule = App\Models\BackupSchedule::find($id);
+            if (!$schedule) {
+                error("Schedule not found: $id");
+                exit(1);
+            }
+
+            $schedule->update(['is_active' => true]);
+            $schedule->calculateNextRun();
+            $schedule->save();
+
+            success("Schedule enabled: {$schedule->name}");
+            break;
+
+        case 'schedule-disable':
+            $id = $options['_args'][0] ?? null;
+            if (!$id) {
+                error("Schedule ID is required");
+                exit(1);
+            }
+
+            $schedule = App\Models\BackupSchedule::find($id);
+            if (!$schedule) {
+                error("Schedule not found: $id");
+                exit(1);
+            }
+
+            $schedule->update(['is_active' => false, 'next_run_at' => null]);
+
+            success("Schedule disabled: {$schedule->name}");
+            break;
+
+        case 'schedule-delete':
+            $id = $options['_args'][0] ?? null;
+            if (!$id) {
+                error("Schedule ID is required");
+                exit(1);
+            }
+
+            $schedule = App\Models\BackupSchedule::find($id);
+            if (!$schedule) {
+                error("Schedule not found: $id");
+                exit(1);
+            }
+
+            if (!confirm("Delete schedule '{$schedule->name}'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            $schedule->delete();
+            success("Schedule deleted");
+            break;
+
+        // ========== DESTINATIONS ==========
+        case 'destinations':
+        case 'dest-list':
+            $destinations = App\Models\BackupDestination::orderBy('name')->get();
+
+            if ($destinations->isEmpty()) {
+                info("No backup destinations configured.");
+                info("Add one with: jabali backup dest-add --type=sftp --name=...");
+                exit(0);
+            }
+
+            $rows = [];
+            foreach ($destinations as $dest) {
+                $rows[] = [
+                    $dest->id,
+                    $dest->name,
+                    $dest->type,
+                    $dest->config['host'] ?? $dest->config['path'] ?? '-',
+                    $dest->is_active ? C_GREEN . 'active' . C_RESET : C_DIM . 'inactive' . C_RESET,
+                ];
+            }
+            table(['ID', 'Name', 'Type', 'Host/Path', 'Status'], $rows);
+            break;
+
+        case 'dest-add':
+            $type = $options['type'] ?? null;
+            $name = $options['name'] ?? null;
+
+            if (!$type || !$name) {
+                error("Required: --type=<sftp|nfs|s3> --name=<name>");
+                exit(1);
+            }
+
+            $config = [];
+            switch ($type) {
+                case 'sftp':
+                    $config = [
+                        'host' => $options['host'] ?? null,
+                        'port' => (int)($options['port'] ?? 22),
+                        'username' => $options['user'] ?? $options['username'] ?? null,
+                        'password' => $options['password'] ?? null,
+                        'path' => $options['path'] ?? '/backups',
+                    ];
+                    if (!$config['host'] || !$config['username']) {
+                        error("SFTP requires: --host=<host> --user=<user> [--password=<pass>] [--port=22] [--path=/backups]");
+                        exit(1);
+                    }
+                    break;
+
+                case 'nfs':
+                    $config = [
+                        'host' => $options['host'] ?? null,
+                        'path' => $options['path'] ?? null,
+                        'mount_point' => $options['mount'] ?? '/mnt/backup',
+                    ];
+                    if (!$config['host'] || !$config['path']) {
+                        error("NFS requires: --host=<host> --path=<remote-path> [--mount=/mnt/backup]");
+                        exit(1);
+                    }
+                    break;
+
+                case 's3':
+                    $config = [
+                        'bucket' => $options['bucket'] ?? null,
+                        'region' => $options['region'] ?? 'us-east-1',
+                        'access_key' => $options['key'] ?? $options['access-key'] ?? null,
+                        'secret_key' => $options['secret'] ?? $options['secret-key'] ?? null,
+                        'path' => $options['path'] ?? '',
+                    ];
+                    if (!$config['bucket'] || !$config['access_key'] || !$config['secret_key']) {
+                        error("S3 requires: --bucket=<name> --key=<access-key> --secret=<secret-key> [--region=us-east-1] [--path=]");
+                        exit(1);
+                    }
+                    break;
+
+                default:
+                    error("Unknown destination type: $type (use: sftp, nfs, s3)");
+                    exit(1);
+            }
+
+            $destination = App\Models\BackupDestination::create([
+                'name' => $name,
+                'type' => $type,
+                'config' => $config,
+                'is_active' => true,
+            ]);
+
+            success("Destination created: {$destination->name} (ID: {$destination->id})");
+            info("Test connection: jabali backup dest-test {$destination->id}");
+            break;
+
+        case 'dest-test':
+            $id = $options['_args'][0] ?? null;
+            if (!$id) {
+                error("Destination ID is required");
+                exit(1);
+            }
+
+            $destination = App\Models\BackupDestination::find($id);
+            if (!$destination) {
+                error("Destination not found: $id");
+                exit(1);
+            }
+
+            info("Testing connection to {$destination->name}...");
+
+            $config = array_merge($destination->config ?? [], ['type' => $destination->type]);
+            $result = agentSend('backup.test_destination', ['destination' => $config]);
+
+            if ($result['success'] ?? false) {
+                success("Connection successful!");
+                if (!empty($result['message'])) {
+                    info($result['message']);
+                }
+            } else {
+                error("Connection failed: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'dest-delete':
+            $id = $options['_args'][0] ?? null;
+            if (!$id) {
+                error("Destination ID is required");
+                exit(1);
+            }
+
+            $destination = App\Models\BackupDestination::find($id);
+            if (!$destination) {
+                error("Destination not found: $id");
+                exit(1);
+            }
+
+            // Check if any schedules use this destination
+            $scheduleCount = App\Models\BackupSchedule::where('destination_id', $id)->count();
+            if ($scheduleCount > 0) {
+                error("Cannot delete: $scheduleCount schedule(s) use this destination");
+                exit(1);
+            }
+
+            if (!confirm("Delete destination '{$destination->name}'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            $destination->delete();
+            success("Destination deleted");
+            break;
+
+        // ========== HELP ==========
+        case 'help':
+        case '':
+            echo "\n" . C_BOLD . "Backup Commands" . C_RESET . "\n";
+            echo str_repeat('─', 60) . "\n\n";
+
+            echo C_YELLOW . "Local Backups:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "backup list [--user=<user>]" . C_RESET . "      List backups\n";
+            echo "  " . C_GREEN . "backup user-list <user>" . C_RESET . "         List user backups\n";
+            echo "  " . C_GREEN . "backup create <user>" . C_RESET . "            Create user backup\n";
+            echo "    --type=full|incremental         Backup type (default: full)\n";
+            echo "    --output=<path>                 Output file/dir\n";
+            echo "    --incremental-base=<path>       Base backup for incremental\n";
+            echo "    --domains=a,b                   Include domains\n";
+            echo "    --databases=a,b                 Include databases\n";
+            echo "    --mailboxes=a,b                 Include mailboxes\n";
+            echo "    --no-files --no-databases --no-mailboxes --no-dns --no-ssl\n";
+            echo "  " . C_GREEN . "backup restore <path> [<user>]" . C_RESET . " Restore backup\n";
+            echo "    --user=<user>                   User for server backups\n";
+            echo "    --domains=a,b                   Restore domains\n";
+            echo "    --databases=a,b                 Restore databases\n";
+            echo "    --mailboxes=a,b                 Restore mailboxes\n";
+            echo "    --no-files --no-databases --no-mailboxes --no-dns --no-ssl\n";
+            echo "  " . C_GREEN . "backup info <path>" . C_RESET . "             Show backup info\n";
+            echo "  " . C_GREEN . "backup verify <path>" . C_RESET . "           Verify backup\n";
+            echo "  " . C_GREEN . "backup delete <file|id>" . C_RESET . "        Delete backup\n";
+            echo "    --user=<user>                   Delete user backup\n\n";
+
+            echo C_YELLOW . "Server Backups:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "backup server" . C_RESET . "                     Create server backup\n";
+            echo "    --type=full|incremental         Backup type (default: full)\n";
+            echo "    --users=user1,user2             Specific users only\n";
+            echo "    --dest=<id>                     Upload to destination\n";
+            echo "  " . C_GREEN . "backup server-list" . C_RESET . "                List server backups\n\n";
+
+            echo C_YELLOW . "Backup History:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "backup history" . C_RESET . "                    Show all backups from database\n";
+            echo "    --limit=20                      Number of records\n";
+            echo "    --status=completed|failed       Filter by status\n";
+            echo "    --type=server|user              Filter by type\n";
+            echo "  " . C_GREEN . "backup show <id>" . C_RESET . "                  Show backup details\n\n";
+
+            echo C_YELLOW . "Schedules:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "backup schedules" . C_RESET . "                  List backup schedules\n";
+            echo "  " . C_GREEN . "backup schedule-create" . C_RESET . "            Create a schedule\n";
+            echo "    --name=<name>                   Schedule name (required)\n";
+            echo "    --frequency=daily|weekly        Run frequency\n";
+            echo "    --time=02:00                    Run time (24h)\n";
+            echo "    --retention=7                   Keep N backups\n";
+            echo "    --dest=<id>                     Destination ID\n";
+            echo "    --backup-type=full|incremental  Backup type\n";
+            echo "  " . C_GREEN . "backup schedule-run <id>" . C_RESET . "          Run schedule now\n";
+            echo "  " . C_GREEN . "backup schedule-enable <id>" . C_RESET . "       Enable schedule\n";
+            echo "  " . C_GREEN . "backup schedule-disable <id>" . C_RESET . "      Disable schedule\n";
+            echo "  " . C_GREEN . "backup schedule-delete <id>" . C_RESET . "       Delete schedule\n\n";
+
+            echo C_YELLOW . "Destinations:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "backup destinations" . C_RESET . "               List destinations\n";
+            echo "  " . C_GREEN . "backup dest-add" . C_RESET . "                   Add destination\n";
+            echo "    --type=sftp                     --host=<host> --user=<user>\n";
+            echo "    --type=nfs                      --host=<host> --path=<path>\n";
+            echo "    --type=s3                       --bucket=<name> --key=<key> --secret=<secret>\n";
+            echo "  " . C_GREEN . "backup dest-test <id>" . C_RESET . "             Test connection\n";
+            echo "  " . C_GREEN . "backup dest-delete <id>" . C_RESET . "           Delete destination\n\n";
+            break;
+
+        default:
+            error("Unknown backup command: $subcommand");
+            echo "Run 'jabali backup help' for usage.\n";
+            exit(1);
+    }
+}
+
+// ============ CPANEL COMMANDS ============
+
+function handleCpanel(string $subcommand, array $options): void
+{
+    $defaultDir = '/var/backups/jabali/cpanel-migrations';
+
+    switch ($subcommand) {
+        case 'analyze':
+            $backupPath = $options['_args'][0] ?? $options['file'] ?? null;
+            if (!is_string($backupPath)) {
+                error("Backup file is required");
+                exit(1);
+            }
+            $backupPath = trim($backupPath);
+            if ($backupPath === '') {
+                error("Backup file is required");
+                exit(1);
+            }
+
+            $backupPath = resolveBackupPath($backupPath, $defaultDir);
+            if (!file_exists($backupPath)) {
+                error("Backup file not found: $backupPath");
+                exit(1);
+            }
+
+            info("Analyzing cPanel backup...");
+            $timeout = (int) ($options['timeout'] ?? 600);
+            $result = agentSendWithTimeout('cpanel.analyze_backup', ['backup_path' => $backupPath], $timeout);
+
+            if (!($result['success'] ?? false)) {
+                error("Analysis failed: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+
+            $data = $result['data'] ?? [];
+            printCpanelAnalysis($backupPath, $data);
+            break;
+
+        case 'restore':
+            $backupPath = $options['_args'][0] ?? $options['file'] ?? null;
+            $username = $options['_args'][1] ?? $options['user'] ?? $options['username'] ?? null;
+
+            if (!is_string($backupPath)) {
+                error("Backup file is required");
+                exit(1);
+            }
+            $backupPath = trim($backupPath);
+            if ($backupPath === '') {
+                error("Backup file is required");
+                exit(1);
+            }
+            if (!is_string($username)) {
+                error("Username is required");
+                exit(1);
+            }
+            $username = trim($username);
+            if ($username === '') {
+                error("Username is required");
+                exit(1);
+            }
+
+            $backupPath = resolveBackupPath($backupPath, $defaultDir);
+            if (!file_exists($backupPath)) {
+                error("Backup file not found: $backupPath");
+                exit(1);
+            }
+
+            $panelUser = App\Models\User::where('username', $username)->orWhere('name', $username)->first();
+            $systemCheck = agentSend('user.exists', ['username' => $username]);
+            $systemExists = (bool) ($systemCheck['exists'] ?? false);
+
+            if (!$panelUser || !$systemExists) {
+                $missing = [];
+                if (!$systemExists) {
+                    $missing[] = 'system user';
+                }
+                if (!$panelUser) {
+                    $missing[] = 'panel user';
+                }
+                error("Missing " . implode(' and ', $missing) . " for '$username'. Create with: jabali user create $username");
+                exit(1);
+            }
+
+            $restoreOptions = [
+                'backup_path' => $backupPath,
+                'username' => $username,
+                'restore_files' => !isset($options['no-files']),
+                'restore_databases' => !isset($options['no-databases']),
+                'restore_emails' => !isset($options['no-emails']),
+                'restore_ssl' => !isset($options['no-ssl']),
+            ];
+
+            if (!empty($options['log'])) {
+                $restoreOptions['log_path'] = $options['log'];
+            }
+
+            if (isset($options['analyze'])) {
+                info("Analyzing backup...");
+                $analysisTimeout = (int) ($options['analysis-timeout'] ?? $options['timeout'] ?? 600);
+                $analysisResult = agentSendWithTimeout('cpanel.analyze_backup', ['backup_path' => $backupPath], $analysisTimeout);
+                if (!($analysisResult['success'] ?? false)) {
+                    error("Analysis failed: " . ($analysisResult['error'] ?? 'Unknown error'));
+                    exit(1);
+                }
+                $analysisData = $analysisResult['data'] ?? [];
+                printCpanelAnalysis($backupPath, $analysisData);
+                $restoreOptions['discovered_data'] = $analysisData;
+            }
+
+            if (!confirm("Restore backup '$backupPath' into '$username'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            info("Restoring cPanel backup...");
+            $timeout = (int) ($options['timeout'] ?? 7200);
+            $result = agentSendWithTimeout('cpanel.restore_backup', $restoreOptions, $timeout);
+
+            if (!($result['success'] ?? false)) {
+                error("Restore failed: " . ($result['error'] ?? 'Unknown error'));
+                $logEntries = $result['log'] ?? [];
+                if (is_array($logEntries) && !empty($logEntries)) {
+                    printCpanelLog($logEntries);
+                }
+                exit(1);
+            }
+
+            $logEntries = $result['log'] ?? [];
+            if (is_array($logEntries) && !empty($logEntries)) {
+                printCpanelLog($logEntries);
+            }
+
+            success("cPanel restore completed");
+            break;
+
+        case 'fix-permissions':
+            $backupPath = $options['_args'][0] ?? $options['file'] ?? null;
+            if (!is_string($backupPath)) {
+                error("Backup file is required");
+                exit(1);
+            }
+            $backupPath = trim($backupPath);
+            if ($backupPath === '') {
+                error("Backup file is required");
+                exit(1);
+            }
+
+            $backupPath = resolveBackupPath($backupPath, $defaultDir);
+            $result = agentSend('cpanel.fix_backup_permissions', ['backup_path' => $backupPath]);
+            if (!($result['success'] ?? false)) {
+                error("Fix permissions failed: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            success("Permissions updated for $backupPath");
+            break;
+
+        case 'help':
+        case '':
+            echo "\n" . C_BOLD . "cPanel Migration Commands" . C_RESET . "\n";
+            echo str_repeat('─', 60) . "\n\n";
+
+            echo C_YELLOW . "Analyze:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "cpanel analyze <file>" . C_RESET . "            Analyze backup contents\n";
+            echo "    --timeout=600                    Analysis timeout\n\n";
+
+            echo C_YELLOW . "Restore:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "cpanel restore <file> <user>" . C_RESET . " Restore backup\n";
+            echo "    --no-files                       Skip website files\n";
+            echo "    --no-databases                   Skip databases\n";
+            echo "    --no-emails                      Skip mailboxes/forwarders\n";
+            echo "    --no-ssl                         Skip SSL certificates\n";
+            echo "    --log=/path/to/log.jsonl         Append log entries to file\n";
+            echo "    --analyze                        Run analysis and reuse results\n";
+            echo "    --timeout=7200                   Restore timeout\n\n";
+
+            echo C_YELLOW . "Maintenance:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "cpanel fix-permissions <file>" . C_RESET . " Fix backup file permissions\n\n";
+            break;
+
+        default:
+            error("Unknown cPanel command: $subcommand");
+            echo "Run 'jabali cpanel help' for usage.\n";
+            exit(1);
+    }
+}
+
+function formatCpanelStatus(string $status): string
+{
+    return match ($status) {
+        'success' => C_GREEN . '✓' . C_RESET,
+        'error' => C_RED . '✗' . C_RESET,
+        'warning' => C_YELLOW . '⚠' . C_RESET,
+        'pending' => C_CYAN . '○' . C_RESET,
+        'info' => C_CYAN . 'ℹ' . C_RESET,
+        default => $status !== '' ? $status : '-',
+    };
+}
+
+function printCpanelLog(array $entries): void
+{
+    foreach ($entries as $entry) {
+        $status = formatCpanelStatus((string) ($entry['status'] ?? ''));
+        $time = $entry['time'] ?? '';
+        $message = $entry['message'] ?? '';
+        $timeLabel = $time !== '' ? "[$time] " : '';
+        echo $status . " " . $timeLabel . $message . "\n";
+    }
+}
+
+function printCpanelAnalysis(string $backupPath, array $data): void
+{
+    $domains = $data['domains'] ?? [];
+    $databases = $data['databases'] ?? [];
+    $mailboxes = $data['mailboxes'] ?? [];
+    $forwarders = $data['forwarders'] ?? [];
+    $ssl = $data['ssl_certificates'] ?? [];
+
+    echo "\n" . C_BOLD . "cPanel Backup Analysis" . C_RESET . "\n";
+    echo str_repeat('─', 60) . "\n";
+    echo C_CYAN . "File:" . C_RESET . " $backupPath\n";
+    if (!empty($data['total_size'])) {
+        echo C_CYAN . "Size:" . C_RESET . " " . formatBytes((int) $data['total_size']) . "\n";
+    }
+    if (!empty($data['cpanel_username'])) {
+        echo C_CYAN . "cPanel User:" . C_RESET . " {$data['cpanel_username']}\n";
+    }
+    echo C_CYAN . "Domains:" . C_RESET . " " . count($domains) . "\n";
+    echo C_CYAN . "Databases:" . C_RESET . " " . count($databases) . "\n";
+    echo C_CYAN . "Mailboxes:" . C_RESET . " " . count($mailboxes) . "\n";
+    echo C_CYAN . "Forwarders:" . C_RESET . " " . count($forwarders) . "\n";
+    echo C_CYAN . "SSL Certificates:" . C_RESET . " " . count($ssl) . "\n\n";
+
+    if (!empty($domains)) {
+        $rows = [];
+        foreach ($domains as $domain) {
+            $rows[] = [
+                $domain['name'] ?? (string) $domain,
+                $domain['type'] ?? '-',
+            ];
+        }
+        table(['Domain', 'Type'], $rows);
+        echo "\n";
+    }
+
+    if (!empty($databases)) {
+        $rows = [];
+        foreach ($databases as $database) {
+            $rows[] = [
+                $database['name'] ?? (string) $database,
+            ];
+        }
+        table(['Database'], $rows);
+        echo "\n";
+    }
+
+    if (!empty($mailboxes)) {
+        $rows = [];
+        foreach ($mailboxes as $mailbox) {
+            $rows[] = [
+                $mailbox['email'] ?? (string) $mailbox,
+            ];
+        }
+        table(['Mailbox'], $rows);
+        echo "\n";
+    }
+
+    if (!empty($forwarders)) {
+        $rows = [];
+        foreach ($forwarders as $forwarder) {
+            $rows[] = [
+                $forwarder['email'] ?? '-',
+                $forwarder['destinations'] ?? ($forwarder['format'] ?? '-'),
+            ];
+        }
+        table(['Forwarder', 'Destinations'], $rows);
+        echo "\n";
+    }
+
+    if (!empty($ssl)) {
+        $rows = [];
+        foreach ($ssl as $cert) {
+            $rows[] = [
+                $cert['domain'] ?? '-',
+                $cert['keyid'] ?? '-',
+            ];
+        }
+        table(['Domain', 'Key ID'], $rows);
+        echo "\n";
+    }
+}
+
+function formatBytes(int $bytes, int $precision = 2): string
+{
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $bytes = max($bytes, 0);
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min($pow, count($units) - 1);
+    $bytes /= pow(1024, $pow);
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
+
+function parseListOption(string|bool|null $value): ?array
+{
+    if (!is_string($value) || $value === '') {
+        return null;
+    }
+
+    $items = array_map('trim', explode(',', $value));
+    $items = array_values(array_filter($items, fn($item) => $item !== ''));
+
+    return empty($items) ? null : $items;
+}
+
+function resolveBackupPath(string $path, string $defaultDir): string
+{
+    if (file_exists($path)) {
+        return $path;
+    }
+
+    $candidate = rtrim($defaultDir, '/') . '/' . ltrim($path, '/');
+    if (file_exists($candidate)) {
+        return $candidate;
+    }
+
+    return $path;
+}
+
+function statusColor(string $status): string
+{
+    return match ($status) {
+        'completed' => C_GREEN . $status . C_RESET,
+        'running', 'uploading', 'pending' => C_YELLOW . $status . C_RESET,
+        'failed' => C_RED . $status . C_RESET,
+        default => $status,
+    };
+}
+
+// ============ SYSTEM COMMANDS ============
+
+function handleSystem(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'info':
+            $result = agentSend('server.info', []);
+            echo "\n" . C_BOLD . "System Information" . C_RESET . "\n";
+            echo str_repeat('─', 50) . "\n";
+
+            // Hostname
+            echo C_CYAN . "Hostname:" . C_RESET . "     " . trim(shell_exec('hostname')) . "\n";
+
+            // OS
+            if (file_exists('/etc/os-release')) {
+                $osRelease = parse_ini_file('/etc/os-release');
+                echo C_CYAN . "OS:" . C_RESET . "           " . ($osRelease['PRETTY_NAME'] ?? 'Unknown') . "\n";
+            }
+
+            // Kernel
+            echo C_CYAN . "Kernel:" . C_RESET . "       " . trim(shell_exec('uname -r')) . "\n";
+
+            // Uptime
+            $uptime = trim(shell_exec('uptime -p'));
+            echo C_CYAN . "Uptime:" . C_RESET . "       $uptime\n";
+
+            // CPU
+            $cpuInfo = shell_exec("grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2");
+            $cpuCores = trim(shell_exec("nproc"));
+            echo C_CYAN . "CPU:" . C_RESET . "          " . trim($cpuInfo) . " ($cpuCores cores)\n";
+
+            // Load
+            $load = sys_getloadavg();
+            echo C_CYAN . "Load:" . C_RESET . "         " . implode(', ', array_map(fn($l) => number_format($l, 2), $load)) . "\n";
+
+            // Memory
+            $memInfo = shell_exec('free -m | grep Mem');
+            if (preg_match('/Mem:\s+(\d+)\s+(\d+)/', $memInfo, $m)) {
+                $total = $m[1];
+                $used = $m[2];
+                $pct = round($used / $total * 100);
+                echo C_CYAN . "Memory:" . C_RESET . "       {$used}MB / {$total}MB ({$pct}%)\n";
+            }
+
+            // Disk
+            $diskTotal = disk_total_space('/');
+            $diskFree = disk_free_space('/');
+            $diskUsed = $diskTotal - $diskFree;
+            $diskPct = round($diskUsed / $diskTotal * 100);
+            echo C_CYAN . "Disk:" . C_RESET . "         " . round($diskUsed / 1024 / 1024 / 1024, 1) . "GB / " . round($diskTotal / 1024 / 1024 / 1024, 1) . "GB ({$diskPct}%)\n";
+
+            // PHP
+            echo C_CYAN . "PHP:" . C_RESET . "          " . PHP_VERSION . "\n";
+
+            // Laravel
+            echo C_CYAN . "Laravel:" . C_RESET . "      " . app()->version() . "\n";
+            break;
+
+        case 'status':
+            handleService('list', $options);
+            break;
+
+        case 'hostname':
+            $newHostname = $options['_args'][0] ?? null;
+            if ($newHostname) {
+                $result = agentSend('server.set_hostname', ['hostname' => $newHostname]);
+                if ($result['success'] ?? false) {
+                    success("Hostname set to '$newHostname'");
+                } else {
+                    error("Failed to set hostname: " . ($result['error'] ?? 'Unknown error'));
+                    exit(1);
+                }
+            } else {
+                echo trim(shell_exec('hostname')) . "\n";
+            }
+            break;
+
+        case 'disk':
+            echo shell_exec('df -h');
+            break;
+
+        case 'memory':
+            echo shell_exec('free -h');
+            break;
+
+        default:
+            error("Unknown system command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ AGENT COMMANDS ============
+
+function handleAgent(string $subcommand, array $options): void
+{
+    $agentScript = JABALI_ROOT . '/bin/jabali-agent';
+    $pidFile = '/var/run/jabali/agent.pid';
+
+    switch ($subcommand) {
+        case 'status':
+            if (file_exists(AGENT_SOCKET)) {
+                $result = agentSend('ping', []);
+                if ($result['success'] ?? false) {
+                    success("Agent is running (version: " . ($result['version'] ?? 'unknown') . ")");
+                } else {
+                    warning("Agent socket exists but not responding");
+                }
+            } else {
+                error("Agent is not running");
+            }
+            break;
+
+        case 'start':
+            if (file_exists(AGENT_SOCKET)) {
+                $result = agentSend('ping', []);
+                if ($result['success'] ?? false) {
+                    info("Agent is already running");
+                    exit(0);
+                }
+            }
+            info("Starting agent...");
+            exec("nohup /usr/bin/php $agentScript > /dev/null 2>&1 &");
+            sleep(2);
+            if (file_exists(AGENT_SOCKET)) {
+                success("Agent started");
+            } else {
+                error("Failed to start agent");
+                exit(1);
+            }
+            break;
+
+        case 'stop':
+            if (file_exists($pidFile)) {
+                $pid = trim(file_get_contents($pidFile));
+                if ($pid && posix_kill((int)$pid, 15)) {
+                    sleep(1);
+                    success("Agent stopped");
+                } else {
+                    exec("pkill -f jabali-agent");
+                    success("Agent stopped");
+                }
+            } else {
+                exec("pkill -f jabali-agent");
+                info("Agent stopped");
+            }
+            break;
+
+        case 'restart':
+            handleAgent('stop', $options);
+            sleep(1);
+            handleAgent('start', $options);
+            break;
+
+        case 'ping':
+            $result = agentSend('ping', []);
+            if ($result['success'] ?? false) {
+                success("Pong! Agent version: " . ($result['version'] ?? 'unknown'));
+            } else {
+                error("Agent not responding: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'log':
+            $lines = $options['lines'] ?? 50;
+            $logFile = '/var/log/jabali/agent.log';
+            if (file_exists($logFile)) {
+                passthru("tail -n $lines " . escapeshellarg($logFile));
+            } else {
+                error("Log file not found: $logFile");
+            }
+            break;
+
+        default:
+            error("Unknown agent command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ PHP COMMANDS ============
+
+function handlePhp(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'list':
+            $result = agentSend('php.list_versions', []);
+            if (!($result['success'] ?? false)) {
+                // Fallback to local detection
+                exec('ls /lib/systemd/system/php*-fpm.service 2>/dev/null', $services);
+                $rows = [];
+                foreach ($services as $svc) {
+                    if (preg_match('/php([\d.]+)-fpm/', $svc, $m)) {
+                        $version = $m[1];
+                        exec("systemctl is-active php{$version}-fpm 2>/dev/null", $active);
+                        $isActive = (trim($active[0] ?? '') === 'active');
+                        $rows[] = [
+                            $version,
+                            $isActive ? C_GREEN . 'Running' . C_RESET : C_RED . 'Stopped' . C_RESET,
+                        ];
+                    }
+                }
+                table(['Version', 'Status'], $rows);
+            } else {
+                $rows = [];
+                foreach ($result['versions'] ?? [] as $v) {
+                    $rows[] = [
+                        is_array($v) ? $v['version'] : $v,
+                        is_array($v) ? ($v['active'] ? C_GREEN . 'Running' . C_RESET : C_RED . 'Stopped' . C_RESET) : '',
+                    ];
+                }
+                table(['Version', 'Status'], $rows);
+            }
+            break;
+
+        case 'install':
+            $version = $options['_args'][0] ?? null;
+            if (!$version) {
+                error("PHP version is required (e.g., 8.2)");
+                exit(1);
+            }
+            info("Installing PHP $version...");
+            $result = agentSend('php.install', ['version' => $version]);
+            if ($result['success'] ?? false) {
+                success("PHP $version installed");
+            } else {
+                error("Failed to install PHP $version: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'uninstall':
+            $version = $options['_args'][0] ?? null;
+            if (!$version) {
+                error("PHP version is required");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to uninstall PHP $version?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+            $result = agentSend('php.uninstall', ['version' => $version]);
+            if ($result['success'] ?? false) {
+                success("PHP $version uninstalled");
+            } else {
+                error("Failed to uninstall: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'default':
+            $version = $options['_args'][0] ?? null;
+            if ($version) {
+                $result = agentSend('php.set_default', ['version' => $version]);
+                if ($result['success'] ?? false) {
+                    success("Default PHP version set to $version");
+                } else {
+                    error("Failed to set default: " . ($result['error'] ?? 'Unknown error'));
+                    exit(1);
+                }
+            } else {
+                $current = trim(shell_exec('php -v | head -1 | cut -d" " -f2 | cut -d"." -f1,2'));
+                echo "Current default: PHP $current\n";
+            }
+            break;
+
+        case 'status':
+            exec('ls /lib/systemd/system/php*-fpm.service 2>/dev/null', $services);
+            foreach ($services as $svc) {
+                if (preg_match('/php([\d.]+)-fpm/', $svc, $m)) {
+                    $service = "php{$m[1]}-fpm";
+                    passthru("systemctl status $service --no-pager -l | head -15");
+                    echo "\n";
+                }
+            }
+            break;
+
+        default:
+            error("Unknown PHP command: $subcommand");
+            exit(1);
+    }
+}
+
+// ============ FIREWALL COMMANDS ============
+
+function handleFirewall(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'status':
+            $result = agentSend('ufw.status', []);
+            if ($result['success'] ?? false) {
+                echo C_BOLD . "Firewall Status: " . C_RESET;
+                echo ($result['enabled'] ?? false) ? C_GREEN . "Active" . C_RESET : C_RED . "Inactive" . C_RESET;
+                echo "\n";
+            } else {
+                passthru('ufw status');
+            }
+            break;
+
+        case 'enable':
+            $result = agentSend('ufw.enable', []);
+            if ($result['success'] ?? false) {
+                success("Firewall enabled");
+            } else {
+                error("Failed to enable firewall: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'disable':
+            if (!confirm("Are you sure you want to disable the firewall?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+            $result = agentSend('ufw.disable', []);
+            if ($result['success'] ?? false) {
+                success("Firewall disabled");
+            } else {
+                error("Failed to disable firewall: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'rules':
+            $result = agentSend('ufw.list_rules', []);
+            if ($result['success'] ?? false) {
+                $rows = [];
+                foreach ($result['rules'] ?? [] as $rule) {
+                    $rows[] = [
+                        $rule['number'] ?? '',
+                        $rule['to'] ?? '',
+                        $rule['action'] ?? '',
+                        $rule['from'] ?? '',
+                    ];
+                }
+                table(['#', 'To', 'Action', 'From'], $rows);
+            } else {
+                passthru('ufw status numbered');
+            }
+            break;
+
+        case 'allow':
+            $port = $options['_args'][0] ?? null;
+            if (!$port) {
+                error("Port is required");
+                exit(1);
+            }
+            $result = agentSend('ufw.allow_port', ['port' => $port]);
+            if ($result['success'] ?? false) {
+                success("Allowed port $port");
+            } else {
+                error("Failed to allow port: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'deny':
+            $port = $options['_args'][0] ?? null;
+            if (!$port) {
+                error("Port is required");
+                exit(1);
+            }
+            $result = agentSend('ufw.deny_port', ['port' => $port]);
+            if ($result['success'] ?? false) {
+                success("Denied port $port");
+            } else {
+                error("Failed to deny port: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'delete':
+            $rule = $options['_args'][0] ?? null;
+            if (!$rule) {
+                error("Rule number is required");
+                exit(1);
+            }
+            if (!confirm("Are you sure you want to delete rule #$rule?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+            $result = agentSend('ufw.delete_rule', ['rule' => $rule]);
+            if ($result['success'] ?? false) {
+                success("Rule deleted");
+            } else {
+                error("Failed to delete rule: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        default:
+            error("Unknown firewall command: $subcommand");
+            exit(1);
+    }
+}
+
+function handleSsl(string $subcommand, array $options): void
+{
+    switch ($subcommand) {
+        case 'check':
+            $domain = $options['_args'][0] ?? null;
+            info("Checking SSL certificates...");
+
+            $cmd = 'php /var/www/jabali/artisan jabali:ssl-check';
+            if ($domain) {
+                $cmd .= ' --domain=' . escapeshellarg($domain);
+            }
+            if ($options['issue-only'] ?? false) {
+                $cmd .= ' --issue-only';
+            }
+            if ($options['renew-only'] ?? false) {
+                $cmd .= ' --renew-only';
+            }
+
+            passthru($cmd, $exitCode);
+            exit($exitCode);
+
+        case 'issue':
+            $domain = $options['_args'][0] ?? null;
+            if (!$domain) {
+                error("Domain is required");
+                echo "Usage: jabali ssl issue <domain>\n";
+                exit(1);
+            }
+
+            info("Issuing SSL certificate for $domain...");
+            $result = agentSend('ssl.issue', [
+                'domain' => $domain,
+                'force' => $options['force'] ?? false,
+            ]);
+
+            if ($result['success'] ?? false) {
+                success("SSL certificate issued for $domain");
+                if (!empty($result['valid_to'])) {
+                    echo "  Expires: " . $result['valid_to'] . "\n";
+                }
+            } else {
+                error("Failed to issue SSL: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'renew':
+            $domain = $options['_args'][0] ?? null;
+            if (!$domain) {
+                error("Domain is required");
+                echo "Usage: jabali ssl renew <domain>\n";
+                exit(1);
+            }
+
+            info("Renewing SSL certificate for $domain...");
+            $result = agentSend('ssl.renew', ['domain' => $domain]);
+
+            if ($result['success'] ?? false) {
+                success("SSL certificate renewed for $domain");
+                if (!empty($result['valid_to'])) {
+                    echo "  New expiry: " . $result['valid_to'] . "\n";
+                }
+            } else {
+                error("Failed to renew SSL: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'status':
+            $domain = $options['_args'][0] ?? null;
+            if (!$domain) {
+                error("Domain is required");
+                echo "Usage: jabali ssl status <domain>\n";
+                exit(1);
+            }
+
+            $result = agentSend('ssl.info', ['domain' => $domain]);
+
+            if ($result['success'] ?? false) {
+                echo C_BOLD . "SSL Certificate Status for $domain" . C_RESET . "\n\n";
+                echo "  Status:  " . (($result['valid'] ?? false) ? C_GREEN . "Valid" : C_RED . "Invalid") . C_RESET . "\n";
+                echo "  Issuer:  " . ($result['issuer'] ?? 'Unknown') . "\n";
+                echo "  From:    " . ($result['valid_from'] ?? 'Unknown') . "\n";
+                echo "  To:      " . ($result['valid_to'] ?? 'Unknown') . "\n";
+
+                if (!empty($result['days_remaining'])) {
+                    $days = $result['days_remaining'];
+                    $color = $days > 30 ? C_GREEN : ($days > 7 ? C_YELLOW : C_RED);
+                    echo "  Days:    " . $color . $days . " days remaining" . C_RESET . "\n";
+                }
+            } else {
+                error("Failed to get SSL status: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case 'list':
+            info("Listing SSL certificates...");
+            $result = agentSend('ssl.list', []);
+
+            if ($result['success'] ?? false) {
+                $rows = [];
+                foreach ($result['certificates'] ?? [] as $cert) {
+                    $status = ($cert['valid'] ?? false) ? C_GREEN . 'Valid' . C_RESET : C_RED . 'Invalid' . C_RESET;
+                    $days = $cert['days_remaining'] ?? 0;
+                    $daysColor = $days > 30 ? C_GREEN : ($days > 7 ? C_YELLOW : C_RED);
+
+                    $rows[] = [
+                        $cert['domain'] ?? '',
+                        $status,
+                        $cert['issuer'] ?? '',
+                        $cert['valid_to'] ?? '',
+                        $daysColor . $days . C_RESET,
+                    ];
+                }
+                table(['Domain', 'Status', 'Issuer', 'Expires', 'Days'], $rows);
+            } else {
+                error("Failed to list SSL certificates: " . ($result['error'] ?? 'Unknown error'));
+                exit(1);
+            }
+            break;
+
+        case '':
+        case 'help':
+            echo C_BOLD . "SSL Certificate Management" . C_RESET . "\n\n";
+            echo "Usage: jabali ssl <command> [options]\n\n";
+            echo C_YELLOW . "Commands:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "check" . C_RESET . "              Check all domains and issue/renew as needed\n";
+            echo "  " . C_GREEN . "check <domain>" . C_RESET . "     Check specific domain\n";
+            echo "  " . C_GREEN . "issue <domain>" . C_RESET . "     Issue SSL certificate for domain\n";
+            echo "  " . C_GREEN . "renew <domain>" . C_RESET . "     Renew SSL certificate for domain\n";
+            echo "  " . C_GREEN . "status <domain>" . C_RESET . "    Show SSL status for domain\n";
+            echo "  " . C_GREEN . "list" . C_RESET . "               List all SSL certificates\n\n";
+            echo C_YELLOW . "Options:" . C_RESET . "\n";
+            echo "  " . C_GREEN . "--issue-only" . C_RESET . "       Only issue new certificates (with check)\n";
+            echo "  " . C_GREEN . "--renew-only" . C_RESET . "       Only renew expiring certificates (with check)\n";
+            echo "  " . C_GREEN . "--force" . C_RESET . "            Force issue even if certificate exists\n";
+            break;
+
+        default:
+            error("Unknown ssl command: $subcommand");
+            echo "Run 'jabali ssl help' for usage information.\n";
+            exit(1);
+    }
+}

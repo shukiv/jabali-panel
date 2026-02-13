@@ -1,0 +1,13 @@
+.git
+.gitignore
+node_modules
+storage/logs
+storage/framework/cache
+storage/framework/sessions
+storage/framework/views
+storage/app/private
+storage/app/private/*
+storage/app/private/livewire-tmp
+.env
+.env.*
+!.env.example

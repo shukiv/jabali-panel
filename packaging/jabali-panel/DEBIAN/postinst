@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="/var/www/jabali"
+PHP_BIN="/usr/bin/php"
+
+if [ ! -d "$APP_DIR" ]; then
+  echo "Jabali install directory missing: $APP_DIR" >&2
+  exit 1
+fi
+
+# Ensure runtime directories exist
+mkdir -p \
+  "$APP_DIR/storage/app" \
+  "$APP_DIR/storage/framework/cache" \
+  "$APP_DIR/storage/framework/sessions" \
+  "$APP_DIR/storage/framework/views" \
+  "$APP_DIR/storage/logs" \
+  "$APP_DIR/bootstrap/cache" \
+  "$APP_DIR/database"
+
+touch "$APP_DIR/database/database.sqlite"
+
+chown -R www-data:www-data "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
+chown www-data:www-data "$APP_DIR/database/database.sqlite"
+chmod -R ug+rwX "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
+chmod 664 "$APP_DIR/database/database.sqlite"
+
+if [ ! -f "$APP_DIR/.env" ]; then
+  cp "$APP_DIR/.env.example" "$APP_DIR/.env"
+  sed -i \
+    -e 's/^APP_NAME=.*/APP_NAME="Jabali"/' \
+    -e 's/^APP_ENV=.*/APP_ENV=production/' \
+    -e 's/^APP_DEBUG=.*/APP_DEBUG=false/' \
+    -e "s|^APP_URL=.*|APP_URL=https://$(hostname -I | awk '{print $1}')|" \
+    -e 's/^LOG_LEVEL=.*/LOG_LEVEL=error/' \
+    "$APP_DIR/.env"
+fi
+
+if ! grep -q '^APP_KEY=base64:' "$APP_DIR/.env"; then
+  su -s /bin/bash www-data -c "$PHP_BIN $APP_DIR/artisan key:generate --force"
+fi
+
+su -s /bin/bash www-data -c "$PHP_BIN $APP_DIR/artisan migrate --force" || true
+su -s /bin/bash www-data -c "$PHP_BIN $APP_DIR/artisan storage:link" || true
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload
+  systemctl enable jabali-agent jabali-queue jabali-health-monitor >/dev/null 2>&1 || true
+  systemctl restart jabali-agent jabali-queue jabali-health-monitor >/dev/null 2>&1 || true
+fi
+
+exit 0

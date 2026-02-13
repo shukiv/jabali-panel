@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+remote_name="github"
+source_branch="main"
+publish_branch="github-main"
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Not a git repository." >&2
+  exit 1
+fi
+
+if ! git remote get-url "$remote_name" >/dev/null 2>&1; then
+  echo "Remote '$remote_name' is not configured." >&2
+  exit 1
+fi
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Working tree is not clean. Commit or stash changes first." >&2
+  exit 1
+fi
+
+original_branch="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$original_branch" != "$source_branch" && "$original_branch" != "$publish_branch" ]]; then
+  echo "Switch to '$source_branch' or '$publish_branch' before publishing." >&2
+  exit 1
+fi
+
+if git fetch "$remote_name" --quiet; then
+  current_version="$(grep -E '^VERSION=' VERSION | head -n1 | cut -d= -f2-)"
+  remote_version="$(git show "$remote_name/main:VERSION" 2>/dev/null | grep -E '^VERSION=' | head -n1 | cut -d= -f2- || true)"
+
+  if [[ -n "$remote_version" && "$current_version" == "$remote_version" ]]; then
+    echo "VERSION unchanged vs GitHub ($current_version). Bump VERSION before pushing." >&2
+    exit 1
+  fi
+fi
+
+git checkout -B "$publish_branch" "$source_branch"
+
+FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --index-filter \
+  "git rm --cached --ignore-unmatch CLAUDE.md" \
+  --prune-empty --tag-name-filter cat -- "$publish_branch"
+
+git push "$remote_name" "$publish_branch:main" --force
+
+git checkout "$original_branch"

@@ -1,0 +1,568 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Jabali Health Monitor
+ *
+ * Monitors critical services and automatically restarts them if they fail.
+ * Monitors server load and sends alerts when load is high for extended periods.
+ * Sends notifications to admin on service failures and recoveries.
+ */
+
+define('LOG_FILE', '/var/log/jabali/health-monitor.log');
+define('STATE_FILE', '/var/run/jabali/health-monitor.state');
+define('OVERRIDE_FILE', '/etc/jabali/health-monitor.json');
+define('CHECK_INTERVAL', 30); // seconds
+define('DEFAULT_LOAD_THRESHOLD', 5.0);
+define('DEFAULT_LOAD_ALERT_MINUTES', 5);
+define('DEFAULT_QUEUE_STUCK_SECONDS', 90);
+define('DEFAULT_QUEUE_RESTART_COOLDOWN', 300);
+
+// Critical services to monitor
+$criticalServices = [
+    'nginx' => [
+        'description' => 'Web Server',
+        'check_command' => 'systemctl is-active nginx',
+        'restart_command' => 'systemctl reload nginx || systemctl start nginx',
+    ],
+    'mariadb' => [
+        'description' => 'Database Server',
+        'check_command' => 'systemctl is-active mariadb',
+        'restart_command' => 'systemctl restart mariadb',
+    ],
+    'jabali-agent' => [
+        'description' => 'Jabali Agent',
+        'check_command' => 'systemctl is-active jabali-agent',
+        'restart_command' => 'systemctl restart jabali-agent',
+    ],
+    'jabali-queue' => [
+        'description' => 'Queue Worker',
+        'check_command' => 'systemctl is-active jabali-queue',
+        'restart_command' => 'systemctl restart jabali-queue',
+    ],
+];
+
+// Optional services - only monitor if installed
+$optionalServices = [
+    'php8.4-fpm' => [
+        'description' => 'PHP-FPM',
+        'check_command' => 'systemctl is-active php8.4-fpm',
+        'restart_command' => 'systemctl reload php8.4-fpm || systemctl start php8.4-fpm',
+        'fallback' => ['php8.3-fpm', 'php8.2-fpm', 'php8.1-fpm'],
+    ],
+    'postfix' => [
+        'description' => 'Mail Transfer Agent',
+        'check_command' => 'systemctl is-active postfix',
+        'restart_command' => 'systemctl restart postfix',
+    ],
+    'dovecot' => [
+        'description' => 'IMAP/POP3 Server',
+        'check_command' => 'systemctl is-active dovecot',
+        'restart_command' => 'systemctl restart dovecot',
+    ],
+    'named' => [
+        'description' => 'DNS Server',
+        'check_command' => 'systemctl is-active named',
+        'restart_command' => 'systemctl restart named',
+        'fallback' => ['bind9'],
+    ],
+    'redis-server' => [
+        'description' => 'Redis Cache',
+        'check_command' => 'systemctl is-active redis-server',
+        'restart_command' => 'systemctl restart redis-server',
+        'fallback' => ['redis'],
+    ],
+    'fail2ban' => [
+        'description' => 'Intrusion Prevention',
+        'check_command' => 'systemctl is-active fail2ban',
+        'restart_command' => 'systemctl restart fail2ban',
+    ],
+    'opendkim' => [
+        'description' => 'OpenDKIM',
+        'check_command' => 'systemctl is-active opendkim',
+        'restart_command' => 'systemctl restart opendkim',
+    ],
+];
+
+/**
+ * Log a message to the log file
+ */
+function logger(string $message, string $level = 'INFO'): void
+{
+    $timestamp = date('Y-m-d H:i:s');
+    $logMessage = "[$timestamp] [$level] $message\n";
+    file_put_contents(LOG_FILE, $logMessage, FILE_APPEND);
+
+    // Also output to console for systemd journald
+    echo $logMessage;
+}
+
+/**
+ * Load service state from file
+ */
+function loadState(): array
+{
+    if (file_exists(STATE_FILE)) {
+        $content = file_get_contents(STATE_FILE);
+        $state = json_decode($content, true);
+        if (is_array($state)) {
+            return $state;
+        }
+    }
+    return [];
+}
+
+/**
+ * Load health monitor overrides (disabled services)
+ */
+function loadOverrides(): array
+{
+    if (!file_exists(OVERRIDE_FILE)) {
+        return [];
+    }
+
+    $content = file_get_contents(OVERRIDE_FILE);
+    $overrides = json_decode($content, true);
+    if (!is_array($overrides)) {
+        return [];
+    }
+
+    $disabled = $overrides['disabled_services'] ?? [];
+    if (!is_array($disabled)) {
+        $disabled = [];
+    }
+
+    return [
+        'disabled_services' => array_values(array_unique(array_filter($disabled, 'is_string'))),
+    ];
+}
+/**
+ * Save service state to file
+ */
+function saveState(array $state): void
+{
+    file_put_contents(STATE_FILE, json_encode($state, JSON_PRETTY_PRINT));
+}
+
+/**
+ * Check if a service is running
+ */
+function isServiceRunning(string $checkCommand): bool
+{
+    exec($checkCommand . ' 2>/dev/null', $output, $returnCode);
+    return $returnCode === 0;
+}
+
+/**
+ * Check if a service exists/is installed
+ */
+function isServiceInstalled(string $service): bool
+{
+    exec("systemctl list-unit-files {$service}.service 2>/dev/null | grep -q {$service}", $output, $returnCode);
+    return $returnCode === 0;
+}
+
+/**
+ * Check if a service is enabled in systemd
+ */
+function isServiceEnabled(string $service): bool
+{
+    exec("systemctl is-enabled {$service} 2>/dev/null", $output, $returnCode);
+    if ($returnCode !== 0) {
+        return true;
+    }
+
+    $state = trim((string) ($output[0] ?? ''));
+    if ($state === 'disabled' || $state === 'masked') {
+        return false;
+    }
+
+    return true;
+}
+/**
+ * Find the correct PHP-FPM service name
+ */
+function findPhpFpmService(): ?string
+{
+    $versions = ['8.4', '8.3', '8.2', '8.1', '8.0'];
+    foreach ($versions as $version) {
+        $service = "php{$version}-fpm";
+        if (isServiceInstalled($service)) {
+            return $service;
+        }
+    }
+    return null;
+}
+
+/**
+ * Restart a service
+ */
+function restartService(string $restartCommand): bool
+{
+    exec($restartCommand . ' 2>&1', $output, $returnCode);
+    sleep(2); // Give service time to start
+    return $returnCode === 0;
+}
+
+/**
+ * Parse a Laravel .env file properly
+ */
+function parseEnvFile(string $path): array
+{
+    $env = [];
+    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+
+    foreach ($lines as $line) {
+        // Skip comments
+        $line = trim($line);
+        if (empty($line) || $line[0] === '#') {
+            continue;
+        }
+
+        // Split on first = only
+        $pos = strpos($line, '=');
+        if ($pos === false) {
+            continue;
+        }
+
+        $key = trim(substr($line, 0, $pos));
+        $value = substr($line, $pos + 1);
+
+        // Remove surrounding quotes if present
+        $value = trim($value);
+        if ((str_starts_with($value, '"') && str_ends_with($value, '"')) ||
+            (str_starts_with($value, "'") && str_ends_with($value, "'"))) {
+            $value = substr($value, 1, -1);
+        }
+
+        $env[$key] = $value;
+    }
+
+    return $env;
+}
+
+/**
+ * Send notification via Laravel's notification system
+ */
+function sendNotification(string $event, string $service, string $description): void
+{
+    $artisan = '/var/www/jabali/artisan';
+    if (!file_exists($artisan)) {
+        return;
+    }
+
+    $cmd = sprintf(
+        'cd /var/www/jabali && /usr/bin/php artisan notify:service-health %s %s --description=%s 2>&1',
+        escapeshellarg($event),
+        escapeshellarg($service),
+        escapeshellarg($description)
+    );
+
+    exec($cmd, $output, $returnCode);
+
+    if ($returnCode === 0) {
+        logger("Notification sent via Laravel: {$event} - {$service}", 'INFO');
+    }
+}
+
+/**
+ * Send high load notification via Laravel
+ */
+function sendLoadNotification(string $event, float $load, int $minutes): void
+{
+    $artisan = '/var/www/jabali/artisan';
+    if (!file_exists($artisan)) {
+        return;
+    }
+
+    $cmd = sprintf(
+        'cd /var/www/jabali && /usr/bin/php artisan notify:high-load %s %s %d 2>&1',
+        escapeshellarg($event),
+        escapeshellarg((string) $load),
+        $minutes
+    );
+
+    exec($cmd, $output, $returnCode);
+
+    if ($returnCode === 0) {
+        logger("Load notification sent via Laravel: {$event} - load: {$load}", 'INFO');
+    }
+}
+
+/**
+ * Get current system load average (1 minute)
+ */
+function getLoadAverage(): float
+{
+    $load = sys_getloadavg();
+    return $load[0] ?? 0.0;
+}
+
+/**
+ * Get load monitoring settings from database
+ */
+function getLoadSettings(): array
+{
+    $artisan = '/var/www/jabali/artisan';
+    if (!file_exists($artisan)) {
+        return [
+            'enabled' => true,
+            'threshold' => DEFAULT_LOAD_THRESHOLD,
+            'minutes' => DEFAULT_LOAD_ALERT_MINUTES,
+        ];
+    }
+
+    $cmd = 'cd /var/www/jabali && /usr/bin/php artisan tinker --execute="
+        use App\Models\DnsSetting;
+        echo json_encode([
+            \'enabled\' => (bool) DnsSetting::get(\'notify_high_load\', true),
+            \'threshold\' => (float) DnsSetting::get(\'load_threshold\', ' . DEFAULT_LOAD_THRESHOLD . '),
+            \'minutes\' => (int) DnsSetting::get(\'load_alert_minutes\', ' . DEFAULT_LOAD_ALERT_MINUTES . '),
+        ]);
+    " 2>/dev/null';
+
+    exec($cmd, $output, $returnCode);
+
+    if ($returnCode === 0 && !empty($output)) {
+        $lastLine = end($output);
+        $settings = json_decode($lastLine, true);
+        if (is_array($settings)) {
+            return $settings;
+        }
+    }
+
+    return [
+        'enabled' => true,
+        'threshold' => DEFAULT_LOAD_THRESHOLD,
+        'minutes' => DEFAULT_LOAD_ALERT_MINUTES,
+    ];
+}
+
+/**
+ * Check server load and send alerts if necessary
+ */
+function checkServerLoad(array &$state): void
+{
+    $settings = getLoadSettings();
+
+    if (!$settings['enabled']) {
+        // Reset load state if monitoring is disabled
+        if (isset($state['load'])) {
+            unset($state['load']);
+        }
+        return;
+    }
+
+    $currentLoad = getLoadAverage();
+    $threshold = $settings['threshold'];
+    $alertMinutes = $settings['minutes'];
+    $alertSeconds = $alertMinutes * 60;
+
+    $loadState = $state['load'] ?? [
+        'high_since' => null,
+        'alert_sent' => false,
+        'last_load' => 0.0,
+    ];
+
+    if ($currentLoad >= $threshold) {
+        // Load is high
+        if ($loadState['high_since'] === null) {
+            // First time detecting high load
+            $loadState['high_since'] = time();
+            $loadState['alert_sent'] = false;
+            logger("Server load is high: {$currentLoad} (threshold: {$threshold})", 'WARNING');
+        } else {
+            // Load has been high for a while
+            $highDuration = time() - $loadState['high_since'];
+            $highMinutes = (int) floor($highDuration / 60);
+
+            if ($highDuration >= $alertSeconds && !$loadState['alert_sent']) {
+                // Send alert
+                logger("Server load has been high ({$currentLoad}) for {$highMinutes} minutes - sending alert", 'WARNING');
+                sendLoadNotification('high', $currentLoad, $highMinutes);
+                $loadState['alert_sent'] = true;
+            }
+        }
+    } else {
+        // Load is normal
+        if ($loadState['high_since'] !== null && $loadState['alert_sent']) {
+            // Load recovered after alert was sent
+            logger("Server load recovered: {$currentLoad} (was high since " . date('H:i:s', $loadState['high_since']) . ")", 'INFO');
+            sendLoadNotification('recovered', $currentLoad, 0);
+        }
+        $loadState['high_since'] = null;
+        $loadState['alert_sent'] = false;
+    }
+
+    $loadState['last_load'] = $currentLoad;
+    $loadState['last_check'] = time();
+    $state['load'] = $loadState;
+}
+
+/**
+ * Build the list of services to monitor
+ */
+function buildServiceList(array $criticalServices, array $optionalServices): array
+{
+    $services = $criticalServices;
+
+    // Find and add PHP-FPM
+    $phpFpm = findPhpFpmService();
+    if ($phpFpm) {
+        $services[$phpFpm] = [
+            'description' => 'PHP-FPM',
+            'check_command' => "systemctl is-active {$phpFpm}",
+            'restart_command' => "systemctl reload {$phpFpm} || systemctl start {$phpFpm}",
+        ];
+    }
+
+    // Add optional services if installed
+    foreach ($optionalServices as $name => $config) {
+        // Skip PHP-FPM as we handle it specially above
+        if (strpos($name, 'php') === 0 && strpos($name, 'fpm') !== false) {
+            continue;
+        }
+
+        if (isServiceInstalled($name)) {
+            $services[$name] = $config;
+        } elseif (isset($config['fallback'])) {
+            // Check fallback service names
+            foreach ($config['fallback'] as $fallback) {
+                if (isServiceInstalled($fallback)) {
+                    $services[$fallback] = [
+                        'description' => $config['description'],
+                        'check_command' => "systemctl is-active {$fallback}",
+                        'restart_command' => "systemctl restart {$fallback}",
+                    ];
+                    break;
+                }
+            }
+        }
+    }
+
+    return $services;
+}
+
+/**
+ * Check and heal a single service
+ */
+function checkAndHealService(string $name, array $config, array &$state): void
+{
+    $isRunning = isServiceRunning($config['check_command']);
+    $wasDown = $state[$name]['down'] ?? false;
+    $restartAttempts = $state[$name]['restart_attempts'] ?? 0;
+    $maxAttempts = 3;
+
+    if ($isRunning) {
+        // Service is running
+        if ($wasDown) {
+            // Service recovered
+            logger("{$config['description']} ({$name}) recovered", 'INFO');
+            sendNotification('recovered', $name, $config['description']);
+            $state[$name] = ['down' => false, 'restart_attempts' => 0, 'last_check' => time()];
+        }
+    } else {
+        // Service is down
+        if (!$wasDown) {
+            // First time noticing it's down
+            logger("{$config['description']} ({$name}) is DOWN", 'WARNING');
+            sendNotification('down', $name, $config['description']);
+            $state[$name] = ['down' => true, 'restart_attempts' => 0, 'down_since' => time(), 'last_check' => time()];
+        }
+
+        if ($restartAttempts < $maxAttempts) {
+            // Try to restart
+            logger("Attempting to restart {$name} (attempt " . ($restartAttempts + 1) . "/$maxAttempts)", 'INFO');
+            $success = restartService($config['restart_command']);
+
+            $state[$name]['restart_attempts'] = $restartAttempts + 1;
+            $state[$name]['last_restart_attempt'] = time();
+
+            if ($success && isServiceRunning($config['check_command'])) {
+                logger("{$name} restarted successfully", 'INFO');
+                sendNotification('restarted', $name, $config['description']);
+                $state[$name] = ['down' => false, 'restart_attempts' => 0, 'last_check' => time()];
+            } else {
+                logger("{$name} restart failed", 'ERROR');
+            }
+        } elseif ($restartAttempts == $maxAttempts) {
+            // Max attempts reached, send critical notification
+            logger("{$name} failed to restart after $maxAttempts attempts - manual intervention required", 'ERROR');
+            sendNotification('failed', $name, $config['description']);
+            $state[$name]['restart_attempts'] = $maxAttempts + 1; // Prevent repeated notifications
+        }
+    }
+
+    $state[$name]['last_check'] = time();
+}
+
+/**
+ * Main monitoring loop
+ */
+function main(): void
+{
+    global $criticalServices, $optionalServices;
+
+    // Ensure log directory exists
+    $logDir = dirname(LOG_FILE);
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0755, true);
+    }
+
+    // Ensure state directory exists
+    $stateDir = dirname(STATE_FILE);
+    if (!is_dir($stateDir)) {
+        mkdir($stateDir, 0755, true);
+    }
+
+    logger("Jabali Health Monitor starting", 'INFO');
+
+    // Build service list
+    $services = buildServiceList($criticalServices, $optionalServices);
+
+    logger("Monitoring " . count($services) . " services: " . implode(', ', array_keys($services)), 'INFO');
+
+    // Load previous state
+    $state = loadState();
+    // Main loop
+    while (true) {
+        $overrides = loadOverrides();
+        $disabledServices = $overrides['disabled_services'] ?? [];
+
+        // Check services
+        foreach ($services as $name => $config) {
+            if (in_array($name, $disabledServices, true)) {
+                continue;
+            }
+            if (!isServiceEnabled($name)) {
+                continue;
+            }
+            checkAndHealService($name, $config, $state);
+        }
+
+        // Check server load
+        checkServerLoad($state);
+
+        // Save state
+        saveState($state);
+
+        // Wait for next check interval
+        sleep(CHECK_INTERVAL);
+    }
+}
+
+// Handle signals for graceful shutdown
+pcntl_async_signals(true);
+pcntl_signal(SIGTERM, function () {
+    logger("Received SIGTERM, shutting down", 'INFO');
+    exit(0);
+});
+pcntl_signal(SIGINT, function () {
+    logger("Received SIGINT, shutting down", 'INFO');
+    exit(0);
+});
+
+// Run the monitor
+main();

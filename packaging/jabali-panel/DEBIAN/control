@@ -1,0 +1,10 @@
+Package: jabali-panel
+Version: 0.0.0
+Section: admin
+Priority: optional
+Architecture: all
+Maintainer: Jabali Panel <admin@example.lan>
+Depends: jabali-deps (>= 0.9-rc36)
+Description: Jabali Panel - Modern web hosting control panel
+ Jabali Panel is a modern web hosting control panel for WordPress and PHP
+ hosting. This package installs the application files and systemd services.

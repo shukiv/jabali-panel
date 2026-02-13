@@ -1,0 +1,49 @@
+FROM php:8.4-cli
+
+WORKDIR /var/www/jabali
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        unzip \
+        sqlite3 \
+        libsqlite3-dev \
+        libzip-dev \
+        libpng-dev \
+        libjpeg62-turbo-dev \
+        libfreetype6-dev \
+        libicu-dev \
+        libonig-dev \
+        libxml2-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) \
+        bcmath \
+        exif \
+        gd \
+        intl \
+        mbstring \
+        pdo \
+        pdo_sqlite \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . /var/www/jabali
+
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV APP_ENV=demo \
+    APP_DEBUG=false \
+    APP_URL=http://localhost:5555 \
+    DB_CONNECTION=sqlite \
+    DB_DATABASE=/var/www/jabali/database/demo.sqlite \
+    JABALI_DEMO=1 \
+    JABALI_DEMO_EMAIL=demo-admin@jabali-panel.com \
+    JABALI_DEMO_PASSWORD=demo12345 \
+    SESSION_DRIVER=file \
+    CACHE_STORE=file \
+    QUEUE_CONNECTION=sync
+
+EXPOSE 5555
+
+ENTRYPOINT ["/entrypoint.sh"]

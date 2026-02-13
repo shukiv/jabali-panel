@@ -1,0 +1,14 @@
+[Unit]
+Description=Jabali Panel Agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/php /var/www/jabali/bin/jabali-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
