@@ -13,31 +13,59 @@ class DnsSetting extends Model
 
     public static function get(string $key, mixed $default = null): mixed
     {
-        return Cache::remember("dns_setting_{$key}", 3600, function () use ($key, $default) {
+        // Cache failures should never take the panel down. If the cache store is misconfigured
+        // or temporarily unavailable (e.g., SQLite cache table can't be written), fall back
+        // to a direct DB read.
+        try {
+            return Cache::remember("dns_setting_{$key}", 3600, function () use ($key, $default) {
+                $setting = static::where('key', $key)->first();
+
+                return $setting?->value ?? $default;
+            });
+        } catch (\Throwable) {
             $setting = static::where('key', $key)->first();
+
             return $setting?->value ?? $default;
-        });
+        }
     }
 
     public static function set(string $key, mixed $value): void
     {
         static::updateOrCreate(['key' => $key], ['value' => $value]);
-        Cache::forget("dns_setting_{$key}");
+        try {
+            Cache::forget("dns_setting_{$key}");
+        } catch (\Throwable) {
+            // Best-effort.
+        }
     }
 
     public static function getAll(): array
     {
-        return Cache::remember('dns_settings_all', 3600, function () {
+        try {
+            return Cache::remember('dns_settings_all', 3600, function () {
+                return static::pluck('value', 'key')->toArray();
+            });
+        } catch (\Throwable) {
             return static::pluck('value', 'key')->toArray();
-        });
+        }
     }
 
     public static function clearCache(): void
     {
-        $settings = static::pluck('key');
-        foreach ($settings as $key) {
-            Cache::forget("dns_setting_{$key}");
+        try {
+            $settings = static::pluck('key');
+
+            foreach ($settings as $key) {
+                try {
+                    Cache::forget("dns_setting_{$key}");
+                } catch (\Throwable) {
+                    // Best-effort.
+                }
+            }
+
+            Cache::forget('dns_settings_all');
+        } catch (\Throwable) {
+            // Best-effort.
         }
-        Cache::forget('dns_settings_all');
     }
 }

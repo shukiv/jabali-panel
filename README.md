@@ -11,40 +11,8 @@ This is a release candidate. Expect rapid iteration and breaking changes until 1
 
 ## Demo and Website
 
-- Demo: https://jabali-panel.com/demo/
 - Website: https://jabali-panel.com/
-
-## Highlights
-
-- Per-user Linux accounts and PHP-FPM isolation
-- Root agent for DNS, SSL, mail, backups, and migrations
-- Health monitor with auto-restarts and alerts
-- cPanel and WHM migrations with step-by-step logs
-- Built-in mail stack with webmail SSO
-- DNS templates with optional DNSSEC
-- User and server backups with schedules and retention
-- WordPress management (install, updates, scans, and SSO)
-- Security center with firewall, Fail2ban, ClamAV, and scanners
-- Audit logs and admin notifications
-
-## Screenshots
-
-Admin panel:
-- [Admin Dashboard](docs/screenshots/admin-dashboard.png)
-- [Admin Server Status](docs/screenshots/admin-server-status.png)
-- [Admin Server Settings](docs/screenshots/admin-server-settings.png)
-- [Admin Security](docs/screenshots/admin-security.png)
-- [Admin Users](docs/screenshots/admin-users.png)
-- [Admin SSL Manager](docs/screenshots/admin-ssl-manager.png)
-- [Admin DNS Zones](docs/screenshots/admin-dns-zones.png)
-- [Admin Backups](docs/screenshots/admin-backups.png)
-- [Admin Services](docs/screenshots/admin-services.png)
-
-User panel:
-- [User Dashboard](docs/screenshots/user-dashboard.png)
-- [User Domains](docs/screenshots/user-domains.png)
-- [User Backups](docs/screenshots/user-backups.png)
-- [User cPanel Migration](docs/screenshots/user-cpanel-migration.png)
+- Demo: https://jabali-panel.com/demo/
 
 ## Installation
 
@@ -75,25 +43,18 @@ After install:
 - User panel: `https://your-host/jabali-panel`
 - Webmail: `https://your-host/webmail`
 
-Website: https://jabali-panel.com/
+## Highlights
 
-## Demo
-
-Public demo:
-
-- User panel: https://demo.jabali-panel.com/jabali-panel/
-- Admin panel: https://demo.jabali-panel.com/jabali-admin/
-
-Credentials:
-
-- Admin: `admin@jabali-panel.com` / `demo1234`
-- User: `demo@jabali-panel.com` / `demo1234`
-
-Notes:
-
-- Demo is read-only; actions that change data are blocked.
-- Some pages use static demo data where the privileged agent is unavailable
-  (for example: PHP Manager, PHP Settings, Protected Directories).
+- Per-user Linux accounts and PHP-FPM isolation
+- Root agent for DNS, SSL, mail, backups, and migrations
+- Health monitor with auto-restarts and alerts
+- cPanel and WHM migrations with step-by-step logs
+- Built-in mail stack with webmail SSO
+- DNS templates with optional DNSSEC
+- User and server backups with schedules and retention
+- WordPress management (install, updates, scans, and SSO)
+- Security center with firewall, Fail2ban, ClamAV, and scanners
+- Audit logs and admin notifications
 
 ## Feature Map
 
@@ -204,5 +165,4 @@ MIT
 
 ## Documentation Notes
 
-- Documentation screenshots are generated for all admin and user pages.
-- cPanel Migration tabs (Domains, Databases, Mailboxes, Forwarders, SSL) only render after a backup is analyzed. Provide a sample cPanel backup to capture those tab screenshots.
+- cPanel Migration tabs (Domains, Databases, Mailboxes, Forwarders, SSL) only render after a backup is analyzed.
