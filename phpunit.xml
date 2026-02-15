@@ -19,6 +19,11 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <env name="APP_CONFIG_CACHE" value="/tmp/jabali-config.php"/>
+        <env name="APP_ROUTES_CACHE" value="/tmp/jabali-routes.php"/>
+        <env name="APP_EVENTS_CACHE" value="/tmp/jabali-events.php"/>
+        <env name="APP_SERVICES_CACHE" value="/tmp/jabali-services.php"/>
+        <env name="APP_PACKAGES_CACHE" value="/tmp/jabali-packages.php"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>

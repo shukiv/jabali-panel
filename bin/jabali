@@ -155,6 +155,7 @@ function showHelp(): void
     echo "  " . C_GREEN . "user show <username>" . C_RESET . "          Show user details\n";
     echo "  " . C_GREEN . "user delete <username>" . C_RESET . "        Delete a user\n";
     echo "  " . C_GREEN . "user password <username>" . C_RESET . "      Change user password\n";
+    echo "  " . C_GREEN . "user admin <user|email|id>" . C_RESET . "   Grant admin (use --revoke)\n";
     echo "  " . C_GREEN . "user suspend <username>" . C_RESET . "       Suspend a user\n";
     echo "  " . C_GREEN . "user unsuspend <username>" . C_RESET . "     Unsuspend a user\n\n";
 
@@ -175,6 +176,185 @@ function showHelp(): void
     echo "  " . C_GREEN . "-v, --version" . C_RESET . "                 Show version\n";
     echo "  " . C_GREEN . "-y, --yes" . C_RESET . "                     Auto-confirm prompts\n";
     echo "  " . C_GREEN . "-q, --quiet" . C_RESET . "                   Quiet mode\n\n";
+}
+
+function showUserHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "User Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali user <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list" . C_RESET . "                           List all users\n";
+    echo "  " . C_GREEN . "create <username> --email=<e>" . C_RESET . "     Create a new user\n";
+    echo "  " . C_GREEN . "show <username>" . C_RESET . "                    Show user details\n";
+    echo "  " . C_GREEN . "delete <username>" . C_RESET . "                  Delete a user\n";
+    echo "  " . C_GREEN . "password <username> [--password=<p>]" . C_RESET . "  Change user password\n";
+    echo "  " . C_GREEN . "admin <user|email|id> [--revoke] [--force]" . C_RESET . " Grant/revoke admin\n";
+    echo "  " . C_GREEN . "suspend <username>" . C_RESET . "                 Suspend a user\n";
+    echo "  " . C_GREEN . "unsuspend <username>" . C_RESET . "               Unsuspend a user\n\n";
+
+    echo C_DIM . "Tip: add -y / --yes to auto-confirm prompts.\n\n" . C_RESET;
+}
+
+function isHelpSubcommand(string $subcommand): bool
+{
+    return $subcommand === '' || $subcommand === 'help' || $subcommand === '--help' || $subcommand === '-h';
+}
+
+function showDomainHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Domain Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali domain <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list [--user=<username>]" . C_RESET . "         List domains\n";
+    echo "  " . C_GREEN . "create <domain> --user=<username>" . C_RESET . " Create a domain\n";
+    echo "  " . C_GREEN . "show <domain>" . C_RESET . "                     Show domain details\n";
+    echo "  " . C_GREEN . "delete <domain>" . C_RESET . "                   Delete a domain\n";
+    echo "  " . C_GREEN . "enable <domain>" . C_RESET . "                   Enable a domain\n";
+    echo "  " . C_GREEN . "disable <domain>" . C_RESET . "                  Disable a domain\n\n";
+
+    echo C_DIM . "Tip: run `jabali --help-full` for the full command list.\n\n" . C_RESET;
+}
+
+function showServiceHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Service Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali service <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list" . C_RESET . "                           List services\n";
+    echo "  " . C_GREEN . "status <name>" . C_RESET . "                    Show status\n";
+    echo "  " . C_GREEN . "start <name>" . C_RESET . "                     Start service\n";
+    echo "  " . C_GREEN . "stop <name>" . C_RESET . "                      Stop service\n";
+    echo "  " . C_GREEN . "restart <name>" . C_RESET . "                   Restart service\n";
+    echo "  " . C_GREEN . "enable <name>" . C_RESET . "                    Enable on boot\n";
+    echo "  " . C_GREEN . "disable <name>" . C_RESET . "                   Disable on boot\n\n";
+}
+
+function showWordPressHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "WordPress Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali wp <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list <username>" . C_RESET . "                   List WordPress sites\n";
+    echo "  " . C_GREEN . "install <username> <domain>" . C_RESET . "       Install WordPress\n";
+    echo "  " . C_GREEN . "scan <username>" . C_RESET . "                   Scan for WordPress sites\n";
+    echo "  " . C_GREEN . "import <username> <path>" . C_RESET . "         Import WordPress\n";
+    echo "  " . C_GREEN . "update <username> <site_id>" . C_RESET . "      Update WordPress\n";
+    echo "  " . C_GREEN . "delete <username> <site_id>" . C_RESET . "      Delete WordPress\n\n";
+}
+
+function showDatabaseHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Database Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali db <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list [--user=<username>]" . C_RESET . "         List databases\n";
+    echo "  " . C_GREEN . "create <name> [--user=<username>]" . C_RESET . " Create database\n";
+    echo "  " . C_GREEN . "delete <name>" . C_RESET . "                    Delete database\n";
+    echo "  " . C_GREEN . "users [--user=<username>]" . C_RESET . "        List db users\n";
+    echo "  " . C_GREEN . "user-create <name> [--password=<p>] [--host=<h>]" . C_RESET . " Create db user\n";
+    echo "  " . C_GREEN . "user-delete <name> [--host=<h>]" . C_RESET . "  Delete db user\n\n";
+}
+
+function showEmailHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Email Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali mail <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list [--domain=<domain>]" . C_RESET . "        List mailboxes\n";
+    echo "  " . C_GREEN . "create <email> [--password=<p>] [--quota=<mb>]" . C_RESET . " Create mailbox\n";
+    echo "  " . C_GREEN . "delete <email>" . C_RESET . "                    Delete mailbox\n";
+    echo "  " . C_GREEN . "password <email> [--password=<p>]" . C_RESET . " Change mailbox password\n";
+    echo "  " . C_GREEN . "quota <email> <mb>" . C_RESET . "               Set mailbox quota\n";
+    echo "  " . C_GREEN . "domains" . C_RESET . "                         List mail domains\n\n";
+}
+
+function showBackupHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Backup Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali backup <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list [--user=<username>]" . C_RESET . "         List backups\n";
+    echo "  " . C_GREEN . "create <username>" . C_RESET . "                 Create user backup\n";
+    echo "  " . C_GREEN . "restore <path> [--user=<username>]" . C_RESET . " Restore backup\n";
+    echo "  " . C_GREEN . "info <path>" . C_RESET . "                      Show backup info\n";
+    echo "  " . C_GREEN . "verify <path>" . C_RESET . "                    Verify backup\n";
+    echo "  " . C_GREEN . "server" . C_RESET . "                          Create server backup\n";
+    echo "  " . C_GREEN . "history" . C_RESET . "                         Show backup history\n";
+    echo "  " . C_GREEN . "schedules" . C_RESET . "                       List schedules\n";
+    echo "  " . C_GREEN . "destinations" . C_RESET . "                    List destinations\n\n";
+}
+
+function showCpanelHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "cPanel Migration" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali cpanel <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "analyze <file>" . C_RESET . "                 Analyze a cPanel backup\n";
+    echo "  " . C_GREEN . "restore <file> <username>" . C_RESET . "      Restore a cPanel backup\n";
+    echo "  " . C_GREEN . "fix-permissions <file>" . C_RESET . "        Fix backup file permissions\n\n";
+}
+
+function showSystemHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "System Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali system <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "info" . C_RESET . "                           System information\n";
+    echo "  " . C_GREEN . "status" . C_RESET . "                         Services status\n";
+    echo "  " . C_GREEN . "hostname [name]" . C_RESET . "                Get/set hostname\n";
+    echo "  " . C_GREEN . "disk" . C_RESET . "                           Disk usage\n";
+    echo "  " . C_GREEN . "memory" . C_RESET . "                         Memory usage\n\n";
+}
+
+function showAgentHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Agent Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali agent <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "status" . C_RESET . "                         Agent status\n";
+    echo "  " . C_GREEN . "start" . C_RESET . "                          Start agent\n";
+    echo "  " . C_GREEN . "stop" . C_RESET . "                           Stop agent\n";
+    echo "  " . C_GREEN . "restart" . C_RESET . "                        Restart agent\n";
+    echo "  " . C_GREEN . "ping" . C_RESET . "                           Ping agent\n";
+    echo "  " . C_GREEN . "log [--lines=N]" . C_RESET . "                View logs\n\n";
+}
+
+function showPhpHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "PHP Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali php <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "list" . C_RESET . "                           List PHP versions\n";
+    echo "  " . C_GREEN . "install <ver>" . C_RESET . "                   Install PHP\n";
+    echo "  " . C_GREEN . "uninstall <ver>" . C_RESET . "                 Uninstall PHP\n";
+    echo "  " . C_GREEN . "default [ver]" . C_RESET . "                   Get/set default\n";
+    echo "  " . C_GREEN . "status" . C_RESET . "                         PHP-FPM status\n\n";
+}
+
+function showFirewallHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Firewall Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali firewall <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "status" . C_RESET . "                         Show status\n";
+    echo "  " . C_GREEN . "enable" . C_RESET . "                         Enable firewall\n";
+    echo "  " . C_GREEN . "disable" . C_RESET . "                        Disable firewall\n";
+    echo "  " . C_GREEN . "rules" . C_RESET . "                          List rules\n";
+    echo "  " . C_GREEN . "allow <port>" . C_RESET . "                    Allow port\n";
+    echo "  " . C_GREEN . "deny <port>" . C_RESET . "                     Deny port\n";
+    echo "  " . C_GREEN . "delete <rule>" . C_RESET . "                   Delete rule\n\n";
+}
+
+function showSslHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "SSL Management" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali ssl <subcommand> [options]\n\n";
+
+    echo "  " . C_GREEN . "check" . C_RESET . "                          Check/issue/renew certs\n";
+    echo "  " . C_GREEN . "issue <domain>" . C_RESET . "                  Issue certificate\n";
+    echo "  " . C_GREEN . "renew <domain>" . C_RESET . "                  Renew certificate\n";
+    echo "  " . C_GREEN . "status <domain>" . C_RESET . "                 Show cert status\n";
+    echo "  " . C_GREEN . "list" . C_RESET . "                           List certificates\n\n";
 }
 
 function showHelpFull(): void
@@ -202,6 +382,7 @@ function showHelpFull(): void
     $printRow(C_GREEN . "user show <user>" . C_RESET . " - Show details", C_GREEN . "domain show <d>" . C_RESET . " - Show details");
     $printRow(C_GREEN . "user delete <user>" . C_RESET . " - Delete user", C_GREEN . "domain delete <d>" . C_RESET . " - Delete domain");
     $printRow(C_GREEN . "user password <user>" . C_RESET . " - Set password", C_GREEN . "domain enable <d>" . C_RESET . " - Enable domain");
+    $printRow(C_GREEN . "user admin <u>" . C_RESET . " - Grant admin", "");
     $printRow(C_GREEN . "user suspend <user>" . C_RESET . " - Suspend", C_GREEN . "domain disable <d>" . C_RESET . " - Disable domain");
     $printRow(C_GREEN . "user unsuspend <user>" . C_RESET . " - Unsuspend", "");
     echo "\n";
@@ -436,6 +617,11 @@ function table(array $headers, array $rows): void
 
 function handleUser(string $subcommand, array $options): void
 {
+    if ($subcommand === '' || $subcommand === 'help' || $subcommand === '--help' || $subcommand === '-h') {
+        showUserHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'list':
             $users = App\Models\User::all();
@@ -560,6 +746,60 @@ function handleUser(string $subcommand, array $options): void
             success("Password updated for '$username'");
             break;
 
+        case 'admin':
+            $identifier = $options['_args'][0] ?? null;
+            if (!$identifier) {
+                error("User identifier is required (username, email, or ID)");
+                exit(1);
+            }
+
+            $revoke = isset($options['revoke']);
+            $makeAdmin = !$revoke;
+
+            $userQuery = App\Models\User::query();
+            if (ctype_digit((string) $identifier)) {
+                $userQuery->where('id', (int) $identifier);
+            } elseif (str_contains((string) $identifier, '@')) {
+                $userQuery->where('email', (string) $identifier);
+            } else {
+                $userQuery->where('username', (string) $identifier)
+                    ->orWhere('name', (string) $identifier);
+            }
+
+            $user = $userQuery->first();
+            if (!$user) {
+                error("User not found: $identifier");
+                exit(1);
+            }
+
+            $label = $user->username ?? $user->name ?? $user->email ?? ('User #' . $user->id);
+
+            if ((bool) $user->is_admin === (bool) $makeAdmin) {
+                info($makeAdmin ? "User '$label' is already an admin" : "User '$label' is already a regular user");
+                exit(0);
+            }
+
+            if ($revoke) {
+                $adminCount = App\Models\User::where('is_admin', true)->count();
+                if ($adminCount <= 1 && !isset($options['force'])) {
+                    error("Refusing to revoke admin from the last admin user.");
+                    info("Re-run with --force if you really want to do this.");
+                    exit(1);
+                }
+            }
+
+            $action = $makeAdmin ? 'grant admin access to' : 'revoke admin access from';
+            if (!confirm("Are you sure you want to {$action} '{$label}'?", $options)) {
+                info("Operation cancelled");
+                exit(0);
+            }
+
+            $user->is_admin = $makeAdmin;
+            $user->save();
+
+            success($makeAdmin ? "User '$label' is now an admin" : "User '$label' is no longer an admin");
+            break;
+
         case 'suspend':
             $username = $options['_args'][0] ?? null;
             if (!$username) {
@@ -603,6 +843,11 @@ function handleUser(string $subcommand, array $options): void
 
 function handleDomain(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showDomainHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'list':
             $query = App\Models\Domain::with('user');
@@ -736,6 +981,7 @@ function handleDomain(string $subcommand, array $options): void
 
         default:
             error("Unknown domain command: $subcommand");
+            echo "Run 'jabali domain --help' for available commands.\n";
             exit(1);
     }
 }
@@ -744,6 +990,11 @@ function handleDomain(string $subcommand, array $options): void
 
 function handleService(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showServiceHelp();
+        exit(0);
+    }
+
     $services = [
         'nginx', 'mariadb', 'redis-server', 'postfix', 'dovecot',
         'rspamd', 'clamav-daemon', 'named', 'opendkim', 'fail2ban',
@@ -876,6 +1127,7 @@ function handleService(string $subcommand, array $options): void
 
         default:
             error("Unknown service command: $subcommand");
+            echo "Run 'jabali service --help' for available commands.\n";
             exit(1);
     }
 }
@@ -884,6 +1136,11 @@ function handleService(string $subcommand, array $options): void
 
 function handleWordPress(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showWordPressHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'list':
             $username = $options['_args'][0] ?? null;
@@ -1033,6 +1290,7 @@ function handleWordPress(string $subcommand, array $options): void
 
         default:
             error("Unknown WordPress command: $subcommand");
+            echo "Run 'jabali wp --help' for available commands.\n";
             exit(1);
     }
 }
@@ -1041,6 +1299,11 @@ function handleWordPress(string $subcommand, array $options): void
 
 function handleDatabase(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showDatabaseHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'list':
             $username = $options['user'] ?? null;
@@ -1157,6 +1420,7 @@ function handleDatabase(string $subcommand, array $options): void
 
         default:
             error("Unknown database command: $subcommand");
+            echo "Run 'jabali db --help' for available commands.\n";
             exit(1);
     }
 }
@@ -1165,6 +1429,11 @@ function handleDatabase(string $subcommand, array $options): void
 
 function handleEmail(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showEmailHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'list':
             $query = App\Models\Mailbox::query();
@@ -1350,6 +1619,7 @@ function handleEmail(string $subcommand, array $options): void
 
         default:
             error("Unknown email command: $subcommand");
+            echo "Run 'jabali mail --help' for available commands.\n";
             exit(1);
     }
 }
@@ -1358,6 +1628,10 @@ function handleEmail(string $subcommand, array $options): void
 
 function handleBackup(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        $subcommand = 'help';
+    }
+
     $backupDir = '/var/backups/jabali';
 
     switch ($subcommand) {
@@ -2396,7 +2670,7 @@ function handleBackup(string $subcommand, array $options): void
 
         default:
             error("Unknown backup command: $subcommand");
-            echo "Run 'jabali backup help' for usage.\n";
+            echo "Run 'jabali backup --help' for available commands.\n";
             exit(1);
     }
 }
@@ -2406,6 +2680,10 @@ function handleBackup(string $subcommand, array $options): void
 function handleCpanel(string $subcommand, array $options): void
 {
     $defaultDir = '/var/backups/jabali/cpanel-migrations';
+
+    if (isHelpSubcommand($subcommand)) {
+        $subcommand = 'help';
+    }
 
     switch ($subcommand) {
         case 'analyze':
@@ -2582,7 +2860,7 @@ function handleCpanel(string $subcommand, array $options): void
 
         default:
             error("Unknown cPanel command: $subcommand");
-            echo "Run 'jabali cpanel help' for usage.\n";
+            echo "Run 'jabali cpanel --help' for available commands.\n";
             exit(1);
     }
 }
@@ -2742,6 +3020,11 @@ function statusColor(string $status): string
 
 function handleSystem(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showSystemHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'info':
             $result = agentSend('server.info', []);
@@ -2825,6 +3108,7 @@ function handleSystem(string $subcommand, array $options): void
 
         default:
             error("Unknown system command: $subcommand");
+            echo "Run 'jabali system --help' for available commands.\n";
             exit(1);
     }
 }
@@ -2833,6 +3117,11 @@ function handleSystem(string $subcommand, array $options): void
 
 function handleAgent(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showAgentHelp();
+        exit(0);
+    }
+
     $agentScript = JABALI_ROOT . '/bin/jabali-agent';
     $pidFile = '/var/run/jabali/agent.pid';
 
@@ -2913,6 +3202,7 @@ function handleAgent(string $subcommand, array $options): void
 
         default:
             error("Unknown agent command: $subcommand");
+            echo "Run 'jabali agent --help' for available commands.\n";
             exit(1);
     }
 }
@@ -2921,6 +3211,11 @@ function handleAgent(string $subcommand, array $options): void
 
 function handlePhp(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showPhpHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'list':
             $result = agentSend('php.list_versions', []);
@@ -3016,6 +3311,7 @@ function handlePhp(string $subcommand, array $options): void
 
         default:
             error("Unknown PHP command: $subcommand");
+            echo "Run 'jabali php --help' for available commands.\n";
             exit(1);
     }
 }
@@ -3024,6 +3320,11 @@ function handlePhp(string $subcommand, array $options): void
 
 function handleFirewall(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        showFirewallHelp();
+        exit(0);
+    }
+
     switch ($subcommand) {
         case 'status':
             $result = agentSend('ufw.status', []);
@@ -3129,12 +3430,17 @@ function handleFirewall(string $subcommand, array $options): void
 
         default:
             error("Unknown firewall command: $subcommand");
+            echo "Run 'jabali firewall --help' for available commands.\n";
             exit(1);
     }
 }
 
 function handleSsl(string $subcommand, array $options): void
 {
+    if (isHelpSubcommand($subcommand)) {
+        $subcommand = 'help';
+    }
+
     switch ($subcommand) {
         case 'check':
             $domain = $options['_args'][0] ?? null;
@@ -3274,7 +3580,7 @@ function handleSsl(string $subcommand, array $options): void
 
         default:
             error("Unknown ssl command: $subcommand");
-            echo "Run 'jabali ssl help' for usage information.\n";
+            echo "Run 'jabali ssl --help' for available commands.\n";
             exit(1);
     }
 }
