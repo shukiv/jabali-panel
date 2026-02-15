@@ -31,10 +31,8 @@ class AuthenticationTest extends TestCase
         $user = User::factory()->create();
 
         Livewire::test(Login::class)
-            ->fillForm([
-                'email' => $user->email,
-                'password' => 'password',
-            ])
+            ->set('data.email', $user->email)
+            ->set('data.password', 'password')
             ->call('authenticate')
             ->assertHasNoFormErrors()
             ->assertRedirect('/jabali-panel');
@@ -45,10 +43,8 @@ class AuthenticationTest extends TestCase
         $user = User::factory()->create();
 
         Livewire::test(Login::class)
-            ->fillForm([
-                'email' => $user->email,
-                'password' => 'wrong-password',
-            ])
+            ->set('data.email', $user->email)
+            ->set('data.password', 'wrong-password')
             ->call('authenticate')
             ->assertHasFormErrors(['email']);
     }
@@ -58,10 +54,8 @@ class AuthenticationTest extends TestCase
         $user = User::factory()->inactive()->create();
 
         Livewire::test(Login::class)
-            ->fillForm([
-                'email' => $user->email,
-                'password' => 'password',
-            ])
+            ->set('data.email', $user->email)
+            ->set('data.password', 'password')
             ->call('authenticate')
             ->assertHasFormErrors(['email']);
     }

@@ -19,6 +19,9 @@ Route::get('/register', function () {
     return redirect('/jabali-panel/register');
 });
 
+// Backward-compatible alias: the "System Updates" page lives at /jabali-admin/server-updates.
+Route::redirect('/jabali-admin/system-updates', '/jabali-admin/server-updates');
+
 /*
 |--------------------------------------------------------------------------
 | Two-Factor Authentication Challenge

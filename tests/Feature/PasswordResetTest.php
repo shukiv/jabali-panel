@@ -33,8 +33,10 @@ class PasswordResetTest extends TestCase
         Notification::fake();
 
         $user = User::factory()->create();
+        $token = 'test';
 
-        $this->post('/forgot-password', [
+        $this->withSession(['_token' => $token])->post('/forgot-password', [
+            '_token' => $token,
             'email' => $user->email,
         ]);
 
@@ -50,8 +52,10 @@ class PasswordResetTest extends TestCase
         Notification::fake();
 
         $user = User::factory()->create();
+        $token = 'test';
 
-        $this->post('/forgot-password', [
+        $this->withSession(['_token' => $token])->post('/forgot-password', [
+            '_token' => $token,
             'email' => $user->email,
         ]);
 
@@ -73,13 +77,18 @@ class PasswordResetTest extends TestCase
         Notification::fake();
 
         $user = User::factory()->create();
+        $token = 'test';
 
-        $this->post('/forgot-password', [
+        $this->withSession(['_token' => $token])->post('/forgot-password', [
+            '_token' => $token,
             'email' => $user->email,
         ]);
 
         Notification::assertSentTo($user, ResetPassword::class, function (object $notification) use ($user) {
-            $response = $this->post('/reset-password', [
+            $token = 'test';
+
+            $response = $this->withSession(['_token' => $token])->post('/reset-password', [
+                '_token' => $token,
                 'token' => $notification->token,
                 'email' => $user->email,
                 'password' => 'password',
