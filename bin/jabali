@@ -120,14 +120,65 @@ exit(0);
 function parseOptions(array $args): array
 {
     $options = ['_args' => []];
-    foreach ($args as $arg) {
+    $valueOptions = [
+        'access-key',
+        'admin',
+        'analysis-timeout',
+        'backup-type',
+        'bucket',
+        'date',
+        'day',
+        'dest',
+        'destination',
+        'domain',
+        'domains',
+        'email',
+        'file',
+        'frequency',
+        'host',
+        'incremental-base',
+        'key',
+        'limit',
+        'lines',
+        'log',
+        'mailboxes',
+        'mount',
+        'name',
+        'output',
+        'password',
+        'path',
+        'port',
+        'quota',
+        'region',
+        'retention',
+        'secret',
+        'secret-key',
+        'status',
+        'time',
+        'timeout',
+        'title',
+        'type',
+        'user',
+        'username',
+        'users',
+    ];
+
+    for ($i = 0; $i < count($args); $i++) {
+        $arg = $args[$i];
         if (strpos($arg, '--') === 0) {
             $arg = substr($arg, 2);
             if (strpos($arg, '=') !== false) {
                 [$key, $value] = explode('=', $arg, 2);
                 $options[$key] = $value;
             } else {
-                $options[$arg] = true;
+                $key = $arg;
+                $next = $args[$i + 1] ?? null;
+                if (in_array($key, $valueOptions, true) && is_string($next) && $next !== '' && strpos($next, '-') !== 0) {
+                    $options[$key] = $next;
+                    $i++;
+                } else {
+                    $options[$key] = true;
+                }
             }
         } elseif (strpos($arg, '-') === 0) {
             $options[substr($arg, 1)] = true;
@@ -485,14 +536,18 @@ function confirm(string $message, array $options): bool
 function prompt(string $message, bool $hidden = false): string
 {
     echo $message . ": ";
-    if ($hidden) {
-        system('stty -echo');
+    $hasTty = true;
+    if (function_exists('posix_isatty')) {
+        $hasTty = posix_isatty(STDIN);
+    }
+    if ($hidden && $hasTty) {
+        system('stty -echo 2>/dev/null');
     }
     $handle = fopen("php://stdin", "r");
     $line = trim(fgets($handle));
     fclose($handle);
-    if ($hidden) {
-        system('stty echo');
+    if ($hidden && $hasTty) {
+        system('stty echo 2>/dev/null');
         echo "\n";
     }
     return $line;
@@ -645,9 +700,16 @@ function handleUser(string $subcommand, array $options): void
                 error("Username is required");
                 exit(1);
             }
-            $email = $options['email'] ?? prompt("Email");
-            if (isset($options['password'])) {
-                $password = $options['password'];
+            $emailOpt = $options['email'] ?? null;
+            $email = is_string($emailOpt) ? $emailOpt : prompt("Email");
+            if (!is_string($email) || trim($email) === '' || $email === '1') {
+                error("Valid email is required");
+                exit(1);
+            }
+
+            $passwordOpt = $options['password'] ?? null;
+            if (is_string($passwordOpt)) {
+                $password = $passwordOpt;
                 if ($err = validatePassword($password)) { error($err); exit(1); }
             } else {
                 $password = promptPassword("Password");
@@ -656,16 +718,49 @@ function handleUser(string $subcommand, array $options): void
             // Create system user via agent
             $result = agentSend('user.create', ['username' => $username, 'password' => $password]);
             if (!($result['success'] ?? false)) {
-                error("Failed to create system user: " . ($result['error'] ?? 'Unknown error'));
-                exit(1);
+                $agentError = (string) ($result['error'] ?? 'Unknown error');
+                if (stripos($agentError, 'already exists') !== false) {
+                    warning("System user '$username' already exists; continuing with panel user record.");
+                    // Best-effort: keep system + panel passwords in sync.
+                    agentSend('user.password', ['username' => $username, 'password' => $password]);
+                } else {
+                    error("Failed to create system user: " . $agentError);
+                    exit(1);
+                }
             }
 
-            // Create database user
+            $panelUser = App\Models\User::where('username', $username)
+                ->orWhere('name', $username)
+                ->orWhere('email', $email)
+                ->first();
+
+            if ($panelUser) {
+                if (!isset($options['force'])) {
+                    warning("Panel user already exists for '$username' (ID: {$panelUser->id}).");
+                    info("Re-run with --force to update email/password.");
+                    exit(1);
+                }
+
+                $panelUser->name = $panelUser->name ?: $username;
+                $panelUser->username = $panelUser->username ?: $username;
+                $panelUser->email = $email;
+                $panelUser->password = bcrypt($password);
+                $panelUser->save();
+
+                success("User '$username' updated successfully (ID: {$panelUser->id})");
+                break;
+            }
+
+            // Create panel user record
+            $isFirstUser = App\Models\User::count() === 0;
+            $isAdmin = $isFirstUser || isset($options['admin']);
+
             $user = App\Models\User::create([
                 'name' => $username,
                 'username' => $username,
                 'email' => $email,
                 'password' => bcrypt($password),
+                'is_admin' => $isAdmin,
             ]);
 
             success("User '$username' created successfully (ID: {$user->id})");
