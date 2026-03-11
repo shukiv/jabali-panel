@@ -961,6 +961,31 @@ class Email extends Page implements HasActions, HasForms, HasTable
             } catch (Exception $e) {
                 // DKIM generation failed, but email can still work
             }
+
+            // Create autoconfig/autodiscover A records and SRV records
+            $serverIp = ServerFacts::serverIp('127.0.0.1');
+            $defaultTtl = 3600;
+
+            $autoconfigRecords = [
+                ['name' => 'autoconfig', 'type' => 'A', 'content' => $serverIp, 'ttl' => $defaultTtl],
+                ['name' => 'autodiscover', 'type' => 'A', 'content' => $serverIp, 'ttl' => $defaultTtl],
+                ['name' => '_imaps._tcp', 'type' => 'SRV', 'content' => "1 993 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0],
+                ['name' => '_pop3s._tcp', 'type' => 'SRV', 'content' => "1 995 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0],
+                ['name' => '_submission._tcp', 'type' => 'SRV', 'content' => "1 587 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0],
+            ];
+
+            foreach ($autoconfigRecords as $record) {
+                DnsRecord::firstOrCreate(
+                    [
+                        'domain_id' => $domain->id,
+                        'name' => $record['name'],
+                        'type' => $record['type'],
+                    ],
+                    $record
+                );
+            }
+
+            $this->regenerateDnsZone($domain);
         }
 
         return $emailDomain;

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\DnsSetting;
 use App\Models\EmailDomain;
-use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
@@ -26,20 +26,24 @@ class AutoconfigController extends Controller
     {
         $email = $this->normalizeEmail($request->query('emailaddress'));
 
-        if (! $email) {
-            return response('Email parameter required', 400);
+        if ($email) {
+            $parts = explode('@', $email);
+            if (count($parts) !== 2) {
+                return response('Invalid email address', 400);
+            }
+            $domain = $parts[1];
+        } else {
+            // Extract domain from Host header (strip autoconfig. prefix)
+            $host = $request->getHost();
+            $domain = preg_replace('/^autoconfig\./i', '', $host);
+            if (! $domain || ! $this->isValidDomain($domain)) {
+                return response('Email parameter required', 400);
+            }
         }
-
-        $parts = explode('@', $email);
-        if (count($parts) !== 2) {
-            return response('Invalid email address', 400);
-        }
-
-        $domain = $parts[1];
 
         // Check if domain is managed
         $emailDomain = EmailDomain::whereHas('domain', function ($query) use ($domain) {
-            $query->where('domain_name', $domain);
+            $query->where('domain', $domain);
         })->where('is_active', true)->first();
 
         if (! $emailDomain) {
@@ -47,7 +51,7 @@ class AutoconfigController extends Controller
         }
 
         $mailServer = $this->getMailServer($emailDomain);
-        $displayName = Setting::get('webmail_product_name', 'Jabali Mail');
+        $displayName = DnsSetting::get('webmail_product_name', 'Jabali Mail');
 
         return $this->autoconfigResponse($domain, $mailServer, $displayName);
     }
@@ -63,7 +67,7 @@ class AutoconfigController extends Controller
         }
 
         $emailDomain = EmailDomain::whereHas('domain', function ($query) use ($domain) {
-            $query->where('domain_name', $domain);
+            $query->where('domain', $domain);
         })->where('is_active', true)->first();
 
         if (! $emailDomain) {
@@ -71,7 +75,7 @@ class AutoconfigController extends Controller
         }
 
         $mailServer = $this->getMailServer($emailDomain);
-        $displayName = Setting::get('webmail_product_name', 'Jabali Mail');
+        $displayName = DnsSetting::get('webmail_product_name', 'Jabali Mail');
 
         return $this->autoconfigResponse($domain, $mailServer, $displayName);
     }
@@ -98,7 +102,7 @@ class AutoconfigController extends Controller
         }
 
         $emailDomain = EmailDomain::whereHas('domain', function ($query) use ($domain) {
-            $query->where('domain_name', $domain);
+            $query->where('domain', $domain);
         })->where('is_active', true)->first();
 
         if (! $emailDomain) {
@@ -106,7 +110,7 @@ class AutoconfigController extends Controller
         }
 
         $mailServer = $this->getMailServer($emailDomain);
-        $displayName = Setting::get('webmail_product_name', 'Jabali Mail');
+        $displayName = DnsSetting::get('webmail_product_name', 'Jabali Mail');
         $escapedDomain = $this->escapeXml($domain);
         $escapedEmail = $this->escapeXml($email);
         $escapedMailServer = $this->escapeXml($mailServer);
@@ -202,13 +206,13 @@ MOBILECONFIG;
      */
     private function getMailServer(EmailDomain $emailDomain): string
     {
-        $hostname = Setting::get('mail_hostname');
+        $hostname = DnsSetting::get('mail_hostname');
 
         if ($hostname) {
             return $hostname;
         }
 
-        return 'mail.'.$emailDomain->domain->domain_name;
+        return 'mail.'.$emailDomain->domain_name;
     }
 
     /**

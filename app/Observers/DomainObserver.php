@@ -72,6 +72,15 @@ class DomainObserver
             $defaultRecords[] = ['name' => 'mail', 'type' => 'AAAA', 'content' => $defaultIpv6, 'ttl' => $defaultTtl];
         }
 
+        // Autoconfig/Autodiscover A records
+        $defaultRecords[] = ['name' => 'autoconfig', 'type' => 'A', 'content' => $defaultIp, 'ttl' => $defaultTtl];
+        $defaultRecords[] = ['name' => 'autodiscover', 'type' => 'A', 'content' => $defaultIp, 'ttl' => $defaultTtl];
+
+        // SRV records for mail client auto-discovery
+        $defaultRecords[] = ['name' => '_imaps._tcp', 'type' => 'SRV', 'content' => "1 993 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0];
+        $defaultRecords[] = ['name' => '_pop3s._tcp', 'type' => 'SRV', 'content' => "1 995 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0];
+        $defaultRecords[] = ['name' => '_submission._tcp', 'type' => 'SRV', 'content' => "1 587 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0];
+
         $defaultRecords = $this->appendNameserverRecords(
             $defaultRecords,
             $domain->domain,
