@@ -352,9 +352,12 @@ EOF
     echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${codename} main" > /etc/apt/sources.list.d/php.list
 
     # Add NodeJS repository
-    if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]]; then
+    if [[ ! -f /usr/share/keyrings/nodesource.gpg ]]; then
         info "Adding NodeJS repository..."
-        curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - > /dev/null 2>&1
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/nodesource.gpg 2>/dev/null || true
+        echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+        # Clean up DEB822 format file if it exists (from previous setup script)
+        rm -f /etc/apt/sources.list.d/nodesource.sources
     fi
 
     # Add MariaDB repository (optional, system version usually fine)
@@ -1514,7 +1517,7 @@ SUBMISSION
 # Authentication for SQL users - Jabali Panel
 # Dovecot 2.4 configuration format
 
-driver = sqlite
+sql_driver = sqlite
 sqlite_path = /var/www/jabali/database/database.sqlite
 
 passdb sql {
@@ -3670,6 +3673,7 @@ uninstall() {
     rm -f /usr/share/keyrings/sury-php.gpg
     # NodeSource repository
     rm -f /etc/apt/sources.list.d/nodesource.list
+    rm -f /etc/apt/sources.list.d/nodesource.sources
     rm -f /usr/share/keyrings/nodesource.gpg
     # Jabali contrib repository
     rm -f /etc/apt/sources.list.d/jabali-contrib.list
