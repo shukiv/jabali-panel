@@ -81,6 +81,15 @@ class DomainObserver
         $defaultRecords[] = ['name' => '_pop3s._tcp', 'type' => 'SRV', 'content' => "1 995 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0];
         $defaultRecords[] = ['name' => '_submission._tcp', 'type' => 'SRV', 'content' => "1 587 mail.{$domain->domain}.", 'ttl' => $defaultTtl, 'priority' => 0];
 
+        // Add server hostname A record if this domain is the server's base domain
+        $hostnameLabel = $this->getServerHostnameLabel($domain->domain);
+        if ($hostnameLabel !== null) {
+            $defaultRecords[] = ['name' => $hostnameLabel, 'type' => 'A', 'content' => $defaultIp, 'ttl' => $defaultTtl];
+            if (! empty($defaultIpv6)) {
+                $defaultRecords[] = ['name' => $hostnameLabel, 'type' => 'AAAA', 'content' => $defaultIpv6, 'ttl' => $defaultTtl];
+            }
+        }
+
         $defaultRecords = $this->appendNameserverRecords(
             $defaultRecords,
             $domain->domain,
@@ -124,6 +133,26 @@ class DomainObserver
     protected function getServerHostname(): string
     {
         return gethostname() ?: 'localhost';
+    }
+
+    /**
+     * If the server FQDN is a subdomain of the given domain, return the hostname label.
+     * E.g., FQDN "web02.example.com" + domain "example.com" → "web02"
+     * Returns null if the domain doesn't match or there's no subdomain part.
+     */
+    protected function getServerHostnameLabel(string $domain): ?string
+    {
+        $fqdn = $this->getServerHostname();
+        $suffix = '.'.$domain;
+
+        if (str_ends_with($fqdn, $suffix)) {
+            $label = substr($fqdn, 0, -strlen($suffix));
+            if ($label !== '' && ! str_contains($label, '.')) {
+                return $label;
+            }
+        }
+
+        return null;
     }
 
     protected function getServerIp(): string
