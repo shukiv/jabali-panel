@@ -9,6 +9,7 @@ use App\Models\DnsRecord;
 use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\ServerFacts;
 use Exception;
 use Illuminate\Support\Facades\Log;
 
@@ -118,9 +119,7 @@ class DomainObserver
 
     protected function getServerIp(): string
     {
-        $ip = trim(shell_exec("hostname -I | awk '{print $1}'") ?? '');
-
-        return $ip ?: '127.0.0.1';
+        return ServerFacts::serverIp('127.0.0.1');
     }
 
     /**

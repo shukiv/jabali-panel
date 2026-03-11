@@ -9,6 +9,7 @@ use App\Models\DnsRecord;
 use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -565,7 +566,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
             DnsRecord::where('domain_id', $this->selectedDomainId)->delete();
 
             $settings = DnsSetting::getAll();
-            $serverIp = $domain->ip_address ?: ($settings['default_ip'] ?? trim(shell_exec("hostname -I | awk '{print $1}'") ?? '') ?: '127.0.0.1');
+            $serverIp = $domain->ip_address ?: ($settings['default_ip'] ?? ServerFacts::serverIp('127.0.0.1'));
             $serverIpv6 = $domain->ipv6_address ?: ($settings['default_ipv6'] ?? null);
             $ns1 = $settings['ns1'] ?? 'ns1.'.$domain->domain;
             $ns2 = $settings['ns2'] ?? 'ns2.'.$domain->domain;
@@ -723,7 +724,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
     protected function getTemplateRecords(string $template, Domain $domain, ?string $verificationCode): array
     {
         $settings = DnsSetting::getAll();
-        $serverIp = $domain->ip_address ?: ($settings['default_ip'] ?? trim(shell_exec("hostname -I | awk '{print $1}'") ?? '') ?: '127.0.0.1');
+        $serverIp = $domain->ip_address ?: ($settings['default_ip'] ?? ServerFacts::serverIp('127.0.0.1'));
         $serverIpv6 = $domain->ipv6_address ?: ($settings['default_ipv6'] ?? null);
         $domainName = $domain->domain;
 
@@ -781,7 +782,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
         try {
             $records = DnsRecord::whereHas('domain', fn ($q) => $q->where('domain', $domain))->get();
             $settings = DnsSetting::getAll();
-            $defaultIp = $settings['default_ip'] ?? trim(shell_exec("hostname -I | awk '{print $1}'") ?? '') ?: '127.0.0.1';
+            $defaultIp = $settings['default_ip'] ?? ServerFacts::serverIp('127.0.0.1');
             $this->getAgent()->send('dns.sync_zone', [
                 'domain' => $domain,
                 'records' => $records->toArray(),

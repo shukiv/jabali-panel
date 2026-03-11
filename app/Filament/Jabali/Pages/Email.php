@@ -14,6 +14,7 @@ use App\Models\Mailbox;
 use App\Models\UserSetting;
 use App\Services\Agent\AgentClient;
 use App\Services\System\MailRoutingSyncService;
+use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -982,7 +983,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
             $records = DnsRecord::where('domain_id', $domain->id)->get()->toArray();
             $settings = \App\Models\DnsSetting::getAll();
             $hostname = gethostname() ?: 'localhost';
-            $serverIp = trim(shell_exec("hostname -I | awk '{print \$1}'") ?? '') ?: '127.0.0.1';
+            $serverIp = ServerFacts::serverIp('127.0.0.1');
             $serverIpv6 = $settings['default_ipv6'] ?? null;
 
             $this->getAgent()->send('dns.sync_zone', [

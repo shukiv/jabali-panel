@@ -498,21 +498,55 @@ class DirectAdminMigration extends Page implements HasActions, HasForms
             return null;
         }
 
-        if (str_starts_with($path, '/') && file_exists($path)) {
-            return $path;
+        if (str_contains($path, "\0") || str_contains($path, '..')) {
+            return null;
+        }
+
+        $localRoot = realpath(Storage::disk('local')->path('')) ?: null;
+        $backupRoot = realpath(Storage::disk('backups')->path('')) ?: null;
+        $allowedAbsRoots = array_values(array_filter([
+            $localRoot,
+            $backupRoot,
+            realpath('/var/backups/jabali') ?: null,
+        ]));
+
+        $isWithin = static function (string $candidate, string $root): bool {
+            $root = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
+            $candidate = rtrim($candidate, DIRECTORY_SEPARATOR);
+
+            return str_starts_with($candidate.DIRECTORY_SEPARATOR, $root);
+        };
+
+        $resolveAllowed = static function (string $candidate) use ($allowedAbsRoots, $isWithin): ?string {
+            $real = realpath($candidate);
+            if ($real === false) {
+                return null;
+            }
+
+            foreach ($allowedAbsRoots as $root) {
+                if ($isWithin($real, $root)) {
+                    return $real;
+                }
+            }
+
+            return null;
+        };
+
+        if (str_starts_with($path, '/')) {
+            return $resolveAllowed($path);
         }
 
         $localCandidate = Storage::disk('local')->path($path);
-        if (file_exists($localCandidate)) {
-            return $localCandidate;
+        if ($resolved = $resolveAllowed($localCandidate)) {
+            return $resolved;
         }
 
         $backupCandidate = Storage::disk('backups')->path($path);
-        if (file_exists($backupCandidate)) {
-            return $backupCandidate;
+        if ($resolved = $resolveAllowed($backupCandidate)) {
+            return $resolved;
         }
 
-        return file_exists($path) ? $path : null;
+        return null;
     }
 
     public function selectAllAccounts(): void

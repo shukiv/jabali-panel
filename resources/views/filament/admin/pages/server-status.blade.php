@@ -3,6 +3,7 @@
         x-data="{
             interval: @js($refreshInterval),
             timer: null,
+            isRefreshing: false,
             init() {
                 this.startPolling();
                 Livewire.on('refresh-interval-changed', (data) => {
@@ -20,8 +21,19 @@
                 const ms = this.getMilliseconds(this.interval);
                 if (ms > 0) {
                     this.timer = setInterval(() => {
-                        $wire.loadMetrics();
+                        this.refresh();
                     }, ms);
+                }
+            },
+            async refresh() {
+                if (this.isRefreshing) return;
+                if (document.visibilityState === 'hidden') return;
+
+                this.isRefreshing = true;
+                try {
+                    await $wire.loadMetrics();
+                } finally {
+                    this.isRefreshing = false;
                 }
             },
             getMilliseconds(interval) {

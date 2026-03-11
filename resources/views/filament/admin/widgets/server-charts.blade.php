@@ -1,13 +1,19 @@
 <x-filament-widgets::widget
     x-data="{
         poller: null,
+        pollerStart: null,
         isRefreshing: false,
         lastUpdatedLabel: null,
         init() {
             this.requestRefresh();
-            this.poller = setInterval(() => {
-                this.requestRefresh();
-            }, 10000);
+            // Server Status page itself polls Livewire updates (process table). Stagger this widget's
+            // polling to avoid concurrent Livewire requests which can result in aborted requests
+            // and noisy console errors.
+            this.pollerStart = setTimeout(() => {
+                this.poller = setInterval(() => {
+                    this.requestRefresh();
+                }, 10000);
+            }, 5000);
         },
         async requestRefresh() {
             if (this.isRefreshing) {
@@ -25,6 +31,10 @@
             }
         },
         stop() {
+            if (this.pollerStart) {
+                clearTimeout(this.pollerStart);
+                this.pollerStart = null;
+            }
             if (this.poller) {
                 clearInterval(this.poller);
                 this.poller = null;
@@ -238,7 +248,11 @@
                         this.series = history.load ?? [];
                         this.ioWaitSeries = history.iowait ?? [];
                         if (this.ioWaitSeries.length !== this.labels.length) {
-                            this.ioWaitSeries = this.labels.map(() => this.ioWaitValue);
+                            const next = [];
+                            for (let i = 0; i < this.labels.length; i++) {
+                                next.push(this.ioWaitValue);
+                            }
+                            this.ioWaitSeries = next;
                         }
                         this.maxPoints = points ?? (this.labels.length || this.maxPoints);
                         if (history.label_format) {
@@ -319,12 +333,17 @@
                         if (!Array.isArray(series) || series.length === 0) {
                             return { min: minDefault, max: maxDefault };
                         }
-                        const values = series.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-                        if (!values.length) {
+                        let minValue = Infinity;
+                        let maxValue = -Infinity;
+                        for (let i = 0; i < series.length; i++) {
+                            const n = Number(series[i]);
+                            if (!Number.isFinite(n)) continue;
+                            if (n < minValue) minValue = n;
+                            if (n > maxValue) maxValue = n;
+                        }
+                        if (minValue === Infinity || maxValue === -Infinity) {
                             return { min: minDefault, max: maxDefault };
                         }
-                        const minValue = Math.min(...values);
-                        const maxValue = Math.max(...values);
                         const range = Math.max(1, maxValue - minValue);
                         const padding = range * paddingRatio;
                         const min = Math.max(minDefault ?? minValue, minValue - padding);
@@ -332,7 +351,16 @@
                         return { min, max };
                     },
                     cloneArray(items) {
-                        return Array.isArray(items) ? items.slice() : [];
+                        // Avoid calling Array prototype methods on reactive Proxies (Livewire/Vue reactivity),
+                        // which can cause deep proxy instrumentation and stack overflows in some environments.
+                        if (!Array.isArray(items)) {
+                            return [];
+                        }
+                        const out = [];
+                        for (let i = 0; i < items.length; i++) {
+                            out.push(items[i]);
+                        }
+                        return out;
                     },
                     getChart() {
                         return this.$refs.chart?.__chart ?? null;
@@ -350,7 +378,11 @@
                         const ratio = this.maxValue > 0 ? (this.series[this.series.length - 1] / this.maxValue) * 100 : this.series[this.series.length - 1];
                         const color = ratio >= 90 ? '#ef4444' : (ratio >= 70 ? '#f59e0b' : '#22c55e');
                         const areaColor = ratio >= 90 ? 'rgba(239,68,68,0.15)' : (ratio >= 70 ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)');
-                        const loadPeak = this.series.length ? Math.max(...this.series) : 0;
+                        let loadPeak = 0;
+                        for (let i = 0; i < this.series.length; i++) {
+                            const n = Number(this.series[i]);
+                            if (Number.isFinite(n) && n > loadPeak) loadPeak = n;
+                        }
                         const loadMax = Math.max(this.maxValue, loadPeak);
                         const loadBounds = this.scaleBounds(this.series, 0, null, 0.2);
                         const ioWaitBounds = this.scaleBounds(this.ioWaitSeries, 0, 100, 0.2);
@@ -379,7 +411,11 @@
                         const color = ratio >= 90 ? '#ef4444' : (ratio >= 70 ? '#f59e0b' : '#22c55e');
                         const areaColor = ratio >= 90 ? 'rgba(239,68,68,0.15)' : (ratio >= 70 ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)');
                         const ioWaitColor = '#38bdf8';
-                        const loadPeak = this.series.length ? Math.max(...this.series) : 0;
+                        let loadPeak = 0;
+                        for (let i = 0; i < this.series.length; i++) {
+                            const n = Number(this.series[i]);
+                            if (Number.isFinite(n) && n > loadPeak) loadPeak = n;
+                        }
                         const loadMax = Math.max(this.maxValue, loadPeak);
                         const loadBounds = this.scaleBounds(this.series, 0, null, 0.2);
                         const ioWaitBounds = this.scaleBounds(this.ioWaitSeries, 0, 100, 0.2);
@@ -447,7 +483,13 @@
                                             maxTicksLimit: 5,
                                             maxRotation: 0,
                                             minRotation: 0,
-                                            callback: (value, index) => this.tickLabel(index, 5),
+                                            // Use Chart.js scale context, avoid closing over Livewire/Vue reactive state.
+                                            callback: function (value, index) {
+                                                const labels = this?.chart?.data?.labels ?? [];
+                                                const maxTicks = 5;
+                                                const step = Math.max(1, Math.ceil(labels.length / maxTicks));
+                                                return index % step === 0 ? (labels[index] ?? '') : '';
+                                            },
                                         },
                                         grid: { display: false }
                                     },
@@ -557,7 +599,11 @@
                         this.series = history.memory ?? [];
                         this.swapSeries = history.swap ?? [];
                         if (this.hasSwap && this.swapSeries.length !== this.labels.length) {
-                            this.swapSeries = this.labels.map(() => 0);
+                            const next = [];
+                            for (let i = 0; i < this.labels.length; i++) {
+                                next.push(0);
+                            }
+                            this.swapSeries = next;
                         }
                         this.maxPoints = points ?? (this.labels.length || this.maxPoints);
                         this.updateChart();
@@ -640,18 +686,32 @@
                         if (!Array.isArray(series) || series.length === 0) {
                             return { min: minDefault, max: maxDefault };
                         }
-                        const values = series.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-                        if (!values.length) {
+                        let minValue = Infinity;
+                        let maxValue = -Infinity;
+                        for (let i = 0; i < series.length; i++) {
+                            const n = Number(series[i]);
+                            if (!Number.isFinite(n)) continue;
+                            if (n < minValue) minValue = n;
+                            if (n > maxValue) maxValue = n;
+                        }
+                        if (minValue === Infinity || maxValue === -Infinity) {
                             return { min: minDefault, max: maxDefault };
                         }
-                        const minValue = Math.min(...values);
-                        const maxValue = Math.max(...values);
                         const min = Math.max(minDefault ?? minValue, minValue - padding);
                         const max = maxDefault !== null ? Math.min(maxDefault, maxValue + padding) : maxValue + padding;
                         return { min, max };
                     },
                     cloneArray(items) {
-                        return Array.isArray(items) ? items.slice() : [];
+                        // Avoid calling Array prototype methods on reactive Proxies (Livewire/Vue reactivity),
+                        // which can cause deep proxy instrumentation and stack overflows in some environments.
+                        if (!Array.isArray(items)) {
+                            return [];
+                        }
+                        const out = [];
+                        for (let i = 0; i < items.length; i++) {
+                            out.push(items[i]);
+                        }
+                        return out;
                     },
                     getChart() {
                         return this.$refs.chart?.__chart ?? null;
@@ -767,7 +827,13 @@
                                             maxTicksLimit: 5,
                                             maxRotation: 0,
                                             minRotation: 0,
-                                            callback: (value, index) => this.tickLabel(index, 5),
+                                            // Use Chart.js scale context, avoid closing over Livewire/Vue reactive state.
+                                            callback: function (value, index) {
+                                                const labels = this?.chart?.data?.labels ?? [];
+                                                const maxTicks = 5;
+                                                const step = Math.max(1, Math.ceil(labels.length / maxTicks));
+                                                return index % step === 0 ? (labels[index] ?? '') : '';
+                                            },
                                         },
                                         grid: { display: false }
                                     },
@@ -847,7 +913,16 @@
                             return `rgba(${r}, ${g}, ${b}, ${opacity})`;
                         },
                         cloneArray(items) {
-                            return Array.isArray(items) ? items.slice() : [];
+                            // Avoid calling Array prototype methods on reactive Proxies (Livewire/Vue reactivity),
+                            // which can cause deep proxy instrumentation and stack overflows in some environments.
+                            if (!Array.isArray(items)) {
+                                return [];
+                            }
+                            const out = [];
+                            for (let i = 0; i < items.length; i++) {
+                                out.push(items[i]);
+                            }
+                            return out;
                         },
                         getChart() {
                             return this.$refs.chart?.__chart ?? null;

@@ -85,10 +85,12 @@ class Services extends Page implements HasActions, HasForms, HasTable
     protected function detectPhpFpmVersions(): array
     {
         $phpServices = [];
-        $output = [];
-        exec('ls /lib/systemd/system/php*-fpm.service 2>/dev/null', $output);
+        $output = (array) glob('/lib/systemd/system/php*-fpm.service');
 
         foreach ($output as $servicePath) {
+            if (! is_string($servicePath)) {
+                continue;
+            }
             if (preg_match('/php([\d.]+)-fpm\.service$/', $servicePath, $matches)) {
                 $version = $matches[1];
                 $serviceName = "php{$version}-fpm";

@@ -490,4 +490,7 @@ if [[ "$SKIP_AGENT_RESTART" -eq 0 ]]; then
     remote_run "if systemctl list-unit-files jabali-agent.service --no-legend 2>/dev/null | grep -q '^jabali-agent\\.service'; then systemctl restart jabali-agent; fi"
 fi
 
+
+echo "Patching Filament notifications JS (Livewire compatibility)..."
+remote_run "f=\"$DEPLOY_PATH/public/js/filament/notifications/notifications.js\"; if [[ -f \"\$f\" ]]; then perl -0777 -i -pe \"s/\\Qo=r();s(()=>{\\E/o=r();typeof s==\\x22function\\x22&&s(()=>{/g\" \"\$f\"; perl -0777 -i -pe \"s/\\Q}),n(({payload:a})=>{\\E/}),typeof n==\\x22function\\x22&&n(({payload:a})=>{/g\" \"\$f\"; perl -0777 -i -pe \"s/\\Qa?.snapshot?.data?.isFilamentNotificationsComponent&&e()\\E/a?.snapshot?.data?.isFilamentNotificationsComponent&&typeof e==\\x22function\\x22&&e()/g\" \"\$f\"; fi"
 echo "Deploy complete."

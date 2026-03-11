@@ -25,3 +25,9 @@ CLAUDE.md
 
 # Local repository configuration (do not commit)
 config.toml
+
+# Local automation / debug artifacts (do not commit)
+/.playwright-cli/
+/output/
+/storage/.cache/
+/storage/npm-cache/

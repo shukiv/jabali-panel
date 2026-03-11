@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Services\Migration\WhmApiService;
 use App\Services\Migration\WhmMigrationStatusStore;
+use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -311,13 +312,14 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
 
     protected function getJabaliPublicIp(): string
     {
-        $ip = trim(shell_exec('curl -s ifconfig.me 2>/dev/null') ?? '');
-
-        if (empty($ip)) {
-            $ip = gethostbyname(gethostname());
+        $ip = ServerFacts::serverIp('');
+        if ($ip !== '') {
+            return $ip;
         }
 
-        return $ip;
+        $fallback = gethostbyname(gethostname() ?: 'localhost');
+
+        return is_string($fallback) ? $fallback : '';
     }
 
     protected function getSshKeyName(): string
@@ -1080,9 +1082,14 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
         try {
             if ($this->createLinuxUsers) {
                 // Check if Linux user already exists
-                exec('id '.escapeshellarg($cpanelUser).' 2>/dev/null', $output, $exitCode);
+                $linuxUserExists = false;
+                if (function_exists('posix_getpwnam')) {
+                    $linuxUserExists = posix_getpwnam($cpanelUser) !== false;
+                } else {
+                    $linuxUserExists = is_dir('/home/'.$cpanelUser);
+                }
 
-                if ($exitCode !== 0) {
+                if (! $linuxUserExists) {
                     $result = $this->getAgent()->send('user.create', [
                         'username' => $cpanelUser,
                         'password' => $password,

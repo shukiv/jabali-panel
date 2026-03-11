@@ -11,6 +11,7 @@ use App\Models\DnsSetting;
 use App\Models\HostingPackage;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
+use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -38,7 +39,6 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\HtmlString;
 use Livewire\Attributes\Url;
 use Livewire\WithFileUploads;
 
@@ -130,10 +130,10 @@ class ServerSettings extends Page implements HasActions, HasForms
         $this->activeTab = $this->normalizeTabName($this->activeTab);
         $settings = DnsSetting::getAll();
         $hostname = gethostname() ?: 'localhost';
-        $serverIp = trim(shell_exec("hostname -I | awk '{print $1}'") ?? '') ?: '';
+        $serverIp = ServerFacts::serverIp('');
 
         $this->currentLogo = $settings['custom_logo'] ?? null;
-        $this->isSystemdResolved = trim(shell_exec('systemctl is-active systemd-resolved 2>/dev/null') ?? '') === 'active';
+        $this->isSystemdResolved = ServerFacts::isSystemdResolved();
 
         // Load hostname from agent
         $agentHostname = $hostname;
@@ -463,21 +463,28 @@ class ServerSettings extends Page implements HasActions, HasForms
             Section::make(__('Disk Quotas'))
                 ->icon('heroicon-o-chart-pie')
                 ->schema([
-                    Grid::make(['default' => 1, 'md' => 2])->schema([
-                        Toggle::make('quotaData.quotas_enabled')
-                            ->label(__('Enable Disk Quotas'))
-                            ->helperText(__('When enabled, disk usage limits will be enforced for user accounts')),
-                        TextInput::make('quotaData.default_quota_mb')
-                            ->label(__('Default Quota (MB)'))
-                            ->numeric()
-                            ->placeholder(__('5120'))
-                            ->helperText(__('Default disk quota for new users (5120 MB = 5 GB)')),
-                    ]),
+                    Placeholder::make('zfs_notice')
+                        ->content(__('ZFS filesystem detected. Linux disk quotas are not available. ZFS manages quotas natively via: zfs set userquota@<user>=<size> <dataset>'))
+                        ->visible(fn () => self::isZfsFilesystem()),
+                    Grid::make(['default' => 1, 'md' => 2])
+                        ->schema([
+                            Toggle::make('quotaData.quotas_enabled')
+                                ->label(__('Enable Disk Quotas'))
+                                ->helperText(__('When enabled, disk usage limits will be enforced for user accounts'))
+                                ->disabled(fn () => self::isZfsFilesystem()),
+                            TextInput::make('quotaData.default_quota_mb')
+                                ->label(__('Default Quota (MB)'))
+                                ->numeric()
+                                ->placeholder(__('5120'))
+                                ->helperText(__('Default disk quota for new users (5120 MB = 5 GB)'))
+                                ->disabled(fn () => self::isZfsFilesystem()),
+                        ])
+                        ->hidden(fn () => self::isZfsFilesystem()),
                     Actions::make([
                         FormAction::make('saveQuotaSettings')
                             ->label(__('Save Quota Settings'))
                             ->action('saveQuotaSettings'),
-                    ]),
+                    ])->hidden(fn () => self::isZfsFilesystem()),
                 ]),
             Section::make(__('File Manager'))
                 ->icon('heroicon-o-folder')
@@ -893,6 +900,18 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
     }
 
+    protected static function isZfsFilesystem(): bool
+    {
+        static $result = null;
+        if ($result === null) {
+            $fsHome = trim(shell_exec('findmnt -n -o FSTYPE /home 2>/dev/null') ?? '');
+            $fsRoot = trim(shell_exec('findmnt -n -o FSTYPE / 2>/dev/null') ?? '');
+            $result = $fsHome === 'zfs' || $fsRoot === 'zfs';
+        }
+
+        return $result;
+    }
+
     public function saveQuotaSettings(): void
     {
         $data = $this->quotaData;
@@ -904,7 +923,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
         if ($data['quotas_enabled'] && ! $wasEnabled) {
             try {
-                $result = $this->getAgent()->send('quota.enable', ['path' => '/home']);
+                $result = $this->getAgent()->send('quota.enable', ['mount' => '/home']);
                 if ($result['success'] ?? false) {
                     Notification::make()->title(__('Disk quotas enabled'))->body(__('Quota system has been initialized on /home'))->success()->send();
                 } else {

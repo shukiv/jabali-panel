@@ -16,8 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc73}"
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc73}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc70}"
 
 # Colors
 RED='\033[0;31m'
@@ -2170,6 +2169,14 @@ setup_quotas() {
 
     # Check filesystem type
     local fs_type=$(findmnt -n -o FSTYPE /)
+
+    # Detect ZFS filesystem — quotas managed natively by ZFS, skip Linux quota setup
+    if [[ "$fs_type" == "zfs" ]]; then
+        log "ZFS filesystem detected — skipping Linux quota setup"
+        info "ZFS manages quotas natively. Configure via: zfs set userquota@<user>=<size> <dataset>"
+        return 0
+    fi
+
     if [[ "$fs_type" != "ext4" && "$fs_type" != "ext3" && "$fs_type" != "xfs" ]]; then
         warn "Quotas not supported on $fs_type filesystem"
         return 1

@@ -9,6 +9,7 @@ use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
+use App\Support\ServerFacts;
 use Exception;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
@@ -284,8 +285,6 @@ class MigrationDnsSyncService
 
     protected function getServerIp(): string
     {
-        $ip = trim(shell_exec("hostname -I | awk '{print $1}'") ?? '');
-
-        return $ip !== '' ? $ip : '127.0.0.1';
+        return ServerFacts::serverIp('127.0.0.1');
     }
 }
