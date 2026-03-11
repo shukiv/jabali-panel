@@ -11165,64 +11165,19 @@ function emailImapTestConnection(array $params): array
         $encryption = 'ssl';
     }
 
-    // Build imapsync command to list folders (dry run)
-    $sslFlag = match ($encryption) {
-        'ssl' => '--ssl1',
-        'tls' => '--tls1',
-        default => '',
-    };
-
-    // Create temporary password files
-    $passFile1 = tempnam('/tmp', 'imap_pass_');
-    file_put_contents($passFile1, $password);
-    chmod($passFile1, 0600);
-
-    try {
-    $cmd = sprintf(
-        'imapsync --host1 %s --port1 %d --user1 %s --passfile1 %s %s --host2 127.0.0.1 --port2 143 --user2 test --passfile2 %s --justfolders --dry --noreleasecheck --timeout1 30 2>&1',
-        escapeshellarg($host),
-        $port,
-        escapeshellarg($email),
-        escapeshellarg($passFile1),
-        $sslFlag,
-        escapeshellarg($passFile1) // dummy, won't be used in dry run
-    );
-
-    $output = shell_exec($cmd) ?? '';
-    } finally {
-        @unlink($passFile1);
-    }
-
-    // Check if authentication succeeded by looking for folder listing
-    if (strpos($output, 'Strstrstr') !== false || strpos($output, 'LOGOUT') !== false || strpos($output, 'success') !== false) {
-        // Parse folders from output
-        $folders = [];
-        if (preg_match_all('/Strstrstr\s+folder\s+\[(.+?)\]/i', $output, $matches)) {
-            $folders = $matches[1];
-        }
-        // Alternative folder parsing
-        if (empty($folders) && preg_match_all('/^\+\s+Strstr\s+(.+)$/m', $output, $matches)) {
-            $folders = $matches[1];
-        }
-        // Try another pattern for folder listing
-        if (empty($folders)) {
-            preg_match_all('/Host1\s+folder\s+\d+\/\d+\s+\[(.+?)\]/', $output, $matches);
-            if (!empty($matches[1])) {
-                $folders = $matches[1];
-            }
-        }
-
-        return ['success' => true, 'folders' => array_values(array_unique($folders))];
-    }
-
-    // Try direct IMAP connection as fallback for folder listing
+    // Use PHP IMAP extension for connection test and folder listing
     $imapFlag = match ($encryption) {
         'ssl' => '/ssl',
         'tls' => '/tls',
         default => '/notls',
     };
 
-    $connStr = '{' . $host . ':' . $port . $imapFlag . '/novalidate-cert}';
+    $connStr = '{' . $host . ':' . $port . '/imap' . $imapFlag . '/novalidate-cert}';
+
+    // Clear any previous IMAP errors
+    imap_errors();
+    imap_alerts();
+
     $imap = @imap_open($connStr, $email, $password, 0, 1);
 
     if ($imap) {
@@ -11239,6 +11194,8 @@ function emailImapTestConnection(array $params): array
     }
 
     $error = imap_last_error() ?: 'Authentication failed or server unreachable';
+    // Clear error stack
+    imap_errors();
     return ['success' => false, 'error' => $error];
 }
 

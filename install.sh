@@ -469,8 +469,25 @@ install_packages() {
             roundcube-core
             roundcube-sqlite3
             roundcube-plugins
-            # IMAP sync
-            imapsync
+            # IMAP sync dependencies
+            libmail-imapclient-perl
+            libio-tee-perl
+            libterm-readkey-perl
+            libfile-copy-recursive-perl
+            libunicode-string-perl
+            libauthen-ntlm-perl
+            libcgi-pm-perl
+            libcrypt-openssl-rsa-perl
+            libdata-uniqid-perl
+            libencode-imaputf7-perl
+            libio-socket-inet6-perl
+            libio-socket-ssl-perl
+            libjson-webtoken-perl
+            libmodule-scandeps-perl
+            libreadonly-perl
+            libregexp-common-perl
+            libsys-meminfo-perl
+            libfile-tail-perl
             # SQLite tools
             sqlite3
         )
@@ -563,6 +580,14 @@ install_packages() {
             apt-get install -y -qq "$pkg" 2>/dev/null || warn "Could not install: $pkg"
         done
     }
+
+    # Install imapsync binary (not in Debian repos)
+    if [[ "$INSTALL_MAIL" == "true" ]] && ! command -v imapsync >/dev/null 2>&1; then
+        info "Installing imapsync..."
+        curl -fsSL https://raw.githubusercontent.com/imapsync/imapsync/master/imapsync -o /usr/local/bin/imapsync
+        chmod +x /usr/local/bin/imapsync
+        log "imapsync $(imapsync --version 2>&1 | head -1) installed"
+    fi
 
     if command -v locale-gen >/dev/null 2>&1; then
         info "Configuring locales..."
@@ -1511,43 +1536,36 @@ SUBMISSION
     # Add dovecot to www-data group for SQLite access
     usermod -a -G www-data dovecot 2>/dev/null || true
 
-    # Configure Dovecot SQL authentication for SQLite (Dovecot 2.4 format)
+    # Configure Dovecot SQL authentication using MySQL (Dovecot 2.4 format)
     info "Configuring Dovecot SQL authentication..."
-    cat > /etc/dovecot/conf.d/auth-sql.conf.ext << 'DOVECOT_SQL'
-# Authentication for SQL users - Jabali Panel
-# Dovecot 2.4 configuration format
 
-sql_driver = sqlite
-sqlite_path = /var/www/jabali/database/database.sqlite
+    # Read DB credentials from .env
+    local _db_host _db_port _db_name _db_user _db_pass
+    _db_host=$(grep '^DB_HOST=' "$INSTALL_DIR/.env" | cut -d= -f2-)
+    _db_port=$(grep '^DB_PORT=' "$INSTALL_DIR/.env" | cut -d= -f2-)
+    _db_name=$(grep '^DB_DATABASE=' "$INSTALL_DIR/.env" | cut -d= -f2-)
+    _db_user=$(grep '^DB_USERNAME=' "$INSTALL_DIR/.env" | cut -d= -f2-)
+    _db_pass=$(grep '^DB_PASSWORD=' "$INSTALL_DIR/.env" | cut -d= -f2-)
+
+    cat > /etc/dovecot/conf.d/auth-sql.conf.ext << DOVECOT_SQL
+# Authentication for SQL users - Jabali Panel
+# Dovecot 2.4 configuration format (MySQL)
+
+sql_driver = mysql
+mysql ${_db_host:-127.0.0.1} {
+  user = ${_db_user:-jabali}
+  password = ${_db_pass}
+  dbname = ${_db_name:-jabali}
+}
 
 passdb sql {
-  query = SELECT \
-    m.local_part || '@' || d.domain AS user, \
-    m.password_hash AS password \
-  FROM mailboxes m \
-  JOIN email_domains e ON m.email_domain_id = e.id \
-  JOIN domains d ON e.domain_id = d.id \
-  WHERE m.local_part || '@' || d.domain = '%{user}' \
-    AND m.is_active = 1 \
-    AND e.is_active = 1
+  query = SELECT CONCAT(m.local_part, '@', d.domain) AS user, m.password_hash AS password FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = '%{user}' AND m.is_active = 1 AND e.is_active = 1
 }
 
 userdb sql {
-  query = SELECT \
-    m.maildir_path AS home, \
-    m.system_uid AS uid, \
-    m.system_gid AS gid \
-  FROM mailboxes m \
-  JOIN email_domains e ON m.email_domain_id = e.id \
-  JOIN domains d ON e.domain_id = d.id \
-  WHERE m.local_part || '@' || d.domain = '%{user}' \
-    AND m.is_active = 1
+  query = SELECT m.maildir_path AS home, m.system_uid AS uid, m.system_gid AS gid FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = '%{user}' AND m.is_active = 1
 
-  iterate_query = SELECT m.local_part || '@' || d.domain AS user \
-    FROM mailboxes m \
-    JOIN email_domains e ON m.email_domain_id = e.id \
-    JOIN domains d ON e.domain_id = d.id \
-    WHERE m.is_active = 1
+  iterate_query = SELECT CONCAT(m.local_part, '@', d.domain) AS user FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE m.is_active = 1
 }
 DOVECOT_SQL
 
@@ -3675,6 +3693,8 @@ uninstall() {
     rm -f /etc/apt/sources.list.d/nodesource.list
     rm -f /etc/apt/sources.list.d/nodesource.sources
     rm -f /usr/share/keyrings/nodesource.gpg
+    # imapsync
+    rm -f /usr/local/bin/imapsync
     # Jabali contrib repository
     rm -f /etc/apt/sources.list.d/jabali-contrib.list
 

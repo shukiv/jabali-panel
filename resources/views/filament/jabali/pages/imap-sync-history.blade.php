@@ -33,7 +33,7 @@
                                 <div class="text-xs text-gray-500">{{ $task->source_host }}:{{ $task->source_port }}</div>
                             </td>
                             <td class="px-3 py-2">
-                                {{ $task->mailbox?->local_part }}@{{ $task->mailbox?->emailDomain?->domain_name }}
+                                {{ $task->mailbox?->local_part . '@' . $task->mailbox?->emailDomain?->domain_name }}
                             </td>
                             <td class="px-3 py-2">
                                 @switch($task->status)
