@@ -31,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 | Request::HEADER_X_FORWARDED_PROTO
         );
         $middleware->throttleApi('api');
+        $middleware->prepend(\App\Http\Middleware\MailSubdomainRedirect::class);
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
