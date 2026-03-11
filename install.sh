@@ -222,9 +222,9 @@ run_quiet() {
         sleep 0.1
     done
 
-    # Get exit code
-    wait "$cmd_pid"
-    local exit_code=$?
+    # Get exit code (|| true prevents set -e from killing the script)
+    local exit_code=0
+    wait "$cmd_pid" || exit_code=$?
 
     if [[ $exit_code -eq 0 ]]; then
         printf "\r${GREEN}[✓]${NC} %s\n" "$label"
@@ -3686,10 +3686,7 @@ uninstall() {
     fi
 
     run_quiet "Cleaning up..." \
-        env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq
-    DEBIAN_FRONTEND=noninteractive apt-get autoclean -y -qq > /dev/null 2>&1
-
-    log "Packages removed"
+        bash -c 'DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq 2>&1; DEBIAN_FRONTEND=noninteractive apt-get autoclean -y -qq 2>&1; true'
 
     header "Cleaning Up Files"
     # Web server
