@@ -116,14 +116,20 @@ $this->getRtlScript()
         }
 
         $stopUrl = url('/impersonate/stop');
+        $csrfToken = csrf_token();
+        $userName = e($currentUser->name);
+        $userUsername = e($currentUser->username);
 
         return <<<HTML
         <div style="background: linear-gradient(90deg, #f59e0b, #d97706); color: white; padding: 8px 16px; text-align: center; font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 12px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span>You are logged in as: <strong>{$currentUser->name}</strong> ({$currentUser->username})</span>
-            <a href="{$stopUrl}" style="background: rgba(255,255,255,0.2); color: white; padding: 4px 12px; border-radius: 4px; text-decoration: none; font-size: 12px; margin-left: 8px;">
-                Return to Admin
-            </a>
+            <span>You are logged in as: <strong>{$userName}</strong> ({$userUsername})</span>
+            <form method="POST" action="{$stopUrl}" style="display: inline; margin: 0;">
+                <input type="hidden" name="_token" value="{$csrfToken}">
+                <button type="submit" style="background: rgba(255,255,255,0.2); color: white; padding: 4px 12px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; margin-left: 8px;">
+                    Return to Admin
+                </button>
+            </form>
         </div>
         HTML;
     }
@@ -132,7 +138,9 @@ $this->getRtlScript()
     {
         $url = url()->current();
         $image = asset('images/og-image.png');
-        $siteName = DnsSetting::get('panel_name', 'Jabali');
+        $siteName = e(DnsSetting::get('panel_name', 'Jabali'));
+        $title = e($title);
+        $description = e($description);
 
         return <<<HTML
         <meta property="og:type" content="website">

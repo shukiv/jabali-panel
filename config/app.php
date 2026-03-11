@@ -134,4 +134,16 @@ return [
     */
     'internal_api_token' => env('JABALI_INTERNAL_API_TOKEN'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Import Insecure TLS
+    |--------------------------------------------------------------------------
+    |
+    | When set to true, disables SSL certificate verification for migration
+    | API calls (WHM/cPanel). Only enable this when migrating from servers
+    | with self-signed certificates.
+    |
+    */
+    'import_insecure_tls' => (bool) env('JABALI_IMPORT_INSECURE_TLS', false),
+
 ];

@@ -20,6 +20,8 @@ class CpanelApiService
 
     private bool $ssl;
 
+    private bool $verifySsl;
+
     public function __construct(string $hostname, string $username, string $apiToken, int $port = 2083, bool $ssl = true)
     {
         // Trim all string inputs to remove copy-paste whitespace/invisible chars
@@ -28,6 +30,7 @@ class CpanelApiService
         $this->apiToken = trim($apiToken);
         $this->port = $port;
         $this->ssl = $ssl;
+        $this->verifySsl = ! config('app.import_insecure_tls', false);
     }
 
     /**
@@ -58,13 +61,17 @@ class CpanelApiService
         Log::info('cPanel UAPI request', ['url' => $url, 'module' => $module, 'function' => $function, 'timeout' => $timeout]);
 
         try {
-            $response = Http::withHeaders([
+            $pending = Http::withHeaders([
                 'Authorization' => "cpanel {$this->username}:{$this->apiToken}",
             ])
                 ->timeout($timeout)
-                ->connectTimeout(10)
-                ->withoutVerifying()
-                ->get($url, $params);
+                ->connectTimeout(10);
+
+            if (! $this->verifySsl) {
+                $pending = $pending->withoutVerifying();
+            }
+
+            $response = $pending->get($url, $params);
 
             Log::info('cPanel UAPI response status', ['status' => $response->status(), 'module' => $module]);
 
@@ -105,12 +112,16 @@ class CpanelApiService
         ], $params);
 
         try {
-            $response = Http::withHeaders([
+            $pending = Http::withHeaders([
                 'Authorization' => "cpanel {$this->username}:{$this->apiToken}",
             ])
-                ->timeout(120)
-                ->withoutVerifying()
-                ->get($url, $queryParams);
+                ->timeout(120);
+
+            if (! $this->verifySsl) {
+                $pending = $pending->withoutVerifying();
+            }
+
+            $response = $pending->get($url, $queryParams);
 
             if (! $response->successful()) {
                 throw new Exception('API request failed with status: '.$response->status());
@@ -514,18 +525,23 @@ class CpanelApiService
             }
 
             // Create a stream context for downloading
-            $context = stream_context_create([
+            $contextOpts = [
                 'http' => [
                     'method' => 'GET',
                     'header' => "Authorization: cpanel {$this->username}:{$this->apiToken}\r\n",
                     'timeout' => 3600, // 1 hour timeout for large files
                     'ignore_errors' => true,
                 ],
-                'ssl' => [
+            ];
+
+            if (! $this->verifySsl) {
+                $contextOpts['ssl'] = [
                     'verify_peer' => false,
                     'verify_peer_name' => false,
-                ],
-            ]);
+                ];
+            }
+
+            $context = stream_context_create($contextOpts);
 
             // Open remote file
             $remoteStream = @fopen($url, 'rb', false, $context);
@@ -1058,12 +1074,16 @@ class CpanelApiService
         $url = $this->getBaseUrl().'/download?file='.urlencode($path);
 
         try {
-            $response = Http::withHeaders([
+            $pending = Http::withHeaders([
                 'Authorization' => "cpanel {$this->username}:{$this->apiToken}",
             ])
-                ->timeout(300)
-                ->withoutVerifying()
-                ->get($url);
+                ->timeout(300);
+
+            if (! $this->verifySsl) {
+                $pending = $pending->withoutVerifying();
+            }
+
+            $response = $pending->get($url);
 
             if ($response->successful()) {
                 return $response->body();

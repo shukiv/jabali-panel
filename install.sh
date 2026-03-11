@@ -1690,7 +1690,7 @@ if (empty($token) || !preg_match("/^[a-f0-9]{64}$/", $token)) {
     die("Invalid token");
 }
 
-$cacheFile = "/tmp/roundcube_sso_" . $token;
+$cacheFile = "/var/lib/jabali/sso-tokens/roundcube_sso_" . $token;
 if (!file_exists($cacheFile)) {
     die("Token expired or invalid");
 }

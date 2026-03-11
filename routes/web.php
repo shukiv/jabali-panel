@@ -75,7 +75,7 @@ Route::get('/impersonate/start/{user}', [ImpersonationController::class, 'start'
     ->middleware('auth:admin')
     ->name('impersonate.start');
 
-Route::get('/impersonate/stop', [ImpersonationController::class, 'stop'])
+Route::post('/impersonate/stop', [ImpersonationController::class, 'stop'])
     ->middleware('auth:web')
     ->name('impersonate.stop');
 
@@ -137,8 +137,13 @@ Route::get('/webmail-sso/{mailbox}', function (\App\Models\Mailbox $mailbox) {
             'expires' => time() + 300,
         ];
 
-        file_put_contents('/tmp/roundcube_sso_'.$token, json_encode($tokenData));
-        chmod('/tmp/roundcube_sso_'.$token, 0600);
+        $ssoDir = '/var/lib/jabali/sso-tokens';
+        if (! is_dir($ssoDir)) {
+            mkdir($ssoDir, 0700, true);
+        }
+        $ssoFile = $ssoDir.'/roundcube_sso_'.$token;
+        file_put_contents($ssoFile, json_encode($tokenData), LOCK_EX);
+        chmod($ssoFile, 0600);
 
         return redirect('/webmail/jabali-sso.php?token='.$token);
     }
@@ -153,8 +158,13 @@ Route::get('/webmail-sso/{mailbox}', function (\App\Models\Mailbox $mailbox) {
             'expires' => time() + 300,
         ];
 
-        file_put_contents('/tmp/roundcube_sso_'.$token, json_encode($tokenData));
-        chmod('/tmp/roundcube_sso_'.$token, 0600);
+        $ssoDir = '/var/lib/jabali/sso-tokens';
+        if (! is_dir($ssoDir)) {
+            mkdir($ssoDir, 0700, true);
+        }
+        $ssoFile = $ssoDir.'/roundcube_sso_'.$token;
+        file_put_contents($ssoFile, json_encode($tokenData), LOCK_EX);
+        chmod($ssoFile, 0600);
 
         return redirect('/webmail/jabali-sso.php?token='.$token);
     }

@@ -9,35 +9,37 @@
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: jabali-cache
- *
- * @package Jabali_Cache
  */
-
 defined('ABSPATH') || exit;
 
-class Jabali_Cache_Plugin {
-
+class Jabali_Cache_Plugin
+{
     const VERSION = '2.6.0';
+
     const OPTION_KEY = 'jabali_cache_settings';
 
     private static $instance = null;
+
     private $settings = [];
 
-    public static function get_instance() {
-        if (null === self::$instance) {
-            self::$instance = new self();
+    public static function get_instance()
+    {
+        if (self::$instance === null) {
+            self::$instance = new self;
         }
+
         return self::$instance;
     }
 
-    private function __construct() {
+    private function __construct()
+    {
         $this->settings = $this->get_settings();
 
         add_action('admin_menu', [$this, 'add_admin_menu']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_init', [$this, 'handle_actions']);
         add_action('admin_bar_menu', [$this, 'add_admin_bar_menu'], 100);
-        add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
+        add_filter('plugin_action_links_'.plugin_basename(__FILE__), [$this, 'add_action_links']);
         add_action('admin_enqueue_scripts', [$this, 'admin_styles']);
 
         // Initialize optimization features
@@ -54,9 +56,10 @@ class Jabali_Cache_Plugin {
      * Initialize hooks for smart page cache purging
      * Automatically purges nginx cache when content changes
      */
-    private function init_page_cache_purge_hooks() {
+    private function init_page_cache_purge_hooks()
+    {
         // Only initialize if page cache is enabled
-        if (!$this->settings['page_cache']) {
+        if (! $this->settings['page_cache']) {
             return;
         }
 
@@ -77,7 +80,7 @@ class Jabali_Cache_Plugin {
         // Theme/Customizer changes
         add_action('switch_theme', [$this, 'purge_all_cache']);
         add_action('customize_save_after', [$this, 'purge_all_cache']);
-        add_action('update_option_theme_mods_' . get_template(), [$this, 'purge_all_cache']);
+        add_action('update_option_theme_mods_'.get_template(), [$this, 'purge_all_cache']);
 
         // Sidebar/Widget changes
         add_action('update_option_sidebars_widgets', [$this, 'purge_all_cache']);
@@ -100,7 +103,8 @@ class Jabali_Cache_Plugin {
     /**
      * Purge cache for a specific post and related pages
      */
-    public function purge_post_cache($post_id, $post = null, $update = true) {
+    public function purge_post_cache($post_id, $post = null, $update = true)
+    {
         // Skip autosaves and revisions
         if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
             return;
@@ -110,11 +114,11 @@ class Jabali_Cache_Plugin {
             return;
         }
 
-        if (!$post) {
+        if (! $post) {
             $post = get_post($post_id);
         }
 
-        if (!$post || $post->post_status === 'auto-draft') {
+        if (! $post || $post->post_status === 'auto-draft') {
             return;
         }
 
@@ -125,9 +129,10 @@ class Jabali_Cache_Plugin {
     /**
      * Purge cache when post is deleted or trashed
      */
-    public function purge_post_cache_on_delete($post_id) {
+    public function purge_post_cache_on_delete($post_id)
+    {
         $post = get_post($post_id);
-        if (!$post) {
+        if (! $post) {
             return;
         }
 
@@ -138,16 +143,18 @@ class Jabali_Cache_Plugin {
     /**
      * Purge cache on post edit
      */
-    public function purge_post_cache_on_edit($post_id, $post) {
+    public function purge_post_cache_on_edit($post_id, $post)
+    {
         $this->purge_post_cache($post_id, $post, true);
     }
 
     /**
      * Purge cache when a comment changes
      */
-    public function purge_comment_cache($comment_id, $approved = null) {
+    public function purge_comment_cache($comment_id, $approved = null)
+    {
         $comment = get_comment($comment_id);
-        if (!$comment) {
+        if (! $comment) {
             return;
         }
 
@@ -161,7 +168,8 @@ class Jabali_Cache_Plugin {
     /**
      * Get all paths related to a post that should be purged
      */
-    private function get_post_related_paths($post) {
+    private function get_post_related_paths($post)
+    {
         $paths = [];
 
         // Post URL
@@ -217,7 +225,7 @@ class Jabali_Cache_Plugin {
         foreach ($taxonomies as $taxonomy) {
             if ($taxonomy !== 'category' && $taxonomy !== 'post_tag') {
                 $terms = get_the_terms($post->ID, $taxonomy);
-                if ($terms && !is_wp_error($terms)) {
+                if ($terms && ! is_wp_error($terms)) {
                     foreach ($terms as $term) {
                         $paths[] = get_term_link($term);
                     }
@@ -226,8 +234,8 @@ class Jabali_Cache_Plugin {
         }
 
         // Remove duplicates and filter
-        $paths = array_unique(array_filter($paths, function($path) {
-            return !is_wp_error($path) && !empty($path);
+        $paths = array_unique(array_filter($paths, function ($path) {
+            return ! is_wp_error($path) && ! empty($path);
         }));
 
         return $paths;
@@ -236,7 +244,8 @@ class Jabali_Cache_Plugin {
     /**
      * Purge cache for WooCommerce product (from stock change)
      */
-    public function purge_woocommerce_product($product) {
+    public function purge_woocommerce_product($product)
+    {
         if (is_numeric($product)) {
             $product_id = $product;
         } else {
@@ -248,14 +257,16 @@ class Jabali_Cache_Plugin {
     /**
      * Purge cache for WooCommerce product stock status change
      */
-    public function purge_woocommerce_product_stock_status($product_id, $stock_status, $product) {
+    public function purge_woocommerce_product_stock_status($product_id, $stock_status, $product)
+    {
         $this->purge_woocommerce_product_by_id($product_id);
     }
 
     /**
      * Purge cache for WooCommerce product by ID
      */
-    public function purge_woocommerce_product_by_id($product_id) {
+    public function purge_woocommerce_product_by_id($product_id)
+    {
         $paths = [];
 
         // Product URL
@@ -275,7 +286,7 @@ class Jabali_Cache_Plugin {
 
         // Product categories
         $terms = get_the_terms($product_id, 'product_cat');
-        if ($terms && !is_wp_error($terms)) {
+        if ($terms && ! is_wp_error($terms)) {
             foreach ($terms as $term) {
                 $paths[] = get_term_link($term);
             }
@@ -283,14 +294,14 @@ class Jabali_Cache_Plugin {
 
         // Product tags
         $tags = get_the_terms($product_id, 'product_tag');
-        if ($tags && !is_wp_error($tags)) {
+        if ($tags && ! is_wp_error($tags)) {
             foreach ($tags as $tag) {
                 $paths[] = get_term_link($tag);
             }
         }
 
-        $paths = array_unique(array_filter($paths, function($path) {
-            return !is_wp_error($path) && !empty($path);
+        $paths = array_unique(array_filter($paths, function ($path) {
+            return ! is_wp_error($path) && ! empty($path);
         }));
 
         $this->purge_paths($paths);
@@ -299,14 +310,16 @@ class Jabali_Cache_Plugin {
     /**
      * Purge all cache (for site-wide changes)
      */
-    public function purge_all_cache() {
+    public function purge_all_cache()
+    {
         $this->purge_paths(['/']);
     }
 
     /**
      * Send purge request to Jabali Panel API
      */
-    private function purge_paths(array $paths) {
+    private function purge_paths(array $paths)
+    {
         if (empty($paths)) {
             return false;
         }
@@ -321,7 +334,7 @@ class Jabali_Cache_Plugin {
         }
 
         // Generate secret from AUTH_KEY
-        $secret = defined('AUTH_KEY') ? substr(md5(AUTH_KEY), 0, 32) : '';
+        $secret = defined('AUTH_KEY') ? hash('sha256', AUTH_KEY) : '';
         if (empty($secret)) {
             return false;
         }
@@ -361,8 +374,9 @@ class Jabali_Cache_Plugin {
 
         if (is_wp_error($response)) {
             if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('Jabali Cache: Failed to purge page cache - ' . $response->get_error_message());
+                error_log('Jabali Cache: Failed to purge page cache - '.$response->get_error_message());
             }
+
             return false;
         }
 
@@ -370,13 +384,14 @@ class Jabali_Cache_Plugin {
         if ($code !== 200) {
             if (defined('WP_DEBUG') && WP_DEBUG) {
                 $body = wp_remote_retrieve_body($response);
-                error_log('Jabali Cache: Failed to purge page cache - HTTP ' . $code . ' - ' . $body);
+                error_log('Jabali Cache: Failed to purge page cache - HTTP '.$code.' - '.$body);
             }
+
             return false;
         }
 
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('Jabali Cache: Purged ' . count($normalized_paths) . ' paths');
+            error_log('Jabali Cache: Purged '.count($normalized_paths).' paths');
         }
 
         return true;
@@ -386,7 +401,8 @@ class Jabali_Cache_Plugin {
      * Initialize hooks for theme/plugin asset regeneration
      * Uses general WordPress hooks instead of plugin-specific ones
      */
-    private function init_plugin_compatibility() {
+    private function init_plugin_compatibility()
+    {
         // General: Catch ALL option updates that might trigger CSS/JS regeneration
         add_action('updated_option', [$this, 'on_option_updated'], 10, 3);
 
@@ -408,7 +424,8 @@ class Jabali_Cache_Plugin {
     /**
      * Patterns in option names that indicate CSS/JS regeneration needed
      */
-    private function get_builder_option_patterns(): array {
+    private function get_builder_option_patterns(): array
+    {
         return [
             // Page builders
             'elementor', 'uagb', 'spectra', 'fl_builder', 'beaver', 'et_divi', 'et_builder',
@@ -425,7 +442,8 @@ class Jabali_Cache_Plugin {
     /**
      * Check if option update should trigger cache flush
      */
-    public function on_option_updated($option, $old_value, $new_value) {
+    public function on_option_updated($option, $old_value, $new_value)
+    {
         // Skip if values are identical
         if ($old_value === $new_value) {
             return;
@@ -435,6 +453,7 @@ class Jabali_Cache_Plugin {
         foreach ($this->get_builder_option_patterns() as $pattern) {
             if (strpos($option_lower, $pattern) !== false) {
                 $this->flush_all_builder_cache();
+
                 return;
             }
         }
@@ -444,7 +463,8 @@ class Jabali_Cache_Plugin {
      * Flush ALL builder-related transients and page cache
      * Single method that handles all builders/themes
      */
-    public function flush_all_builder_cache($upgrader = null, $options = null) {
+    public function flush_all_builder_cache($upgrader = null, $options = null)
+    {
         // Prevent multiple flushes in same request
         static $flushed = false;
         if ($flushed) {
@@ -479,7 +499,8 @@ class Jabali_Cache_Plugin {
     /**
      * Flush WooCommerce related transients
      */
-    public function flush_woocommerce_cache() {
+    public function flush_woocommerce_cache()
+    {
         $this->flush_transients_by_patterns(['wc_', '_wc_', 'woocommerce_']);
         $this->log_cache_flush('WooCommerce');
     }
@@ -487,22 +508,23 @@ class Jabali_Cache_Plugin {
     /**
      * Flush transients matching specific patterns from Redis
      *
-     * @param array $patterns Array of patterns to match (e.g., ['uagb_', 'spectra_'])
+     * @param  array  $patterns  Array of patterns to match (e.g., ['uagb_', 'spectra_'])
      * @return int Number of keys deleted
      */
-    private function flush_transients_by_patterns(array $patterns) {
-        if (!$this->is_redis_connected()) {
+    private function flush_transients_by_patterns(array $patterns)
+    {
+        if (! $this->is_redis_connected()) {
             return 0;
         }
 
         try {
-            $redis = new Redis();
+            $redis = new Redis;
             $host = defined('JABALI_CACHE_HOST') ? JABALI_CACHE_HOST : '127.0.0.1';
             $port = defined('JABALI_CACHE_PORT') ? JABALI_CACHE_PORT : 6379;
             $db = defined('JABALI_CACHE_DATABASE') ? JABALI_CACHE_DATABASE : 0;
             $prefix = defined('JABALI_CACHE_PREFIX') ? JABALI_CACHE_PREFIX : '';
 
-            if (!$redis->connect($host, $port, 2)) {
+            if (! $redis->connect($host, $port, 2)) {
                 return 0;
             }
 
@@ -520,16 +542,16 @@ class Jabali_Cache_Plugin {
                 // Search for transient keys matching the pattern
                 // WordPress stores transients as: {prefix}transient_{name} and {prefix}_transient_{name}
                 $scan_patterns = [
-                    $prefix . '*transient*' . $pattern . '*',
-                    $prefix . '*' . $pattern . '*transient*',
-                    $prefix . '*' . $pattern . '*',
+                    $prefix.'*transient*'.$pattern.'*',
+                    $prefix.'*'.$pattern.'*transient*',
+                    $prefix.'*'.$pattern.'*',
                 ];
 
                 foreach ($scan_patterns as $scan_pattern) {
                     $cursor = null;
                     do {
                         $keys = $redis->scan($cursor, $scan_pattern, 100);
-                        if ($keys !== false && !empty($keys)) {
+                        if ($keys !== false && ! empty($keys)) {
                             foreach ($keys as $key) {
                                 $redis->del($key);
                                 $deleted++;
@@ -540,10 +562,12 @@ class Jabali_Cache_Plugin {
             }
 
             $redis->close();
+
             return $deleted;
 
         } catch (Exception $e) {
-            error_log('Jabali Cache: Failed to flush transients - ' . $e->getMessage());
+            error_log('Jabali Cache: Failed to flush transients - '.$e->getMessage());
+
             return 0;
         }
     }
@@ -551,13 +575,15 @@ class Jabali_Cache_Plugin {
     /**
      * Log cache flush event for debugging
      */
-    private function log_cache_flush($plugin_name) {
+    private function log_cache_flush($plugin_name)
+    {
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log(sprintf('Jabali Cache: Flushed Redis transients triggered by %s asset regeneration', $plugin_name));
         }
     }
 
-    public function get_settings() {
+    public function get_settings()
+    {
         $defaults = [
             'page_cache' => true,
             'object_cache' => true,
@@ -581,39 +607,41 @@ class Jabali_Cache_Plugin {
             'delay_third_party' => false,
         ];
         $saved = get_option(self::OPTION_KEY, []);
+
         return array_merge($defaults, $saved);
     }
 
-    public function init_optimizations() {
+    public function init_optimizations()
+    {
         // Page Cache bypass - send no-cache headers when disabled
-        if (!$this->settings['page_cache'] && !is_admin()) {
+        if (! $this->settings['page_cache'] && ! is_admin()) {
             add_action('send_headers', [$this, 'disable_page_cache_headers'], 1);
         }
 
         // HTML Minification
-        if ($this->settings['html_minify'] && !is_admin()) {
+        if ($this->settings['html_minify'] && ! is_admin()) {
             add_action('template_redirect', [$this, 'start_html_buffer'], 1);
         }
 
         // CSS Minification
-        if ($this->settings['minify_css'] && !is_admin()) {
+        if ($this->settings['minify_css'] && ! is_admin()) {
             add_filter('style_loader_tag', [$this, 'minify_inline_css'], 10, 4);
             add_action('wp_head', [$this, 'start_css_capture'], 1);
             add_action('wp_head', [$this, 'end_css_capture'], 999);
         }
 
         // JS Minification
-        if ($this->settings['minify_js'] && !is_admin()) {
+        if ($this->settings['minify_js'] && ! is_admin()) {
             add_filter('script_loader_tag', [$this, 'minify_inline_js'], 10, 3);
         }
 
         // Defer JS
-        if ($this->settings['defer_js'] && !is_admin()) {
+        if ($this->settings['defer_js'] && ! is_admin()) {
             add_filter('script_loader_tag', [$this, 'defer_js'], 10, 3);
         }
 
         // Lazy Loading
-        if ($this->settings['lazy_load'] && !is_admin()) {
+        if ($this->settings['lazy_load'] && ! is_admin()) {
             add_filter('the_content', [$this, 'add_lazy_loading']);
             add_filter('post_thumbnail_html', [$this, 'add_lazy_loading']);
             add_filter('get_avatar', [$this, 'add_lazy_loading']);
@@ -621,13 +649,13 @@ class Jabali_Cache_Plugin {
         }
 
         // Lazy Load iframes
-        if ($this->settings['lazy_load_iframes'] && !is_admin()) {
+        if ($this->settings['lazy_load_iframes'] && ! is_admin()) {
             add_filter('the_content', [$this, 'add_lazy_loading_iframes']);
             add_filter('embed_oembed_html', [$this, 'add_lazy_loading_iframes']);
         }
 
         // Remove Query Strings
-        if ($this->settings['remove_query_strings'] && !is_admin()) {
+        if ($this->settings['remove_query_strings'] && ! is_admin()) {
             add_filter('script_loader_src', [$this, 'remove_query_strings'], 15);
             add_filter('style_loader_src', [$this, 'remove_query_strings'], 15);
         }
@@ -643,41 +671,41 @@ class Jabali_Cache_Plugin {
         }
 
         // Expired Cache (No-Cache Headers)
-        if ($this->settings['expired_cache'] && !is_admin()) {
+        if ($this->settings['expired_cache'] && ! is_admin()) {
             add_action('template_redirect', [$this, 'send_expired_cache_headers'], 1);
             add_action('send_headers', [$this, 'send_expired_cache_headers']);
         }
 
         // Debug mode - add debug info for admins
-        if ($this->settings['cache_debug'] && !is_admin()) {
+        if ($this->settings['cache_debug'] && ! is_admin()) {
             add_action('wp_footer', [$this, 'output_debug_info'], 999);
         }
 
         // Local Google Fonts
-        if ($this->settings['local_google_fonts'] && !is_admin()) {
+        if ($this->settings['local_google_fonts'] && ! is_admin()) {
             add_filter('style_loader_src', [$this, 'localize_google_fonts_css'], 10, 2);
             add_filter('wp_resource_hints', [$this, 'remove_google_fonts_preconnect'], 10, 2);
         }
 
         // LCP Image Optimization (preload + fetchpriority)
-        if ($this->settings['lcp_preload'] && !is_admin()) {
+        if ($this->settings['lcp_preload'] && ! is_admin()) {
             add_filter('the_content', [$this, 'optimize_lcp_image'], 5);
             add_filter('post_thumbnail_html', [$this, 'optimize_lcp_image'], 5);
             add_action('wp_head', [$this, 'output_lcp_preload'], 1);
         }
 
         // Preconnect Hints
-        if ($this->settings['preconnect_hints'] && !is_admin()) {
+        if ($this->settings['preconnect_hints'] && ! is_admin()) {
             add_action('wp_head', [$this, 'output_preconnect_hints'], 1);
         }
 
         // Font Preload
-        if ($this->settings['preload_fonts'] && !is_admin()) {
+        if ($this->settings['preload_fonts'] && ! is_admin()) {
             add_action('wp_head', [$this, 'output_font_preload'], 2);
         }
 
         // Delay Third-Party Scripts
-        if ($this->settings['delay_third_party'] && !is_admin()) {
+        if ($this->settings['delay_third_party'] && ! is_admin()) {
             add_filter('script_loader_tag', [$this, 'delay_third_party_scripts'], 10, 3);
         }
     }
@@ -685,27 +713,31 @@ class Jabali_Cache_Plugin {
     /**
      * CSS Minification - minify inline styles in style tags
      */
-    public function minify_inline_css($html, $handle, $href, $media) {
+    public function minify_inline_css($html, $handle, $href, $media)
+    {
         return $html; // Return unchanged, we don't minify external CSS files
     }
 
     private $css_buffer_active = false;
 
-    public function start_css_capture() {
+    public function start_css_capture()
+    {
         // Not implemented - inline CSS minification would require output buffering
         // which conflicts with page cache. External files are better cached by nginx.
     }
 
-    public function end_css_capture() {
+    public function end_css_capture()
+    {
         // Not implemented
     }
 
     /**
      * Minify inline JS within script tags
      */
-    public function minify_inline_js($tag, $handle, $src) {
+    public function minify_inline_js($tag, $handle, $src)
+    {
         // Don't touch external scripts
-        if (!empty($src)) {
+        if (! empty($src)) {
             return $tag;
         }
 
@@ -717,7 +749,7 @@ class Jabali_Cache_Plugin {
 
         // Simple minification for inline scripts - just collapse whitespace
         // Being conservative to avoid breaking scripts
-        $tag = preg_replace_callback('/<script([^>]*)>(.*?)<\/script>/is', function($match) {
+        $tag = preg_replace_callback('/<script([^>]*)>(.*?)<\/script>/is', function ($match) {
             $attrs = $match[1];
             $content = $match[2];
 
@@ -730,7 +762,7 @@ class Jabali_Cache_Plugin {
             $content = preg_replace('/\s{2,}/', ' ', $content);
             $content = trim($content);
 
-            return '<script' . $attrs . '>' . $content . '</script>';
+            return '<script'.$attrs.'>'.$content.'</script>';
         }, $tag);
 
         return $tag;
@@ -739,19 +771,20 @@ class Jabali_Cache_Plugin {
     /**
      * Output debug info for admins
      */
-    public function output_debug_info() {
+    public function output_debug_info()
+    {
         // Only show for admins with cache_debug param or setting enabled
-        if (!current_user_can('manage_options')) {
+        if (! current_user_can('manage_options')) {
             return;
         }
 
         // Check if ?cache_debug=1 is set
-        if (!isset($_GET['cache_debug']) && !$this->settings['cache_debug']) {
+        if (! isset($_GET['cache_debug']) && ! $this->settings['cache_debug']) {
             return;
         }
 
         // Only output if explicitly requested via query param
-        if (!isset($_GET['cache_debug']) || $_GET['cache_debug'] !== '1') {
+        if (! isset($_GET['cache_debug']) || $_GET['cache_debug'] !== '1') {
             return;
         }
 
@@ -780,12 +813,13 @@ class Jabali_Cache_Plugin {
     /**
      * Get reason why page cache might be bypassed
      */
-    private function get_cache_bypass_reason() {
+    private function get_cache_bypass_reason()
+    {
         if (is_user_logged_in()) {
             return 'logged_in_user';
         }
 
-        if (isset($_POST) && !empty($_POST)) {
+        if (isset($_POST) && ! empty($_POST)) {
             return 'post_request';
         }
 
@@ -816,11 +850,13 @@ class Jabali_Cache_Plugin {
     }
 
     // HTML Minification
-    public function start_html_buffer() {
+    public function start_html_buffer()
+    {
         ob_start([$this, 'minify_html']);
     }
 
-    public function minify_html($html) {
+    public function minify_html($html)
+    {
         if (empty($html)) {
             return $html;
         }
@@ -832,9 +868,10 @@ class Jabali_Cache_Plugin {
 
         // Preserve scripts and styles
         $preserved = [];
-        $html = preg_replace_callback('/<(script|style|pre|textarea)[^>]*>.*?<\/\1>/is', function($match) use (&$preserved) {
-            $key = '<!--PRESERVE:' . count($preserved) . '-->';
+        $html = preg_replace_callback('/<(script|style|pre|textarea)[^>]*>.*?<\/\1>/is', function ($match) use (&$preserved) {
+            $key = '<!--PRESERVE:'.count($preserved).'-->';
             $preserved[$key] = $match[0];
+
             return $key;
         }, $html);
 
@@ -857,13 +894,14 @@ class Jabali_Cache_Plugin {
     }
 
     // Lazy Loading
-    public function add_lazy_loading($content) {
+    public function add_lazy_loading($content)
+    {
         if (empty($content)) {
             return $content;
         }
 
         // Add loading="lazy" to images that don't have it
-        $content = preg_replace_callback('/<img([^>]+)>/i', function($match) {
+        $content = preg_replace_callback('/<img([^>]+)>/i', function ($match) {
             $img = $match[0];
 
             // Skip if already has loading attribute
@@ -883,13 +921,14 @@ class Jabali_Cache_Plugin {
         return $content;
     }
 
-    public function add_lazy_loading_iframes($content) {
+    public function add_lazy_loading_iframes($content)
+    {
         if (empty($content)) {
             return $content;
         }
 
         // Add loading="lazy" to iframes
-        $content = preg_replace_callback('/<iframe([^>]+)>/i', function($match) {
+        $content = preg_replace_callback('/<iframe([^>]+)>/i', function ($match) {
             $iframe = $match[0];
 
             if (strpos($iframe, 'loading=') !== false) {
@@ -903,15 +942,18 @@ class Jabali_Cache_Plugin {
     }
 
     // Remove Query Strings
-    public function remove_query_strings($src) {
+    public function remove_query_strings($src)
+    {
         if (strpos($src, '?ver=') !== false) {
             $src = remove_query_arg('ver', $src);
         }
+
         return $src;
     }
 
     // Disable Emojis
-    public function disable_emojis() {
+    public function disable_emojis()
+    {
         remove_action('wp_head', 'print_emoji_detection_script', 7);
         remove_action('admin_print_scripts', 'print_emoji_detection_script');
         remove_action('wp_print_styles', 'print_emoji_styles');
@@ -919,35 +961,38 @@ class Jabali_Cache_Plugin {
         remove_filter('the_content_feed', 'wp_staticize_emoji');
         remove_filter('comment_text_rss', 'wp_staticize_emoji');
         remove_filter('wp_mail', 'wp_staticize_emoji_for_email');
-        add_filter('tiny_mce_plugins', function($plugins) {
+        add_filter('tiny_mce_plugins', function ($plugins) {
             return is_array($plugins) ? array_diff($plugins, ['wpemoji']) : [];
         });
-        add_filter('wp_resource_hints', function($urls, $relation_type) {
-            if ('dns-prefetch' === $relation_type) {
-                $urls = array_filter($urls, function($url) {
+        add_filter('wp_resource_hints', function ($urls, $relation_type) {
+            if ($relation_type === 'dns-prefetch') {
+                $urls = array_filter($urls, function ($url) {
                     return strpos($url, 'https://s.w.org/images/core/emoji/') === false;
                 });
             }
+
             return $urls;
         }, 10, 2);
     }
 
     // Disable Embeds
-    public function disable_embeds() {
+    public function disable_embeds()
+    {
         remove_action('rest_api_init', 'wp_oembed_register_route');
         remove_filter('oembed_dataparse', 'wp_filter_oembed_result', 10);
         remove_action('wp_head', 'wp_oembed_add_discovery_links');
         remove_action('wp_head', 'wp_oembed_add_host_js');
         add_filter('embed_oembed_discover', '__return_false');
-        add_filter('tiny_mce_plugins', function($plugins) {
+        add_filter('tiny_mce_plugins', function ($plugins) {
             return array_diff($plugins, ['wpembed']);
         });
-        add_filter('rewrite_rules_array', function($rules) {
+        add_filter('rewrite_rules_array', function ($rules) {
             foreach ($rules as $rule => $rewrite) {
                 if (strpos($rewrite, 'embed=true') !== false) {
                     unset($rules[$rule]);
                 }
             }
+
             return $rules;
         });
     }
@@ -957,8 +1002,11 @@ class Jabali_Cache_Plugin {
     // =========================================================================
 
     private $lcp_image_url = null;
+
     private $lcp_image_srcset = null;
+
     private $lcp_image_sizes = null;
+
     private $lcp_processed = false;
 
     /**
@@ -966,7 +1014,8 @@ class Jabali_Cache_Plugin {
      * Adds fetchpriority="high" and loading="eager" to the first large image
      * Also excludes it from lazy loading
      */
-    public function optimize_lcp_image($content) {
+    public function optimize_lcp_image($content)
+    {
         if (empty($content) || $this->lcp_processed) {
             return $content;
         }
@@ -1038,16 +1087,17 @@ class Jabali_Cache_Plugin {
     /**
      * Check if image is likely small (icon, avatar, etc.)
      */
-    private function is_small_image($img) {
+    private function is_small_image($img)
+    {
         // Check for explicit small dimensions
         if (preg_match('/width=["\']?(\d+)/i', $img, $w_match)) {
-            if ((int)$w_match[1] < 150) {
+            if ((int) $w_match[1] < 150) {
                 return true;
             }
         }
 
         if (preg_match('/height=["\']?(\d+)/i', $img, $h_match)) {
-            if ((int)$h_match[1] < 150) {
+            if ((int) $h_match[1] < 150) {
                 return true;
             }
         }
@@ -1062,7 +1112,7 @@ class Jabali_Cache_Plugin {
 
         // Check for small image sizes in filename
         if (preg_match('/-(\d+)x(\d+)\./i', $img, $size_match)) {
-            if ((int)$size_match[1] < 150 || (int)$size_match[2] < 150) {
+            if ((int) $size_match[1] < 150 || (int) $size_match[2] < 150) {
                 return true;
             }
         }
@@ -1073,9 +1123,10 @@ class Jabali_Cache_Plugin {
     /**
      * Output LCP image preload link in head
      */
-    public function output_lcp_preload() {
+    public function output_lcp_preload()
+    {
         // If we haven't processed content yet, try to get featured image
-        if (!$this->lcp_image_url && is_singular()) {
+        if (! $this->lcp_image_url && is_singular()) {
             $post_id = get_the_ID();
             if ($post_id && has_post_thumbnail($post_id)) {
                 $thumbnail_id = get_post_thumbnail_id($post_id);
@@ -1087,24 +1138,24 @@ class Jabali_Cache_Plugin {
             }
         }
 
-        if (!$this->lcp_image_url) {
+        if (! $this->lcp_image_url) {
             return;
         }
 
         // Build preload link
-        $preload = '<link rel="preload" as="image" href="' . esc_url($this->lcp_image_url) . '"';
+        $preload = '<link rel="preload" as="image" href="'.esc_url($this->lcp_image_url).'"';
 
         if ($this->lcp_image_srcset) {
-            $preload .= ' imagesrcset="' . esc_attr($this->lcp_image_srcset) . '"';
+            $preload .= ' imagesrcset="'.esc_attr($this->lcp_image_srcset).'"';
         }
 
         if ($this->lcp_image_sizes) {
-            $preload .= ' imagesizes="' . esc_attr($this->lcp_image_sizes) . '"';
+            $preload .= ' imagesizes="'.esc_attr($this->lcp_image_sizes).'"';
         }
 
         $preload .= ' fetchpriority="high">';
 
-        echo $preload . "\n";
+        echo $preload."\n";
     }
 
     // =========================================================================
@@ -1114,18 +1165,20 @@ class Jabali_Cache_Plugin {
     /**
      * Output preconnect hints for external domains
      */
-    public function output_preconnect_hints() {
+    public function output_preconnect_hints()
+    {
         $domains = $this->get_preconnect_domains();
 
         foreach ($domains as $domain) {
-            echo '<link rel="preconnect" href="' . esc_url($domain) . '" crossorigin>' . "\n";
+            echo '<link rel="preconnect" href="'.esc_url($domain).'" crossorigin>'."\n";
         }
     }
 
     /**
      * Get list of domains that should have preconnect hints
      */
-    private function get_preconnect_domains() {
+    private function get_preconnect_domains()
+    {
         $domains = [];
         $site_host = parse_url(home_url(), PHP_URL_HOST);
 
@@ -1143,7 +1196,7 @@ class Jabali_Cache_Plugin {
         ];
 
         // Check if local Google Fonts is disabled (then we need preconnect for Google)
-        if (!$this->settings['local_google_fonts']) {
+        if (! $this->settings['local_google_fonts']) {
             $domains[] = 'https://fonts.googleapis.com';
             $domains[] = 'https://fonts.gstatic.com';
         }
@@ -1152,7 +1205,7 @@ class Jabali_Cache_Plugin {
         $template_uri = get_template_directory_uri();
         $template_host = parse_url($template_uri, PHP_URL_HOST);
         if ($template_host && $template_host !== $site_host) {
-            $domains[] = 'https://' . $template_host;
+            $domains[] = 'https://'.$template_host;
         }
 
         // Check WooCommerce
@@ -1175,21 +1228,24 @@ class Jabali_Cache_Plugin {
     /**
      * Preload critical fonts
      */
-    public function output_font_preload() {
+    public function output_font_preload()
+    {
         // If using local Google Fonts, preload the first cached font file
         if ($this->settings['local_google_fonts']) {
-            $cache_dir = WP_CONTENT_DIR . '/cache/jabali/fonts';
+            $cache_dir = WP_CONTENT_DIR.'/cache/jabali/fonts';
             $cache_url = content_url('/cache/jabali/fonts');
 
             if (is_dir($cache_dir)) {
-                $fonts = glob($cache_dir . '/*.woff2');
-                if (!empty($fonts)) {
+                $fonts = glob($cache_dir.'/*.woff2');
+                if (! empty($fonts)) {
                     // Preload first 2 font files (usually regular and bold)
                     $count = 0;
                     foreach ($fonts as $font) {
-                        if ($count >= 2) break;
-                        $font_url = $cache_url . '/' . basename($font);
-                        echo '<link rel="preload" as="font" type="font/woff2" href="' . esc_url($font_url) . '" crossorigin>' . "\n";
+                        if ($count >= 2) {
+                            break;
+                        }
+                        $font_url = $cache_url.'/'.basename($font);
+                        echo '<link rel="preload" as="font" type="font/woff2" href="'.esc_url($font_url).'" crossorigin>'."\n";
                         $count++;
                     }
                 }
@@ -1204,7 +1260,8 @@ class Jabali_Cache_Plugin {
     /**
      * Default list of script handles that should NOT be deferred
      */
-    private function get_defer_js_exclusions() {
+    private function get_defer_js_exclusions()
+    {
         return [
             // Core jQuery - many inline scripts depend on it
             'jquery-core',
@@ -1249,7 +1306,8 @@ class Jabali_Cache_Plugin {
     /**
      * Defer non-critical JavaScript with proper exclusions
      */
-    public function defer_js($tag, $handle, $src) {
+    public function defer_js($tag, $handle, $src)
+    {
         // Skip if no src (inline script)
         if (empty($src)) {
             return $tag;
@@ -1289,7 +1347,8 @@ class Jabali_Cache_Plugin {
     /**
      * Third-party script domains that should be delayed
      */
-    private function get_third_party_domains() {
+    private function get_third_party_domains()
+    {
         return [
             'google-analytics.com',
             'googletagmanager.com',
@@ -1327,7 +1386,8 @@ class Jabali_Cache_Plugin {
     /**
      * Delay third-party scripts until user interaction
      */
-    public function delay_third_party_scripts($tag, $handle, $src) {
+    public function delay_third_party_scripts($tag, $handle, $src)
+    {
         if (empty($src)) {
             return $tag;
         }
@@ -1342,7 +1402,7 @@ class Jabali_Cache_Plugin {
             }
         }
 
-        if (!$is_third_party) {
+        if (! $is_third_party) {
             return $tag;
         }
 
@@ -1353,7 +1413,7 @@ class Jabali_Cache_Plugin {
 
         // Add the delay loader script if not already added
         static $loader_added = false;
-        if (!$loader_added) {
+        if (! $loader_added) {
             add_action('wp_footer', [$this, 'output_delay_loader_script'], 999);
             $loader_added = true;
         }
@@ -1364,7 +1424,8 @@ class Jabali_Cache_Plugin {
     /**
      * Output script that loads delayed scripts on user interaction
      */
-    public function output_delay_loader_script() {
+    public function output_delay_loader_script()
+    {
         ?>
         <script>
         (function() {
@@ -1401,25 +1462,26 @@ class Jabali_Cache_Plugin {
     /**
      * Localize Google Fonts - intercept and serve locally
      */
-    public function localize_google_fonts_css($src, $handle) {
+    public function localize_google_fonts_css($src, $handle)
+    {
         // Only process Google Fonts CSS URLs
         if (strpos($src, 'fonts.googleapis.com/css') === false) {
             return $src;
         }
 
         // Generate a cache key based on the URL
-        $cache_key = 'jabali_fonts_' . md5($src);
-        $cache_dir = WP_CONTENT_DIR . '/cache/jabali/fonts';
+        $cache_key = 'jabali_fonts_'.md5($src);
+        $cache_dir = WP_CONTENT_DIR.'/cache/jabali/fonts';
         $cache_url = content_url('/cache/jabali/fonts');
 
         // Check if we have a cached version
-        $cached_file = $cache_dir . '/' . $cache_key . '.css';
+        $cached_file = $cache_dir.'/'.$cache_key.'.css';
         if (file_exists($cached_file) && (time() - filemtime($cached_file)) < WEEK_IN_SECONDS) {
-            return $cache_url . '/' . $cache_key . '.css';
+            return $cache_url.'/'.$cache_key.'.css';
         }
 
         // Create cache directory if it doesn't exist
-        if (!is_dir($cache_dir)) {
+        if (! is_dir($cache_dir)) {
             wp_mkdir_p($cache_dir);
         }
 
@@ -1441,13 +1503,14 @@ class Jabali_Cache_Plugin {
         // Save the modified CSS
         file_put_contents($cached_file, $css);
 
-        return $cache_url . '/' . $cache_key . '.css';
+        return $cache_url.'/'.$cache_key.'.css';
     }
 
     /**
      * Download font files and replace URLs in CSS
      */
-    private function download_and_replace_font_urls($css, $cache_dir, $cache_url) {
+    private function download_and_replace_font_urls($css, $cache_dir, $cache_url)
+    {
         // Find all font URLs in the CSS
         preg_match_all('/url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/i', $css, $matches);
 
@@ -1461,17 +1524,17 @@ class Jabali_Cache_Plugin {
             // Generate local filename
             $font_hash = md5($font_url);
             $extension = pathinfo(parse_url($font_url, PHP_URL_PATH), PATHINFO_EXTENSION) ?: 'woff2';
-            $local_filename = $font_hash . '.' . $extension;
-            $local_path = $cache_dir . '/' . $local_filename;
-            $local_url = $cache_url . '/' . $local_filename;
+            $local_filename = $font_hash.'.'.$extension;
+            $local_path = $cache_dir.'/'.$local_filename;
+            $local_url = $cache_url.'/'.$local_filename;
 
             // Download font if not cached
-            if (!file_exists($local_path)) {
+            if (! file_exists($local_path)) {
                 $font_response = wp_remote_get($font_url, [
                     'timeout' => 30,
                 ]);
 
-                if (!is_wp_error($font_response) && wp_remote_retrieve_response_code($font_response) === 200) {
+                if (! is_wp_error($font_response) && wp_remote_retrieve_response_code($font_response) === 200) {
                     file_put_contents($local_path, wp_remote_retrieve_body($font_response));
                 } else {
                     continue; // Skip this font, keep original URL
@@ -1488,22 +1551,26 @@ class Jabali_Cache_Plugin {
     /**
      * Remove Google Fonts preconnect hints
      */
-    public function remove_google_fonts_preconnect($hints, $relation_type) {
+    public function remove_google_fonts_preconnect($hints, $relation_type)
+    {
         if ($relation_type === 'preconnect' || $relation_type === 'dns-prefetch') {
-            $hints = array_filter($hints, function($hint) {
+            $hints = array_filter($hints, function ($hint) {
                 $url = is_array($hint) ? ($hint['href'] ?? '') : $hint;
+
                 return strpos($url, 'fonts.googleapis.com') === false
                     && strpos($url, 'fonts.gstatic.com') === false;
             });
         }
+
         return $hints;
     }
 
     /**
      * Get local Google Fonts cache stats
      */
-    public function get_local_fonts_stats() {
-        $cache_dir = WP_CONTENT_DIR . '/cache/jabali/fonts';
+    public function get_local_fonts_stats()
+    {
+        $cache_dir = WP_CONTENT_DIR.'/cache/jabali/fonts';
         $stats = [
             'enabled' => $this->settings['local_google_fonts'],
             'cached_files' => 0,
@@ -1511,7 +1578,7 @@ class Jabali_Cache_Plugin {
         ];
 
         if (is_dir($cache_dir)) {
-            $files = glob($cache_dir . '/*');
+            $files = glob($cache_dir.'/*');
             $stats['cached_files'] = count($files);
             foreach ($files as $file) {
                 $stats['cache_size'] += filesize($file);
@@ -1522,7 +1589,8 @@ class Jabali_Cache_Plugin {
     }
 
     // Expired Cache - Send no-cache headers
-    public function send_expired_cache_headers() {
+    public function send_expired_cache_headers()
+    {
         // Skip if headers already sent
         if (headers_sent()) {
             return;
@@ -1541,7 +1609,8 @@ class Jabali_Cache_Plugin {
     }
 
     // Disable Page Cache - Send headers to bypass nginx fastcgi_cache
-    public function disable_page_cache_headers() {
+    public function disable_page_cache_headers()
+    {
         // Skip if headers already sent
         if (headers_sent()) {
             return;
@@ -1561,7 +1630,8 @@ class Jabali_Cache_Plugin {
     }
 
     // Admin Menu
-    public function add_admin_menu() {
+    public function add_admin_menu()
+    {
         add_options_page(
             __('Jabali Cache', 'jabali-cache'),
             __('Jabali Cache', 'jabali-cache'),
@@ -1571,13 +1641,15 @@ class Jabali_Cache_Plugin {
         );
     }
 
-    public function register_settings() {
+    public function register_settings()
+    {
         register_setting(self::OPTION_KEY, self::OPTION_KEY, [
-            'sanitize_callback' => [$this, 'sanitize_settings']
+            'sanitize_callback' => [$this, 'sanitize_settings'],
         ]);
     }
 
-    public function sanitize_settings($input) {
+    public function sanitize_settings($input)
+    {
         $sanitized = [];
         $checkboxes = [
             'page_cache', 'object_cache', 'html_minify', 'minify_css', 'minify_js',
@@ -1585,11 +1657,11 @@ class Jabali_Cache_Plugin {
             'remove_query_strings', 'disable_emojis', 'disable_embeds', 'defer_js', 'cache_debug',
             'local_google_fonts',
             // LCP Optimization settings
-            'lcp_preload', 'preconnect_hints', 'preload_fonts', 'delay_third_party'
+            'lcp_preload', 'preconnect_hints', 'preload_fonts', 'delay_third_party',
         ];
 
         foreach ($checkboxes as $key) {
-            $sanitized[$key] = !empty($input[$key]);
+            $sanitized[$key] = ! empty($input[$key]);
         }
 
         // Sync page cache with Jabali Panel (nginx FastCGI cache)
@@ -1609,7 +1681,8 @@ class Jabali_Cache_Plugin {
      * Sync page cache setting with Jabali Panel
      * This enables/disables nginx FastCGI cache for this domain
      */
-    private function sync_page_cache_with_jabali($enabled) {
+    private function sync_page_cache_with_jabali($enabled)
+    {
         // Get domain from site URL
         $site_url = get_site_url();
         $parsed = parse_url($site_url);
@@ -1620,7 +1693,7 @@ class Jabali_Cache_Plugin {
         }
 
         // Generate secret from AUTH_KEY
-        $secret = defined('AUTH_KEY') ? substr(md5(AUTH_KEY), 0, 32) : '';
+        $secret = defined('AUTH_KEY') ? hash('sha256', AUTH_KEY) : '';
         if (empty($secret)) {
             return false;
         }
@@ -1641,14 +1714,16 @@ class Jabali_Cache_Plugin {
         ]);
 
         if (is_wp_error($response)) {
-            error_log('Jabali Cache: Failed to sync page cache - ' . $response->get_error_message());
+            error_log('Jabali Cache: Failed to sync page cache - '.$response->get_error_message());
+
             return false;
         }
 
         $code = wp_remote_retrieve_response_code($response);
         if ($code !== 200) {
             $body = wp_remote_retrieve_body($response);
-            error_log('Jabali Cache: Failed to sync page cache - HTTP ' . $code . ' - ' . $body);
+            error_log('Jabali Cache: Failed to sync page cache - HTTP '.$code.' - '.$body);
+
             return false;
         }
 
@@ -1658,18 +1733,21 @@ class Jabali_Cache_Plugin {
     /**
      * Disable page cache when plugin is deactivated
      */
-    public function disable_page_cache_on_deactivation() {
+    public function disable_page_cache_on_deactivation()
+    {
         return $this->sync_page_cache_with_jabali(false);
     }
 
     /**
      * Enable page cache when plugin is activated (if enabled in settings)
      */
-    public function enable_page_cache_on_activation() {
+    public function enable_page_cache_on_activation()
+    {
         return $this->sync_page_cache_with_jabali(true);
     }
 
-    public function admin_styles($hook) {
+    public function admin_styles($hook)
+    {
         if ($hook !== 'settings_page_jabali-cache') {
             return;
         }
@@ -1887,8 +1965,9 @@ class Jabali_Cache_Plugin {
         <?php
     }
 
-    public function add_admin_bar_menu($wp_admin_bar) {
-        if (!current_user_can('manage_options')) {
+    public function add_admin_bar_menu($wp_admin_bar)
+    {
+        if (! current_user_can('manage_options')) {
             return;
         }
 
@@ -1935,18 +2014,21 @@ class Jabali_Cache_Plugin {
         ]);
     }
 
-    public function add_action_links($links) {
+    public function add_action_links($links)
+    {
         $settings_link = sprintf(
             '<a href="%s">%s</a>',
             admin_url('options-general.php?page=jabali-cache'),
             __('Settings', 'jabali-cache')
         );
         array_unshift($links, $settings_link);
+
         return $links;
     }
 
-    public function handle_actions() {
-        if (!isset($_GET['page']) || $_GET['page'] !== 'jabali-cache' || !isset($_GET['action'])) {
+    public function handle_actions()
+    {
+        if (! isset($_GET['page']) || $_GET['page'] !== 'jabali-cache' || ! isset($_GET['action'])) {
             return;
         }
 
@@ -1954,7 +2036,7 @@ class Jabali_Cache_Plugin {
 
         switch ($action) {
             case 'flush':
-                if (!wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_flush')) {
+                if (! wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_flush')) {
                     wp_die(__('Security check failed', 'jabali-cache'));
                 }
                 wp_cache_flush();
@@ -1962,7 +2044,7 @@ class Jabali_Cache_Plugin {
                 exit;
 
             case 'enable':
-                if (!wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_enable')) {
+                if (! wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_enable')) {
                     wp_die(__('Security check failed', 'jabali-cache'));
                 }
                 $this->enable_drop_in();
@@ -1970,7 +2052,7 @@ class Jabali_Cache_Plugin {
                 exit;
 
             case 'disable':
-                if (!wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_disable')) {
+                if (! wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_disable')) {
                     wp_die(__('Security check failed', 'jabali-cache'));
                 }
                 $this->disable_drop_in();
@@ -1978,7 +2060,7 @@ class Jabali_Cache_Plugin {
                 exit;
 
             case 'clear_all':
-                if (!wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_clear_all')) {
+                if (! wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_clear_all')) {
                     wp_die(__('Security check failed', 'jabali-cache'));
                 }
                 $this->clear_all_caches();
@@ -1986,7 +2068,7 @@ class Jabali_Cache_Plugin {
                 exit;
 
             case 'purge_page':
-                if (!wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_purge_page')) {
+                if (! wp_verify_nonce($_GET['_wpnonce'] ?? '', 'jabali_cache_purge_page')) {
                     wp_die(__('Security check failed', 'jabali-cache'));
                 }
                 $this->purge_all_cache();
@@ -1998,11 +2080,12 @@ class Jabali_Cache_Plugin {
     /**
      * Clear all caches - combined CSS/JS files and object cache
      */
-    public function clear_all_caches() {
+    public function clear_all_caches()
+    {
         // Clear combined CSS/JS cache files
-        $cache_dir = WP_CONTENT_DIR . '/cache/jabali';
+        $cache_dir = WP_CONTENT_DIR.'/cache/jabali';
         if (is_dir($cache_dir)) {
-            $files = glob($cache_dir . '/*');
+            $files = glob($cache_dir.'/*');
             foreach ($files as $file) {
                 if (is_file($file)) {
                     @unlink($file);
@@ -2019,41 +2102,46 @@ class Jabali_Cache_Plugin {
         $this->purge_all_cache();
     }
 
-    public function is_drop_in_installed() {
-        $drop_in = WP_CONTENT_DIR . '/object-cache.php';
-        if (!file_exists($drop_in)) {
+    public function is_drop_in_installed()
+    {
+        $drop_in = WP_CONTENT_DIR.'/object-cache.php';
+        if (! file_exists($drop_in)) {
             return false;
         }
         $content = file_get_contents($drop_in);
+
         return strpos($content, 'Jabali_Redis_Object_Cache') !== false;
     }
 
-    public function enable_drop_in() {
-        $source = plugin_dir_path(__FILE__) . 'object-cache.php';
-        $dest = WP_CONTENT_DIR . '/object-cache.php';
+    public function enable_drop_in()
+    {
+        $source = plugin_dir_path(__FILE__).'object-cache.php';
+        $dest = WP_CONTENT_DIR.'/object-cache.php';
         if (file_exists($source)) {
             @copy($source, $dest);
         }
     }
 
-    public function disable_drop_in() {
-        $drop_in = WP_CONTENT_DIR . '/object-cache.php';
+    public function disable_drop_in()
+    {
+        $drop_in = WP_CONTENT_DIR.'/object-cache.php';
         if (file_exists($drop_in)) {
             @unlink($drop_in);
         }
     }
 
-    public function is_redis_connected() {
-        if (!class_exists('Redis')) {
+    public function is_redis_connected()
+    {
+        if (! class_exists('Redis')) {
             return false;
         }
         try {
-            $redis = new Redis();
+            $redis = new Redis;
             $host = defined('JABALI_CACHE_HOST') ? JABALI_CACHE_HOST : '127.0.0.1';
             $port = defined('JABALI_CACHE_PORT') ? JABALI_CACHE_PORT : 6379;
             $db = defined('JABALI_CACHE_DATABASE') ? JABALI_CACHE_DATABASE : 0;
 
-            if (!$redis->connect($host, $port, 1)) {
+            if (! $redis->connect($host, $port, 1)) {
                 return false;
             }
 
@@ -2073,7 +2161,8 @@ class Jabali_Cache_Plugin {
         }
     }
 
-    public function get_cache_stats() {
+    public function get_cache_stats()
+    {
         global $wp_object_cache;
 
         $stats = [
@@ -2104,48 +2193,49 @@ class Jabali_Cache_Plugin {
         return $stats;
     }
 
-    public function render_admin_page() {
+    public function render_admin_page()
+    {
         $stats = $this->get_cache_stats();
         $drop_in_installed = $this->is_drop_in_installed();
         $redis_available = class_exists('Redis');
         $redis_connected = $this->is_redis_connected();
         ?>
         <div class="wrap">
-            <?php if (isset($_GET['flushed'])): ?>
+            <?php if (isset($_GET['flushed'])) { ?>
             <div class="notice notice-success is-dismissible">
                 <p><?php _e('Object cache flushed successfully.', 'jabali-cache'); ?></p>
             </div>
-            <?php endif; ?>
+            <?php } ?>
 
-            <?php if (isset($_GET['cleared'])): ?>
+            <?php if (isset($_GET['cleared'])) { ?>
             <div class="notice notice-success is-dismissible">
                 <p><?php _e('All caches cleared successfully.', 'jabali-cache'); ?></p>
             </div>
-            <?php endif; ?>
+            <?php } ?>
 
-            <?php if (isset($_GET['purged'])): ?>
+            <?php if (isset($_GET['purged'])) { ?>
             <div class="notice notice-success is-dismissible">
                 <p><?php _e('Page cache purged successfully.', 'jabali-cache'); ?></p>
             </div>
-            <?php endif; ?>
+            <?php } ?>
 
-            <?php if (isset($_GET['enabled'])): ?>
+            <?php if (isset($_GET['enabled'])) { ?>
             <div class="notice notice-success is-dismissible">
                 <p><?php _e('Object cache enabled successfully.', 'jabali-cache'); ?></p>
             </div>
-            <?php endif; ?>
+            <?php } ?>
 
-            <?php if (isset($_GET['disabled'])): ?>
+            <?php if (isset($_GET['disabled'])) { ?>
             <div class="notice notice-success is-dismissible">
                 <p><?php _e('Object cache disabled successfully.', 'jabali-cache'); ?></p>
             </div>
-            <?php endif; ?>
+            <?php } ?>
 
-            <?php if (isset($_GET['settings-updated'])): ?>
+            <?php if (isset($_GET['settings-updated'])) { ?>
             <div class="notice notice-success is-dismissible">
                 <p><?php _e('Settings saved successfully.', 'jabali-cache'); ?></p>
             </div>
-            <?php endif; ?>
+            <?php } ?>
 
             <!-- Header with Logo -->
             <div class="jabali-header">
@@ -2223,27 +2313,27 @@ class Jabali_Cache_Plugin {
                                 </div>
                             </div>
 
-                            <?php if ($stats['ratio'] < 50 && ($stats['hits'] + $stats['misses']) > 100): ?>
+                            <?php if ($stats['ratio'] < 50 && ($stats['hits'] + $stats['misses']) > 100) { ?>
                             <div class="jabali-warning-notice">
                                 <p><strong><?php _e('Low Hit Ratio:', 'jabali-cache'); ?></strong> <?php _e('Consider reviewing your caching strategy. High misses may indicate frequent cache flushes or too many unique cache keys.', 'jabali-cache'); ?></p>
                             </div>
-                            <?php endif; ?>
+                            <?php } ?>
 
                             <div class="jabali-actions">
-                                <?php if ($drop_in_installed): ?>
+                                <?php if ($drop_in_installed) { ?>
                                     <a href="<?php echo wp_nonce_url(admin_url('options-general.php?page=jabali-cache&action=flush'), 'jabali_cache_flush'); ?>" class="button button-primary">
                                         <?php _e('Flush Cache', 'jabali-cache'); ?>
                                     </a>
                                     <a href="<?php echo wp_nonce_url(admin_url('options-general.php?page=jabali-cache&action=disable'), 'jabali_cache_disable'); ?>" class="button">
                                         <?php _e('Disable', 'jabali-cache'); ?>
                                     </a>
-                                <?php elseif ($redis_available): ?>
+                                <?php } elseif ($redis_available) { ?>
                                     <a href="<?php echo wp_nonce_url(admin_url('options-general.php?page=jabali-cache&action=enable'), 'jabali_cache_enable'); ?>" class="button button-primary">
                                         <?php _e('Enable Object Cache', 'jabali-cache'); ?>
                                     </a>
-                                <?php else: ?>
+                                <?php } else { ?>
                                     <p class="description"><?php _e('Redis PHP extension is not installed.', 'jabali-cache'); ?></p>
-                                <?php endif; ?>
+                                <?php } ?>
                             </div>
                         </div>
                     </div>
@@ -2491,7 +2581,7 @@ class Jabali_Cache_Plugin {
                 <p><?php _e('Jabali Cache provides comprehensive caching and optimization for WordPress sites hosted on Jabali Panel. It includes Redis object caching, nginx page caching with smart auto-purging, HTML/CSS/JS minification, lazy loading, local Google Fonts, and various performance optimizations.', 'jabali-cache'); ?></p>
                 <p>
                     <strong><?php _e('Version:', 'jabali-cache'); ?></strong> <?php echo self::VERSION; ?> &nbsp;|&nbsp;
-                    <strong><?php _e('Smart Cache Purge:', 'jabali-cache'); ?></strong> <?php echo $this->settings['page_cache'] ? '<span style="color:#00a32a;">' . __('Active', 'jabali-cache') . '</span>' : '<span style="color:#646970;">' . __('Inactive', 'jabali-cache') . '</span>'; ?>
+                    <strong><?php _e('Smart Cache Purge:', 'jabali-cache'); ?></strong> <?php echo $this->settings['page_cache'] ? '<span style="color:#00a32a;">'.__('Active', 'jabali-cache').'</span>' : '<span style="color:#646970;">'.__('Inactive', 'jabali-cache').'</span>'; ?>
                 </p>
             </div>
         </div>
@@ -2503,7 +2593,7 @@ class Jabali_Cache_Plugin {
 Jabali_Cache_Plugin::get_instance();
 
 // Activation - enable object cache and page cache
-register_activation_hook(__FILE__, function() {
+register_activation_hook(__FILE__, function () {
     $plugin = Jabali_Cache_Plugin::get_instance();
 
     // Enable Redis object cache if available
@@ -2523,7 +2613,7 @@ register_activation_hook(__FILE__, function() {
 });
 
 // Deactivation - disable object cache AND page cache
-register_deactivation_hook(__FILE__, function() {
+register_deactivation_hook(__FILE__, function () {
     $plugin = Jabali_Cache_Plugin::get_instance();
     $plugin->disable_drop_in();
 

@@ -12,12 +12,14 @@ use Illuminate\Console\Command;
 class CheckDiskQuotas extends Command
 {
     protected $signature = 'jabali:check-quotas {--threshold=90 : Percentage threshold for warning}';
+
     protected $description = 'Check disk quotas and send notifications for users exceeding threshold';
 
     public function handle(): int
     {
-        if (!DnsSetting::get('quotas_enabled', false)) {
+        if (! DnsSetting::get('quotas_enabled', false)) {
             $this->info('Disk quotas are not enabled.');
+
             return Command::SUCCESS;
         }
 
@@ -42,6 +44,7 @@ class CheckDiskQuotas extends Command
         }
 
         $this->info("Quota check complete. {$warnings} warning(s) sent.");
+
         return Command::SUCCESS;
     }
 
@@ -50,7 +53,7 @@ class CheckDiskQuotas extends Command
         $output = [];
         $returnVar = 0;
 
-        exec("quota -u {$username} 2>/dev/null", $output, $returnVar);
+        exec('quota -u '.escapeshellarg($username).' 2>/dev/null', $output, $returnVar);
 
         if ($returnVar !== 0 || empty($output)) {
             return null;
