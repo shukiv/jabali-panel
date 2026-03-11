@@ -42,7 +42,10 @@ class Files extends Page implements HasActions, HasForms, HasTable
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-folder';
 
-    protected static ?string $navigationLabel = 'File Manager';
+    public static function getNavigationLabel(): string
+    {
+        return __('File Manager');
+    }
 
     protected static ?int $navigationSort = 6;
 
@@ -84,7 +87,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                 $this->currentPath = '';
                 Notification::make()
                     ->title(__('Invalid path'))
-                    ->body('The requested path is not allowed.')
+                    ->body(__('The requested path is not allowed.'))
                     ->danger()
                     ->send();
             }
@@ -266,7 +269,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
 
     public function getPathBreadcrumbs(): array
     {
-        $breadcrumbs = [['name' => 'Home', 'path' => '']];
+        $breadcrumbs = [['name' => __('Home'), 'path' => '']];
 
         if (! empty($this->currentPath)) {
             $parts = explode('/', $this->currentPath);

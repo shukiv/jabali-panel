@@ -156,7 +156,7 @@ class ImageOptimization extends Page implements HasActions, HasForms
                 $optimized = $result['optimized'] ?? [];
                 $message = __('Optimization complete');
                 if (! empty($optimized)) {
-                    $message .= ' · JPG: '.($optimized['jpg'] ?? 0).', PNG: '.($optimized['png'] ?? 0).', WebP: '.($optimized['webp'] ?? 0);
+                    $message .= ' · '.__('JPG').': '.($optimized['jpg'] ?? 0).', '.__('PNG').': '.($optimized['png'] ?? 0).', '.__('WebP').': '.($optimized['webp'] ?? 0);
                 }
 
                 Notification::make()->title($message)->success()->send();
