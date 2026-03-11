@@ -19,7 +19,7 @@ class ImportProcessCommand extends Command
 {
     protected $signature = 'import:process {import_id : The server import ID to process}';
 
-    protected $description = 'Process a server import job (cPanel/DirectAdmin migration)';
+    protected $description = 'Process a server import job (cPanel/DirectAdmin/HestiaCP migration)';
 
     private ?AgentClient $agent = null;
 
@@ -261,7 +261,7 @@ class ImportProcessCommand extends Command
             return;
         }
 
-        $extractDir = "/tmp/import_{$import->id}_{$account->id}_".time();
+        $extractDir = "/tmp/import_{$import->id}_{$account->id}_".bin2hex(random_bytes(8));
         if (! mkdir($extractDir, 0755, true)) {
             $account->addLog('Warning: Failed to create extraction directory');
 
@@ -274,8 +274,9 @@ class ImportProcessCommand extends Command
 
             if ($import->source_type === 'cpanel') {
                 // Extract home directory from cPanel backup
+                $safeUsername = escapeshellarg($username);
                 $cmd = "{$tarExtract} ".escapeshellarg($backupPath).' -C '.escapeshellarg($extractDir).
-                    " --wildcards '*/{$username}/homedir/*' '*/homedir/*' 2>/dev/null";
+                    " --wildcards '*/{$safeUsername}/homedir/*' '*/homedir/*' 2>/dev/null";
                 exec($cmd, $output, $code);
                 if ($code !== 0) {
                     $account->addLog('Warning: Failed to extract backup archive');
@@ -298,6 +299,38 @@ class ImportProcessCommand extends Command
                         }
                     }
                 }
+            } elseif ($import->source_type === 'hestiacp') {
+                // Extract from HestiaCP/VestaCP backup
+                $cmd = "{$tarExtract} ".escapeshellarg($backupPath).' -C '.escapeshellarg($extractDir).
+                    " --wildcards 'domains/*' 'backup/domains/*' 2>/dev/null";
+                exec($cmd, $output, $code);
+                if ($code !== 0) {
+                    $account->addLog('Warning: Failed to extract HestiaCP backup archive');
+                }
+
+                // Find domain directories (HestiaCP stores files at domains/{domain}/public_html/)
+                $domainDirs = glob("$extractDir/**/domains/*", GLOB_ONLYDIR) ?:
+                    glob("$extractDir/domains/*", GLOB_ONLYDIR) ?:
+                    glob("$extractDir/backup/domains/*", GLOB_ONLYDIR) ?: [];
+
+                foreach ($domainDirs as $domainDir) {
+                    $domain = basename($domainDir);
+                    if (! $this->isValidDomainName($domain)) {
+                        $account->addLog("Warning: Skipped invalid domain name from backup: {$domain}");
+
+                        continue;
+                    }
+                    $publicHtml = "$domainDir/public_html";
+
+                    if (is_dir($publicHtml)) {
+                        $destDir = "/home/{$user->username}/domains/{$domain}/public_html";
+                        if (is_dir($destDir)) {
+                            exec('cp -r '.escapeshellarg($publicHtml).'/* '.escapeshellarg($destDir).'/ 2>&1');
+                            exec('chown -R '.escapeshellarg($user->username).':'.escapeshellarg($user->username).' '.escapeshellarg($destDir).' 2>&1');
+                            $account->addLog("Copied files for domain: {$domain}");
+                        }
+                    }
+                }
             } else {
                 // Extract from DirectAdmin backup
                 $cmd = "{$tarExtract} ".escapeshellarg($backupPath).' -C '.escapeshellarg($extractDir).
@@ -313,6 +346,11 @@ class ImportProcessCommand extends Command
 
                 foreach ($domainDirs as $domainDir) {
                     $domain = basename($domainDir);
+                    if (! $this->isValidDomainName($domain)) {
+                        $account->addLog("Warning: Skipped invalid domain name from backup: {$domain}");
+
+                        continue;
+                    }
                     $publicHtml = "$domainDir/public_html";
 
                     if (is_dir($publicHtml)) {
@@ -344,7 +382,7 @@ class ImportProcessCommand extends Command
             return;
         }
 
-        $extractDir = "/tmp/import_db_{$import->id}_{$account->id}_".time();
+        $extractDir = "/tmp/import_db_{$import->id}_{$account->id}_".bin2hex(random_bytes(8));
         if (! mkdir($extractDir, 0755, true)) {
             return;
         }
@@ -356,6 +394,9 @@ class ImportProcessCommand extends Command
             if ($import->source_type === 'cpanel') {
                 $cmd = "{$tarExtract} ".escapeshellarg($backupPath).' -C '.escapeshellarg($extractDir).
                     " --wildcards '*/mysql/*.sql*' 'mysql/*.sql*' 2>/dev/null";
+            } elseif ($import->source_type === 'hestiacp') {
+                $cmd = "{$tarExtract} ".escapeshellarg($backupPath).' -C '.escapeshellarg($extractDir).
+                    " --wildcards 'backup/databases/*.sql*' 'databases/*.sql*' 2>/dev/null";
             } else {
                 $cmd = "{$tarExtract} ".escapeshellarg($backupPath).' -C '.escapeshellarg($extractDir).
                     " --wildcards 'backup/databases/*.sql*' 'databases/*.sql*' 2>/dev/null";
@@ -453,25 +494,46 @@ class ImportProcessCommand extends Command
     private function resolveBackupFullPath(ServerImport $import): ?string
     {
         $path = trim((string) ($import->backup_path ?? ''));
-        if ($path === '') {
+        if ($path === '' || str_contains($path, "\0") || str_contains($path, '..')) {
             return null;
         }
 
-        if (str_starts_with($path, '/') && file_exists($path)) {
-            return $path;
+        $allowedRoots = array_filter([
+            realpath(Storage::disk('local')->path('')) ?: null,
+            realpath(Storage::disk('backups')->path('')) ?: null,
+            realpath('/var/backups/jabali') ?: null,
+        ]);
+
+        $isWithinAllowed = static function (string $candidate) use ($allowedRoots): bool {
+            $real = realpath($candidate);
+            if ($real === false) {
+                return false;
+            }
+            foreach ($allowedRoots as $root) {
+                $rootPrefix = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
+                if (str_starts_with($real.DIRECTORY_SEPARATOR, $rootPrefix) || $real === $root) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        if (str_starts_with($path, '/')) {
+            return $isWithinAllowed($path) ? realpath($path) : null;
         }
 
         $localCandidate = Storage::disk('local')->path($path);
-        if (file_exists($localCandidate)) {
-            return $localCandidate;
+        if (file_exists($localCandidate) && $isWithinAllowed($localCandidate)) {
+            return realpath($localCandidate);
         }
 
         $backupCandidate = Storage::disk('backups')->path($path);
-        if (file_exists($backupCandidate)) {
-            return $backupCandidate;
+        if (file_exists($backupCandidate) && $isWithinAllowed($backupCandidate)) {
+            return realpath($backupCandidate);
         }
 
-        return file_exists($path) ? $path : null;
+        return null;
     }
 
     private function getTarExtractCommandPrefix(string $archivePath): string
@@ -487,5 +549,10 @@ class ImportProcessCommand extends Command
         }
 
         return 'tar -xf';
+    }
+
+    private function isValidDomainName(string $domain): bool
+    {
+        return (bool) preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i', $domain);
     }
 }

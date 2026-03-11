@@ -41,19 +41,19 @@ class Migration extends Page implements HasForms
 
     public function getSubheading(): ?string
     {
-        return __('Migrate cPanel, WHM, or DirectAdmin accounts into Jabali');
+        return __('Migrate cPanel, WHM, DirectAdmin, or HestiaCP accounts into Jabali');
     }
 
     public function mount(): void
     {
-        if (! in_array($this->activeTab, ['cpanel', 'whm', 'directadmin'], true)) {
+        if (! in_array($this->activeTab, ['cpanel', 'whm', 'directadmin', 'hestiacp'], true)) {
             $this->activeTab = 'cpanel';
         }
     }
 
     public function updatedActiveTab(string $activeTab): void
     {
-        if (! in_array($activeTab, ['cpanel', 'whm', 'directadmin'], true)) {
+        if (! in_array($activeTab, ['cpanel', 'whm', 'directadmin', 'hestiacp'], true)) {
             $this->activeTab = 'cpanel';
         }
     }
@@ -83,6 +83,11 @@ class Migration extends Page implements HasForms
                         ->icon('heroicon-o-arrow-down-tray')
                         ->schema([
                             View::make('filament.admin.pages.migration-directadmin-tab'),
+                        ]),
+                    'hestiacp' => Tabs\Tab::make(__('HestiaCP / VestaCP'))
+                        ->icon('heroicon-o-server-stack')
+                        ->schema([
+                            View::make('filament.admin.pages.migration-hestiacp-tab'),
                         ]),
                 ]),
         ]);
