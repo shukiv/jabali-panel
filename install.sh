@@ -2042,13 +2042,28 @@ create_webmaster_mailbox() {
         }
 
         // Create or find domain for hostname
-        \$domain = Domain::firstOrCreate(
-            ['domain' => \$hostname],
-            ['user_id' => \$admin->id, 'status' => 'active', 'document_root' => '/var/www/html']
-        );
+        \$agent = new AgentClient();
+        \$domain = Domain::where('domain', \$hostname)->first();
+
+        if (!\$domain) {
+            // Create via agent first (sets up vhost + document root directory)
+            try {
+                \$agent->domainCreate(\$admin->username, \$hostname);
+            } catch (Exception \$e) {
+                // May fail if vhost already exists
+            }
+
+            \$domain = Domain::create([
+                'user_id' => \$admin->id,
+                'domain' => \$hostname,
+                'document_root' => '/home/' . \$admin->username . '/domains/' . \$hostname . '/public_html',
+                'is_active' => true,
+                'ssl_enabled' => false,
+                'directory_index' => 'index.php index.html',
+            ]);
+        }
 
         // Enable email for domain if not already
-        \$agent = new AgentClient();
         try {
             \$agent->emailEnableDomain(\$admin->username, \$hostname);
         } catch (Exception \$e) {
