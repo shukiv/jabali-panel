@@ -537,16 +537,18 @@ class UpgradeCommand extends Command
 
     protected function ensurePublicAssetsPermissions(): void
     {
-        $publicJs = $this->basePath.'/public/js';
+        $paths = [
+            $this->basePath.'/public/js',
+            $this->basePath.'/public/css',
+        ];
 
-        if (! File::isDirectory($publicJs)) {
-            return;
-        }
+        foreach ($paths as $path) {
+            if (! File::isDirectory($path)) {
+                continue;
+            }
 
-        if ($this->isRunningAsRoot() && $this->userExists('www-data')) {
-            $escaped = escapeshellarg($publicJs);
-            $this->executeCommand("chown -R www-data:www-data {$escaped}");
-            $this->executeCommand("chmod -R u+rwX {$escaped}");
+            $escaped = escapeshellarg($path);
+            $this->executeCommand("chmod -R a+rwX {$escaped}");
         }
     }
 
