@@ -128,7 +128,7 @@ DELETE_REMOTE=0
 DRY_RUN=0
 SKIP_PUSH=0
 PUSH_GITEA=1
-PUSH_GITHUB=1
+PUSH_GITHUB=0
 SET_VERSION=""
 
 usage() {
@@ -149,6 +149,7 @@ Options:
   --delete            Pass --delete to rsync (dangerous)
   --dry-run           Dry-run rsync only
   --skip-push         Skip all git push operations
+  --push TARGET       Push to: gitea, github, or both (default: gitea)
   --push-gitea        Push current branch to Gitea from deploy server (default: on)
   --no-push-gitea     Disable Gitea push
   --gitea-remote NAME Gitea git remote name (default: gitea)
@@ -221,6 +222,27 @@ while [[ $# -gt 0 ]]; do
             PUSH_GITEA=0
             PUSH_GITHUB=0
             shift
+            ;;
+        --push)
+            case "${2:-}" in
+                gitea)
+                    PUSH_GITEA=1
+                    PUSH_GITHUB=0
+                    ;;
+                github)
+                    PUSH_GITEA=0
+                    PUSH_GITHUB=1
+                    ;;
+                both)
+                    PUSH_GITEA=1
+                    PUSH_GITHUB=1
+                    ;;
+                *)
+                    echo "Invalid --push target: '${2:-}'. Use: gitea, github, or both"
+                    exit 1
+                    ;;
+            esac
+            shift 2
             ;;
         --push-gitea)
             PUSH_GITEA=1
