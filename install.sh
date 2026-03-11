@@ -27,6 +27,9 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 BOLD='\033[1m'
 
+# Verbosity (set via --debug flag)
+DEBUG=${DEBUG:-false}
+
 # Configuration
 JABALI_DIR="/var/www/jabali"
 JABALI_USER="www-data"
@@ -189,6 +192,52 @@ header() {
     echo ""
 }
 
+# Run a command quietly with a spinner, or verbosely in debug mode
+# Usage: run_quiet "Installing packages..." command arg1 arg2 ...
+run_quiet() {
+    local label="$1"
+    shift
+
+    if [[ "$DEBUG" == "true" ]]; then
+        echo -e "${CYAN}[i]${NC} ${label}"
+        "$@"
+        return $?
+    fi
+
+    local log_file
+    log_file=$(mktemp /tmp/jabali-install-XXXXXX.log)
+    local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spin_len=${#spin_chars}
+    local i=0
+
+    # Run command in background
+    "$@" > "$log_file" 2>&1 &
+    local cmd_pid=$!
+
+    # Show spinner
+    printf "${CYAN}[i]${NC} %s " "$label"
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+        printf "\r${CYAN}[${spin_chars:i%spin_len:1}]${NC} %s " "$label"
+        ((i++))
+        sleep 0.1
+    done
+
+    # Get exit code
+    wait "$cmd_pid"
+    local exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        printf "\r${GREEN}[✓]${NC} %s\n" "$label"
+    else
+        printf "\r${RED}[✗]${NC} %s\n" "$label"
+        echo -e "${YELLOW}    Command failed. Last 20 lines of output:${NC}"
+        tail -20 "$log_file" | sed 's/^/    /'
+    fi
+
+    rm -f "$log_file"
+    return $exit_code
+}
+
 # Check if running as root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -321,11 +370,11 @@ add_repositories() {
     header "Adding Repositories"
 
     # Update package list
-    apt-get update -qq
+    run_quiet "Updating package lists..." apt-get update -qq
 
     # Install prerequisites (software-properties-common is optional, mainly for Ubuntu)
-    apt-get install -y -qq apt-transport-https ca-certificates curl gnupg lsb-release sudo
-    apt-get install -y -qq software-properties-common 2>/dev/null || true
+    run_quiet "Installing prerequisites..." apt-get install -y -qq apt-transport-https ca-certificates curl gnupg lsb-release sudo
+    apt-get install -y -qq software-properties-common > /dev/null 2>&1 || true
 
     # Detect codename
     local codename=$(lsb_release -sc)
@@ -362,7 +411,7 @@ EOF
 
     # Add MariaDB repository (optional, system version usually fine)
 
-    apt-get update -qq
+    run_quiet "Updating package lists..." apt-get update -qq
     log "Repositories configured"
 }
 
@@ -573,11 +622,11 @@ install_packages() {
         echo "roundcube-core roundcube/database-type select sqlite3" | debconf-set-selections 2>/dev/null || true
     fi
 
-    info "Installing base packages..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${base_packages[@]}" || {
+    run_quiet "Installing base packages (this may take a few minutes)..." \
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${base_packages[@]}" || {
         warn "Some packages may not be available, retrying individually..."
         for pkg in "${base_packages[@]}"; do
-            apt-get install -y -qq "$pkg" 2>/dev/null || warn "Could not install: $pkg"
+            run_quiet "  Installing $pkg..." apt-get install -y -qq "$pkg" || warn "Could not install: $pkg"
         done
     }
 
@@ -660,7 +709,8 @@ install_packages() {
     )
 
     # Install all PHP packages (use --force-confmiss to handle dpkg's "deleted config" state)
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" "${php_extensions[@]}"; then
+    if ! run_quiet "Installing PHP extensions..." \
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" "${php_extensions[@]}"; then
         warn "PHP installation had errors, attempting aggressive recovery..."
 
         # Stop PHP-FPM if it's somehow running in a broken state
@@ -688,8 +738,8 @@ install_packages() {
         dpkg --configure -a 2>/dev/null || true
 
         # Reinstall PHP with force-confmiss to ensure config files are created
-        info "Reinstalling PHP 8.4 with fresh configuration..."
-        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" "${php_extensions[@]}"; then
+        if ! run_quiet "Reinstalling PHP 8.4 with fresh configuration..." \
+            env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" "${php_extensions[@]}"; then
             error "Failed to install PHP 8.4. Please check your system's package state and try again."
         fi
     fi
@@ -717,10 +767,11 @@ install_packages() {
         info "Purging and reinstalling PHP-FPM with fresh config..."
         systemctl stop php8.4-fpm 2>/dev/null || true
         systemctl reset-failed php8.4-fpm 2>/dev/null || true
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-fpm 2>/dev/null || true
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-fpm > /dev/null 2>&1 || true
         rm -rf /etc/php/8.4/fpm
-        apt-get clean
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php8.4-fpm
+        apt-get clean > /dev/null 2>&1
+        run_quiet "Reinstalling PHP-FPM..." \
+            env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php8.4-fpm
     fi
 
     # Verify PHP-FPM is running
@@ -797,9 +848,10 @@ EOF
     if [[ ! -f "$cli_ini" ]]; then
         warn "PHP CLI config file missing: $cli_ini"
         info "Reinstalling php8.4-cli with fresh config..."
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-cli 2>/dev/null || true
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-cli > /dev/null 2>&1 || true
         rm -rf /etc/php/8.4/cli
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php8.4-cli
+        run_quiet "Reinstalling PHP CLI..." \
+            env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php8.4-cli
     fi
 
     # Verify required extensions are available
@@ -814,8 +866,9 @@ EOF
         info "Extension .ini files may be missing. Purging and reinstalling PHP packages..."
 
         # Purge php-common to remove stale config state, then reinstall all packages
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-common
-        DEBIAN_FRONTEND=noninteractive apt-get install -y "${php_extensions[@]}"
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-common > /dev/null 2>&1
+        run_quiet "Reinstalling PHP extensions..." \
+            env DEBIAN_FRONTEND=noninteractive apt-get install -y "${php_extensions[@]}"
 
         # Check again
         php -r "class_exists('Phar') || exit(1);" 2>/dev/null || error "PHP Phar extension is missing"
@@ -1211,7 +1264,7 @@ EOF
 configure_mariadb() {
     header "Configuring MariaDB"
 
-    systemctl enable mariadb
+    systemctl enable mariadb > /dev/null 2>&1
     systemctl start mariadb
 
     # Secure installation (non-interactive)
@@ -1484,7 +1537,7 @@ ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
 OVERRIDE
     systemctl daemon-reload
 
-    nginx -t && systemctl reload nginx
+    nginx -t -q 2>/dev/null && systemctl reload nginx
 
     log "Nginx configured with HTTPS (self-signed certificate)"
 }
@@ -1541,11 +1594,11 @@ SUBMISSION
 
     # Read DB credentials from .env
     local _db_host _db_port _db_name _db_user _db_pass
-    _db_host=$(grep '^DB_HOST=' "$INSTALL_DIR/.env" | cut -d= -f2-)
-    _db_port=$(grep '^DB_PORT=' "$INSTALL_DIR/.env" | cut -d= -f2-)
-    _db_name=$(grep '^DB_DATABASE=' "$INSTALL_DIR/.env" | cut -d= -f2-)
-    _db_user=$(grep '^DB_USERNAME=' "$INSTALL_DIR/.env" | cut -d= -f2-)
-    _db_pass=$(grep '^DB_PASSWORD=' "$INSTALL_DIR/.env" | cut -d= -f2-)
+    _db_host=$(grep '^DB_HOST=' "$JABALI_DIR/.env" | cut -d= -f2-)
+    _db_port=$(grep '^DB_PORT=' "$JABALI_DIR/.env" | cut -d= -f2-)
+    _db_name=$(grep '^DB_DATABASE=' "$JABALI_DIR/.env" | cut -d= -f2-)
+    _db_user=$(grep '^DB_USERNAME=' "$JABALI_DIR/.env" | cut -d= -f2-)
+    _db_pass=$(grep '^DB_PASSWORD=' "$JABALI_DIR/.env" | cut -d= -f2-)
 
     cat > /etc/dovecot/conf.d/auth-sql.conf.ext << DOVECOT_SQL
 # Authentication for SQL users - Jabali Panel
@@ -1696,7 +1749,7 @@ namespace inbox {
 }
 DOVECOT_MAIL
 
-    systemctl enable postfix dovecot
+    systemctl enable postfix dovecot > /dev/null 2>&1
 
     # Create Roundcube SSO script for Jabali Panel
     if [[ -d /var/lib/roundcube/public_html ]]; then
@@ -1919,7 +1972,7 @@ OPENDKIM_CONF
     # Add postfix to opendkim group for socket access
     usermod -aG opendkim postfix 2>/dev/null || true
 
-    systemctl enable opendkim
+    systemctl enable opendkim > /dev/null 2>&1
 
     # Restart mail services to apply configuration
     systemctl restart opendkim
@@ -1927,7 +1980,7 @@ OPENDKIM_CONF
     systemctl restart postfix
     log "OpenDKIM configured"
 
-    log "Mail server configured with SQLite authentication"
+    log "Mail server configured with MySQL authentication"
 }
 
 # Create webmaster mailbox for system notifications
@@ -2363,7 +2416,8 @@ configure_security() {
         fi
 
         if [[ -n "$module_pkg" ]]; then
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$module_pkg" $modsec_lib $crs_pkg 2>/dev/null || warn "ModSecurity install failed"
+            run_quiet "Installing ModSecurity..." \
+                env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$module_pkg" $modsec_lib $crs_pkg || warn "ModSecurity install failed"
 
             # Ensure ModSecurity base config
             if [[ ! -f /etc/modsecurity/modsecurity.conf ]]; then
@@ -2514,7 +2568,7 @@ findtime = 300
 bantime = 3600
 RCJAIL
 
-    systemctl enable fail2ban
+    systemctl enable fail2ban > /dev/null 2>&1
     systemctl restart fail2ban
     log "Fail2ban configured and enabled"
 
@@ -2848,8 +2902,8 @@ ENV
     sed -i "s/^MAIL_FROM_ADDRESS=.*/MAIL_FROM_ADDRESS=webmaster@${SERVER_HOSTNAME}/" .env
 
     # Install dependencies
-    log "Installing Composer dependencies..."
-    sudo -u $JABALI_USER COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
+    run_quiet "Installing Composer dependencies..." \
+        sudo -u $JABALI_USER COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
     if [ ! -f "$JABALI_DIR/vendor/autoload.php" ]; then
         error "Composer install failed - vendor/autoload.php not found"
         exit 1
@@ -2964,21 +3018,23 @@ ENV
     chown -R "$JABALI_USER:www-data" "$JABALI_DIR/public/build" "$JABALI_DIR/node_modules"
     chmod -R 775 "$JABALI_DIR/public/build" "$JABALI_DIR/node_modules"
     if command -v sudo &>/dev/null; then
-        sudo -u "$JABALI_USER" -H env \
-            NPM_CONFIG_CACHE="$NPM_CONFIG_CACHE" \
-            PUPPETEER_SKIP_DOWNLOAD=1 \
-            PUPPETEER_CACHE_DIR="$PUPPETEER_CACHE_DIR" \
-            XDG_CACHE_HOME="$XDG_CACHE_HOME" \
-            npm install
-        sudo -u "$JABALI_USER" -H env \
-            NPM_CONFIG_CACHE="$NPM_CONFIG_CACHE" \
-            PUPPETEER_SKIP_DOWNLOAD=1 \
-            PUPPETEER_CACHE_DIR="$PUPPETEER_CACHE_DIR" \
-            XDG_CACHE_HOME="$XDG_CACHE_HOME" \
-            npm run build
+        run_quiet "Installing Node.js dependencies..." \
+            sudo -u "$JABALI_USER" -H env \
+                NPM_CONFIG_CACHE="$NPM_CONFIG_CACHE" \
+                PUPPETEER_SKIP_DOWNLOAD=1 \
+                PUPPETEER_CACHE_DIR="$PUPPETEER_CACHE_DIR" \
+                XDG_CACHE_HOME="$XDG_CACHE_HOME" \
+                npm install
+        run_quiet "Building frontend assets..." \
+            sudo -u "$JABALI_USER" -H env \
+                NPM_CONFIG_CACHE="$NPM_CONFIG_CACHE" \
+                PUPPETEER_SKIP_DOWNLOAD=1 \
+                PUPPETEER_CACHE_DIR="$PUPPETEER_CACHE_DIR" \
+                XDG_CACHE_HOME="$XDG_CACHE_HOME" \
+                npm run build
     else
-        npm install
-        npm run build
+        run_quiet "Installing Node.js dependencies..." npm install
+        run_quiet "Building frontend assets..." npm run build
     fi
 
     # Final permissions - ensure everything is correct after all setup
@@ -3094,8 +3150,7 @@ setup_scheduler_cron() {
     # Ensure crontab command is available
     if ! command -v crontab >/dev/null 2>&1; then
         warn "crontab command not found, installing cron package..."
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cron || true
+        run_quiet "Installing cron..." env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cron || true
     fi
 
     if ! command -v crontab >/dev/null 2>&1; then
@@ -3618,12 +3673,21 @@ uninstall() {
         ufw
     )
 
-    for pkg in "${packages[@]}"; do
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq $pkg 2>/dev/null || true
-    done
+    if [[ "$DEBUG" == "true" ]]; then
+        for pkg in "${packages[@]}"; do
+            DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq $pkg 2>/dev/null || true
+        done
+    else
+        info "Removing packages..."
+        for pkg in "${packages[@]}"; do
+            DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq $pkg > /dev/null 2>&1 || true
+        done
+        log "Packages removed"
+    fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq
-    DEBIAN_FRONTEND=noninteractive apt-get autoclean -y -qq
+    run_quiet "Cleaning up..." \
+        env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq
+    DEBIAN_FRONTEND=noninteractive apt-get autoclean -y -qq > /dev/null 2>&1
 
     log "Packages removed"
 
@@ -3754,6 +3818,7 @@ show_usage() {
     echo ""
     echo "Options:"
     echo "  --git <url>          Use a custom git repository URL"
+    echo "  --debug              Show verbose output (apt, npm, composer, etc.)"
     echo ""
     echo "Commands:"
     echo "  install              Install Jabali Panel (default, interactive)"
@@ -3911,6 +3976,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force|-f)
             UNINSTALL_FORCE="--force"
+            shift
+            ;;
+        --debug)
+            DEBUG=true
             shift
             ;;
         *)
