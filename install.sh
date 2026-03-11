@@ -1478,7 +1478,7 @@ SUBMISSION
 # Authentication for SQL users - Jabali Panel
 # Dovecot 2.4 configuration format
 
-sql_driver = sqlite
+driver = sqlite
 sqlite_path = /var/www/jabali/database/database.sqlite
 
 passdb sql {
