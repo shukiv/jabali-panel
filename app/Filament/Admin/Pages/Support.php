@@ -12,7 +12,7 @@ class Support extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-question-mark-circle';
 
-    protected static ?int $navigationSort = 23;
+    protected static ?int $navigationSort = 24;
 
     protected static ?string $slug = 'support';
 
