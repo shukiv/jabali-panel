@@ -432,7 +432,8 @@ ensure_remote_permissions() {
     fi
 
     remote_run "mkdir -p \"$DEPLOY_PATH/storage\" \"$DEPLOY_PATH/bootstrap/cache\" \"$DEPLOY_PATH/public/build\" \"$DEPLOY_PATH/node_modules\" \"$DEPLOY_PATH/database\" \"$NPM_CACHE_DIR\""
-    remote_run "chown -R \"$WWW_USER\":\"$WWW_USER\" \"$DEPLOY_PATH/storage\" \"$DEPLOY_PATH/bootstrap/cache\" \"$DEPLOY_PATH/public\" \"$DEPLOY_PATH/public/build\" \"$DEPLOY_PATH/node_modules\" \"$DEPLOY_PATH/database\" \"$NPM_CACHE_DIR\""
+    remote_run "chown -R \"$WWW_USER\":\"$WWW_USER\" \"$DEPLOY_PATH\""
+    remote_run "chown -R \"$WWW_USER\":\"$WWW_USER\" \"$NPM_CACHE_DIR\""
     remote_run "if [[ -f \"$DEPLOY_PATH/auth.json\" ]]; then chown \"$WWW_USER\":\"$WWW_USER\" \"$DEPLOY_PATH/auth.json\" && chmod 600 \"$DEPLOY_PATH/auth.json\"; fi"
 }
 
