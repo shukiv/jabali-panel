@@ -10,6 +10,7 @@ use App\Models\Mailbox;
 use App\Services\Agent\AgentClient;
 use BackedEnum;
 use Exception;
+use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\CheckboxList;
@@ -147,7 +148,7 @@ class ImapSync extends Page implements HasActions, HasForms
                             ->disabled(fn () => $this->isProcessing),
                     ]),
                     FormActions::make([
-                        FormActions\Action::make('testConnection')
+                        Action::make('testConnection')
                             ->label(__('Test Connection'))
                             ->icon('heroicon-o-signal')
                             ->color('gray')
@@ -155,7 +156,31 @@ class ImapSync extends Page implements HasActions, HasForms
                             ->action('testConnection'),
                     ]),
                     // Show after successful connection
-                    ...$this->getPostConnectionFields(),
+                    CheckboxList::make('selectedFolders')
+                        ->label(__('Select Folders'))
+                        ->helperText(__('Leave empty to sync all folders'))
+                        ->options(fn () => array_combine($this->availableFolders, $this->availableFolders) ?: [])
+                        ->columns(3)
+                        ->disabled(fn () => $this->isProcessing)
+                        ->visible(fn () => $this->isConnected && ! empty($this->availableFolders)),
+                    Select::make('targetMailboxId')
+                        ->label(__('Target Mailbox'))
+                        ->options(fn () => $this->getMailboxOptions())
+                        ->required()
+                        ->searchable()
+                        ->disabled(fn () => $this->isProcessing)
+                        ->visible(fn () => $this->isConnected),
+                    FormActions::make([
+                        Action::make('startSync')
+                            ->label(__('Start Sync'))
+                            ->icon('heroicon-o-play')
+                            ->color('primary')
+                            ->disabled(fn () => $this->isProcessing)
+                            ->requiresConfirmation()
+                            ->modalHeading(__('Start IMAP Sync'))
+                            ->modalDescription(__('This will start syncing emails from the source server. Continue?'))
+                            ->action('startSync'),
+                    ])->visible(fn () => $this->isConnected),
                 ]),
 
             // Bulk Sync Section
@@ -199,7 +224,7 @@ class ImapSync extends Page implements HasActions, HasForms
                         ->required()
                         ->disabled(fn () => $this->isProcessing),
                     FormActions::make([
-                        FormActions\Action::make('startBulkSync')
+                        Action::make('startBulkSync')
                             ->label(__('Start Bulk Sync'))
                             ->icon('heroicon-o-play')
                             ->color('primary')
@@ -220,45 +245,6 @@ class ImapSync extends Page implements HasActions, HasForms
                     \Filament\Schemas\Components\View::make('filament.jabali.pages.imap-sync-history'),
                 ]),
         ]);
-    }
-
-    protected function getPostConnectionFields(): array
-    {
-        if (! $this->isConnected) {
-            return [];
-        }
-
-        $fields = [];
-
-        if (! empty($this->availableFolders)) {
-            $fields[] = CheckboxList::make('selectedFolders')
-                ->label(__('Select Folders'))
-                ->helperText(__('Leave empty to sync all folders'))
-                ->options(array_combine($this->availableFolders, $this->availableFolders))
-                ->columns(3)
-                ->disabled(fn () => $this->isProcessing);
-        }
-
-        $fields[] = Select::make('targetMailboxId')
-            ->label(__('Target Mailbox'))
-            ->options($this->getMailboxOptions())
-            ->required()
-            ->searchable()
-            ->disabled(fn () => $this->isProcessing);
-
-        $fields[] = FormActions::make([
-            FormActions\Action::make('startSync')
-                ->label(__('Start Sync'))
-                ->icon('heroicon-o-play')
-                ->color('primary')
-                ->disabled(fn () => $this->isProcessing)
-                ->requiresConfirmation()
-                ->modalHeading(__('Start IMAP Sync'))
-                ->modalDescription(__('This will start syncing emails from the source server. Continue?'))
-                ->action('startSync'),
-        ]);
-
-        return $fields;
     }
 
     public function testConnection(): void
