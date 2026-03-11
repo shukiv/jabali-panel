@@ -9513,8 +9513,12 @@ function dnsSyncZone(array $params): array {
         if ($type === 'NS') continue;
         // Use tab separator to handle long names like default._domainkey
         $line = "{$name}\tIN\t{$type}\t";
-        if ($type === 'MX' && $priority) $line .= "{$priority}\t";
+        if (in_array($type, ['MX', 'SRV'], true) && $priority !== null && $priority !== '') $line .= "{$priority}\t";
         if (in_array($type, ['CNAME', 'MX', 'NS']) && substr($content, -1) !== '.') $content .= '.';
+        if ($type === 'SRV' && preg_match('/^(\d+ \d+) (.+)$/', $content, $srvMatch)) {
+            $srvHost = rtrim($srvMatch[2], '.');
+            $content = $srvMatch[1] . ' ' . $srvHost . '.';
+        }
         if ($type === 'TXT') {
             // Remove existing quotes if present
             $content = trim($content, '"');

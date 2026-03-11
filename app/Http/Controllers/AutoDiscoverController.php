@@ -26,21 +26,25 @@ class AutoDiscoverController extends Controller
         // Parse email address from request
         $email = $this->normalizeEmail($this->extractEmailFromRequest($xml));
 
-        if (! $email) {
-            return $this->errorResponse('No email address provided');
+        if ($email) {
+            // Extract domain from email
+            $parts = explode('@', $email);
+            if (count($parts) !== 2) {
+                return $this->errorResponse('Invalid email address');
+            }
+            $domain = $parts[1];
+        } else {
+            // Extract domain from Host header (strip autodiscover. prefix)
+            $host = $request->getHost();
+            $domain = preg_replace('/^autodiscover\./i', '', $host);
+            if (! $domain || ! filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) {
+                return $this->errorResponse('No email address provided');
+            }
         }
-
-        // Extract domain from email
-        $parts = explode('@', $email);
-        if (count($parts) !== 2) {
-            return $this->errorResponse('Invalid email address');
-        }
-
-        $domain = $parts[1];
 
         // Check if domain is managed by our mail server
         $emailDomain = EmailDomain::whereHas('domain', function ($query) use ($domain) {
-            $query->where('domain_name', $domain);
+            $query->where('domain', $domain);
         })->where('is_active', true)->first();
 
         if (! $emailDomain) {
@@ -49,6 +53,9 @@ class AutoDiscoverController extends Controller
 
         // Get mail server hostname
         $mailServer = $this->getMailServer($emailDomain);
+
+        // If no email was provided (Host header fallback), use a placeholder
+        $email = $email ?: "user@{$domain}";
 
         return $this->autodiscoverResponse($email, $mailServer);
     }
@@ -72,7 +79,7 @@ class AutoDiscoverController extends Controller
         $domain = $parts[1];
 
         $emailDomain = EmailDomain::whereHas('domain', function ($query) use ($domain) {
-            $query->where('domain_name', $domain);
+            $query->where('domain', $domain);
         })->where('is_active', true)->first();
 
         if (! $emailDomain) {
@@ -130,13 +137,13 @@ class AutoDiscoverController extends Controller
     private function getMailServer(EmailDomain $emailDomain): string
     {
         // Use setting or fall back to domain-based hostname
-        $hostname = \App\Models\Setting::get('mail_hostname');
+        $hostname = \App\Models\DnsSetting::get('mail_hostname');
 
         if ($hostname) {
             return $hostname;
         }
 
-        return 'mail.'.$emailDomain->domain->domain_name;
+        return 'mail.'.$emailDomain->domain_name;
     }
 
     /**

@@ -1321,6 +1321,40 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name ${SERVER_HOSTNAME} _;
+
+    # Mail autoconfig/autodiscover over HTTP (avoids SSL cert mismatch for subdomains)
+    location = /mail/config-v1.1.xml {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /.well-known/autoconfig/mail/config-v1.1.xml {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /autodiscover/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /Autodiscover/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
     return 301 https://\$host\$request_uri;
 }
 
@@ -2085,6 +2119,11 @@ _dmarc  IN      TXT     "v=DMARC1; p=none; rua=mailto:admin@$domain"
 ; Autodiscover for mail clients
 autoconfig      IN      A       $server_ip
 autodiscover    IN      A       $server_ip
+
+; SRV records for mail client auto-discovery
+_imaps._tcp     IN      SRV     0 1 993 mail.${domain}.
+_pop3s._tcp     IN      SRV     0 1 995 mail.${domain}.
+_submission._tcp IN     SRV     0 1 587 mail.${domain}.
 MAILRECORDS
 
     # Set permissions
