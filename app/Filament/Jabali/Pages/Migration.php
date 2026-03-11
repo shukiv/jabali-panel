@@ -41,19 +41,19 @@ class Migration extends Page implements HasForms
 
     public function getSubheading(): ?string
     {
-        return __('Migrate a cPanel or DirectAdmin account into your Jabali account');
+        return __('Migrate accounts from cPanel, DirectAdmin, or sync mail via IMAP');
     }
 
     public function mount(): void
     {
-        if (! in_array($this->activeTab, ['cpanel', 'directadmin'], true)) {
+        if (! in_array($this->activeTab, ['cpanel', 'directadmin', 'imap'], true)) {
             $this->activeTab = 'cpanel';
         }
     }
 
     public function updatedActiveTab(string $activeTab): void
     {
-        if (! in_array($activeTab, ['cpanel', 'directadmin'], true)) {
+        if (! in_array($activeTab, ['cpanel', 'directadmin', 'imap'], true)) {
             $this->activeTab = 'cpanel';
         }
     }
@@ -78,6 +78,11 @@ class Migration extends Page implements HasForms
                         ->icon('heroicon-o-arrow-down-tray')
                         ->schema([
                             View::make('filament.jabali.pages.migration-directadmin-tab'),
+                        ]),
+                    'imap' => Tabs\Tab::make(__('IMAP Sync'))
+                        ->icon('heroicon-o-envelope')
+                        ->schema([
+                            View::make('filament.jabali.pages.migration-imap-tab'),
                         ]),
                 ]),
         ]);

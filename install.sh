@@ -466,6 +466,8 @@ install_packages() {
             roundcube-core
             roundcube-sqlite3
             roundcube-plugins
+            # IMAP sync
+            imapsync
             # SQLite tools
             sqlite3
         )

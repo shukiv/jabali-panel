@@ -599,6 +599,8 @@ function handleAction(array $request): array
         'email.autoresponder_toggle' => emailAutoresponderToggle($params),
         'email.autoresponder_delete' => emailAutoresponderDelete($params),
         'email.hash_password' => emailHashPassword($params),
+        'email.imap_test_connection' => emailImapTestConnection($params),
+        'email.imap_sync_run' => emailImapSyncRun($params),
         // Mail queue operations
         'mail.queue_list' => mailQueueList($params),
         'mail.queue_retry' => mailQueueRetry($params),
@@ -11144,6 +11146,217 @@ function emailGetLogs(array $params): array
     $logs = array_slice($logs, 0, $limit);
 
     return ['success' => true, 'logs' => $logs];
+}
+
+function emailImapTestConnection(array $params): array
+{
+    $host = $params['host'] ?? '';
+    $port = (int) ($params['port'] ?? 993);
+    $encryption = $params['encryption'] ?? 'ssl';
+    $email = $params['email'] ?? '';
+    $password = $params['password'] ?? '';
+
+    if (empty($host) || empty($email) || empty($password)) {
+        return ['success' => false, 'error' => 'Host, email, and password are required'];
+    }
+
+    // Validate encryption parameter
+    if (!in_array($encryption, ['ssl', 'tls', 'none'], true)) {
+        $encryption = 'ssl';
+    }
+
+    // Build imapsync command to list folders (dry run)
+    $sslFlag = match ($encryption) {
+        'ssl' => '--ssl1',
+        'tls' => '--tls1',
+        default => '',
+    };
+
+    // Create temporary password files
+    $passFile1 = tempnam('/tmp', 'imap_pass_');
+    file_put_contents($passFile1, $password);
+    chmod($passFile1, 0600);
+
+    try {
+    $cmd = sprintf(
+        'imapsync --host1 %s --port1 %d --user1 %s --passfile1 %s %s --host2 127.0.0.1 --port2 143 --user2 test --passfile2 %s --justfolders --dry --noreleasecheck --timeout1 30 2>&1',
+        escapeshellarg($host),
+        $port,
+        escapeshellarg($email),
+        escapeshellarg($passFile1),
+        $sslFlag,
+        escapeshellarg($passFile1) // dummy, won't be used in dry run
+    );
+
+    $output = shell_exec($cmd) ?? '';
+    } finally {
+        @unlink($passFile1);
+    }
+
+    // Check if authentication succeeded by looking for folder listing
+    if (strpos($output, 'Strstrstr') !== false || strpos($output, 'LOGOUT') !== false || strpos($output, 'success') !== false) {
+        // Parse folders from output
+        $folders = [];
+        if (preg_match_all('/Strstrstr\s+folder\s+\[(.+?)\]/i', $output, $matches)) {
+            $folders = $matches[1];
+        }
+        // Alternative folder parsing
+        if (empty($folders) && preg_match_all('/^\+\s+Strstr\s+(.+)$/m', $output, $matches)) {
+            $folders = $matches[1];
+        }
+        // Try another pattern for folder listing
+        if (empty($folders)) {
+            preg_match_all('/Host1\s+folder\s+\d+\/\d+\s+\[(.+?)\]/', $output, $matches);
+            if (!empty($matches[1])) {
+                $folders = $matches[1];
+            }
+        }
+
+        return ['success' => true, 'folders' => array_values(array_unique($folders))];
+    }
+
+    // Try direct IMAP connection as fallback for folder listing
+    $imapFlag = match ($encryption) {
+        'ssl' => '/ssl',
+        'tls' => '/tls',
+        default => '/notls',
+    };
+
+    $connStr = '{' . $host . ':' . $port . $imapFlag . '/novalidate-cert}';
+    $imap = @imap_open($connStr, $email, $password, 0, 1);
+
+    if ($imap) {
+        $folders = [];
+        $list = imap_list($imap, $connStr, '*');
+        if (is_array($list)) {
+            foreach ($list as $folder) {
+                $folderName = str_replace($connStr, '', $folder);
+                $folders[] = $folderName;
+            }
+        }
+        imap_close($imap);
+        return ['success' => true, 'folders' => $folders];
+    }
+
+    $error = imap_last_error() ?: 'Authentication failed or server unreachable';
+    return ['success' => false, 'error' => $error];
+}
+
+function emailImapSyncRun(array $params): array
+{
+    $sourceHost = $params['source_host'] ?? '';
+    $sourcePort = (int) ($params['source_port'] ?? 993);
+    $sourceEncryption = $params['source_encryption'] ?? 'ssl';
+    $sourceEmail = $params['source_email'] ?? '';
+    $sourcePassword = $params['source_password'] ?? '';
+    $destEmail = $params['dest_email'] ?? '';
+    $destPassword = $params['dest_password'] ?? '';
+    $folders = $params['folders'] ?? null;
+    $logPath = $params['log_path'] ?? '/tmp/imapsync.log';
+
+    if (empty($sourceHost) || empty($sourceEmail) || empty($sourcePassword) || empty($destEmail) || empty($destPassword)) {
+        return ['success' => false, 'error' => 'All connection parameters are required'];
+    }
+
+    // Validate encryption parameter
+    if (!in_array($sourceEncryption, ['ssl', 'tls', 'none'], true)) {
+        $sourceEncryption = 'ssl';
+    }
+
+    // SSL/TLS flags
+    $sslFlag = match ($sourceEncryption) {
+        'ssl' => '--ssl1',
+        'tls' => '--tls1',
+        default => '',
+    };
+
+    // Create temporary password files (security: avoid CLI arguments)
+    $passFile1 = tempnam('/tmp', 'imap_src_');
+    $passFile2 = tempnam('/tmp', 'imap_dst_');
+    file_put_contents($passFile1, $sourcePassword);
+    file_put_contents($passFile2, $destPassword);
+    chmod($passFile1, 0600);
+    chmod($passFile2, 0600);
+
+    try {
+    // Build folder include flags
+    $folderFlags = '';
+    if (is_array($folders) && !empty($folders)) {
+        foreach ($folders as $folder) {
+            $folderFlags .= ' --folder ' . escapeshellarg($folder);
+        }
+    }
+
+    // Ensure log directory exists
+    $logDir = dirname($logPath);
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0755, true);
+    }
+
+    $cmd = sprintf(
+        'imapsync --host1 %s --port1 %d --user1 %s --passfile1 %s %s --host2 127.0.0.1 --port2 143 --user2 %s --passfile2 %s %s --logfile %s --noreleasecheck --no-modulesversion 2>&1',
+        escapeshellarg($sourceHost),
+        $sourcePort,
+        escapeshellarg($sourceEmail),
+        escapeshellarg($passFile1),
+        $sslFlag,
+        escapeshellarg($destEmail),
+        escapeshellarg($passFile2),
+        $folderFlags,
+        escapeshellarg($logPath)
+    );
+
+    $returnCode = 0;
+    $outputLines = [];
+    exec($cmd, $outputLines, $returnCode);
+    $output = implode("\n", $outputLines);
+
+    } finally {
+        // Always clean up password files
+        @unlink($passFile1);
+        @unlink($passFile2);
+    }
+
+    // Parse message counts from imapsync output
+    $messagesSynced = 0;
+    $messagesTotal = 0;
+
+    if (preg_match('/Messages\s+transferred\s*:\s*(\d+)/i', $output, $m)) {
+        $messagesSynced = (int) $m[1];
+    }
+    if (preg_match('/Messages\s+found\s+on\s+host1\s*:\s*(\d+)/i', $output, $m)) {
+        $messagesTotal = (int) $m[1];
+    }
+    // Alternative patterns
+    if ($messagesTotal === 0 && preg_match('/Total\s+messages\s+in\s+host1\s*:\s*(\d+)/i', $output, $m)) {
+        $messagesTotal = (int) $m[1];
+    }
+    if ($messagesSynced === 0 && preg_match('/Strstrstr\s+(\d+)\s+messages?\s+transferred/i', $output, $m)) {
+        $messagesSynced = (int) $m[1];
+    }
+
+    if ($returnCode === 0) {
+        return [
+            'success' => true,
+            'messages_synced' => $messagesSynced,
+            'messages_total' => $messagesTotal,
+        ];
+    }
+
+    // Determine error message
+    $error = 'imapsync exited with code ' . $returnCode;
+    if (preg_match('/ERR_AUTHENTICATION_FAILURE|LOGIN failed|Authentication failed/i', $output, $m)) {
+        $error = 'Authentication failed on source or destination server';
+    } elseif (preg_match('/Can not open imap connection/i', $output)) {
+        $error = 'Could not connect to IMAP server';
+    }
+
+    return [
+        'success' => false,
+        'error' => $error,
+        'messages_synced' => $messagesSynced,
+        'messages_total' => $messagesTotal,
+    ];
 }
 
 // ============ UFW Firewall Management ============
