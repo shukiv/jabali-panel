@@ -56,7 +56,7 @@ class Dashboard extends BaseDashboard
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('onboarding')->modalCancelActionLabel('Maybe later')
+            Action::make('onboarding')->modalCancelActionLabel(__('Maybe later'))
                 ->label(__('Setup Wizard'))
                 ->icon('heroicon-o-sparkles')
 
