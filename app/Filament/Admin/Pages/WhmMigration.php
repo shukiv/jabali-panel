@@ -59,7 +59,7 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
         return __('WHM Migration');
     }
 
-    protected static ?int $navigationSort = 22;
+    protected static ?int $navigationSort = 23;
 
     public static function getNavigationGroup(): string
     {

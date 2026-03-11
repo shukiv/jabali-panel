@@ -28,7 +28,7 @@ class ServerUpdates extends Page implements HasActions, HasTable
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedArrowPathRoundedSquare;
 
-    protected static ?int $navigationSort = 16;
+    protected static ?int $navigationSort = 22;
 
     protected static ?string $slug = 'server-updates';
 
