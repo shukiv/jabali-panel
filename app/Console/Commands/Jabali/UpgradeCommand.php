@@ -171,6 +171,7 @@ class UpgradeCommand extends Command
         if ($shouldRunComposer) {
             try {
                 $this->ensureCommandAvailable('composer');
+                $this->ensurePublicAssetsPermissions();
                 $composerResult = $this->executeCommand('composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader', 1200);
                 if ($composerResult['exitCode'] !== 0) {
                     throw new Exception($composerResult['output'] ?: 'Composer install failed.');
@@ -532,6 +533,21 @@ class UpgradeCommand extends Command
         }
 
         $this->executeCommand('chmod -R u+rwX '.escapeshellarg($buildPath));
+    }
+
+    protected function ensurePublicAssetsPermissions(): void
+    {
+        $publicJs = $this->basePath.'/public/js';
+
+        if (! File::isDirectory($publicJs)) {
+            return;
+        }
+
+        if ($this->isRunningAsRoot() && $this->userExists('www-data')) {
+            $escaped = escapeshellarg($publicJs);
+            $this->executeCommand("chown -R www-data:www-data {$escaped}");
+            $this->executeCommand("chmod -R u+rwX {$escaped}");
+        }
     }
 
     protected function isNodeModulesWritable(): bool
