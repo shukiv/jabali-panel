@@ -802,6 +802,19 @@ class AgentClient
         ]);
     }
 
+    public function sslMailIssue(string $hostname, ?string $email = null): array
+    {
+        return $this->send('ssl.mail.issue', [
+            'hostname' => $hostname,
+            'email' => $email,
+        ]);
+    }
+
+    public function sslMailStatus(): array
+    {
+        return $this->send('ssl.mail.status', []);
+    }
+
     // Server config export/import
 
     /**

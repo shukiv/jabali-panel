@@ -13,6 +13,7 @@ use App\Models\EmailForwarder;
 use App\Models\Mailbox;
 use App\Models\UserSetting;
 use App\Services\Agent\AgentClient;
+use App\Services\RoundcubeIdentityService;
 use App\Services\System\MailRoutingSyncService;
 use App\Support\ServerFacts;
 use BackedEnum;
@@ -44,6 +45,7 @@ use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Log;
 use Livewire\Attributes\Url;
 
 class Email extends Page implements HasActions, HasForms, HasTable
@@ -1308,6 +1310,9 @@ class Email extends Page implements HasActions, HasForms, HasTable
                         'is_active' => true,
                     ]);
 
+                    // Sync Roundcube identities for local mailboxes in destinations
+                    $this->syncRoundcubeIdentitiesForForwarder($email, $destinations);
+
                     $this->syncMailRouting();
 
                     Notification::make()->title(__('Forwarder created'))->success()->send();
@@ -1329,6 +1334,8 @@ class Email extends Page implements HasActions, HasForms, HasTable
         }
 
         try {
+            $oldDestinations = $forwarder->destinations;
+
             $this->getAgent()->send('email.forwarder_update', [
                 'username' => $this->getUsername(),
                 'email' => $forwarder->email,
@@ -1336,6 +1343,10 @@ class Email extends Page implements HasActions, HasForms, HasTable
             ]);
 
             $forwarder->update(['destinations' => $destinations]);
+
+            // Update Roundcube identities: remove old, add new
+            $this->removeRoundcubeIdentitiesForForwarder($forwarder->email, $oldDestinations);
+            $this->syncRoundcubeIdentitiesForForwarder($forwarder->email, $destinations);
 
             $this->syncMailRouting();
 
@@ -1377,12 +1388,18 @@ class Email extends Page implements HasActions, HasForms, HasTable
     public function deleteForwarderDirect(EmailForwarder $forwarder): void
     {
         try {
+            $forwarderEmail = $forwarder->email;
+            $forwarderDestinations = $forwarder->destinations;
+
             $this->getAgent()->send('email.forwarder_delete', [
                 'username' => $this->getUsername(),
-                'email' => $forwarder->email,
+                'email' => $forwarderEmail,
             ]);
 
             $forwarder->delete();
+
+            // Remove Roundcube identities for this forwarder
+            $this->removeRoundcubeIdentitiesForForwarder($forwarderEmail, $forwarderDestinations);
 
             $this->syncMailRouting();
 
@@ -1390,6 +1407,63 @@ class Email extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
         }
+    }
+
+    /**
+     * Sync Roundcube identities when a forwarder is created.
+     * For each destination that is a local mailbox, add the forwarder address as an identity.
+     */
+    protected function syncRoundcubeIdentitiesForForwarder(string $forwarderEmail, array $destinations): void
+    {
+        try {
+            $service = new RoundcubeIdentityService;
+
+            foreach ($destinations as $destination) {
+                // Check if destination is a local mailbox
+                $mailbox = $this->findLocalMailbox($destination);
+                if ($mailbox) {
+                    $service->addIdentity($destination, $forwarderEmail, $mailbox->name ?? '');
+                }
+            }
+        } catch (Exception $e) {
+            Log::warning("Failed to sync Roundcube identities: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Remove Roundcube identities when a forwarder is deleted.
+     */
+    protected function removeRoundcubeIdentitiesForForwarder(string $forwarderEmail, array $destinations): void
+    {
+        try {
+            $service = new RoundcubeIdentityService;
+
+            foreach ($destinations as $destination) {
+                $mailbox = $this->findLocalMailbox($destination);
+                if ($mailbox) {
+                    $service->removeIdentity($destination, $forwarderEmail);
+                }
+            }
+        } catch (Exception $e) {
+            Log::warning("Failed to remove Roundcube identities: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Find a local mailbox by email address.
+     */
+    protected function findLocalMailbox(string $email): ?Mailbox
+    {
+        $parts = explode('@', $email);
+        if (count($parts) !== 2) {
+            return null;
+        }
+
+        [$localPart, $domainName] = $parts;
+
+        return Mailbox::whereHas('emailDomain.domain', function ($q) use ($domainName) {
+            $q->where('domain', $domainName)->where('user_id', Auth::id());
+        })->where('local_part', $localPart)->first();
     }
 
     // Autoresponder Actions

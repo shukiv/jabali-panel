@@ -619,6 +619,8 @@ function handleAction(array $request): array
         'ssl.renew' => sslRenew($params),
         'ssl.generate_self_signed' => sslGenerateSelfSigned($params),
         'ssl.delete' => sslDelete($params),
+        'ssl.mail.issue' => sslMailIssue($params),
+        'ssl.mail.status' => sslMailStatus($params),
         // Backup operations
         'backup.create' => backupCreate($params),
         'backup.create_server' => backupCreateServer($params),
@@ -13693,6 +13695,244 @@ function importStart(array $params): array
     exec($cmd);
 
     return ['success' => true, 'message' => 'Import process started'];
+}
+
+/**
+ * Issue or renew Let's Encrypt SSL certificate for the mail hostname
+ * and configure Postfix + Dovecot to use it.
+ */
+function sslMailIssue(array $params): array
+{
+    $hostname = $params['hostname'] ?? '';
+    $email = $params['email'] ?? '';
+
+    if (empty($hostname)) {
+        return ['success' => false, 'error' => 'Mail hostname is required'];
+    }
+
+    if (!validateDomain($hostname)) {
+        return ['success' => false, 'error' => 'Invalid mail hostname format'];
+    }
+
+    if (empty($email)) {
+        $email = 'admin@' . preg_replace('/^mail\./', '', $hostname);
+    }
+
+    logger("Issuing mail SSL certificate for: $hostname");
+
+    // Check if certbot is installed
+    $output = [];
+    exec('which certbot 2>/dev/null', $output, $code);
+    if ($code !== 0) {
+        return ['success' => false, 'error' => 'Certbot is not installed'];
+    }
+
+    // Verify hostname resolves to this server
+    $serverIp = trim(shell_exec("curl -s ifconfig.me 2>/dev/null") ?? '');
+    $hostnameIp = gethostbyname($hostname);
+    if ($hostnameIp === $hostname) {
+        return ['success' => false, 'error' => "Hostname $hostname does not resolve to any IP address"];
+    }
+    if (!empty($serverIp) && $hostnameIp !== $serverIp) {
+        logger("Warning: $hostname resolves to $hostnameIp but server IP is $serverIp");
+    }
+
+    // Use standalone mode (stops nginx briefly) since mail hostname
+    // may not have a webroot.
+    $certPath = "/etc/letsencrypt/live/$hostname/fullchain.pem";
+    $keyPath = "/etc/letsencrypt/live/$hostname/privkey.pem";
+
+    // Check if cert already exists and is still valid (> 30 days)
+    if (file_exists($certPath)) {
+        $certContent = file_get_contents($certPath);
+        $certData = openssl_x509_parse($certContent);
+        $expiresAt = $certData['validTo_time_t'] ?? 0;
+        $daysLeft = ($expiresAt - time()) / 86400;
+
+        if ($daysLeft > 30) {
+            // Cert is still valid, just ensure mail services are configured
+            $configResult = sslMailConfigure($hostname, $certPath, $keyPath);
+            return [
+                'success' => true,
+                'message' => "Existing certificate is still valid (" . round($daysLeft) . " days left). Mail services reconfigured.",
+                'cert_path' => $certPath,
+                'key_path' => $keyPath,
+                'expires_at' => date('Y-m-d H:i:s', $expiresAt),
+                'days_left' => round($daysLeft),
+                'reconfigured' => true,
+            ];
+        }
+    }
+
+    // Issue/renew using standalone (temporarily stops nginx to free port 80)
+    $cmd = sprintf(
+        'certbot certonly --standalone --preferred-challenges http -d %s --email %s --agree-tos --non-interactive %s 2>&1',
+        escapeshellarg($hostname),
+        escapeshellarg($email),
+        file_exists($certPath) ? '--force-renewal' : ''
+    );
+
+    // Stop nginx temporarily for standalone mode, ensure it restarts on any outcome
+    exec('systemctl stop nginx 2>/dev/null');
+    try {
+        logger("Running certbot for mail SSL: $cmd");
+        $certOutput = [];
+        exec($cmd, $certOutput, $exitCode);
+        $outputStr = implode("\n", $certOutput);
+        logger("Certbot mail SSL output: $outputStr");
+    } finally {
+        exec('systemctl start nginx 2>/dev/null');
+    }
+
+    if ($exitCode !== 0) {
+        return ['success' => false, 'error' => "Certbot failed: $outputStr"];
+    }
+
+    if (!file_exists($certPath) || !file_exists($keyPath)) {
+        return ['success' => false, 'error' => 'Certificate files not found after certbot'];
+    }
+
+    // Configure Postfix and Dovecot
+    $configResult = sslMailConfigure($hostname, $certPath, $keyPath);
+    if (!$configResult['success']) {
+        return $configResult;
+    }
+
+    // Read cert info for response
+    $certContent = file_get_contents($certPath);
+    $certData = openssl_x509_parse($certContent);
+
+    return [
+        'success' => true,
+        'message' => "Mail SSL certificate issued for $hostname",
+        'cert_path' => $certPath,
+        'key_path' => $keyPath,
+        'issuer' => "Let's Encrypt",
+        'expires_at' => date('Y-m-d H:i:s', $certData['validTo_time_t'] ?? 0),
+        'days_left' => round(($certData['validTo_time_t'] - time()) / 86400),
+    ];
+}
+
+/**
+ * Configure Postfix and Dovecot to use the given SSL certificate.
+ */
+function sslMailConfigure(string $hostname, string $certPath, string $keyPath): array
+{
+    $errors = [];
+
+    // Update Postfix SSL configuration
+    $out = [];
+    exec('postconf -e ' . escapeshellarg("smtpd_tls_cert_file=$certPath") . ' 2>&1', $out, $code);
+    if ($code !== 0) {
+        $errors[] = 'Failed to update Postfix cert path';
+    }
+    $out = [];
+    exec('postconf -e ' . escapeshellarg("smtpd_tls_key_file=$keyPath") . ' 2>&1', $out, $code);
+    if ($code !== 0) {
+        $errors[] = 'Failed to update Postfix key path';
+    }
+
+    // Update Dovecot SSL configuration
+    $dovecotSslConf = '/etc/dovecot/conf.d/10-ssl.conf';
+    if (file_exists($dovecotSslConf)) {
+        $content = file_get_contents($dovecotSslConf);
+
+        // Replace ssl_cert line (handle both commented and uncommented)
+        $content = preg_replace(
+            '/^#?\s*ssl_cert\s*=.*$/m',
+            "ssl_cert = <$certPath",
+            $content
+        );
+        // Replace ssl_key line (handle both commented and uncommented)
+        $content = preg_replace(
+            '/^#?\s*ssl_key\s*=.*$/m',
+            "ssl_key = <$keyPath",
+            $content
+        );
+
+        // Verify the directives are present after replacement
+        if (strpos($content, "ssl_cert = <$certPath") === false) {
+            $content .= "\nssl_cert = <$certPath\n";
+        }
+        if (strpos($content, "ssl_key = <$keyPath") === false) {
+            $content .= "ssl_key = <$keyPath\n";
+        }
+
+        file_put_contents($dovecotSslConf, $content);
+    } else {
+        $errors[] = 'Dovecot SSL config not found at ' . $dovecotSslConf;
+    }
+
+    // Reload mail services
+    $out = [];
+    exec('systemctl reload postfix 2>&1', $out, $code);
+    if ($code !== 0) {
+        $errors[] = 'Failed to reload Postfix';
+    }
+    $out = [];
+    exec('systemctl reload dovecot 2>&1', $out, $code);
+    if ($code !== 0) {
+        $errors[] = 'Failed to reload Dovecot';
+    }
+
+    if (!empty($errors)) {
+        return ['success' => false, 'error' => implode('; ', $errors)];
+    }
+
+    return ['success' => true, 'message' => 'Mail services configured with SSL certificate'];
+}
+
+/**
+ * Check the current SSL certificate status for mail services.
+ */
+function sslMailStatus(array $params): array
+{
+    // Get current Postfix cert path
+    $certPath = trim(shell_exec("postconf -h smtpd_tls_cert_file 2>/dev/null") ?? '');
+
+    if (empty($certPath) || !file_exists($certPath)) {
+        return [
+            'success' => true,
+            'configured' => false,
+            'message' => 'No SSL certificate configured for mail services',
+        ];
+    }
+
+    $certContent = file_get_contents($certPath);
+    $certData = openssl_x509_parse($certContent);
+
+    if (!$certData) {
+        return [
+            'success' => true,
+            'configured' => true,
+            'valid' => false,
+            'cert_path' => $certPath,
+            'message' => 'Certificate file exists but could not be parsed',
+        ];
+    }
+
+    $expiresAt = $certData['validTo_time_t'] ?? 0;
+    $issuedAt = $certData['validFrom_time_t'] ?? 0;
+    $daysLeft = round(($expiresAt - time()) / 86400);
+    $issuer = $certData['issuer']['O'] ?? ($certData['issuer']['CN'] ?? 'Unknown');
+    $cn = $certData['subject']['CN'] ?? '';
+
+    // Check if it's a snakeoil/self-signed cert
+    $isSelfSigned = str_contains($certPath, 'snakeoil') ||
+                    ($certData['issuer']['CN'] ?? '') === ($certData['subject']['CN'] ?? '');
+
+    return [
+        'success' => true,
+        'configured' => true,
+        'valid' => $daysLeft > 0,
+        'self_signed' => $isSelfSigned,
+        'cert_path' => $certPath,
+        'common_name' => $cn,
+        'issuer' => $issuer,
+        'issued_at' => date('Y-m-d H:i:s', $issuedAt),
+        'expires_at' => date('Y-m-d H:i:s', $expiresAt),
+        'days_left' => $daysLeft,
+    ];
 }
 
 // ============ SSL CERTIFICATE MANAGEMENT ============
