@@ -107,9 +107,6 @@ class ImpersonationController extends Controller
         session()->forget(Auth::guard('web')->getName());
         session()->forget('password_hash_web');
 
-        // Clear the user from the web guard
-        Auth::guard('web')->setUser(null);
-
         // Save session changes
         session()->save();
 
