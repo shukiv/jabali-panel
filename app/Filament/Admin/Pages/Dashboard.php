@@ -88,7 +88,7 @@ class Dashboard extends Page implements HasActions, HasForms
                 ->color('gray')
                 ->action(fn () => $this->redirect(request()->url())),
 
-            Action::make('onboarding')->modalCancelActionLabel('Maybe later')
+            Action::make('onboarding')->modalCancelActionLabel(__('Maybe later'))
                 ->label(__('Setup Wizard'))
                 ->icon('heroicon-o-sparkles')
 
