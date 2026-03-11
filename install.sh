@@ -2790,8 +2790,8 @@ setup_jabali() {
     # Load Redis credentials
     source /root/.jabali_redis_credentials
 
-    # Create .env file
-    cp .env.example .env 2>/dev/null || cat > .env << ENV
+    # Create .env file (always use heredoc to ensure correct DB/cache settings)
+    cat > .env << ENV
 APP_NAME=Jabali
 APP_ENV=production
 APP_KEY=
