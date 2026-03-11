@@ -286,25 +286,18 @@ check_os() {
             # Read debian_version file
             local debian_ver=$(cat /etc/debian_version 2>/dev/null || echo "")
 
-            # Check for testing/unstable first (trixie/sid)
-            if [[ "$debian_ver" == *trixie* ]] || [[ "$debian_ver" == *sid* ]] || \
-               [[ "$VERSION_CODENAME" == "trixie" ]] || [[ "$VERSION_CODENAME" == "sid" ]] || \
-               [[ -z "${VERSION_ID:-}" ]]; then
-                info "Detected Debian testing/unstable (trixie/sid) - proceeding"
-            elif [[ "$debian_ver" == *bookworm* ]] || [[ "$VERSION_CODENAME" == "bookworm" ]]; then
-                info "Detected Debian 12 (bookworm)"
-            elif [[ "$debian_ver" == *bullseye* ]] || [[ "$VERSION_CODENAME" == "bullseye" ]]; then
-                info "Detected Debian 11 (bullseye)"
-            elif [[ -n "${VERSION_ID:-}" ]] && [[ "${VERSION_ID}" -lt 11 ]]; then
-                error "Debian 11 or later is required"
-            else
-                # Try numeric extraction from debian_version
-                local num_ver=$(echo "$debian_ver" | grep -oE '^[0-9]+' | head -1)
-                if [[ -n "$num_ver" ]] && [[ "$num_ver" -ge 11 ]]; then
-                    info "Detected Debian $num_ver"
+            if [[ -n "${VERSION_ID:-}" ]]; then
+                # Stable release with a numeric version
+                if [[ "${VERSION_ID}" -ge 11 ]]; then
+                    info "Detected Debian ${VERSION_ID} (${VERSION_CODENAME:-unknown})"
                 else
-                    warn "Unknown Debian version: $debian_ver - proceeding anyway"
+                    error "Debian 11 or later is required"
                 fi
+            elif [[ "$debian_ver" == *sid* ]] || [[ "$VERSION_CODENAME" == "sid" ]]; then
+                info "Detected Debian unstable (sid) - proceeding"
+            else
+                # Testing without VERSION_ID (e.g., next unreleased version)
+                info "Detected Debian testing (${VERSION_CODENAME:-unknown}) - proceeding"
             fi
             ;;
         ubuntu)
