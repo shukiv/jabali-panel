@@ -26,6 +26,7 @@ Optional flags:
 
 - `JABALI_MINIMAL=1` for core-only install
 - `JABALI_FULL=1` to force all optional components
+- `--debug` to show full command output instead of spinner
 
 Debian packages:
 
@@ -49,7 +50,9 @@ After install:
 - Root agent for DNS, SSL, mail, backups, and migrations
 - Health monitor with auto-restarts and alerts
 - cPanel and WHM migrations with step-by-step logs
+- IMAP sync for migrating mail from external servers
 - Built-in mail stack with webmail SSO
+- `mail.domain.ext` auto-redirects to webmail
 - DNS templates with optional DNSSEC
 - User and server backups with schedules and retention
 - WordPress management (install, updates, scans, and SSO)
@@ -68,7 +71,7 @@ After install:
 - SSL issuance and renewals
 - IP address assignments
 - Backups and restores (local + remote)
-- Migrations (cPanel restore, WHM downloads)
+- Migrations (cPanel restore, WHM downloads, IMAP sync)
 - Security center (firewall, Fail2ban, ClamAV, scans)
 - Audit logs and notifications
 
@@ -77,6 +80,7 @@ After install:
 - Domains, redirects, and Nginx config
 - DNS records editor
 - Mail domains, mailboxes, and forwarders
+- IMAP sync (single and bulk mail migration)
 - Webmail SSO (Roundcube)
 - WordPress manager (install, scan, SSO)
 - File manager plus SFTP/SSH keys
@@ -116,7 +120,7 @@ Service stack (single-node default):
 
 ## Requirements
 
-- Fresh Debian 12 or 13 install (no pre-existing web or mail stack)
+- Fresh Debian 11, 12, or 13 install (no pre-existing web or mail stack)
 - A domain for panel and mail (with glue records if hosting DNS)
 - PTR (reverse DNS) for mail hostname
 - Open ports: 22, 80, 443, 25, 465, 587, 993, 995, 53
@@ -181,6 +185,10 @@ php artisan test --compact
 ## License
 
 MIT
+
+## Mail Subdomain
+
+Visiting `mail.domain.ext` in a browser automatically redirects to webmail (Roundcube). Autoconfig and autodiscover paths are excluded so mail client auto-discovery continues to work.
 
 ## Documentation Notes
 
