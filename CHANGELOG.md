@@ -2,6 +2,31 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc101] - 2026-03-12
+
+### Added
+
+- **IMAP Sync** - New Migration tab for migrating mail from external IMAP servers. Supports single mailbox sync and bulk migration (multiple mailboxes at once). Uses `imapsync` as the backend engine with PHP `imap_open()` for connection testing. Includes sync history table with status tracking, retry, and cancel actions. (`app/Filament/Jabali/Pages/ImapSync.php`, `app/Jobs/RunImapSync.php`, `app/Models/ImapSyncTask.php`)
+- **Mail subdomain redirect** - Visiting `mail.domain.ext` in a browser now redirects to webmail (Roundcube) instead of showing the panel login. Autoconfig/autodiscover paths are excluded so mail client auto-discovery still works. (`app/Http/Middleware/MailSubdomainRedirect.php`)
+- **Installer --debug flag** - Verbose output is now suppressed by default with an animated spinner. Pass `--debug` to see full command output for troubleshooting.
+- **Server hostname DNS record** - When a domain matching the server's base domain is created (e.g., `example.com` on server `web02.example.com`), an A record for the hostname subdomain is automatically added. (`app/Observers/DomainObserver.php`)
+
+### Fixed
+
+- **Domain setup during install** - The installer now properly calls the agent's `domainCreate()` and sets the correct user-scoped `document_root` path instead of `/var/www/html`. This fixes the issue where the base domain had no vhost or web directory after install, and users couldn't re-add it through the panel. (Closes #16)
+- **Debian 13 detection** - Debian 13 (trixie) is now correctly identified as a stable release instead of "testing/unstable". The OS detection logic now checks `VERSION_ID` first. (Closes #21)
+- **Dovecot MySQL authentication** - Dovecot was configured for SQLite but the app uses MySQL. Fixed to use Dovecot 2.4 MySQL block format. Also fixed empty password issue by reading credentials from `/root/.jabali_db_credentials` instead of `.env` (which doesn't exist yet at configure_mail time).
+- **IMAP test connection hanging** - Replaced `imapsync --dry` with PHP `imap_open()` for connection testing, since imapsync validates both source and destination hosts even in dry-run mode.
+- **IMAP folder checkboxes not appearing** - Replaced conditional schema building with `->visible()` closures for dynamic field visibility in Livewire/Filament forms.
+- **Installer .env path** - Fixed `$INSTALL_DIR` undefined variable references, replaced with `$JABALI_DIR`.
+- **Installer uninstall hanging** - Wrapped `apt-get autoremove` in error-tolerant block to prevent `set -e` from killing the script.
+- **Refresh button redirect** - Fixed Refresh button redirecting to Livewire update endpoint.
+
+### Changed
+
+- **Installer output** - All verbose command output (apt, npm, composer) is now suppressed with an animated spinner. Failures show the last 20 lines of output for debugging.
+- **DNS Records table** - Default pagination changed to 25 rows per page.
+
 ## [0.9-rc86] - 2026-03-11
 
 ### Security
