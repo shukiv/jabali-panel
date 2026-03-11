@@ -192,7 +192,48 @@ header() {
     echo ""
 }
 
-# Run a command quietly with a spinner, or verbosely in debug mode
+# Start a spinner on the current line. Call stop_spinner to finish.
+# The spinner runs as a separate bash process (not a subshell) so it can
+# be reliably killed. Output goes to stderr to avoid interfering with pipes.
+_spinner_pid=""
+
+_spinner_running=""
+
+start_spinner() {
+    local label="$1"
+    _spinner_running=$(mktemp /tmp/.jabali-spinner-XXXXXX)
+    (
+        local frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+        local n=${#frames[@]} i=0
+        tput civis 2>/dev/null || true
+        while [[ -f "$_spinner_running" ]]; do
+            printf "\r\033[0;36m[%s]\033[0m %s " "${frames[i % n]}" "$label" >&2
+            i=$((i + 1))
+            sleep 0.08
+        done
+    ) &
+    _spinner_pid=$!
+}
+
+stop_spinner() {
+    local success="${1:-true}"
+    local label="$2"
+    # Signal spinner to stop by removing the flag file
+    rm -f "$_spinner_running" 2>/dev/null
+    if [[ -n "$_spinner_pid" ]]; then
+        # Wait for spinner loop to notice the file is gone
+        wait "$_spinner_pid" 2>/dev/null || true
+        _spinner_pid=""
+    fi
+    tput cnorm 2>/dev/null || true
+    if [[ "$success" == "true" ]]; then
+        printf "\r${GREEN}[✓]${NC} %s\n" "$label" >&2
+    else
+        printf "\r${RED}[✗]${NC} %s\n" "$label" >&2
+    fi
+}
+
+# Run a command quietly with an animated spinner, or verbosely in debug mode
 # Usage: run_quiet "Installing packages..." command arg1 arg2 ...
 run_quiet() {
     local label="$1"
@@ -207,16 +248,15 @@ run_quiet() {
     local log_file
     log_file=$(mktemp /tmp/jabali-install-XXXXXX.log)
 
-    # Run command, capture output
-    printf "${CYAN}[~]${NC} %s " "$label"
+    start_spinner "$label"
 
     local exit_code=0
     "$@" > "$log_file" 2>&1 || exit_code=$?
 
     if [[ $exit_code -eq 0 ]]; then
-        printf "\r${GREEN}[✓]${NC} %s\n" "$label"
+        stop_spinner true "$label"
     else
-        printf "\r${RED}[✗]${NC} %s\n" "$label"
+        stop_spinner false "$label"
         echo -e "${YELLOW}    Command failed. Last 20 lines of output:${NC}"
         tail -20 "$log_file" | sed 's/^/    /'
     fi
@@ -1040,7 +1080,7 @@ clone_jabali() {
         mv "$JABALI_DIR" "${JABALI_DIR}.bak.$(date +%s)"
     fi
 
-    git clone "$JABALI_REPO" "$JABALI_DIR"
+    run_quiet "Cloning Jabali Panel repository..." git clone "$JABALI_REPO" "$JABALI_DIR"
     chown -R $JABALI_USER:$JABALI_USER "$JABALI_DIR"
 
     # Prevent git safe.directory issues for upgrades run as root or www-data
