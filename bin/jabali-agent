@@ -13081,6 +13081,8 @@ function importDiscover(array $params): array
         try {
             if ($sourceType === 'cpanel') {
                 $accounts = discoverCpanelBackup($backupPath, $extractDir);
+            } elseif ($sourceType === 'hestiacp') {
+                $accounts = discoverHestiaCPBackup($backupPath, $extractDir);
             } else {
                 $accounts = discoverDirectAdminBackup($backupPath, $extractDir);
             }
@@ -13506,6 +13508,206 @@ function parseDirectAdminUserConf(string $userConf, string $extractDir): ?array
         'email_accounts' => $emailAccounts,
         'disk_usage' => $diskUsage,
     ];
+}
+
+/**
+ * Parse HestiaCP/VestaCP KEY='value' config format
+ */
+function parseHestiaCPConf(string $content): array
+{
+    $config = [];
+    foreach (explode("\n", $content) as $line) {
+        $line = trim($line);
+        if (empty($line) || $line[0] === '#') continue;
+        if (preg_match("/^([A-Z_]+)='([^']*)'/", $line, $m)) {
+            $config[$m[1]] = $m[2];
+        } elseif (preg_match("/^([A-Z_]+)=(.+)/", $line, $m)) {
+            $config[$m[1]] = trim($m[2], "'\"");
+        }
+    }
+    return $config;
+}
+
+/**
+ * Discover accounts from a HestiaCP/VestaCP backup file
+ */
+function discoverHestiaCPBackup(string $backupPath, string $extractDir): array
+{
+    logger("Discovering HestiaCP backup: $backupPath");
+
+    $accounts = [];
+
+    $tarArgs = [];
+    if (preg_match('/\.(tar\.gz|tgz)$/i', $backupPath)) {
+        $tarArgs = ['-I', 'pigz'];
+    }
+    // Plain .tar needs no extra args
+
+    // List archive contents
+    $tarArgsStr = implode(' ', array_map('escapeshellarg', $tarArgs));
+    $cmd = "tar {$tarArgsStr} -tf " . escapeshellarg($backupPath) . " 2>/dev/null | head -500";
+    exec($cmd, $fileList, $code);
+
+    if ($code !== 0) {
+        throw new Exception('Failed to read backup file. Make sure it is a valid HestiaCP archive (.tar, .tar.gz, .tgz).');
+    }
+
+    $fileListStr = implode("\n", $fileList);
+
+    // HestiaCP backup structure: backup/user.conf, web.conf, db.conf, mail.conf, domains/, databases/
+    // Or just user.conf at root level
+    if (preg_match('/(backup\/)?user\.conf/', $fileListStr)) {
+        // Extract config files and domain listing
+        $extractCmd = "tar {$tarArgsStr} -xf " . escapeshellarg($backupPath) . " -C " . escapeshellarg($extractDir) .
+            " --wildcards 'backup/user.conf' 'user.conf' 'backup/web.conf' 'web.conf'" .
+            " 'backup/db.conf' 'db.conf' 'backup/mail.conf' 'mail.conf'" .
+            " 'backup/domains/*' 'domains/*' 'backup/databases/*' 'databases/*' 2>/dev/null";
+        exec($extractCmd, $extractOutput, $extractCode);
+        if ($extractCode !== 0) {
+            logger("Warning: tar extraction returned code $extractCode for HestiaCP backup", 'WARN');
+        }
+
+        // Find user.conf
+        $userConf = null;
+        foreach (["$extractDir/backup/user.conf", "$extractDir/user.conf"] as $path) {
+            if (file_exists($path)) {
+                $userConf = $path;
+                break;
+            }
+        }
+
+        if ($userConf) {
+            $baseDir = dirname($userConf);
+            $userConfig = parseHestiaCPConf(file_get_contents($userConf));
+
+            $username = $userConfig['USER'] ?? '';
+            if ($username === '') {
+                // Try to infer username from FNAME or backup structure
+                $username = $userConfig['FNAME'] ?? basename(dirname($userConf));
+                if ($username === 'backup' || $username === basename($extractDir)) {
+                    $username = 'user';
+                }
+            }
+
+            $email = $userConfig['CONTACT'] ?? '';
+            $mainDomain = '';
+            $addonDomains = [];
+            $databases = [];
+            $emailAccounts = [];
+
+            // Parse web.conf for domains
+            $webConf = null;
+            foreach (["$baseDir/web.conf", "$extractDir/backup/web.conf", "$extractDir/web.conf"] as $path) {
+                if (file_exists($path)) {
+                    $webConf = $path;
+                    break;
+                }
+            }
+
+            if ($webConf) {
+                $webContent = file_get_contents($webConf);
+                foreach (explode("\n", $webContent) as $line) {
+                    $line = trim($line);
+                    if (empty($line) || $line[0] === '#') continue;
+                    $lineConfig = parseHestiaCPConf($line);
+                    $domain = $lineConfig['DOMAIN'] ?? '';
+                    if ($domain !== '') {
+                        if ($mainDomain === '') {
+                            $mainDomain = $domain;
+                        } else {
+                            $addonDomains[] = $domain;
+                        }
+                    }
+                }
+            }
+
+            // Parse db.conf for databases
+            $dbConf = null;
+            foreach (["$baseDir/db.conf", "$extractDir/backup/db.conf", "$extractDir/db.conf"] as $path) {
+                if (file_exists($path)) {
+                    $dbConf = $path;
+                    break;
+                }
+            }
+
+            if ($dbConf) {
+                $dbContent = file_get_contents($dbConf);
+                foreach (explode("\n", $dbContent) as $line) {
+                    $line = trim($line);
+                    if (empty($line) || $line[0] === '#') continue;
+                    $lineConfig = parseHestiaCPConf($line);
+                    $db = $lineConfig['DB'] ?? '';
+                    if ($db !== '') {
+                        $databases[] = $db;
+                    }
+                }
+            }
+
+            // Also check for database dump files
+            if (empty($databases)) {
+                $dbDirs = ["$baseDir/databases", "$extractDir/backup/databases", "$extractDir/databases"];
+                foreach ($dbDirs as $dbDir) {
+                    if (is_dir($dbDir)) {
+                        $sqlFiles = glob("$dbDir/*.sql.gz") ?: [];
+                        $sqlFilesPlain = glob("$dbDir/*.sql") ?: [];
+                        foreach (array_merge($sqlFiles, $sqlFilesPlain) as $sqlFile) {
+                            $dbName = basename($sqlFile);
+                            $dbName = preg_replace('/\.(sql\.gz|sql)$/i', '', $dbName);
+                            if ($dbName !== '' && !in_array($dbName, $databases, true)) {
+                                $databases[] = $dbName;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Parse mail.conf for email accounts
+            $mailConf = null;
+            foreach (["$baseDir/mail.conf", "$extractDir/backup/mail.conf", "$extractDir/mail.conf"] as $path) {
+                if (file_exists($path)) {
+                    $mailConf = $path;
+                    break;
+                }
+            }
+
+            if ($mailConf) {
+                $mailContent = file_get_contents($mailConf);
+                foreach (explode("\n", $mailContent) as $line) {
+                    $line = trim($line);
+                    if (empty($line) || $line[0] === '#') continue;
+                    $lineConfig = parseHestiaCPConf($line);
+                    $accountsList = $lineConfig['ACCOUNTS'] ?? '';
+                    if ($accountsList !== '') {
+                        foreach (explode(',', $accountsList) as $acct) {
+                            $acct = trim($acct);
+                            if ($acct !== '') {
+                                $emailAccounts[] = $acct;
+                            }
+                        }
+                    }
+                }
+            }
+
+            $diskUsage = 0;
+            if (isset($userConfig['U_DISK'])) {
+                $diskUsage = (int) $userConfig['U_DISK'] * 1048576; // Convert MB to bytes
+            }
+
+            $accounts[] = [
+                'username' => $username,
+                'email' => $email,
+                'main_domain' => $mainDomain,
+                'addon_domains' => $addonDomains,
+                'subdomains' => [],
+                'databases' => $databases,
+                'email_accounts' => $emailAccounts,
+                'disk_usage' => $diskUsage,
+            ];
+        }
+    }
+
+    return $accounts;
 }
 
 /**
