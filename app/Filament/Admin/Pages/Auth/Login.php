@@ -8,16 +8,16 @@ use App\Models\User;
 use Filament\Auth\Http\Responses\Contracts\LoginResponse;
 use Filament\Auth\Pages\Login as BaseLogin;
 use Filament\Facades\Filament;
-use Illuminate\Support\HtmlString;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\HtmlString;
 
 class Login extends BaseLogin
 {
-    public function getSubheading(): string | HtmlString | null
+    public function getSubheading(): string|HtmlString|null
     {
         if (env('JABALI_DEMO', false)) {
             return new HtmlString(
-                __('Demo credentials') .
+                __('Demo credentials').
                 ': <code>admin@jabali-panel.com</code> / <code>demo1234</code>'
             );
         }
@@ -31,6 +31,11 @@ class Login extends BaseLogin
 
         // Check credentials without logging in
         $user = User::where('email', $data['email'])->first();
+
+        if (! $user) {
+            // Constant-time: prevent user enumeration via timing
+            Hash::check($data['password'], '$2y$12$VG9EWpdymMd.phHpJLWwauaoYk0mufInpXAzNUqZcMXm/WszkDs42');
+        }
 
         if ($user && Hash::check($data['password'], $user->password)) {
             if (! $user->is_admin) {

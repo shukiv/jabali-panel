@@ -79,6 +79,19 @@ class BackupDownloadController extends Controller
             abort(404, 'Backup file not found on disk');
         }
 
+        // Validate backup path is under an allowed directory
+        $allowedPrefixes = ['/home/', '/var/backups/', rtrim(storage_path('app/backups'), '/').'/'];
+        $isAllowed = false;
+        foreach ($allowedPrefixes as $prefix) {
+            if (str_starts_with($realPath, $prefix)) {
+                $isAllowed = true;
+                break;
+            }
+        }
+        if (! $isAllowed) {
+            abort(403, 'Backup path is not in an allowed directory');
+        }
+
         // Handle directory backups by creating a zip archive on-the-fly
         if (is_dir($realPath)) {
             $backupName = basename($realPath).'.zip';

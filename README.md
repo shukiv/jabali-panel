@@ -123,10 +123,29 @@ Service stack (single-node default):
 
 ## Security Hardening
 
-- `TRUSTED_PROXIES`: comma-separated proxy IPs/CIDRs (or `*` if you intentionally trust all upstream proxies).
-- `JABALI_INTERNAL_API_TOKEN`: optional shared token for internal API calls that do not originate from localhost.
-- `JABALI_IMPORT_INSECURE_TLS`: optional escape hatch for remote migration discovery. Leave unset for strict TLS verification.
-- Git deployment webhooks support signed payloads via `X-Jabali-Signature` / `X-Hub-Signature-256` (HMAC-SHA256).
+See [SECURITY.md](SECURITY.md) for the full security policy, architecture, and audit history.
+
+### Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `TRUSTED_PROXIES` | Comma-separated proxy IPs/CIDRs (or `*` to trust all upstream proxies) | (unset) |
+| `JABALI_INTERNAL_API_TOKEN` | Shared token for internal API calls from non-localhost | (unset) |
+| `JABALI_IMPORT_INSECURE_TLS` | Disable TLS certificate verification for WHM/cPanel migration API calls | `false` |
+| `SESSION_ENCRYPT` | Encrypt session data at rest | `false` |
+| `SESSION_SECURE_COOKIE` | Send session cookies only over HTTPS | `false` |
+
+### Key Security Features
+
+- Shell arguments escaped with `escapeshellarg()` to prevent OS command injection
+- Admin impersonation uses one-time IP-bound tokens; stop action requires POST + CSRF
+- DKIM private keys encrypted at rest via Laravel's `encrypted` cast
+- Migration API calls verify TLS certificates by default (opt-out with `JABALI_IMPORT_INSECURE_TLS`)
+- Webmail SSO tokens stored in restricted directory with `0600` permissions and 5-minute expiry
+- Admin backup downloads restricted to allowed directory prefixes
+- WordPress page-cache API uses SHA-256 verification of `AUTH_KEY`
+- CSP, HSTS, and other security headers on all panel responses
+- Git deployment webhooks support signed payloads via `X-Jabali-Signature` / `X-Hub-Signature-256` (HMAC-SHA256)
 
 ## Upgrades
 

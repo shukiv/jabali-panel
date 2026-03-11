@@ -20,6 +20,8 @@ class WhmApiService
 
     private bool $ssl;
 
+    private bool $verifySsl;
+
     public function __construct(
         string $hostname,
         string $username,
@@ -32,6 +34,7 @@ class WhmApiService
         $this->apiToken = trim($apiToken);
         $this->port = $port;
         $this->ssl = $ssl;
+        $this->verifySsl = ! config('app.import_insecure_tls', false);
     }
 
     /**
@@ -55,13 +58,17 @@ class WhmApiService
         Log::info('WHM API request', ['function' => $function, 'url' => $url]);
 
         try {
-            $response = Http::withHeaders([
+            $pending = Http::withHeaders([
                 'Authorization' => "whm {$this->username}:{$this->apiToken}",
             ])
                 ->timeout($timeout)
-                ->connectTimeout(10)
-                ->withoutVerifying()
-                ->get($url, $params);
+                ->connectTimeout(10);
+
+            if (! $this->verifySsl) {
+                $pending = $pending->withoutVerifying();
+            }
+
+            $response = $pending->get($url, $params);
 
             if (! $response->successful()) {
                 throw new Exception('WHM API request failed: '.$response->status());
@@ -195,13 +202,17 @@ class WhmApiService
         ]);
 
         try {
-            $response = Http::withHeaders([
+            $pending = Http::withHeaders([
                 'Authorization' => "whm {$this->username}:{$this->apiToken}",
             ])
                 ->timeout($timeout)
-                ->connectTimeout(10)
-                ->withoutVerifying()
-                ->get($url, $queryParams);
+                ->connectTimeout(10);
+
+            if (! $this->verifySsl) {
+                $pending = $pending->withoutVerifying();
+            }
+
+            $response = $pending->get($url, $queryParams);
 
             if (! $response->successful()) {
                 throw new Exception('WHM API2 request failed: '.$response->status());
@@ -251,13 +262,17 @@ class WhmApiService
         ]);
 
         try {
-            $response = Http::withHeaders([
+            $pending = Http::withHeaders([
                 'Authorization' => "whm {$this->username}:{$this->apiToken}",
             ])
                 ->timeout($timeout)
-                ->connectTimeout(10)
-                ->withoutVerifying()
-                ->get($url, $queryParams);
+                ->connectTimeout(10);
+
+            if (! $this->verifySsl) {
+                $pending = $pending->withoutVerifying();
+            }
+
+            $response = $pending->get($url, $queryParams);
 
             if (! $response->successful()) {
                 throw new Exception('WHM UAPI request failed: '.$response->status());
@@ -607,15 +622,20 @@ class WhmApiService
 
             // Step 3: Download using curl for better reliability
             $ch = curl_init();
-            curl_setopt_array($ch, [
+            $curlOpts = [
                 CURLOPT_URL => $downloadUrl,
                 CURLOPT_RETURNTRANSFER => false,
                 CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_SSL_VERIFYHOST => false,
                 CURLOPT_TIMEOUT => 3600,
                 CURLOPT_CONNECTTIMEOUT => 30,
-            ]);
+            ];
+
+            if (! $this->verifySsl) {
+                $curlOpts[CURLOPT_SSL_VERIFYPEER] = false;
+                $curlOpts[CURLOPT_SSL_VERIFYHOST] = false;
+            }
+
+            curl_setopt_array($ch, $curlOpts);
 
             // Ensure local directory exists
             $localDir = dirname($localPath);

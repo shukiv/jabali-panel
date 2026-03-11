@@ -6,7 +6,6 @@ namespace App\Console\Commands;
 
 use App\Models\DnsSetting;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Mail;
 
 class CheckFileIntegrity extends Command
 {
@@ -42,8 +41,9 @@ class CheckFileIntegrity extends Command
         $basePath = base_path();
 
         // Check if we're in a Git repository
-        if (!is_dir("$basePath/.git")) {
+        if (! is_dir("$basePath/.git")) {
             $this->error('Not a Git repository. File integrity checking requires Git.');
+
             return 1;
         }
 
@@ -57,23 +57,24 @@ class CheckFileIntegrity extends Command
         $modifiedFiles = $this->filterProtectedPaths($modifiedFiles);
         $untrackedFiles = $this->filterProtectedPaths($untrackedFiles);
 
-        $hasChanges = !empty($modifiedFiles) || !empty($untrackedFiles);
+        $hasChanges = ! empty($modifiedFiles) || ! empty($untrackedFiles);
 
-        if (!$hasChanges) {
+        if (! $hasChanges) {
             $this->info('All core files are intact. No unauthorized modifications detected.');
             DnsSetting::set('last_integrity_check', now()->toIso8601String());
             DnsSetting::set('last_integrity_status', 'clean');
+
             return 0;
         }
 
         // Report modified files
-        if (!empty($modifiedFiles)) {
+        if (! empty($modifiedFiles)) {
             $this->warn('Modified files detected:');
-            $this->table(['File', 'Status'], array_map(fn($f) => [$f['file'], $f['status']], $modifiedFiles));
+            $this->table(['File', 'Status'], array_map(fn ($f) => [$f['file'], $f['status']], $modifiedFiles));
         }
 
         // Report untracked files in protected directories
-        if (!empty($untrackedFiles)) {
+        if (! empty($untrackedFiles)) {
             $this->warn('Untracked files in protected directories:');
             foreach ($untrackedFiles as $file) {
                 $this->line("  - $file");
@@ -105,17 +106,21 @@ class CheckFileIntegrity extends Command
     protected function getModifiedFiles(string $basePath): array
     {
         $output = [];
-        exec("cd $basePath && git status --porcelain 2>/dev/null", $output);
+        exec('cd '.escapeshellarg($basePath).' && git status --porcelain 2>/dev/null', $output);
 
         $files = [];
         foreach ($output as $line) {
-            if (strlen($line) < 3) continue;
+            if (strlen($line) < 3) {
+                continue;
+            }
 
             $status = trim(substr($line, 0, 2));
             $file = trim(substr($line, 3));
 
             // Skip untracked files (handled separately)
-            if ($status === '??') continue;
+            if ($status === '??') {
+                continue;
+            }
 
             // Map status codes
             $statusMap = [
@@ -141,7 +146,8 @@ class CheckFileIntegrity extends Command
     protected function getUntrackedFiles(string $basePath): array
     {
         $output = [];
-        exec("cd $basePath && git status --porcelain 2>/dev/null | grep '^??' | cut -c4-", $output);
+        exec('cd '.escapeshellarg($basePath)." && git status --porcelain 2>/dev/null | grep '^??' | cut -c4-", $output);
+
         return $output;
     }
 
@@ -172,6 +178,7 @@ class CheckFileIntegrity extends Command
     {
         if (empty($modifiedFiles)) {
             $this->info('No files to restore.');
+
             return 0;
         }
 
@@ -183,10 +190,10 @@ class CheckFileIntegrity extends Command
 
             // Skip deleted files - they need to be restored
             if (str_contains($status, 'D')) {
-                exec("cd $basePath && git checkout HEAD -- " . escapeshellarg($filePath) . " 2>&1", $output, $code);
+                exec('cd '.escapeshellarg($basePath).' && git checkout HEAD -- '.escapeshellarg($filePath).' 2>&1', $output, $code);
             } else {
                 // Reset modifications
-                exec("cd $basePath && git checkout -- " . escapeshellarg($filePath) . " 2>&1", $output, $code);
+                exec('cd '.escapeshellarg($basePath).' && git checkout -- '.escapeshellarg($filePath).' 2>&1', $output, $code);
             }
 
             if ($code === 0) {
@@ -212,6 +219,7 @@ class CheckFileIntegrity extends Command
         $recipients = DnsSetting::get('admin_email_recipients');
         if (empty($recipients)) {
             $this->warn('No admin email recipients configured. Skipping notification.');
+
             return;
         }
 
@@ -220,7 +228,7 @@ class CheckFileIntegrity extends Command
 
         $message = "File integrity check detected unauthorized modifications:\n\n";
 
-        if (!empty($modifiedFiles)) {
+        if (! empty($modifiedFiles)) {
             $message .= "MODIFIED FILES:\n";
             foreach ($modifiedFiles as $file) {
                 $message .= "  - {$file['file']} ({$file['status']})\n";
@@ -228,7 +236,7 @@ class CheckFileIntegrity extends Command
             $message .= "\n";
         }
 
-        if (!empty($untrackedFiles)) {
+        if (! empty($untrackedFiles)) {
             $message .= "UNTRACKED FILES IN PROTECTED DIRECTORIES:\n";
             foreach ($untrackedFiles as $file) {
                 $message .= "  - $file\n";
@@ -237,7 +245,7 @@ class CheckFileIntegrity extends Command
         }
 
         $message .= "To restore files, run: php artisan jabali:check-integrity --fix\n";
-        $message .= "\nTime: " . now()->toDateTimeString();
+        $message .= "\nTime: ".now()->toDateTimeString();
 
         foreach (explode(',', $recipients) as $email) {
             $email = trim($email);

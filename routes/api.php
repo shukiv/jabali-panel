@@ -80,7 +80,7 @@ Route::post('/internal/page-cache', function (Request $request) use ($allowInter
     $wpConfig = file_get_contents($wpConfigPath);
     if (preg_match("/define\s*\(\s*['\"]AUTH_KEY['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)/", $wpConfig, $matches)) {
         $authKey = $matches[1];
-        $expectedSecret = substr(md5($authKey), 0, 32);
+        $expectedSecret = hash('sha256', $authKey);
         if (! hash_equals($expectedSecret, $secret)) {
             return response()->json(['error' => 'Invalid secret'], 401);
         }
@@ -105,7 +105,9 @@ Route::post('/internal/page-cache', function (Request $request) use ($allowInter
 
         return response()->json($result);
     } catch (\Exception $e) {
-        return response()->json(['error' => $e->getMessage()], 500);
+        \Illuminate\Support\Facades\Log::error('Page cache error: '.$e->getMessage());
+
+        return response()->json(['error' => 'An internal error occurred'], 500);
     }
 })->middleware('throttle:internal-api');
 
@@ -147,7 +149,7 @@ Route::post('/internal/page-cache-purge', function (Request $request) use ($allo
     $wpConfig = file_get_contents($wpConfigPath);
     if (preg_match("/define\s*\(\s*['\"]AUTH_KEY['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)/", $wpConfig, $matches)) {
         $authKey = $matches[1];
-        $expectedSecret = substr(md5($authKey), 0, 32);
+        $expectedSecret = hash('sha256', $authKey);
         if (! hash_equals($expectedSecret, $secret)) {
             return response()->json(['error' => 'Invalid secret'], 401);
         }
@@ -173,7 +175,9 @@ Route::post('/internal/page-cache-purge', function (Request $request) use ($allo
 
         return response()->json($result);
     } catch (\Exception $e) {
-        return response()->json(['error' => $e->getMessage()], 500);
+        \Illuminate\Support\Facades\Log::error('Page cache purge error: '.$e->getMessage());
+
+        return response()->json(['error' => 'An internal error occurred'], 500);
     }
 })->middleware('throttle:internal-api');
 

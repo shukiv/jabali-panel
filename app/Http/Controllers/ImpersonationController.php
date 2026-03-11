@@ -98,6 +98,11 @@ class ImpersonationController extends Controller
      */
     public function stop(): RedirectResponse
     {
+        // Verify we are actually impersonating (M1 fix)
+        if (! session()->has('impersonated_by')) {
+            return redirect()->route('filament.jabali.pages.dashboard');
+        }
+
         // Clear impersonation session data
         session()->forget('impersonated_by');
         session()->forget('impersonation_token_id');

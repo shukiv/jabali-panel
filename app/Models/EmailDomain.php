@@ -27,6 +27,7 @@ class EmailDomain extends Model
         'catch_all_enabled' => 'boolean',
         'max_mailboxes' => 'integer',
         'max_quota_bytes' => 'integer',
+        'dkim_private_key' => 'encrypted',
     ];
 
     protected $hidden = [
