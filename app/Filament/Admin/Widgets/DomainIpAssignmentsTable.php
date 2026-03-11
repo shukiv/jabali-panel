@@ -8,6 +8,7 @@ use App\Models\DnsRecord;
 use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\ServerFacts;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -289,7 +290,7 @@ class DomainIpAssignmentsTable extends Component implements HasActions, HasSchem
     {
         $settings = DnsSetting::getAll();
         $hostname = gethostname() ?: 'localhost';
-        $serverIp = trim(shell_exec("hostname -I | awk '{print $1}'") ?? '') ?: '127.0.0.1';
+        $serverIp = ServerFacts::serverIp('127.0.0.1');
         $serverIpv6 = $settings['default_ipv6'] ?? null;
 
         try {

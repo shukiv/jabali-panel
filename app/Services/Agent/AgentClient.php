@@ -1146,6 +1146,14 @@ class AgentClient
     }
 
     /**
+     * Get versions of installed server software (best-effort).
+     */
+    public function serverVersions(): array
+    {
+        return $this->cachedMetrics('agent.server.versions', 60, fn (): array => $this->send('server.versions', []));
+    }
+
+    /**
      * Get top processes.
      */
     public function metricsProcesses(int $limit = 15, string $sortBy = 'cpu'): array

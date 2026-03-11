@@ -9,6 +9,7 @@ use App\Services\Agent\AgentClient;
 use App\Services\Migration\MigrationDnsSyncService;
 use App\Services\Migration\WhmApiService;
 use App\Services\Migration\WhmMigrationStatusStore;
+use App\Support\ServerFacts;
 use Exception;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -237,9 +238,14 @@ class RunWhmMigrationBatch implements ShouldQueue
 
         try {
             if ($this->createLinuxUsers) {
-                exec('id '.escapeshellarg($cpanelUser).' 2>/dev/null', $output, $exitCode);
+                $linuxUserExists = false;
+                if (function_exists('posix_getpwnam')) {
+                    $linuxUserExists = posix_getpwnam($cpanelUser) !== false;
+                } else {
+                    $linuxUserExists = is_dir('/home/'.$cpanelUser);
+                }
 
-                if ($exitCode !== 0) {
+                if (! $linuxUserExists) {
                     $result = $agent->send('user.create', [
                         'username' => $cpanelUser,
                         'password' => $password,
@@ -388,13 +394,14 @@ class RunWhmMigrationBatch implements ShouldQueue
 
     protected function getJabaliPublicIp(): string
     {
-        $ip = trim(shell_exec('curl -s ifconfig.me 2>/dev/null') ?? '');
-
-        if (empty($ip)) {
-            $ip = gethostbyname(gethostname());
+        $ip = ServerFacts::serverIp('');
+        if ($ip !== '') {
+            return $ip;
         }
 
-        return $ip;
+        $fallback = gethostbyname(gethostname() ?: 'localhost');
+
+        return is_string($fallback) ? $fallback : '';
     }
 
     protected function formatBytes(int $bytes, int $precision = 2): string

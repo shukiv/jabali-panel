@@ -42,6 +42,7 @@ use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Url;
 
@@ -482,7 +483,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             ]);
 
             // Cleanup temp directory
-            exec('rm -rf '.escapeshellarg($tempPath));
+            if (is_dir($tempPath)) {
+                File::deleteDirectory($tempPath);
+            }
 
             if ($restoreResult['success'] ?? false) {
                 $restoredItems = [];
@@ -517,7 +520,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             // Cleanup on error
             if (is_dir($tempPath)) {
-                exec('rm -rf '.escapeshellarg($tempPath));
+                File::deleteDirectory($tempPath);
             }
             Notification::make()
                 ->title(__('Restore failed'))

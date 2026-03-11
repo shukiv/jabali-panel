@@ -8,6 +8,7 @@ use App\Jobs\RunCpanelRestore;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Services\Migration\CpanelApiService;
+use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -285,9 +286,13 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
         $password = bin2hex(random_bytes(12));
 
         try {
-            // Check if Linux user already exists
-            exec('id '.escapeshellarg($this->cpanelUsername).' 2>/dev/null', $output, $exitCode);
-            $linuxUserExists = ($exitCode === 0);
+            // Check if Linux user already exists (avoid shelling out).
+            $linuxUserExists = false;
+            if (function_exists('posix_getpwnam')) {
+                $linuxUserExists = posix_getpwnam($this->cpanelUsername) !== false;
+            } else {
+                $linuxUserExists = is_dir('/home/'.$this->cpanelUsername);
+            }
 
             if (! $linuxUserExists) {
                 // Create Linux user via agent
@@ -447,13 +452,14 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
     protected function getJabaliPublicIp(): string
     {
-        $ip = trim(shell_exec('curl -s ifconfig.me 2>/dev/null') ?? '');
-
-        if (empty($ip)) {
-            $ip = gethostbyname(gethostname());
+        $ip = ServerFacts::serverIp('');
+        if ($ip !== '') {
+            return $ip;
         }
 
-        return $ip;
+        $fallback = gethostbyname(gethostname() ?: 'localhost');
+
+        return is_string($fallback) ? $fallback : '';
     }
 
     protected function getForms(): array
@@ -1483,62 +1489,6 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
         return $result;
     }
 
-    /**
-     * Quick scan backup file for SSL certificates without full extraction.
-     * Updates discoveredData['ssl_certificates'] with found certs.
-     */
-    protected function scanBackupForSsl(string $backupPath): int
-    {
-        if (! file_exists($backupPath)) {
-            return 0;
-        }
-
-        // Quick scan of tar.gz contents for SSL files
-        $output = [];
-        exec('tar -tzf '.escapeshellarg($backupPath).' 2>/dev/null | grep -E "ssl/(certs|keys)/.*\.(crt|key|pem)$" | head -100', $output);
-
-        $sslSet = [];
-        foreach ($output as $file) {
-            // Match cPanel SSL cert format: domain_keyid_timestamp_hash.crt
-            if (preg_match('/ssl\/certs\/(.+)_([a-f0-9]+_[a-f0-9]+)_\d+_[a-f0-9]+\.(crt|pem)$/i', $file, $matches)) {
-                $domain = str_replace('_', '.', $matches[1]);
-                $keyId = $matches[2];
-                if (! isset($sslSet[$keyId])) {
-                    $sslSet[$keyId] = ['domain' => $domain, 'has_cert' => true, 'has_key' => false];
-                } else {
-                    $sslSet[$keyId]['has_cert'] = true;
-                    $sslSet[$keyId]['domain'] = $domain;
-                }
-            }
-            // Match key files: keyid_hash.key
-            elseif (preg_match('/ssl\/keys\/([a-f0-9]+_[a-f0-9]+)_[a-f0-9]+\.key$/i', $file, $matches)) {
-                $keyId = $matches[1];
-                if (! isset($sslSet[$keyId])) {
-                    $sslSet[$keyId] = ['domain' => '', 'has_cert' => false, 'has_key' => true];
-                } else {
-                    $sslSet[$keyId]['has_key'] = true;
-                }
-            }
-        }
-
-        // Build SSL certificates list from matched cert+key pairs
-        $sslCerts = [];
-        foreach ($sslSet as $keyId => $info) {
-            if ($info['has_cert'] && $info['has_key'] && ! empty($info['domain'])) {
-                $sslCerts[] = [
-                    'domain' => $info['domain'],
-                    'has_key' => true,
-                    'has_cert' => true,
-                ];
-            }
-        }
-
-        // Update discoveredData
-        $this->discoveredData['ssl_certificates'] = $sslCerts;
-
-        return count($sslCerts);
-    }
-
     public function validateLocalFile(): void
     {
         if (empty($this->localBackupPath)) {
@@ -1597,11 +1547,22 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
             return;
         }
 
-        // Quick validation - try to list contents
-        $output = [];
-        exec('tar -I pigz -tf '.escapeshellarg($path).' 2>&1 | head -5', $output, $returnCode);
+        // Quick validation - try to list contents (via agent)
+        try {
+            $result = $this->getAgent()->send('cpanel.validate_backup', [
+                'backup_path' => $path,
+            ]);
+        } catch (Exception $e) {
+            Notification::make()
+                ->title(__('Invalid backup'))
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
 
-        if ($returnCode !== 0) {
+            return;
+        }
+
+        if (! ($result['valid'] ?? false)) {
             Notification::make()
                 ->title(__('Invalid backup'))
                 ->body(__('The file does not appear to be a valid cPanel backup archive'))

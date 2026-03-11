@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\ServerFacts;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -173,13 +174,7 @@ class BackupSchedule extends Model
     {
         static $timezone = null;
         if ($timezone === null) {
-            $timezone = trim((string) @file_get_contents('/etc/timezone'));
-            if ($timezone === '') {
-                $timezone = trim((string) @shell_exec('timedatectl show -p Timezone --value 2>/dev/null'));
-            }
-            if ($timezone === '') {
-                $timezone = 'UTC';
-            }
+            $timezone = ServerFacts::timezone();
         }
 
         return $timezone;

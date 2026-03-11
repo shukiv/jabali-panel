@@ -31,6 +31,16 @@
                 "artisan",
                 "boost:mcp"
             ]
+        },
+        "tailwindcss": {
+            "command": "ssh",
+            "args": [
+                "rasp",
+                "npx",
+                "-y",
+                "tailwindcss-mcp-server"
+            ],
+            "description": "Tailwind CSS MCP server running on Raspberry Pi via SSH"
         }
     }
 }

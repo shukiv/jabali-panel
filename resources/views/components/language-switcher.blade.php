@@ -1,7 +1,7 @@
 @php
     $languages = config('languages.supported', []);
     $currentLocale = app()->getLocale();
-    $currentLanguage = $languages[$currentLocale] ?? ['name' => 'English', 'flag' => '🇬🇧', 'native' => 'English'];
+    $currentLanguage = $languages[$currentLocale] ?? ['name' => 'English', 'native' => 'English'];
 @endphp
 
 <x-filament::dropdown placement="bottom-end" :teleport="true">

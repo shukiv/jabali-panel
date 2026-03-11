@@ -542,6 +542,7 @@ function handleAction(array $request): array
         'server.set_upload_limits' => setUploadLimits($params),
         'server.update_bind' => updateBindConfig($params),
         'server.info' => getServerInfo($params),
+        'server.versions' => serverVersions($params),
         'server.create_zone' => createServerZone($params),
         'updates.list' => updatesList($params),
         'updates.run' => updatesRun($params),
@@ -636,6 +637,7 @@ function handleAction(array $request): array
         'backup.download_user_archive' => backupDownloadUserArchive($params),
         // cPanel migration operations
         'cpanel.analyze_backup' => cpanelAnalyzeBackup($params),
+        'cpanel.validate_backup' => cpanelValidateBackup($params),
         'cpanel.restore_backup' => cpanelRestoreBackup($params),
         'cpanel.fix_backup_permissions' => cpanelFixBackupPermissions($params),
         // WHM migration operations
@@ -713,6 +715,8 @@ function handleAction(array $request): array
         'scanner.run_wpscan' => scannerRunWpscan($params),
         'scanner.start_lynis' => scannerStartLynis($params),
         'scanner.get_scan_status' => scannerGetScanStatus($params),
+        // Screenshot capture
+        'screenshot.capture' => screenshotCapture($params),
         // Log analysis
         'logs.tail' => logsTail($params),
         'logs.goaccess' => logsGoaccess($params),
@@ -12157,6 +12161,40 @@ function getServerInfo(array $params): array
     return ['success' => true, 'info' => $info];
 }
 
+function serverVersions(array $params): array
+{
+    $versions = [
+        'nginx' => null,
+        'mysql' => null,
+    ];
+
+    // nginx -v writes to stderr.
+    exec('nginx -v 2>&1', $nginxOut, $nginxCode);
+    if ($nginxCode === 0) {
+        $line = trim(implode("\n", $nginxOut));
+        if (preg_match('/nginx\\/(\\d+\\.\\d+\\.\\d+)/', $line, $m)) {
+            $versions['nginx'] = $m[1];
+        }
+    }
+
+    exec('mysqld --version 2>/dev/null', $mysqlOut, $mysqlCode);
+    if ($mysqlCode === 0) {
+        $line = trim(implode("\n", $mysqlOut));
+        if (preg_match('/Ver\\s+(\\d+\\.\\d+\\.\\d+)-?(MariaDB)?/i', $line, $m)) {
+            $isMaria = ! empty($m[2]);
+            $versions['mysql'] = [
+                'type' => $isMaria ? 'MariaDB' : 'MySQL',
+                'version' => $m[1],
+            ];
+        }
+    }
+
+    return [
+        'success' => true,
+        'versions' => $versions,
+    ];
+}
+
 /**
  * Get DNS resolver configuration from /etc/resolv.conf
  */
@@ -12871,6 +12909,12 @@ function serviceList(array $params): array
         if (!preg_match('/^[a-zA-Z0-9._-]+$/', $service)) {
             continue;
         }
+        
+        // Reset output arrays per service. PHP's exec() appends to provided arrays,
+        // which can cause later services to inherit earlier output and status.
+        $activeOutput = [];
+        $enabledOutput = [];
+        $statusOutput = [];
         
         // Check if service is active
         exec("systemctl is-active " . escapeshellarg($service) . " 2>/dev/null", $activeOutput, $activeCode);
@@ -20482,12 +20526,40 @@ function getOsInfo(): array
 // ============ DISK QUOTA MANAGEMENT ============
 
 /**
+ * Detect if the given mount point sits on a ZFS filesystem.
+ */
+function isZfsFilesystem(string $mountPoint = '/home'): bool
+{
+    $fsType = trim(shell_exec("findmnt -n -o FSTYPE " . escapeshellarg($mountPoint) . " 2>/dev/null") ?? '');
+    if ($fsType === 'zfs') {
+        return true;
+    }
+    // Fallback: check the resolved mount point (e.g. /home might live on /)
+    $resolved = trim(shell_exec("df --output=target " . escapeshellarg($mountPoint) . " 2>/dev/null | tail -1") ?? '');
+    if (!empty($resolved) && $resolved !== $mountPoint) {
+        $fsType = trim(shell_exec("findmnt -n -o FSTYPE " . escapeshellarg($resolved) . " 2>/dev/null") ?? '');
+        return $fsType === 'zfs';
+    }
+    return false;
+}
+
+/**
  * Check if quota system is enabled on the filesystem
  */
 function quotaStatus(array $params): array
 {
     $mountPoint = $params['mount'] ?? '/home';
-    
+
+    if (isZfsFilesystem($mountPoint)) {
+        return [
+            'success' => true,
+            'enabled' => false,
+            'available' => false,
+            'zfs' => true,
+            'reason' => 'ZFS filesystem detected. Linux quotas are not supported on ZFS. Use native ZFS quota management instead.'
+        ];
+    }
+
     // Check if quota tools are installed
     $quotaCheck = trim(shell_exec('which quota 2>/dev/null') ?? '');
     if (empty($quotaCheck)) {
@@ -20529,7 +20601,15 @@ function quotaStatus(array $params): array
 function quotaEnable(array $params): array
 {
     $mountPoint = $params['mount'] ?? '/home';
-    
+
+    if (isZfsFilesystem($mountPoint)) {
+        return [
+            'success' => false,
+            'zfs' => true,
+            'error' => 'ZFS filesystem detected. Linux quotas cannot be enabled on ZFS. Use native ZFS quota commands: zfs set userquota@<user>=<size> <dataset>'
+        ];
+    }
+
     // Check if running as root
     if (posix_getuid() !== 0) {
         return ['success' => false, 'error' => 'Must run as root to enable quotas'];
@@ -20608,13 +20688,21 @@ function quotaSet(array $params): array
     $softLimit = $params['soft_mb'] ?? 0;  // Soft limit in MB
     $hardLimit = $params['hard_mb'] ?? 0;  // Hard limit in MB (usually same as soft or slightly higher)
     $mountPoint = $params['mount'] ?? '/home';
-    
+
     if (empty($username)) {
         return ['success' => false, 'error' => 'Username is required'];
     }
-    
+
     if (!validateUsername($username)) {
         return ['success' => false, 'error' => 'Invalid username format'];
+    }
+
+    if (isZfsFilesystem($mountPoint)) {
+        return [
+            'success' => false,
+            'zfs' => true,
+            'error' => 'ZFS filesystem detected. Use: zfs set userquota@' . escapeshellarg($username) . '=<size> <dataset>'
+        ];
     }
     
     // Check if user exists
@@ -20685,6 +20773,30 @@ function quotaGet(array $params): array
 
     if (empty($username)) {
         return ['success' => false, 'error' => 'Username is required'];
+    }
+
+    if (isZfsFilesystem($mountPoint)) {
+        $usedMb = 0.0;
+        if (validateUsername($username)) {
+            $homeDir = "/home/{$username}";
+            if (is_dir($homeDir)) {
+                $duOutput = trim(shell_exec("du -sk " . escapeshellarg($homeDir) . " 2>/dev/null | cut -f1") ?? '');
+                if ($duOutput !== '' && preg_match('/^\d+$/', $duOutput) === 1) {
+                    $usedMb = round(((int) $duOutput) / 1024, 2);
+                }
+            }
+        }
+        return [
+            'success' => true,
+            'username' => $username,
+            'has_quota' => false,
+            'zfs' => true,
+            'used_mb' => $usedMb,
+            'soft_mb' => 0,
+            'hard_mb' => 0,
+            'usage_percent' => 0,
+            'quota_source' => 'du',
+        ];
     }
 
     // Root-level disk usage probe for /home/<user>.
@@ -20814,7 +20926,15 @@ function quotaGet(array $params): array
 function quotaReport(array $params): array
 {
     $mountPoint = $params['mount'] ?? '/home';
-    
+
+    if (isZfsFilesystem($mountPoint)) {
+        return [
+            'success' => false,
+            'zfs' => true,
+            'error' => 'ZFS filesystem detected. Use: zfs userspace <dataset>'
+        ];
+    }
+
     // Find the actual mount point
     $findMount = trim(shell_exec("df --output=target " . escapeshellarg($mountPoint) . " 2>/dev/null | tail -1") ?? '');
     if (empty($findMount)) {
@@ -21800,6 +21920,84 @@ function scannerRunWpscan(array $params): array
     ];
 }
 
+function screenshotCapture(array $params): array
+{
+    $url = trim((string) ($params['url'] ?? ''));
+    $siteId = trim((string) ($params['site_id'] ?? ''));
+
+    if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false) {
+        return ['success' => false, 'error' => 'Invalid URL'];
+    }
+
+    $parts = parse_url($url);
+    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+    if (! in_array($scheme, ['http', 'https'], true)) {
+        return ['success' => false, 'error' => 'Invalid URL scheme'];
+    }
+
+    if ($siteId === '' || preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $siteId) !== 1) {
+        return ['success' => false, 'error' => 'Invalid site id'];
+    }
+
+    $screenshotBin = '/var/www/jabali/bin/screenshot';
+    if (! file_exists($screenshotBin) || ! is_executable($screenshotBin)) {
+        return ['success' => false, 'error' => 'Screenshot script not found'];
+    }
+
+    $screenshotDir = '/var/www/jabali/storage/app/public/screenshots';
+    if (! is_dir($screenshotDir)) {
+        mkdir($screenshotDir, 0755, true);
+    }
+    // Ensure www-data can write files.
+    @chown($screenshotDir, 'www-data');
+    @chgrp($screenshotDir, 'www-data');
+
+    $filepath = $screenshotDir . '/wp_' . $siteId . '.png';
+
+    $cmd = sprintf(
+        'timeout 60 sudo -u www-data -H %s %s %s 2>&1',
+        escapeshellarg($screenshotBin),
+        escapeshellarg($url),
+        escapeshellarg($filepath),
+    );
+
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+
+    $process = proc_open($cmd, $descriptors, $pipes);
+    if (! is_resource($process)) {
+        return ['success' => false, 'error' => 'Failed to start screenshot process'];
+    }
+
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]) ?: '';
+    $err = stream_get_contents($pipes[2]) ?: '';
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    if (! file_exists($filepath) || (int) @filesize($filepath) < 1000) {
+        $msg = trim($err !== '' ? $err : $out);
+        if ($msg === '') {
+            $msg = $exitCode === 124 ? 'Screenshot timed out' : 'Screenshot failed';
+        }
+
+        return ['success' => false, 'error' => $msg];
+    }
+
+    @chown($filepath, 'www-data');
+    @chgrp($filepath, 'www-data');
+    @touch($filepath);
+
+    return [
+        'success' => true,
+        'path' => $filepath,
+    ];
+}
+
 function scannerStartLynis(array $params): array
 {
     // Check if lynis is installed
@@ -22368,6 +22566,43 @@ function jabaliSshAddToAuthorizedKeys(array $params): array
 }
 
 // ============ CPANEL MIGRATION ============
+
+/**
+ * Validate a cPanel backup archive by attempting to list a few entries.
+ * This is used by the web UI to avoid running tar commands in-process.
+ */
+function cpanelValidateBackup(array $params): array
+{
+    $backupPath = $params['backup_path'] ?? '';
+
+    if (empty($backupPath) || ! file_exists($backupPath)) {
+        return ['success' => false, 'error' => 'Backup file not found'];
+    }
+
+    if (! is_file($backupPath) || ! is_readable($backupPath)) {
+        return ['success' => false, 'error' => 'Backup file is not readable'];
+    }
+
+    // Best-effort listing based on extension.
+    $cmd = null;
+    if (preg_match('/\\.(tar\\.gz|tgz)$/i', $backupPath)) {
+        $cmd = 'tar -tzf '.escapeshellarg($backupPath).' 2>&1 | head -5';
+    } elseif (preg_match('/\\.(tar\\.zst|zst)$/i', $backupPath)) {
+        // zstd support varies; tar -I zstd is common on modern distros.
+        $cmd = 'tar -I zstd -tf '.escapeshellarg($backupPath).' 2>&1 | head -5';
+    } else {
+        $cmd = 'tar -tf '.escapeshellarg($backupPath).' 2>&1 | head -5';
+    }
+
+    $output = [];
+    exec($cmd, $output, $code);
+
+    return [
+        'success' => true,
+        'valid' => $code === 0,
+        'head' => $output,
+    ];
+}
 
 /**
  * Analyze a cPanel backup tar.gz file to extract information about its contents.

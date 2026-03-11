@@ -268,7 +268,6 @@ class ServerStatus extends Page implements HasTable
             ->description(__(':total total processes, :running running', ['total' => $this->processTotal, 'running' => $this->processRunning]))
             ->paginated([10, 25, 50, 100])
             ->defaultPaginationPageOption(25)
-            ->poll($this->refreshInterval === 'off' ? null : $this->refreshInterval)
             ->striped()
             ->defaultSort('cpu', 'desc')
             ->persistFiltersInSession()

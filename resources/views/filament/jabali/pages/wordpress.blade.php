@@ -16,10 +16,25 @@
         wire:model="showSecurityScanModal"
         width="2xl"
         icon="heroicon-o-shield-check"
-        :icon-color="count($securityScanResults['vulnerabilities'] ?? []) > 0 ? 'danger' : 'success'"
+        :icon-color="$isSecurityScanning ? 'info' : (count($securityScanResults['vulnerabilities'] ?? []) > 0 ? 'danger' : 'success')"
     >
         <x-slot name="heading">{{ __('Security Scan Results') }}</x-slot>
         <x-slot name="description">{{ $securityScanResults['url'] ?? '' }}</x-slot>
+
+        @if($isSecurityScanning)
+            <div wire:poll.2s="pollSecurityScan">
+                <x-filament::section
+                    icon="heroicon-o-arrow-path"
+                    icon-color="info"
+                    compact
+                >
+                    <x-slot name="heading">{{ __('Scan in progress') }}</x-slot>
+                    <div class="fi-section-header-description">
+                        {{ __('This can take a few minutes. Results will appear automatically.') }}
+                    </div>
+                </x-filament::section>
+            </div>
+        @endif
 
         {{-- Scan Info --}}
         <x-filament::section compact>

@@ -154,15 +154,24 @@ class SystemInfoTableWidget extends Component implements HasActions, HasSchemas,
                 return $version;
             }
         } catch (\Exception $e) {
-            // Fall through to command line fallback
+            // Fall through
         }
 
-        // Fallback to mysqld --version command
-        $output = shell_exec('mysqld --version 2>/dev/null');
-        if ($output && preg_match('/Ver\s+(\d+\.\d+\.\d+)-?(MariaDB)?/i', $output, $matches)) {
-            $dbType = ! empty($matches[2]) ? 'MariaDB' : 'MySQL';
+        // Fallback: ask the agent (no local shell usage in the web request).
+        try {
+            $agent = new AgentClient;
+            $result = $agent->serverVersions();
 
-            return "$dbType {$matches[1]}";
+            $mysql = $result['versions']['mysql'] ?? null;
+            if (is_array($mysql)) {
+                $type = $mysql['type'] ?? null;
+                $ver = $mysql['version'] ?? null;
+                if (is_string($type) && $type !== '' && is_string($ver) && $ver !== '') {
+                    return "{$type} {$ver}";
+                }
+            }
+        } catch (\Throwable) {
+            // Best-effort.
         }
 
         return 'N/A';
@@ -170,9 +179,16 @@ class SystemInfoTableWidget extends Component implements HasActions, HasSchemas,
 
     protected function getWebserverVersion(): string
     {
-        $version = shell_exec('nginx -v 2>&1');
-        if ($version && preg_match('/nginx\/(\d+\.\d+\.\d+)/', $version, $matches)) {
-            return "Nginx {$matches[1]}";
+        try {
+            $agent = new AgentClient;
+            $result = $agent->serverVersions();
+
+            $nginx = $result['versions']['nginx'] ?? null;
+            if (is_string($nginx) && $nginx !== '') {
+                return "Nginx {$nginx}";
+            }
+        } catch (\Throwable) {
+            // Best-effort.
         }
 
         return 'Nginx';

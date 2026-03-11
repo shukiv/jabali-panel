@@ -8,7 +8,9 @@ use App\Models\Domain;
 use App\Models\DnsRecord;
 use App\Models\DnsSetting;
 use App\Models\MysqlCredential;
+use App\Jobs\RunWpscanScan;
 use App\Services\Agent\AgentClient;
+use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -1119,9 +1121,14 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
             return;
         }
 
-        // Check if WPScan is installed
-        exec('which wpscan 2>/dev/null', $output, $code);
-        if ($code !== 0) {
+        // Check if WPScan is available (scan runs asynchronously via the queue).
+        try {
+            $status = $this->getAgent()->send('scanner.status', ['tool' => 'wpscan']);
+        } catch (Exception $e) {
+            $status = ['installed' => false, 'error' => $e->getMessage()];
+        }
+
+        if (! ($status['installed'] ?? false)) {
             Notification::make()
                 ->title(__('WPScan not available'))
                 ->body(__('Please contact your administrator to enable security scanning.'))
@@ -1133,58 +1140,87 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
 
         $this->isSecurityScanning = true;
         $this->scanningSiteId = $siteId;
-        $this->scanningSiteUrl = $site['url'];
-        $this->securityScanResults = [];
+        $this->scanningSiteUrl = (string) ($site['url'] ?? '');
+
+        if ($this->scanningSiteUrl === '' || filter_var($this->scanningSiteUrl, FILTER_VALIDATE_URL) === false) {
+            $this->isSecurityScanning = false;
+            $this->scanningSiteId = null;
+            $this->scanningSiteUrl = null;
+
+            Notification::make()
+                ->title(__('Invalid site URL'))
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        $this->securityScanResults = [
+            'url' => $this->scanningSiteUrl,
+            'scan_time' => now()->format('Y-m-d H:i:s'),
+            'status' => 'running',
+        ];
 
         Notification::make()
             ->title(__('Starting security scan...'))
-            ->body(__('Scanning :url for vulnerabilities.', ['url' => $site['url']]))
+            ->body(__('Scanning :url for vulnerabilities.', ['url' => $this->scanningSiteUrl]))
             ->info()
             ->send();
 
-        // Run WPScan
-        $url = $site['url'];
-        exec('wpscan --url '.escapeshellarg($url).' --format json --no-banner 2>&1', $scanOutput, $scanCode);
-
-        $jsonOutput = implode("\n", $scanOutput);
-        $results = json_decode($jsonOutput, true);
-
-        if (! $results) {
-            $this->securityScanResults = [
-                'error' => __('Failed to parse scan results'),
-                'raw_output' => $jsonOutput,
-                'url' => $url,
-                'scan_time' => now()->format('Y-m-d H:i:s'),
-            ];
-        } else {
-            $results['url'] = $url;
-            $results['scan_time'] = now()->format('Y-m-d H:i:s');
-            $this->securityScanResults = $this->parseWpScanResults($results);
-        }
-
-        $this->isSecurityScanning = false;
         $this->showSecurityScanModal = true;
 
-        $vulnCount = count($this->securityScanResults['vulnerabilities'] ?? []);
-        if ($vulnCount > 0) {
-            Notification::make()
-                ->title(__('Security scan completed'))
-                ->body(__('Found :count potential vulnerability(ies)', ['count' => $vulnCount]))
-                ->warning()
-                ->send();
-        } else {
-            Notification::make()
-                ->title(__('Security scan completed'))
-                ->body(__('No vulnerabilities found!'))
-                ->success()
-                ->send();
+        // Queue scan; results will be picked up by pollSecurityScan().
+        dispatch(new RunWpscanScan($this->scanningSiteUrl));
+    }
+
+    public function pollSecurityScan(): void
+    {
+        if (! $this->isSecurityScanning || ! $this->scanningSiteUrl) {
+            return;
         }
+
+        $resultsPath = storage_path('app/security-scans/wpscan-latest.json');
+        if (! is_file($resultsPath)) {
+            return;
+        }
+
+        $raw = json_decode((string) @file_get_contents($resultsPath), true);
+        if (! is_array($raw)) {
+            $this->securityScanResults = [
+                'error' => __('Failed to parse scan results'),
+                'url' => $this->scanningSiteUrl,
+                'scan_time' => now()->format('Y-m-d H:i:s'),
+            ];
+            $this->isSecurityScanning = false;
+            return;
+        }
+
+        $rawUrl = (string) ($raw['url'] ?? $raw['target_url'] ?? '');
+        if ($rawUrl !== '' && $rawUrl !== $this->scanningSiteUrl) {
+            // Another scan completed; ignore.
+            return;
+        }
+
+        $raw['url'] = $this->scanningSiteUrl;
+        $raw['scan_time'] = $raw['scan_time'] ?? now()->format('Y-m-d H:i:s');
+
+        $this->securityScanResults = $this->parseWpScanResults($raw);
+        $this->isSecurityScanning = false;
+
+        $vulnCount = count($this->securityScanResults['vulnerabilities'] ?? []);
+        $notification = Notification::make()
+            ->title(__('Security scan completed'))
+            ->body($vulnCount > 0
+                ? __('Found :count potential vulnerability(ies)', ['count' => $vulnCount])
+                : __('No vulnerabilities found!'));
+
+        ($vulnCount > 0 ? $notification->warning() : $notification->success())->send();
     }
 
     protected function parseWpScanResults(array $results): array
     {
         $parsed = [
-            'url' => $results['url'] ?? '',
+            'url' => $results['url'] ?? ($results['target_url'] ?? ''),
             'scan_time' => $results['scan_time'] ?? now()->format('Y-m-d H:i:s'),
             'wordpress_version' => null,
             'main_theme' => null,
@@ -1273,6 +1309,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         $this->securityScanResults = [];
         $this->scanningSiteId = null;
         $this->scanningSiteUrl = null;
+        $this->isSecurityScanning = false;
     }
 
     public function showCredentialsModal(): void
@@ -1486,42 +1523,25 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
             return;
         }
 
-        $url = $site['url'];
+        $url = (string) ($site['url'] ?? '');
 
         try {
-            // Ensure screenshots directory exists
-            $screenshotDir = storage_path('app/public/screenshots');
-            if (! is_dir($screenshotDir)) {
-                mkdir($screenshotDir, 0755, true);
-            }
-
-            $filename = 'wp_'.$siteId.'.png';
-            $filepath = $screenshotDir.'/'.$filename;
-
-            // Use screenshot wrapper script that handles Chromium crashpad issues
-            $screenshotBin = base_path('bin/screenshot');
-
-            if (! file_exists($screenshotBin) || ! is_executable($screenshotBin)) {
+            if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false) {
                 Notification::make()
                     ->title(__('Screenshot failed'))
-                    ->body(__('Screenshot script not found.'))
+                    ->body(__('Invalid site URL.'))
                     ->warning()
                     ->send();
 
                 return;
             }
 
-            $cmd = sprintf('%s %s %s 2>&1',
-                escapeshellarg($screenshotBin),
-                escapeshellarg($url),
-                escapeshellarg($filepath)
-            );
+            $result = $this->getAgent()->send('screenshot.capture', [
+                'url' => $url,
+                'site_id' => $siteId,
+            ]);
 
-            exec($cmd, $output, $code);
-
-            if (file_exists($filepath) && filesize($filepath) > 1000) {
-                touch($filepath);
-
+            if ($result['success'] ?? false) {
                 Notification::make()
                     ->title(__('Screenshot captured'))
                     ->body(__('Website screenshot has been updated.'))
@@ -1530,7 +1550,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
             } else {
                 Notification::make()
                     ->title(__('Screenshot failed'))
-                    ->body(__('Could not capture screenshot. Error: ').implode("\n", $output))
+                    ->body($result['error'] ?? __('Could not capture screenshot.'))
                     ->warning()
                     ->send();
             }
@@ -1583,7 +1603,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         $defaultTtl = (int) ($settings['default_ttl'] ?? 3600);
 
         $defaultIpv4 = $sourceDomain->ip_address
-            ?: ($settings['default_ip'] ?? trim((string) (shell_exec("hostname -I | awk '{print $1}'") ?? '')) ?: '127.0.0.1');
+            ?: ($settings['default_ip'] ?? ServerFacts::serverIp('127.0.0.1'));
 
         DnsRecord::query()->updateOrCreate(
             [
@@ -1678,7 +1698,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         $settings ??= DnsSetting::getAll();
         $records = DnsRecord::query()->where('domain_id', $domain->id)->get()->toArray();
         $hostname = gethostname() ?: 'localhost';
-        $serverIp = trim((string) (shell_exec("hostname -I | awk '{print $1}'") ?? ''));
+        $serverIp = ServerFacts::serverIp('');
 
         $this->getAgent()->dnsSyncZone($domain->domain, $records, [
             'ns1' => $settings['ns1'] ?? "ns1.{$hostname}",

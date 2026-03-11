@@ -37,7 +37,24 @@ class ImageOptimization extends Page implements HasActions, HasForms
 
     protected ?AgentClient $agent = null;
 
-    public array $imageFormData = [];
+    /**
+     * Livewire v4 + Filament form fields entangle to nested state paths.
+     * Ensure keys exist to avoid "property cannot be found" client-side errors.
+     *
+     * @var array{domain_id: int|null, path: string|null, convert_webp: bool, quality: int}
+     */
+    public array $imageFormData = [
+        'domain_id' => null,
+        'path' => null,
+        'convert_webp' => false,
+        'quality' => 82,
+    ];
+
+    public function mount(): void
+    {
+        // Seed the Filament form state so Alpine/Livewire entanglement has concrete keys.
+        $this->imageForm->fill($this->imageFormData);
+    }
 
     public function getTitle(): string|Htmlable
     {

@@ -9,6 +9,7 @@ use App\Models\BackupDestination;
 use App\Models\BackupSchedule;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
+use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -37,6 +38,7 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\File;
 use Livewire\Attributes\Url;
 
 class Backups extends Page implements HasActions, HasForms, HasTable
@@ -1429,7 +1431,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             } catch (Exception $e) {
                 // Cleanup temp directory on failure
                 if (is_dir($tempDownloadPath)) {
-                    exec('rm -rf '.escapeshellarg($tempDownloadPath));
+                    File::deleteDirectory($tempDownloadPath);
                 }
                 Notification::make()
                     ->title(__('Download failed'))
@@ -1463,7 +1465,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
             // Cleanup temp download if used
             if ($tempDownloadPath && is_dir($tempDownloadPath)) {
-                exec('rm -rf '.escapeshellarg($tempDownloadPath));
+                File::deleteDirectory($tempDownloadPath);
             }
 
             if ($result['success'] ?? false) {
@@ -1500,7 +1502,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             // Cleanup temp download on failure
             if ($tempDownloadPath && is_dir($tempDownloadPath)) {
-                exec('rm -rf '.escapeshellarg($tempDownloadPath));
+                File::deleteDirectory($tempDownloadPath);
             }
             Notification::make()
                 ->title(__('Restore failed'))
@@ -1611,13 +1613,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     {
         static $timezone = null;
         if ($timezone === null) {
-            $timezone = trim(shell_exec('cat /etc/timezone 2>/dev/null') ?? '');
-            if ($timezone === '') {
-                $timezone = trim(shell_exec('timedatectl show -p Timezone --value 2>/dev/null') ?? '');
-            }
-            if ($timezone === '') {
-                $timezone = 'UTC';
-            }
+            $timezone = ServerFacts::timezone();
         }
 
         return $timezone;
