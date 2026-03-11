@@ -206,25 +206,12 @@ run_quiet() {
 
     local log_file
     log_file=$(mktemp /tmp/jabali-install-XXXXXX.log)
-    local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    local spin_len=${#spin_chars}
-    local i=0
 
-    # Run command in background
-    "$@" > "$log_file" 2>&1 &
-    local cmd_pid=$!
+    # Run command, capture output
+    printf "${CYAN}[~]${NC} %s " "$label"
 
-    # Show spinner
-    printf "${CYAN}[i]${NC} %s " "$label"
-    while kill -0 "$cmd_pid" 2>/dev/null; do
-        printf "\r${CYAN}[${spin_chars:i%spin_len:1}]${NC} %s " "$label"
-        ((i++))
-        sleep 0.1
-    done
-
-    # Get exit code (|| true prevents set -e from killing the script)
     local exit_code=0
-    wait "$cmd_pid" || exit_code=$?
+    "$@" > "$log_file" 2>&1 || exit_code=$?
 
     if [[ $exit_code -eq 0 ]]; then
         printf "\r${GREEN}[✓]${NC} %s\n" "$label"
