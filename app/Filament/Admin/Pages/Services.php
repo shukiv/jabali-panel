@@ -45,21 +45,6 @@ class Services extends Page implements HasActions, HasForms, HasTable
 
     protected ?AgentClient $agent = null;
 
-    protected array $baseServices = [
-        'nginx' => ['name' => 'Nginx', 'description' => 'Web Server', 'icon' => 'globe'],
-        'mariadb' => ['name' => 'MariaDB', 'description' => 'Database Server', 'icon' => 'database'],
-        'redis-server' => ['name' => 'Redis', 'description' => 'Cache Server', 'icon' => 'bolt'],
-        'postfix' => ['name' => 'Postfix', 'description' => 'Mail Transfer Agent', 'icon' => 'envelope'],
-        'dovecot' => ['name' => 'Dovecot', 'description' => 'IMAP/POP3 Server', 'icon' => 'inbox'],
-        'rspamd' => ['name' => 'Rspamd', 'description' => 'Spam Filter', 'icon' => 'shield'],
-        'clamav-daemon' => ['name' => 'ClamAV', 'description' => 'Antivirus Scanner', 'icon' => 'bug'],
-        'named' => ['name' => 'BIND9', 'description' => 'DNS Server', 'icon' => 'server'],
-        'opendkim' => ['name' => 'OpenDKIM', 'description' => 'DKIM Signing', 'icon' => 'key'],
-        'fail2ban' => ['name' => 'Fail2Ban', 'description' => 'Intrusion Prevention', 'icon' => 'lock'],
-        'ssh' => ['name' => 'SSH', 'description' => 'Secure Shell', 'icon' => 'terminal'],
-        'cron' => ['name' => 'Cron', 'description' => 'Task Scheduler', 'icon' => 'clock'],
-    ];
-
     protected ?array $managedServices = null;
 
     protected function getManagedServices(): array
@@ -68,8 +53,23 @@ class Services extends Page implements HasActions, HasForms, HasTable
             return $this->managedServices;
         }
 
+        $baseServices = [
+            'nginx' => ['name' => 'Nginx', 'description' => __('Web Server'), 'icon' => 'globe'],
+            'mariadb' => ['name' => 'MariaDB', 'description' => __('Database Server'), 'icon' => 'database'],
+            'redis-server' => ['name' => 'Redis', 'description' => __('Cache Server'), 'icon' => 'bolt'],
+            'postfix' => ['name' => 'Postfix', 'description' => __('Mail Transfer Agent'), 'icon' => 'envelope'],
+            'dovecot' => ['name' => 'Dovecot', 'description' => __('IMAP/POP3 Server'), 'icon' => 'inbox'],
+            'rspamd' => ['name' => 'Rspamd', 'description' => __('Spam Filter'), 'icon' => 'shield'],
+            'clamav-daemon' => ['name' => 'ClamAV', 'description' => __('Antivirus Scanner'), 'icon' => 'bug'],
+            'named' => ['name' => 'BIND9', 'description' => __('DNS Server'), 'icon' => 'server'],
+            'opendkim' => ['name' => 'OpenDKIM', 'description' => __('DKIM Signing'), 'icon' => 'key'],
+            'fail2ban' => ['name' => 'Fail2Ban', 'description' => __('Intrusion Prevention'), 'icon' => 'lock'],
+            'ssh' => ['name' => 'SSH', 'description' => __('Secure Shell'), 'icon' => 'terminal'],
+            'cron' => ['name' => 'Cron', 'description' => __('Task Scheduler'), 'icon' => 'clock'],
+        ];
+
         $this->managedServices = [];
-        foreach ($this->baseServices as $key => $config) {
+        foreach ($baseServices as $key => $config) {
             $this->managedServices[$key] = $config;
 
             if ($key === 'nginx') {
@@ -96,7 +96,7 @@ class Services extends Page implements HasActions, HasForms, HasTable
                 $serviceName = "php{$version}-fpm";
                 $phpServices[$serviceName] = [
                     'name' => "PHP {$version} FPM",
-                    'description' => 'PHP FastCGI Process Manager',
+                    'description' => __('PHP FastCGI Process Manager'),
                     'icon' => 'code',
                 ];
             }
