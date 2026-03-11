@@ -1579,13 +1579,14 @@ SUBMISSION
     # Configure Dovecot SQL authentication using MySQL (Dovecot 2.4 format)
     info "Configuring Dovecot SQL authentication..."
 
-    # Read DB credentials from .env
-    local _db_host _db_port _db_name _db_user _db_pass
-    _db_host=$(grep '^DB_HOST=' "$JABALI_DIR/.env" | cut -d= -f2-)
-    _db_port=$(grep '^DB_PORT=' "$JABALI_DIR/.env" | cut -d= -f2-)
-    _db_name=$(grep '^DB_DATABASE=' "$JABALI_DIR/.env" | cut -d= -f2-)
-    _db_user=$(grep '^DB_USERNAME=' "$JABALI_DIR/.env" | cut -d= -f2-)
-    _db_pass=$(grep '^DB_PASSWORD=' "$JABALI_DIR/.env" | cut -d= -f2-)
+    # Read DB credentials (from credentials file saved by configure_mariadb,
+    # since .env is not yet created at this point in the install)
+    local _db_pass=""
+    if [[ -f /root/.jabali_db_credentials ]]; then
+        _db_pass=$(grep '^DB_PASSWORD=' /root/.jabali_db_credentials | cut -d= -f2-)
+    elif [[ -f "$JABALI_DIR/.env" ]]; then
+        _db_pass=$(grep '^DB_PASSWORD=' "$JABALI_DIR/.env" | cut -d= -f2-)
+    fi
 
     cat > /etc/dovecot/conf.d/auth-sql.conf.ext << DOVECOT_SQL
 # Authentication for SQL users - Jabali Panel
