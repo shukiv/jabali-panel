@@ -135,9 +135,17 @@ class UpgradeCommand extends Command
         try {
             $pullResult = $this->executeCommand("git pull --ff-only {$updateSource['pullRemote']} main");
             if ($pullResult['exitCode'] !== 0) {
-                throw new Exception($pullResult['output'] ?: 'Git pull failed.');
-            }
-            if ($pullResult['output'] !== '') {
+                // Fast-forward failed — likely divergent history from a history rewrite.
+                // Reset to the remote branch to adopt the canonical history.
+                $this->warn('Fast-forward not possible. Resetting to remote branch...');
+                $resetResult = $this->executeCommand("git reset --hard {$updateSource['remoteRef']}");
+                if ($resetResult['exitCode'] !== 0) {
+                    throw new Exception($resetResult['output'] ?: 'Git reset failed.');
+                }
+                if ($resetResult['output'] !== '') {
+                    $this->line($resetResult['output']);
+                }
+            } elseif ($pullResult['output'] !== '') {
                 $this->line($pullResult['output']);
             }
         } catch (Exception $e) {
