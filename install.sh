@@ -2166,7 +2166,8 @@ configure_dns() {
 
     # Extract domain from hostname (e.g., panel.example.com -> example.com)
     local domain=$(echo "$SERVER_HOSTNAME" | awk -F. '{if (NF>2) {print $(NF-1)"."$NF} else {print $0}}')
-    local hostname_part=$(echo "$SERVER_HOSTNAME" | sed "s/\.$domain$//")
+    local escaped_domain=$(echo "$domain" | sed 's/\./\\./g')
+    local hostname_part=$(echo "$SERVER_HOSTNAME" | sed "s/\\.${escaped_domain}$//")
 
     # If hostname is same as domain (e.g., example.com), use @ for the host part
     if [[ "$hostname_part" == "$domain" ]]; then
