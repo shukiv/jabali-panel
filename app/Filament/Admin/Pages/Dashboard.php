@@ -86,7 +86,7 @@ class Dashboard extends Page implements HasActions, HasForms
                 ->label(__('Refresh'))
                 ->icon('heroicon-o-arrow-path')
                 ->color('gray')
-                ->action(fn () => $this->redirect(request()->url())),
+                ->action(fn () => $this->redirect(static::getUrl())),
 
             Action::make('onboarding')->modalCancelActionLabel(__('Maybe later'))
                 ->label(__('Setup Wizard'))
