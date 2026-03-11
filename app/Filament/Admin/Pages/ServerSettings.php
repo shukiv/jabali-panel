@@ -508,6 +508,48 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function emailTabContent(): array
     {
         return [
+            Section::make(__('Mail SSL Certificate'))
+                ->icon('heroicon-o-lock-closed')
+                ->description(__('SSL certificate used by SMTP (Postfix) and IMAP/POP3 (Dovecot) services'))
+                ->schema([
+                    Placeholder::make('mail_ssl_status')
+                        ->label('')
+                        ->content(function () {
+                            try {
+                                $status = $this->getAgent()->sslMailStatus();
+                                if (! ($status['configured'] ?? false)) {
+                                    return __('No SSL certificate configured. Mail clients will show security warnings.');
+                                }
+                                if ($status['self_signed'] ?? false) {
+                                    return __('Using self-signed certificate (:cn). Mail clients will show security warnings. Issue a Let\'s Encrypt certificate below.', ['cn' => $status['common_name'] ?? 'unknown']);
+                                }
+                                $daysLeft = $status['days_left'] ?? 0;
+                                $expiry = $status['expires_at'] ?? 'unknown';
+                                $issuer = $status['issuer'] ?? 'unknown';
+                                if ($daysLeft < 1) {
+                                    return __('Certificate EXPIRED (:issuer, :cn). Issue a new certificate below.', ['issuer' => $issuer, 'cn' => $status['common_name'] ?? '']);
+                                }
+
+                                return __('Valid certificate — :issuer, :cn, expires :date (:days days left)', [
+                                    'issuer' => $issuer,
+                                    'cn' => $status['common_name'] ?? '',
+                                    'date' => $expiry,
+                                    'days' => $daysLeft,
+                                ]);
+                            } catch (Exception $e) {
+                                return __('Could not check mail SSL status');
+                            }
+                        }),
+                    Actions::make([
+                        FormAction::make('issueMailSsl')
+                            ->label(__('Issue Let\'s Encrypt Certificate'))
+                            ->icon('heroicon-o-shield-check')
+                            ->requiresConfirmation()
+                            ->modalHeading(__('Issue Mail SSL Certificate'))
+                            ->modalDescription(__('This will issue a Let\'s Encrypt certificate for the mail hostname and configure Postfix and Dovecot. Nginx will be briefly stopped during issuance.'))
+                            ->action('issueMailSsl'),
+                    ]),
+                ]),
             Section::make(__('Mail Server'))
                 ->icon('heroicon-o-envelope')
                 ->schema([
@@ -985,6 +1027,48 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         Notification::make()->title(__('Email settings saved'))->success()->send();
+    }
+
+    public function issueMailSsl(): void
+    {
+        $mailHostname = $this->emailData['mail_hostname'] ?? '';
+        if (empty($mailHostname)) {
+            $hostname = gethostname();
+            $mailHostname = 'mail.' . preg_replace('/^[^.]+\./', '', $hostname);
+        }
+
+        if (! preg_match('/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i', $mailHostname)) {
+            Notification::make()
+                ->title(__('Invalid mail hostname'))
+                ->body(__('Please set a valid mail hostname in the Mail Server section above.'))
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        try {
+            $result = $this->getAgent()->sslMailIssue($mailHostname);
+            if ($result['success'] ?? false) {
+                Notification::make()
+                    ->title(__('Mail SSL certificate issued'))
+                    ->body(__(':message', ['message' => $result['message'] ?? '']))
+                    ->success()
+                    ->send();
+            } else {
+                Notification::make()
+                    ->title(__('Failed to issue mail SSL certificate'))
+                    ->body($result['error'] ?? __('Unknown error'))
+                    ->danger()
+                    ->send();
+            }
+        } catch (Exception $e) {
+            Notification::make()
+                ->title(__('Failed to issue mail SSL certificate'))
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
     }
 
     public function saveEmailNotificationSettings(): void
