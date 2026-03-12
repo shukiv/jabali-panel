@@ -735,6 +735,38 @@ class AgentClient
         return $this->send('email.reload_services');
     }
 
+    public function emailAclShareFolder(string $username, string $ownerEmail, string $sharedWithEmail, string $folder, string $aclRights): array
+    {
+        return $this->send('email.acl_share_folder', [
+            'username' => $username,
+            'owner_email' => $ownerEmail,
+            'shared_with_email' => $sharedWithEmail,
+            'folder' => $folder,
+            'acl_rights' => $aclRights,
+        ]);
+    }
+
+    public function emailAclRevokeFolder(string $username, string $ownerEmail, string $sharedWithEmail, string $folder): array
+    {
+        return $this->send('email.acl_revoke_folder', [
+            'username' => $username,
+            'owner_email' => $ownerEmail,
+            'shared_with_email' => $sharedWithEmail,
+            'folder' => $folder,
+        ]);
+    }
+
+    public function emailAclUpdateFolder(string $username, string $ownerEmail, string $sharedWithEmail, string $folder, string $aclRights): array
+    {
+        return $this->send('email.acl_update_folder', [
+            'username' => $username,
+            'owner_email' => $ownerEmail,
+            'shared_with_email' => $sharedWithEmail,
+            'folder' => $folder,
+            'acl_rights' => $aclRights,
+        ]);
+    }
+
     // Server Import operations (cPanel/DirectAdmin migration)
     public function importDiscover(int $importId, string $sourceType, string $importMethod, ?string $backupPath, ?string $remoteHost, ?int $remotePort, ?string $remoteUser, ?string $remotePassword): array
     {

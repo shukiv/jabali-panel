@@ -2,6 +2,20 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc103] - 2026-03-12
+
+### Added
+
+- **Shared Folders** - New "Shared Folders" tab on the Email page for managing IMAP folder sharing between mailboxes. Users can share individual folders with other mailboxes on the same domain using four permission levels: Read, Read & Write, Full Access, and Admin. Recipients automatically discover shared folders via IMAP. Backed by Dovecot ACL plugin with vfile backend and SQL-based shared mailbox discovery (`user_shares` table).
+- **Dovecot ACL plugin configuration** - Dovecot is now configured with the ACL plugin and shared namespaces out of the box. New installations get this automatically; existing installations can run `php artisan jabali:configure-dovecot-acl` to enable the feature.
+- **Shared folders translations** - All shared folder UI strings are translated in 7 languages (en, es, ar, fr, ru, pt, he).
+
+### Deployment Notes
+
+1. For existing installations, run `php artisan jabali:configure-dovecot-acl` to configure Dovecot ACL support and create the `user_shares` table
+2. Run `php artisan migrate` to create the shared folder permissions table
+3. Dovecot will be automatically restarted after ACL configuration
+
 ## [0.9-rc101] - 2026-03-12
 
 ### Added

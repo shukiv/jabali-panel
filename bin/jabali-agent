@@ -598,6 +598,9 @@ function handleAction(array $request): array
         'email.autoresponder_set' => emailAutoresponderSet($params),
         'email.autoresponder_toggle' => emailAutoresponderToggle($params),
         'email.autoresponder_delete' => emailAutoresponderDelete($params),
+        'email.acl_share_folder' => emailAclShareFolder($params),
+        'email.acl_revoke_folder' => emailAclRevokeFolder($params),
+        'email.acl_update_folder' => emailAclUpdateFolder($params),
         'email.hash_password' => emailHashPassword($params),
         'email.imap_test_connection' => emailImapTestConnection($params),
         'email.imap_sync_run' => emailImapSyncRun($params),
@@ -11027,6 +11030,206 @@ function emailAutoresponderDelete(array $params): array
 
     logger("Autoresponder deleted for: $email");
     return ['success' => true];
+}
+
+function emailAclShareFolder(array $params): array
+{
+    $ownerEmail = $params['owner_email'] ?? '';
+    $sharedWithEmail = $params['shared_with_email'] ?? '';
+    $folder = $params['folder'] ?? 'INBOX';
+    $aclRights = $params['acl_rights'] ?? 'lrs';
+    $username = $params['username'] ?? '';
+
+    if (empty($ownerEmail) || empty($sharedWithEmail) || empty($username)) {
+        return ['success' => false, 'error' => 'Missing required parameters'];
+    }
+
+    if (!validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    // Validate acl_rights against allowlist
+    $allowedRights = ['lrs', 'lrswite', 'lrswitekx', 'lrswitekxa'];
+    if (!in_array($aclRights, $allowedRights, true)) {
+        return ['success' => false, 'error' => 'Invalid ACL rights'];
+    }
+
+    // Validate folder name - only allow safe characters (no path traversal)
+    if ($folder !== 'INBOX' && !preg_match('/^[A-Za-z0-9._-]+$/', $folder)) {
+        return ['success' => false, 'error' => 'Invalid folder name'];
+    }
+
+    // Validate same domain
+    $ownerParts = explode('@', $ownerEmail);
+    $sharedParts = explode('@', $sharedWithEmail);
+    if (count($ownerParts) !== 2 || count($sharedParts) !== 2) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+    if ($ownerParts[1] !== $sharedParts[1]) {
+        return ['success' => false, 'error' => 'Only mailboxes in the same domain can share folders'];
+    }
+
+    $domain = $ownerParts[1];
+    $localPart = $ownerParts[0];
+
+    // Resolve Maildir path
+    $maildirBase = "/home/{$username}/mail/{$domain}/{$localPart}";
+
+    // Map folder to directory
+    if ($folder === 'INBOX') {
+        $folderDir = $maildirBase;
+    } else {
+        $folderDir = $maildirBase . '/.' . $folder;
+    }
+
+    // Verify resolved path is within maildir base (defense in depth)
+    $realPath = realpath($folderDir);
+    $realBase = realpath($maildirBase);
+    if ($realPath === false || $realBase === false || !str_starts_with($realPath, $realBase)) {
+        return ['success' => false, 'error' => 'Invalid folder path'];
+    }
+
+    $aclFile = $folderDir . '/dovecot-acl';
+    $aclLine = "user={$sharedWithEmail} {$aclRights}";
+
+    // Read-modify-write with file locking to prevent race conditions
+    $lockFile = $aclFile . '.lock';
+    $lockFp = fopen($lockFile, 'c');
+    if (!flock($lockFp, LOCK_EX)) {
+        fclose($lockFp);
+        return ['success' => false, 'error' => 'Could not acquire lock on dovecot-acl file'];
+    }
+
+    try {
+        // Read existing ACL file
+        $lines = [];
+        if (file_exists($aclFile)) {
+            $lines = file($aclFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        }
+
+        // Replace existing entry for this user or add new one
+        $found = false;
+        foreach ($lines as $i => $line) {
+            if (str_starts_with($line, "user={$sharedWithEmail} ")) {
+                $lines[$i] = $aclLine;
+                $found = true;
+                break;
+            }
+        }
+        if (!$found) {
+            $lines[] = $aclLine;
+        }
+
+        if (file_put_contents($aclFile, implode("\n", $lines) . "\n") === false) {
+            return ['success' => false, 'error' => 'Failed to write dovecot-acl file'];
+        }
+    } finally {
+        flock($lockFp, LOCK_UN);
+        fclose($lockFp);
+    }
+
+    // Set ownership to the system user
+    $userInfo = posix_getpwnam($username);
+    if ($userInfo) {
+        chown($aclFile, $userInfo['uid']);
+        chgrp($aclFile, $userInfo['gid']);
+    }
+
+    logger("ACL share: {$ownerEmail} shared {$folder} with {$sharedWithEmail} ({$aclRights})");
+    return ['success' => true];
+}
+
+function emailAclRevokeFolder(array $params): array
+{
+    $ownerEmail = $params['owner_email'] ?? '';
+    $sharedWithEmail = $params['shared_with_email'] ?? '';
+    $folder = $params['folder'] ?? 'INBOX';
+    $username = $params['username'] ?? '';
+
+    if (empty($ownerEmail) || empty($sharedWithEmail) || empty($username)) {
+        return ['success' => false, 'error' => 'Missing required parameters'];
+    }
+
+    if (!validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    // Validate folder name - only allow safe characters (no path traversal)
+    if ($folder !== 'INBOX' && !preg_match('/^[A-Za-z0-9._-]+$/', $folder)) {
+        return ['success' => false, 'error' => 'Invalid folder name'];
+    }
+
+    $ownerParts = explode('@', $ownerEmail);
+    if (count($ownerParts) !== 2) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    $domain = $ownerParts[1];
+    $localPart = $ownerParts[0];
+
+    // Resolve Maildir path
+    $maildirBase = "/home/{$username}/mail/{$domain}/{$localPart}";
+
+    // Map folder to directory
+    if ($folder === 'INBOX') {
+        $folderDir = $maildirBase;
+    } else {
+        $folderDir = $maildirBase . '/.' . $folder;
+    }
+
+    // Verify resolved path is within maildir base
+    $realPath = realpath($folderDir);
+    $realBase = realpath($maildirBase);
+    if ($realPath === false || $realBase === false || !str_starts_with($realPath, $realBase)) {
+        return ['success' => false, 'error' => 'Invalid folder path'];
+    }
+
+    $aclFile = $folderDir . '/dovecot-acl';
+
+    if (!file_exists($aclFile)) {
+        return ['success' => true]; // Nothing to revoke
+    }
+
+    // File locking to prevent race conditions
+    $lockFile = $aclFile . '.lock';
+    $lockFp = fopen($lockFile, 'c');
+    if (!flock($lockFp, LOCK_EX)) {
+        fclose($lockFp);
+        return ['success' => false, 'error' => 'Could not acquire lock on dovecot-acl file'];
+    }
+
+    try {
+        $lines = file($aclFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $newLines = [];
+        foreach ($lines as $line) {
+            if (!str_starts_with($line, "user={$sharedWithEmail} ")) {
+                $newLines[] = $line;
+            }
+        }
+
+        if (empty($newLines)) {
+            unlink($aclFile);
+        } else {
+            file_put_contents($aclFile, implode("\n", $newLines) . "\n");
+            $userInfo = posix_getpwnam($username);
+            if ($userInfo) {
+                chown($aclFile, $userInfo['uid']);
+                chgrp($aclFile, $userInfo['gid']);
+            }
+        }
+    } finally {
+        flock($lockFp, LOCK_UN);
+        fclose($lockFp);
+    }
+
+    logger("ACL revoke: {$ownerEmail} revoked {$folder} share from {$sharedWithEmail}");
+    return ['success' => true];
+}
+
+function emailAclUpdateFolder(array $params): array
+{
+    // Update is the same as share - it replaces the existing ACL line
+    return emailAclShareFolder($params);
 }
 
 function emailGetLogs(array $params): array

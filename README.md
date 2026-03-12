@@ -52,6 +52,7 @@ After install:
 - cPanel and WHM migrations with step-by-step logs
 - IMAP sync for migrating mail from external servers
 - Built-in mail stack with webmail SSO
+- Shared mailbox folders with Dovecot ACL permissions
 - `mail.domain.ext` auto-redirects to webmail
 - DNS templates with optional DNSSEC
 - User and server backups with schedules and retention
@@ -79,7 +80,7 @@ After install:
 
 - Domains, redirects, and Nginx config
 - DNS records editor
-- Mail domains, mailboxes, and forwarders
+- Mail domains, mailboxes, forwarders, and shared folders
 - IMAP sync (single and bulk mail migration)
 - Webmail SSO (Roundcube)
 - WordPress manager (install, scan, SSO)
