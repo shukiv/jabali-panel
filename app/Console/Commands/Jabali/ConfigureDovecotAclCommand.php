@@ -18,6 +18,18 @@ class ConfigureDovecotAclCommand extends Command
     {
         $this->info('Configuring Dovecot ACL plugin...');
 
+        // Detect Dovecot version
+        $isDovecot24 = false;
+        $versionProcess = new Process(['dovecot', '--version']);
+        $versionProcess->run();
+        if ($versionProcess->isSuccessful()) {
+            $version = trim($versionProcess->getOutput());
+            if (preg_match('/^(\d+)\.(\d+)/', $version, $m)) {
+                $isDovecot24 = ($m[1] > 2) || ($m[1] == 2 && $m[2] >= 4);
+            }
+        }
+        $this->line('  Detected Dovecot '.($isDovecot24 ? '2.4+' : '2.3'));
+
         // Read DB credentials
         $dbPass = '';
         $dbHost = 'localhost';
@@ -44,7 +56,8 @@ class ConfigureDovecotAclCommand extends Command
         if (file_exists($mailConf)) {
             $content = file_get_contents($mailConf);
             if (! str_contains($content, 'namespace shared')) {
-                $sharedNamespace = <<<'CONF'
+                if ($isDovecot24) {
+                    $sharedNamespace = <<<'CONF'
 
 namespace shared {
   type = shared
@@ -74,6 +87,30 @@ acl_sharing_map {
   }
 }
 CONF;
+                } else {
+                    $sharedNamespace = <<<'CONF'
+
+namespace {
+  type = shared
+  separator = /
+  prefix = shared/%%u/
+  location = maildir:%%h:INDEX=%h/shared/%%u
+  subscriptions = no
+  list = children
+}
+
+mail_plugins = acl
+
+protocol imap {
+  mail_plugins = $mail_plugins imap_acl
+}
+
+plugin {
+  acl = vfile
+  acl_shared_dict = proxy::acl
+}
+CONF;
+                }
                 file_put_contents($mailConf, $content.$sharedNamespace);
                 $this->line('  Added shared namespace and ACL config to 10-mail.conf');
             } else {
@@ -85,13 +122,15 @@ CONF;
             return 1;
         }
 
-        // Add ACL dict definition to 30-dict-server.conf (Dovecot 2.4 syntax)
-        $this->info('  Configuring ACL dict in dict_server...');
-        $dictServerConf = '/etc/dovecot/conf.d/30-dict-server.conf';
-        if (file_exists($dictServerConf)) {
-            $content = file_get_contents($dictServerConf);
-            if (! str_contains($content, 'dict acl')) {
-                $dictBlock = <<<CONF
+        // Configure ACL dict
+        $this->info('  Configuring ACL dict...');
+        if ($isDovecot24) {
+            // Dovecot 2.4: inline dict in dict_server
+            $dictServerConf = '/etc/dovecot/conf.d/30-dict-server.conf';
+            if (file_exists($dictServerConf)) {
+                $content = file_get_contents($dictServerConf);
+                if (! str_contains($content, 'dict acl')) {
+                    $dictBlock = <<<CONF
   dict acl {
     driver = sql
     sql_driver = mysql
@@ -116,21 +155,52 @@ CONF;
     }
   }
 CONF;
-                // Insert before the closing brace of dict_server { }
-                $content = preg_replace(
-                    '/^(dict_server\s*\{.*?)(^\})/ms',
-                    "$1\n".$dictBlock."\n$2",
-                    $content
-                );
-                file_put_contents($dictServerConf, $content);
-                $this->line('  Added ACL dict to 30-dict-server.conf');
+                    $content = preg_replace(
+                        '/^(dict_server\s*\{.*?)(^\})/ms',
+                        "$1\n".$dictBlock."\n$2",
+                        $content
+                    );
+                    file_put_contents($dictServerConf, $content);
+                    $this->line('  Added ACL dict to 30-dict-server.conf');
+                } else {
+                    $this->line('  ACL dict already present in 30-dict-server.conf');
+                }
             } else {
-                $this->line('  ACL dict already present in 30-dict-server.conf');
+                $this->error('  30-dict-server.conf not found');
+
+                return 1;
             }
         } else {
-            $this->error('  30-dict-server.conf not found');
+            // Dovecot 2.3: external dict-sql config file + dict {} in dovecot.conf
+            $dictSqlConf = '/etc/dovecot/dovecot-dict-sql.conf.ext';
+            if (! file_exists($dictSqlConf)) {
+                $dictSql = "connect = host={$dbHost} dbname={$dbName} user={$dbUser} password={$dbPass}\n\n"
+                    ."map {\n"
+                    ."  pattern = shared/shared-boxes/user/\$to/\$from\n"
+                    ."  table = user_shares\n"
+                    ."  value_field = dummy\n\n"
+                    ."  fields {\n"
+                    ."    from_user = \$from\n"
+                    ."    to_user = \$to\n"
+                    ."  }\n"
+                    ."}\n";
+                file_put_contents($dictSqlConf, $dictSql);
+                chown($dictSqlConf, 'root');
+                chgrp($dictSqlConf, 'dovecot');
+                chmod($dictSqlConf, 0640);
+                $this->line('  Created dovecot-dict-sql.conf.ext');
+            }
 
-            return 1;
+            // Add dict block to dovecot.conf
+            $dovecotConf = '/etc/dovecot/dovecot.conf';
+            if (file_exists($dovecotConf)) {
+                $content = file_get_contents($dovecotConf);
+                if (! str_contains($content, 'dict {')) {
+                    $content .= "\ndict {\n  acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext\n}\n";
+                    file_put_contents($dovecotConf, $content);
+                    $this->line('  Added dict definition to dovecot.conf');
+                }
+            }
         }
 
         // Ensure dict service socket exists in 10-master.conf
