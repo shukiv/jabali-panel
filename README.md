@@ -121,7 +121,7 @@ Service stack (single-node default):
 
 ## Requirements
 
-- Fresh Debian 11, 12, or 13 install (no pre-existing web or mail stack)
+- Fresh Debian 13 install (no pre-existing web or mail stack)
 - A domain for panel and mail (with glue records if hosting DNS)
 - PTR (reverse DNS) for mail hostname
 - Open ports: 22, 80, 443, 25, 465, 587, 993, 995, 53

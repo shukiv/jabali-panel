@@ -293,6 +293,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
                     ->color(fn (DnsRecord $record) => $this->isRecordPendingDelete($record->id) ? 'danger' : null)
                     ->sortable(),
             ])
+            ->defaultPaginationPageOption(25)
             ->filters([])
             ->headerActions([
                 TableAction::make('resetToDefaults')

@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc112}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc113}"
 
 # Colors
 RED='\033[0;31m'
@@ -288,10 +288,10 @@ check_os() {
 
             if [[ -n "${VERSION_ID:-}" ]]; then
                 # Stable release with a numeric version
-                if [[ "${VERSION_ID}" -ge 11 ]]; then
+                if [[ "${VERSION_ID}" -ge 13 ]]; then
                     info "Detected Debian ${VERSION_ID} (${VERSION_CODENAME:-unknown})"
                 else
-                    error "Debian 11 or later is required"
+                    error "Debian 13 or later is required"
                 fi
             elif [[ "$debian_ver" == *sid* ]] || [[ "$VERSION_CODENAME" == "sid" ]]; then
                 info "Detected Debian unstable (sid) - proceeding"
@@ -412,7 +412,7 @@ EOF
         fi
     fi
 
-    # Sury supports: bookworm, bullseye, buster, trixie (Debian) and jammy, focal, noble (Ubuntu)
+    # Sury supports: trixie (Debian) and jammy, focal, noble (Ubuntu)
     info "Using Sury PHP repository for $codename"
 
     # Add/update PHP repository (Sury) - always update to ensure correct codename
@@ -1614,18 +1614,6 @@ SUBMISSION
     # Configure Dovecot SQL authentication using MySQL
     info "Configuring Dovecot SQL authentication..."
 
-    # Detect Dovecot version (2.3 vs 2.4+)
-    local dovecot_version=$(dovecot --version 2>/dev/null | head -1 | grep -oP '^\d+\.\d+')
-    local dovecot_major=${dovecot_version%%.*}
-    local dovecot_minor=${dovecot_version##*.}
-    dovecot_major=${dovecot_major:-0}
-    dovecot_minor=${dovecot_minor:-0}
-    local is_dovecot_24=false
-    if [[ "$dovecot_major" -ge 3 ]] || { [[ "$dovecot_major" -eq 2 ]] && [[ "$dovecot_minor" -ge 4 ]]; }; then
-        is_dovecot_24=true
-    fi
-    info "Detected Dovecot version: ${dovecot_version:-unknown} (using $($is_dovecot_24 && echo '2.4+' || echo '2.3') config format)"
-
     # Read DB credentials (from credentials file saved by configure_mariadb,
     # since .env is not yet created at this point in the install)
     local _db_pass=""
@@ -1635,8 +1623,7 @@ SUBMISSION
         _db_pass=$(grep '^DB_PASSWORD=' "$JABALI_DIR/.env" | cut -d= -f2-)
     fi
 
-    if $is_dovecot_24; then
-        cat > /etc/dovecot/conf.d/auth-sql.conf.ext << DOVECOT_SQL
+    cat > /etc/dovecot/conf.d/auth-sql.conf.ext << DOVECOT_SQL
 # Authentication for SQL users - Jabali Panel
 # Dovecot 2.4 configuration format (MySQL)
 
@@ -1657,28 +1644,6 @@ userdb sql {
   iterate_query = SELECT CONCAT(m.local_part, '@', d.domain) AS user FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE m.is_active = 1
 }
 DOVECOT_SQL
-    else
-        # Dovecot 2.3 format: separate dovecot-sql.conf.ext for DB connection + queries
-        cat > /etc/dovecot/dovecot-sql.conf.ext << DOVECOT_SQL_23
-driver = mysql
-connect = host=${_db_host:-127.0.0.1} dbname=${_db_name:-jabali} user=${_db_user:-jabali} password=${_db_pass}
-default_pass_scheme = SHA512-CRYPT
-password_query = SELECT CONCAT(m.local_part, '@', d.domain) AS user, m.password_hash AS password FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = '%u' AND m.is_active = 1 AND e.is_active = 1
-user_query = SELECT m.maildir_path AS home, m.system_uid AS uid, m.system_gid AS gid FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = '%u' AND m.is_active = 1
-iterate_query = SELECT CONCAT(m.local_part, '@', d.domain) AS user FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE m.is_active = 1
-DOVECOT_SQL_23
-
-        cat > /etc/dovecot/conf.d/auth-sql.conf.ext << 'DOVECOT_AUTH_SQL_23'
-passdb {
-  driver = sql
-  args = /etc/dovecot/dovecot-sql.conf.ext
-}
-userdb {
-  driver = sql
-  args = /etc/dovecot/dovecot-sql.conf.ext
-}
-DOVECOT_AUTH_SQL_23
-    fi
 
     # Configure Dovecot master user for Jabali SSO
     if [[ ! -d /etc/jabali ]]; then
@@ -1721,22 +1686,12 @@ EOF
     chown root:dovecot /etc/dovecot/master-users
     chmod 640 /etc/dovecot/master-users
 
-    if $is_dovecot_24; then
-        cat > /etc/dovecot/conf.d/auth-master.conf.ext << 'DOVECOT_MASTER_24'
+    cat > /etc/dovecot/conf.d/auth-master.conf.ext << 'DOVECOT_MASTER_24'
 passdb passwd-file {
   passwd_file_path = /etc/dovecot/master-users
   master = yes
 }
 DOVECOT_MASTER_24
-    else
-        cat > /etc/dovecot/conf.d/auth-master.conf.ext << 'DOVECOT_MASTER_23'
-passdb {
-  driver = passwd-file
-  args = /etc/dovecot/master-users
-  master = yes
-}
-DOVECOT_MASTER_23
-    fi
 
     # Enable SQL auth in Dovecot (disable system auth, enable SQL auth)
     if [[ -f /etc/dovecot/conf.d/10-auth.conf ]]; then
@@ -1814,8 +1769,7 @@ DOVECOT_DICT_SVC
     fi
 
     # Configure Dovecot mail storage (Maildir format)
-    if $is_dovecot_24; then
-        cat > /etc/dovecot/conf.d/10-mail.conf << 'DOVECOT_MAIL_24'
+    cat > /etc/dovecot/conf.d/10-mail.conf << 'DOVECOT_MAIL_24'
 ##
 ## Mailbox locations and namespaces - Jabali Panel
 ##
@@ -1860,47 +1814,9 @@ acl_sharing_map {
   }
 }
 DOVECOT_MAIL_24
-    else
-        cat > /etc/dovecot/conf.d/10-mail.conf << 'DOVECOT_MAIL_23'
-##
-## Mailbox locations and namespaces - Jabali Panel
-##
-
-# Mail storage format and location
-# Using Maildir format - home is returned by userdb
-mail_location = maildir:%h
-mail_home = %h
-
-namespace inbox {
-  inbox = yes
-  separator = /
-}
-
-namespace {
-  type = shared
-  separator = /
-  prefix = shared/%%u/
-  location = maildir:%%h:INDEX=%h/shared/%%u
-  subscriptions = no
-  list = children
-}
-
-mail_plugins = acl
-
-protocol imap {
-  mail_plugins = $mail_plugins imap_acl
-}
-
-plugin {
-  acl = vfile
-  acl_shared_dict = proxy::acl
-}
-DOVECOT_MAIL_23
-    fi
 
     # Write dict config with ACL dict definition
-    if $is_dovecot_24; then
-        cat > /etc/dovecot/conf.d/30-dict-server.conf << DOVECOT_DICT_24
+    cat > /etc/dovecot/conf.d/30-dict-server.conf << DOVECOT_DICT_24
 dict_server {
   dict acl {
     driver = sql
@@ -1927,37 +1843,6 @@ dict_server {
   }
 }
 DOVECOT_DICT_24
-    else
-        # Dovecot 2.3: separate dict SQL config file
-        cat > /etc/dovecot/dovecot-dict-sql.conf.ext << DOVECOT_DICT_SQL_23
-connect = host=${_db_host:-127.0.0.1} dbname=${_db_name:-jabali} user=${_db_user:-jabali} password=${_db_pass}
-
-map {
-  pattern = shared/shared-boxes/user/\$to/\$from
-  table = user_shares
-  value_field = dummy
-
-  fields {
-    from_user = \$from
-    to_user = \$to
-  }
-}
-DOVECOT_DICT_SQL_23
-
-        # Add dict definition to dovecot.conf if not present
-        if ! grep -q "acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext" /etc/dovecot/dovecot.conf 2>/dev/null; then
-            if grep -q "^dict {" /etc/dovecot/dovecot.conf 2>/dev/null; then
-                sed -i '/^dict {/a\  acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext' /etc/dovecot/dovecot.conf
-            else
-                cat >> /etc/dovecot/dovecot.conf << 'DOVECOT_DICT_BLOCK_23'
-
-dict {
-  acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext
-}
-DOVECOT_DICT_BLOCK_23
-            fi
-        fi
-    fi
 
     systemctl enable postfix dovecot > /dev/null 2>&1
 

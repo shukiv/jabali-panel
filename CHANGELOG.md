@@ -2,6 +2,18 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc113] - 2026-03-12
+
+### Changed
+
+- **Debian 13 only** — Dropped support for Debian 11 (Bullseye) and Debian 12 (Bookworm). Jabali now requires Debian 13 (Trixie) with Dovecot 2.4.
+
+### Removed
+
+- Dovecot 2.3 configuration paths in the installer and `jabali:configure-dovecot-acl` command
+- Version detection logic for Dovecot 2.3 vs 2.4
+- Legacy `dovecot-sql.conf.ext` and `dovecot-dict-sql.conf.ext` external config file support
+
 ## [0.9-rc103] - 2026-03-12
 
 ### Added
