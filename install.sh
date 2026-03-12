@@ -3152,18 +3152,24 @@ ENV
     fi
     records_json="${records_json}]"
 
+    # Sync DNS records via agent (may fail if agent not yet started - that's OK,
+    # the zone file was already written directly above)
     php artisan tinker --execute="
-        \$agent = new App\Services\Agent\AgentClient();
-        \$agent->send('dns.sync_zone', [
-            'domain' => '${root_domain}',
-            'records' => json_decode('${records_json}', true),
-            'ns1' => 'ns1.${root_domain}',
-            'ns2' => 'ns2.${root_domain}',
-            'admin_email' => 'admin.${root_domain}',
-            'default_ip' => '${server_ip}',
-            'default_ttl' => 3600,
-        ]);
-    " 2>/dev/null || true
+        try {
+            \$agent = new App\Services\Agent\AgentClient();
+            \$agent->send('dns.sync_zone', [
+                'domain' => '${root_domain}',
+                'records' => json_decode('${records_json}', true),
+                'ns1' => 'ns1.${root_domain}',
+                'ns2' => 'ns2.${root_domain}',
+                'admin_email' => 'admin.${root_domain}',
+                'default_ip' => '${server_ip}',
+                'default_ttl' => 3600,
+            ]);
+        } catch (Exception \$e) {
+            // Agent may not be running yet during install
+        }
+    " > /dev/null 2>&1 || true
 
     # Build assets
     export NPM_CONFIG_CACHE="$JABALI_DIR/storage/npm-cache"
