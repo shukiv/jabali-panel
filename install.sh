@@ -2097,6 +2097,7 @@ create_webmaster_mailbox() {
 
     cd "$JABALI_DIR"
     php artisan tinker --execute="
+        use App\Models\DnsRecord;
         use App\Models\Domain;
         use App\Models\EmailDomain;
         use App\Models\Mailbox;
@@ -2156,6 +2157,46 @@ create_webmaster_mailbox() {
             ['domain_id' => \$domain->id],
             ['is_active' => true]
         );
+
+        // Generate DKIM keys for the domain
+        try {
+            \$dkimResult = \$agent->emailGenerateDkim(\$admin->username, \$hostname);
+            if (isset(\$dkimResult['public_key'])) {
+                \$selector = \$dkimResult['selector'] ?? 'default';
+                \$publicKey = \$dkimResult['public_key'];
+
+                \$emailDomain->update([
+                    'dkim_selector' => \$selector,
+                    'dkim_public_key' => \$publicKey,
+                    'dkim_private_key' => \$dkimResult['private_key'] ?? null,
+                ]);
+
+                // Add DKIM DNS record
+                \$cleanKey = str_replace(["\n", "\r", '-----BEGIN PUBLIC KEY-----', '-----END PUBLIC KEY-----', ' '], '', \$publicKey);
+                \$dkimContent = "v=DKIM1; k=rsa; p={\$cleanKey}";
+
+                DnsRecord::firstOrCreate(
+                    [
+                        'domain_id' => \$domain->id,
+                        'name' => "{\$selector}._domainkey",
+                        'type' => 'TXT',
+                    ],
+                    [
+                        'content' => \$dkimContent,
+                        'ttl' => 3600,
+                    ]
+                );
+
+                // Sync DNS zone
+                try {
+                    \$agent->send('dns.sync_zone', ['domain' => \$hostname]);
+                } catch (Exception \$e) {
+                    // DNS sync is best-effort
+                }
+            }
+        } catch (Exception \$e) {
+            // DKIM generation is best-effort during install
+        }
 
         // Check if webmaster mailbox exists
         if (Mailbox::where('email_domain_id', \$emailDomain->id)->where('local_part', 'webmaster')->exists()) {
