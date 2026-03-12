@@ -2178,7 +2178,7 @@ create_webmaster_mailbox() {
                 DnsRecord::firstOrCreate(
                     [
                         'domain_id' => \$domain->id,
-                        'name' => "{\$selector}._domainkey",
+                        'name' => \$selector . '._domainkey',
                         'type' => 'TXT',
                     ],
                     [
