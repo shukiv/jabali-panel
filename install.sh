@@ -2172,8 +2172,8 @@ create_webmaster_mailbox() {
                 ]);
 
                 // Add DKIM DNS record
-                \$cleanKey = str_replace(["\n", "\r", '-----BEGIN PUBLIC KEY-----', '-----END PUBLIC KEY-----', ' '], '', \$publicKey);
-                \$dkimContent = "v=DKIM1; k=rsa; p={\$cleanKey}";
+                \$cleanKey = preg_replace('/-----[A-Z ]+-----|\\s/', '', \$publicKey);
+                \$dkimContent = 'v=DKIM1; k=rsa; p=' . \$cleanKey;
 
                 DnsRecord::firstOrCreate(
                     [
