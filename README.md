@@ -183,6 +183,12 @@ php artisan test --compact
 ./vendor/bin/pint
 ```
 
+### Versioning
+
+The version string in the `VERSION` file must be kept in sync between the panel codebase and the installer (`install.sh`). When the installer clones the repository during a fresh install, it reads `VERSION` to display the installed version. If you bump the version in one place but not the other, the panel footer and installer output will show different versions.
+
+Always update `VERSION` in a single commit that includes both the panel changes and any corresponding `install.sh` changes.
+
 ## License
 
 MIT
