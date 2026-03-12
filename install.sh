@@ -1814,32 +1814,34 @@ acl_sharing_map {
 }
 DOVECOT_MAIL
 
-    # Configure Dovecot dict for ACL sharing map
-    cat > /etc/dovecot/dovecot-dict-sql.conf.ext << DOVECOT_DICT_SQL
-connect = host=${_db_host:-127.0.0.1} dbname=${_db_name:-jabali} user=${_db_user:-jabali} password=${_db_pass}
-map {
-  pattern = shared/shared-boxes/user/\$to/\$from
-  table = user_shares
-  value_field = dummy
-  fields {
-    from_user = \$from
-    to_user = \$to
+    # Write 30-dict-server.conf with ACL dict definition (Dovecot 2.4 syntax)
+    cat > /etc/dovecot/conf.d/30-dict-server.conf << DOVECOT_DICT_SERVER
+dict_server {
+  dict acl {
+    driver = sql
+    sql_driver = mysql
+
+    mysql localhost {
+      dbname = ${_db_name:-jabali}
+      user = ${_db_user:-jabali}
+      password = ${_db_pass}
+    }
+
+    dict_map shared/shared-boxes/user/\$to/\$from {
+      sql_table = user_shares
+      value_field dummy {
+      }
+
+      key_field from_user {
+        value = \$from
+      }
+      key_field to_user {
+        value = \$to
+      }
+    }
   }
 }
-DOVECOT_DICT_SQL
-    chown root:dovecot /etc/dovecot/dovecot-dict-sql.conf.ext
-    chmod 640 /etc/dovecot/dovecot-dict-sql.conf.ext
-
-    # Add dict definition to dovecot.conf if not present
-    if ! grep -q 'dict {' /etc/dovecot/dovecot.conf 2>/dev/null; then
-        cat >> /etc/dovecot/dovecot.conf << 'DOVECOT_DICT_DEF'
-
-# ACL sharing dict
-dict {
-  acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext
-}
-DOVECOT_DICT_DEF
-    fi
+DOVECOT_DICT_SERVER
 
     systemctl enable postfix dovecot > /dev/null 2>&1
 
