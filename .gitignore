@@ -25,6 +25,7 @@ CLAUDE.md
 
 # Local repository configuration (do not commit)
 config.toml
+SECURITY.md
 
 # Local automation / debug artifacts (do not commit)
 /.playwright-cli/
