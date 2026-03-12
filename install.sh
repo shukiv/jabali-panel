@@ -1745,6 +1745,21 @@ service lmtp {
 }
 DOVECOT_LMTP
         fi
+
+        # Add dict service for ACL sharing
+        if ! grep -q "Dict service for ACL sharing" /etc/dovecot/conf.d/10-master.conf; then
+            cat >> /etc/dovecot/conf.d/10-master.conf << 'DOVECOT_DICT_SVC'
+
+# Dict service for ACL sharing
+service dict {
+  unix_listener dict {
+    mode = 0660
+    user = dovecot
+    group = dovecot
+  }
+}
+DOVECOT_DICT_SVC
+        fi
     fi
 
     # Fix LMTP auth_username_format to keep full email address
@@ -1765,10 +1780,66 @@ mail_home = %{userdb:home}
 mail_path = %{userdb:home}
 
 namespace inbox {
+  type = private
   inbox = yes
   separator = /
 }
+
+namespace shared {
+  type = shared
+  separator = /
+  prefix = shared/$user/
+  mail_path = %{owner_home}
+  mail_index_private_path = ~/shared/%{owner_user}
+  subscriptions = no
+  list = children
+}
+
+mail_plugins {
+  acl = yes
+}
+
+protocol imap {
+  mail_plugins {
+    imap_acl = yes
+  }
+}
+
+acl_driver = vfile
+
+acl_sharing_map {
+  dict proxy {
+    name = acl
+  }
+}
 DOVECOT_MAIL
+
+    # Configure Dovecot dict for ACL sharing map
+    cat > /etc/dovecot/dovecot-dict-sql.conf.ext << DOVECOT_DICT_SQL
+connect = host=${_db_host:-127.0.0.1} dbname=${_db_name:-jabali} user=${_db_user:-jabali} password=${_db_pass}
+map {
+  pattern = shared/shared-boxes/user/\$to/\$from
+  table = user_shares
+  value_field = dummy
+  fields {
+    from_user = \$from
+    to_user = \$to
+  }
+}
+DOVECOT_DICT_SQL
+    chown root:dovecot /etc/dovecot/dovecot-dict-sql.conf.ext
+    chmod 640 /etc/dovecot/dovecot-dict-sql.conf.ext
+
+    # Add dict definition to dovecot.conf if not present
+    if ! grep -q 'dict {' /etc/dovecot/dovecot.conf 2>/dev/null; then
+        cat >> /etc/dovecot/dovecot.conf << 'DOVECOT_DICT_DEF'
+
+# ACL sharing dict
+dict {
+  acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext
+}
+DOVECOT_DICT_DEF
+    fi
 
     systemctl enable postfix dovecot > /dev/null 2>&1
 

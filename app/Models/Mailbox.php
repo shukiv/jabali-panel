@@ -6,6 +6,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\Crypt;
 
@@ -84,12 +85,22 @@ class Mailbox extends Model
         return $this->hasOne(Autoresponder::class);
     }
 
+    public function sharedFolders(): HasMany
+    {
+        return $this->hasMany(MailboxShare::class);
+    }
+
+    public function sharedWithMe(): HasMany
+    {
+        return $this->hasMany(MailboxShare::class, 'shared_with_mailbox_id');
+    }
+
     /**
      * Get the full email address (e.g., user@example.com)
      */
     public function getEmailAttribute(): string
     {
-        return $this->local_part . '@' . $this->emailDomain->domain_name;
+        return $this->local_part.'@'.$this->emailDomain->domain_name;
     }
 
     /**
@@ -109,7 +120,7 @@ class Mailbox extends Model
      */
     public function getMaildirPathAttribute(): string
     {
-        return $this->emailDomain->domain_name . '/' . $this->local_part . '/';
+        return $this->emailDomain->domain_name.'/'.$this->local_part.'/';
     }
 
     /**
@@ -150,15 +161,15 @@ class Mailbox extends Model
     protected function formatBytes(int $bytes): string
     {
         if ($bytes < 1024) {
-            return $bytes . ' B';
+            return $bytes.' B';
         }
         if ($bytes < 1048576) {
-            return round($bytes / 1024, 1) . ' KB';
+            return round($bytes / 1024, 1).' KB';
         }
         if ($bytes < 1073741824) {
-            return round($bytes / 1048576, 1) . ' MB';
+            return round($bytes / 1048576, 1).' MB';
         }
 
-        return round($bytes / 1073741824, 1) . ' GB';
+        return round($bytes / 1073741824, 1).' GB';
     }
 }
