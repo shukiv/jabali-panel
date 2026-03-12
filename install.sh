@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc111}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc112}"
 
 # Colors
 RED='\033[0;31m'
@@ -1298,7 +1298,9 @@ configure_mariadb() {
     local db_password=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
     mysql -e "CREATE DATABASE IF NOT EXISTS jabali CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
     mysql -e "CREATE USER IF NOT EXISTS 'jabali'@'localhost' IDENTIFIED BY '${db_password}';"
+    mysql -e "CREATE USER IF NOT EXISTS 'jabali'@'127.0.0.1' IDENTIFIED BY '${db_password}';"
     mysql -e "GRANT ALL PRIVILEGES ON jabali.* TO 'jabali'@'localhost';"
+    mysql -e "GRANT ALL PRIVILEGES ON jabali.* TO 'jabali'@'127.0.0.1';"
     mysql -e "FLUSH PRIVILEGES;"
 
     # Save credentials
@@ -3885,6 +3887,7 @@ uninstall() {
     header "Removing Database"
     mysql -e "DROP DATABASE IF EXISTS jabali;" 2>/dev/null || true
     mysql -e "DROP USER IF EXISTS 'jabali'@'localhost';" 2>/dev/null || true
+    mysql -e "DROP USER IF EXISTS 'jabali'@'127.0.0.1';" 2>/dev/null || true
     log "Database removed"
 
     header "Removing Packages"
