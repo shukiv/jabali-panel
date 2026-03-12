@@ -2,6 +2,13 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc114] - 2026-03-12
+
+### Fixed
+
+- **SMTP connection drops on ports 25, 587, 465** — Set `inet_interfaces=all` in Postfix (Debian 13 defaults to `loopback-only`, blocking external connections). Set `myhostname` to the configured FQDN so the SMTP banner shows the correct domain instead of the system hostname. Fixed debconf pre-seed to use `$SERVER_HOSTNAME` instead of `hostname -f`. (Closes #23)
+- **SMTPS port 465 not configured** — Added `smtps` service to Postfix `master.cf` for legacy mail clients using implicit TLS.
+
 ## [0.9-rc113] - 2026-03-12
 
 ### Changed

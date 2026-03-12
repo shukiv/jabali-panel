@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc113}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc114}"
 
 # Colors
 RED='\033[0;31m'
@@ -635,7 +635,7 @@ install_packages() {
     # Pre-configure postfix and roundcube to avoid interactive prompts
     # Note: debconf templates may not exist yet on fresh install, so suppress errors
     if [[ "$INSTALL_MAIL" == "true" ]]; then
-        echo "postfix postfix/mailname string $(hostname -f)" | debconf-set-selections 2>/dev/null || true
+        echo "postfix postfix/mailname string $SERVER_HOSTNAME" | debconf-set-selections 2>/dev/null || true
         echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections 2>/dev/null || true
         # Skip roundcube dbconfig - we configure it manually
         echo "roundcube-core roundcube/dbconfig-install boolean false" | debconf-set-selections 2>/dev/null || true
@@ -1569,6 +1569,8 @@ configure_mail() {
     header "Configuring Mail Server"
 
     # Basic Postfix config
+    postconf -e "myhostname=$SERVER_HOSTNAME"
+    postconf -e "inet_interfaces=all"
     postconf -e "smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem"
     postconf -e "smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key"
     postconf -e "smtpd_tls_security_level=may"
@@ -1600,6 +1602,22 @@ submission inet n       -       y       -       -       smtpd
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o milter_macro_daemon_name=ORIGINATING
 SUBMISSION
+    fi
+
+    # Configure SMTPS port (465) for legacy mail clients
+    if ! grep -q "^smtps" /etc/postfix/master.cf; then
+        cat >> /etc/postfix/master.cf << 'SMTPS'
+
+# SMTPS port for legacy mail clients (implicit TLS)
+smtps     inet  n       -       y       -       -       smtpd
+  -o syslog_name=postfix/smtps
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_sasl_type=dovecot
+  -o smtpd_sasl_path=private/auth
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+SMTPS
     fi
 
     # Basic Dovecot config
