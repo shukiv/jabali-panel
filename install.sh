@@ -2114,8 +2114,16 @@ create_webmaster_mailbox() {
             return;
         }
 
-        // Create or find domain for hostname
+        // Ensure system user exists for admin
         \$agent = new AgentClient();
+        if (!posix_getpwnam(\$admin->username)) {
+            \$agent->send('user.create', [
+                'username' => \$admin->username,
+                'password' => '',
+            ]);
+        }
+
+        // Create or find domain for hostname
         \$domain = Domain::where('domain', \$hostname)->first();
 
         if (!\$domain) {
@@ -3380,7 +3388,18 @@ setup_panel_ssl() {
         local mail_resolved=$(dig +short "$mail_hostname" 2>/dev/null | head -1)
         if [[ "$mail_resolved" == "$server_ip" ]]; then
             info "Attempting to issue Let's Encrypt certificate for $mail_hostname"
-            if certbot certonly --standalone -d "$mail_hostname" --non-interactive --agree-tos --email "$ADMIN_EMAIL" 2>/dev/null; then
+
+            # Create temporary nginx server block for mail hostname validation
+            cat > /etc/nginx/sites-enabled/mail-cert-temp.conf << MAILNGINX
+server {
+    listen 80;
+    server_name $mail_hostname;
+    root /var/www/html;
+}
+MAILNGINX
+            nginx -t > /dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+
+            if certbot certonly --webroot -w /var/www/html -d "$mail_hostname" --non-interactive --agree-tos --email "$ADMIN_EMAIL" 2>/dev/null; then
                 log "Let's Encrypt certificate issued for $mail_hostname"
 
                 # Update Postfix to use the certificate
@@ -3398,6 +3417,10 @@ setup_panel_ssl() {
             else
                 warn "Could not issue certificate for $mail_hostname"
             fi
+
+            # Remove temporary nginx config for mail hostname
+            rm -f /etc/nginx/sites-enabled/mail-cert-temp.conf
+            nginx -t > /dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
         fi
     fi
 
