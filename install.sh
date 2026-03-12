@@ -1613,13 +1613,16 @@ SUBMISSION
     info "Configuring Dovecot SQL authentication..."
 
     # Detect Dovecot version (2.3 vs 2.4+)
-    local dovecot_version=$(dovecot --version 2>/dev/null | head -1 | cut -d. -f1-2)
-    local dovecot_major=$(echo "$dovecot_version" | cut -d. -f1)
-    local dovecot_minor=$(echo "$dovecot_version" | cut -d. -f2)
+    local dovecot_version=$(dovecot --version 2>/dev/null | head -1 | grep -oP '^\d+\.\d+')
+    local dovecot_major=${dovecot_version%%.*}
+    local dovecot_minor=${dovecot_version##*.}
+    dovecot_major=${dovecot_major:-0}
+    dovecot_minor=${dovecot_minor:-0}
     local is_dovecot_24=false
     if [[ "$dovecot_major" -ge 3 ]] || { [[ "$dovecot_major" -eq 2 ]] && [[ "$dovecot_minor" -ge 4 ]]; }; then
         is_dovecot_24=true
     fi
+    info "Detected Dovecot version: ${dovecot_version:-unknown} (using $($is_dovecot_24 && echo '2.4+' || echo '2.3') config format)"
 
     # Read DB credentials (from credentials file saved by configure_mariadb,
     # since .env is not yet created at this point in the install)
