@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc121] - 2026-03-13
+
+### Added
+
+- **Per-domain mail TLS via SNI** — When an SSL certificate covering `mail.domain` is installed, Postfix and Dovecot are automatically configured with SNI (`tls_server_sni_maps` and `local_name` blocks) so each domain presents its own certificate during IMAP/SMTP handshake. The installer pre-configures the SNI map infrastructure. (Closes #30)
+
 ## [0.9-rc120] - 2026-03-13
 
 ### Fixed

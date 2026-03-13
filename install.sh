@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc120}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc121}"
 
 # Colors
 RED='\033[0;31m'
@@ -1579,14 +1579,17 @@ configure_mail() {
     postconf -e "virtual_mailbox_domains=hash:/etc/postfix/virtual_mailbox_domains"
     postconf -e "virtual_mailbox_maps=hash:/etc/postfix/virtual_mailbox_maps"
     postconf -e "virtual_alias_maps=hash:/etc/postfix/virtual_aliases"
+    postconf -e "tls_server_sni_maps=hash:/etc/postfix/sni_maps"
 
     # Create empty virtual map files and generate hash databases
     touch /etc/postfix/virtual_mailbox_domains
     touch /etc/postfix/virtual_mailbox_maps
     touch /etc/postfix/virtual_aliases
+    touch /etc/postfix/sni_maps
     postmap /etc/postfix/virtual_mailbox_domains
     postmap /etc/postfix/virtual_mailbox_maps
     postmap /etc/postfix/virtual_aliases
+    postmap /etc/postfix/sni_maps
 
     # Configure submission port (587) for authenticated mail clients
     if ! grep -q "^submission" /etc/postfix/master.cf; then
