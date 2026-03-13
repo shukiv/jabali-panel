@@ -15034,6 +15034,48 @@ function sslInstallCertificate(string $domain, string $username, string $certPat
     // Reload nginx
     exec('systemctl reload nginx 2>&1', $output, $code);
 
+    // Configure mail SNI for this domain's certificate
+    $mailDomain = "mail.$domain";
+
+    // Check if the certificate covers mail.domain
+    $certContent = file_get_contents($certPath);
+    $certData = openssl_x509_parse($certContent);
+    $sans = $certData['extensions']['subjectAltName'] ?? '';
+    $coversMailDomain = str_contains($sans, "DNS:$mailDomain");
+
+    if ($coversMailDomain) {
+        // Update Postfix SNI map
+        $sniMapFile = '/etc/postfix/sni_maps';
+        $sniLine = "$mailDomain $keyPath $certPath";
+        $sniContent = file_exists($sniMapFile) ? file_get_contents($sniMapFile) : '';
+
+        // Remove existing entry for this mail domain
+        $sniContent = preg_replace('/^' . preg_quote($mailDomain, '/') . '\s+.*$/m', '', $sniContent);
+        $sniContent = trim($sniContent) . "\n" . $sniLine . "\n";
+        file_put_contents($sniMapFile, $sniContent);
+        exec('postmap /etc/postfix/sni_maps 2>&1');
+        exec('systemctl reload postfix 2>&1');
+
+        // Update Dovecot local_name for SNI
+        $dovecotSslConf = '/etc/dovecot/conf.d/10-ssl.conf';
+        if (file_exists($dovecotSslConf)) {
+            $dovecotContent = file_get_contents($dovecotSslConf);
+            $localNameBlock = "local_name $mailDomain {\n  ssl_cert = <$certPath\n  ssl_key = <$keyPath\n}";
+
+            // Remove existing local_name block for this mail domain
+            $dovecotContent = preg_replace(
+                '/local_name\s+' . preg_quote($mailDomain, '/') . '\s*\{[^}]*\}\n?/',
+                '',
+                $dovecotContent
+            );
+            $dovecotContent = trim($dovecotContent) . "\n\n" . $localNameBlock . "\n";
+            file_put_contents($dovecotSslConf, $dovecotContent);
+            exec('systemctl reload dovecot 2>&1');
+        }
+
+        logger("Configured mail SNI for $mailDomain using cert from $domain");
+    }
+
     return ['success' => true];
 }
 
