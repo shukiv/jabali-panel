@@ -103,6 +103,9 @@ switch ($command) {
     case 'ssl':
         handleSsl($subcommand, $options);
         break;
+    case 'report':
+        handleReport($subcommand, $options);
+        break;
     case '--version':
     case '-v':
         echo "Jabali CLI v" . VERSION . "\n";
@@ -218,7 +221,7 @@ function showHelp(): void
     echo "  " . C_GREEN . "domain enable <domain>" . C_RESET . "        Enable a domain\n";
     echo "  " . C_GREEN . "domain disable <domain>" . C_RESET . "       Disable a domain\n\n";
 
-    echo C_DIM . "More commands: service, wp, db, mail, backup, cpanel, system, agent, php, firewall, ssl\n" . C_RESET;
+    echo C_DIM . "More commands: service, wp, db, mail, backup, cpanel, system, agent, php, firewall, ssl, report\n" . C_RESET;
     echo C_DIM . "Run " . C_RESET . C_CYAN . "jabali --help-full" . C_RESET . C_DIM . " for the full command list.\n\n" . C_RESET;
 
     echo C_YELLOW . C_BOLD . "Options:" . C_RESET . "\n";
@@ -487,6 +490,11 @@ function showHelpFull(): void
     $printRow(C_GREEN . "backup schedules" . C_RESET . " - List schedules", "");
     $printRow(C_GREEN . "backup destinations" . C_RESET . " - List destinations", "");
     $printRow(C_GREEN . "backup help" . C_RESET . " - Show all backup cmds", "");
+    echo "\n";
+
+    echo C_YELLOW . C_BOLD . "Diagnostics" . C_RESET . "\n";
+    $printRow(C_GREEN . "report" . C_RESET . " - Encrypted diagnostic report", C_GREEN . "report --file" . C_RESET . " - Save to /tmp file");
+    $printRow(C_GREEN . "report --json" . C_RESET . " - Raw JSON (unencrypted)", "");
     echo "\n";
 
     echo C_YELLOW . C_BOLD . "Migration & Restore" . C_RESET . "\n";
@@ -3678,4 +3686,47 @@ function handleSsl(string $subcommand, array $options): void
             echo "Run 'jabali ssl --help' for available commands.\n";
             exit(1);
     }
+}
+
+// ============ DIAGNOSTIC REPORT ============
+
+function handleReport(string $subcommand, array $options): void
+{
+    if ($subcommand === 'help' || $subcommand === '--help' || $subcommand === '-h') {
+        showReportHelp();
+        exit(0);
+    }
+
+    $artisanArgs = ['jabali:report'];
+
+    if (isset($options['file']) || $subcommand === '--file') {
+        $artisanArgs[] = '--file';
+    }
+
+    if (isset($options['json']) || $subcommand === '--json') {
+        $artisanArgs[] = '--json';
+    }
+
+    $cmd = 'php ' . escapeshellarg(JABALI_ROOT . '/artisan') . ' ' . implode(' ', $artisanArgs);
+    passthru($cmd, $exitCode);
+    exit($exitCode);
+}
+
+function showReportHelp(): void
+{
+    echo "\n" . C_YELLOW . C_BOLD . "Diagnostic Report" . C_RESET . "\n";
+    echo C_YELLOW . "Usage:" . C_RESET . " jabali report [options]\n\n";
+
+    echo "Generate an encrypted diagnostic report for troubleshooting.\n";
+    echo "The report includes system info, service statuses, logs, and DB connectivity.\n";
+    echo "It is encrypted so only the Jabali team can read it.\n\n";
+
+    echo C_YELLOW . "Options:" . C_RESET . "\n";
+    echo "  " . C_GREEN . "--file" . C_RESET . "     Save encrypted report to /tmp instead of stdout\n";
+    echo "  " . C_GREEN . "--json" . C_RESET . "     Output raw JSON (unencrypted, for debugging)\n\n";
+
+    echo C_YELLOW . "Examples:" . C_RESET . "\n";
+    echo "  " . C_DIM . "jabali report" . C_RESET . "          Print encrypted report to paste in a GitHub issue\n";
+    echo "  " . C_DIM . "jabali report --file" . C_RESET . "   Save to /tmp/jabali-report-XXXX.enc\n";
+    echo "  " . C_DIM . "jabali report --json" . C_RESET . "   Print raw JSON for inspection\n\n";
 }
