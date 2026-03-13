@@ -32,3 +32,8 @@ SECURITY.md
 /output/
 /storage/.cache/
 /storage/npm-cache/
+
+# Private keys (only public keys should be committed)
+/resources/keys/*.key
+/resources/keys/*.pem
+!/resources/keys/*.pub

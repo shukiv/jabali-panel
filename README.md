@@ -58,6 +58,7 @@ After install:
 - User and server backups with schedules and retention
 - WordPress management (install, updates, scans, and SSO)
 - Security center with firewall, Fail2ban, ClamAV, and scanners
+- Encrypted diagnostic reports for support
 - Audit logs and admin notifications
 
 ## Feature Map
@@ -74,6 +75,7 @@ After install:
 - Backups and restores (local + remote)
 - Migrations (cPanel restore, WHM downloads, IMAP sync)
 - Security center (firewall, Fail2ban, ClamAV, scans)
+- Diagnostic report (encrypted, for support)
 - Audit logs and notifications
 
 ### User Panel
@@ -171,6 +173,7 @@ php artisan jabali:upgrade --check
 jabali --help
 jabali backup create <user>
 jabali backup restore <path> --user=<user>
+jabali report
 jabali cpanel analyze <file>
 jabali cpanel restore <file> <user>
 ```
@@ -191,7 +194,7 @@ Always update `VERSION` in a single commit that includes both the panel changes 
 
 ## License
 
-MIT
+GPL-3.0 — see [LICENSE](LICENSE) for details.
 
 ## Mail Subdomain
 

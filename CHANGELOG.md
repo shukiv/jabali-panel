@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc123] - 2026-03-13
+
+### Added
+
+- **Encrypted diagnostic report** -- New `jabali:report` artisan command and "Diagnostic Report" button on the Server Status page. Collects system info, service statuses, logs, and DB connectivity into an encrypted report that only the Jabali team can decrypt. Users can paste it into GitHub issues for faster troubleshooting.
+
 ## [0.9-rc122] - 2026-03-13
 
 ### Fixed
