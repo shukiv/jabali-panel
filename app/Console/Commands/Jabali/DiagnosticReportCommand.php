@@ -268,7 +268,8 @@ class DiagnosticReportCommand extends Command
 
         // PHP-FPM log
         try {
-            $data['php_fpm_log'] = $this->tailFile('/var/log/php8.4-fpm.log', 30);
+            $phpVersion = PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;
+            $data['php_fpm_log'] = $this->tailFile("/var/log/php{$phpVersion}-fpm.log", 30);
         } catch (Exception) {
             // skip
         }

@@ -448,17 +448,23 @@ install_packages() {
     fi
 
     # Clean up broken PHP state from previous failed installations
-    # Check if php8.4 packages exist in any state (installed, config-files, half-installed, etc.)
-    # dpkg remembers "deleted" config files and won't recreate them on reinstall
-    if dpkg -l 'php8.4*' 2>/dev/null | grep -qE '^(ii|rc|iU|iF|hi|pi)'; then
+    # Detect which PHP version packages are present (if any) for cleanup
+    local _cleanup_ver=""
+    for _cv in 8.5 8.4 8.3 8.2 8.1 8.0; do
+        if dpkg -l "php${_cv}*" 2>/dev/null | grep -qE '^(ii|rc|iU|iF|hi|pi)'; then
+            _cleanup_ver="$_cv"
+            break
+        fi
+    done
+    if [[ -n "$_cleanup_ver" ]]; then
         # Check if configs are missing or broken
-        if [[ ! -f /etc/php/8.4/fpm/php.ini ]] || [[ ! -f /etc/php/8.4/cli/php.ini ]] || \
-           dpkg -l php8.4-fpm 2>/dev/null | grep -qE '^(rc|iU|iF)'; then
-            info "Cleaning up broken PHP installation..."
-            systemctl stop php8.4-fpm 2>/dev/null || true
-            systemctl reset-failed php8.4-fpm 2>/dev/null || true
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y 'php8.4*' 2>/dev/null || true
-            rm -rf /etc/php/8.4
+        if [[ ! -f "/etc/php/${_cleanup_ver}/fpm/php.ini" ]] || [[ ! -f "/etc/php/${_cleanup_ver}/cli/php.ini" ]] || \
+           dpkg -l "php${_cleanup_ver}-fpm" 2>/dev/null | grep -qE '^(rc|iU|iF)'; then
+            info "Cleaning up broken PHP ${_cleanup_ver} installation..."
+            systemctl stop "php${_cleanup_ver}-fpm" 2>/dev/null || true
+            systemctl reset-failed "php${_cleanup_ver}-fpm" 2>/dev/null || true
+            DEBIAN_FRONTEND=noninteractive apt-get purge -y "php${_cleanup_ver}*" 2>/dev/null || true
+            rm -rf "/etc/php/${_cleanup_ver}"
             apt-get clean
             dpkg --configure -a 2>/dev/null || true
         fi
@@ -630,7 +636,7 @@ install_packages() {
     # Prevent Apache2 and libapache2-mod-php from being installed
     # (roundcube recommends apache2, php metapackage recommends libapache2-mod-php, but we use nginx+php-fpm)
     info "Blocking Apache2 and mod-php installation (we use nginx + php-fpm)..."
-    apt-mark hold apache2 libapache2-mod-php libapache2-mod-php8.4 2>/dev/null || true
+    apt-mark hold apache2 libapache2-mod-php libapache2-mod-php${PHP_VERSION:-8.4} 2>/dev/null || true
 
     # Pre-configure postfix and roundcube to avoid interactive prompts
     # Note: debconf templates may not exist yet on fresh install, so suppress errors
@@ -683,10 +689,19 @@ install_packages() {
     fi
 
     # Unhold packages in case user wants to install them manually later
-    apt-mark unhold apache2 libapache2-mod-php libapache2-mod-php8.4 2>/dev/null || true
+    apt-mark unhold apache2 libapache2-mod-php libapache2-mod-php${PHP_VERSION:-8.4} 2>/dev/null || true
 
-    # Install PHP 8.4 (required for Jabali Panel)
-    info "Installing PHP 8.4..."
+    # Install PHP and detect the version from the Sury repository
+    info "Installing PHP..."
+
+    # Install base PHP package first to determine available version
+    run_quiet "Installing base PHP package..." \
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y php-fpm php-cli 2>/dev/null || true
+    if command -v php &>/dev/null; then
+        PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
+    fi
+    PHP_VERSION="${PHP_VERSION:-8.4}"
+    info "Using PHP ${PHP_VERSION}..."
 
     # Stop, disable and mask Apache2 if installed (conflicts with nginx on port 80)
     # Apache2 can be installed as a dependency of some PHP packages
@@ -698,34 +713,34 @@ install_packages() {
     fi
 
     # Clean up any broken PHP-FPM state from previous installations
-    if systemctl is-failed --quiet php8.4-fpm 2>/dev/null; then
+    if systemctl is-failed --quiet php${PHP_VERSION}-fpm 2>/dev/null; then
         info "Resetting failed PHP-FPM service state..."
-        systemctl reset-failed php8.4-fpm
+        systemctl reset-failed php${PHP_VERSION}-fpm
     fi
 
     # Required PHP extensions for Jabali Panel
     local php_extensions=(
-        php8.4
-        php8.4-fpm
-        php8.4-cli
-        php8.4-common
-        php8.4-mysql
-        php8.4-pgsql
-        php8.4-sqlite3
-        php8.4-curl
-        php8.4-gd
-        php8.4-mbstring
-        php8.4-xml          # Provides dom extension
-        php8.4-zip
-        php8.4-bcmath
-        php8.4-intl         # Required by Filament
-        php8.4-readline
-        php8.4-soap
-        php8.4-imap
-        php8.4-ldap
-        php8.4-imagick
-        php8.4-redis
-        php8.4-opcache
+        php${PHP_VERSION}
+        php${PHP_VERSION}-fpm
+        php${PHP_VERSION}-cli
+        php${PHP_VERSION}-common
+        php${PHP_VERSION}-mysql
+        php${PHP_VERSION}-pgsql
+        php${PHP_VERSION}-sqlite3
+        php${PHP_VERSION}-curl
+        php${PHP_VERSION}-gd
+        php${PHP_VERSION}-mbstring
+        php${PHP_VERSION}-xml          # Provides dom extension
+        php${PHP_VERSION}-zip
+        php${PHP_VERSION}-bcmath
+        php${PHP_VERSION}-intl         # Required by Filament
+        php${PHP_VERSION}-readline
+        php${PHP_VERSION}-soap
+        php${PHP_VERSION}-imap
+        php${PHP_VERSION}-ldap
+        php${PHP_VERSION}-imagick
+        php${PHP_VERSION}-redis
+        php${PHP_VERSION}-opcache
     )
 
     # Install all PHP packages (use --force-confmiss to handle dpkg's "deleted config" state)
@@ -734,21 +749,21 @@ install_packages() {
         warn "PHP installation had errors, attempting aggressive recovery..."
 
         # Stop PHP-FPM if it's somehow running in a broken state
-        systemctl stop php8.4-fpm 2>/dev/null || true
-        systemctl reset-failed php8.4-fpm 2>/dev/null || true
+        systemctl stop php${PHP_VERSION}-fpm 2>/dev/null || true
+        systemctl reset-failed php${PHP_VERSION}-fpm 2>/dev/null || true
 
-        # Purge ALL PHP 8.4 packages including config files
-        info "Purging all PHP 8.4 packages..."
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y 'php8.4*' 2>/dev/null || true
+        # Purge ALL PHP ${PHP_VERSION} packages including config files
+        info "Purging all PHP ${PHP_VERSION} packages..."
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y "php${PHP_VERSION}*" 2>/dev/null || true
 
         # Also remove libapache2-mod-php if it got installed (it conflicts with php-fpm)
         DEBIAN_FRONTEND=noninteractive apt-get purge -y 'libapache2-mod-php*' 2>/dev/null || true
 
         # Remove config directories to force fresh install (dpkg won't replace "deleted" configs)
         info "Removing PHP config directories..."
-        rm -rf /etc/php/8.4/fpm
-        rm -rf /etc/php/8.4/cli
-        rm -rf /etc/php/8.4/apache2
+        rm -rf /etc/php/${PHP_VERSION}/fpm
+        rm -rf /etc/php/${PHP_VERSION}/cli
+        rm -rf /etc/php/${PHP_VERSION}/apache2
 
         # Clean package cache
         apt-get clean
@@ -758,9 +773,9 @@ install_packages() {
         dpkg --configure -a 2>/dev/null || true
 
         # Reinstall PHP with force-confmiss to ensure config files are created
-        if ! run_quiet "Reinstalling PHP 8.4 with fresh configuration..." \
+        if ! run_quiet "Reinstalling PHP ${PHP_VERSION} with fresh configuration..." \
             env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" "${php_extensions[@]}"; then
-            error "Failed to install PHP 8.4. Please check your system's package state and try again."
+            error "Failed to install PHP ${PHP_VERSION}. Please check your system's package state and try again."
         fi
     fi
 
@@ -773,55 +788,54 @@ install_packages() {
         systemctl mask apache2 2>/dev/null || true  # Prevent it from starting
     fi
 
-    # Verify PHP 8.4 is installed and working
-    if ! php -v 2>/dev/null | grep -q "PHP 8.4"; then
-        error "PHP 8.4 installation failed. Found: $(php -v 2>/dev/null | head -1)"
+    # Verify PHP is installed and working
+    if ! php -v 2>/dev/null | grep -q "PHP ${PHP_VERSION}"; then
+        error "PHP ${PHP_VERSION} installation failed. Found: $(php -v 2>/dev/null | head -1)"
     fi
 
-    PHP_VERSION="8.4"
-    log "PHP 8.4 installed successfully"
+    log "PHP ${PHP_VERSION} installed successfully"
 
     # Ensure PHP-FPM is properly configured
-    if [[ ! -f "/etc/php/8.4/fpm/php-fpm.conf" ]] || [[ ! -f "/etc/php/8.4/fpm/php.ini" ]]; then
+    if [[ ! -f "/etc/php/${PHP_VERSION}/fpm/php-fpm.conf" ]] || [[ ! -f "/etc/php/${PHP_VERSION}/fpm/php.ini" ]]; then
         warn "PHP-FPM config files missing after install"
         info "Purging and reinstalling PHP-FPM with fresh config..."
-        systemctl stop php8.4-fpm 2>/dev/null || true
-        systemctl reset-failed php8.4-fpm 2>/dev/null || true
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-fpm > /dev/null 2>&1 || true
-        rm -rf /etc/php/8.4/fpm
+        systemctl stop php${PHP_VERSION}-fpm 2>/dev/null || true
+        systemctl reset-failed php${PHP_VERSION}-fpm 2>/dev/null || true
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y php${PHP_VERSION}-fpm > /dev/null 2>&1 || true
+        rm -rf /etc/php/${PHP_VERSION}/fpm
         apt-get clean > /dev/null 2>&1
         run_quiet "Reinstalling PHP-FPM..." \
-            env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php8.4-fpm
+            env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php${PHP_VERSION}-fpm
     fi
 
     # Verify PHP-FPM is running
-    if ! systemctl is-active --quiet php8.4-fpm; then
+    if ! systemctl is-active --quiet php${PHP_VERSION}-fpm; then
         # Reset failed state first if needed
-        systemctl reset-failed php8.4-fpm 2>/dev/null || true
-        if ! systemctl start php8.4-fpm; then
+        systemctl reset-failed php${PHP_VERSION}-fpm 2>/dev/null || true
+        if ! systemctl start php${PHP_VERSION}-fpm; then
             warn "PHP-FPM failed to start, attempting recovery..."
             # Check for config errors
-            php-fpm8.4 -t 2>&1 || true
-            systemctl status php8.4-fpm --no-pager -l || true
+            php-fpm${PHP_VERSION} -t 2>&1 || true
+            systemctl status php${PHP_VERSION}-fpm --no-pager -l || true
         fi
     fi
 
     # Create dedicated PHP-FPM service for the panel to avoid interrupting user pools
-    local panel_fpm_dir="/etc/php/8.4/fpm-panel"
+    local panel_fpm_dir="/etc/php/${PHP_VERSION}/fpm-panel"
     mkdir -p "${panel_fpm_dir}/pool.d"
 
-    cat > "${panel_fpm_dir}/php-fpm.conf" <<'EOF'
+    cat > "${panel_fpm_dir}/php-fpm.conf" <<EOF
 [global]
-pid = /run/php/php8.4-fpm-panel.pid
-error_log = /var/log/php8.4-fpm-panel.log
-include=/etc/php/8.4/fpm-panel/pool.d/*.conf
+pid = /run/php/php${PHP_VERSION}-fpm-panel.pid
+error_log = /var/log/php${PHP_VERSION}-fpm-panel.log
+include=/etc/php/${PHP_VERSION}/fpm-panel/pool.d/*.conf
 EOF
 
-    cat > "${panel_fpm_dir}/pool.d/panel.conf" <<'EOF'
+    cat > "${panel_fpm_dir}/pool.d/panel.conf" <<EOF
 [panel]
 user = www-data
 group = www-data
-listen = /run/php/php8.4-fpm-panel.sock
+listen = /run/php/php${PHP_VERSION}-fpm-panel.sock
 listen.owner = www-data
 listen.group = www-data
 listen.mode = 0660
@@ -832,20 +846,20 @@ pm.min_spare_servers = 2
 pm.max_spare_servers = 4
 catch_workers_output = yes
 php_admin_flag[log_errors] = on
-php_admin_value[error_log] = /var/log/php8.4-fpm-panel.pool.log
+php_admin_value[error_log] = /var/log/php${PHP_VERSION}-fpm-panel.pool.log
 chdir = /
 EOF
 
-    cat > /etc/systemd/system/php8.4-fpm-panel.service <<'EOF'
+    cat > /etc/systemd/system/php${PHP_VERSION}-fpm-panel.service <<EOF
 [Unit]
-Description=The PHP 8.4 FastCGI Process Manager (Panel)
-Documentation=man:php-fpm8.4(8)
+Description=The PHP ${PHP_VERSION} FastCGI Process Manager (Panel)
+Documentation=man:php-fpm${PHP_VERSION}(8)
 After=network.target
 
 [Service]
 Type=notify
-ExecStart=/usr/sbin/php-fpm8.4 --nodaemonize --fpm-config /etc/php/8.4/fpm-panel/php-fpm.conf
-ExecReload=/bin/kill -USR2 $MAINPID
+ExecStart=/usr/sbin/php-fpm${PHP_VERSION} --nodaemonize --fpm-config /etc/php/${PHP_VERSION}/fpm-panel/php-fpm.conf
+ExecReload=/bin/kill -USR2 \$MAINPID
 Restart=on-failure
 
 [Install]
@@ -853,7 +867,7 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now php8.4-fpm-panel
+    systemctl enable --now php${PHP_VERSION}-fpm-panel
 
     # Verify PHP CLI is working and has required extensions
     info "Verifying PHP CLI and extensions..."
@@ -863,15 +877,15 @@ EOF
     fi
 
     # Ensure php.ini exists for CLI (dpkg doesn't replace deleted config files)
-    local cli_ini="/etc/php/8.4/cli/php.ini"
+    local cli_ini="/etc/php/${PHP_VERSION}/cli/php.ini"
 
     if [[ ! -f "$cli_ini" ]]; then
         warn "PHP CLI config file missing: $cli_ini"
-        info "Reinstalling php8.4-cli with fresh config..."
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-cli > /dev/null 2>&1 || true
-        rm -rf /etc/php/8.4/cli
+        info "Reinstalling php${PHP_VERSION}-cli with fresh config..."
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y php${PHP_VERSION}-cli > /dev/null 2>&1 || true
+        rm -rf /etc/php/${PHP_VERSION}/cli
         run_quiet "Reinstalling PHP CLI..." \
-            env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php8.4-cli
+            env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confmiss" php${PHP_VERSION}-cli
     fi
 
     # Verify required extensions are available
@@ -886,17 +900,17 @@ EOF
         info "Extension .ini files may be missing. Purging and reinstalling PHP packages..."
 
         # Purge php-common to remove stale config state, then reinstall all packages
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y php8.4-common > /dev/null 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y php${PHP_VERSION}-common > /dev/null 2>&1
         run_quiet "Reinstalling PHP extensions..." \
             env DEBIAN_FRONTEND=noninteractive apt-get install -y "${php_extensions[@]}"
 
         # Check again
         php -r "class_exists('Phar') || exit(1);" 2>/dev/null || error "PHP Phar extension is missing"
-        php -r "extension_loaded('dom') || exit(1);" 2>/dev/null || error "PHP DOM extension is missing (install php8.4-xml)"
-        php -r "extension_loaded('intl') || exit(1);" 2>/dev/null || error "PHP Intl extension is missing (install php8.4-intl)"
+        php -r "extension_loaded('dom') || exit(1);" 2>/dev/null || error "PHP DOM extension is missing (install php${PHP_VERSION}-xml)"
+        php -r "extension_loaded('intl') || exit(1);" 2>/dev/null || error "PHP Intl extension is missing (install php${PHP_VERSION}-intl)"
     fi
 
-    log "PHP 8.4 CLI verified with all required extensions"
+    log "PHP ${PHP_VERSION} CLI verified with all required extensions"
 
     # Install WPScan if security is enabled
     if [[ "$INSTALL_SECURITY" == "true" ]]; then
@@ -1062,6 +1076,45 @@ install_wp_cli() {
     fi
 
     log "WP-CLI installed successfully"
+}
+
+# Install phpMyAdmin with Jabali SSO signon
+install_phpmyadmin() {
+    header "Installing phpMyAdmin"
+
+    # Pre-configure debconf to skip auto-configure for any web server
+    echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections 2>/dev/null || true
+    echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect" | debconf-set-selections 2>/dev/null || true
+
+    run_quiet "Installing phpMyAdmin package..." \
+        apt-get install -y -qq phpmyadmin
+
+    # Copy Jabali signon script
+    if [[ -f "$JABALI_DIR/stubs/phpmyadmin/jabali-signon.php" ]]; then
+        cp "$JABALI_DIR/stubs/phpmyadmin/jabali-signon.php" /usr/share/phpmyadmin/jabali-signon.php
+        chown root:www-data /usr/share/phpmyadmin/jabali-signon.php
+        chmod 644 /usr/share/phpmyadmin/jabali-signon.php
+    else
+        warn "phpMyAdmin signon script not found in stubs"
+    fi
+
+    # Copy Jabali config to phpMyAdmin conf.d
+    mkdir -p /etc/phpmyadmin/conf.d
+    if [[ -f "$JABALI_DIR/stubs/phpmyadmin/config.inc.php" ]]; then
+        cp "$JABALI_DIR/stubs/phpmyadmin/config.inc.php" /etc/phpmyadmin/conf.d/jabali.inc.php
+
+        # Generate random blowfish secret
+        local blowfish_secret
+        blowfish_secret=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+        sed -i "s|%%BLOWFISH_SECRET%%|${blowfish_secret}|g" /etc/phpmyadmin/conf.d/jabali.inc.php
+
+        chown root:www-data /etc/phpmyadmin/conf.d/jabali.inc.php
+        chmod 640 /etc/phpmyadmin/conf.d/jabali.inc.php
+    else
+        warn "phpMyAdmin config stub not found"
+    fi
+
+    log "phpMyAdmin installed with Jabali SSO signon"
 }
 
 # Clone Jabali Panel
@@ -1502,6 +1555,23 @@ server {
 
     location ~ /\.(?!well-known).* {
         deny all;
+    }
+
+    # phpMyAdmin
+    location = /phpmyadmin {
+        return 301 /phpmyadmin/;
+    }
+
+    location ^~ /phpmyadmin/ {
+        alias /usr/share/phpmyadmin/;
+        index index.php;
+
+        location ~ \.php\$ {
+            fastcgi_pass unix:${panel_sock};
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            include fastcgi_params;
+            fastcgi_read_timeout 600;
+        }
     }
 
     # Roundcube Webmail
@@ -2874,18 +2944,18 @@ SSHJAIL
     fi
 
     # Copy PHP CLI configuration (resolve symlinks to actual files)
-    mkdir -p /var/jail/etc/php/8.4/cli/conf.d
-    cp /etc/php/8.4/cli/php.ini /var/jail/etc/php/8.4/cli/ 2>/dev/null || true
+    mkdir -p /var/jail/etc/php/${PHP_VERSION}/cli/conf.d
+    cp /etc/php/${PHP_VERSION}/cli/php.ini /var/jail/etc/php/${PHP_VERSION}/cli/ 2>/dev/null || true
 
     # Set timezone in jail's php.ini to avoid warnings
-    sed -i 's/;date.timezone =/date.timezone = UTC/' /var/jail/etc/php/8.4/cli/php.ini 2>/dev/null || true
+    sed -i 's/;date.timezone =/date.timezone = UTC/' /var/jail/etc/php/${PHP_VERSION}/cli/php.ini 2>/dev/null || true
 
-    for f in /etc/php/8.4/cli/conf.d/*.ini; do
+    for f in /etc/php/${PHP_VERSION}/cli/conf.d/*.ini; do
         if [ -L "$f" ]; then
             # Resolve symlink and copy actual file
-            cp "$(readlink -f "$f")" "/var/jail/etc/php/8.4/cli/conf.d/$(basename "$f")" 2>/dev/null || true
+            cp "$(readlink -f "$f")" "/var/jail/etc/php/${PHP_VERSION}/cli/conf.d/$(basename "$f")" 2>/dev/null || true
         elif [ -f "$f" ]; then
-            cp "$f" "/var/jail/etc/php/8.4/cli/conf.d/" 2>/dev/null || true
+            cp "$f" "/var/jail/etc/php/${PHP_VERSION}/cli/conf.d/" 2>/dev/null || true
         fi
     done
 
@@ -3690,6 +3760,12 @@ uninstall() {
     show_banner
     check_root
 
+    # Detect PHP version for service names
+    if command -v php &>/dev/null; then
+        PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
+    fi
+    PHP_VERSION="${PHP_VERSION:-8.4}"
+
     echo -e "${RED}${BOLD}WARNING: This will completely remove Jabali Panel and all related services!${NC}"
     echo ""
     echo "This will remove:"
@@ -3757,7 +3833,7 @@ uninstall() {
     local services=(
         nginx
         php-fpm
-        php8.4-fpm
+        php${PHP_VERSION}-fpm
         mariadb
         mysql
         redis-server
@@ -3865,6 +3941,9 @@ uninstall() {
         roundcube-sqlite3
         roundcube-plugins
 
+        # phpMyAdmin
+        phpmyadmin
+
         # Security
         fail2ban
         libnginx-mod-http-modsecurity
@@ -3943,6 +4022,10 @@ uninstall() {
     rm -rf /var/lib/roundcube
     rm -rf /var/log/roundcube
     rm -rf /usr/share/roundcube
+
+    # phpMyAdmin
+    rm -rf /etc/phpmyadmin
+    rm -rf /usr/share/phpmyadmin
 
     # Security
     rm -rf /etc/fail2ban
@@ -4103,6 +4186,7 @@ main() {
     clone_jabali
     configure_php
     configure_mariadb
+    install_phpmyadmin
     configure_nginx
 
     # Optional components based on feature selection

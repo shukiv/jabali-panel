@@ -518,7 +518,7 @@ fi
 if [[ "$SKIP_AGENT_RESTART" -eq 0 ]]; then
     echo "Restarting services..."
     remote_run "if systemctl list-unit-files jabali-agent.service --no-legend 2>/dev/null | grep -q '^jabali-agent\\.service'; then systemctl restart jabali-agent; fi"
-    remote_run "systemctl restart php8.4-fpm-panel 2>/dev/null || systemctl restart php8.4-fpm 2>/dev/null || true"
+    remote_run "PHP_VER=\$(php -r 'echo PHP_MAJOR_VERSION.\".\".PHP_MINOR_VERSION;' 2>/dev/null || echo 8.4); systemctl restart php\${PHP_VER}-fpm-panel 2>/dev/null || systemctl restart php\${PHP_VER}-fpm 2>/dev/null || true"
     remote_run "systemctl reload nginx 2>/dev/null || true"
 fi
 
