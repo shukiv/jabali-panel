@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc122] - 2026-03-13
+
+### Fixed
+
+- **502 Bad Gateway after creating a new domain** — `domainCreate()` wrote the PHP-FPM pool config but never reloaded PHP-FPM (`createFpmPool` was called with `reload=false`), so the FPM socket didn't exist when Nginx tried to proxy to it. Now reloads PHP-FPM after creating the pool so the socket is ready before Nginx starts using it. (Closes #31)
+
 ## [0.9-rc121] - 2026-03-13
 
 ### Added

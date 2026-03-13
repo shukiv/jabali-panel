@@ -4771,8 +4771,8 @@ function domainCreate(array $params): array
         chgrp($indexFile, $gid);
     }
     
-    // Ensure FPM pool exists for this user (don't reload - caller handles that)
-    createFpmPool($username, false);
+    // Ensure FPM pool exists for this user and reload so the socket is created before Nginx uses it
+    createFpmPool($username, true);
     $fpmSocket = getFpmSocketPath($username);
     
     // Create Nginx virtual host configuration
