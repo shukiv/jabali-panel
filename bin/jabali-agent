@@ -1319,7 +1319,7 @@ function generateNginxVhost(string $domain, string $publicHtml, string $logs, st
 server {
     listen 80;
     listen [::]:80;
-    server_name DOMAIN_PLACEHOLDER www.DOMAIN_PLACEHOLDER;
+    server_name DOMAIN_PLACEHOLDER www.DOMAIN_PLACEHOLDER mail.DOMAIN_PLACEHOLDER;
     root DOCROOT_PLACEHOLDER;
 
     include /etc/nginx/jabali/includes/waf.conf;
@@ -1340,7 +1340,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     http2 on;
-    server_name DOMAIN_PLACEHOLDER www.DOMAIN_PLACEHOLDER;
+    server_name DOMAIN_PLACEHOLDER www.DOMAIN_PLACEHOLDER mail.DOMAIN_PLACEHOLDER;
     root DOCROOT_PLACEHOLDER;
 
     include /etc/nginx/jabali/includes/waf.conf;
@@ -1368,6 +1368,23 @@ server {
         include fastcgi_params;
     }
 
+    # Roundcube Webmail (served via panel PHP-FPM pool)
+    location = /webmail {
+        return 301 /webmail/;
+    }
+
+    location ^~ /webmail/ {
+        alias /var/lib/roundcube/public_html/;
+        index index.php;
+
+        location ~ \.php$ {
+            fastcgi_pass unix:PANEL_SOCKET_PLACEHOLDER;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+            include fastcgi_params;
+            fastcgi_read_timeout 600;
+        }
+    }
+
     # GoAccess statistics reports
     location /stats/ {
         alias STATS_PLACEHOLDER/;
@@ -1386,8 +1403,11 @@ NGINXCONF;
     // Stats directory lives under the document root for web access
     $stats = rtrim($publicHtml, '/') . '/stats';
 
+    $panelSocket = '/run/php/php8.4-fpm-panel.sock';
+
     $config = str_replace('DOMAIN_PLACEHOLDER', $domain, $config);
     $config = str_replace('DOCROOT_PLACEHOLDER', $publicHtml, $config);
+    $config = str_replace('PANEL_SOCKET_PLACEHOLDER', $panelSocket, $config);
     $config = str_replace('SOCKET_PLACEHOLDER', $fpmSocket, $config);
     $config = str_replace('LOGS_PLACEHOLDER', $logs, $config);
     $config = str_replace('STATS_PLACEHOLDER', $stats, $config);
@@ -14629,6 +14649,13 @@ function sslIssue(array $params): array
         if ($wwwIp !== $wwwDomain) {
             $domains .= " -d " . escapeshellarg($wwwDomain);
         }
+    }
+
+    // Include mail subdomain if it resolves
+    $mailDomain = "mail.$domain";
+    $mailIp = gethostbyname($mailDomain);
+    if ($mailIp !== $mailDomain) {
+        $domains .= " -d " . escapeshellarg($mailDomain);
     }
 
     $webroot = "/home/$username/domains/$domain/public_html";
