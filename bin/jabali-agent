@@ -21550,7 +21550,24 @@ function quotaSet(array $params): array
             'error' => 'ZFS filesystem detected. Use: zfs set userquota@' . escapeshellarg($username) . '=<size> <dataset>'
         ];
     }
-    
+
+    // Check if quota tools are installed
+    $quotaCheck = trim(shell_exec('which setquota 2>/dev/null') ?? '');
+    if (empty($quotaCheck)) {
+        return ['success' => false, 'error' => 'Quota tools not installed. Run: apt install quota'];
+    }
+
+    // Check if quota is active on the filesystem
+    $findMount = trim(shell_exec("df --output=target " . escapeshellarg($mountPoint) . " 2>/dev/null | tail -1") ?? '');
+    if (empty($findMount)) {
+        $findMount = '/';
+    }
+    exec("quotaon -p " . escapeshellarg($findMount) . " 2>&1", $quotaOnOutput, $quotaOnExit);
+    $quotaActive = $quotaOnExit === 0 && strpos(implode(' ', $quotaOnOutput), 'is on') !== false;
+    if (!$quotaActive) {
+        return ['success' => false, 'error' => 'Filesystem quotas not enabled. Enable them in Server Settings > Quotas first.'];
+    }
+
     // Check if user exists
     exec("id " . escapeshellarg($username) . " 2>/dev/null", $output, $exitCode);
     if ($exitCode !== 0) {

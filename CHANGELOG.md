@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc119] - 2026-03-13
+
+### Fixed
+
+- **Confusing disk quota error on systems without quota support** — `quotaSet` now checks if quota tools are installed and quotas are active on the filesystem before running `setquota`. Shows a clear message ("Enable them in Server Settings > Quotas first") instead of a raw `setquota: Cannot stat() mounted device` error.
+
 ## [0.9-rc118] - 2026-03-13
 
 ### Fixed
