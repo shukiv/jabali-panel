@@ -46,11 +46,11 @@ $criticalServices = [
 
 // Optional services - only monitor if installed
 $optionalServices = [
-    'php8.4-fpm' => [
+    'php'.PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION.'-fpm' => [
         'description' => 'PHP-FPM',
-        'check_command' => 'systemctl is-active php8.4-fpm',
-        'restart_command' => 'systemctl reload php8.4-fpm || systemctl start php8.4-fpm',
-        'fallback' => ['php8.3-fpm', 'php8.2-fpm', 'php8.1-fpm'],
+        'check_command' => 'systemctl is-active php'.PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION.'-fpm',
+        'restart_command' => 'systemctl reload php'.PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION.'-fpm || systemctl start php'.PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION.'-fpm',
+        'fallback' => [],
     ],
     'postfix' => [
         'description' => 'Mail Transfer Agent',

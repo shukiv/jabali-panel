@@ -30,7 +30,8 @@ define('JABALI_WAF_RULES', '/etc/nginx/jabali/modsecurity.conf');
 define('JABALI_GEO_HTTP_CONF', '/etc/nginx/conf.d/jabali-geoip.conf');
 
 $protectedUsers = ['root', 'www-data', 'mysql', 'postgres', 'nobody', 'ubuntu', 'debian'];
-$allowedServices = ['nginx', 'apache2', 'php-fpm', 'php8.4-fpm', 'php8.3-fpm', 'mysql', 'mariadb', 'postfix', 'dovecot', 'bind9', 'named'];
+$phpVer = PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;
+$allowedServices = ['nginx', 'apache2', 'php-fpm', "php{$phpVer}-fpm", 'mysql', 'mariadb', 'postfix', 'dovecot', 'bind9', 'named'];
 
 function logger(string $message, string $level = 'INFO'): void
 {
@@ -1403,7 +1404,7 @@ NGINXCONF;
     // Stats directory lives under the document root for web access
     $stats = rtrim($publicHtml, '/') . '/stats';
 
-    $panelSocket = '/run/php/php8.4-fpm-panel.sock';
+    $panelSocket = '/run/php/php' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '-fpm-panel.sock';
 
     $config = str_replace('DOMAIN_PLACEHOLDER', $domain, $config);
     $config = str_replace('DOCROOT_PLACEHOLDER', $publicHtml, $config);
@@ -12447,7 +12448,7 @@ function setUploadLimits(array $params): array
     exec('systemctl reload php*-fpm 2>&1', $output, $exitCode);
     if ($exitCode !== 0) {
         // Try specific version
-        exec('systemctl reload php8.4-fpm 2>&1', $output, $exitCode);
+        exec('systemctl reload php' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '-fpm 2>&1', $output, $exitCode);
     }
 
     logger("Upload limits set to {$sizeMb}MB");
@@ -15085,6 +15086,7 @@ function sslInstallCertificate(string $domain, string $username, string $certPat
 function generateHttpsServerBlock(string $domain, string $username, string $certPath, string $keyPath): string
 {
     $docRoot = "/home/$username/domains/$domain/public_html";
+    $phpVer = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
 
     return <<<NGINX
 # HTTPS Server Block for $domain
@@ -15116,7 +15118,7 @@ server {
 
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php8.4-fpm-$username.sock;
+        fastcgi_pass unix:/var/run/php/php$phpVer-fpm-$username.sock;
         fastcgi_next_upstream error timeout invalid_header http_500 http_503;
         fastcgi_next_upstream_tries 2;
         fastcgi_next_upstream_timeout 5s;
