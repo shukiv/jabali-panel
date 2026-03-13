@@ -2,6 +2,13 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc118] - 2026-03-13
+
+### Fixed
+
+- **Webmail 502 on user domains** — User domain nginx vhosts had no `/webmail/` location block, so Roundcube requests hit the user's PHP-FPM pool which can't access `/var/lib/roundcube/`. Added webmail location using the panel FPM socket. Also added `mail.domain` to vhost `server_name` so mail subdomain requests route correctly. (Closes #28)
+- **SSL cert missing mail subdomain** — `sslIssue()` now includes `mail.domain` as a SAN in Let's Encrypt certificates when the subdomain resolves, so `https://mail.domain.ext` gets a valid cert.
+
 ## [0.9-rc117] - 2026-03-13
 
 ### Fixed
