@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc115}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc116}"
 
 # Colors
 RED='\033[0;31m'
@@ -3159,6 +3159,7 @@ ENV
         DnsSetting::set('default_ip', '${server_ip}');
         DnsSetting::set('admin_email', 'admin.${root_domain}');
         DnsSetting::set('default_ttl', '3600');
+        DnsSetting::set('mail_hostname', 'mail.${root_domain}');
     " 2>/dev/null || true
 
     # Create DNS zone for root domain

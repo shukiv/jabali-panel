@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc116] - 2026-03-13
+
+### Fixed
+
+- **Mail Server Hostname incorrect after install** — The installer wasn't setting `mail_hostname` in DnsSetting, so Server Settings > Email showed `mail.<system-hostname>` (e.g., `mail.web03.REDACTEDDOMAIN.com`) instead of `mail.<root-domain>`. Now explicitly sets `mail_hostname` to `mail.{root_domain}` during install. (Closes #26)
+
 ## [0.9-rc115] - 2026-03-13
 
 ### Fixed
