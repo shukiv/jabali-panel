@@ -18,8 +18,8 @@ push_branch = "main"
 
 # Optional: push to explicit URLs (instead of relying on named remotes)
 # These pushes run FROM the test server.
-gitea_url = "ssh://git@gitea.example.com:2222/shukivaknin/jabali-panel.git"
-github_url = "git@github.com:shukiv/jabali-panel.git"
+gitea_url = "ssh://git@gitea.example.com:2222/org/jabali-panel.git"
+github_url = "git@github.com:your-org/jabali-panel.git"
 
 # If you prefer named remotes on the deploy server instead of URLs:
 # gitea_remote = "gitea"
