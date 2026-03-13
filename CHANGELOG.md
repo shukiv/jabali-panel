@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc117] - 2026-03-13
+
+### Fixed
+
+- **Webmail SSO 500 error** — The SSO token directory `/var/lib/jabali/sso-tokens/` was never created during install, causing `file_put_contents` to fail when clicking the Webmail link. The installer now creates the directory with correct ownership. The route also handles the missing directory gracefully with an actionable error message instead of a raw 500. (Closes #27)
+
 ## [0.9-rc116] - 2026-03-13
 
 ### Fixed
