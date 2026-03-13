@@ -432,13 +432,13 @@ class Email extends Page implements HasActions, HasForms, HasTable
                                         ->copyable(),
                                     TextEntry::make('smtp_port')
                                         ->label(__('Port'))
-                                        ->state('587')
+                                        ->state('465')
                                         ->copyable(),
                                     TextEntry::make('smtp_security')
                                         ->label(__('Security'))
-                                        ->state('STARTTLS')
+                                        ->state('SSL/TLS')
                                         ->badge()
-                                        ->color('warning'),
+                                        ->color('success'),
                                 ]),
                             Section::make(__('Credentials'))
                                 ->description(__('Use your email address and password'))

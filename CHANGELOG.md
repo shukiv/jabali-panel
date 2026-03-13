@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc120] - 2026-03-13
+
+### Fixed
+
+- **Autoconfig/autodiscover recommends wrong SMTP settings** — Changed primary outgoing server from port 587/STARTTLS to port 465/SSL (implicit TLS) across autoconfig (Thunderbird), autodiscover (Outlook), and iOS mobile profile. Port 587/STARTTLS kept as fallback in autoconfig. Updated connection info in the Email page to show 465/SSL/TLS. (Closes #29)
+
 ## [0.9-rc119] - 2026-03-13
 
 ### Fixed
