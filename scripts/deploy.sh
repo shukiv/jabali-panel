@@ -478,7 +478,9 @@ fi
 
 if [[ "$SKIP_PUSH" -eq 0 && ( "$PUSH_GITEA" -eq 1 || "$PUSH_GITHUB" -eq 1 ) ]]; then
     echo "Committing and pushing from ${REMOTE}..."
-    remote_commit_and_push
+    if ! remote_commit_and_push; then
+        echo "Warning: remote git commit/push failed (non-fatal, continuing deploy)"
+    fi
 fi
 
 echo "Ensuring remote permissions..."
@@ -509,8 +511,10 @@ if [[ "$SKIP_CACHE" -eq 0 ]]; then
 fi
 
 if [[ "$SKIP_AGENT_RESTART" -eq 0 ]]; then
-    echo "Restarting jabali-agent service..."
+    echo "Restarting services..."
     remote_run "if systemctl list-unit-files jabali-agent.service --no-legend 2>/dev/null | grep -q '^jabali-agent\\.service'; then systemctl restart jabali-agent; fi"
+    remote_run "systemctl restart php8.4-fpm-panel 2>/dev/null || systemctl restart php8.4-fpm 2>/dev/null || true"
+    remote_run "systemctl reload nginx 2>/dev/null || true"
 fi
 
 
