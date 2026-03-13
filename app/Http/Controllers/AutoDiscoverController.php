@@ -175,9 +175,9 @@ class AutoDiscoverController extends Controller
             <Protocol>
                 <Type>SMTP</Type>
                 <Server>{$escapedServer}</Server>
-                <Port>587</Port>
+                <Port>465</Port>
                 <SSL>on</SSL>
-                <Encryption>TLS</Encryption>
+                <Encryption>SSL</Encryption>
                 <SPA>off</SPA>
                 <AuthRequired>on</AuthRequired>
                 <LoginName>{$escapedEmail}</LoginName>

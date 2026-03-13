@@ -149,7 +149,7 @@ class AutoconfigController extends Controller
             <key>OutgoingMailServerHostName</key>
             <string>{$escapedMailServer}</string>
             <key>OutgoingMailServerPortNumber</key>
-            <integer>587</integer>
+            <integer>465</integer>
             <key>OutgoingMailServerUseSSL</key>
             <true/>
             <key>OutgoingMailServerUsername</key>
@@ -245,6 +245,13 @@ MOBILECONFIG;
             <authentication>password-cleartext</authentication>
             <username>%EMAILADDRESS%</username>
         </incomingServer>
+        <outgoingServer type="smtp">
+            <hostname>{$escapedMailServer}</hostname>
+            <port>465</port>
+            <socketType>SSL</socketType>
+            <authentication>password-cleartext</authentication>
+            <username>%EMAILADDRESS%</username>
+        </outgoingServer>
         <outgoingServer type="smtp">
             <hostname>{$escapedMailServer}</hostname>
             <port>587</port>
