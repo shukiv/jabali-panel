@@ -26,6 +26,8 @@ CLAUDE.md
 # Local repository configuration (do not commit)
 config.toml
 SECURITY.md
+.git-authorized-remotes
+.git-authorized-committers
 
 # Local automation / debug artifacts (do not commit)
 /.playwright-cli/

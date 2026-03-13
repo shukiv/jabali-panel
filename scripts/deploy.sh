@@ -19,7 +19,7 @@ ENV_GITHUB_REMOTE="${GITHUB_REMOTE-}"
 ENV_GITHUB_URL="${GITHUB_URL-}"
 ENV_PUSH_BRANCH="${PUSH_BRANCH-}"
 
-DEPLOY_HOST="your-server-ip"
+DEPLOY_HOST=""
 DEPLOY_USER="root"
 DEPLOY_PATH="/var/www/jabali"
 WWW_USER="www-data"
@@ -136,7 +136,7 @@ usage() {
 Usage: scripts/deploy.sh [options]
 
 Options:
-  --host HOST         Remote host (default: your-server-ip)
+  --host HOST         Remote host (from config.toml or --host flag)
   --user USER         SSH user (default: root)
   --path PATH         Remote path (default: /var/www/jabali)
   --www-user USER     Remote runtime user (default: www-data)
@@ -291,6 +291,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "$DEPLOY_HOST" ]]; then
+    echo "Error: No deploy host configured. Set it in config.toml [deploy] host or use --host flag."
+    exit 1
+fi
 
 REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
 
