@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc114}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc115}"
 
 # Colors
 RED='\033[0;31m'
@@ -2117,6 +2117,7 @@ create_webmaster_mailbox() {
     cd "$JABALI_DIR"
     php artisan tinker --execute="
         use App\Models\DnsRecord;
+        use App\Models\DnsSetting;
         use App\Models\Domain;
         use App\Models\EmailDomain;
         use App\Models\Mailbox;
@@ -2206,9 +2207,21 @@ create_webmaster_mailbox() {
                     ]
                 );
 
-                // Sync DNS zone
+                // Sync DNS zone with full records from DB
                 try {
-                    \$agent->send('dns.sync_zone', ['domain' => \$hostname]);
+                    \$settings = DnsSetting::getAll();
+                    \$allRecords = DnsRecord::where('domain_id', \$domain->id)->get()->toArray();
+                    \$serverIp = trim(shell_exec('hostname -I') ?: '');
+                    \$serverIp = explode(' ', \$serverIp)[0] ?? '127.0.0.1';
+                    \$agent->send('dns.sync_zone', [
+                        'domain' => \$hostname,
+                        'records' => \$allRecords,
+                        'ns1' => \$settings['ns1'] ?? 'ns1.' . \$hostname,
+                        'ns2' => \$settings['ns2'] ?? 'ns2.' . \$hostname,
+                        'admin_email' => \$settings['admin_email'] ?? 'admin.' . \$hostname,
+                        'default_ip' => \$settings['default_ip'] ?? \$serverIp,
+                        'default_ttl' => \$settings['default_ttl'] ?? 3600,
+                    ]);
                 } catch (Exception \$e) {
                     // DNS sync is best-effort
                 }

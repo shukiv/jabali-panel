@@ -2,6 +2,12 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc115] - 2026-03-13
+
+### Fixed
+
+- **DNS zone not active after install** — The `dns.sync_zone` call after DKIM generation was missing the `records` parameter, causing the zone file to be overwritten with only SOA/NS records (no A, MX, TXT, etc.). Now passes full records from the database, matching the "Rebuild Zone" behavior. (Closes #25)
+
 ## [0.9-rc114] - 2026-03-12
 
 ### Fixed
