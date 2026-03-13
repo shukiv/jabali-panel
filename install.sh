@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
     JABALI_VERSION="$(sed -n 's/^VERSION=//p' "$SCRIPT_DIR/VERSION")"
 fi
-JABALI_VERSION="${JABALI_VERSION:-0.9-rc116}"
+JABALI_VERSION="${JABALI_VERSION:-0.9-rc117}"
 
 # Colors
 RED='\033[0;31m'
@@ -1669,6 +1669,11 @@ DOVECOT_SQL
         chown root:www-data /etc/jabali
         chmod 750 /etc/jabali
     fi
+
+    # Create SSO token directory for webmail auto-login
+    mkdir -p /var/lib/jabali/sso-tokens
+    chown www-data:www-data /var/lib/jabali/sso-tokens
+    chmod 700 /var/lib/jabali/sso-tokens
 
     master_user="jabali-master"
     master_pass=""

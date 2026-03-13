@@ -127,6 +127,11 @@ Route::get('/webmail-sso/{mailbox}', function (\App\Models\Mailbox $mailbox) {
         abort(403);
     }
 
+    $ssoDir = '/var/lib/jabali/sso-tokens';
+    if (! is_dir($ssoDir) && ! @mkdir($ssoDir, 0700, true)) {
+        abort(500, 'SSO token directory could not be created. Run: mkdir -p /var/lib/jabali/sso-tokens && chown www-data:www-data /var/lib/jabali/sso-tokens && chmod 700 /var/lib/jabali/sso-tokens');
+    }
+
     $password = $mailbox->plain_password;
     if ($password) {
         // Create SSO token for auto-login
@@ -137,10 +142,6 @@ Route::get('/webmail-sso/{mailbox}', function (\App\Models\Mailbox $mailbox) {
             'expires' => time() + 300,
         ];
 
-        $ssoDir = '/var/lib/jabali/sso-tokens';
-        if (! is_dir($ssoDir)) {
-            mkdir($ssoDir, 0700, true);
-        }
         $ssoFile = $ssoDir.'/roundcube_sso_'.$token;
         file_put_contents($ssoFile, json_encode($tokenData), LOCK_EX);
         chmod($ssoFile, 0600);
@@ -158,10 +159,6 @@ Route::get('/webmail-sso/{mailbox}', function (\App\Models\Mailbox $mailbox) {
             'expires' => time() + 300,
         ];
 
-        $ssoDir = '/var/lib/jabali/sso-tokens';
-        if (! is_dir($ssoDir)) {
-            mkdir($ssoDir, 0700, true);
-        }
         $ssoFile = $ssoDir.'/roundcube_sso_'.$token;
         file_put_contents($ssoFile, json_encode($tokenData), LOCK_EX);
         chmod($ssoFile, 0600);
