@@ -1310,7 +1310,7 @@ function userExists(array $params): array
 
 function getFpmSocketPath(string $username): string
 {
-    $phpVersion = '8.4';
+    $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
     return "/run/php/php{$phpVersion}-fpm-{$username}.sock";
 }
 
@@ -1417,15 +1417,24 @@ NGINXCONF;
 }
 function createFpmPool(string $username, bool $reload = true): array
 {
-    $phpVersion = '8.4';
+    $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
     $poolFile = "/etc/php/{$phpVersion}/fpm/pool.d/{$username}.conf";
 
     // Check if pool already exists
     if (file_exists($poolFile)) {
+        $socketPath = getFpmSocketPath($username);
+        // If the pool config exists but the socket doesn't, FPM needs a restart
+        // (reload may not activate a pool that was never loaded)
+        if ($reload && !file_exists($socketPath)) {
+            exec("systemctl restart php{$phpVersion}-fpm 2>&1", $output, $code);
+            if ($code !== 0) {
+                logger("Warning: PHP-FPM restart failed while activating pool for {$username}: " . implode("\n", $output));
+            }
+        }
         return [
             'success' => true,
             'message' => 'Pool already exists',
-            'socket' => getFpmSocketPath($username),
+            'socket' => $socketPath,
             'pool_created' => false,
         ];
     }
@@ -1540,7 +1549,7 @@ security.limit_extensions = .php
 
 function deleteFpmPool(string $username): array
 {
-    $phpVersion = '8.4';
+    $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
     $poolFile = "/etc/php/{$phpVersion}/fpm/pool.d/{$username}.conf";
 
     if (file_exists($poolFile)) {
@@ -1557,7 +1566,7 @@ function deleteFpmPool(string $username): array
 function phpUpdatePoolLimits(array $params): array
 {
     $username = $params['username'] ?? '';
-    $phpVersion = '8.4';
+    $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
 
     if (!validateUsername($username)) {
         return ['success' => false, 'error' => 'Invalid username'];
@@ -1657,7 +1666,7 @@ security.limit_extensions = .php
  */
 function phpUpdateAllPoolLimits(array $params): array
 {
-    $phpVersion = '8.4';
+    $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
     $poolDir = "/etc/php/{$phpVersion}/fpm/pool.d";
 
     $pools = glob("{$poolDir}/*.conf");
@@ -9224,7 +9233,7 @@ function phpGetSettings(array $params): array
     }
     
     // If no JSON, try to read from the actual FPM pool config
-    $phpVersion = '8.4';
+    $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
     $poolFile = "/etc/php/{$phpVersion}/fpm/pool.d/{$username}.conf";
     
     if (file_exists($poolFile)) {
