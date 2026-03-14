@@ -32,8 +32,9 @@ class IssueSslCertificate implements ShouldQueue
             return;
         }
 
-        // Skip if domain already has active SSL
+        // Skip if domain already has active web SSL
         $existingSsl = SslCertificate::where('domain_id', $domain->id)
+            ->where('service', 'web')
             ->where('status', 'active')
             ->first();
 
@@ -60,7 +61,7 @@ class IssueSslCertificate implements ShouldQueue
 
             if ($result['success'] ?? false) {
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'active',
@@ -83,7 +84,7 @@ class IssueSslCertificate implements ShouldQueue
 
                 // Record the failure but don't throw - let the scheduled SSL check retry later
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'pending',
@@ -100,7 +101,7 @@ class IssueSslCertificate implements ShouldQueue
 
             // Record pending state so scheduled check can retry
             SslCertificate::updateOrCreate(
-                ['domain_id' => $domain->id],
+                ['domain_id' => $domain->id, 'service' => 'web'],
                 [
                     'type' => 'lets_encrypt',
                     'status' => 'pending',

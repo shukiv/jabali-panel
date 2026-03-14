@@ -293,7 +293,7 @@ class SslCheckCommand extends Command
                 $expiresAt = isset($result['valid_to']) ? Carbon::parse($result['valid_to']) : now()->addMonths(3);
 
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'active',
@@ -316,7 +316,7 @@ class SslCheckCommand extends Command
             } else {
                 $error = $result['error'] ?? 'Unknown error';
 
-                $ssl = SslCertificate::firstOrNew(['domain_id' => $domain->id]);
+                $ssl = SslCertificate::firstOrNew(['domain_id' => $domain->id, 'service' => 'web']);
                 $ssl->type = 'lets_encrypt';
                 $ssl->status = 'failed';
                 $ssl->last_check_at = now();

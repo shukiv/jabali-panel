@@ -19,7 +19,8 @@ class SslStatsOverview extends Widget
     protected function getStats(): array
     {
         $totalDomains = Domain::count();
-        $domainsWithSsl = SslCertificate::where('status', 'active')->count();
+        $domainsWithSsl = SslCertificate::where('status', 'active')->where('service', 'web')->count();
+        $mailCerts = SslCertificate::where('status', 'active')->where('service', 'mail')->count();
         $expiringSoon = SslCertificate::where('status', 'active')
             ->where('expires_at', '<=', now()->addDays(30))
             ->where('expires_at', '>', now())
@@ -35,9 +36,15 @@ class SslStatsOverview extends Widget
         return [
             [
                 'value' => $domainsWithSsl,
-                'label' => __('With SSL'),
+                'label' => __('Web SSL'),
                 'icon' => 'heroicon-m-shield-check',
                 'color' => 'success',
+            ],
+            [
+                'value' => $mailCerts,
+                'label' => __('Mail SSL'),
+                'icon' => 'heroicon-m-envelope',
+                'color' => $mailCerts > 0 ? 'success' : 'gray',
             ],
             [
                 'value' => $withoutSsl,

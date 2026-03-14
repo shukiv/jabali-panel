@@ -176,7 +176,7 @@ class Ssl extends Page implements HasActions, HasForms, HasTable
             if ($result['success'] ?? false) {
                 // Update or create certificate record
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'active',
@@ -203,7 +203,7 @@ class Ssl extends Page implements HasActions, HasForms, HasTable
 
                 // Record the failure
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'failed',
@@ -242,7 +242,7 @@ class Ssl extends Page implements HasActions, HasForms, HasTable
 
             if ($result['success'] ?? false) {
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'self_signed',
                         'status' => 'active',
@@ -335,7 +335,7 @@ class Ssl extends Page implements HasActions, HasForms, HasTable
 
                 if ($sslData['has_ssl'] ?? false) {
                     SslCertificate::updateOrCreate(
-                        ['domain_id' => $domain->id],
+                        ['domain_id' => $domain->id, 'service' => 'web'],
                         [
                             'type' => $sslData['type'] ?? 'custom',
                             'status' => ($sslData['is_expired'] ?? false) ? 'expired' : 'active',
@@ -453,7 +453,7 @@ class Ssl extends Page implements HasActions, HasForms, HasTable
 
                     if ($result['success'] ?? false) {
                         SslCertificate::updateOrCreate(
-                            ['domain_id' => $domain->id],
+                            ['domain_id' => $domain->id, 'service' => 'web'],
                             [
                                 'type' => 'custom',
                                 'status' => 'active',

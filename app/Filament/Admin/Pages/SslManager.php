@@ -80,19 +80,39 @@ class SslManager extends Page implements HasTable
     public function table(Table $table): Table
     {
         return $table
-            ->query(Domain::with(['user', 'sslCertificate']))
+            ->query(SslCertificate::with(['domain.user']))
             ->columns([
-                TextColumn::make('domain')
+                TextColumn::make('domain.domain')
                     ->label(__('Domain'))
                     ->searchable()
                     ->sortable()
-                    ->description(fn (Domain $record) => $record->user?->username ?? __('Unknown')),
-                TextColumn::make('sslCertificate.type')
+                    ->formatStateUsing(function ($state, SslCertificate $record) {
+                        if ($record->service === 'mail') {
+                            return 'mail.' . $state;
+                        }
+
+                        return $state;
+                    })
+                    ->description(fn (SslCertificate $record) => $record->domain?->user?->username ?? __('Unknown')),
+                TextColumn::make('service')
+                    ->label(__('Service'))
+                    ->badge()
+                    ->color(fn (string $state) => match ($state) {
+                        'web' => 'info',
+                        'mail' => 'warning',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (string $state) => match ($state) {
+                        'web' => __('HTTPS'),
+                        'mail' => __('Mail (IMAPS/SMTPS)'),
+                        default => ucfirst($state),
+                    }),
+                TextColumn::make('type')
                     ->label(__('Type'))
                     ->badge()
                     ->color('gray')
-                    ->formatStateUsing(fn ($state) => $state ? ucfirst(str_replace('_', ' ', $state)) : __('No SSL')),
-                TextColumn::make('sslCertificate.status')
+                    ->formatStateUsing(fn ($state) => $state ? ucfirst(str_replace('_', ' ', $state)) : __('Unknown')),
+                TextColumn::make('status')
                     ->label(__('Status'))
                     ->badge()
                     ->color(fn ($state) => match ($state) {
@@ -102,23 +122,23 @@ class SslManager extends Page implements HasTable
                         'failed' => 'danger',
                         default => 'gray',
                     })
-                    ->formatStateUsing(fn ($state) => $state ? ucfirst($state) : __('No Certificate')),
-                TextColumn::make('sslCertificate.expires_at')
+                    ->formatStateUsing(fn ($state) => $state ? ucfirst($state) : __('Unknown')),
+                TextColumn::make('expires_at')
                     ->label(__('Expires'))
                     ->date('M d, Y')
-                    ->description(fn (Domain $record) => $record->sslCertificate?->days_until_expiry !== null
-                        ? __(':days days', ['days' => $record->sslCertificate->days_until_expiry])
+                    ->description(fn (SslCertificate $record) => $record->days_until_expiry !== null
+                        ? __(':days days', ['days' => $record->days_until_expiry])
                         : null)
-                    ->color(fn (Domain $record) => match (true) {
-                        $record->sslCertificate?->days_until_expiry <= 7 => 'danger',
-                        $record->sslCertificate?->days_until_expiry <= 30 => 'warning',
+                    ->color(fn (SslCertificate $record) => match (true) {
+                        $record->days_until_expiry !== null && $record->days_until_expiry <= 7 => 'danger',
+                        $record->days_until_expiry !== null && $record->days_until_expiry <= 30 => 'warning',
                         default => 'gray',
                     }),
-                TextColumn::make('sslCertificate.last_check_at')
+                TextColumn::make('last_check_at')
                     ->label(__('Last Check'))
                     ->since()
                     ->sortable(),
-                TextColumn::make('sslCertificate.last_error')
+                TextColumn::make('last_error')
                     ->label(__('Error'))
                     ->limit(30)
                     ->tooltip(fn ($state) => $state)
@@ -126,56 +146,43 @@ class SslManager extends Page implements HasTable
                     ->placeholder(__('-')),
             ])
             ->filters([
-                SelectFilter::make('ssl_status')
+                SelectFilter::make('service')
+                    ->label(__('Service'))
+                    ->options([
+                        'web' => __('HTTPS'),
+                        'mail' => __('Mail'),
+                    ]),
+                SelectFilter::make('status')
                     ->label(__('Status'))
                     ->options([
                         'active' => __('Active'),
-                        'no_ssl' => __('No SSL'),
                         'expiring' => __('Expiring Soon'),
                         'expired' => __('Expired'),
                         'failed' => __('Failed'),
-                    ])
-                    ->query(function (Builder $query, array $data) {
-                        if (! $data['value']) {
-                            return $query;
-                        }
-
-                        return match ($data['value']) {
-                            'active' => $query->whereHas('sslCertificate', fn ($q) => $q->where('status', 'active')),
-                            'no_ssl' => $query->whereDoesntHave('sslCertificate'),
-                            'expiring' => $query->whereHas('sslCertificate', fn ($q) => $q->where('status', 'active')
-                                ->where('expires_at', '<=', now()->addDays(30))
-                                ->where('expires_at', '>', now())),
-                            'expired' => $query->whereHas('sslCertificate', fn ($q) => $q->where('status', 'expired')
-                                ->orWhere('expires_at', '<', now())),
-                            'failed' => $query->whereHas('sslCertificate', fn ($q) => $q->where('status', 'failed')),
-                            default => $query,
-                        };
-                    }),
-                SelectFilter::make('user_id')
+                    ]),
+                SelectFilter::make('user')
                     ->label(__('User'))
-                    ->relationship('user', 'username'),
+                    ->options(fn () => User::pluck('username', 'id')->toArray())
+                    ->query(fn (Builder $query, array $data) => $data['value']
+                        ? $query->whereHas('domain', fn ($q) => $q->where('user_id', $data['value']))
+                        : $query),
             ])
             ->recordActions([
-                Action::make('issue')
-                    ->label(__('Issue'))
-                    ->icon('heroicon-o-lock-closed')
-                    ->color('success')
-                    ->visible(fn (Domain $record) => ! $record->sslCertificate || $record->sslCertificate->status === 'failed')
-                    ->action(fn (Domain $record) => $this->issueSslForDomain($record->id)),
                 Action::make('renew')
                     ->label(__('Renew'))
                     ->icon('heroicon-o-arrow-path')
                     ->color('primary')
-                    ->visible(fn (Domain $record) => $record->sslCertificate?->type === 'lets_encrypt' && $record->sslCertificate?->status === 'active')
-                    ->action(fn (Domain $record) => $this->renewSslForDomain($record->id)),
+                    ->visible(fn (SslCertificate $record) => $record->type === 'lets_encrypt' && $record->status === 'active')
+                    ->action(fn (SslCertificate $record) => $record->service === 'mail'
+                        ? $this->renewMailSslForDomain($record->domain_id)
+                        : $this->renewSslForDomain($record->domain_id)),
                 Action::make('check')
                     ->label(__('Check'))
                     ->icon('heroicon-o-magnifying-glass')
                     ->color('gray')
-                    ->action(fn (Domain $record) => $this->checkSslForDomain($record->id)),
+                    ->action(fn (SslCertificate $record) => $this->checkSslForDomain($record->domain_id)),
             ])
-            ->heading(__('Domain Certificates'))
+            ->heading(__('SSL Certificates'))
             ->poll('30s');
     }
 
@@ -193,7 +200,7 @@ class SslManager extends Page implements HasTable
 
             if ($result['success'] ?? false) {
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'active',
@@ -217,7 +224,7 @@ class SslManager extends Page implements HasTable
                     ->send();
             } else {
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id],
+                    ['domain_id' => $domain->id, 'service' => 'web'],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'failed',
@@ -298,7 +305,7 @@ class SslManager extends Page implements HasTable
 
                 if ($sslData['has_ssl'] ?? false) {
                     SslCertificate::updateOrCreate(
-                        ['domain_id' => $domain->id],
+                        ['domain_id' => $domain->id, 'service' => 'web'],
                         [
                             'type' => $sslData['type'] ?? 'custom',
                             'status' => ($sslData['is_expired'] ?? false) ? 'expired' : 'active',
@@ -333,6 +340,69 @@ class SslManager extends Page implements HasTable
         }
 
         $this->lastUpdated = now()->format('H:i:s');
+    }
+
+    public function issueMailSslForDomain(int $domainId): void
+    {
+        try {
+            $domain = Domain::with('user')->findOrFail($domainId);
+            $mailHostname = 'mail.' . $domain->domain;
+
+            $result = $this->getAgent()->sslMailIssue($mailHostname, $domain->user->email);
+
+            if ($result['success'] ?? false) {
+                SslCertificate::updateOrCreate(
+                    ['domain_id' => $domain->id, 'service' => 'mail'],
+                    [
+                        'type' => 'lets_encrypt',
+                        'status' => 'active',
+                        'issuer' => "Let's Encrypt",
+                        'issued_at' => now(),
+                        'expires_at' => isset($result['valid_to']) ? \Carbon\Carbon::parse($result['valid_to']) : now()->addMonths(3),
+                        'last_check_at' => now(),
+                        'last_error' => null,
+                        'renewal_attempts' => 0,
+                        'auto_renew' => true,
+                    ]
+                );
+
+                Notification::make()
+                    ->title(__('Mail SSL Certificate Issued'))
+                    ->body(__('Certificate issued for :hostname', ['hostname' => $mailHostname]))
+                    ->success()
+                    ->send();
+            } else {
+                SslCertificate::updateOrCreate(
+                    ['domain_id' => $domain->id, 'service' => 'mail'],
+                    [
+                        'type' => 'lets_encrypt',
+                        'status' => 'failed',
+                        'last_check_at' => now(),
+                        'last_error' => $result['error'] ?? __('Unknown error'),
+                    ]
+                );
+
+                Notification::make()
+                    ->title(__('Mail SSL Certificate Failed'))
+                    ->body($result['error'] ?? __('Unknown error'))
+                    ->danger()
+                    ->send();
+            }
+        } catch (Exception $e) {
+            Notification::make()
+                ->title(__('Error'))
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+
+        $this->lastUpdated = now()->format('H:i:s');
+    }
+
+    public function renewMailSslForDomain(int $domainId): void
+    {
+        // For mail certs, re-issuing is the same as renewing
+        $this->issueMailSslForDomain($domainId);
     }
 
     public function runAutoSsl(?string $domain = null): void
@@ -446,7 +516,7 @@ class SslManager extends Page implements HasTable
 
                 if ($result['success'] ?? false) {
                     SslCertificate::updateOrCreate(
-                        ['domain_id' => $domain->id],
+                        ['domain_id' => $domain->id, 'service' => 'web'],
                         [
                             'type' => 'lets_encrypt',
                             'status' => 'active',
@@ -464,7 +534,7 @@ class SslManager extends Page implements HasTable
                     $issued++;
                 } else {
                     SslCertificate::updateOrCreate(
-                        ['domain_id' => $domain->id],
+                        ['domain_id' => $domain->id, 'service' => 'web'],
                         [
                             'type' => 'lets_encrypt',
                             'status' => 'failed',
@@ -472,6 +542,40 @@ class SslManager extends Page implements HasTable
                             'last_error' => $result['error'] ?? __('Unknown error'),
                         ]
                     );
+                    $failed++;
+                }
+            } catch (Exception $e) {
+                $failed++;
+            }
+        }
+
+        // Also issue mail certificates for domains that don't have one
+        $domainsWithoutMailSsl = Domain::whereDoesntHave('mailSslCertificate')
+            ->with('user')
+            ->get();
+
+        foreach ($domainsWithoutMailSsl as $domain) {
+            try {
+                $mailHostname = 'mail.' . $domain->domain;
+                $result = $this->getAgent()->sslMailIssue($mailHostname, $domain->user->email);
+
+                if ($result['success'] ?? false) {
+                    SslCertificate::updateOrCreate(
+                        ['domain_id' => $domain->id, 'service' => 'mail'],
+                        [
+                            'type' => 'lets_encrypt',
+                            'status' => 'active',
+                            'issuer' => "Let's Encrypt",
+                            'issued_at' => now(),
+                            'expires_at' => isset($result['valid_to']) ? \Carbon\Carbon::parse($result['valid_to']) : now()->addMonths(3),
+                            'last_check_at' => now(),
+                            'last_error' => null,
+                            'renewal_attempts' => 0,
+                            'auto_renew' => true,
+                        ]
+                    );
+                    $issued++;
+                } else {
                     $failed++;
                 }
             } catch (Exception $e) {

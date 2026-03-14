@@ -11,6 +11,7 @@ class SslCertificate extends Model
 {
     protected $fillable = [
         'domain_id',
+        'service',
         'type',
         'status',
         'issuer',
