@@ -36,8 +36,8 @@ class Domain extends Model
                 \Log::warning("Failed to delete email forwarders for domain {$domain->domain}: ".$e->getMessage());
             }
 
-            // Delete SSL certificate
-            $domain->sslCertificate?->delete();
+            // Delete SSL certificates (web and mail)
+            $domain->sslCertificates()->delete();
 
             // Delete DNS records
             $domain->dnsRecords()->delete();
@@ -98,7 +98,17 @@ class Domain extends Model
 
     public function sslCertificate(): HasOne
     {
-        return $this->hasOne(SslCertificate::class);
+        return $this->hasOne(SslCertificate::class)->where('service', 'web');
+    }
+
+    public function mailSslCertificate(): HasOne
+    {
+        return $this->hasOne(SslCertificate::class)->where('service', 'mail');
+    }
+
+    public function sslCertificates(): HasMany
+    {
+        return $this->hasMany(SslCertificate::class);
     }
 
     public function redirects(): HasMany
