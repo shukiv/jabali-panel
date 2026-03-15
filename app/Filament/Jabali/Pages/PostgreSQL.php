@@ -37,7 +37,7 @@ class PostgreSQL extends Page implements HasActions, HasForms, HasTable
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-circle-stack';
 
-    protected static ?int $navigationSort = 9;
+    protected static ?int $navigationSort = 7;
 
     public static function getNavigationGroup(): ?string
     {
