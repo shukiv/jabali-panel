@@ -17,51 +17,61 @@ class IssueSslCertificate implements ShouldQueue
     use Queueable;
 
     public int $tries = 3;
+
     public int $backoff = 60; // Wait 60 seconds between retries
 
     public function __construct(
-        public int $domainId
+        public int $domainId,
+        public string $service = 'web',
     ) {}
 
     public function handle(): void
     {
         $domain = Domain::with('user')->find($this->domainId);
 
-        if (!$domain) {
+        if (! $domain) {
             Log::warning("IssueSslCertificate: Domain {$this->domainId} not found");
+
             return;
         }
 
-        // Skip if domain already has active web SSL
+        // Skip if domain already has active SSL for this service
         $existingSsl = SslCertificate::where('domain_id', $domain->id)
-            ->where('service', 'web')
+            ->where('service', $this->service)
             ->where('status', 'active')
             ->first();
 
         if ($existingSsl) {
-            Log::info("IssueSslCertificate: Domain {$domain->domain} already has active SSL");
+            Log::info("IssueSslCertificate: Domain {$domain->domain} already has active {$this->service} SSL");
+
             return;
         }
 
-        if (!$domain->user) {
+        if (! $domain->user) {
             Log::warning("IssueSslCertificate: Domain {$domain->domain} has no user");
+
             return;
         }
 
-        Log::info("IssueSslCertificate: Issuing SSL for {$domain->domain}");
+        Log::info("IssueSslCertificate: Issuing {$this->service} SSL for {$domain->domain}");
 
         try {
-            $agent = new AgentClient();
-            $result = $agent->sslIssue(
-                $domain->domain,
-                $domain->user->username,
-                $domain->user->email,
-                true // Force issue
-            );
+            $agent = new AgentClient;
+
+            if ($this->service === 'mail') {
+                $result = $agent->sslMailIssue('mail.'.$domain->domain, $domain->user->email);
+            } else {
+                $result = $agent->sslIssue(
+                    $domain->domain,
+                    $domain->user->username,
+                    $domain->user->email,
+                    true // Force issue
+                );
+            }
 
             if ($result['success'] ?? false) {
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id, 'service' => 'web'],
+                    ['domain_id' => $domain->id, 'service' => $this->service],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'active',
@@ -76,15 +86,17 @@ class IssueSslCertificate implements ShouldQueue
                     ]
                 );
 
-                $domain->update(['ssl_enabled' => true]);
+                if ($this->service === 'web') {
+                    $domain->update(['ssl_enabled' => true]);
+                }
 
-                Log::info("IssueSslCertificate: SSL issued successfully for {$domain->domain}");
+                Log::info("IssueSslCertificate: {$this->service} SSL issued successfully for {$domain->domain}");
             } else {
                 $error = $result['error'] ?? 'Unknown error';
 
                 // Record the failure but don't throw - let the scheduled SSL check retry later
                 SslCertificate::updateOrCreate(
-                    ['domain_id' => $domain->id, 'service' => 'web'],
+                    ['domain_id' => $domain->id, 'service' => $this->service],
                     [
                         'type' => 'lets_encrypt',
                         'status' => 'pending',
@@ -94,14 +106,14 @@ class IssueSslCertificate implements ShouldQueue
                     ]
                 );
 
-                Log::warning("IssueSslCertificate: Failed to issue SSL for {$domain->domain}: {$error}");
+                Log::warning("IssueSslCertificate: Failed to issue {$this->service} SSL for {$domain->domain}: {$error}");
             }
         } catch (\Exception $e) {
-            Log::error("IssueSslCertificate: Exception for {$domain->domain}: " . $e->getMessage());
+            Log::error("IssueSslCertificate: Exception for {$this->service} SSL {$domain->domain}: ".$e->getMessage());
 
             // Record pending state so scheduled check can retry
             SslCertificate::updateOrCreate(
-                ['domain_id' => $domain->id, 'service' => 'web'],
+                ['domain_id' => $domain->id, 'service' => $this->service],
                 [
                     'type' => 'lets_encrypt',
                     'status' => 'pending',
