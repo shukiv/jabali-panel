@@ -39,12 +39,12 @@ class PostgreSQL extends Page implements HasActions, HasForms, HasTable
 
     protected static ?int $navigationSort = 7;
 
-    public static function getNavigationGroup(): ?string
+    protected static ?string $slug = 'postgresql';
+
+    public static function getNavigationParentItem(): ?string
     {
         return __('Databases');
     }
-
-    protected static ?string $slug = 'postgresql';
 
     protected string $view = 'filament.jabali.pages.postgresql';
 
