@@ -40,7 +40,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-circle-stack';
 
-    protected static ?int $navigationSort = 8;
+    protected static ?int $navigationSort = 7;
 
     public static function getNavigationGroup(): ?string
     {
