@@ -15076,10 +15076,18 @@ function sslInstallCertificate(string $domain, string $username, string $certPat
         exec('systemctl reload postfix 2>&1');
 
         // Update Dovecot local_name for SNI
+        // Dovecot 2.4+ uses ssl_server_cert_file / ssl_server_key_file
+        // Dovecot 2.3  uses ssl_cert / ssl_key with < prefix
         $dovecotSslConf = '/etc/dovecot/conf.d/10-ssl.conf';
         if (file_exists($dovecotSslConf)) {
             $dovecotContent = file_get_contents($dovecotSslConf);
-            $localNameBlock = "local_name $mailDomain {\n  ssl_cert = <$certPath\n  ssl_key = <$keyPath\n}";
+            $isV24 = preg_match('/^\s*ssl_server_cert_file\s*=/m', $dovecotContent);
+
+            if ($isV24) {
+                $localNameBlock = "local_name $mailDomain {\n  ssl_server_cert_file = $certPath\n  ssl_server_key_file = $keyPath\n}";
+            } else {
+                $localNameBlock = "local_name $mailDomain {\n  ssl_cert = <$certPath\n  ssl_key = <$keyPath\n}";
+            }
 
             // Remove existing local_name block for this mail domain
             $dovecotContent = preg_replace(
@@ -15089,7 +15097,6 @@ function sslInstallCertificate(string $domain, string $username, string $certPat
             );
             $dovecotContent = trim($dovecotContent) . "\n\n" . $localNameBlock . "\n";
             file_put_contents($dovecotSslConf, $dovecotContent);
-            exec('systemctl reload dovecot 2>&1');
         }
 
         logger("Configured mail SNI for $mailDomain using cert from $domain");
