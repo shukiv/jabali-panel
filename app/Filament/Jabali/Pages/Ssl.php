@@ -67,94 +67,118 @@ class Ssl extends Page implements HasActions, HasForms, HasTable
     public function table(Table $table): Table
     {
         return $table
-            ->query(Domain::query()->where('user_id', Auth::id())->with('sslCertificate'))
+            ->query(
+                SslCertificate::query()
+                    ->whereHas('domain', fn ($q) => $q->where('user_id', Auth::id()))
+                    ->with('domain')
+            )
             ->columns([
-                TextColumn::make('domain')
+                TextColumn::make('domain.domain')
                     ->label(__('Domain'))
-                    ->icon(fn (Domain $record) => $record->sslCertificate?->isActive() ? 'heroicon-o-lock-closed' : 'heroicon-o-lock-open')
-                    ->iconColor(fn (Domain $record) => $record->sslCertificate?->status_color ?? 'gray')
-                    ->description(fn (Domain $record) => $record->sslCertificate?->issuer ?? __('No certificate'))
+                    ->formatStateUsing(function ($state, SslCertificate $record) {
+                        if ($record->service === 'mail') {
+                            return 'mail.'.$state;
+                        }
+
+                        return $state;
+                    })
+                    ->icon(fn (SslCertificate $record) => $record->isActive() ? 'heroicon-o-lock-closed' : 'heroicon-o-lock-open')
+                    ->iconColor(fn (SslCertificate $record) => $record->status_color ?? 'gray')
                     ->searchable()
                     ->sortable(),
-                TextColumn::make('sslCertificate.type')
+                TextColumn::make('service')
+                    ->label(__('Service'))
+                    ->badge()
+                    ->color(fn (string $state) => match ($state) {
+                        'web' => 'info',
+                        'mail' => 'warning',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (string $state) => match ($state) {
+                        'web' => __('HTTPS'),
+                        'mail' => __('Mail (IMAPS/SMTPS)'),
+                        default => ucfirst($state),
+                    }),
+                TextColumn::make('type')
                     ->label(__('Type'))
                     ->badge()
                     ->formatStateUsing(fn (?string $state) => match ($state) {
                         'lets_encrypt' => __("Let's Encrypt"),
                         'self_signed' => __('Self-Signed'),
                         'custom' => __('Custom'),
-                        default => __('No SSL'),
+                        default => __('None'),
                     })
                     ->color('gray'),
-                TextColumn::make('sslCertificate.status')
+                TextColumn::make('status')
                     ->label(__('Status'))
                     ->badge()
-                    ->getStateUsing(fn (Domain $record) => $record->sslCertificate?->status_label ?? __('No Certificate'))
-                    ->color(fn (Domain $record) => $record->sslCertificate?->status_color ?? 'gray'),
-                TextColumn::make('sslCertificate.expires_at')
+                    ->getStateUsing(fn (SslCertificate $record) => $record->status_label ?? __('Unknown'))
+                    ->color(fn (SslCertificate $record) => $record->status_color ?? 'gray'),
+                TextColumn::make('expires_at')
                     ->label(__('Expires'))
                     ->date('M d, Y')
-                    ->description(fn (Domain $record) => $record->sslCertificate?->days_until_expiry !== null
-                        ? ($record->sslCertificate->days_until_expiry < 0
-                            ? __('Expired :days days ago', ['days' => abs($record->sslCertificate->days_until_expiry)])
-                            : __(':days days left', ['days' => $record->sslCertificate->days_until_expiry]))
+                    ->description(fn (SslCertificate $record) => $record->days_until_expiry !== null
+                        ? ($record->days_until_expiry < 0
+                            ? __('Expired :days days ago', ['days' => abs($record->days_until_expiry)])
+                            : __(':days days left', ['days' => $record->days_until_expiry]))
                         : null)
                     ->placeholder(__('-'))
                     ->sortable(),
-                IconColumn::make('sslCertificate.auto_renew')
+                IconColumn::make('auto_renew')
                     ->label(__('Auto-Renew'))
                     ->boolean()
                     ->trueIcon('heroicon-o-check-circle')
                     ->falseIcon('heroicon-o-x-circle')
                     ->trueColor('success')
                     ->falseColor('gray')
-                    ->action(fn (Domain $record) => $record->sslCertificate?->type === 'lets_encrypt' ? $this->toggleAutoRenew($record->domain) : null),
+                    ->action(fn (SslCertificate $record) => $record->service === 'web' && $record->type === 'lets_encrypt' ? $this->toggleAutoRenew($record->domain->domain) : null),
             ])
             ->recordActions([
                 Action::make('issueSsl')
                     ->label(__('Issue SSL'))
                     ->icon('heroicon-o-shield-check')
                     ->color('success')
-                    ->visible(fn (Domain $record) => ! $record->sslCertificate || $record->sslCertificate->type === 'self_signed' || $record->sslCertificate->status === 'failed')
+                    ->visible(fn (SslCertificate $record) => $record->service === 'web' && ($record->type === 'self_signed' || $record->status === 'failed'))
                     ->requiresConfirmation()
                     ->modalHeading(__('Issue SSL Certificate'))
-                    ->modalDescription(fn (Domain $record) => __("Issue a free Let's Encrypt SSL certificate for :domain? This will enable HTTPS for your domain.", ['domain' => $record->domain]))
+                    ->modalDescription(fn (SslCertificate $record) => __("Issue a free Let's Encrypt SSL certificate for :domain? This will enable HTTPS for your domain.", ['domain' => $record->domain->domain]))
                     ->modalIcon('heroicon-o-shield-check')
                     ->modalIconColor('success')
                     ->modalSubmitActionLabel(__('Issue Certificate'))
-                    ->action(fn (Domain $record) => $this->issueLetsEncrypt($record->domain)),
+                    ->action(fn (SslCertificate $record) => $this->issueLetsEncrypt($record->domain->domain)),
                 Action::make('renew')
                     ->label(__('Renew'))
                     ->icon('heroicon-o-arrow-path')
                     ->color('info')
-                    ->visible(fn (Domain $record) => $record->sslCertificate?->type === 'lets_encrypt' && $record->sslCertificate?->status === 'active')
+                    ->visible(fn (SslCertificate $record) => $record->service === 'web' && $record->type === 'lets_encrypt' && $record->status === 'active')
                     ->requiresConfirmation()
                     ->modalHeading(__('Renew SSL Certificate'))
-                    ->modalDescription(fn (Domain $record) => __("Renew the Let's Encrypt certificate for :domain? This will extend the certificate validity.", ['domain' => $record->domain]))
+                    ->modalDescription(fn (SslCertificate $record) => __("Renew the Let's Encrypt certificate for :domain? This will extend the certificate validity.", ['domain' => $record->domain->domain]))
                     ->modalIcon('heroicon-o-arrow-path')
                     ->modalIconColor('info')
                     ->modalSubmitActionLabel(__('Renew Certificate'))
-                    ->action(fn (Domain $record) => $this->renewCertificate($record->domain)),
+                    ->action(fn (SslCertificate $record) => $this->renewCertificate($record->domain->domain)),
                 Action::make('selfSigned')
                     ->label(__('Self-Signed'))
                     ->icon('heroicon-o-exclamation-triangle')
                     ->color('warning')
-                    ->visible(fn (Domain $record) => ! $record->sslCertificate)
+                    ->visible(fn (SslCertificate $record) => $record->service === 'web' && $record->status === 'failed')
                     ->requiresConfirmation()
                     ->modalHeading(__('Generate Self-Signed Certificate'))
-                    ->modalDescription(fn (Domain $record) => __('Generate a self-signed certificate for :domain? Note: Browsers will show a security warning for self-signed certificates.', ['domain' => $record->domain]))
+                    ->modalDescription(fn (SslCertificate $record) => __('Generate a self-signed certificate for :domain? Note: Browsers will show a security warning for self-signed certificates.', ['domain' => $record->domain->domain]))
                     ->modalIcon('heroicon-o-exclamation-triangle')
                     ->modalIconColor('warning')
                     ->modalSubmitActionLabel(__('Generate Certificate'))
-                    ->action(fn (Domain $record) => $this->generateSelfSigned($record->domain)),
+                    ->action(fn (SslCertificate $record) => $this->generateSelfSigned($record->domain->domain)),
                 Action::make('check')
                     ->label(__('Check'))
                     ->icon('heroicon-o-magnifying-glass')
                     ->color('gray')
-                    ->action(fn (Domain $record) => $this->checkCertificate($record->domain)),
+                    ->visible(fn (SslCertificate $record) => $record->service === 'web')
+                    ->action(fn (SslCertificate $record) => $this->checkCertificate($record->domain->domain)),
             ])
-            ->emptyStateHeading(__('No domains yet'))
-            ->emptyStateDescription(__('Add a domain first to manage SSL certificates'))
+            ->emptyStateHeading(__('No SSL certificates'))
+            ->emptyStateDescription(__('SSL certificates will appear here once issued for your domains'))
             ->emptyStateIcon('heroicon-o-lock-closed')
             ->striped();
     }

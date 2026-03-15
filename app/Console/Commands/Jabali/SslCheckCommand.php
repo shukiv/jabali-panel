@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands\Jabali;
 
 use App\Models\Domain;
+use App\Models\EmailDomain;
 use App\Models\SslCertificate;
 use App\Services\AdminNotificationService;
 use App\Services\Agent\AgentClient;
@@ -23,17 +24,23 @@ class SslCheckCommand extends Command
     protected $description = 'Check SSL certificates and automatically issue/renew them';
 
     private AgentClient $agent;
+
     private int $issued = 0;
+
     private int $renewed = 0;
+
     private int $failed = 0;
+
     private int $skipped = 0;
+
     private array $logEntries = [];
+
     private string $logFile = '';
 
     public function __construct()
     {
         parent::__construct();
-        $this->agent = new AgentClient();
+        $this->agent = new AgentClient;
     }
 
     public function handle(): int
@@ -50,11 +57,12 @@ class SslCheckCommand extends Command
         if ($domain) {
             $this->processSingleDomain($domain);
         } else {
-            if (!$renewOnly) {
+            if (! $renewOnly) {
                 $this->issueMissingCertificates();
+                $this->issueMissingMailCertificates();
             }
 
-            if (!$issueOnly) {
+            if (! $issueOnly) {
                 $this->renewExpiringCertificates();
             }
 
@@ -96,19 +104,19 @@ class SslCheckCommand extends Command
         $logDir = storage_path('logs/ssl');
 
         try {
-            if (!is_dir($logDir)) {
+            if (! is_dir($logDir)) {
                 mkdir($logDir, 0775, true);
             }
 
             // Ensure directory is writable
-            if (!is_writable($logDir)) {
+            if (! is_writable($logDir)) {
                 chmod($logDir, 0775);
             }
 
-            $this->logFile = $logDir . '/ssl-check-' . date('Y-m-d_H-i-s') . '.log';
+            $this->logFile = $logDir.'/ssl-check-'.date('Y-m-d_H-i-s').'.log';
         } catch (\Exception $e) {
             // Fall back to temp directory if storage is not writable
-            $this->logFile = sys_get_temp_dir() . '/ssl-check-' . date('Y-m-d_H-i-s') . '.log';
+            $this->logFile = sys_get_temp_dir().'/ssl-check-'.date('Y-m-d_H-i-s').'.log';
         }
 
         $this->logEntries = [];
@@ -127,11 +135,11 @@ class SslCheckCommand extends Command
         }
 
         try {
-            $content = implode("\n", $this->logEntries) . "\n";
+            $content = implode("\n", $this->logEntries)."\n";
 
             // Ensure parent directory exists
             $logDir = dirname($this->logFile);
-            if (!is_dir($logDir)) {
+            if (! is_dir($logDir)) {
                 @mkdir($logDir, 0775, true);
             }
 
@@ -173,10 +181,11 @@ class SslCheckCommand extends Command
     {
         $domain = Domain::where('domain', $domainName)->with(['user', 'sslCertificate'])->first();
 
-        if (!$domain) {
+        if (! $domain) {
             $this->log("Domain not found: {$domainName}", 'ERROR');
             $this->error("Domain not found: {$domainName}");
             $this->failed++;
+
             return;
         }
 
@@ -185,7 +194,7 @@ class SslCheckCommand extends Command
 
         $ssl = $domain->sslCertificate;
 
-        if (!$ssl || $ssl->status === 'failed') {
+        if (! $ssl || $ssl->status === 'failed') {
             $this->issueCertificate($domain);
         } elseif ($ssl->needsRenewal()) {
             $this->renewCertificate($domain);
@@ -218,6 +227,97 @@ class SslCheckCommand extends Command
 
         foreach ($domains as $domain) {
             $this->issueCertificate($domain);
+        }
+    }
+
+    private function issueMissingMailCertificates(): void
+    {
+        $this->log('Checking email domains without mail SSL certificates...');
+        $this->info('Checking email domains without mail SSL certificates...');
+
+        $emailDomains = EmailDomain::where('is_active', true)
+            ->whereDoesntHave('domain.sslCertificates', function ($q) {
+                $q->where('service', 'mail');
+            })
+            ->with(['domain.user'])
+            ->get();
+
+        $this->log("Found {$emailDomains->count()} email domains without mail SSL");
+        $this->line("Found {$emailDomains->count()} email domains without mail SSL");
+
+        foreach ($emailDomains as $emailDomain) {
+            $domain = $emailDomain->domain;
+
+            if (! $domain || ! $domain->user) {
+                $this->log("Skipping email domain ID {$emailDomain->id}: No domain or user associated", 'WARN');
+                $this->skipped++;
+
+                continue;
+            }
+
+            $mailHostname = 'mail.'.$domain->domain;
+
+            // Check if mail.domain DNS points to this server
+            if (! $this->domainPointsToServer($mailHostname)) {
+                $this->log("Skipping {$mailHostname}: DNS does not point to this server", 'WARN');
+                $this->warn("  Skipping {$mailHostname}: DNS does not point to this server");
+                $this->skipped++;
+
+                continue;
+            }
+
+            $this->log("Issuing mail SSL for: {$mailHostname} (user: {$domain->user->username})");
+            $this->line("  Issuing mail SSL for: {$mailHostname}");
+
+            try {
+                $result = $this->agent->sslMailIssue($mailHostname, $domain->user->email);
+
+                if ($result['success'] ?? false) {
+                    $expiresAt = isset($result['valid_to']) ? Carbon::parse($result['valid_to']) : now()->addMonths(3);
+
+                    SslCertificate::updateOrCreate(
+                        ['domain_id' => $domain->id, 'service' => 'mail'],
+                        [
+                            'type' => 'lets_encrypt',
+                            'status' => 'active',
+                            'issuer' => "Let's Encrypt",
+                            'certificate' => $result['certificate'] ?? null,
+                            'issued_at' => now(),
+                            'expires_at' => $expiresAt,
+                            'last_check_at' => now(),
+                            'last_error' => null,
+                            'renewal_attempts' => 0,
+                            'auto_renew' => true,
+                        ]
+                    );
+
+                    $this->log("SUCCESS: Mail SSL issued for {$mailHostname}, expires: {$expiresAt->format('Y-m-d')}", 'SUCCESS');
+                    $this->info('    ✓ Mail certificate issued successfully');
+                    $this->issued++;
+                } else {
+                    $error = $result['error'] ?? 'Unknown error';
+
+                    $ssl = SslCertificate::firstOrNew(['domain_id' => $domain->id, 'service' => 'mail']);
+                    $ssl->type = 'lets_encrypt';
+                    $ssl->status = 'failed';
+                    $ssl->last_check_at = now();
+                    $ssl->last_error = $error;
+                    $ssl->increment('renewal_attempts');
+                    $ssl->save();
+
+                    $this->log("FAILED: Mail SSL for {$mailHostname}: {$error}", 'ERROR');
+                    $this->error("    ✗ Failed: {$error}");
+                    $this->failed++;
+
+                    AdminNotificationService::sslError($mailHostname, $error);
+                }
+            } catch (Exception $e) {
+                $this->log("EXCEPTION: Mail SSL for {$mailHostname}: {$e->getMessage()}", 'ERROR');
+                $this->error("    ✗ Exception: {$e->getMessage()}");
+                $this->failed++;
+
+                AdminNotificationService::sslError($mailHostname, $e->getMessage());
+            }
         }
     }
 
@@ -263,18 +363,20 @@ class SslCheckCommand extends Command
 
     private function issueCertificate(Domain $domain): void
     {
-        if (!$domain->user) {
+        if (! $domain->user) {
             $this->log("Skipping {$domain->domain}: No user associated", 'WARN');
             $this->warn("  Skipping {$domain->domain}: No user associated");
             $this->skipped++;
+
             return;
         }
 
         // Check if domain DNS points to this server
-        if (!$this->domainPointsToServer($domain->domain)) {
+        if (! $this->domainPointsToServer($domain->domain)) {
             $this->log("Skipping {$domain->domain}: DNS does not point to this server", 'WARN');
             $this->warn("  Skipping {$domain->domain}: DNS does not point to this server");
             $this->skipped++;
+
             return;
         }
 
@@ -311,7 +413,7 @@ class SslCheckCommand extends Command
                 $domain->update(['ssl_enabled' => true]);
 
                 $this->log("SUCCESS: Certificate issued for {$domain->domain}, expires: {$expiresAt->format('Y-m-d')}", 'SUCCESS');
-                $this->info("    ✓ Certificate issued successfully");
+                $this->info('    ✓ Certificate issued successfully');
                 $this->issued++;
             } else {
                 $error = $result['error'] ?? 'Unknown error';
@@ -343,18 +445,20 @@ class SslCheckCommand extends Command
 
     private function renewCertificate(Domain $domain): void
     {
-        if (!$domain->user) {
+        if (! $domain->user) {
             $this->log("Skipping renewal for {$domain->domain}: No user associated", 'WARN');
             $this->warn("  Skipping {$domain->domain}: No user associated");
             $this->skipped++;
+
             return;
         }
 
         // Check if domain DNS still points to this server
-        if (!$this->domainPointsToServer($domain->domain)) {
+        if (! $this->domainPointsToServer($domain->domain)) {
             $this->log("Skipping renewal for {$domain->domain}: DNS does not point to this server", 'WARN');
             $this->warn("  Skipping {$domain->domain}: DNS does not point to this server");
             $this->skipped++;
+
             return;
         }
 
@@ -380,7 +484,7 @@ class SslCheckCommand extends Command
                 }
 
                 $this->log("SUCCESS: Certificate renewed for {$domain->domain}, expires: {$expiresAt->format('Y-m-d')}", 'SUCCESS');
-                $this->info("    ✓ Certificate renewed successfully");
+                $this->info('    ✓ Certificate renewed successfully');
                 $this->renewed++;
             } else {
                 $error = $result['error'] ?? 'Unknown error';
@@ -412,7 +516,7 @@ class SslCheckCommand extends Command
     {
         // Get server's public IP
         $serverIp = $this->getServerPublicIp();
-        if (!$serverIp) {
+        if (! $serverIp) {
             // If we can't determine server IP, assume it's okay to try
             return true;
         }
@@ -452,12 +556,14 @@ class SslCheckCommand extends Command
                 $ip = trim($ip);
                 if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
                     $cachedIp = $ip;
+
                     return $ip;
                 }
             }
         }
 
         $cachedIp = '';
+
         return null;
     }
 }
