@@ -14441,29 +14441,39 @@ function sslMailConfigure(string $hostname, string $certPath, string $keyPath): 
     }
 
     // Update Dovecot SSL configuration
+    // Dovecot 2.4+ (Debian 13) uses ssl_server_cert_file / ssl_server_key_file
+    // Dovecot 2.3  (Debian 12) uses ssl_cert / ssl_key
     $dovecotSslConf = '/etc/dovecot/conf.d/10-ssl.conf';
     if (file_exists($dovecotSslConf)) {
         $content = file_get_contents($dovecotSslConf);
 
-        // Replace ssl_cert line (handle both commented and uncommented)
-        $content = preg_replace(
-            '/^#?\s*ssl_cert\s*=.*$/m',
-            "ssl_cert = <$certPath",
-            $content
-        );
-        // Replace ssl_key line (handle both commented and uncommented)
-        $content = preg_replace(
-            '/^#?\s*ssl_key\s*=.*$/m',
-            "ssl_key = <$keyPath",
-            $content
-        );
+        // Detect Dovecot version by checking which directive exists
+        $isV24 = preg_match('/^\s*ssl_server_cert_file\s*=/m', $content);
 
-        // Verify the directives are present after replacement
-        if (strpos($content, "ssl_cert = <$certPath") === false) {
-            $content .= "\nssl_cert = <$certPath\n";
-        }
-        if (strpos($content, "ssl_key = <$keyPath") === false) {
-            $content .= "ssl_key = <$keyPath\n";
+        if ($isV24) {
+            // Dovecot 2.4+: ssl_server_cert_file / ssl_server_key_file
+            $content = preg_replace(
+                '/^(\s*)ssl_server_cert_file\s*=.*$/m',
+                "\\1ssl_server_cert_file = $certPath",
+                $content
+            );
+            $content = preg_replace(
+                '/^(\s*)ssl_server_key_file\s*=.*$/m',
+                "\\1ssl_server_key_file = $keyPath",
+                $content
+            );
+        } else {
+            // Dovecot 2.3: ssl_cert / ssl_key (with < prefix for file path)
+            $content = preg_replace(
+                '/^(\s*)ssl_cert\s*=.*$/m',
+                "\\1ssl_cert = <$certPath",
+                $content
+            );
+            $content = preg_replace(
+                '/^(\s*)ssl_key\s*=.*$/m',
+                "\\1ssl_key = <$keyPath",
+                $content
+            );
         }
 
         file_put_contents($dovecotSslConf, $content);

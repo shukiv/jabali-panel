@@ -3475,9 +3475,16 @@ MAILNGINX
                 systemctl reload postfix 2>/dev/null || true
 
                 # Update Dovecot to use the certificate
+                # Dovecot 2.4+ (Debian 13) uses ssl_server_cert_file / ssl_server_key_file
+                # Dovecot 2.3  (Debian 12) uses ssl_cert / ssl_key
                 if [[ -f /etc/dovecot/conf.d/10-ssl.conf ]]; then
-                    sed -i "s|^ssl_cert = .*|ssl_cert = </etc/letsencrypt/live/$mail_hostname/fullchain.pem|" /etc/dovecot/conf.d/10-ssl.conf
-                    sed -i "s|^ssl_key = .*|ssl_key = </etc/letsencrypt/live/$mail_hostname/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                    if grep -q '^ssl_server_cert_file' /etc/dovecot/conf.d/10-ssl.conf; then
+                        sed -i "s|^ssl_server_cert_file = .*|ssl_server_cert_file = /etc/letsencrypt/live/$mail_hostname/fullchain.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                        sed -i "s|^ssl_server_key_file = .*|ssl_server_key_file = /etc/letsencrypt/live/$mail_hostname/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                    else
+                        sed -i "s|^ssl_cert = .*|ssl_cert = </etc/letsencrypt/live/$mail_hostname/fullchain.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                        sed -i "s|^ssl_key = .*|ssl_key = </etc/letsencrypt/live/$mail_hostname/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                    fi
                     systemctl reload dovecot 2>/dev/null || true
                 fi
                 log "Mail services updated to use Let's Encrypt certificate"
