@@ -109,7 +109,7 @@ After install:
 - Data plane: root agent handling privileged operations
 - Job queue: async tasks and migration steps
 - Logging: panel and agent logs for troubleshooting
-- Server metrics: sysstat logs via SysstatMetrics
+- Server metrics: live /proc filesystem reads
 
 Service stack (single-node default):
 

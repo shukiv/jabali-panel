@@ -520,8 +520,6 @@ install_packages() {
         # Log analysis
         goaccess
 
-        # System metrics
-        sysstat
     )
 
     # Add Mail Server packages if enabled
@@ -1241,95 +1239,6 @@ configure_php() {
         log "PHP configured"
     else
         warn "Could not reload PHP-FPM, you may need to reload it manually"
-    fi
-}
-
-configure_sysstat() {
-    if ! command -v sar >/dev/null 2>&1; then
-        warn "sysstat not installed, skipping sysstat configuration"
-        return
-    fi
-
-    info "Configuring sysstat..."
-
-    if [[ -f /etc/default/sysstat ]]; then
-        if grep -q '^ENABLED=' /etc/default/sysstat; then
-            sed -i 's/^ENABLED=.*/ENABLED=\"true\"/' /etc/default/sysstat
-        else
-            echo 'ENABLED="true"' >> /etc/default/sysstat
-        fi
-
-        if grep -q '^INTERVAL=' /etc/default/sysstat; then
-            sed -i 's/^INTERVAL=.*/INTERVAL=10/' /etc/default/sysstat
-        else
-            echo 'INTERVAL=10' >> /etc/default/sysstat
-        fi
-    fi
-
-    if [[ -f /etc/sysstat/sysstat ]]; then
-        if grep -q '^HISTORY=' /etc/sysstat/sysstat; then
-            sed -i 's/^HISTORY=.*/HISTORY=31/' /etc/sysstat/sysstat
-        else
-            echo 'HISTORY=31' >> /etc/sysstat/sysstat
-        fi
-
-        if grep -q '^REPORTS=' /etc/sysstat/sysstat; then
-            sed -i 's/^REPORTS=.*/REPORTS=true/' /etc/sysstat/sysstat
-        else
-            echo 'REPORTS=true' >> /etc/sysstat/sysstat
-        fi
-
-        if grep -q '^SADC_OPTIONS=' /etc/sysstat/sysstat; then
-            sed -i 's/^SADC_OPTIONS=.*/SADC_OPTIONS=\"-S DISK\"/' /etc/sysstat/sysstat
-        else
-            echo 'SADC_OPTIONS="-S DISK"' >> /etc/sysstat/sysstat
-        fi
-
-        if grep -q '^ENABLED=' /etc/sysstat/sysstat; then
-            sed -i 's/^ENABLED=.*/ENABLED=\"true\"/' /etc/sysstat/sysstat
-        else
-            echo 'ENABLED="true"' >> /etc/sysstat/sysstat
-        fi
-
-        if grep -q '^INTERVAL=' /etc/sysstat/sysstat; then
-            sed -i 's/^INTERVAL=.*/INTERVAL=10/' /etc/sysstat/sysstat
-        else
-            echo 'INTERVAL=10' >> /etc/sysstat/sysstat
-        fi
-    fi
-
-    if systemctl list-unit-files | grep -q '^sysstat-collect.timer'; then
-        mkdir -p /etc/systemd/system/sysstat-collect.timer.d
-        cat > /etc/systemd/system/sysstat-collect.timer.d/override.conf <<'EOF'
-[Timer]
-OnCalendar=
-OnActiveSec=10s
-OnUnitActiveSec=10s
-AccuracySec=1s
-Persistent=true
-EOF
-    fi
-
-    mkdir -p /var/log/sysstat
-    chmod 0755 /var/log/sysstat
-
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl enable --now sysstat-collect.timer 2>/dev/null || true
-    systemctl enable --now sysstat-summary.timer 2>/dev/null || true
-    if systemctl list-unit-files | grep -q '^sysstat.service'; then
-        systemctl enable --now sysstat.service 2>/dev/null || true
-    fi
-    systemctl restart sysstat-collect.timer 2>/dev/null || true
-    systemctl restart sysstat-summary.timer 2>/dev/null || true
-
-    if [[ -x /usr/libexec/sysstat/sa1 ]]; then
-        /usr/libexec/sysstat/sa1 1 1 >/dev/null 2>&1 || true
-    elif [[ -x /usr/lib/sysstat/sa1 ]]; then
-        /usr/lib/sysstat/sa1 1 1 >/dev/null 2>&1 || true
-    elif [[ -x /usr/lib/sysstat/sadc ]]; then
-        /usr/lib/sysstat/sadc 1 1 /var/log/sysstat/sa"$(date +%d)" >/dev/null 2>&1 || true
-    elif command -v sadc >/dev/null 2>&1; then
-        sadc 1 1 /var/log/sysstat/sa"$(date +%d)" >/dev/null 2>&1 || true
     fi
 }
 
@@ -3819,17 +3728,6 @@ uninstall() {
     rm -f /etc/systemd/system/jabali-queue.service
     rm -rf /etc/systemd/system/jabali-queue.service.d
 
-    systemctl stop sysstat-collect.timer 2>/dev/null || true
-    systemctl disable sysstat-collect.timer 2>/dev/null || true
-    systemctl stop sysstat-summary.timer 2>/dev/null || true
-    systemctl disable sysstat-summary.timer 2>/dev/null || true
-    systemctl stop sysstat-rotate.timer 2>/dev/null || true
-    systemctl disable sysstat-rotate.timer 2>/dev/null || true
-    systemctl stop sysstat 2>/dev/null || true
-    systemctl disable sysstat 2>/dev/null || true
-    rm -rf /etc/systemd/system/sysstat-collect.timer.d
-    rm -rf /etc/systemd/system/sysstat-summary.timer.d
-
     local services=(
         nginx
         php-fpm
@@ -3846,7 +3744,6 @@ uninstall() {
         fail2ban
         clamav-daemon
         clamav-freshclam
-        sysstat
     )
 
     for service in "${services[@]}"; do
@@ -3956,9 +3853,6 @@ uninstall() {
         clamav-daemon
         clamav-freshclam
 
-        # Metrics
-        sysstat
-
         # Additional components installed by Jabali
         nodejs
         geoipupdate
@@ -4043,11 +3937,6 @@ uninstall() {
     rm -f /usr/local/bin/wpscan
     rm -rf /var/lib/gems
     rm -rf /var/cache/gem
-
-    # Metrics
-    rm -rf /etc/sysstat
-    rm -rf /etc/default/sysstat
-    rm -rf /var/log/sysstat
 
     # SSL certificates (Let's Encrypt)
     rm -rf /etc/letsencrypt
@@ -4179,7 +4068,6 @@ main() {
 
     add_repositories
     install_packages
-    configure_sysstat
     install_geoipupdate_binary
     install_composer
     install_wp_cli

@@ -964,11 +964,10 @@ function createUser(array $params): array
     chgrp($homeDir, $username);  // User's own group - only this user can access
     chmod($homeDir, 0750);       // root=rwx, user's group=r-x, others=none
 
-    // Create PHP-FPM pool for the user (so it's ready when they create domains)
-    // Don't reload FPM here - caller is responsible for reloading after all operations complete
-    $fpmResult = createFpmPool($username, false);
+    // Create PHP-FPM pool and reload so the socket is ready before any domain is added
+    $fpmResult = createFpmPool($username, true);
     $fpmPoolCreated = (bool) ($fpmResult['pool_created'] ?? false);
-    $fpmReloadRequired = $fpmPoolCreated && (bool) ($fpmResult['needs_reload'] ?? false);
+    $fpmReloadRequired = false;
 
     // Create Redis ACL user for isolated caching
     $redisPassword = bin2hex(random_bytes(16)); // 32 char password

@@ -30,6 +30,7 @@ class AdminPanelProvider extends PanelProvider
         return $panel
             ->id('admin')
             ->path('jabali-admin')
+            ->viteTheme('resources/css/filament/admin/theme.css')
             ->authGuard('admin')
             ->login(AdminLogin::class)
             ->passwordReset()
@@ -46,7 +47,7 @@ class AdminPanelProvider extends PanelProvider
             ->renderHook(
                 PanelsRenderHook::HEAD_END,
                 fn () => $this->getOpenGraphTags($this->getAdminBrandName(), 'Server administration panel for Jabali - Manage your hosting infrastructure').
-                    \Illuminate\Support\Facades\Vite::useBuildDirectory('build')->withEntryPoints(['resources/css/app.css', 'resources/js/server-charts.js'])->toHtml().
+                    \Illuminate\Support\Facades\Vite::useBuildDirectory('build')->withEntryPoints(['resources/css/app.css'])->toHtml().
 $this->getRtlScript()
             )
             ->renderHook(
