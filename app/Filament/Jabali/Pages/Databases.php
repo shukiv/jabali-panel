@@ -42,9 +42,14 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
     protected static ?int $navigationSort = 8;
 
-    public static function getNavigationLabel(): string
+    public static function getNavigationGroup(): ?string
     {
         return __('Databases');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('MySQL');
     }
 
     protected string $view = 'filament.jabali.pages.databases';
