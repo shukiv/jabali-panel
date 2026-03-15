@@ -8,8 +8,11 @@ use App\Models\User;
 use Filament\Auth\Http\Responses\Contracts\LoginResponse;
 use Filament\Auth\Pages\Login as BaseLogin;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\TextInput;
+use Filament\Schemas\Components\Component;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\HtmlString;
+use SensitiveParameter;
 
 class Login extends BaseLogin
 {
@@ -29,8 +32,11 @@ class Login extends BaseLogin
     {
         $data = $this->form->getState();
 
-        // Check credentials without logging in
-        $user = User::where('email', $data['email'])->first();
+        // Check credentials without logging in — support email or username
+        $login = $data['email'];
+        $user = str_contains($login, '@')
+            ? User::where('email', $login)->first()
+            : User::where('username', $login)->first();
 
         if (! $user) {
             // Constant-time: prevent user enumeration via timing
@@ -72,5 +78,29 @@ class Login extends BaseLogin
         }
 
         return $response;
+    }
+
+    protected function getEmailFormComponent(): Component
+    {
+        return TextInput::make('email')
+            ->label(__('Email or Username'))
+            ->required()
+            ->autocomplete()
+            ->autofocus();
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function getCredentialsFromFormData(#[SensitiveParameter] array $data): array
+    {
+        $login = $data['email'];
+        $field = str_contains($login, '@') ? 'email' : 'username';
+
+        return [
+            $field => $login,
+            'password' => $data['password'],
+        ];
     }
 }
