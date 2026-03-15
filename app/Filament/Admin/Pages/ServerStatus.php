@@ -60,7 +60,47 @@ class ServerStatus extends Page implements HasTable
 
     public function getTitle(): string|Htmlable
     {
-        return __('Server Status');
+        $uptime = $this->getServerUptime();
+
+        $load = sys_getloadavg();
+        $loadStr = is_array($load) && count($load) >= 3
+            ? sprintf('%.2f, %.2f, %.2f', $load[0], $load[1], $load[2])
+            : '';
+
+        $parts = [__('Server Status')];
+        if ($uptime) {
+            $parts[] = __('Uptime').': '.$uptime;
+        }
+        if ($loadStr) {
+            $parts[] = __('Load').': '.$loadStr;
+        }
+
+        return implode(' — ', $parts);
+    }
+
+    private function getServerUptime(): string
+    {
+        if (! is_readable('/proc/uptime')) {
+            return '';
+        }
+
+        $seconds = (int) floor((float) explode(' ', trim((string) file_get_contents('/proc/uptime')))[0]);
+        if ($seconds <= 0) {
+            return '';
+        }
+
+        $days = intdiv($seconds, 86400);
+        $hours = intdiv($seconds % 86400, 3600);
+        $minutes = intdiv($seconds % 3600, 60);
+
+        if ($days > 0) {
+            return sprintf('%dd %dh %dm', $days, $hours, $minutes);
+        }
+        if ($hours > 0) {
+            return sprintf('%dh %dm', $hours, $minutes);
+        }
+
+        return sprintf('%dm', $minutes);
     }
 
     protected function getHeaderWidgets(): array

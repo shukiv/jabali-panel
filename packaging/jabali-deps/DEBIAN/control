@@ -7,7 +7,7 @@ Maintainer: Jabali Panel <admin@example.lan>
 Depends: nginx, nginx-common, mariadb-server, mariadb-client, redis-server,
  certbot, python3-certbot-nginx, nodejs, git, curl, wget, zip, unzip, htop,
  net-tools, dnsutils, acl, socat, sshpass, pigz, locales, fail2ban,
- libnginx-mod-http-geoip2, chromium, build-essential, quota, goaccess, sysstat,
+ libnginx-mod-http-geoip2, chromium, build-essential, quota, goaccess,
  software-properties-common, apt-transport-https, ca-certificates, gnupg,
  lsb-release, sudo, php8.4, php8.4-fpm, php8.4-cli, php8.4-common,
  php8.4-mysql, php8.4-pgsql, php8.4-sqlite3, php8.4-curl, php8.4-gd,
