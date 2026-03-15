@@ -9,18 +9,21 @@ use Filament\Auth\Http\Responses\Contracts\LoginResponse;
 use Filament\Auth\MultiFactor\Contracts\HasBeforeChallengeHook;
 use Filament\Auth\Pages\Login as BaseLogin;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\TextInput;
 use Filament\Models\Contracts\FilamentUser;
+use Filament\Schemas\Components\Component;
 use Illuminate\Contracts\Auth\Guard;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\HtmlString;
+use SensitiveParameter;
 
 class Login extends BaseLogin
 {
-    public function getSubheading(): string | HtmlString | null
+    public function getSubheading(): string|HtmlString|null
     {
         if (env('JABALI_DEMO', false)) {
             return new HtmlString(
-                __('Demo credentials') .
+                __('Demo credentials').
                 ': <code>demo@jabali-panel.com</code> / <code>demo1234</code>'
             );
         }
@@ -105,5 +108,29 @@ class Login extends BaseLogin
         }
 
         return app(LoginResponse::class);
+    }
+
+    protected function getEmailFormComponent(): Component
+    {
+        return TextInput::make('email')
+            ->label(__('Email or Username'))
+            ->required()
+            ->autocomplete()
+            ->autofocus();
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function getCredentialsFromFormData(#[SensitiveParameter] array $data): array
+    {
+        $login = $data['email'];
+        $field = str_contains($login, '@') ? 'email' : 'username';
+
+        return [
+            $field => $login,
+            'password' => $data['password'],
+        ];
     }
 }
