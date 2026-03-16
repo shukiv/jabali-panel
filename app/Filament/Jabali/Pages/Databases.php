@@ -22,6 +22,10 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\View;
+use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -31,6 +35,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
+use Livewire\Attributes\Url;
 
 class Databases extends Page implements HasActions, HasForms, HasTable
 {
@@ -48,6 +53,11 @@ class Databases extends Page implements HasActions, HasForms, HasTable
     }
 
     protected string $view = 'filament.jabali.pages.databases';
+
+    #[Url(as: 'tab')]
+    public string $activeTab = 'mysql';
+
+    public string $pgSubTab = 'databases';
 
     public array $databases = [];
 
@@ -67,9 +77,13 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
     protected ?AgentClient $agent = null;
 
+    public array $pgDatabases = [];
+
+    public array $pgUsers = [];
+
     public function getTitle(): string|Htmlable
     {
-        return __('MySQL Databases');
+        return __('Databases');
     }
 
     public function getAgent(): AgentClient
@@ -88,8 +102,47 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
     public function mount(): void
     {
+        $this->activeTab = $this->normalizeTab($this->activeTab);
         $this->ensureAdminUserExists();
         $this->loadData();
+    }
+
+    public function updatedActiveTab(): void
+    {
+        $this->activeTab = $this->normalizeTab($this->activeTab);
+        $this->loadData();
+        $this->resetTable();
+    }
+
+    protected function normalizeTab(string $tab): string
+    {
+        return in_array($tab, ['mysql', 'postgresql'], true) ? $tab : 'mysql';
+    }
+
+    protected function getForms(): array
+    {
+        return ['databasesForm'];
+    }
+
+    public function databasesForm(Schema $schema): Schema
+    {
+        return $schema->schema([
+            Tabs::make(__('Database Engines'))
+                ->contained()
+                ->livewireProperty('activeTab')
+                ->tabs([
+                    'mysql' => Tab::make(__('MySQL'))
+                        ->icon('heroicon-o-circle-stack')
+                        ->schema([
+                            View::make('filament.jabali.pages.databases-mysql-tab'),
+                        ]),
+                    'postgresql' => Tab::make(__('PostgreSQL'))
+                        ->icon('heroicon-o-server-stack')
+                        ->schema([
+                            View::make('filament.jabali.pages.databases-postgresql-tab'),
+                        ]),
+                ]),
+        ]);
     }
 
     /**
@@ -147,6 +200,13 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
     public function loadData(): void
     {
+        if ($this->activeTab === 'postgresql') {
+            $this->loadPgDatabases();
+            $this->loadPgUsers();
+
+            return;
+        }
+
         try {
             $result = $this->getAgent()->mysqlListDatabases($this->getUsername());
             $this->databases = $result['databases'] ?? [];
@@ -192,7 +252,77 @@ class Databases extends Page implements HasActions, HasForms, HasTable
         return $this->userGrants["$user@$host"] ?? [];
     }
 
+    // ── PostgreSQL data loading ─────────────────────────────────────
+
+    protected function loadPgDatabases(): void
+    {
+        try {
+            $result = $this->getAgent()->postgresListDatabases($this->getUsername());
+            $this->pgDatabases = $result['databases'] ?? [];
+        } catch (Exception) {
+            $this->pgDatabases = [];
+        }
+    }
+
+    protected function loadPgUsers(): void
+    {
+        try {
+            $result = $this->getAgent()->postgresListUsers($this->getUsername());
+            $this->pgUsers = $result['users'] ?? [];
+        } catch (Exception) {
+            $this->pgUsers = [];
+        }
+    }
+
+    protected function getPgUserOptions(): array
+    {
+        if (empty($this->pgUsers)) {
+            $this->loadPgUsers();
+        }
+
+        $options = [];
+        foreach ($this->pgUsers as $user) {
+            $options[$user['username']] = $user['username'];
+        }
+
+        return $options;
+    }
+
+    protected function formatBytes(int $bytes, int $precision = 2): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $bytes = max($bytes, 0);
+        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+        $pow = min($pow, count($units) - 1);
+        $bytes /= pow(1024, $pow);
+
+        return round($bytes, $precision).' '.$units[$pow];
+    }
+
+    public function setPgSubTab(string $tab): void
+    {
+        $this->pgSubTab = in_array($tab, ['databases', 'users'], true) ? $tab : 'databases';
+
+        if ($this->pgSubTab === 'users') {
+            $this->loadPgUsers();
+        } else {
+            $this->loadPgDatabases();
+        }
+
+        $this->resetTable();
+    }
+
+    // ── Table ───────────────────────────────────────────────────────
+
     public function table(Table $table): Table
+    {
+        return match ($this->activeTab) {
+            'postgresql' => $this->postgresqlTable($table),
+            default => $this->mysqlTable($table),
+        };
+    }
+
+    protected function mysqlTable(Table $table): Table
     {
         return $table
             ->records(fn () => $this->databases)
@@ -302,9 +432,80 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             ->striped();
     }
 
+    protected function postgresqlTable(Table $table): Table
+    {
+        if ($this->pgSubTab === 'users') {
+            return $table
+                ->records(fn () => $this->pgUsers)
+                ->columns([
+                    TextColumn::make('username')
+                        ->label(__('User'))
+                        ->searchable(),
+                ])
+                ->recordActions([
+                    Action::make('delete')
+                        ->label(__('Delete'))
+                        ->icon('heroicon-o-trash')
+                        ->color('danger')
+                        ->requiresConfirmation()
+                        ->action(function (array $record): void {
+                            $result = $this->getAgent()->postgresDeleteUser($this->getUsername(), $record['username']);
+                            if ($result['success'] ?? false) {
+                                Notification::make()->title(__('User deleted'))->success()->send();
+                                $this->loadPgUsers();
+                                $this->resetTable();
+
+                                return;
+                            }
+
+                            Notification::make()->title(__('Deletion failed'))->body($result['error'] ?? '')->danger()->send();
+                        }),
+                ])
+                ->emptyStateHeading(__('No PostgreSQL users'))
+                ->emptyStateDescription(__('Create a PostgreSQL user to manage databases'));
+        }
+
+        return $table
+            ->records(fn () => $this->pgDatabases)
+            ->columns([
+                TextColumn::make('name')
+                    ->label(__('Database'))
+                    ->searchable(),
+                TextColumn::make('size_bytes')
+                    ->label(__('Size'))
+                    ->formatStateUsing(fn ($state) => $this->formatBytes((int) $state))
+                    ->color('gray'),
+            ])
+            ->recordActions([
+                Action::make('delete')
+                    ->label(__('Delete'))
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->action(function (array $record): void {
+                        $result = $this->getAgent()->postgresDeleteDatabase($this->getUsername(), $record['name']);
+                        if ($result['success'] ?? false) {
+                            Notification::make()->title(__('Database deleted'))->success()->send();
+                            $this->loadPgDatabases();
+                            $this->resetTable();
+
+                            return;
+                        }
+
+                        Notification::make()->title(__('Deletion failed'))->body($result['error'] ?? '')->danger()->send();
+                    }),
+            ])
+            ->emptyStateHeading(__('No PostgreSQL databases'))
+            ->emptyStateDescription(__('Create a PostgreSQL database to get started'));
+    }
+
     public function getTableRecordKey(Model|array $record): string
     {
-        return is_array($record) ? $record['name'] : $record->getKey();
+        if (is_array($record)) {
+            return $record['name'] ?? $record['username'] ?? '';
+        }
+
+        return $record->getKey();
     }
 
     public function generateSecurePassword(int $length = 16): string
@@ -384,6 +585,8 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             $this->createDatabaseAction(),
             $this->createUserAction(),
             $this->showCredentialsAction(),
+            $this->pgCreateDatabaseAction(),
+            $this->pgCreateUserAction(),
         ];
     }
 
@@ -434,6 +637,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             ->label(__('Quick Setup'))
             ->icon('heroicon-o-bolt')
             ->color('warning')
+            ->visible(fn () => $this->activeTab === 'mysql')
             ->modalHeading(__('Quick Database Setup'))
             ->modalDescription(__('Create a database and user with full access in one step'))
             ->modalIcon('heroicon-o-bolt')
@@ -506,6 +710,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             ->label(__('New Database'))
             ->icon('heroicon-o-plus-circle')
             ->color('success')
+            ->visible(fn () => $this->activeTab === 'mysql')
             ->modalHeading(__('Create New Database'))
             ->modalDescription(__('Create a new MySQL database'))
             ->modalIcon('heroicon-o-circle-stack')
@@ -551,6 +756,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             ->label(__('New User'))
             ->icon('heroicon-o-user-plus')
             ->color('primary')
+            ->visible(fn () => $this->activeTab === 'mysql')
             ->modalHeading(__('Create New Database User'))
             ->modalDescription(__('Create a new MySQL user for database access'))
             ->modalIcon('heroicon-o-user-plus')
@@ -632,6 +838,105 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                 }
             });
     }
+
+    // ── PostgreSQL header actions ───────────────────────────────────
+
+    protected function pgCreateDatabaseAction(): Action
+    {
+        return Action::make('pgCreateDatabase')
+            ->label(__('Create Database'))
+            ->icon('heroicon-o-circle-stack')
+            ->color('primary')
+            ->visible(fn () => $this->activeTab === 'postgresql' && $this->pgSubTab === 'databases')
+            ->form([
+                TextInput::make('database')
+                    ->label(__('Database Name'))
+                    ->required()
+                    ->alphaNum()
+                    ->maxLength(32)
+                    ->prefix($this->getUsername().'_')
+                    ->helperText(__('Only alphanumeric characters allowed')),
+                Select::make('owner')
+                    ->label(__('Owner User'))
+                    ->options($this->getPgUserOptions())
+                    ->required(),
+            ])
+            ->action(function (array $data): void {
+                $name = $this->getUsername().'_'.$data['database'];
+                $result = $this->getAgent()->postgresCreateDatabase(
+                    $this->getUsername(),
+                    $name,
+                    $data['owner']
+                );
+
+                if ($result['success'] ?? false) {
+                    Notification::make()->title(__('Database created'))->success()->send();
+                    $this->loadPgDatabases();
+                    $this->resetTable();
+
+                    return;
+                }
+
+                Notification::make()->title(__('Creation failed'))->body($result['error'] ?? '')->danger()->send();
+            });
+    }
+
+    protected function pgCreateUserAction(): Action
+    {
+        return Action::make('pgCreateUser')
+            ->label(__('Create User'))
+            ->icon('heroicon-o-user-plus')
+            ->color('primary')
+            ->visible(fn () => $this->activeTab === 'postgresql' && $this->pgSubTab === 'users')
+            ->form([
+                TextInput::make('db_user')
+                    ->label(__('Username'))
+                    ->required()
+                    ->alphaNum()
+                    ->maxLength(20)
+                    ->prefix($this->getUsername().'_')
+                    ->helperText(__('Only alphanumeric characters allowed')),
+                TextInput::make('password')
+                    ->label(__('Password'))
+                    ->password()
+                    ->revealable()
+                    ->required()
+                    ->minLength(8)
+                    ->rules([
+                        'regex:/[a-z]/',
+                        'regex:/[A-Z]/',
+                        'regex:/[0-9]/',
+                    ])
+                    ->default(fn () => $this->generateSecurePassword())
+                    ->helperText(__('Minimum 8 characters with uppercase, lowercase, and numbers')),
+            ])
+            ->action(function (array $data): void {
+                $username = $this->getUsername().'_'.$data['db_user'];
+                $result = $this->getAgent()->postgresCreateUser(
+                    $this->getUsername(),
+                    $username,
+                    $data['password']
+                );
+
+                if ($result['success'] ?? false) {
+                    $this->credDatabase = '';
+                    $this->credUser = $username;
+                    $this->credPassword = $data['password'];
+
+                    Notification::make()->title(__('User created'))->success()->send();
+                    $this->loadPgUsers();
+                    $this->resetTable();
+
+                    $this->mountAction('showCredentials');
+
+                    return;
+                }
+
+                Notification::make()->title(__('Creation failed'))->body($result['error'] ?? '')->danger()->send();
+            });
+    }
+
+    // ── MySQL user management (unchanged) ───────────────────────────
 
     public function deleteUser(string $user, string $host): void
     {

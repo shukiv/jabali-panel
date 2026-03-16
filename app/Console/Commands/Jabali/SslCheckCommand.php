@@ -339,7 +339,11 @@ class SslCheckCommand extends Command
 
         foreach ($certificates as $ssl) {
             if ($ssl->domain) {
-                $this->renewCertificate($ssl->domain);
+                if ($ssl->service === 'mail') {
+                    $this->renewMailCertificate($ssl);
+                } else {
+                    $this->renewCertificate($ssl->domain);
+                }
             }
         }
     }
@@ -509,6 +513,52 @@ class SslCheckCommand extends Command
 
             // Send admin notification
             AdminNotificationService::sslError($domain->domain, "Renewal exception: {$e->getMessage()}");
+        }
+    }
+
+    private function renewMailCertificate(SslCertificate $ssl): void
+    {
+        $domain = $ssl->domain;
+        $mailHostname = 'mail.'.$domain->domain;
+
+        $this->log("Renewing mail SSL for: {$mailHostname}");
+        $this->line("  Renewing mail SSL for: {$mailHostname}");
+
+        try {
+            $result = $this->agent->sslMailIssue($mailHostname, $domain->user?->email);
+
+            if ($result['success'] ?? false) {
+                $expiresAt = isset($result['expires_at']) ? Carbon::parse($result['expires_at']) : now()->addMonths(3);
+
+                $ssl->update([
+                    'status' => 'active',
+                    'issued_at' => now(),
+                    'expires_at' => $expiresAt,
+                    'last_check_at' => now(),
+                    'last_error' => null,
+                    'renewal_attempts' => 0,
+                ]);
+
+                $this->log("SUCCESS: Mail certificate renewed for {$mailHostname}, expires: {$expiresAt->format('Y-m-d')}", 'SUCCESS');
+                $this->info('    ✓ Mail certificate renewed successfully');
+                $this->renewed++;
+            } else {
+                $error = $result['error'] ?? 'Unknown error';
+                $ssl->incrementRenewalAttempts();
+                $ssl->update(['last_error' => $error]);
+
+                $this->log("FAILED: Mail certificate renewal for {$mailHostname}: {$error}", 'ERROR');
+                $this->error("    ✗ Failed: {$error}");
+                $this->failed++;
+
+                AdminNotificationService::sslError($mailHostname, "Mail renewal failed: {$error}");
+            }
+        } catch (Exception $e) {
+            $this->log("EXCEPTION: Mail certificate renewal for {$mailHostname}: {$e->getMessage()}", 'ERROR');
+            $this->error("    ✗ Exception: {$e->getMessage()}");
+            $this->failed++;
+
+            AdminNotificationService::sslError($mailHostname, "Mail renewal exception: {$e->getMessage()}");
         }
     }
 

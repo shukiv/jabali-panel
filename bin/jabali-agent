@@ -14422,60 +14422,85 @@ function sslMailIssue(array $params): array
 }
 
 /**
- * Configure Postfix and Dovecot to use the given SSL certificate.
+ * Configure Postfix and Dovecot to use the given SSL certificate via per-domain SNI.
+ * Only sets the global default cert if no real cert is configured yet (snakeoil).
  */
 function sslMailConfigure(string $hostname, string $certPath, string $keyPath): array
 {
     $errors = [];
 
-    // Update Postfix SSL configuration
+    // Set global Postfix cert only if currently using snakeoil or no cert
     $out = [];
-    exec('postconf -e ' . escapeshellarg("smtpd_tls_cert_file=$certPath") . ' 2>&1', $out, $code);
-    if ($code !== 0) {
-        $errors[] = 'Failed to update Postfix cert path';
-    }
-    $out = [];
-    exec('postconf -e ' . escapeshellarg("smtpd_tls_key_file=$keyPath") . ' 2>&1', $out, $code);
-    if ($code !== 0) {
-        $errors[] = 'Failed to update Postfix key path';
+    exec('postconf -h smtpd_tls_cert_file 2>/dev/null', $out);
+    $currentCert = trim($out[0] ?? '');
+    if (empty($currentCert) || str_contains($currentCert, 'snakeoil') || str_contains($currentCert, 'ssl-cert-snakeoil')) {
+        exec('postconf -e ' . escapeshellarg("smtpd_tls_cert_file=$certPath") . ' 2>&1', $out, $code);
+        exec('postconf -e ' . escapeshellarg("smtpd_tls_key_file=$keyPath") . ' 2>&1', $out, $code);
     }
 
-    // Update Dovecot SSL configuration
-    // Dovecot 2.4+ (Debian 13) uses ssl_server_cert_file / ssl_server_key_file
-    // Dovecot 2.3  (Debian 12) uses ssl_cert / ssl_key
+    // Add per-domain SNI entry to Postfix sni_maps
+    $sniMapFile = '/etc/postfix/sni_maps';
+    $sniLine = "$hostname $keyPath $certPath";
+    $sniContent = file_exists($sniMapFile) ? file_get_contents($sniMapFile) : '';
+
+    // Remove existing entry for this hostname
+    $sniContent = preg_replace('/^' . preg_quote($hostname, '/') . '\s+.*$/m', '', $sniContent);
+    $sniContent = trim($sniContent) . "\n" . $sniLine . "\n";
+    file_put_contents($sniMapFile, $sniContent);
+
+    $out = [];
+    exec('postmap /etc/postfix/sni_maps 2>&1', $out, $code);
+    if ($code !== 0) {
+        $errors[] = 'Failed to rebuild Postfix sni_maps';
+    }
+
+    // Add per-domain SNI local_name block to Dovecot
     $dovecotSslConf = '/etc/dovecot/conf.d/10-ssl.conf';
     if (file_exists($dovecotSslConf)) {
         $content = file_get_contents($dovecotSslConf);
-
-        // Detect Dovecot version by checking which directive exists
         $isV24 = preg_match('/^\s*ssl_server_cert_file\s*=/m', $content);
 
-        if ($isV24) {
-            // Dovecot 2.4+: ssl_server_cert_file / ssl_server_key_file
-            $content = preg_replace(
-                '/^(\s*)ssl_server_cert_file\s*=.*$/m',
-                "\\1ssl_server_cert_file = $certPath",
-                $content
-            );
-            $content = preg_replace(
-                '/^(\s*)ssl_server_key_file\s*=.*$/m',
-                "\\1ssl_server_key_file = $keyPath",
-                $content
-            );
-        } else {
-            // Dovecot 2.3: ssl_cert / ssl_key (with < prefix for file path)
-            $content = preg_replace(
-                '/^(\s*)ssl_cert\s*=.*$/m',
-                "\\1ssl_cert = <$certPath",
-                $content
-            );
-            $content = preg_replace(
-                '/^(\s*)ssl_key\s*=.*$/m',
-                "\\1ssl_key = <$keyPath",
-                $content
-            );
+        // Set global Dovecot cert only if currently using snakeoil
+        if (preg_match('/snakeoil/', $content)) {
+            if ($isV24) {
+                $content = preg_replace(
+                    '/^(\s*)ssl_server_cert_file\s*=.*$/m',
+                    "\\1ssl_server_cert_file = $certPath",
+                    $content
+                );
+                $content = preg_replace(
+                    '/^(\s*)ssl_server_key_file\s*=.*$/m',
+                    "\\1ssl_server_key_file = $keyPath",
+                    $content
+                );
+            } else {
+                $content = preg_replace(
+                    '/^(\s*)ssl_cert\s*=.*$/m',
+                    "\\1ssl_cert = <$certPath",
+                    $content
+                );
+                $content = preg_replace(
+                    '/^(\s*)ssl_key\s*=.*$/m',
+                    "\\1ssl_key = <$keyPath",
+                    $content
+                );
+            }
         }
 
+        // Build the local_name SNI block
+        if ($isV24) {
+            $localNameBlock = "local_name $hostname {\n  ssl_server_cert_file = $certPath\n  ssl_server_key_file = $keyPath\n}";
+        } else {
+            $localNameBlock = "local_name $hostname {\n  ssl_cert = <$certPath\n  ssl_key = <$keyPath\n}";
+        }
+
+        // Remove existing local_name block for this hostname
+        $content = preg_replace(
+            '/local_name\s+' . preg_quote($hostname, '/') . '\s*\{[^}]*\}\n?/',
+            '',
+            $content
+        );
+        $content = trim($content) . "\n\n" . $localNameBlock . "\n";
         file_put_contents($dovecotSslConf, $content);
     } else {
         $errors[] = 'Dovecot SSL config not found at ' . $dovecotSslConf;
@@ -14493,11 +14518,13 @@ function sslMailConfigure(string $hostname, string $certPath, string $keyPath): 
         $errors[] = 'Failed to reload Dovecot';
     }
 
+    logger("Configured mail SNI for $hostname");
+
     if (!empty($errors)) {
         return ['success' => false, 'error' => implode('; ', $errors)];
     }
 
-    return ['success' => true, 'message' => 'Mail services configured with SSL certificate'];
+    return ['success' => true, 'message' => "Mail SNI configured for $hostname"];
 }
 
 /**
