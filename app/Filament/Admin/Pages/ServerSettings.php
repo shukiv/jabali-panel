@@ -80,6 +80,8 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public ?array $phpFpmData = [];
 
+    public ?array $securityData = [];
+
     // Version info (non-form)
     public bool $isSystemdResolved = false;
 
@@ -170,6 +172,10 @@ class ServerSettings extends Page implements HasActions, HasForms
         // Fill form data
         $this->brandingData = [
             'panel_name' => $settings['panel_name'] ?? 'Jabali',
+        ];
+
+        $this->securityData = [
+            'passphrase_passwords' => (bool) ($settings['passphrase_passwords'] ?? false),
         ];
 
         $this->hostnameData = [
@@ -326,6 +332,19 @@ class ServerSettings extends Page implements HasActions, HasForms
                         FormAction::make('saveHostname')
                             ->label(__('Save Hostname'))
                             ->action('saveHostname'),
+                    ]),
+                ]),
+            Section::make(__('Security'))
+                ->icon('heroicon-o-shield-check')
+                ->schema([
+                    Toggle::make('securityData.passphrase_passwords')
+                        ->label(__('Passphrase Passwords'))
+                        ->helperText(__('Generate easy-to-remember passwords using random words (e.g., sunset-harbor-meadow) instead of random characters'))
+                        ->inline(false),
+                    Actions::make([
+                        FormAction::make('saveSecurity')
+                            ->label(__('Save Security'))
+                            ->action('saveSecurity'),
                     ]),
                 ]),
         ];
@@ -780,6 +799,14 @@ class ServerSettings extends Page implements HasActions, HasForms
         Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
     }
 
+    public function saveSecurity(): void
+    {
+        DnsSetting::set('passphrase_passwords', $this->securityData['passphrase_passwords'] ? '1' : '0');
+        DnsSetting::clearCache();
+
+        Notification::make()->title(__('Security settings updated'))->success()->send();
+    }
+
     public function uploadLogo(array $data): void
     {
         try {
@@ -1034,7 +1061,7 @@ class ServerSettings extends Page implements HasActions, HasForms
         $mailHostname = $this->emailData['mail_hostname'] ?? '';
         if (empty($mailHostname)) {
             $hostname = gethostname();
-            $mailHostname = 'mail.' . preg_replace('/^[^.]+\./', '', $hostname);
+            $mailHostname = 'mail.'.preg_replace('/^[^.]+\./', '', $hostname);
         }
 
         if (! preg_match('/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i', $mailHostname)) {

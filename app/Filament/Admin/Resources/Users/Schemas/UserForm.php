@@ -2,7 +2,9 @@
 
 namespace App\Filament\Admin\Resources\Users\Schemas;
 
+use App\Models\DnsSetting;
 use App\Models\HostingPackage;
+use App\Support\WordList;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Placeholder;
@@ -77,17 +79,18 @@ class UserForm
                             ->dehydrated(fn ($state) => filled($state))
                             ->required(fn (string $operation): bool => $operation === 'create')
                             ->minLength(8)
-                            ->rules([
-                                'regex:/[a-z]/',      // lowercase
-                                'regex:/[A-Z]/',      // uppercase
-                                'regex:/[0-9]/',      // number
+                            ->rules(fn () => (bool) DnsSetting::get('passphrase_passwords') ? [] : [
+                                'regex:/[a-z]/',
+                                'regex:/[A-Z]/',
+                                'regex:/[0-9]/',
                             ])
                             ->suffixActions([
                                 Action::make('generatePassword')
                                     ->icon('heroicon-o-arrow-path')
                                     ->tooltip(__('Generate secure password'))
                                     ->action(function ($set) {
-                                        $password = self::generateSecurePassword();
+                                        $useWords = (bool) DnsSetting::get('passphrase_passwords');
+                                        $password = $useWords ? WordList::generate() : self::generateSecurePassword();
                                         $set('password', $password);
                                     }),
                                 Action::make('copyPassword')
@@ -105,7 +108,9 @@ class UserForm
                                         }
                                     }),
                             ])
-                            ->helperText(__('Minimum 8 characters with uppercase, lowercase, and numbers'))
+                            ->helperText(fn () => (bool) DnsSetting::get('passphrase_passwords')
+                                ? __('Password will be generated as easy-to-remember words')
+                                : __('Minimum 8 characters with uppercase, lowercase, and numbers'))
                             ->label(fn (string $operation): string => $operation === 'create' ? __('Password') : __('New Password')),
                     ])
                     ->columns(2),
