@@ -181,7 +181,7 @@ class AuditLog extends Model
     /**
      * Prune audit logs older than the specified number of days.
      *
-     * @param int|null $days Number of days to keep (default: from settings or 90)
+     * @param  int|null  $days  Number of days to keep (default: from settings or 90)
      * @return int Number of deleted records
      */
     public static function prune(?int $days = null): int

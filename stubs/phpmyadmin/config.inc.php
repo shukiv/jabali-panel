@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Jabali Panel phpMyAdmin configuration
  *
@@ -11,11 +12,11 @@ $cfg['blowfish_secret'] = '%%BLOWFISH_SECRET%%';
 
 // Server configuration
 $i = 1;
-$cfg['Servers'][$i]['auth_type']     = 'signon';
+$cfg['Servers'][$i]['auth_type'] = 'signon';
 $cfg['Servers'][$i]['SignonSession'] = 'jabali_phpmyadmin_signon';
-$cfg['Servers'][$i]['SignonURL']     = '/phpmyadmin/jabali-signon.php';
-$cfg['Servers'][$i]['LogoutURL']     = '/jabali-user/databases';
-$cfg['Servers'][$i]['host']          = 'localhost';
+$cfg['Servers'][$i]['SignonURL'] = '/phpmyadmin/jabali-signon.php';
+$cfg['Servers'][$i]['LogoutURL'] = '/jabali-user/databases';
+$cfg['Servers'][$i]['host'] = 'localhost';
 
 // Disable phpMyAdmin configuration storage (not needed)
 $cfg['Servers'][$i]['pmadb'] = '';

@@ -8,7 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (!Schema::hasColumn('users', 'home_directory')) {
+        if (! Schema::hasColumn('users', 'home_directory')) {
             Schema::table('users', function (Blueprint $table) {
                 $table->string('home_directory')->nullable()->after('username');
             });

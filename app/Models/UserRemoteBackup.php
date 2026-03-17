@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Carbon\Carbon;
 
 class UserRemoteBackup extends Model
 {
@@ -46,6 +46,7 @@ class UserRemoteBackup extends Model
         if (preg_match('/^(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})(\d{2})$/', $backupName, $matches)) {
             return Carbon::parse("{$matches[1]} {$matches[2]}:{$matches[3]}:{$matches[4]}");
         }
+
         return null;
     }
 

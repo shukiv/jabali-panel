@@ -16,7 +16,9 @@ class ManageGitProtection extends Command
     protected $description = 'Manage Git commit protection for Jabali';
 
     protected string $authFile;
+
     protected string $hookFile;
+
     protected string $deployKeyFile;
 
     public function __construct()
@@ -45,19 +47,20 @@ class ManageGitProtection extends Command
     protected function enableProtection(): int
     {
         // Ensure hook exists and is executable
-        if (!file_exists($this->hookFile)) {
+        if (! file_exists($this->hookFile)) {
             $this->error('Pre-commit hook not found. Please reinstall Jabali.');
+
             return 1;
         }
 
         chmod($this->hookFile, 0755);
 
         // Create authorized committers file if not exists
-        if (!file_exists($this->authFile)) {
+        if (! file_exists($this->authFile)) {
             // Add current git user as first authorized committer
             $email = trim(shell_exec('git config user.email') ?? '');
             if ($email) {
-                file_put_contents($this->authFile, $email . "\n");
+                file_put_contents($this->authFile, $email."\n");
             } else {
                 touch($this->authFile);
             }
@@ -65,7 +68,7 @@ class ManageGitProtection extends Command
         }
 
         // Generate deploy key for automated deployments
-        if (!file_exists($this->deployKeyFile)) {
+        if (! file_exists($this->deployKeyFile)) {
             $key = Str::random(64);
             file_put_contents($this->deployKeyFile, $key);
             chmod($this->deployKeyFile, 0600);
@@ -75,7 +78,7 @@ class ManageGitProtection extends Command
         $this->info('Git commit protection ENABLED.');
         $this->line('Only authorized committers can now make commits.');
         $this->line('');
-        $this->line('Authorized committers file: ' . $this->authFile);
+        $this->line('Authorized committers file: '.$this->authFile);
 
         return 0;
     }
@@ -130,8 +133,8 @@ class ManageGitProtection extends Command
 
         if ($lastCheck) {
             $this->line('');
-            $this->line('Last integrity check: ' . $lastCheck);
-            $this->line('Status: ' . ($lastStatus === 'clean' ? 'Clean' : 'Modified files detected'));
+            $this->line('Last integrity check: '.$lastCheck);
+            $this->line('Status: '.($lastStatus === 'clean' ? 'Clean' : 'Modified files detected'));
         }
 
         return 0;
@@ -141,12 +144,13 @@ class ManageGitProtection extends Command
     {
         $email = $this->option('email');
 
-        if (!$email) {
+        if (! $email) {
             $email = $this->ask('Enter committer email address');
         }
 
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $this->error('Invalid email address.');
+
             return 1;
         }
 
@@ -154,11 +158,12 @@ class ManageGitProtection extends Command
 
         if (in_array($email, $committers)) {
             $this->warn("$email is already an authorized committer.");
+
             return 0;
         }
 
         $committers[] = $email;
-        file_put_contents($this->authFile, implode("\n", $committers) . "\n");
+        file_put_contents($this->authFile, implode("\n", $committers)."\n");
         chmod($this->authFile, 0600);
 
         $this->info("Added $email to authorized committers.");
@@ -170,14 +175,14 @@ class ManageGitProtection extends Command
     {
         $email = $this->option('email');
 
-        if (!$email) {
+        if (! $email) {
             $email = $this->ask('Enter committer email to remove');
         }
 
         $committers = $this->getCommitters();
-        $committers = array_filter($committers, fn($e) => $e !== $email);
+        $committers = array_filter($committers, fn ($e) => $e !== $email);
 
-        file_put_contents($this->authFile, implode("\n", $committers) . "\n");
+        file_put_contents($this->authFile, implode("\n", $committers)."\n");
 
         $this->info("Removed $email from authorized committers.");
 
@@ -190,6 +195,7 @@ class ManageGitProtection extends Command
 
         if (empty($committers)) {
             $this->warn('No authorized committers configured.');
+
             return 0;
         }
 
@@ -203,7 +209,7 @@ class ManageGitProtection extends Command
 
     protected function getCommitters(): array
     {
-        if (!file_exists($this->authFile)) {
+        if (! file_exists($this->authFile)) {
             return [];
         }
 

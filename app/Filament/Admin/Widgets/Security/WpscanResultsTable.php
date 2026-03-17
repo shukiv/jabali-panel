@@ -14,11 +14,11 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class WpscanResultsTable extends Component implements HasTable, HasSchemas, HasActions
+class WpscanResultsTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public array $results = [];
 
@@ -30,6 +30,7 @@ class WpscanResultsTable extends Component implements HasTable, HasSchemas, HasA
     protected function getRecords(): array
     {
         $vulnerabilities = $this->results['vulnerabilities'] ?? [];
+
         return array_map(fn ($vuln, $index) => [
             'id' => $index,
             'title' => is_array($vuln) ? ($vuln['title'] ?? 'Unknown') : $vuln,

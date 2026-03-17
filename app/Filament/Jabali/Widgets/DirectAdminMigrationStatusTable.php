@@ -167,4 +167,3 @@ class DirectAdminMigrationStatusTable extends Component implements HasActions, H
         return $this->getTable()->render();
     }
 }
-

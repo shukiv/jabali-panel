@@ -227,6 +227,4 @@ class BackupSchedule extends Model
             default => 'gray',
         };
     }
-
-
 }

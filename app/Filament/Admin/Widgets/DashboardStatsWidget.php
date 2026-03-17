@@ -24,6 +24,7 @@ class DashboardStatsWidget extends Widget
         $domainCount = Domain::count();
         $mailboxCount = Mailbox::count();
         $databaseCount = MysqlCredential::count();
+
         return [
             [
                 'value' => $userCount,

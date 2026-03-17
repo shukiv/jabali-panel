@@ -30,7 +30,7 @@ return new class extends Migration
         });
 
         // Add ssl_enabled column to domains if not exists
-        if (!Schema::hasColumn('domains', 'ssl_enabled')) {
+        if (! Schema::hasColumn('domains', 'ssl_enabled')) {
             Schema::table('domains', function (Blueprint $table) {
                 $table->boolean('ssl_enabled')->default(false)->after('is_active');
             });

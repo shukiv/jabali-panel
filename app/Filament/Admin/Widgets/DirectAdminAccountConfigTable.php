@@ -139,4 +139,3 @@ class DirectAdminAccountConfigTable extends Component implements HasActions, Has
         return $this->getTable()->render();
     }
 }
-

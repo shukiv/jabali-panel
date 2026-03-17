@@ -10,6 +10,7 @@ use Illuminate\Console\Command;
 class NotifySshLogin extends Command
 {
     protected $signature = 'notify:ssh-login {username} {ip} {--method=password : Authentication method}';
+
     protected $description = 'Send notification for successful SSH login';
 
     public function handle(): int
