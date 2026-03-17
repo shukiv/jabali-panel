@@ -52,15 +52,9 @@ class ProtectedDirectories extends Page implements HasActions, HasForms, HasTabl
 
     public array $protectedDirs = [];
 
-    protected ?AgentClient $agent = null;
-
     protected function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     protected function getUsername(): string

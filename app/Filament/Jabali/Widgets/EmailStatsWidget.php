@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Jabali\Widgets;
 
 use App\Models\EmailDomain;
+use App\Support\Formatter;
 use Filament\Widgets\Widget;
 use Illuminate\Support\Facades\Auth;
 
@@ -48,25 +49,17 @@ class EmailStatsWidget extends Widget
                 'color' => 'info',
             ],
             [
-                'value' => $this->formatBytes($totalUsed),
+                'value' => Formatter::bytes($totalUsed),
                 'label' => __('Used'),
                 'icon' => 'heroicon-o-server',
                 'color' => 'warning',
             ],
             [
-                'value' => $percent . '%',
+                'value' => $percent.'%',
                 'label' => __('Quota'),
                 'icon' => 'heroicon-o-chart-pie',
                 'color' => $percent >= 90 ? 'danger' : ($percent >= 80 ? 'warning' : 'gray'),
             ],
         ];
-    }
-
-    protected function formatBytes(int $bytes): string
-    {
-        if ($bytes < 1024) return $bytes . ' B';
-        if ($bytes < 1048576) return round($bytes / 1024, 1) . ' KB';
-        if ($bytes < 1073741824) return round($bytes / 1048576, 1) . ' MB';
-        return round($bytes / 1073741824, 1) . ' GB';
     }
 }

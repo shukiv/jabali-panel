@@ -6,6 +6,8 @@ namespace App\Filament\Jabali\Pages;
 
 use App\Models\DnsSetting;
 use App\Services\Agent\AgentClient;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -59,8 +61,6 @@ class Files extends Page implements HasActions, HasForms, HasTable
 
     public array $items = [];
 
-    protected ?AgentClient $agent = null;
-
     public function getTitle(): string|Htmlable
     {
         return __('File Manager');
@@ -68,11 +68,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function mount(): void
@@ -226,7 +222,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
             $this->items = [];
             Notification::make()
                 ->title(__('Error loading directory'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -241,7 +237,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Invalid path'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -320,7 +316,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                     ->searchable(),
                 TextColumn::make('size')
                     ->label(__('Size'))
-                    ->formatStateUsing(fn (array $record): string => $record['is_dir'] ? '—' : $this->formatSize($record['size']))
+                    ->formatStateUsing(fn (array $record): string => $record['is_dir'] ? '—' : Formatter::bytes($record['size']))
                     ->color('gray'),
                 TextColumn::make('permissions')
                     ->label(__('Permissions'))
@@ -375,7 +371,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                             $this->getAgent()->fileWrite($this->getUsername(), $record['path'], $data['content']);
                             Notification::make()->title(__('File saved'))->success()->send();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error saving file'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error saving file'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('download')
@@ -402,7 +398,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                             $this->loadDirectory();
                             $this->resetTable();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error extracting archive'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error extracting archive'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('permissions')
@@ -461,7 +457,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                             $this->loadDirectory();
                             $this->resetTable();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error changing permissions'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error changing permissions'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('rename')
@@ -487,7 +483,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                             $this->loadDirectory();
                             $this->resetTable();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error renaming'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error renaming'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('moveToTrash')
@@ -503,7 +499,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                             $this->loadDirectory();
                             $this->resetTable();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
             ])
@@ -764,7 +760,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error moving item'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -802,7 +798,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Upload failed: :filename', ['filename' => $filename]))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -847,7 +843,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Error creating folder'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
                 }
@@ -898,7 +894,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Error creating file'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
                 }
@@ -945,7 +941,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                     } catch (Exception $e) {
                         Notification::make()
                             ->title(__('Upload failed: :filename', ['filename' => $file->getClientOriginalName()]))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                     }
@@ -1012,26 +1008,8 @@ class Files extends Page implements HasActions, HasForms, HasTable
                 filename: basename($path)
             );
         } catch (Exception $e) {
-            Notification::make()->title(__('Error downloading'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error downloading'))->body(SafeError::message($e))->danger()->send();
         }
-    }
-
-    public function formatSize(?int $bytes): string
-    {
-        if ($bytes === null) {
-            return '—';
-        }
-        if ($bytes < 1024) {
-            return $bytes.' B';
-        }
-        if ($bytes < 1048576) {
-            return round($bytes / 1024, 1).' KB';
-        }
-        if ($bytes < 1073741824) {
-            return round($bytes / 1048576, 1).' MB';
-        }
-
-        return round($bytes / 1073741824, 1).' GB';
     }
 
     public function formatDate(int $timestamp): string
@@ -1189,7 +1167,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
             $this->loadDirectory();
             $this->resetTable();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1200,7 +1178,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
             $this->getAgent()->fileDelete($this->getUsername(), $trashPath);
             Notification::make()->title(__('Permanently deleted'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1214,7 +1192,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                 ->success()
                 ->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 }

@@ -34,12 +34,13 @@ class InstallScannerTool implements ShouldQueue
 
         if (! $lock->get()) {
             Log::info("InstallScannerTool: lock already held for {$this->tool}");
+
             return;
         }
 
         try {
             // Installs can take a while; keep socket timeouts generous.
-            $agent = new AgentClient(timeout: 900);
+            $agent = app(AgentClient::class);
             $result = $agent->send('scanner.install', ['tool' => $this->tool]);
 
             if (! ($result['success'] ?? false)) {
@@ -57,4 +58,3 @@ class InstallScannerTool implements ShouldQueue
         }
     }
 }
-

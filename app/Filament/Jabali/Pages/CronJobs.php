@@ -7,6 +7,7 @@ namespace App\Filament\Jabali\Pages;
 use App\Models\CronJob;
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -48,8 +49,6 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
 
     public array $wordPressDomains = [];
 
-    protected ?AgentClient $agent = null;
-
     public function getTitle(): string|Htmlable
     {
         return __('Cron Jobs');
@@ -57,11 +56,7 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function getUsername(): string
@@ -280,7 +275,7 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Error creating cron job'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
                 }
@@ -375,7 +370,7 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Error setting up WordPress cron'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
                 }
@@ -486,7 +481,7 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error deleting cron job'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -520,7 +515,7 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error updating cron job'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -542,7 +537,7 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error toggling cron job'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -581,7 +576,7 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error running cron job'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

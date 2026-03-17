@@ -9,6 +9,8 @@ use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Services\Migration\WhmApiService;
 use App\Services\Migration\WhmMigrationStatusStore;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
@@ -125,8 +127,6 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
 
     public array $statusLog = [];
 
-    protected ?AgentClient $agent = null;
-
     protected ?WhmApiService $whm = null;
 
     public function getTitle(): string|Htmlable
@@ -202,7 +202,7 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
 
     public function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function getMigrationCacheKey(): string
@@ -758,7 +758,7 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
 
             Notification::make()
                 ->title(__('Connection failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -788,7 +788,7 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Refresh failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1020,7 +1020,7 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
                 throw new Exception(__('Backup file did not arrive'));
             }
 
-            $this->addAccountLog($cpanelUser, __('Backup received: :size', ['size' => $this->formatBytes(filesize($backupPath))]), 'success');
+            $this->addAccountLog($cpanelUser, __('Backup received: :size', ['size' => Formatter::bytes(filesize($backupPath))]), 'success');
 
             // Step 5: Get migration summary for this user
             $summary = $whm->getUserMigrationSummary($cpanelUser);
@@ -1192,7 +1192,7 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
 
             if ($attempt % 6 === 0) { // Log every 30 seconds
                 $this->addAccountLog($cpanelUser, __('Receiving backup... :size', [
-                    'size' => $this->formatBytes($currentSize),
+                    'size' => Formatter::bytes($currentSize),
                 ]), 'pending');
             }
         }
@@ -1259,16 +1259,5 @@ class WhmMigration extends Page implements HasActions, HasForms, HasInfolists, H
         $this->getMigrationStatusStore()->clear();
         $this->clearSession();
         $this->redirect(static::getUrl());
-    }
-
-    protected function formatBytes(int $bytes, int $precision = 2): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-
-        return round($bytes, $precision).' '.$units[$pow];
     }
 }

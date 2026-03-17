@@ -8,6 +8,7 @@ use App\Filament\Admin\Resources\Users\UserResource;
 use App\Models\HostingPackage;
 use App\Services\Agent\AgentClient;
 use App\Services\System\LinuxUserService;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions;
 use Filament\Forms\Components\Toggle;
@@ -48,7 +49,7 @@ class EditUser extends EditRecord
         if ($newQuota !== $this->originalQuota) {
             // Always try to apply quota when changed
             try {
-                $agent = new AgentClient;
+                $agent = app(AgentClient::class);
                 $result = $agent->quotaSet($this->record->username, (int) ($newQuota ?? 0));
 
                 if ($result['success'] ?? false) {
@@ -116,7 +117,7 @@ class EditUser extends EditRecord
                     } catch (Exception $e) {
                         Notification::make()
                             ->title(__('Linux user deletion failed'))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                     }

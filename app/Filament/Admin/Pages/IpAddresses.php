@@ -6,6 +6,7 @@ namespace App\Filament\Admin\Pages;
 
 use App\Models\DnsSetting;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -41,8 +42,6 @@ class IpAddresses extends Page implements HasActions, HasTable
 
     public ?string $defaultIpv6 = null;
 
-    protected ?AgentClient $agent = null;
-
     public static function getNavigationLabel(): string
     {
         return __('IP Addresses');
@@ -60,7 +59,7 @@ class IpAddresses extends Page implements HasActions, HasTable
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     protected function loadAddresses(): void
@@ -154,7 +153,7 @@ class IpAddresses extends Page implements HasActions, HasTable
                     } catch (Exception $e) {
                         Notification::make()
                             ->title(__('Failed to add IP'))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                         $this->dispatch('notificationsSent');
@@ -321,7 +320,7 @@ class IpAddresses extends Page implements HasActions, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to remove IP'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
             $this->dispatch('notificationsSent');

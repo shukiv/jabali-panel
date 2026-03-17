@@ -18,6 +18,8 @@ use App\Services\Agent\AgentClient;
 use App\Services\MailboxSharingService;
 use App\Services\RoundcubeIdentityService;
 use App\Services\System\MailRoutingSyncService;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use App\Support\WordList;
 use BackedEnum;
@@ -77,8 +79,6 @@ class Email extends Page implements HasActions, HasForms, HasTable
     public string $credPassword = '';
 
     public array $spamFormData = [];
-
-    protected ?AgentClient $agent = null;
 
     public function getTitle(): string|Htmlable
     {
@@ -233,11 +233,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function getUsername(): string
@@ -1079,7 +1075,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Mail routing sync failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -1256,7 +1252,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
                     $this->mountAction('showCredentials');
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error creating mailbox'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error creating mailbox'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1284,7 +1280,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             $this->mountAction('showCredentials');
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1311,7 +1307,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 ->success()
                 ->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1335,7 +1331,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             Notification::make()->title(__('Mailbox deleted'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1428,7 +1424,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
                     Notification::make()->title(__('Forwarder created'))->success()->send();
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error creating forwarder'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error creating forwarder'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1463,7 +1459,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             Notification::make()->title(__('Forwarder updated'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1492,7 +1488,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 ->success()
                 ->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1516,7 +1512,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             Notification::make()->title(__('Forwarder deleted'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1665,7 +1661,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
                     $this->setTab('autoresponders');
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1694,7 +1690,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             Notification::make()->title(__('Autoresponder updated'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1716,7 +1712,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 ->success()
                 ->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1733,7 +1729,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             Notification::make()->title(__('Autoresponder deleted'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1806,7 +1802,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                             $service->updatePermissions($record, $data['acl_rights']);
                             Notification::make()->title(__('Permissions updated'))->success()->send();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('revoke')
@@ -1835,7 +1831,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                             $service->revokeShare($record);
                             Notification::make()->title(__('Share revoked'))->success()->send();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
             ])
@@ -1932,7 +1928,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 } catch (\InvalidArgumentException $e) {
                     Notification::make()->title(__('Error'))->body(__($e->getMessage()))->danger()->send();
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1990,7 +1986,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 ->success()
                 ->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -2016,7 +2012,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 ->success()
                 ->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -2057,24 +2053,9 @@ class Email extends Page implements HasActions, HasForms, HasTable
             'mailboxes' => $totalMailboxes,
             'used_bytes' => $totalUsed,
             'quota_bytes' => $totalQuota,
-            'used_formatted' => $this->formatBytes($totalUsed),
-            'quota_formatted' => $this->formatBytes($totalQuota),
+            'used_formatted' => Formatter::bytes($totalUsed),
+            'quota_formatted' => Formatter::bytes($totalQuota),
             'percent' => $totalQuota > 0 ? round(($totalUsed / $totalQuota) * 100, 1) : 0,
         ];
-    }
-
-    protected function formatBytes(int $bytes): string
-    {
-        if ($bytes < 1024) {
-            return $bytes.' B';
-        }
-        if ($bytes < 1048576) {
-            return round($bytes / 1024, 1).' KB';
-        }
-        if ($bytes < 1073741824) {
-            return round($bytes / 1048576, 1).' MB';
-        }
-
-        return round($bytes / 1073741824, 1).' GB';
     }
 }

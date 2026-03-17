@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Pages;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
-use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
 use Filament\Notifications\Notification;
@@ -19,7 +19,6 @@ use Filament\Tables\Table;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\View;
 
 class ServerUpdates extends Page implements HasActions, HasTable
 {
@@ -60,8 +59,6 @@ class ServerUpdates extends Page implements HasActions, HasTable
 
     public ?string $refreshOutputTitle = null;
 
-    protected ?AgentClient $agent = null;
-
     protected bool $updatesLoaded = false;
 
     public function getTitle(): string|Htmlable
@@ -95,7 +92,7 @@ class ServerUpdates extends Page implements HasActions, HasTable
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function loadUpdates(bool $refreshTable = true, bool $refreshApt = false): void
@@ -133,7 +130,7 @@ class ServerUpdates extends Page implements HasActions, HasTable
             }
             Notification::make()
                 ->title(__('Failed to load updates'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -176,7 +173,7 @@ class ServerUpdates extends Page implements HasActions, HasTable
             $this->jabaliOutputAt = now()->format('Y-m-d H:i:s');
             Notification::make()
                 ->title(__('Update check failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         } finally {
@@ -213,7 +210,7 @@ class ServerUpdates extends Page implements HasActions, HasTable
             $this->jabaliOutputAt = now()->format('Y-m-d H:i:s');
             Notification::make()
                 ->title(__('Upgrade failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         } finally {
@@ -242,7 +239,7 @@ class ServerUpdates extends Page implements HasActions, HasTable
             $this->refreshOutputTitle = __('System Update Output');
             Notification::make()
                 ->title(__('Update failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

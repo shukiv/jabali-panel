@@ -33,7 +33,7 @@ class DomainObserver
     public function deleted(Domain $domain): void
     {
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->send('dns.delete_zone', ['domain' => $domain->domain]);
         } catch (Exception $e) {
             Log::warning("Failed to delete DNS zone for {$domain->domain}: ".$e->getMessage());
@@ -114,7 +114,7 @@ class DomainObserver
             $serverIp = $this->getServerIp();
             $serverIpv6 = $settings['default_ipv6'] ?? null;
 
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->send('dns.sync_zone', [
                 'domain' => $domain->domain,
                 'records' => $records,

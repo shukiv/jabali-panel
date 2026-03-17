@@ -55,7 +55,7 @@ class PhpManager extends Page implements HasActions, HasForms, HasTable
 
     protected function getAgent(): AgentClient
     {
-        return new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function mount(): void

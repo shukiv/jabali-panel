@@ -11,6 +11,7 @@ use Illuminate\Console\Command;
 class SyncMailboxQuotas extends Command
 {
     protected $signature = 'jabali:sync-mailbox-quotas';
+
     protected $description = 'Sync mailbox quota usage from disk to database';
 
     public function handle(): int
@@ -19,12 +20,13 @@ class SyncMailboxQuotas extends Command
 
         if ($mailboxes->isEmpty()) {
             $this->info('No mailboxes to sync.');
+
             return 0;
         }
 
         $this->info("Syncing quota usage for {$mailboxes->count()} mailboxes...");
 
-        $agent = new AgentClient();
+        $agent = app(AgentClient::class);
         $synced = 0;
         $errors = 0;
 
@@ -51,7 +53,7 @@ class SyncMailboxQuotas extends Command
             }
         }
 
-        $this->info("Synced {$synced} mailboxes" . ($errors ? ", {$errors} errors" : ''));
+        $this->info("Synced {$synced} mailboxes".($errors ? ", {$errors} errors" : ''));
 
         return $errors > 0 ? 1 : 0;
     }

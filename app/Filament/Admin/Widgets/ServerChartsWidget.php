@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Admin\Widgets;
 
+use App\Support\Formatter;
 use Filament\Widgets\Widget;
 
 class ServerChartsWidget extends Widget
@@ -131,8 +132,8 @@ class ServerChartsWidget extends Widget
                 'used' => $used,
                 'total' => $total,
                 'usage' => round(($used / $total) * 100, 1),
-                'used_human' => $this->formatBytes($used),
-                'total_human' => $this->formatBytes($total),
+                'used_human' => Formatter::bytes($used),
+                'total_human' => Formatter::bytes($total),
             ];
         }
 
@@ -183,23 +184,10 @@ class ServerChartsWidget extends Widget
         return [
             'total_rx' => $totalRx,
             'total_tx' => $totalTx,
-            'total_rx_human' => $this->formatBytes($totalRx),
-            'total_tx_human' => $this->formatBytes($totalTx),
-            'rx_speed' => $this->formatBytes($rxSpeed).'/s',
-            'tx_speed' => $this->formatBytes($txSpeed).'/s',
+            'total_rx_human' => Formatter::bytes($totalRx),
+            'total_tx_human' => Formatter::bytes($totalTx),
+            'rx_speed' => Formatter::bytes($rxSpeed).'/s',
+            'tx_speed' => Formatter::bytes($txSpeed).'/s',
         ];
-    }
-
-    private function formatBytes(int|float $bytes): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $size = max(0, (float) $bytes);
-        $unit = 0;
-        while ($size >= 1024 && $unit < count($units) - 1) {
-            $size /= 1024;
-            $unit++;
-        }
-
-        return round($size, 1).' '.$units[$unit];
     }
 }

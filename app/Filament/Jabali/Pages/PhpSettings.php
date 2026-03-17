@@ -52,15 +52,9 @@ class PhpSettings extends Page implements HasActions, HasForms
     // PHP Settings form data
     public ?array $data = [];
 
-    protected ?AgentClient $agent = null;
-
     protected function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     protected function getUsername(): string

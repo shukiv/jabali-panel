@@ -8,6 +8,7 @@ use App\Filament\Admin\Widgets\ServerChartsWidget;
 use App\Filament\Admin\Widgets\ServerInfoWidget;
 use App\Models\ServerProcess;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -50,8 +51,6 @@ class ServerStatus extends Page implements HasTable
     public ?string $lastUpdated = null;
 
     public int $processLimit = 50;
-
-    protected ?AgentClient $agent = null;
 
     public static function getNavigationLabel(): string
     {
@@ -130,11 +129,7 @@ class ServerStatus extends Page implements HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function mount(): void
@@ -340,7 +335,7 @@ class ServerStatus extends Page implements HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to kill process'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

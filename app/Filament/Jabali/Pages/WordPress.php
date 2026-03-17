@@ -10,6 +10,7 @@ use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Models\MysqlCredential;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
@@ -84,8 +85,6 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
 
     public ?string $scanningSiteUrl = null;
 
-    protected ?AgentClient $agent = null;
-
     public function getTitle(): string|Htmlable
     {
         return __('WordPress Manager');
@@ -93,11 +92,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function getUsername(): string
@@ -322,7 +317,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                             } catch (Exception $e) {
                                 Notification::make()
                                     ->title(__('Deletion Failed'))
-                                    ->body($e->getMessage())
+                                    ->body(SafeError::message($e))
                                     ->danger()
                                     ->send();
                             }
@@ -678,7 +673,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Installation Failed'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
                 }
@@ -699,7 +694,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Auto-login Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -752,7 +747,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Deletion Failed'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
                 }
@@ -835,7 +830,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Cache Toggle Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -866,7 +861,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Debug Toggle Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -897,7 +892,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Auto-Update Toggle Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -932,7 +927,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Update Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1021,7 +1016,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Staging Creation Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1051,7 +1046,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Push Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1081,7 +1076,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Flush Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1557,7 +1552,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Screenshot failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

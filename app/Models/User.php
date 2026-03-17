@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\Formatter;
 use Filament\Models\Contracts\FilamentUser;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -66,7 +67,7 @@ class User extends Authenticatable implements FilamentUser
 
             // Clean up email forwarders from system maps before DB cascade deletes them
             try {
-                $agent = new \App\Services\Agent\AgentClient;
+                $agent = app(\App\Services\Agent\AgentClient::class);
                 $domains = $user->domains()->with('emailDomain.forwarders', 'emailDomain.domain')->get();
 
                 foreach ($domains as $domain) {
@@ -152,10 +153,7 @@ class User extends Authenticatable implements FilamentUser
     {
         // Disk usage must be obtained via the agent (root) to avoid permission-based undercounting.
         try {
-            $agent = new \App\Services\Agent\AgentClient(
-                (string) config('jabali.agent.socket', '/var/run/jabali/agent.sock'),
-                (int) config('jabali.agent.timeout', 120),
-            );
+            $agent = app(\App\Services\Agent\AgentClient::class);
 
             $mount = $this->home_directory ?: ("/home/{$this->username}");
             $result = $agent->quotaGet($this->username, $mount);
@@ -179,7 +177,7 @@ class User extends Authenticatable implements FilamentUser
     {
         $bytes = $this->getDiskUsageBytes();
 
-        return $this->formatBytes($bytes);
+        return Formatter::bytes($bytes);
     }
 
     /**
@@ -203,19 +201,5 @@ class User extends Authenticatable implements FilamentUser
         $quota = $this->quota_bytes;
 
         return $quota > 0 ? min(100, round(($used / $quota) * 100, 1)) : 0;
-    }
-
-    /**
-     * Format bytes to human readable string.
-     */
-    protected function formatBytes(int $bytes, int $precision = 1): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-
-        return round($bytes, $precision).' '.$units[$pow];
     }
 }

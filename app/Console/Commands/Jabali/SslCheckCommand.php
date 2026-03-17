@@ -40,7 +40,7 @@ class SslCheckCommand extends Command
     public function __construct()
     {
         parent::__construct();
-        $this->agent = new AgentClient;
+        $this->agent = app(AgentClient::class);
     }
 
     public function handle(): int

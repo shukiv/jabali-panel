@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets\Security;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -17,18 +18,18 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class BannedIpsTable extends Component implements HasTable, HasSchemas, HasActions
+class BannedIpsTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public array $jails = [];
 
     protected function reloadBannedIps(): void
     {
         try {
-            $agent = new AgentClient();
+            $agent = app(AgentClient::class);
             $result = $agent->send('fail2ban.status', []);
             if ($result['success'] ?? false) {
                 $this->jails = $result['jails'] ?? [];
@@ -58,6 +59,7 @@ class BannedIpsTable extends Component implements HasTable, HasSchemas, HasActio
                 ];
             }
         }
+
         return $records;
     }
 
@@ -91,7 +93,7 @@ class BannedIpsTable extends Component implements HasTable, HasSchemas, HasActio
                     ]))
                     ->action(function (array $record): void {
                         try {
-                            $agent = new AgentClient();
+                            $agent = app(AgentClient::class);
                             $result = $agent->send('fail2ban.unban_ip', [
                                 'jail' => $record['jail'],
                                 'ip' => $record['ip'],
@@ -115,7 +117,7 @@ class BannedIpsTable extends Component implements HasTable, HasSchemas, HasActio
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Error'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

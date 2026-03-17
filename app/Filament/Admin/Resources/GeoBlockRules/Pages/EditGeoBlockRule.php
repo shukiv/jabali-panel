@@ -6,6 +6,7 @@ namespace App\Filament\Admin\Resources\GeoBlockRules\Pages;
 
 use App\Filament\Admin\Resources\GeoBlockRules\GeoBlockRuleResource;
 use App\Services\System\GeoBlockService;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions\DeleteAction;
 use Filament\Notifications\Notification;
@@ -40,7 +41,7 @@ class EditGeoBlockRule extends EditRecord
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Geo rules apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

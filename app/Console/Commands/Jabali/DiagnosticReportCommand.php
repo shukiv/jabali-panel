@@ -107,7 +107,7 @@ class DiagnosticReportCommand extends Command
 
         // Server software versions
         try {
-            $agent = new AgentClient(timeout: 5);
+            $agent = app(AgentClient::class);
             $data['server_versions'] = $agent->serverVersions();
         } catch (Exception) {
             try {
@@ -203,7 +203,7 @@ class DiagnosticReportCommand extends Command
 
         // Services
         try {
-            $agent = new AgentClient(timeout: 5);
+            $agent = app(AgentClient::class);
             $result = $agent->send('service.list', ['services' => [
                 'nginx', 'mariadb', 'mysql', 'postfix', 'dovecot',
                 'named', 'bind9', 'redis-server', 'fail2ban', 'jabali-agent',
@@ -220,7 +220,7 @@ class DiagnosticReportCommand extends Command
 
         // Disk
         try {
-            $agent = new AgentClient(timeout: 5);
+            $agent = app(AgentClient::class);
             $data['disk'] = $agent->metricsDisk();
         } catch (Exception) {
             try {
@@ -233,7 +233,7 @@ class DiagnosticReportCommand extends Command
 
         // Load & memory
         try {
-            $agent = new AgentClient(timeout: 5);
+            $agent = app(AgentClient::class);
             $data['load_memory'] = $agent->metricsOverview();
         } catch (Exception) {
             try {

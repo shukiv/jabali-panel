@@ -67,7 +67,7 @@ class MailAutoconfigSyncCommand extends Command
                 $hostname = gethostname() ?: 'localhost';
                 $serverIpv6 = $settings['default_ipv6'] ?? null;
 
-                $agent = new AgentClient;
+                $agent = app(AgentClient::class);
                 $agent->send('dns.sync_zone', [
                     'domain' => $domain->domain,
                     'records' => $allRecords,

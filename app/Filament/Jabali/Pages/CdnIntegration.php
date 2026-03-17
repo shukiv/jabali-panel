@@ -6,6 +6,7 @@ namespace App\Filament\Jabali\Pages;
 
 use App\Models\CloudflareZone;
 use App\Models\Domain;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -93,7 +94,7 @@ class CdnIntegration extends Page implements HasActions, HasTable
 
                             Notification::make()->title(__('Cloudflare connected'))->success()->send();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Connection failed'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Connection failed'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('purge')
@@ -120,7 +121,7 @@ class CdnIntegration extends Page implements HasActions, HasTable
 
                             Notification::make()->title(__('Cache purged'))->success()->send();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Purge failed'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Purge failed'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('disconnect')

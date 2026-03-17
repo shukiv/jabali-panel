@@ -9,6 +9,7 @@ use App\Models\DnsRecord;
 use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
@@ -49,8 +50,6 @@ class DnsZones extends Page implements HasActions, HasForms, HasTable
 
     public ?int $selectedDomainId = null;
 
-    protected ?AgentClient $agent = null;
-
     // Pending changes tracking
     public array $pendingEdits = [];    // [record_id => [field => value]]
 
@@ -70,7 +69,7 @@ class DnsZones extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function mount(): void
@@ -492,7 +491,7 @@ class DnsZones extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to save changes'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -575,7 +574,7 @@ class DnsZones extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to reset records'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -853,7 +852,7 @@ class DnsZones extends Page implements HasActions, HasForms, HasTable
             $this->syncZoneFile($domain->domain);
             Notification::make()->title(__('Zone rebuilt for :domain', ['domain' => $domain->domain]))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -879,7 +878,7 @@ class DnsZones extends Page implements HasActions, HasForms, HasTable
             $this->pendingDeletes = [];
             $this->pendingAdds = [];
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed'))->body(SafeError::message($e))->danger()->send();
         }
     }
 

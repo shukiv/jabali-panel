@@ -14,7 +14,7 @@ class LinuxUserService
 
     public function __construct(?AgentClient $agent = null)
     {
-        $this->agent = $agent ?? new AgentClient;
+        $this->agent = $agent ?? app(AgentClient::class);
     }
 
     /**

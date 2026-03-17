@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\DnsSetting;
 use App\Models\NotificationLog;
+use App\Support\Formatter;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -14,9 +15,10 @@ class AdminNotificationService
     public static function send(string $type, string $subject, string $message, array $context = []): bool
     {
         $settingKey = "notify_{$type}";
-        if (!DnsSetting::get($settingKey, true)) {
+        if (! DnsSetting::get($settingKey, true)) {
             // Log as skipped (notification type disabled)
             self::logNotification($type, $subject, $message, [], 'skipped', $context, 'Notification type disabled');
+
             return false;
         }
 
@@ -24,22 +26,24 @@ class AdminNotificationService
         if (empty($recipients)) {
             Log::warning("AdminNotification: No recipients configured for {$type}");
             self::logNotification($type, $subject, $message, [], 'skipped', $context, 'No recipients configured');
+
             return false;
         }
 
         $recipientList = array_filter(array_map('trim', explode(',', $recipients)));
         if (empty($recipientList)) {
             self::logNotification($type, $subject, $message, [], 'skipped', $context, 'No valid recipients');
+
             return false;
         }
 
         try {
             $hostname = gethostname();
-            $fullMessage = $message . "\n\n---\n" .
-                           "Server: {$hostname}\n" .
-                           "Time: " . now()->format('Y-m-d H:i:s') . "\n";
+            $fullMessage = $message."\n\n---\n".
+                           "Server: {$hostname}\n".
+                           'Time: '.now()->format('Y-m-d H:i:s')."\n";
 
-            if (!empty($context)) {
+            if (! empty($context)) {
                 $fullMessage .= "\nDetails:\n";
                 foreach ($context as $key => $value) {
                     $fullMessage .= "- {$key}: {$value}\n";
@@ -56,10 +60,12 @@ class AdminNotificationService
 
             Log::info("AdminNotification sent: {$type} - {$subject}");
             self::logNotification($type, $subject, $message, $recipientList, 'sent', $context);
+
             return true;
         } catch (\Exception $e) {
             Log::error("AdminNotification failed: {$e->getMessage()}");
             self::logNotification($type, $subject, $message, $recipientList, 'failed', $context, $e->getMessage());
+
             return false;
         }
     }
@@ -109,14 +115,14 @@ class AdminNotificationService
         return self::send(
             'backup_failures',
             "Backup Failed: {$backupName}",
-            "A scheduled backup has failed.",
+            'A scheduled backup has failed.',
             ['Backup Name' => $backupName, 'Error' => $error]
         );
     }
 
     public static function backupSuccess(string $backupName, int $sizeBytes, ?string $destination = null): bool
     {
-        $size = self::formatBytes($sizeBytes);
+        $size = Formatter::bytes($sizeBytes);
         $context = [
             'Backup Name' => $backupName,
             'Size' => $size,
@@ -128,19 +134,9 @@ class AdminNotificationService
         return self::send(
             'backup_success',
             "Backup Completed: {$backupName}",
-            "A backup has completed successfully.",
+            'A backup has completed successfully.',
             $context
         );
-    }
-
-    protected static function formatBytes(int $bytes, int $precision = 2): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-        return round($bytes, $precision) . ' ' . $units[$pow];
     }
 
     public static function diskQuotaWarning(string $username, int $usagePercent): bool
@@ -158,7 +154,7 @@ class AdminNotificationService
         return self::send(
             'login_failures',
             "Login Failure Alert: {$ip}",
-            "Multiple failed login attempts detected.",
+            'Multiple failed login attempts detected.',
             ['IP Address' => $ip, 'Service' => $service, 'Attempts' => $attempts]
         );
     }
@@ -167,7 +163,7 @@ class AdminNotificationService
     {
         return self::send(
             'system_updates',
-            "System Updates Available",
+            'System Updates Available',
             "{$updateCount} system update(s) are available for your Jabali Panel.",
             ['Available Updates' => $updateCount]
         );
@@ -178,7 +174,7 @@ class AdminNotificationService
         return self::send(
             'ssh_logins',
             "SSH Login: {$username}",
-            "Successful SSH login detected.",
+            'Successful SSH login detected.',
             ['Username' => $username, 'IP Address' => $ip, 'Auth Method' => $method]
         );
     }

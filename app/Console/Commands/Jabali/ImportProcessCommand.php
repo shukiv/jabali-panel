@@ -21,8 +21,6 @@ class ImportProcessCommand extends Command
 
     protected $description = 'Process a server import job (cPanel/DirectAdmin/HestiaCP migration)';
 
-    private ?AgentClient $agent = null;
-
     public function handle(): int
     {
         $importId = (int) $this->argument('import_id');
@@ -109,11 +107,7 @@ class ImportProcessCommand extends Command
 
     private function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     private function processAccount(ServerImport $import, ServerImportAccount $account, array $options): void

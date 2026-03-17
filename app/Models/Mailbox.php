@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\Formatter;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -128,7 +129,7 @@ class Mailbox extends Model
      */
     public function getQuotaFormattedAttribute(): string
     {
-        return $this->formatBytes($this->quota_bytes);
+        return Formatter::bytes($this->quota_bytes);
     }
 
     /**
@@ -136,7 +137,7 @@ class Mailbox extends Model
      */
     public function getQuotaUsedFormattedAttribute(): string
     {
-        return $this->formatBytes($this->quota_used_bytes);
+        return Formatter::bytes($this->quota_used_bytes);
     }
 
     /**
@@ -153,23 +154,5 @@ class Mailbox extends Model
     public function isOverQuota(): bool
     {
         return $this->quota_used_bytes >= $this->quota_bytes;
-    }
-
-    /**
-     * Format bytes to human readable
-     */
-    protected function formatBytes(int $bytes): string
-    {
-        if ($bytes < 1024) {
-            return $bytes.' B';
-        }
-        if ($bytes < 1048576) {
-            return round($bytes / 1024, 1).' KB';
-        }
-        if ($bytes < 1073741824) {
-            return round($bytes / 1048576, 1).' MB';
-        }
-
-        return round($bytes / 1073741824, 1).' GB';
     }
 }

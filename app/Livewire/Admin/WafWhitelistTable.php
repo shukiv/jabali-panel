@@ -6,6 +6,7 @@ namespace App\Livewire\Admin;
 
 use App\Models\Setting;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -24,11 +25,11 @@ use Illuminate\Support\Arr;
 use Livewire\Attributes\On;
 use Livewire\Component;
 
-class WafWhitelistTable extends Component implements HasTable, HasForms, HasActions
+class WafWhitelistTable extends Component implements HasActions, HasForms, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithForms;
     use InteractsWithActions;
+    use InteractsWithForms;
+    use InteractsWithTable;
 
     #[On('waf-whitelist-updated')]
     public function refreshWhitelist(): void
@@ -151,6 +152,7 @@ class WafWhitelistTable extends Component implements HasTable, HasForms, HasActi
             if (! is_array($rule)) {
                 $rule = [];
                 $changed = true;
+
                 continue;
             }
 
@@ -190,7 +192,7 @@ class WafWhitelistTable extends Component implements HasTable, HasForms, HasActi
     protected function normalizeLabel(array $rule): string
     {
         $label = trim((string) ($rule['label'] ?? ''));
-        if ($label !== '' && !str_contains($label, '{rule}') && !str_contains($label, ':rule')) {
+        if ($label !== '' && ! str_contains($label, '{rule}') && ! str_contains($label, ':rule')) {
             return $label;
         }
 
@@ -225,7 +227,7 @@ class WafWhitelistTable extends Component implements HasTable, HasForms, HasActi
         Setting::set('waf_whitelist_rules', json_encode(array_values($rules), JSON_UNESCAPED_SLASHES));
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->wafApplySettings(
                 Setting::get('waf_enabled', '0') === '1',
                 (string) Setting::get('waf_paranoia', '1'),
@@ -235,7 +237,7 @@ class WafWhitelistTable extends Component implements HasTable, HasForms, HasActi
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Whitelist saved, but apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }

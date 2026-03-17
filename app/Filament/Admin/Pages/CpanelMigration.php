@@ -8,6 +8,8 @@ use App\Jobs\RunCpanelRestore;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Services\Migration\CpanelApiService;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
@@ -160,8 +162,6 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
     public ?string $restoreStatus = null;
 
-    protected ?AgentClient $agent = null;
-
     protected ?CpanelApiService $cpanel = null;
 
     public function getTitle(): string|Htmlable
@@ -229,7 +229,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
     public function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     protected function getTargetUser(): ?User
@@ -670,7 +670,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
                     ->visible(fn () => $this->isConnected && $this->sourceType === 'local')
                     ->schema([
                         Text::make(fn () => __('File: :path', ['path' => basename($this->localBackupPath ?? '')])),
-                        Text::make(fn () => __('Size: :size', ['size' => $this->formatBytes(filesize($this->localBackupPath ?? '') ?: 0)])),
+                        Text::make(fn () => __('Size: :size', ['size' => Formatter::bytes(filesize($this->localBackupPath ?? '') ?: 0)])),
                         Text::make(__('You can proceed to the next step.'))->color('success'),
                     ]),
             ])
@@ -729,7 +729,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
                                 'username' => $this->getTargetUser()?->username ?? '-',
                             ])),
                             Text::make(__('File: :name', ['name' => $this->backupFilename ?? basename($this->localBackupPath ?? '')])),
-                            Text::make(__('Size: :size', ['size' => $this->formatBytes($this->backupSize)])),
+                            Text::make(__('Size: :size', ['size' => Formatter::bytes($this->backupSize)])),
                         ]),
 
                     Section::make(__('Analysis Progress'))
@@ -827,7 +827,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
                 ->iconColor('success')
                 ->schema([
                     Text::make(__('File: :name', ['name' => $this->backupFilename ?? basename($this->backupPath)])),
-                    Text::make(__('Size: :size', ['size' => $this->formatBytes($this->backupSize)])),
+                    Text::make(__('Size: :size', ['size' => Formatter::bytes($this->backupSize)])),
                 ])
                 ->compact();
         }
@@ -1362,7 +1362,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
             Notification::make()
                 ->title(__('Connection failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1555,7 +1555,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Invalid backup'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
 
@@ -1583,7 +1583,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
         Notification::make()
             ->title(__('File validated'))
-            ->body(__('Backup file is valid. Size: :size', ['size' => $this->formatBytes($this->backupSize)]))
+            ->body(__('Backup file is valid. Size: :size', ['size' => Formatter::bytes($this->backupSize)]))
             ->success()
             ->send();
     }
@@ -1768,7 +1768,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
             Notification::make()
                 ->title(__('Backup transfer failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1808,7 +1808,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
             $size2 = filesize($backupFile);
 
             if ($size1 !== $size2) {
-                $this->addStatusLog(__('Receiving backup file... (:size)', ['size' => $this->formatBytes($size2)]), 'pending');
+                $this->addStatusLog(__('Receiving backup file... (:size)', ['size' => Formatter::bytes($size2)]), 'pending');
 
                 return;
             }
@@ -1847,7 +1847,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
                 ->title(__('Backup received'))
                 ->body(__('Backup file :name (:size) is ready. Click Next to continue.', [
                     'name' => $this->backupFilename,
-                    'size' => $this->formatBytes($this->backupSize),
+                    'size' => Formatter::bytes($this->backupSize),
                 ]))
                 ->success()
                 ->send();
@@ -1921,7 +1921,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
             if ($this->lastSeenBackupSize !== $currentSize || $currentSize < $minBackupSize) {
                 $this->lastSeenBackupSize = $currentSize;
                 $this->addStatusLog(__('Backup in progress... :size (check :count)', [
-                    'size' => $this->formatBytes($currentSize),
+                    'size' => Formatter::bytes($currentSize),
                     'count' => $this->pollCount,
                 ]), 'pending');
 
@@ -1931,7 +1931,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
             // Size is stable and large enough - backup is complete
             $this->addStatusLog(__('Backup complete on cPanel: :name (:size)', [
                 'name' => $remoteFilename,
-                'size' => $this->formatBytes($currentSize),
+                'size' => Formatter::bytes($currentSize),
             ]), 'success');
             $this->addStatusLog(__('Downloading backup file...'), 'pending');
 
@@ -1941,8 +1941,8 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
                 $percent = $total > 0 ? round(($downloaded / $total) * 100) : 0;
                 $this->addStatusLog(__('Downloading... :percent% (:downloaded / :total)', [
                     'percent' => $percent,
-                    'downloaded' => $this->formatBytes($downloaded),
-                    'total' => $this->formatBytes($total),
+                    'downloaded' => Formatter::bytes($downloaded),
+                    'total' => Formatter::bytes($total),
                 ]), 'pending');
             });
 
@@ -1994,7 +1994,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
                 ->title(__('Backup downloaded'))
                 ->body(__('Backup file :name (:size) is ready. Click Next to continue.', [
                     'name' => $this->backupFilename,
-                    'size' => $this->formatBytes($this->backupSize),
+                    'size' => Formatter::bytes($this->backupSize),
                 ]))
                 ->success()
                 ->send();
@@ -2004,7 +2004,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
             Notification::make()
                 ->title(__('Download failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -2156,7 +2156,7 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
 
             Notification::make()
                 ->title(__('Analysis failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         } finally {
@@ -2363,16 +2363,5 @@ class CpanelMigration extends Page implements HasActions, HasForms, HasInfolists
         session()->save();
 
         $this->redirect(static::getUrl());
-    }
-
-    protected function formatBytes(int $bytes, int $precision = 2): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-
-        return round($bytes, $precision).' '.$units[$pow];
     }
 }

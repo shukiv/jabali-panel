@@ -12,6 +12,8 @@ use App\Models\EmailDomain;
 use App\Models\Mailbox;
 use App\Models\UserRemoteBackup;
 use App\Services\Agent\AgentClient;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -70,8 +72,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     public ?int $selectedBackupId = null;
 
-    protected ?AgentClient $agent = null;
-
     public function getTitle(): string|Htmlable
     {
         return __('Backups');
@@ -79,7 +79,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     protected function getUser()
@@ -524,7 +524,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             }
             Notification::make()
                 ->title(__('Restore failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -724,7 +724,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 'completed_at' => now(),
                 'error_message' => $e->getMessage(),
             ]);
-            Notification::make()->title(__('Backup failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Backup failed'))->body(SafeError::message($e))->danger()->send();
         }
 
         $this->resetTable();
@@ -859,7 +859,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['error'] ?? 'Delete failed');
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Delete failed'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Delete failed'))->body(SafeError::message($e))->danger()->send();
                 }
 
                 $this->resetTable();
@@ -916,7 +916,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 ]);
 
                 // Format size for display
-                $sizeFormatted = $this->formatBytes($result['size'] ?? 0);
+                $sizeFormatted = Formatter::bytes($result['size'] ?? 0);
 
                 // Create download URL
                 $downloadUrl = url('/jabali-panel/backup-download?path='.base64_encode($localPath));
@@ -945,7 +945,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? 'Download failed');
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Download failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Download failed'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1073,7 +1073,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             }
         } catch (Exception $e) {
             $restore->markAsFailed($e->getMessage());
-            Notification::make()->title(__('Restore failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Restore failed'))->body(SafeError::message($e))->danger()->send();
         }
 
         $this->resetTable();
@@ -1150,7 +1150,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             } catch (Exception $e) {
                                 Notification::make()
                                     ->title(__('Connection failed'))
-                                    ->body($e->getMessage())
+                                    ->body(SafeError::message($e))
                                     ->danger()
                                     ->send();
                             }
@@ -1185,7 +1185,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Connection failed'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
 
@@ -1240,7 +1240,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 'test_status' => 'failed',
                 'test_message' => $e->getMessage(),
             ]);
-            Notification::make()->title(__('Test failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Test failed'))->body(SafeError::message($e))->danger()->send();
         }
 
         $this->resetTable();
@@ -1252,16 +1252,5 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         BackupDestination::where('id', $id)->where('user_id', $user->id)->delete();
         Notification::make()->title(__('Destination deleted'))->success()->send();
         $this->resetTable();
-    }
-
-    protected function formatBytes(int $bytes, int $precision = 2): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-
-        return round($bytes, $precision).' '.$units[$pow];
     }
 }

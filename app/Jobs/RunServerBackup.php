@@ -48,7 +48,7 @@ class RunServerBackup implements ShouldQueue
         $isIncrementalRemote = $backupType === 'incremental' && $backup->destination_id;
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
 
             if ($isIncrementalRemote) {
                 $destination = $backup->destination;
@@ -240,7 +240,7 @@ class RunServerBackup implements ShouldQueue
 
         // Get backups to delete (keep newest $retentionCount)
         $toDelete = $backups->slice($retentionCount);
-        $agent = new AgentClient;
+        $agent = app(AgentClient::class);
 
         foreach ($toDelete as $oldBackup) {
             Log::info("RunServerBackup: Deleting old backup per retention: {$oldBackup->name}");

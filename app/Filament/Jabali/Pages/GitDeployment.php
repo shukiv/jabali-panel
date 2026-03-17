@@ -44,8 +44,6 @@ class GitDeployment extends Page implements HasActions, HasForms, HasTable
 
     protected string $view = 'filament.jabali.pages.git-deployment';
 
-    protected ?AgentClient $agent = null;
-
     public ?string $deployKey = null;
 
     public function getTitle(): string|Htmlable
@@ -60,11 +58,7 @@ class GitDeployment extends Page implements HasActions, HasForms, HasTable
 
     protected function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     protected function getUsername(): string

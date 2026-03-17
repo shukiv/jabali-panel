@@ -93,7 +93,7 @@ Route::post('/internal/page-cache', function (Request $request) use ($allowInter
     }
 
     try {
-        $agent = new AgentClient;
+        $agent = app(AgentClient::class);
 
         if ($enabled) {
             $result = $agent->send('wp.page_cache_enable', [
@@ -162,7 +162,7 @@ Route::post('/internal/page-cache-purge', function (Request $request) use ($allo
     }
 
     try {
-        $agent = new AgentClient;
+        $agent = app(AgentClient::class);
 
         if ($purgeAll || empty($paths)) {
             // Purge entire domain cache

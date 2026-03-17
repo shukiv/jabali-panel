@@ -6,6 +6,7 @@ namespace App\Filament\Admin\Resources\GeoBlockRules\Pages;
 
 use App\Filament\Admin\Resources\GeoBlockRules\GeoBlockRuleResource;
 use App\Services\System\GeoBlockService;
+use App\Support\SafeError;
 use Exception;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
@@ -26,7 +27,7 @@ class CreateGeoBlockRule extends CreateRecord
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Geo rules apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

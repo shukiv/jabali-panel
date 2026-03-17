@@ -7,6 +7,7 @@ namespace App\Filament\Admin\Resources\GeoBlockRules\Pages;
 use App\Filament\Admin\Resources\GeoBlockRules\GeoBlockRuleResource;
 use App\Models\DnsSetting;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
@@ -61,7 +62,7 @@ class ListGeoBlockRules extends ListRecords
                     DnsSetting::set('geoip_edition_ids', $editionIds);
 
                     try {
-                        $agent = new AgentClient;
+                        $agent = app(AgentClient::class);
                         $result = $agent->geoUpdateDatabase($accountId, $licenseKey, $editionIds);
 
                         Notification::make()
@@ -72,7 +73,7 @@ class ListGeoBlockRules extends ListRecords
                     } catch (Exception $e) {
                         Notification::make()
                             ->title(__('GeoIP update failed'))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                     }
@@ -119,7 +120,7 @@ class ListGeoBlockRules extends ListRecords
                     $content = base64_encode((string) file_get_contents($filePath));
 
                     try {
-                        $agent = new AgentClient;
+                        $agent = app(AgentClient::class);
                         $result = $agent->geoUploadDatabase($edition, $content);
 
                         Notification::make()
@@ -130,7 +131,7 @@ class ListGeoBlockRules extends ListRecords
                     } catch (Exception $e) {
                         Notification::make()
                             ->title(__('GeoIP upload failed'))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                     }

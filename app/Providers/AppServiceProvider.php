@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use App\Models\Domain;
 use App\Observers\DomainObserver;
+use App\Services\Agent\AgentClient;
+use App\Services\Agent\AgentClientInterface;
 use Filament\Support\Facades\FilamentAsset;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -16,7 +18,15 @@ class AppServiceProvider extends ServiceProvider
     /**
      * Register any application services.
      */
-    public function register(): void {}
+    public function register(): void
+    {
+        $this->app->singleton(AgentClient::class, fn (): AgentClient => new AgentClient(
+            (string) config('jabali.agent.socket', '/var/run/jabali/agent.sock'),
+            (int) config('jabali.agent.timeout', 30),
+        ));
+
+        $this->app->alias(AgentClient::class, AgentClientInterface::class);
+    }
 
     /**
      * Bootstrap any application services.

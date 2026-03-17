@@ -24,7 +24,7 @@ class GeoBlockService
             ->values()
             ->toArray();
 
-        $agent = new AgentClient;
+        $agent = app(AgentClient::class);
         $agent->geoApplyRules($rules);
     }
 }

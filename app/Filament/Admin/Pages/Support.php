@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Admin\Pages;
 
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -71,7 +72,7 @@ class Support extends Page
                     } catch (Exception $e) {
                         Notification::make()
                             ->title(__('Report generation failed'))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                     }

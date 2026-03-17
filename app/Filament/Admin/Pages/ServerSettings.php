@@ -11,6 +11,7 @@ use App\Models\DnsSetting;
 use App\Models\HostingPackage;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
@@ -101,7 +102,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     protected function getAgent(): AgentClient
     {
-        return new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function getTitle(): string|Htmlable
@@ -833,7 +834,7 @@ class ServerSettings extends Page implements HasActions, HasForms
                 Notification::make()->title(__('Logo uploaded'))->body(__('Refresh to see changes.'))->success()->send();
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to upload logo'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to upload logo'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -848,7 +849,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             $this->currentLogo = null;
             Notification::make()->title(__('Logo removed'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to remove logo'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to remove logo'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -965,7 +966,7 @@ class ServerSettings extends Page implements HasActions, HasForms
                 Notification::make()->title(__('Failed to update DNS resolvers'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to update DNS resolvers'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to update DNS resolvers'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1092,7 +1093,7 @@ class ServerSettings extends Page implements HasActions, HasForms
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to issue mail SSL certificate'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1171,7 +1172,7 @@ class ServerSettings extends Page implements HasActions, HasForms
                 $e->getMessage()
             );
 
-            Notification::make()->title(__('Failed to send test email'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to send test email'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1282,7 +1283,7 @@ class ServerSettings extends Page implements HasActions, HasForms
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to update pools'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1403,7 +1404,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             ]);
             Notification::make()->title(__('Configuration imported'))->body($message)->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Import failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Import failed'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1607,7 +1608,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             }
 
             try {
-                $agent = new AgentClient;
+                $agent = app(AgentClient::class);
                 $result = $agent->databasePersistTuning($name, (string) $value);
                 if ($result['success'] ?? false) {
                     $applied++;

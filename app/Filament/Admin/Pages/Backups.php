@@ -9,6 +9,7 @@ use App\Models\BackupDestination;
 use App\Models\BackupSchedule;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
@@ -60,8 +61,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     #[Url(as: 'tab')]
     public ?string $activeTab = 'destinations';
-
-    protected ?AgentClient $agent = null;
 
     public function getTitle(): string|Htmlable
     {
@@ -135,7 +134,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     protected function supportsIncremental($destinationId): bool
@@ -732,7 +731,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         } catch (Exception $e) {
                             Notification::make()
                                 ->title(__('Connection test failed'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }
@@ -793,7 +792,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Connection test failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
 
@@ -843,7 +842,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 'test_status' => 'failed',
                 'test_message' => $e->getMessage(),
             ]);
-            Notification::make()->title(__('Test failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Test failed'))->body(SafeError::message($e))->danger()->send();
         }
 
         $this->resetTable();
@@ -964,7 +963,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             } catch (Exception $e) {
                 Notification::make()
                     ->title(__('Failed to delete local backup'))
-                    ->body($e->getMessage())
+                    ->body(SafeError::message($e))
                     ->danger()
                     ->send();
 
@@ -1334,7 +1333,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         'completed_at' => now(),
                         'error_message' => $e->getMessage(),
                     ]);
-                    Notification::make()->title(__('Backup failed'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Backup failed'))->body(SafeError::message($e))->danger()->send();
                 }
 
                 $this->resetTable();
@@ -1435,7 +1434,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 }
                 Notification::make()
                     ->title(__('Download failed'))
-                    ->body($e->getMessage())
+                    ->body(SafeError::message($e))
                     ->danger()
                     ->send();
 
@@ -1506,7 +1505,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             }
             Notification::make()
                 ->title(__('Restore failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

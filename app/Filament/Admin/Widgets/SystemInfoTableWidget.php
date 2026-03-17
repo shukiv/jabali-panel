@@ -31,7 +31,7 @@ class SystemInfoTableWidget extends Component implements HasActions, HasSchemas,
     protected function loadInfo(): void
     {
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $overview = $agent->metricsOverview();
             $network = $agent->metricsNetwork()['data'] ?? [];
 
@@ -159,7 +159,7 @@ class SystemInfoTableWidget extends Component implements HasActions, HasSchemas,
 
         // Fallback: ask the agent (no local shell usage in the web request).
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $result = $agent->serverVersions();
 
             $mysql = $result['versions']['mysql'] ?? null;
@@ -180,7 +180,7 @@ class SystemInfoTableWidget extends Component implements HasActions, HasSchemas,
     protected function getWebserverVersion(): string
     {
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $result = $agent->serverVersions();
 
             $nginx = $result['versions']['nginx'] ?? null;

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets\Security;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -17,11 +18,11 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class QuarantinedFilesTable extends Component implements HasTable, HasSchemas, HasActions
+class QuarantinedFilesTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public array $files = [];
 
@@ -42,7 +43,7 @@ class QuarantinedFilesTable extends Component implements HasTable, HasSchemas, H
                     ->limit(40),
                 TextColumn::make('size')
                     ->label(__('Size'))
-                    ->formatStateUsing(fn ($state): string => $state ? number_format($state / 1024, 1) . ' KB' : '-'),
+                    ->formatStateUsing(fn ($state): string => $state ? number_format($state / 1024, 1).' KB' : '-'),
                 TextColumn::make('date')
                     ->label(__('Quarantined'))
                     ->date('M d, Y H:i'),
@@ -57,7 +58,7 @@ class QuarantinedFilesTable extends Component implements HasTable, HasSchemas, H
                     ->modalDescription(__('Are you sure you want to permanently delete this file? This action cannot be undone.'))
                     ->action(function (array $record): void {
                         try {
-                            $agent = new AgentClient();
+                            $agent = app(AgentClient::class);
                             $result = $agent->send('clamav.delete_quarantined', [
                                 'filename' => $record['name'],
                             ]);
@@ -75,7 +76,7 @@ class QuarantinedFilesTable extends Component implements HasTable, HasSchemas, H
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Error'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

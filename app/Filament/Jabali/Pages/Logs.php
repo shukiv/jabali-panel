@@ -6,6 +6,8 @@ namespace App\Filament\Jabali\Pages;
 
 use App\Filament\Jabali\Widgets\ActivityLogTable;
 use App\Services\Agent\AgentClient;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -14,9 +16,9 @@ use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
-use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Illuminate\Contracts\Support\Htmlable;
@@ -40,8 +42,6 @@ class Logs extends Page implements HasActions, HasForms
     protected static ?string $slug = 'logs';
 
     protected string $view = 'filament.jabali.pages.logs';
-
-    protected ?AgentClient $agent = null;
 
     #[Url]
     public ?string $selectedDomain = null;
@@ -136,11 +136,7 @@ class Logs extends Page implements HasActions, HasForms
 
     protected function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     protected function getUsername(): string
@@ -205,7 +201,7 @@ class Logs extends Page implements HasActions, HasForms
             if ($result['success'] ?? false) {
                 $this->logContent = $result['content'] ?? '';
                 $this->logInfo = [
-                    'file_size' => $this->formatBytes($result['file_size'] ?? 0),
+                    'file_size' => Formatter::bytes($result['file_size'] ?? 0),
                     'last_modified' => $result['last_modified'] ?? '',
                     'lines' => $result['lines'] ?? 0,
                 ];
@@ -265,7 +261,7 @@ class Logs extends Page implements HasActions, HasForms
         } catch (\Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -289,16 +285,5 @@ class Logs extends Page implements HasActions, HasForms
                 ->visible(fn () => $this->selectedDomain !== null && $this->activeTab === 'logs')
                 ->action(fn () => $this->refreshLogs()),
         ];
-    }
-
-    protected function formatBytes(int $bytes, int $precision = 2): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-
-        return round($bytes, $precision).' '.$units[$pow];
     }
 }

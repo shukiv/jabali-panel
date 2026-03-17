@@ -6,12 +6,13 @@ namespace App\Livewire\Admin;
 
 use App\Models\Setting;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Toggle;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
@@ -27,7 +28,7 @@ use Illuminate\Support\Str;
 use Livewire\Attributes\On;
 use Livewire\Component;
 
-class SecurityWafPanel extends Component implements HasForms, HasTable, HasActions
+class SecurityWafPanel extends Component implements HasActions, HasForms, HasTable
 {
     use InteractsWithActions;
     use InteractsWithForms;
@@ -130,7 +131,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
         $whitelistRules = $this->getWhitelistRules();
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->wafApplySettings(
                 $requestedEnabled,
                 (string) ($data['paranoia'] ?? '1'),
@@ -155,7 +156,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('WAF settings saved, but apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -164,7 +165,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
     public function loadAuditLogs(bool $notify = true): void
     {
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $response = $agent->wafAuditLogList();
             $entries = $response['entries'] ?? [];
             if (! is_array($entries)) {
@@ -183,7 +184,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to load WAF logs'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -203,6 +204,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
             if (! is_array($rule)) {
                 $rule = [];
                 $changed = true;
+
                 continue;
             }
 
@@ -402,6 +404,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
                 ->body(__('Missing URI/IP or rule ID for this entry.'))
                 ->warning()
                 ->send();
+
             return;
         }
 
@@ -415,7 +418,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
         Setting::set('waf_whitelist_rules', json_encode(array_values($rules), JSON_UNESCAPED_SLASHES));
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->wafApplySettings(
                 Setting::get('waf_enabled', '0') === '1',
                 (string) Setting::get('waf_paranoia', '1'),
@@ -425,7 +428,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Whitelist saved, but apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -465,13 +468,14 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
                 ->title(__('No matching whitelist rule found'))
                 ->warning()
                 ->send();
+
             return;
         }
 
         Setting::set('waf_whitelist_rules', json_encode(array_values($rules), JSON_UNESCAPED_SLASHES));
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->wafApplySettings(
                 Setting::get('waf_enabled', '0') === '1',
                 (string) Setting::get('waf_paranoia', '1'),
@@ -481,7 +485,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Whitelist updated, but apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -520,6 +524,7 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
                     ->label(__('Time'))
                     ->formatStateUsing(function (array $record): string {
                         $timestamp = (int) ($record['timestamp'] ?? 0);
+
                         return $timestamp > 0 ? date('Y-m-d H:i:s', $timestamp) : '';
                     })
                     ->sortable(),
@@ -620,8 +625,6 @@ class SecurityWafPanel extends Component implements HasForms, HasTable, HasActio
         $this->loadAuditLogs(false);
         $this->resetTable();
     }
-
-
 
     protected function filterRecords(array $records, ?string $search): array
     {

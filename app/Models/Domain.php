@@ -20,7 +20,7 @@ class Domain extends Model
         static::deleting(function (Domain $domain) {
             // Clean up email forwarders from system maps before DB cascade deletes them
             try {
-                $agent = new \App\Services\Agent\AgentClient;
+                $agent = app(\App\Services\Agent\AgentClient::class);
                 $domain->loadMissing('user', 'emailDomain.forwarders');
                 $username = $domain->user?->username;
 

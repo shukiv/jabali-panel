@@ -34,11 +34,12 @@ class UninstallScannerTool implements ShouldQueue
 
         if (! $lock->get()) {
             Log::info("UninstallScannerTool: lock already held for {$this->tool}");
+
             return;
         }
 
         try {
-            $agent = new AgentClient(timeout: 900);
+            $agent = app(AgentClient::class);
             $result = $agent->send('scanner.uninstall', ['tool' => $this->tool]);
 
             if (! ($result['success'] ?? false)) {
@@ -54,4 +55,3 @@ class UninstallScannerTool implements ShouldQueue
         }
     }
 }
-
