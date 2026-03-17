@@ -1565,6 +1565,7 @@ function deleteFpmPool(string $username): array
 
     if (file_exists($poolFile)) {
         unlink($poolFile);
+        // $phpVersion from PHP_MAJOR_VERSION/PHP_MINOR_VERSION constants — safe
         exec("(sleep 1 && systemctl reload php{$phpVersion}-fpm) > /dev/null 2>&1 &");
     }
 
@@ -1707,6 +1708,7 @@ function phpUpdateAllPoolLimits(array $params): array
     }
 
     // Reload PHP-FPM after all updates
+    // $phpVersion from PHP_MAJOR_VERSION/PHP_MINOR_VERSION constants — safe
     exec("(sleep 2 && systemctl reload php{$phpVersion}-fpm) > /dev/null 2>&1 &");
 
     return [
@@ -9728,7 +9730,7 @@ function dnsEnableDnssec(array $params): array {
     sleep(2);
 
     // Force zone re-signing
-    exec("rndc sign {$domain} 2>&1", $signOutput, $signRet);
+    exec("rndc sign " . escapeshellarg($domain) . " 2>&1", $signOutput, $signRet);
 
     logger("DNSSEC enabled for {$domain}");
     return [
@@ -11839,14 +11841,14 @@ function ufwAllowPort(array $params): array
     if (!empty($protocol)) {
         $rule .= '/' . $protocol;
     }
-    
-    $cmd = "ufw allow $rule";
+
+    $cmd = "ufw allow " . escapeshellarg($rule);
     if (!empty($comment)) {
         $cmd .= " comment " . escapeshellarg($comment);
     }
-    
+
     exec($cmd . ' 2>&1', $output, $exitCode);
-    
+
     return [
         'success' => $exitCode === 0,
         'message' => implode("\n", $output),
@@ -11858,17 +11860,17 @@ function ufwDenyPort(array $params): array
     $port = $params['port'] ?? '';
     $protocol = $params['protocol'] ?? '';
     $comment = $params['comment'] ?? '';
-    
+
     if (empty($port)) {
         return ['success' => false, 'error' => 'Port is required'];
     }
-    
+
     $rule = $port;
     if (!empty($protocol)) {
         $rule .= '/' . $protocol;
     }
-    
-    $cmd = "ufw deny $rule";
+
+    $cmd = "ufw deny " . escapeshellarg($rule);
     if (!empty($comment)) {
         $cmd .= " comment " . escapeshellarg($comment);
     }
@@ -11898,20 +11900,20 @@ function ufwAllowIp(array $params): array
     }
     
     $cmd = "ufw allow from " . escapeshellarg($ip);
-    
+
     if (!empty($port)) {
-        $cmd .= " to any port $port";
+        $cmd .= " to any port " . escapeshellarg($port);
         if (!empty($protocol)) {
-            $cmd .= " proto $protocol";
+            $cmd .= " proto " . escapeshellarg($protocol);
         }
     }
-    
+
     if (!empty($comment)) {
         $cmd .= " comment " . escapeshellarg($comment);
     }
-    
+
     exec($cmd . ' 2>&1', $output, $exitCode);
-    
+
     return [
         'success' => $exitCode === 0,
         'message' => implode("\n", $output),
@@ -11924,24 +11926,24 @@ function ufwDenyIp(array $params): array
     $port = $params['port'] ?? '';
     $protocol = $params['protocol'] ?? '';
     $comment = $params['comment'] ?? '';
-    
+
     if (empty($ip)) {
         return ['success' => false, 'error' => 'IP address is required'];
     }
-    
+
     if (!filter_var($ip, FILTER_VALIDATE_IP) && !preg_match('/^\d+\.\d+\.\d+\.\d+\/\d+$/', $ip)) {
         return ['success' => false, 'error' => 'Invalid IP address format'];
     }
-    
+
     $cmd = "ufw deny from " . escapeshellarg($ip);
-    
+
     if (!empty($port)) {
-        $cmd .= " to any port $port";
+        $cmd .= " to any port " . escapeshellarg($port);
         if (!empty($protocol)) {
-            $cmd .= " proto $protocol";
+            $cmd .= " proto " . escapeshellarg($protocol);
         }
     }
-    
+
     if (!empty($comment)) {
         $cmd .= " comment " . escapeshellarg($comment);
     }
@@ -11983,7 +11985,7 @@ function ufwSetDefault(array $params): array
         return ['success' => false, 'error' => 'Policy must be allow, deny, or reject'];
     }
     
-    exec("ufw default $policy $direction 2>&1", $output, $exitCode);
+    exec("ufw default " . escapeshellarg($policy) . " " . escapeshellarg($direction) . " 2>&1", $output, $exitCode);
     
     return [
         'success' => $exitCode === 0,
@@ -12005,7 +12007,7 @@ function ufwLimitPort(array $params): array
         $rule .= '/' . $protocol;
     }
     
-    exec("ufw limit $rule 2>&1", $output, $exitCode);
+    exec("ufw limit " . escapeshellarg($rule) . " 2>&1", $output, $exitCode);
     
     return [
         'success' => $exitCode === 0,
@@ -12092,8 +12094,8 @@ function phpInstall(array $params): array
         return ['success' => false, 'error' => 'Failed to install PHP: ' . implode("\n", $output)];
     }
     
-    exec("systemctl enable php{$version}-fpm 2>&1");
-    exec("systemctl start php{$version}-fpm 2>&1");
+    exec("systemctl enable " . escapeshellarg("php{$version}-fpm") . " 2>&1");
+    exec("systemctl start " . escapeshellarg("php{$version}-fpm") . " 2>&1");
     
     return ['success' => true, 'version' => $version, 'message' => "PHP $version installed successfully"];
 }
@@ -12112,8 +12114,8 @@ function phpUninstall(array $params): array
         return ['success' => false, 'error' => 'Package manager is busy. Please wait for the current operation to complete.'];
     }
 
-    exec("systemctl stop php{$version}-fpm 2>/dev/null");
-    exec("systemctl disable php{$version}-fpm 2>/dev/null");
+    exec("systemctl stop " . escapeshellarg("php{$version}-fpm") . " 2>/dev/null");
+    exec("systemctl disable " . escapeshellarg("php{$version}-fpm") . " 2>/dev/null");
 
     $output = [];
     // Use purge instead of remove to also delete config files
@@ -12146,7 +12148,7 @@ function phpSetDefaultVersion(array $params): array
         return ['success' => false, 'error' => 'Invalid PHP version format'];
     }
     
-    exec("update-alternatives --set php /usr/bin/php{$version} 2>&1", $output, $exitCode);
+    exec("update-alternatives --set php " . escapeshellarg("/usr/bin/php{$version}") . " 2>&1", $output, $exitCode);
     
     return ['success' => $exitCode === 0, 'version' => $version, 'message' => "PHP $version set as default"];
 }
@@ -12261,7 +12263,7 @@ function phpListVersions(array $params): array
                 continue;
             }
 
-            $fpmStatus = trim(shell_exec("systemctl is-active php{$version}-fpm 2>/dev/null") ?? 'inactive');
+            $fpmStatus = trim(shell_exec("systemctl is-active " . escapeshellarg("php{$version}-fpm") . " 2>/dev/null") ?? 'inactive');
             $versions[] = [
                 'version' => $version,
                 'fpm_status' => $fpmStatus ?: 'inactive',
@@ -12317,13 +12319,13 @@ function phpInstallWordPressModules(array $params): array
             $packages[] = "php{$ver}-{$module}";
         }
 
-        $packageList = implode(' ', $packages);
+        $packageList = implode(' ', array_map('escapeshellarg', $packages));
         exec("apt-get install -y $packageList 2>&1", $output, $exitCode);
 
         if ($exitCode === 0) {
             $installed[] = $ver;
             // Reload PHP-FPM for this version
-            exec("systemctl reload php{$ver}-fpm 2>/dev/null");
+            exec("systemctl reload " . escapeshellarg("php{$ver}-fpm") . " 2>/dev/null");
         } else {
             $failed[] = $ver;
         }
@@ -13478,7 +13480,7 @@ function createServerZone(array $params): array
     }
     
     // Check zone
-    exec("named-checkzone {$baseDomain} {$zoneFile} 2>&1", $zoneOutput, $zoneCode);
+    exec("named-checkzone " . escapeshellarg($baseDomain) . " " . escapeshellarg($zoneFile) . " 2>&1", $zoneOutput, $zoneCode);
     if ($zoneCode !== 0) {
         return ['success' => false, 'error' => 'Zone error: ' . implode("\n", $zoneOutput)];
     }
@@ -15183,8 +15185,8 @@ function sslDelete(array $params): array
         } else {
             // Fallback: manually remove if certbot fails
             exec("rm -rf " . escapeshellarg($letsencryptPath) . " 2>&1");
-            exec("rm -rf /etc/letsencrypt/renewal/$domain.conf 2>&1");
-            exec("rm -rf /etc/letsencrypt/archive/$domain 2>&1");
+            exec("rm -rf " . escapeshellarg("/etc/letsencrypt/renewal/{$domain}.conf") . " 2>&1");
+            exec("rm -rf " . escapeshellarg("/etc/letsencrypt/archive/{$domain}") . " 2>&1");
             $deleted[] = "Let's Encrypt certificate (manual cleanup)";
             logger("Manually cleaned up Let's Encrypt files for $domain");
         }
@@ -17579,14 +17581,14 @@ function uploadViaSftp(string $localPath, array $destination): array
         file_put_contents($keyFile, $privateKey);
         chmod($keyFile, 0600);
 
-        $cmd = "sftp -o StrictHostKeyChecking=no -o Port=$port -i " . escapeshellarg($keyFile) .
+        $cmd = "sftp -o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port) . " -i " . escapeshellarg($keyFile) .
                " " . escapeshellarg("$username@$host") . " 2>&1 <<EOF\n{$sftpCommands}EOF";
 
         exec($cmd, $output, $retval);
         unlink($keyFile);
     } else {
         $cmd = "sshpass -p " . escapeshellarg($password) .
-               " sftp -o StrictHostKeyChecking=no -o Port=$port " .
+               " sftp -o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port) . " " .
                escapeshellarg("$username@$host") . " 2>&1 <<EOF\n{$sftpCommands}EOF";
 
         exec($cmd, $output, $retval);
@@ -17632,7 +17634,7 @@ function syncViaRsyncIncremental(string $localPath, array $destination): array
         }
 
         // SSH options
-        $sshOpts = "-o StrictHostKeyChecking=no -o Port=$port";
+        $sshOpts = "-o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port);
         $keyFile = null;
 
         if (!empty($privateKey)) {
@@ -17817,7 +17819,7 @@ function backupServerIncrementalDirect(array $params): array
             return ['success' => false, 'error' => 'SFTP host and username required'];
         }
 
-        $sshOpts .= " -o Port=$port";
+        $sshOpts .= " -o Port=" . escapeshellarg($port);
 
         if (!empty($privateKey)) {
             $keyFile = tempnam(sys_get_temp_dir(), 'rsync_key_');
@@ -17894,7 +17896,8 @@ function backupServerIncrementalDirect(array $params): array
             array_map('unlink', glob("$tempDbDir/*.sql.gz"));
 
             // Get user's databases from MySQL
-            $dbResult = shell_exec("mysql -N -e \"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '{$user}_%'\" 2>/dev/null");
+            $escapedUser = str_replace(['\\', "'", '%', '_'], ['\\\\', "\\'", '\\%', '\\_'], $user);
+            $dbResult = shell_exec("mysql -N -e " . escapeshellarg("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '{$escapedUser}\\_%'") . " 2>/dev/null");
             if ($dbResult) {
                 $databases = array_filter(explode("\n", trim($dbResult)));
                 foreach ($databases as $db) {
@@ -18400,7 +18403,7 @@ function downloadViaSftp(string $remotePath, string $localPath, array $destinati
         file_put_contents($keyFile, $privateKey);
         chmod($keyFile, 0600);
 
-        $sshCmd = "ssh -o StrictHostKeyChecking=no -o Port=$port -i " . escapeshellarg($keyFile);
+        $sshCmd = "ssh -o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port) . " -i " . escapeshellarg($keyFile);
         $cmd = "rsync -avz -e " . escapeshellarg($sshCmd) . " " .
                escapeshellarg("$username@$host:$fullRemotePath") . " " .
                escapeshellarg(rtrim($localPath, '/') . '/') . " 2>&1";
@@ -18409,7 +18412,7 @@ function downloadViaSftp(string $remotePath, string $localPath, array $destinati
         exec($cmd, $output, $retval);
         unlink($keyFile);
     } else {
-        $sshCmd = "ssh -o StrictHostKeyChecking=no -o Port=$port -o PreferredAuthentications=password -o PubkeyAuthentication=no";
+        $sshCmd = "ssh -o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port) . " -o PreferredAuthentications=password -o PubkeyAuthentication=no";
         $cmd = "sshpass -p " . escapeshellarg($password) .
                " rsync -avz -e " . escapeshellarg($sshCmd) . " " .
                escapeshellarg("$username@$host:$fullRemotePath") . " " .
@@ -18580,7 +18583,7 @@ function listRemoteSftp(array $destination, string $path): array
         file_put_contents($keyFile, $privateKey);
         chmod($keyFile, 0600);
 
-        $cmd = "sftp -o StrictHostKeyChecking=no -o Port=$port -i " . escapeshellarg($keyFile) .
+        $cmd = "sftp -o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port) . " -i " . escapeshellarg($keyFile) .
                " " . escapeshellarg("$username@$host") . " 2>&1 <<EOF
 ls -la $fullPath
 EOF";
@@ -18589,7 +18592,7 @@ EOF";
         unlink($keyFile);
     } else {
         $cmd = "sshpass -p " . escapeshellarg($password) .
-               " sftp -o StrictHostKeyChecking=no -o Port=$port " .
+               " sftp -o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port) . " " .
                escapeshellarg("$username@$host") . " 2>&1 <<EOF
 ls -la $fullPath
 EOF";
@@ -18758,7 +18761,7 @@ function deleteRemoteSftp(string $remotePath, array $destination): array
         $fullPath = "$basePath/$remotePath";
     }
 
-    $sshOpts = "-o StrictHostKeyChecking=no -o Port=$port";
+    $sshOpts = "-o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port);
 
     if (!empty($privateKey)) {
         $keyFile = tempnam(sys_get_temp_dir(), 'sftp_key_');
@@ -18969,7 +18972,7 @@ function downloadUserFolderSftp(string $remotePath, string $localPath, array $de
     $privateKey = $destination['private_key'] ?? '';
 
     $keyFile = null;
-    $sshOpts = "-o StrictHostKeyChecking=no -o Port=$port";
+    $sshOpts = "-o StrictHostKeyChecking=no -o Port=" . escapeshellarg($port);
 
     if (!empty($privateKey)) {
         $keyFile = tempnam(sys_get_temp_dir(), 'sftp_key_');
@@ -19098,14 +19101,14 @@ quit";
         file_put_contents($keyFile, $privateKey);
         chmod($keyFile, 0600);
 
-        $cmd = "echo " . escapeshellarg($sftpCommands) . " | sftp -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10 -o Port=$port -i " .
+        $cmd = "echo " . escapeshellarg($sftpCommands) . " | sftp -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10 -o Port=" . escapeshellarg($port) . " -i " .
                escapeshellarg($keyFile) . " " . escapeshellarg("$username@$host") . " 2>&1";
 
         exec($cmd, $output, $retval);
         unlink($keyFile);
     } else {
         $cmd = "echo " . escapeshellarg($sftpCommands) . " | sshpass -p " . escapeshellarg($password) .
-               " sftp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o Port=$port " .
+               " sftp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o Port=" . escapeshellarg($port) . " " .
                escapeshellarg("$username@$host") . " 2>&1";
 
         exec($cmd, $output, $retval);
@@ -19942,7 +19945,7 @@ function clamavStatus(array $params): array
             $size = filesize($path);
             $sigs = 0;
             $buildTime = '';
-            exec("sigtool --info '$path' 2>/dev/null", $infoOutput);
+            exec("sigtool --info " . escapeshellarg($path) . " 2>/dev/null", $infoOutput);
             foreach ($infoOutput as $line) {
                 if (str_contains($line, 'Signatures:')) {
                     $sigs = (int) trim(str_replace('Signatures:', '', $line));
@@ -20754,7 +20757,7 @@ function clamavForceUpdateSignatures(array $params): array
 
     foreach (['daily.cld', 'daily.cvd', 'main.cld', 'main.cvd'] as $db) {
         if (file_exists("$dbDir/$db")) {
-            exec("sigtool --info '$dbDir/$db' 2>/dev/null", $sigOutput);
+            exec("sigtool --info " . escapeshellarg("$dbDir/$db") . " 2>/dev/null", $sigOutput);
             foreach ($sigOutput as $line) {
                 if (str_contains($line, 'Signatures:')) {
                     $sigCount += (int) trim(str_replace('Signatures:', '', $line));
@@ -21505,7 +21508,7 @@ function metricsNetwork(array $params): array
         ];
         
         // Get IP address
-        exec("ip addr show $iface 2>/dev/null | grep 'inet ' | awk '{print \$2}'", $ipOutput);
+        exec("ip addr show " . escapeshellarg($iface) . " 2>/dev/null | grep 'inet ' | awk '{print \$2}'", $ipOutput);
         $interfaces[$iface]['ip'] = $ipOutput[0] ?? '';
     }
     
@@ -22544,16 +22547,16 @@ function scannerInstall(array $params): array
                 // Clone or update Nikto
                 $niktoDir = '/opt/nikto';
                 if (is_dir($niktoDir)) {
-                    exec("cd $niktoDir && git pull 2>&1", $gitOutput, $gitCode);
+                    exec("cd " . escapeshellarg($niktoDir) . " && git pull 2>&1", $gitOutput, $gitCode);
                 } else {
-                    exec("git clone https://github.com/sullo/nikto.git $niktoDir 2>&1", $gitOutput, $gitCode);
+                    exec("git clone https://github.com/sullo/nikto.git " . escapeshellarg($niktoDir) . " 2>&1", $gitOutput, $gitCode);
                 }
                 if ($gitCode !== 0) {
                     return ['success' => false, 'error' => 'Failed to download Nikto', 'output' => implode("\n", $gitOutput)];
                 }
                 // Create symlink
-                exec("ln -sf $niktoDir/program/nikto.pl /usr/local/bin/nikto 2>&1", $linkOutput, $linkCode);
-                exec("chmod +x $niktoDir/program/nikto.pl 2>&1");
+                exec("ln -sf " . escapeshellarg("$niktoDir/program/nikto.pl") . " /usr/local/bin/nikto 2>&1", $linkOutput, $linkCode);
+                exec("chmod +x " . escapeshellarg("$niktoDir/program/nikto.pl") . " 2>&1");
                 $output = array_merge($depOutput ?? [], $gitOutput ?? [], $linkOutput ?? []);
                 $code = 0; // Success
             }
