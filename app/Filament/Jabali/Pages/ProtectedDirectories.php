@@ -80,7 +80,7 @@ class ProtectedDirectories extends Page implements HasActions, HasForms, HasTabl
 
     protected function loadDomains(): void
     {
-        if ((bool) env('JABALI_DEMO', false)) {
+        if ((bool) config('jabali.demo')) {
             $this->domains = [
                 ['domain' => 'jabali-panel.com'],
                 ['domain' => 'demo-site.com'],
@@ -112,7 +112,7 @@ class ProtectedDirectories extends Page implements HasActions, HasForms, HasTabl
             return;
         }
 
-        if ((bool) env('JABALI_DEMO', false)) {
+        if ((bool) config('jabali.demo')) {
             $this->protectedDirs = [
                 [
                     'path' => '/admin',

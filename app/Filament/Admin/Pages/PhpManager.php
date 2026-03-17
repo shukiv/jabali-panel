@@ -65,7 +65,7 @@ class PhpManager extends Page implements HasActions, HasForms, HasTable
 
     public function loadPhpVersions(): void
     {
-        if ((bool) env('JABALI_DEMO', false)) {
+        if ((bool) config('jabali.demo')) {
             $this->installedVersions = [
                 ['version' => '8.4', 'fpm_status' => 'active'],
                 ['version' => '8.3', 'fpm_status' => 'active'],

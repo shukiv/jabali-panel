@@ -4,21 +4,21 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Jobs\IndexRemoteBackups;
 use App\Models\Backup;
 use App\Models\BackupSchedule;
 use App\Services\AdminNotificationService;
 use App\Services\Agent\AgentClient;
+use Exception;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
-use Exception;
 
 class RunServerBackup implements ShouldQueue
 {
     use Queueable;
 
     public int $tries = 1;
+
     public int $timeout = 3600; // 1 hour max
 
     public function __construct(
@@ -29,14 +29,16 @@ class RunServerBackup implements ShouldQueue
     {
         $backup = Backup::find($this->backupId);
 
-        if (!$backup) {
+        if (! $backup) {
             Log::warning("RunServerBackup: Backup {$this->backupId} not found");
+
             return;
         }
 
         // Skip if already completed or failed
         if (in_array($backup->status, ['completed', 'failed'])) {
             Log::info("RunServerBackup: Backup {$this->backupId} already {$backup->status}");
+
             return;
         }
 
@@ -46,11 +48,11 @@ class RunServerBackup implements ShouldQueue
         $isIncrementalRemote = $backupType === 'incremental' && $backup->destination_id;
 
         try {
-            $agent = new AgentClient();
+            $agent = new AgentClient;
 
             if ($isIncrementalRemote) {
                 $destination = $backup->destination;
-                if (!$destination) {
+                if (! $destination) {
                     throw new Exception('Backup destination not found');
                 }
 
@@ -148,7 +150,7 @@ class RunServerBackup implements ShouldQueue
                 'error_message' => $e->getMessage(),
             ]);
 
-            Log::error("RunServerBackup: Backup {$this->backupId} failed: " . $e->getMessage());
+            Log::error("RunServerBackup: Backup {$this->backupId} failed: ".$e->getMessage());
 
             // Send failure notification
             AdminNotificationService::backupFailure($backup->name, $e->getMessage());
@@ -157,7 +159,7 @@ class RunServerBackup implements ShouldQueue
 
     protected function uploadToRemote(Backup $backup, AgentClient $agent): void
     {
-        if (!$backup->destination || !$backup->local_path) {
+        if (! $backup->destination || ! $backup->local_path) {
             return;
         }
 
@@ -190,7 +192,7 @@ class RunServerBackup implements ShouldQueue
                 // Keep as completed since local exists, just log warning
                 $backup->update([
                     'status' => 'completed',
-                    'error_message' => 'Remote upload failed: ' . ($result['error'] ?? 'Unknown error'),
+                    'error_message' => 'Remote upload failed: '.($result['error'] ?? 'Unknown error'),
                 ]);
 
                 Log::warning("RunServerBackup: Remote upload failed for {$this->backupId}");
@@ -198,26 +200,28 @@ class RunServerBackup implements ShouldQueue
         } catch (Exception $e) {
             $backup->update([
                 'status' => 'completed',
-                'error_message' => 'Remote upload failed: ' . $e->getMessage(),
+                'error_message' => 'Remote upload failed: '.$e->getMessage(),
             ]);
 
-            Log::warning("RunServerBackup: Remote upload exception for {$this->backupId}: " . $e->getMessage());
+            Log::warning("RunServerBackup: Remote upload exception for {$this->backupId}: ".$e->getMessage());
         }
     }
 
     protected function applyRetention(Backup $backup): void
     {
-        Log::info("RunServerBackup: applyRetention called for backup {$backup->id}, schedule_id: " . ($backup->schedule_id ?? 'NULL'));
+        Log::info("RunServerBackup: applyRetention called for backup {$backup->id}, schedule_id: ".($backup->schedule_id ?? 'NULL'));
 
         // Only apply retention if backup has a schedule
-        if (!$backup->schedule_id) {
-            Log::info("RunServerBackup: No schedule_id, skipping retention");
+        if (! $backup->schedule_id) {
+            Log::info('RunServerBackup: No schedule_id, skipping retention');
+
             return;
         }
 
         $schedule = BackupSchedule::find($backup->schedule_id);
-        if (!$schedule) {
+        if (! $schedule) {
             Log::info("RunServerBackup: Schedule not found for id {$backup->schedule_id}");
+
             return;
         }
 
@@ -236,17 +240,24 @@ class RunServerBackup implements ShouldQueue
 
         // Get backups to delete (keep newest $retentionCount)
         $toDelete = $backups->slice($retentionCount);
-        $agent = new AgentClient();
+        $agent = new AgentClient;
 
         foreach ($toDelete as $oldBackup) {
             Log::info("RunServerBackup: Deleting old backup per retention: {$oldBackup->name}");
 
             // Delete local file/folder
             if ($oldBackup->local_path && file_exists($oldBackup->local_path)) {
-                if (is_file($oldBackup->local_path)) {
-                    unlink($oldBackup->local_path);
+                $deletePath = $oldBackup->local_path;
+                $isValidPath = ! empty($deletePath)
+                    && ! str_contains($deletePath, '..')
+                    && (str_starts_with($deletePath, '/home/') || str_starts_with($deletePath, '/var/backups/'));
+
+                if (! $isValidPath) {
+                    Log::warning("RunServerBackup: Skipping deletion of invalid path: {$deletePath}");
+                } elseif (is_file($deletePath)) {
+                    unlink($deletePath);
                 } else {
-                    exec("rm -rf " . escapeshellarg($oldBackup->local_path));
+                    exec('rm -rf '.escapeshellarg($deletePath));
                 }
             }
 
@@ -262,13 +273,13 @@ class RunServerBackup implements ShouldQueue
                         'destination' => $config,
                     ]);
                 } catch (Exception $e) {
-                    Log::warning("RunServerBackup: Failed to delete remote backup: " . $e->getMessage());
+                    Log::warning('RunServerBackup: Failed to delete remote backup: '.$e->getMessage());
                 }
             }
 
             $oldBackup->delete();
         }
 
-        Log::info("RunServerBackup: Deleted " . $toDelete->count() . " old backup(s) per retention policy");
+        Log::info('RunServerBackup: Deleted '.$toDelete->count().' old backup(s) per retention policy');
     }
 }

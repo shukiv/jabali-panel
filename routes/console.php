@@ -100,3 +100,28 @@ Schedule::call(function () {
         logger()->info("Cleaned up {$cleaned} orphaned database records");
     }
 })->daily()->at('02:30');
+
+// SSO Token Cleanup - runs every 5 minutes to remove expired SSO token files
+Schedule::call(function () {
+    $dir = '/var/lib/jabali/sso-tokens';
+    if (! is_dir($dir)) {
+        return;
+    }
+    foreach (glob($dir.'/roundcube_sso_*') as $file) {
+        $data = @json_decode(@file_get_contents($file), true);
+        if (! is_array($data) || ($data['expires'] ?? 0) < time()) {
+            @unlink($file);
+        }
+    }
+})->everyFiveMinutes()->name('sso-token-cleanup')->withoutOverlapping();
+
+// Impersonation Token Cleanup - runs daily to remove expired/used tokens
+Schedule::call(function () {
+    \App\Models\ImpersonationToken::where(function ($q) {
+        $q->where('expires_at', '<', now())
+            ->orWhere(function ($q2) {
+                $q2->where('used', true)
+                    ->where('created_at', '<', now()->subDay());
+            });
+    })->delete();
+})->daily()->at('03:00')->name('impersonation-token-cleanup');

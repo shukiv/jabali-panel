@@ -18,7 +18,7 @@ class Login extends BaseLogin
 {
     public function getSubheading(): string|HtmlString|null
     {
-        if (env('JABALI_DEMO', false)) {
+        if (config('jabali.demo')) {
             return new HtmlString(
                 __('Demo credentials').
                 ': <code>admin@jabali-panel.com</code> / <code>demo1234</code>'

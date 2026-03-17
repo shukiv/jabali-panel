@@ -260,6 +260,8 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
             ])
             ->action(function (array $data): void {
                 try {
+                    $this->validateCronCommand($data['command']);
+
                     // Create in database - Laravel scheduler will handle execution
                     CronJob::create([
                         'user_id' => Auth::id(),
@@ -380,6 +382,85 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
             });
     }
 
+    private function validateCronCommand(string $command): void
+    {
+        $normalizedCommand = strtolower(trim($command));
+
+        // Block fork bombs
+        if (str_contains($normalizedCommand, ':(){ :|:& };:')) {
+            throw new Exception(__('This command contains a dangerous pattern and is not allowed.'));
+        }
+
+        // Block dangerous commands at the start
+        $dangerousStartPatterns = [
+            'rm -rf /',
+            'mkfs',
+            'dd if=',
+            'chmod -r 777 /',
+            'chown -r',
+        ];
+
+        foreach ($dangerousStartPatterns as $pattern) {
+            if (str_starts_with($normalizedCommand, $pattern)) {
+                throw new Exception(__('This command contains a dangerous pattern and is not allowed.'));
+            }
+        }
+
+        // Block privilege escalation
+        $blockedSubstrings = [
+            'sudo ',
+            'su -',
+            'su root',
+        ];
+
+        foreach ($blockedSubstrings as $pattern) {
+            if (str_contains($normalizedCommand, $pattern)) {
+                throw new Exception(__('This command contains a dangerous pattern and is not allowed.'));
+            }
+        }
+
+        // Block network abuse
+        $networkPatterns = [
+            'nc -l',
+            'ncat -l',
+        ];
+
+        foreach ($networkPatterns as $pattern) {
+            if (str_contains($normalizedCommand, $pattern)) {
+                throw new Exception(__('This command contains a dangerous pattern and is not allowed.'));
+            }
+        }
+
+        // Block shell downloads piped to execution
+        $pipedExecutionPatterns = [
+            '| bash',
+            '| sh',
+            '| zsh',
+            '| python',
+            '| perl',
+            '| ruby',
+        ];
+
+        foreach ($pipedExecutionPatterns as $pattern) {
+            if (str_contains($normalizedCommand, $pattern)) {
+                throw new Exception(__('This command contains a dangerous pattern and is not allowed.'));
+            }
+        }
+
+        // Block crypto mining binaries
+        $miningPatterns = [
+            'xmrig',
+            'minerd',
+            'cpuminer',
+        ];
+
+        foreach ($miningPatterns as $pattern) {
+            if (str_contains($normalizedCommand, $pattern)) {
+                throw new Exception(__('This command contains a dangerous pattern and is not allowed.'));
+            }
+        }
+    }
+
     public function deleteCronJob(int $id): void
     {
         try {
@@ -414,6 +495,17 @@ class CronJobs extends Page implements HasActions, HasForms, HasTable
     public function updateCronJob(CronJob $cronJob, array $data): void
     {
         try {
+            if ($cronJob->user_id !== Auth::id()) {
+                Notification::make()
+                    ->title(__('Cron job not found'))
+                    ->danger()
+                    ->send();
+
+                return;
+            }
+
+            $this->validateCronCommand($data['command']);
+
             // Update database - Laravel scheduler uses these values
             $cronJob->update([
                 'name' => $data['name'],

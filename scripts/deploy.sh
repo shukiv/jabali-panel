@@ -328,7 +328,7 @@ remote_commit_and_push() {
         fi
     fi
 
-    ssh -o StrictHostKeyChecking=no "$REMOTE" \
+    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
         DEPLOY_PATH="$DEPLOY_PATH" \
         PUSH_BRANCH="$push_branch" \
         PUSH_GITEA="$PUSH_GITEA" \
@@ -443,11 +443,11 @@ rsync_project() {
 }
 
 remote_run() {
-    ssh -o StrictHostKeyChecking=no "$REMOTE" "bash -lc '$1'"
+    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" "bash -lc '$1'"
 }
 
 remote_run_www() {
-    ssh -o StrictHostKeyChecking=no "$REMOTE" "bash -lc 'cd \"$DEPLOY_PATH\" && sudo -u \"$WWW_USER\" -H bash -lc \"$1\"'"
+    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" "bash -lc 'cd \"$DEPLOY_PATH\" && sudo -u \"$WWW_USER\" -H bash -lc \"$1\"'"
 }
 
 ensure_remote_permissions() {
@@ -493,7 +493,7 @@ ensure_remote_permissions
 
 if [[ "$SKIP_COMPOSER" -eq 0 ]]; then
     echo "Installing composer dependencies..."
-    remote_run_www "composer install --no-interaction --prefer-dist --optimize-autoloader"
+    remote_run_www "composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev"
 fi
 
 if [[ "$SKIP_NPM" -eq 0 ]]; then
@@ -513,6 +513,7 @@ if [[ "$SKIP_CACHE" -eq 0 ]]; then
     remote_run_www "php artisan config:cache"
     remote_run_www "php artisan route:cache"
     remote_run_www "php artisan view:cache"
+    remote_run_www "php artisan queue:restart"
 fi
 
 if [[ "$SKIP_AGENT_RESTART" -eq 0 ]]; then
