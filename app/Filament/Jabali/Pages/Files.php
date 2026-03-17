@@ -197,7 +197,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
     public function loadDirectory(?string $path = null): void
     {
         if ($path !== null) {
-            $this->currentPath = $path;
+            $this->currentPath = $this->sanitizePath($path);
         }
 
         try {
@@ -565,7 +565,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                     ->action(function (\Illuminate\Support\Collection $records, array $data): void {
                         $moved = 0;
                         $failed = 0;
-                        $destination = trim($data['destination'], '/');
+                        $destination = $this->sanitizePath($data['destination']);
                         foreach ($records as $record) {
                             try {
                                 $filename = basename($record['path']);
@@ -610,7 +610,7 @@ class Files extends Page implements HasActions, HasForms, HasTable
                     ->action(function (\Illuminate\Support\Collection $records, array $data): void {
                         $copied = 0;
                         $failed = 0;
-                        $destination = trim($data['destination'], '/');
+                        $destination = $this->sanitizePath($data['destination']);
                         foreach ($records as $record) {
                             try {
                                 $filename = basename($record['path']);
@@ -750,6 +750,8 @@ class Files extends Page implements HasActions, HasForms, HasTable
     public function moveItem(string $sourcePath, string $destPath): void
     {
         try {
+            $sourcePath = $this->sanitizePath($sourcePath);
+            $destPath = $this->sanitizePath($destPath);
             $this->getAgent()->fileMove($this->getUsername(), $sourcePath, $destPath);
 
             Notification::make()

@@ -14,6 +14,10 @@ Route::get('/user', function (Request $request) {
 Route::post('/phpmyadmin/verify-token', function (Request $request) {
     $token = $request->input('token');
 
+    if (! is_string($token) || ! preg_match('/^[0-9a-f]{64}$/', $token)) {
+        return response()->json(['error' => 'Invalid token'], 401);
+    }
+
     // Use Cache::get() which handles the prefix automatically
     $data = Cache::get('phpmyadmin_token_'.$token);
 

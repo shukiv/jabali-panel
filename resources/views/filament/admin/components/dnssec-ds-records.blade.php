@@ -13,7 +13,7 @@
                         icon="heroicon-o-clipboard-document"
                         color="gray"
                         size="sm"
-                        x-on:click="navigator.clipboard.writeText('{{ addslashes($ds['record']) }}'); $tooltip('{{ __('Copied!') }}')"
+                        x-on:click="navigator.clipboard.writeText({{ \Illuminate\Support\Js::from($ds['record']) }}); $tooltip('{{ __('Copied!') }}')"
                         :tooltip="__('Copy to clipboard')"
                     />
                 </div>

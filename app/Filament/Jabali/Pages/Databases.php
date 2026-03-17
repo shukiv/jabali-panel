@@ -351,7 +351,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                     ->action(function (array $record): void {
                         $url = $this->getPhpMyAdminUrl($record['name']);
                         if ($url) {
-                            $this->js("window.open('".addslashes($url)."', '_blank')");
+                            $this->js('window.open('.json_encode($url, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG).', \'_blank\')');
                         } else {
                             Notification::make()
                                 ->title(__('Cannot open phpMyAdmin'))
@@ -792,8 +792,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                             ->tooltip(__('Copy to clipboard'))
                             ->action(function ($state, $livewire) {
                                 if ($state) {
-                                    $escaped = addslashes($state);
-                                    $livewire->js("navigator.clipboard.writeText('{$escaped}')");
+                                    $livewire->js('navigator.clipboard.writeText('.json_encode($state, JSON_HEX_TAG).')');
                                     Notification::make()
                                         ->title(__('Copied to clipboard'))
                                         ->success()
@@ -806,9 +805,10 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             ])
             ->action(function (array $data): void {
                 try {
+                    $prefixedUsername = $this->getUsername().'_'.$data['username'];
                     $result = $this->getAgent()->mysqlCreateUser(
                         $this->getUsername(),
-                        $data['username'],
+                        $prefixedUsername,
                         $data['password']
                     );
 
@@ -1009,8 +1009,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                             ->tooltip(__('Copy to clipboard'))
                             ->action(function ($state, $livewire) {
                                 if ($state) {
-                                    $escaped = addslashes($state);
-                                    $livewire->js("navigator.clipboard.writeText('{$escaped}')");
+                                    $livewire->js('navigator.clipboard.writeText('.json_encode($state, JSON_HEX_TAG).')');
                                     Notification::make()
                                         ->title(__('Copied to clipboard'))
                                         ->success()

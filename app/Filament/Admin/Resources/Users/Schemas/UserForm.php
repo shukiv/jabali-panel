@@ -98,8 +98,7 @@ class UserForm
                                     ->tooltip(__('Copy to clipboard'))
                                     ->action(function ($state, $livewire) {
                                         if ($state) {
-                                            $escaped = addslashes($state);
-                                            $livewire->js("navigator.clipboard.writeText('{$escaped}')");
+                                            $livewire->js('navigator.clipboard.writeText('.json_encode($state, JSON_HEX_TAG).')');
                                             \Filament\Notifications\Notification::make()
                                                 ->title(__('Copied to clipboard'))
                                                 ->success()

@@ -301,7 +301,7 @@ class ServerSettings extends Page implements HasActions, HasForms
                                     ->disk('public')
                                     ->directory('branding')
                                     ->visibility('public')
-                                    ->acceptedFileTypes(['image/png', 'image/svg+xml', 'image/jpeg', 'image/webp'])
+                                    ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp'])
                                     ->maxSize(1024)
                                     ->required()
                                     ->helperText(__('SVG, PNG, JPEG or WebP, max 1MB')),
@@ -1355,9 +1355,19 @@ class ServerSettings extends Page implements HasActions, HasForms
                 throw new Exception(__('Invalid configuration file format'));
             }
 
+            $allowedKeys = [
+                'panel_name', 'passphrase_passwords',
+                'ns1', 'ns1_ip', 'ns2', 'ns2_ip', 'default_ip', 'default_ipv6', 'default_ttl', 'admin_email',
+                'quotas_enabled', 'default_quota_mb', 'max_upload_size_mb',
+                'mail_hostname', 'mail_default_quota_mb', 'max_mailboxes_per_domain', 'webmail_url', 'webmail_product_name',
+                'admin_email_recipients', 'notify_ssl_errors', 'notify_backup_failures', 'notify_backup_success',
+                'notify_disk_quota', 'notify_login_failures', 'notify_ssh_logins', 'notify_system_updates',
+                'notify_service_health', 'notify_high_load',
+            ];
+
             $importedSettings = 0;
             foreach ($importData['settings'] as $key => $value) {
-                if (in_array($key, ['custom_logo'])) {
+                if (! in_array($key, $allowedKeys, true)) {
                     continue;
                 }
                 DnsSetting::set($key, $value);

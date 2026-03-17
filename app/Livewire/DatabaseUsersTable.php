@@ -6,6 +6,7 @@ namespace App\Livewire;
 
 use App\Models\MysqlCredential;
 use App\Services\Agent\AgentClient;
+use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -25,17 +26,19 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 use Livewire\Component;
-use Exception;
 
-class DatabaseUsersTable extends Component implements HasTable, HasForms, HasActions
+class DatabaseUsersTable extends Component implements HasActions, HasForms, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithForms;
     use InteractsWithActions;
+    use InteractsWithForms;
+    use InteractsWithTable;
 
     public array $users = [];
+
     public array $userGrants = [];
+
     public array $databases = [];
+
     public ?string $selectedUser = null;
 
     protected ?AgentClient $agent = null;
@@ -56,8 +59,9 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
     public function getAgent(): AgentClient
     {
         if ($this->agent === null) {
-            $this->agent = new AgentClient();
+            $this->agent = new AgentClient;
         }
+
         return $this->agent;
     }
 
@@ -73,8 +77,8 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
             $this->users = $result['users'] ?? [];
 
             // Filter out the master admin user
-            $this->users = array_values(array_filter($this->users, function($user) {
-                return $user['user'] !== $this->getUsername() . '_admin';
+            $this->users = array_values(array_filter($this->users, function ($user) {
+                return $user['user'] !== $this->getUsername().'_admin';
             }));
 
             $this->userGrants = [];
@@ -117,7 +121,7 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
                     ->label(__('User'))
                     ->icon('heroicon-o-user')
                     ->iconColor('primary')
-                    ->description(fn (array $record): string => '@ ' . $record['host'])
+                    ->description(fn (array $record): string => '@ '.$record['host'])
                     ->weight('medium')
                     ->searchable(),
                 ViewColumn::make('privileges')
@@ -130,7 +134,7 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
                     ->icon('heroicon-o-plus')
                     ->color('success')
                     ->modalHeading(__('Add Database Access'))
-                    ->modalDescription(fn (array $record): string => __('Grant privileges to :user', ['user' => $record['user'] . '@' . $record['host']]))
+                    ->modalDescription(fn (array $record): string => __('Grant privileges to :user', ['user' => $record['user'].'@'.$record['host']]))
                     ->modalIcon('heroicon-o-shield-check')
                     ->modalIconColor('success')
                     ->modalWidth('lg')
@@ -144,7 +148,7 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
                     ->icon('heroicon-o-key')
                     ->color('warning')
                     ->modalHeading(__('Change Password'))
-                    ->modalDescription(fn (array $record): string => $record['user'] . '@' . $record['host'])
+                    ->modalDescription(fn (array $record): string => $record['user'].'@'.$record['host'])
                     ->modalIcon('heroicon-o-key')
                     ->modalIconColor('warning')
                     ->modalSubmitActionLabel(__('Change Password'))
@@ -166,8 +170,7 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
                                     ->tooltip(__('Copy to clipboard'))
                                     ->action(function ($state, $livewire) {
                                         if ($state) {
-                                            $escaped = addslashes($state);
-                                            $livewire->js("navigator.clipboard.writeText('{$escaped}')");
+                                            $livewire->js('navigator.clipboard.writeText('.json_encode($state, JSON_HEX_TAG).')');
                                             Notification::make()
                                                 ->title(__('Copied to clipboard'))
                                                 ->success()
@@ -186,7 +189,7 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
                     ->color('danger')
                     ->requiresConfirmation()
                     ->modalHeading(__('Delete User'))
-                    ->modalDescription(fn (array $record): string => __("Delete user ':user'?", ['user' => $record['user'] . '@' . $record['host']]))
+                    ->modalDescription(fn (array $record): string => __("Delete user ':user'?", ['user' => $record['user'].'@'.$record['host']]))
                     ->modalIcon('heroicon-o-trash')
                     ->modalIconColor('danger')
                     ->action(function (array $record): void {
@@ -201,7 +204,7 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
 
     public function getTableRecordKey(Model|array $record): string
     {
-        return is_array($record) ? $record['user'] . '@' . $record['host'] : $record->getKey();
+        return is_array($record) ? $record['user'].'@'.$record['host'] : $record->getKey();
     }
 
     protected function getPrivilegesForm(): array
@@ -306,6 +309,7 @@ class DatabaseUsersTable extends Component implements HasTable, HasForms, HasAct
         for ($i = 0; $i < $length; $i++) {
             $password .= $chars[random_int(0, strlen($chars) - 1)];
         }
+
         return $password;
     }
 

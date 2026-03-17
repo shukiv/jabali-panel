@@ -110,9 +110,11 @@ $this->getRtlScript()
 
     protected function getOpenGraphTags(string $title, string $description): string
     {
-        $url = url()->current();
-        $image = asset('images/og-image.png');
-        $siteName = DnsSetting::get('panel_name', 'Jabali');
+        $url = e(url()->current());
+        $image = e(asset('images/og-image.png'));
+        $siteName = e(DnsSetting::get('panel_name', 'Jabali'));
+        $title = e($title);
+        $description = e($description);
 
         return <<<HTML
         <meta property="og:type" content="website">
