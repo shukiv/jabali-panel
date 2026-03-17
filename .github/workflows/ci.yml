@@ -19,6 +19,9 @@ jobs:
           extensions: mbstring, xml, curl, sqlite3
           coverage: none
 
+      - name: Configure Filament auth
+        run: composer config http-basic.packages.filamentphp.com "${{ secrets.FILAMENT_USERNAME }}" "${{ secrets.FILAMENT_LICENSE_KEY }}"
+
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist
 
