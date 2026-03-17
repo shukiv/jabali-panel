@@ -1067,7 +1067,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
             $this->regenerateDnsZone($domain);
 
             // Issue mail SSL certificate in the background
-            \App\Jobs\IssueSslCertificate::dispatch($domain->id, 'mail')->delay(now()->addSeconds(30));
+            \App\Jobs\IssueSslCertificate::dispatch($domain->id, 'mail')->delay(now()->addSeconds(120));
         }
 
         return $emailDomain;

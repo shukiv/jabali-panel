@@ -1455,6 +1455,12 @@ server {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
 
+    # Block access to sensitive directories and files
+    location ~ ^/(vendor|node_modules|storage)/ {
+        deny all;
+        return 404;
+    }
+
     location ~ \.php\$ {
         fastcgi_pass unix:${panel_sock};
         fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
