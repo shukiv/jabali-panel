@@ -89,14 +89,14 @@ class Backup extends Model
         $bytes = $this->size_bytes;
 
         if ($bytes >= 1073741824) {
-            return number_format($bytes / 1073741824, 2) . ' GB';
+            return number_format($bytes / 1073741824, 2).' GB';
         } elseif ($bytes >= 1048576) {
-            return number_format($bytes / 1048576, 2) . ' MB';
+            return number_format($bytes / 1048576, 2).' MB';
         } elseif ($bytes >= 1024) {
-            return number_format($bytes / 1024, 2) . ' KB';
+            return number_format($bytes / 1024, 2).' KB';
         }
 
-        return $bytes . ' bytes';
+        return $bytes.' bytes';
     }
 
     /**
@@ -104,7 +104,7 @@ class Backup extends Model
      */
     public function getDurationAttribute(): ?string
     {
-        if (!$this->started_at || !$this->completed_at) {
+        if (! $this->started_at || ! $this->completed_at) {
             return null;
         }
 
@@ -113,10 +113,10 @@ class Backup extends Model
         if ($seconds >= 3600) {
             return gmdate('H:i:s', $seconds);
         } elseif ($seconds >= 60) {
-            return gmdate('i:s', $seconds) . ' min';
+            return gmdate('i:s', $seconds).' min';
         }
 
-        return $seconds . ' sec';
+        return $seconds.' sec';
     }
 
     /**
@@ -218,7 +218,7 @@ class Backup extends Model
     {
         return $query->where(function ($q) {
             $q->whereNull('expires_at')
-              ->orWhere('expires_at', '>', now());
+                ->orWhere('expires_at', '>', now());
         });
     }
 
@@ -228,7 +228,7 @@ class Backup extends Model
     public function scopeExpired($query)
     {
         return $query->whereNotNull('expires_at')
-                     ->where('expires_at', '<=', now());
+            ->where('expires_at', '<=', now());
     }
 
     /**

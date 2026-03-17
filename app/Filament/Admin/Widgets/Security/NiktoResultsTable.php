@@ -14,13 +14,14 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class NiktoResultsTable extends Component implements HasTable, HasSchemas, HasActions
+class NiktoResultsTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public array $results = [];
+
     public string $type = 'vulnerabilities'; // 'vulnerabilities' or 'info'
 
     public function makeFilamentTranslatableContentDriver(): ?\Filament\Support\Contracts\TranslatableContentDriver
@@ -31,6 +32,7 @@ class NiktoResultsTable extends Component implements HasTable, HasSchemas, HasAc
     protected function getRecords(): array
     {
         $items = $this->results[$this->type] ?? [];
+
         return array_map(fn ($item, $index) => [
             'id' => $index,
             'message' => $item,

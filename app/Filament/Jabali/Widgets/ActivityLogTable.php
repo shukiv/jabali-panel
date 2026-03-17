@@ -16,11 +16,11 @@ use Filament\Tables\Table;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 
-class ActivityLogTable extends Component implements HasTable, HasSchemas, HasActions
+class ActivityLogTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public function table(Table $table): Table
     {

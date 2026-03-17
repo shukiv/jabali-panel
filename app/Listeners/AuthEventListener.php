@@ -39,7 +39,7 @@ class AuthEventListener
             'user_id' => $event->user?->id,
             'action' => 'login_failed',
             'category' => 'auth',
-            'description' => 'Failed login attempt for: ' . ($event->credentials['email'] ?? 'unknown'),
+            'description' => 'Failed login attempt for: '.($event->credentials['email'] ?? 'unknown'),
             'target_type' => 'user',
             'target_id' => $event->user?->id,
             'target_name' => $event->credentials['email'] ?? 'unknown',

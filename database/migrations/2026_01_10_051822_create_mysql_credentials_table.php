@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('mysql_username');
             $table->text('mysql_password_encrypted');
             $table->timestamps();
-            
+
             $table->unique(['user_id', 'mysql_username']);
         });
     }

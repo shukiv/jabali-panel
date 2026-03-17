@@ -63,7 +63,7 @@ class BackupRestore extends Model
      */
     public function getDurationAttribute(): ?string
     {
-        if (!$this->started_at || !$this->completed_at) {
+        if (! $this->started_at || ! $this->completed_at) {
             return null;
         }
 
@@ -72,10 +72,10 @@ class BackupRestore extends Model
         if ($seconds >= 3600) {
             return gmdate('H:i:s', $seconds);
         } elseif ($seconds >= 60) {
-            return gmdate('i:s', $seconds) . ' min';
+            return gmdate('i:s', $seconds).' min';
         }
 
-        return $seconds . ' sec';
+        return $seconds.' sec';
     }
 
     /**
@@ -84,7 +84,7 @@ class BackupRestore extends Model
     public function appendLog(string $message): void
     {
         $timestamp = now()->format('H:i:s');
-        $this->log = ($this->log ?? '') . "[{$timestamp}] {$message}\n";
+        $this->log = ($this->log ?? '')."[{$timestamp}] {$message}\n";
         $this->save();
     }
 

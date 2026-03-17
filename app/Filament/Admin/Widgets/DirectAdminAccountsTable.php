@@ -152,4 +152,3 @@ class DirectAdminAccountsTable extends Component implements HasActions, HasSchem
         return $this->getTable()->render();
     }
 }
-

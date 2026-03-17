@@ -19,11 +19,11 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class NotificationLogTable extends Component implements HasTable, HasSchemas, HasActions
+class NotificationLogTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public function makeFilamentTranslatableContentDriver(): ?\Filament\Support\Contracts\TranslatableContentDriver
     {
@@ -79,6 +79,7 @@ class NotificationLogTable extends Component implements HasTable, HasSchemas, Ha
                         if (is_string($state)) {
                             $state = json_decode($state, true) ?? [];
                         }
+
                         return is_array($state) && count($state) > 0 ? implode(', ', $state) : '-';
                     })
                     ->limit(30)

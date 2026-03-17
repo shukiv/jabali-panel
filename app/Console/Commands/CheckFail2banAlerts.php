@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Cache;
 class CheckFail2banAlerts extends Command
 {
     protected $signature = 'jabali:check-fail2ban';
+
     protected $description = 'Check fail2ban logs for recent bans and send notifications';
 
     public function handle(): int
@@ -19,8 +20,9 @@ class CheckFail2banAlerts extends Command
 
         $logFile = '/var/log/fail2ban.log';
 
-        if (!file_exists($logFile)) {
+        if (! file_exists($logFile)) {
             $this->info('Fail2ban log not found.');
+
             return Command::SUCCESS;
         }
 
@@ -34,8 +36,9 @@ class CheckFail2banAlerts extends Command
         }
 
         $handle = fopen($logFile, 'r');
-        if (!$handle) {
+        if (! $handle) {
             $this->error('Cannot open fail2ban log.');
+
             return Command::FAILURE;
         }
 
@@ -51,7 +54,7 @@ class CheckFail2banAlerts extends Command
                 $ip = $matches[2];
 
                 $key = "{$service}:{$ip}";
-                if (!isset($bans[$key])) {
+                if (! isset($bans[$key])) {
                     $bans[$key] = [
                         'service' => $service,
                         'ip' => $ip,
@@ -76,6 +79,7 @@ class CheckFail2banAlerts extends Command
         }
 
         $this->info("Fail2ban check complete. {$banCount} ban(s) found.");
+
         return Command::SUCCESS;
     }
 }

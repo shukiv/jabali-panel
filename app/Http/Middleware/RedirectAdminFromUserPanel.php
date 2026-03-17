@@ -23,7 +23,7 @@ class RedirectAdminFromUserPanel
 
         // If the user on the web guard is an admin AND not being impersonated,
         // redirect to admin panel
-        if ($user && $user->is_admin && !session()->has('impersonated_by')) {
+        if ($user && $user->is_admin && ! session()->has('impersonated_by')) {
             return redirect()->route('filament.admin.pages.dashboard');
         }
 
