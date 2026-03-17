@@ -121,19 +121,55 @@ class ServerChartsWidget extends Widget
     private function readDiskUsage(): array
     {
         $partitions = [];
+        $seen = [];
 
-        $total = @disk_total_space('/') ?: 0;
-        $free = @disk_free_space('/') ?: 0;
-        $used = max(0, $total - $free);
-        if ($total > 0) {
+        $mounts = @file('/proc/mounts', FILE_IGNORE_NEW_LINES) ?: [];
+        foreach ($mounts as $line) {
+            $parts = preg_split('/\s+/', $line);
+            $device = $parts[0] ?? '';
+            $mount = $parts[1] ?? '';
+            $fstype = $parts[2] ?? '';
+
+            if (! str_starts_with($device, '/dev/') || isset($seen[$device])) {
+                continue;
+            }
+            if (in_array($fstype, ['devtmpfs', 'tmpfs', 'squashfs', 'overlay'], true)) {
+                continue;
+            }
+
+            $total = @disk_total_space($mount) ?: 0;
+            if ($total <= 0) {
+                continue;
+            }
+
+            $free = @disk_free_space($mount) ?: 0;
+            $used = max(0, $total - $free);
+            $seen[$device] = true;
+
             $partitions[] = [
-                'mount' => '/',
+                'mount' => $mount,
                 'used' => $used,
                 'total' => $total,
                 'usage' => round(($used / $total) * 100, 1),
                 'used_human' => $this->formatBytes($used),
                 'total_human' => $this->formatBytes($total),
             ];
+        }
+
+        if (empty($partitions)) {
+            $total = @disk_total_space('/') ?: 0;
+            $free = @disk_free_space('/') ?: 0;
+            $used = max(0, $total - $free);
+            if ($total > 0) {
+                $partitions[] = [
+                    'mount' => '/',
+                    'used' => $used,
+                    'total' => $total,
+                    'usage' => round(($used / $total) * 100, 1),
+                    'used_human' => $this->formatBytes($used),
+                    'total_human' => $this->formatBytes($total),
+                ];
+            }
         }
 
         return $partitions;

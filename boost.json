@@ -5,5 +5,8 @@
     "editors": [
         "claude_code"
     ],
-    "guidelines": []
+    "guidelines": [
+        "filament/filament",
+        "filament/blueprint"
+    ]
 }

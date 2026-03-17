@@ -12,6 +12,8 @@ export default defineConfig({
                 'resources/css/app.css',
                 'resources/js/app.js',
                 'resources/js/server-charts.js',
+                'resources/js/chart-plugins.js',
+                'resources/js/echarts.js',
                 'resources/css/filament/admin/theme.css',
             ],
             refresh: true,
