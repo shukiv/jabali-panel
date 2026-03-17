@@ -6,6 +6,7 @@ namespace App\Filament\Admin\Pages;
 
 use App\Models\AuditLog;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -42,8 +43,6 @@ class Services extends Page implements HasActions, HasForms, HasTable
     public array $services = [];
 
     public ?string $selectedService = null;
-
-    protected ?AgentClient $agent = null;
 
     protected ?array $managedServices = null;
 
@@ -119,7 +118,7 @@ class Services extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function mount(): void
@@ -153,7 +152,7 @@ class Services extends Page implements HasActions, HasForms, HasTable
                 }
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Error loading services'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error loading services'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -311,7 +310,7 @@ class Services extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Action failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

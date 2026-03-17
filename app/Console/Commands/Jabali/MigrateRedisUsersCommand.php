@@ -17,14 +17,17 @@ class MigrateRedisUsersCommand extends Command
     protected $description = 'Create Redis ACL users for existing Jabali users';
 
     private AgentClient $agent;
+
     private int $created = 0;
+
     private int $skipped = 0;
+
     private int $failed = 0;
 
     public function __construct()
     {
         parent::__construct();
-        $this->agent = new AgentClient();
+        $this->agent = app(AgentClient::class);
     }
 
     public function handle(): int
@@ -44,6 +47,7 @@ class MigrateRedisUsersCommand extends Command
 
         if ($users->isEmpty()) {
             $this->info('No users found to migrate.');
+
             return 0;
         }
 
@@ -74,15 +78,17 @@ class MigrateRedisUsersCommand extends Command
         $credFile = "{$homeDir}/.redis_credentials";
 
         // Check if credentials file already exists
-        if (file_exists($credFile) && !$force) {
+        if (file_exists($credFile) && ! $force) {
             $this->line("  [skip] {$user->username} - credentials file already exists");
             $this->skipped++;
+
             return;
         }
 
         if ($dryRun) {
             $this->line("  [would create] {$user->username}");
             $this->created++;
+
             return;
         }
 
@@ -90,7 +96,7 @@ class MigrateRedisUsersCommand extends Command
 
         // Generate password before sending to agent so we can save it
         $redisPassword = bin2hex(random_bytes(16)); // 32 char password
-        $redisUser = 'jabali_' . $user->username;
+        $redisUser = 'jabali_'.$user->username;
 
         try {
             $result = $this->agent->send('redis.create_user', [
@@ -100,8 +106,8 @@ class MigrateRedisUsersCommand extends Command
 
             if ($result['success'] ?? false) {
                 // Save credentials file
-                $credContent = "REDIS_USER={$redisUser}\n" .
-                               "REDIS_PASS={$redisPassword}\n" .
+                $credContent = "REDIS_USER={$redisUser}\n".
+                               "REDIS_PASS={$redisPassword}\n".
                                "REDIS_PREFIX={$user->username}:\n";
 
                 file_put_contents($credFile, $credContent);

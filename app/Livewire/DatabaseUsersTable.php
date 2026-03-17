@@ -6,6 +6,7 @@ namespace App\Livewire;
 
 use App\Models\MysqlCredential;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -41,8 +42,6 @@ class DatabaseUsersTable extends Component implements HasActions, HasForms, HasT
 
     public ?string $selectedUser = null;
 
-    protected ?AgentClient $agent = null;
-
     protected $listeners = ['refresh-database-users' => 'refreshData'];
 
     public function mount(): void
@@ -58,11 +57,7 @@ class DatabaseUsersTable extends Component implements HasActions, HasForms, HasT
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function getUsername(): string
@@ -257,7 +252,7 @@ class DatabaseUsersTable extends Component implements HasActions, HasForms, HasT
             $this->loadData();
             $this->resetTable();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -269,7 +264,7 @@ class DatabaseUsersTable extends Component implements HasActions, HasForms, HasT
             $this->loadData();
             $this->resetTable();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -285,7 +280,7 @@ class DatabaseUsersTable extends Component implements HasActions, HasForms, HasT
 
             Notification::make()->title(__('Password changed'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -298,7 +293,7 @@ class DatabaseUsersTable extends Component implements HasActions, HasForms, HasT
             $this->loadData();
             $this->resetTable();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 

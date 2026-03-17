@@ -35,7 +35,7 @@ class RunGitDeployment implements ShouldQueue
             'last_error' => null,
         ]);
 
-        $agent = new AgentClient;
+        $agent = app(AgentClient::class);
 
         try {
             $result = $agent->send('git.deploy', [

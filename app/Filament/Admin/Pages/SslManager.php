@@ -9,6 +9,7 @@ use App\Models\Domain;
 use App\Models\SslCertificate;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -49,8 +50,6 @@ class SslManager extends Page implements HasTable
 
     public ?string $lastUpdated = null;
 
-    protected ?AgentClient $agent = null;
-
     protected function getHeaderWidgets(): array
     {
         return [
@@ -65,11 +64,7 @@ class SslManager extends Page implements HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function mount(): void
@@ -88,7 +83,7 @@ class SslManager extends Page implements HasTable
                     ->sortable()
                     ->formatStateUsing(function ($state, SslCertificate $record) {
                         if ($record->service === 'mail') {
-                            return 'mail.' . $state;
+                            return 'mail.'.$state;
                         }
 
                         return $state;
@@ -242,7 +237,7 @@ class SslManager extends Page implements HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -285,7 +280,7 @@ class SslManager extends Page implements HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -334,7 +329,7 @@ class SslManager extends Page implements HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -346,7 +341,7 @@ class SslManager extends Page implements HasTable
     {
         try {
             $domain = Domain::with('user')->findOrFail($domainId);
-            $mailHostname = 'mail.' . $domain->domain;
+            $mailHostname = 'mail.'.$domain->domain;
 
             $result = $this->getAgent()->sslMailIssue($mailHostname, $domain->user->email);
 
@@ -391,7 +386,7 @@ class SslManager extends Page implements HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -437,7 +432,7 @@ class SslManager extends Page implements HasTable
 
             Notification::make()
                 ->title(__('SSL Check Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -484,7 +479,7 @@ class SslManager extends Page implements HasTable
 
             Notification::make()
                 ->title(__('SSL Check Failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -556,7 +551,7 @@ class SslManager extends Page implements HasTable
 
         foreach ($domainsWithoutMailSsl as $domain) {
             try {
-                $mailHostname = 'mail.' . $domain->domain;
+                $mailHostname = 'mail.'.$domain->domain;
                 $result = $this->getAgent()->sslMailIssue($mailHostname, $domain->user->email);
 
                 if ($result['success'] ?? false) {

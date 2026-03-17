@@ -20,7 +20,7 @@ final class ServerFacts
         // Keep this short-lived; it is used from request contexts.
         return Cache::remember('server.facts.agent_info', 30, function (): array {
             try {
-                $agent = new AgentClient(timeout: 5);
+                $agent = app(AgentClient::class);
                 $result = $agent->send('server.info', []);
 
                 if (! ($result['success'] ?? false)) {

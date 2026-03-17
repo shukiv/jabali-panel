@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Resources\GeoBlockRules\Tables;
 
 use App\Services\System\GeoBlockService;
+use App\Support\SafeError;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Notifications\Notification;
@@ -42,7 +43,7 @@ class GeoBlockRulesTable
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Geo rules sync failed'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

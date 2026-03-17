@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Resources\WebhookEndpoints\Tables;
 
 use App\Models\WebhookEndpoint;
+use App\Support\SafeError;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
@@ -86,7 +87,7 @@ class WebhookEndpointsTable
 
                             Notification::make()
                                 ->title(__('Webhook failed'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

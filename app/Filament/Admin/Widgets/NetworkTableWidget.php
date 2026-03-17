@@ -15,11 +15,11 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class NetworkTableWidget extends Component implements HasTable, HasSchemas, HasActions
+class NetworkTableWidget extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public array $interfaces = [];
 
@@ -31,7 +31,7 @@ class NetworkTableWidget extends Component implements HasTable, HasSchemas, HasA
     protected function loadNetwork(): void
     {
         try {
-            $agent = new AgentClient();
+            $agent = app(AgentClient::class);
             $network = $agent->metricsNetwork()['data'] ?? [];
 
             $interfaces = [];

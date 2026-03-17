@@ -6,6 +6,8 @@ namespace App\Filament\Jabali\Pages;
 
 use App\Models\MysqlCredential;
 use App\Services\Agent\AgentClient;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -75,8 +77,6 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
     public string $credPassword = '';
 
-    protected ?AgentClient $agent = null;
-
     public array $pgDatabases = [];
 
     public array $pgUsers = [];
@@ -88,11 +88,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function getUsername(): string
@@ -214,7 +210,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             $this->databases = [];
             Notification::make()
                 ->title(__('Error loading databases'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -286,17 +282,6 @@ class Databases extends Page implements HasActions, HasForms, HasTable
         }
 
         return $options;
-    }
-
-    protected function formatBytes(int $bytes, int $precision = 2): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-
-        return round($bytes, $precision).' '.$units[$pow];
     }
 
     public function setPgSubTab(string $tab): void
@@ -422,7 +407,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                             $this->loadData();
                             $this->resetTable();
                         } catch (Exception $e) {
-                            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
             ])
@@ -473,7 +458,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                     ->searchable(),
                 TextColumn::make('size_bytes')
                     ->label(__('Size'))
-                    ->formatStateUsing(fn ($state) => $this->formatBytes((int) $state))
+                    ->formatStateUsing(fn ($state) => Formatter::bytes((int) $state))
                     ->color('gray'),
             ])
             ->recordActions([
@@ -699,7 +684,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
                     $this->mountAction('showCredentials');
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -745,7 +730,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                     $this->resetTable();
                     $this->dispatch('refresh-database-users');
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error creating database'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error creating database'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -834,7 +819,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
                     $this->mountAction('showCredentials');
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error creating user'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error creating user'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -967,7 +952,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                     Notification::make()->title(__('User deleted'))->success()->send();
                     $this->loadData();
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1044,7 +1029,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
 
                     $this->mountAction('showCredentials');
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1128,7 +1113,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                         ->send();
                     $this->loadData();
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1140,7 +1125,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             Notification::make()->title(__('Access revoked'))->success()->send();
             $this->loadData();
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1187,7 +1172,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Backup failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1212,7 +1197,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Download failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1281,7 +1266,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Restore failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

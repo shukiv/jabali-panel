@@ -9,6 +9,7 @@ use App\Models\DnsRecord;
 use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use BackedEnum;
 use Exception;
@@ -56,8 +57,6 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
 
     public ?int $selectedDomainId = null;
 
-    protected ?AgentClient $agent = null;
-
     // Pending changes tracking
     public array $pendingEdits = [];
 
@@ -72,7 +71,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function mount(): void
@@ -540,7 +539,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to save changes'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -619,7 +618,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to reset records'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -795,7 +794,7 @@ class DnsRecords extends Page implements HasActions, HasForms, HasTable
                 'default_ttl' => $settings['default_ttl'] ?? 3600,
             ]);
         } catch (Exception $e) {
-            Notification::make()->title(__('Warning: Zone file sync failed'))->body($e->getMessage())->warning()->send();
+            Notification::make()->title(__('Warning: Zone file sync failed'))->body(SafeError::message($e))->warning()->send();
         }
     }
 

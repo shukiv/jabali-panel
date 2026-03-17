@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Resources\Users\Tables;
 
 use App\Services\System\LinuxUserService;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
@@ -145,7 +146,7 @@ class UsersTable
                         } catch (Exception $e) {
                             Notification::make()
                                 ->title(__('Linux user deletion failed'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }
@@ -190,7 +191,7 @@ class UsersTable
                             } catch (Exception $e) {
                                 Notification::make()
                                     ->title(__('Failed to delete Linux user :username', ['username' => $record->username]))
-                                    ->body($e->getMessage())
+                                    ->body(SafeError::message($e))
                                     ->danger()
                                     ->send();
                             }

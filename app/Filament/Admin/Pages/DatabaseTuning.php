@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Pages;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -83,7 +84,7 @@ class DatabaseTuning extends Page implements HasActions, HasTable
             $this->variables = [];
             Notification::make()
                 ->title(__('Unable to load database variables'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -137,12 +138,12 @@ class DatabaseTuning extends Page implements HasActions, HasTable
                             } catch (\Exception $e) {
                                 Notification::make()
                                     ->title(__('Update failed'))
-                                    ->body($e->getMessage())
+                                    ->body(SafeError::message($e))
                                     ->danger()
                                     ->send();
                             }
                         } catch (\Exception $e) {
-                            Notification::make()->title(__('Update failed'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Update failed'))->body(SafeError::message($e))->danger()->send();
                         }
 
                         $this->loadVariables();

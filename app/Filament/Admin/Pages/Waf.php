@@ -6,6 +6,7 @@ namespace App\Filament\Admin\Pages;
 
 use App\Models\Setting;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Forms\Components\Select;
@@ -133,7 +134,7 @@ class Waf extends Page implements HasForms, HasTable
         $whitelistRules = $this->getWhitelistRules();
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->wafApplySettings(
                 $requestedEnabled,
                 (string) ($data['paranoia'] ?? '1'),
@@ -158,7 +159,7 @@ class Waf extends Page implements HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('WAF settings saved, but apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -167,7 +168,7 @@ class Waf extends Page implements HasForms, HasTable
     public function loadAuditLogs(bool $notify = true): void
     {
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $response = $agent->wafAuditLogList();
             $entries = $response['entries'] ?? [];
             if (! is_array($entries)) {
@@ -186,7 +187,7 @@ class Waf extends Page implements HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to load WAF logs'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -206,6 +207,7 @@ class Waf extends Page implements HasForms, HasTable
             if (! is_array($rule)) {
                 $rule = [];
                 $changed = true;
+
                 continue;
             }
 
@@ -280,14 +282,14 @@ class Waf extends Page implements HasForms, HasTable
         $ip = (string) ($entry['remote_ip'] ?? '');
 
         foreach ($rules as $rule) {
-            if (!is_array($rule)) {
+            if (! is_array($rule)) {
                 continue;
             }
 
             $idsRaw = (string) ($rule['rule_ids'] ?? '');
             $ids = preg_split('/[,\s]+/', $idsRaw, -1, PREG_SPLIT_NO_EMPTY) ?: [];
             $ids = array_map('trim', $ids);
-            if ($ruleId !== '' && !empty($ids) && !in_array($ruleId, $ids, true)) {
+            if ($ruleId !== '' && ! empty($ids) && ! in_array($ruleId, $ids, true)) {
                 continue;
             }
 
@@ -313,7 +315,7 @@ class Waf extends Page implements HasForms, HasTable
 
     protected function ruleMatchesEntry(array $rule, array $entry): bool
     {
-        if (!is_array($rule)) {
+        if (! is_array($rule)) {
             return false;
         }
 
@@ -326,7 +328,7 @@ class Waf extends Page implements HasForms, HasTable
         $idsRaw = (string) ($rule['rule_ids'] ?? '');
         $ids = preg_split('/[,\s]+/', $idsRaw, -1, PREG_SPLIT_NO_EMPTY) ?: [];
         $ids = array_map('trim', $ids);
-        if ($ruleId !== '' && !empty($ids) && !in_array($ruleId, $ids, true)) {
+        if ($ruleId !== '' && ! empty($ids) && ! in_array($ruleId, $ids, true)) {
             return false;
         }
 
@@ -405,6 +407,7 @@ class Waf extends Page implements HasForms, HasTable
                 ->body(__('Missing URI/IP or rule ID for this entry.'))
                 ->warning()
                 ->send();
+
             return;
         }
 
@@ -418,7 +421,7 @@ class Waf extends Page implements HasForms, HasTable
         Setting::set('waf_whitelist_rules', json_encode(array_values($rules), JSON_UNESCAPED_SLASHES));
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->wafApplySettings(
                 Setting::get('waf_enabled', '0') === '1',
                 (string) Setting::get('waf_paranoia', '1'),
@@ -428,7 +431,7 @@ class Waf extends Page implements HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Whitelist saved, but apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -468,13 +471,14 @@ class Waf extends Page implements HasForms, HasTable
                 ->title(__('No matching whitelist rule found'))
                 ->warning()
                 ->send();
+
             return;
         }
 
         Setting::set('waf_whitelist_rules', json_encode(array_values($rules), JSON_UNESCAPED_SLASHES));
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $agent->wafApplySettings(
                 Setting::get('waf_enabled', '0') === '1',
                 (string) Setting::get('waf_paranoia', '1'),
@@ -484,7 +488,7 @@ class Waf extends Page implements HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Whitelist updated, but apply failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -523,6 +527,7 @@ class Waf extends Page implements HasForms, HasTable
                     ->label(__('Time'))
                     ->formatStateUsing(function (array $record): string {
                         $timestamp = (int) ($record['timestamp'] ?? 0);
+
                         return $timestamp > 0 ? date('Y-m-d H:i:s', $timestamp) : '';
                     })
                     ->sortable(),
@@ -535,7 +540,7 @@ class Waf extends Page implements HasForms, HasTable
                     ->label(__('Type'))
                     ->badge()
                     ->getStateUsing(function (array $record): string {
-                        if (!empty($record['blocked'])) {
+                        if (! empty($record['blocked'])) {
                             return __('Blocked');
                         }
 
@@ -547,7 +552,7 @@ class Waf extends Page implements HasForms, HasTable
                         return __('Warning');
                     })
                     ->color(function (array $record): string {
-                        if (!empty($record['blocked'])) {
+                        if (! empty($record['blocked'])) {
                             return 'danger';
                         }
 
@@ -589,8 +594,8 @@ class Waf extends Page implements HasForms, HasTable
                 TextColumn::make('whitelisted')
                     ->label(__('Whitelisted'))
                     ->badge()
-                    ->formatStateUsing(fn (array $record): string => !empty($record['whitelisted']) ? __('Yes') : __('No'))
-                    ->color(fn (array $record): string => !empty($record['whitelisted']) ? 'success' : 'gray'),
+                    ->formatStateUsing(fn (array $record): string => ! empty($record['whitelisted']) ? __('Yes') : __('No'))
+                    ->color(fn (array $record): string => ! empty($record['whitelisted']) ? 'success' : 'gray'),
             ])
             ->recordActions([
                 \Filament\Actions\Action::make('whitelist')
@@ -603,7 +608,7 @@ class Waf extends Page implements HasForms, HasTable
                     ->label(__('Remove whitelist'))
                     ->icon('heroicon-o-x-mark')
                     ->color('danger')
-                    ->visible(fn (array $record): bool => !empty($record['whitelisted']))
+                    ->visible(fn (array $record): bool => ! empty($record['whitelisted']))
                     ->requiresConfirmation()
                     ->action(fn (array $record) => $this->removeWhitelistEntry($record)),
             ])

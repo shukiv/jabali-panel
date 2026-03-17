@@ -46,22 +46,24 @@ class RunClamavScan implements ShouldQueue
 
         if (! $lock->get()) {
             Log::info('RunClamavScan: lock already held', ['key' => $lockKey]);
+
             return;
         }
 
         try {
-            $agent = new AgentClient(timeout: 3600);
+            $agent = app(AgentClient::class);
             $result = $agent->send('clamav.scan', ['path' => $this->path]);
 
             if (! ($result['success'] ?? false)) {
                 Log::warning('RunClamavScan: scan failed', [
                     'error' => $result['error'] ?? null,
                 ]);
+
                 return;
             }
 
             $output = (string) ($result['output'] ?? '');
-            $lines = $output === '' ? [] : preg_split("/\\r\\n|\\n|\\r/", $output);
+            $lines = $output === '' ? [] : preg_split('/\\r\\n|\\n|\\r/', $output);
             $lines = array_values(array_filter(array_map('trim', $lines ?? []), static fn ($v) => $v !== ''));
 
             $parsed = $this->parseClamScanOutput($lines);
@@ -118,4 +120,3 @@ class RunClamavScan implements ShouldQueue
         return $results;
     }
 }
-

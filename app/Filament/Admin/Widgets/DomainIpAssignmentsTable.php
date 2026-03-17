@@ -8,6 +8,7 @@ use App\Models\DnsRecord;
 use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use App\Support\ServerFacts;
 use Exception;
 use Filament\Actions\Action;
@@ -35,8 +36,6 @@ class DomainIpAssignmentsTable extends Component implements HasActions, HasSchem
 
     public ?string $defaultIpv6 = null;
 
-    protected ?AgentClient $agent = null;
-
     public function makeFilamentTranslatableContentDriver(): ?TranslatableContentDriver
     {
         return null;
@@ -63,7 +62,7 @@ class DomainIpAssignmentsTable extends Component implements HasActions, HasSchem
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function table(Table $table): Table
@@ -308,7 +307,7 @@ class DomainIpAssignmentsTable extends Component implements HasActions, HasSchem
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('DNS sync failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
             $this->dispatch('notificationsSent');

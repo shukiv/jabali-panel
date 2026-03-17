@@ -6,6 +6,7 @@ namespace App\Filament\Admin\Widgets\Settings;
 
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -19,11 +20,11 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
+class DnssecTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public function makeFilamentTranslatableContentDriver(): ?\Filament\Support\Contracts\TranslatableContentDriver
     {
@@ -32,7 +33,7 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
 
     protected function getAgent(): AgentClient
     {
-        return new AgentClient();
+        return app(AgentClient::class);
     }
 
     protected function getDnssecStatus(string $domain): array
@@ -85,6 +86,7 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                     ->label(__('DNSSEC'))
                     ->state(function (Domain $record): bool {
                         $status = $this->getDnssecStatus($record->domain);
+
                         return $status['enabled'] ?? false;
                     })
                     ->boolean()
@@ -96,7 +98,7 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                     ->label(__('Keys'))
                     ->state(function (Domain $record): string {
                         $status = $this->getDnssecStatus($record->domain);
-                        if (!($status['enabled'] ?? false)) {
+                        if (! ($status['enabled'] ?? false)) {
                             return '-';
                         }
                         $keys = $status['keys'] ?? [];
@@ -112,6 +114,7 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                         if ($zsk) {
                             $info[] = "ZSK: {$zsk['key_id']}";
                         }
+
                         return implode(', ', $info) ?: '-';
                     })
                     ->fontFamily('mono')
@@ -129,7 +132,8 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                     ->modalIconColor('success')
                     ->visible(function (Domain $record): bool {
                         $status = $this->getDnssecStatus($record->domain);
-                        return !($status['enabled'] ?? false);
+
+                        return ! ($status['enabled'] ?? false);
                     })
                     ->action(function (Domain $record): void {
                         try {
@@ -147,7 +151,7 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Failed to enable DNSSEC'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }
@@ -158,12 +162,14 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                     ->color('gray')
                     ->visible(function (Domain $record): bool {
                         $status = $this->getDnssecStatus($record->domain);
+
                         return $status['enabled'] ?? false;
                     })
                     ->modalHeading(fn (Domain $record): string => __('DS Records for :domain', ['domain' => $record->domain]))
                     ->modalDescription(__('Add one of these DS records to your domain registrar to complete DNSSEC setup.'))
                     ->modalContent(function (Domain $record) {
                         $dsRecords = $this->getDsRecords($record->domain);
+
                         return view('filament.admin.components.dnssec-ds-records', ['dsRecords' => $dsRecords, 'domain' => $record->domain]);
                     })
                     ->modalSubmitAction(false)
@@ -179,6 +185,7 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                     ->modalIconColor('danger')
                     ->visible(function (Domain $record): bool {
                         $status = $this->getDnssecStatus($record->domain);
+
                         return $status['enabled'] ?? false;
                     })
                     ->action(function (Domain $record): void {
@@ -197,7 +204,7 @@ class DnssecTable extends Component implements HasTable, HasSchemas, HasActions
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Failed to disable DNSSEC'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

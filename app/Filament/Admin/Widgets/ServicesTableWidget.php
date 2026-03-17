@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -72,7 +73,7 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
 
         $statuses = [];
         try {
-            $agent = new AgentClient(timeout: 5);
+            $agent = app(AgentClient::class);
             $result = $agent->send('service.list', ['services' => $servicesToCheck]);
 
             if ($result['success'] ?? false) {
@@ -209,7 +210,7 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
                     ->visible(fn (array $record): bool => ! ($record['active'] ?? true))
                     ->action(function (array $record): void {
                         try {
-                            $agent = new AgentClient;
+                            $agent = app(AgentClient::class);
                             $result = $agent->send('service.start', ['service' => $record['key']]);
 
                             if ($result['success'] ?? false) {
@@ -227,7 +228,7 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Failed to start service'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }
@@ -246,7 +247,7 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
                     )
                     ->action(function (array $record): void {
                         try {
-                            $agent = new AgentClient;
+                            $agent = app(AgentClient::class);
                             $action = $this->shouldReloadService($record['key']) ? 'reload' : 'restart';
                             $result = $agent->send("service.{$action}", ['service' => $record['key']]);
 
@@ -267,7 +268,7 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title($this->shouldReloadService($record['key']) ? __('Failed to reload service') : __('Failed to restart service'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

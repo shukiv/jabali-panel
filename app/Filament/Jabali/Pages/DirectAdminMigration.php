@@ -7,6 +7,8 @@ namespace App\Filament\Jabali\Pages;
 use App\Models\ServerImport;
 use App\Models\ServerImportAccount;
 use App\Services\Agent\AgentClient;
+use App\Support\Formatter;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -82,8 +84,6 @@ class DirectAdminMigration extends Page implements HasActions, HasForms
     public bool $importEmails = true;
 
     public bool $importSsl = true;
-
-    protected ?AgentClient $agent = null;
 
     public static function getNavigationLabel(): string
     {
@@ -318,7 +318,7 @@ class DirectAdminMigration extends Page implements HasActions, HasForms
                                         } catch (Exception $e) {
                                             Notification::make()
                                                 ->title(__('Upload failed'))
-                                                ->body($e->getMessage())
+                                                ->body(SafeError::message($e))
                                                 ->danger()
                                                 ->send();
                                         }
@@ -592,7 +592,7 @@ class DirectAdminMigration extends Page implements HasActions, HasForms
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Discovery failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -683,7 +683,7 @@ class DirectAdminMigration extends Page implements HasActions, HasForms
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     protected function getUser()
@@ -757,7 +757,7 @@ class DirectAdminMigration extends Page implements HasActions, HasForms
                 continue;
             }
 
-            $size = $this->formatBytes((int) ($item['size'] ?? 0));
+            $size = Formatter::bytes((int) ($item['size'] ?? 0));
             $options[$path] = "{$name} ({$size})";
         }
 
@@ -805,25 +805,10 @@ class DirectAdminMigration extends Page implements HasActions, HasForms
             ->title(__('Backup selected'))
             ->body(__('Selected :name (:size)', [
                 'name' => $details['name'] ?? basename($this->backupPath),
-                'size' => $this->formatBytes((int) ($details['size'] ?? 0)),
+                'size' => Formatter::bytes((int) ($details['size'] ?? 0)),
             ]))
             ->success()
             ->send();
-    }
-
-    protected function formatBytes(int $bytes): string
-    {
-        if ($bytes >= 1073741824) {
-            return number_format($bytes / 1073741824, 2).' GB';
-        }
-        if ($bytes >= 1048576) {
-            return number_format($bytes / 1048576, 2).' MB';
-        }
-        if ($bytes >= 1024) {
-            return number_format($bytes / 1024, 2).' KB';
-        }
-
-        return $bytes.' B';
     }
 
     protected function resolveBackupFullPath(?string $path): ?string

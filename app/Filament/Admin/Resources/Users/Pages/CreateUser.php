@@ -8,6 +8,7 @@ use App\Filament\Admin\Resources\Users\UserResource;
 use App\Models\HostingPackage;
 use App\Services\Agent\AgentClient;
 use App\Services\System\LinuxUserService;
+use App\Support\SafeError;
 use Exception;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
@@ -60,7 +61,7 @@ class CreateUser extends CreateRecord
             } catch (Exception $e) {
                 Notification::make()
                     ->title(__('Linux user creation failed'))
-                    ->body($e->getMessage())
+                    ->body(SafeError::message($e))
                     ->danger()
                     ->send();
             }
@@ -84,7 +85,7 @@ class CreateUser extends CreateRecord
 
         // Always try to apply quota when set
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
             $result = $agent->quotaSet($this->record->username, (int) $quotaMb);
 
             if ($result['success'] ?? false) {

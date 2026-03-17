@@ -10,6 +10,7 @@ use App\Models\DomainAlias;
 use App\Models\DomainHotlinkSetting;
 use App\Models\DomainRedirect;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -53,8 +54,6 @@ class Domains extends Page implements HasActions, HasForms, HasTable
 
     protected string $view = 'filament.jabali.pages.domains';
 
-    protected ?AgentClient $agent = null;
-
     public function getTitle(): string|Htmlable
     {
         return __('Domains');
@@ -62,11 +61,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function getUsername(): string
@@ -496,7 +491,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
                 } catch (Exception $e) {
                     Notification::make()
                         ->title(__('Error creating domain'))
-                        ->body($e->getMessage())
+                        ->body(SafeError::message($e))
                         ->danger()
                         ->send();
                 }
@@ -576,7 +571,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error saving redirects'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -634,7 +629,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error saving hotlink settings'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -660,7 +655,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error saving index settings'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -686,7 +681,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error toggling domain'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -822,7 +817,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error deleting domain'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -982,7 +977,7 @@ class Domains extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to update error pages'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

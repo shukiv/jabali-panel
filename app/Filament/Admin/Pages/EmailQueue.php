@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Pages;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -35,8 +36,6 @@ class EmailQueue extends Page implements HasActions, HasTable
 
     public array $queueItems = [];
 
-    protected ?AgentClient $agent = null;
-
     protected bool $queueLoaded = false;
 
     public function getTitle(): string|Htmlable
@@ -56,7 +55,7 @@ class EmailQueue extends Page implements HasActions, HasTable
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function loadQueue(bool $refreshTable = true): void
@@ -70,7 +69,7 @@ class EmailQueue extends Page implements HasActions, HasTable
             $this->queueLoaded = true;
             Notification::make()
                 ->title(__('Failed to load mail queue'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -142,7 +141,7 @@ class EmailQueue extends Page implements HasActions, HasTable
                                 throw new \Exception($result['error'] ?? __('Failed to retry message'));
                             }
                         } catch (\Exception $e) {
-                            Notification::make()->title(__('Retry failed'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Retry failed'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
                 Action::make('delete')
@@ -160,7 +159,7 @@ class EmailQueue extends Page implements HasActions, HasTable
                                 throw new \Exception($result['error'] ?? __('Failed to delete message'));
                             }
                         } catch (\Exception $e) {
-                            Notification::make()->title(__('Delete failed'))->body($e->getMessage())->danger()->send();
+                            Notification::make()->title(__('Delete failed'))->body(SafeError::message($e))->danger()->send();
                         }
                     }),
             ])

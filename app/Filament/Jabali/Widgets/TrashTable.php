@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Filament\Jabali\Widgets;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
+use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -18,19 +20,16 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
-use Exception;
 
-class TrashTable extends Component implements HasTable, HasSchemas, HasActions
+class TrashTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     protected static string $view = 'filament.jabali.widgets.trash-table';
 
     public array $trashItems = [];
-
-    protected ?AgentClient $agent = null;
 
     public function mount(): void
     {
@@ -39,10 +38,7 @@ class TrashTable extends Component implements HasTable, HasSchemas, HasActions
 
     public function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient();
-        }
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     public function getUsername(): string
@@ -144,7 +140,7 @@ class TrashTable extends Component implements HasTable, HasSchemas, HasActions
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -164,7 +160,7 @@ class TrashTable extends Component implements HasTable, HasSchemas, HasActions
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -185,7 +181,7 @@ class TrashTable extends Component implements HasTable, HasSchemas, HasActions
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

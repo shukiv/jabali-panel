@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Jabali\Widgets;
 
 use App\Models\Backup;
+use App\Support\Formatter;
 use Filament\Actions\Action;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -34,7 +35,7 @@ class RecentBackupsWidget extends BaseWidget
 
                 TextColumn::make('size_bytes')
                     ->label(__('Size'))
-                    ->formatStateUsing(fn ($state) => $this->formatBytes((int) $state))
+                    ->formatStateUsing(fn ($state) => Formatter::bytes((int) $state))
                     ->badge()
                     ->color('gray'),
 
@@ -92,18 +93,5 @@ class RecentBackupsWidget extends BaseWidget
             ->where('user_id', Auth::id())
             ->orderBy('created_at', 'desc')
             ->limit(5);
-    }
-
-    protected function formatBytes(int $bytes, int $precision = 2): string
-    {
-        if ($bytes === 0) {
-            return '0 B';
-        }
-
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $pow = floor(log($bytes) / log(1024));
-        $pow = min($pow, count($units) - 1);
-
-        return round($bytes / pow(1024, $pow), $precision) . ' ' . $units[$pow];
     }
 }

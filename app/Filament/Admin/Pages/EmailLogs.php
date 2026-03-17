@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Pages;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -47,8 +48,6 @@ class EmailLogs extends Page implements HasActions, HasForms, HasTable
     public array $logs = [];
 
     public array $queueItems = [];
-
-    protected ?AgentClient $agent = null;
 
     protected bool $logsLoaded = false;
 
@@ -114,6 +113,7 @@ class EmailLogs extends Page implements HasActions, HasForms, HasTable
         $mode = $this->normalizeViewMode($this->viewMode);
         if ($this->viewMode !== $mode) {
             $this->viewMode = $mode;
+
             return;
         }
 
@@ -128,7 +128,7 @@ class EmailLogs extends Page implements HasActions, HasForms, HasTable
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     public function loadLogs(bool $refreshTable = true): void
@@ -146,7 +146,7 @@ class EmailLogs extends Page implements HasActions, HasForms, HasTable
 
             Notification::make()
                 ->title(__('Failed to load email logs'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -167,7 +167,7 @@ class EmailLogs extends Page implements HasActions, HasForms, HasTable
             $this->queueLoaded = true;
             Notification::make()
                 ->title(__('Failed to load mail queue'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -342,7 +342,7 @@ class EmailLogs extends Page implements HasActions, HasForms, HasTable
                             throw new \Exception($result['error'] ?? __('Failed to retry message'));
                         }
                     } catch (\Exception $e) {
-                        Notification::make()->title(__('Retry failed'))->body($e->getMessage())->danger()->send();
+                        Notification::make()->title(__('Retry failed'))->body(SafeError::message($e))->danger()->send();
                     }
                 }),
             Action::make('delete')
@@ -360,7 +360,7 @@ class EmailLogs extends Page implements HasActions, HasForms, HasTable
                             throw new \Exception($result['error'] ?? __('Failed to delete message'));
                         }
                     } catch (\Exception $e) {
-                        Notification::make()->title(__('Delete failed'))->body($e->getMessage())->danger()->send();
+                        Notification::make()->title(__('Delete failed'))->body(SafeError::message($e))->danger()->send();
                     }
                 }),
         ];

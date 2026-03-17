@@ -18,7 +18,7 @@ class MemoryWidget extends BaseWidget
     protected function getStats(): array
     {
         try {
-            $agent = new AgentClient();
+            $agent = app(AgentClient::class);
             $overview = $agent->metricsOverview();
             $memory = $overview['memory'] ?? [];
         } catch (\Exception $e) {
@@ -31,19 +31,19 @@ class MemoryWidget extends BaseWidget
         $available = ($memory['available'] ?? 0) / 1024;
 
         return [
-            Stat::make(__('Total'), number_format($total, 1) . ' GB')
+            Stat::make(__('Total'), number_format($total, 1).' GB')
                 ->description(__('Total memory'))
                 ->color('gray'),
 
-            Stat::make(__('Used'), number_format($used, 1) . ' GB')
+            Stat::make(__('Used'), number_format($used, 1).' GB')
                 ->description(__('In use'))
                 ->color('success'),
 
-            Stat::make(__('Cached'), number_format($cached, 1) . ' GB')
+            Stat::make(__('Cached'), number_format($cached, 1).' GB')
                 ->description(__('Cached data'))
                 ->color('primary'),
 
-            Stat::make(__('Available'), number_format($available, 1) . ' GB')
+            Stat::make(__('Available'), number_format($available, 1).' GB')
                 ->description(__('Free to use'))
                 ->color('warning'),
         ];

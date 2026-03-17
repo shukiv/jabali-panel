@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets\Security;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -18,18 +19,18 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class JailsTable extends Component implements HasTable, HasSchemas, HasActions
+class JailsTable extends Component implements HasActions, HasSchemas, HasTable
 {
-    use InteractsWithTable;
-    use InteractsWithSchemas;
     use InteractsWithActions;
+    use InteractsWithSchemas;
+    use InteractsWithTable;
 
     public array $jails = [];
 
     protected function reloadJails(): void
     {
         try {
-            $agent = new AgentClient();
+            $agent = app(AgentClient::class);
             $result = $agent->send('fail2ban.list_jails', []);
             if ($result['success'] ?? false) {
                 $this->jails = $result['jails'] ?? [];
@@ -84,7 +85,7 @@ class JailsTable extends Component implements HasTable, HasSchemas, HasActions
                         $enabled = $record['enabled'] ?? false;
 
                         try {
-                            $agent = new AgentClient();
+                            $agent = app(AgentClient::class);
                             $action = $enabled ? 'fail2ban.disable_jail' : 'fail2ban.enable_jail';
                             $result = $agent->send($action, ['jail' => $name]);
 
@@ -102,7 +103,7 @@ class JailsTable extends Component implements HasTable, HasSchemas, HasActions
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Error'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

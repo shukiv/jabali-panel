@@ -62,7 +62,7 @@ class MailRoutingSyncService
 
         $aliases = array_merge($aliases, $catchAll);
 
-        $agent = new AgentClient;
+        $agent = app(AgentClient::class);
         $agent->emailSyncMaps($domains, $mailboxes, $aliases);
     }
 }

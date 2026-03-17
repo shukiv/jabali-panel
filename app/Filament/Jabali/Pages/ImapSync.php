@@ -8,6 +8,7 @@ use App\Jobs\RunImapSync;
 use App\Models\ImapSyncTask;
 use App\Models\Mailbox;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -291,7 +292,7 @@ class ImapSync extends Page implements HasActions, HasForms
             Log::error('IMAP test connection failed', ['error' => $e->getMessage()]);
             Notification::make()
                 ->title(__('Connection failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }

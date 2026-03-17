@@ -11,6 +11,7 @@ use App\Services\Agent\AgentClient;
 use App\Services\System\LinuxUserService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class AutomationApiController extends Controller
@@ -62,12 +63,14 @@ class AutomationApiController extends Controller
         } catch (\Exception $e) {
             $user->delete();
 
-            return response()->json(['error' => $e->getMessage()], 500);
+            Log::error('API user creation failed: '.$e->getMessage());
+
+            return response()->json(['error' => 'User creation failed'], 500);
         }
 
         if ($package && $package->disk_quota_mb) {
             try {
-                $agent = new AgentClient;
+                $agent = app(AgentClient::class);
                 $agent->quotaSet($user->username, (int) $package->disk_quota_mb);
             } catch (\Exception) {
                 // keep user created, quota can be applied later
@@ -107,7 +110,7 @@ class AutomationApiController extends Controller
             return response()->json(['error' => 'Domain limit reached'], 409);
         }
 
-        $agent = new AgentClient;
+        $agent = app(AgentClient::class);
         $result = $agent->domainCreate($user->username, $data['domain']);
         if (! ($result['success'] ?? false)) {
             return response()->json(['error' => $result['error'] ?? 'Domain creation failed'], 500);

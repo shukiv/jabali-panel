@@ -9,6 +9,7 @@ use App\Services\Agent\AgentClient;
 use App\Services\Migration\MigrationDnsSyncService;
 use App\Services\Migration\WhmApiService;
 use App\Services\Migration\WhmMigrationStatusStore;
+use App\Support\Formatter;
 use App\Support\ServerFacts;
 use Exception;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -188,7 +189,7 @@ class RunWhmMigrationBatch implements ShouldQueue
                 throw new Exception(__('Backup file did not arrive'));
             }
 
-            $store->addAccountLog($cpanelUser, __('Backup received: :size', ['size' => $this->formatBytes(filesize($backupPath))]), 'success');
+            $store->addAccountLog($cpanelUser, __('Backup received: :size', ['size' => Formatter::bytes(filesize($backupPath))]), 'success');
 
             $summary = $whm->getUserMigrationSummary($cpanelUser);
             $discoveredData = $whm->convertApiDataToAgentFormat($summary);
@@ -339,7 +340,7 @@ class RunWhmMigrationBatch implements ShouldQueue
 
             if ($attempt % 6 === 0) {
                 $store->addAccountLog($cpanelUser, __('Receiving backup... :size', [
-                    'size' => $this->formatBytes($currentSize),
+                    'size' => Formatter::bytes($currentSize),
                 ]), 'pending');
             }
         }
@@ -402,16 +403,5 @@ class RunWhmMigrationBatch implements ShouldQueue
         $fallback = gethostbyname(gethostname() ?: 'localhost');
 
         return is_string($fallback) ? $fallback : '';
-    }
-
-    protected function formatBytes(int $bytes, int $precision = 2): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
-
-        return round($bytes, $precision).' '.$units[$pow];
     }
 }

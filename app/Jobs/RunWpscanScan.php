@@ -34,17 +34,19 @@ class RunWpscanScan implements ShouldQueue
 
         if (! $lock->get()) {
             Log::info('RunWpscanScan: lock already held');
+
             return;
         }
 
         try {
-            $agent = new AgentClient(timeout: 900);
+            $agent = app(AgentClient::class);
             $result = $agent->send('scanner.run_wpscan', ['url' => $this->url]);
 
             if (! ($result['success'] ?? false)) {
                 Log::warning('RunWpscanScan: scan failed', [
                     'error' => $result['error'] ?? null,
                 ]);
+
                 return;
             }
 
@@ -66,4 +68,3 @@ class RunWpscanScan implements ShouldQueue
         }
     }
 }
-

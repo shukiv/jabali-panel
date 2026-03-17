@@ -6,6 +6,7 @@ namespace App\Filament\Jabali\Pages;
 
 use App\Models\Domain;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -34,8 +35,6 @@ class ImageOptimization extends Page implements HasActions, HasForms
     protected static ?string $slug = 'image-optimization';
 
     protected string $view = 'filament.jabali.pages.image-optimization';
-
-    protected ?AgentClient $agent = null;
 
     /**
      * Livewire v4 + Filament form fields entangle to nested state paths.
@@ -68,11 +67,7 @@ class ImageOptimization extends Page implements HasActions, HasForms
 
     protected function getAgent(): AgentClient
     {
-        if ($this->agent === null) {
-            $this->agent = new AgentClient;
-        }
-
-        return $this->agent;
+        return app(AgentClient::class);
     }
 
     protected function getUsername(): string
@@ -166,7 +161,7 @@ class ImageOptimization extends Page implements HasActions, HasForms
 
             Notification::make()->title(__('Optimization failed'))->body($result['error'] ?? '')->danger()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Optimization failed'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Optimization failed'))->body(SafeError::message($e))->danger()->send();
         }
     }
 }

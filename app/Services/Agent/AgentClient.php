@@ -7,7 +7,7 @@ namespace App\Services\Agent;
 use Exception;
 use Illuminate\Support\Facades\Cache;
 
-class AgentClient
+class AgentClient implements AgentClientInterface
 {
     private string $socketPath;
 

@@ -56,7 +56,7 @@ class IssueSslCertificate implements ShouldQueue
         Log::info("IssueSslCertificate: Issuing {$this->service} SSL for {$domain->domain}");
 
         try {
-            $agent = new AgentClient;
+            $agent = app(AgentClient::class);
 
             if ($this->service === 'mail') {
                 $result = $agent->sslMailIssue('mail.'.$domain->domain, $domain->user->email);

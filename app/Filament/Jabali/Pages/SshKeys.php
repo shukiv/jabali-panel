@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\Filament\Jabali\Pages;
 
-use BackedEnum;
 use App\Models\Setting;
+use App\Support\SafeError;
+use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -118,7 +119,7 @@ class SshKeys extends Page implements HasActions, HasForms, HasTable
         } catch (\Exception $e) {
             Notification::make()
                 ->title(__('Error'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -199,7 +200,7 @@ class SshKeys extends Page implements HasActions, HasForms, HasTable
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Error'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }
@@ -267,7 +268,7 @@ class SshKeys extends Page implements HasActions, HasForms, HasTable
                     } catch (\Exception $e) {
                         Notification::make()
                             ->title(__('Error'))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                     }
@@ -315,7 +316,7 @@ class SshKeys extends Page implements HasActions, HasForms, HasTable
                     } catch (\Exception $e) {
                         Notification::make()
                             ->title(__('Error'))
-                            ->body($e->getMessage())
+                            ->body(SafeError::message($e))
                             ->danger()
                             ->send();
                     }

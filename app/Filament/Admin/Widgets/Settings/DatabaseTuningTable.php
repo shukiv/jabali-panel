@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets\Settings;
 
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -19,15 +20,13 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class DatabaseTuningTable extends Component implements HasTable, HasSchemas, HasActions
+class DatabaseTuningTable extends Component implements HasActions, HasSchemas, HasTable
 {
     use InteractsWithActions;
     use InteractsWithSchemas;
     use InteractsWithTable;
 
     public array $variables = [];
-
-    protected ?AgentClient $agent = null;
 
     public function makeFilamentTranslatableContentDriver(): ?TranslatableContentDriver
     {
@@ -41,7 +40,7 @@ class DatabaseTuningTable extends Component implements HasTable, HasSchemas, Has
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient();
+        return app(AgentClient::class);
     }
 
     public function loadVariables(): void
@@ -71,7 +70,7 @@ class DatabaseTuningTable extends Component implements HasTable, HasSchemas, Has
             $this->variables = [];
             Notification::make()
                 ->title(__('Unable to load database variables'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->warning()
                 ->send();
         }
@@ -124,7 +123,7 @@ class DatabaseTuningTable extends Component implements HasTable, HasSchemas, Has
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title(__('Update failed'))
-                                ->body($e->getMessage())
+                                ->body(SafeError::message($e))
                                 ->danger()
                                 ->send();
                         }

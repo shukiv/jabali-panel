@@ -7,6 +7,7 @@ namespace App\Filament\Admin\Pages;
 use App\Models\ServerImport;
 use App\Models\ServerImportAccount;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -68,8 +69,6 @@ class HestiaCpMigration extends Page implements HasActions, HasForms
     public bool $importEmails = true;
 
     public bool $importSsl = true;
-
-    protected ?AgentClient $agent = null;
 
     public static function getNavigationLabel(): string
     {
@@ -425,7 +424,7 @@ class HestiaCpMigration extends Page implements HasActions, HasForms
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Discovery failed'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -590,7 +589,7 @@ class HestiaCpMigration extends Page implements HasActions, HasForms
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     protected function getImport(): ?ServerImport

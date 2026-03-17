@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets;
 
 use App\Services\Agent\AgentClient;
+use App\Support\Formatter;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
@@ -14,7 +15,7 @@ class ServerStatsOverview extends BaseWidget
 
     protected function getStats(): array
     {
-        $agent = new AgentClient();
+        $agent = app(AgentClient::class);
 
         try {
             $overview = $agent->metricsOverview();
@@ -42,25 +43,25 @@ class ServerStatsOverview extends BaseWidget
         $ioWait = $this->getIoWait();
 
         return [
-            Stat::make(__('CPU Usage'), $cpuUsage . '%')
-                ->description(($cpu['cores'] ?? 0) . ' ' . __('cores'))
+            Stat::make(__('CPU Usage'), $cpuUsage.'%')
+                ->description(($cpu['cores'] ?? 0).' '.__('cores'))
                 ->descriptionIcon('heroicon-m-cpu-chip')
                 ->color('primary')
                 ->chart($this->generateSparkline($cpuUsage)),
 
-            Stat::make(__('Memory'), $memUsage . '%')
-                ->description(number_format(($memory['used'] ?? 0) / 1024, 1) . ' / ' . number_format(($memory['total'] ?? 0) / 1024, 1) . ' GB')
+            Stat::make(__('Memory'), $memUsage.'%')
+                ->description(number_format(($memory['used'] ?? 0) / 1024, 1).' / '.number_format(($memory['total'] ?? 0) / 1024, 1).' GB')
                 ->descriptionIcon('heroicon-m-server')
                 ->color('info')
                 ->chart($this->generateSparkline($memUsage)),
 
             Stat::make(__('Load Average'), (string) $loadAvg)
-                ->description(__('Uptime') . ': ' . $uptime)
+                ->description(__('Uptime').': '.$uptime)
                 ->descriptionIcon('heroicon-m-clock')
                 ->color('warning'),
 
-            Stat::make(__('Disk I/O'), $ioWait . '% ' . __('wait'))
-                ->description(__('R') . ': ' . $this->formatBytes($readBytes) . ' | ' . __('W') . ': ' . $this->formatBytes($writeBytes))
+            Stat::make(__('Disk I/O'), $ioWait.'% '.__('wait'))
+                ->description(__('R').': '.Formatter::bytes($readBytes).' | '.__('W').': '.Formatter::bytes($writeBytes))
                 ->descriptionIcon('heroicon-m-circle-stack')
                 ->color($ioWait > 20 ? 'danger' : ($ioWait > 10 ? 'warning' : 'gray')),
         ];
@@ -69,7 +70,7 @@ class ServerStatsOverview extends BaseWidget
     protected function getIoWait(): float
     {
         $stat = @file_get_contents('/proc/stat');
-        if (!$stat) {
+        if (! $stat) {
             return 0;
         }
 
@@ -89,21 +90,11 @@ class ServerStatsOverview extends BaseWidget
         return 0;
     }
 
-    protected function formatBytes(int $bytes): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $i = 0;
-        while ($bytes >= 1024 && $i < count($units) - 1) {
-            $bytes /= 1024;
-            $i++;
-        }
-        return round($bytes, 1) . ' ' . $units[$i];
-    }
-
     protected function generateSparkline(float $value): array
     {
         // Generate a simple sparkline based on current value
         $base = max(0, $value - 20);
+
         return [
             $base + rand(0, 10),
             $base + rand(0, 15),

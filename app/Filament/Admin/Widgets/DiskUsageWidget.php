@@ -11,12 +11,13 @@ class DiskUsageWidget extends Widget
 {
     protected string $view = 'filament.admin.widgets.disk-usage';
 
-    protected int | string | array $columnSpan = 1;
+    protected int|string|array $columnSpan = 1;
 
     public function getData(): array
     {
         try {
-            $agent = new AgentClient();
+            $agent = app(AgentClient::class);
+
             return $agent->metricsDisk()['data'] ?? [];
         } catch (\Exception $e) {
             return [];

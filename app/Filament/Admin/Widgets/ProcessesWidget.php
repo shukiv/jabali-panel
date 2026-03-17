@@ -11,12 +11,13 @@ class ProcessesWidget extends Widget
 {
     protected string $view = 'filament.admin.widgets.processes';
 
-    protected int | string | array $columnSpan = 'full';
+    protected int|string|array $columnSpan = 'full';
 
     public function getData(): array
     {
         try {
-            $agent = new AgentClient();
+            $agent = app(AgentClient::class);
+
             return $agent->metricsProcesses(10)['data'] ?? [];
         } catch (\Exception $e) {
             return [];

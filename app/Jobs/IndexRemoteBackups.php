@@ -8,16 +8,17 @@ use App\Models\BackupDestination;
 use App\Models\User;
 use App\Models\UserRemoteBackup;
 use App\Services\Agent\AgentClient;
+use Exception;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
-use Exception;
 
 class IndexRemoteBackups implements ShouldQueue
 {
     use Queueable;
 
     public int $tries = 1;
+
     public int $timeout = 600; // 10 minutes max
 
     public function __construct(
@@ -26,7 +27,7 @@ class IndexRemoteBackups implements ShouldQueue
 
     public function handle(): void
     {
-        $agent = new AgentClient();
+        $agent = app(AgentClient::class);
 
         // Get destinations to index
         $query = BackupDestination::where('is_server_backup', true)->where('is_active', true);
@@ -42,7 +43,7 @@ class IndexRemoteBackups implements ShouldQueue
             try {
                 $this->indexDestination($agent, $destination, $users);
             } catch (Exception $e) {
-                Log::warning("IndexRemoteBackups: Failed to index destination {$destination->name}: " . $e->getMessage());
+                Log::warning("IndexRemoteBackups: Failed to index destination {$destination->name}: ".$e->getMessage());
             }
         }
 
@@ -59,21 +60,21 @@ class IndexRemoteBackups implements ShouldQueue
             'path' => '',
         ]);
 
-        if (!($result['success'] ?? false) || empty($result['files'])) {
+        if (! ($result['success'] ?? false) || empty($result['files'])) {
             return;
         }
 
         $indexedBackups = [];
 
         foreach ($result['files'] as $file) {
-            if (!$file['is_directory']) {
+            if (! $file['is_directory']) {
                 continue;
             }
 
             $backupName = basename($file['name']);
 
             // Check for timestamp directories (incremental backups: 2026-01-19_210219)
-            if (!preg_match('/^\d{4}-\d{2}-\d{2}_\d{6}$/', $backupName)) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}_\d{6}$/', $backupName)) {
                 continue;
             }
 
@@ -83,13 +84,13 @@ class IndexRemoteBackups implements ShouldQueue
                 'path' => $backupName,
             ]);
 
-            if (!($backupContents['success'] ?? false) || empty($backupContents['files'])) {
+            if (! ($backupContents['success'] ?? false) || empty($backupContents['files'])) {
                 continue;
             }
 
             // Check each subdirectory to see if it's a user
             foreach ($backupContents['files'] as $subFile) {
-                if (!$subFile['is_directory']) {
+                if (! $subFile['is_directory']) {
                     continue;
                 }
 
@@ -101,12 +102,12 @@ class IndexRemoteBackups implements ShouldQueue
                 }
 
                 // Check if this is a valid user
-                if (!isset($users[$username])) {
+                if (! isset($users[$username])) {
                     continue;
                 }
 
                 $userId = $users[$username];
-                $backupPath = $backupName . '/' . $username;
+                $backupPath = $backupName.'/'.$username;
                 $backupDate = UserRemoteBackup::parseBackupDate($backupName);
 
                 // Upsert the backup record
@@ -128,7 +129,7 @@ class IndexRemoteBackups implements ShouldQueue
             }
         }
 
-        Log::info("IndexRemoteBackups: Indexed " . count($indexedBackups) . " backups from {$destination->name}");
+        Log::info('IndexRemoteBackups: Indexed '.count($indexedBackups)." backups from {$destination->name}");
 
         // Clean up old entries that no longer exist on the remote
         // (backups that were deleted via retention policy)
@@ -149,7 +150,7 @@ class IndexRemoteBackups implements ShouldQueue
         }
 
         // Delete index entries for backups that no longer exist
-        if (!empty($remoteBackupNames)) {
+        if (! empty($remoteBackupNames)) {
             $deleted = UserRemoteBackup::where('destination_id', $destinationId)
                 ->whereNotIn('backup_name', $remoteBackupNames)
                 ->delete();

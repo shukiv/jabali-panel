@@ -28,17 +28,19 @@ class RunNiktoScan implements ShouldQueue
 
         if (! $lock->get()) {
             Log::info('RunNiktoScan: lock already held');
+
             return;
         }
 
         try {
-            $agent = new AgentClient(timeout: 900);
+            $agent = app(AgentClient::class);
             $result = $agent->send('scanner.run_nikto', ['target' => $this->target]);
 
             if (! ($result['success'] ?? false)) {
                 Log::warning('RunNiktoScan: scan failed', [
                     'error' => $result['error'] ?? null,
                 ]);
+
                 return;
             }
 
@@ -59,4 +61,3 @@ class RunNiktoScan implements ShouldQueue
         }
     }
 }
-

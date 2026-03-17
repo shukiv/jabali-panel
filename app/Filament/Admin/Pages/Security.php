@@ -21,6 +21,7 @@ use App\Models\AuditLog;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
+use App\Support\SafeError;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -67,8 +68,6 @@ class Security extends Page implements HasActions, HasForms, HasTable
     protected static ?string $slug = 'security';
 
     protected string $view = 'filament.admin.pages.security';
-
-    protected ?AgentClient $agent = null;
 
     // Firewall
     public bool $firewallInstalled = false;
@@ -200,7 +199,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
 
     protected function getAgent(): AgentClient
     {
-        return $this->agent ??= new AgentClient;
+        return app(AgentClient::class);
     }
 
     protected function normalizeTabName(?string $tab): string
@@ -1302,7 +1301,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to save SSH settings'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -1367,7 +1366,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['message'] ?? __('Unknown error'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
 
         $this->loadFirewallStatus();
@@ -1384,7 +1383,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
             AuditLog::logFirewallAction('installed', 'default rules configured');
             Notification::make()->title(__('Firewall configured with default rules'))->success()->send();
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to configure firewall'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to configure firewall'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFirewallStatus();
     }
@@ -1414,7 +1413,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1451,7 +1450,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1467,7 +1466,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['message'] ?? __('Unknown error'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 
@@ -1495,7 +1494,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1536,7 +1535,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['error'] ?? $result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1575,7 +1574,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['error'] ?? $result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1618,7 +1617,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['error'] ?? $result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1660,7 +1659,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['error'] ?? $result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1700,7 +1699,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['error'] ?? $result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1736,7 +1735,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                         throw new Exception($result['error'] ?? $result['message'] ?? __('Unknown error'));
                     }
                 } catch (Exception $e) {
-                    Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+                    Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
                 }
             });
     }
@@ -1795,7 +1794,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Installation failed'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to install Fail2ban'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to install Fail2ban'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1813,7 +1812,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to start'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to start Fail2ban'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to start Fail2ban'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1828,7 +1827,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to stop'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to stop Fail2ban'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to stop Fail2ban'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1846,7 +1845,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to disable'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to disable Fail2ban'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to disable Fail2ban'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1865,7 +1864,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to save'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to save settings'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to save settings'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1880,7 +1879,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to unban'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to unban IP'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to unban IP'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1895,7 +1894,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to enable jail'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to enable jail'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to enable jail'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1910,7 +1909,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to disable jail'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to disable jail'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to disable jail'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadFail2banStatus();
     }
@@ -1927,7 +1926,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Installation failed'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to install ClamAV'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to install ClamAV'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
@@ -1942,7 +1941,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 Notification::make()->title(__('Update may have issues'))->body($result['output'] ?? '')->warning()->send();
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to update signatures'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to update signatures'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
@@ -1957,7 +1956,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to start'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to start ClamAV'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to start ClamAV'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
@@ -1975,7 +1974,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to enable'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to enable ClamAV'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to enable ClamAV'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
@@ -1990,7 +1989,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to stop'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to stop ClamAV'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to stop ClamAV'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
@@ -2008,7 +2007,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to disable'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to disable ClamAV'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to disable ClamAV'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
@@ -2029,7 +2028,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to toggle real-time protection'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to toggle real-time protection'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
@@ -2056,7 +2055,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
         } catch (Exception $e) {
             Notification::make()
                 ->title(__('Failed to switch ClamAV mode'))
-                ->body($e->getMessage())
+                ->body(SafeError::message($e))
                 ->danger()
                 ->send();
         }
@@ -2073,7 +2072,7 @@ class Security extends Page implements HasActions, HasForms, HasTable
                 throw new Exception($result['error'] ?? __('Failed to delete'));
             }
         } catch (Exception $e) {
-            Notification::make()->title(__('Failed to delete file'))->body($e->getMessage())->danger()->send();
+            Notification::make()->title(__('Failed to delete file'))->body(SafeError::message($e))->danger()->send();
         }
         $this->loadClamavStatus();
     }
