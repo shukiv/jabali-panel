@@ -8,12 +8,13 @@ use App\Models\Backup;
 use App\Models\BackupSchedule;
 use App\Services\AdminNotificationService;
 use App\Services\Agent\AgentClient;
-use Illuminate\Console\Command;
 use Exception;
+use Illuminate\Console\Command;
 
 class RunBackupSchedules extends Command
 {
     protected $signature = 'backups:run-schedules';
+
     protected $description = 'Run due backup schedules';
 
     protected AgentClient $agent;
@@ -21,7 +22,7 @@ class RunBackupSchedules extends Command
     public function __construct()
     {
         parent::__construct();
-        $this->agent = new AgentClient();
+        $this->agent = new AgentClient;
     }
 
     public function handle(): int
@@ -32,6 +33,7 @@ class RunBackupSchedules extends Command
 
         if ($dueSchedules->isEmpty()) {
             $this->info('No backup schedules due.');
+
             return Command::SUCCESS;
         }
 
@@ -57,8 +59,9 @@ class RunBackupSchedules extends Command
             $outputPath = "/var/backups/jabali/{$timestamp}";
         } else {
             $user = $schedule->user;
-            if (!$user) {
+            if (! $user) {
                 $this->error("Schedule {$schedule->id} has no user.");
+
                 return;
             }
             $filename = "backup_scheduled_{$timestamp}.tar.gz";
@@ -69,7 +72,7 @@ class RunBackupSchedules extends Command
             'user_id' => $schedule->user_id,
             'destination_id' => $schedule->destination_id,
             'schedule_id' => $schedule->id,
-            'name' => "{$schedule->name} - " . now()->format('M j, Y H:i'),
+            'name' => "{$schedule->name} - ".now()->format('M j, Y H:i'),
             'filename' => $filename,
             'type' => $schedule->is_server_backup ? 'server' : 'partial',
             'include_files' => $schedule->include_files,
@@ -149,10 +152,10 @@ class RunBackupSchedules extends Command
 
                     // Delete local file after successful remote upload (unless keep_local is set)
                     $keepLocal = $schedule->metadata['keep_local_copy'] ?? false;
-                    if (!$keepLocal && $uploadSuccess && $backup->local_path) {
+                    if (! $keepLocal && $uploadSuccess && $backup->local_path) {
                         $this->agent->backupDeleteServer($backup->local_path);
                         $backup->update(['local_path' => null]);
-                        $this->info("Local backup deleted after remote upload");
+                        $this->info('Local backup deleted after remote upload');
                     }
                 }
 
@@ -195,7 +198,7 @@ class RunBackupSchedules extends Command
 
     protected function uploadToRemote(Backup $backup): bool
     {
-        if (!$backup->destination || !$backup->local_path) {
+        if (! $backup->destination || ! $backup->local_path) {
             return false;
         }
 
@@ -216,6 +219,7 @@ class RunBackupSchedules extends Command
                     'remote_path' => $result['remote_path'] ?? null,
                 ]);
                 $this->info("Uploaded to remote: {$backup->destination->name}");
+
                 return true;
             } else {
                 throw new Exception($result['error'] ?? 'Upload failed');
@@ -223,9 +227,10 @@ class RunBackupSchedules extends Command
         } catch (Exception $e) {
             $backup->update([
                 'status' => 'completed', // Keep as completed since local exists
-                'error_message' => 'Remote upload failed: ' . $e->getMessage(),
+                'error_message' => 'Remote upload failed: '.$e->getMessage(),
             ]);
             $this->warn("Remote upload failed: {$e->getMessage()}");
+
             return false;
         }
     }
@@ -253,10 +258,17 @@ class RunBackupSchedules extends Command
 
             // Delete local file
             if ($backup->local_path && file_exists($backup->local_path)) {
-                if (is_file($backup->local_path)) {
-                    unlink($backup->local_path);
+                $path = $backup->local_path;
+                $isValidPath = ! empty($path)
+                    && ! str_contains($path, '..')
+                    && (str_starts_with($path, '/home/') || str_starts_with($path, '/var/backups/'));
+
+                if (! $isValidPath) {
+                    $this->warn("Skipping deletion of invalid path: {$path}");
+                } elseif (is_file($path)) {
+                    unlink($path);
                 } else {
-                    exec("rm -rf " . escapeshellarg($backup->local_path));
+                    exec('rm -rf '.escapeshellarg($path));
                 }
             }
 

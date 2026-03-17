@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Filament\Models\Contracts\FilamentUser;
-use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -46,19 +45,6 @@ class User extends Authenticatable implements FilamentUser
             'is_active' => 'boolean',
             'sftp_password' => 'encrypted',
         ];
-    }
-
-    public function canAccesJabali(Panel $panel): bool
-    {
-        if (! $this->is_active) {
-            return false;
-        }
-
-        if ($panel->getId() === 'admin') {
-            return $this->is_admin;
-        }
-
-        return true;
     }
 
     public function isAdmin(): bool

@@ -1290,7 +1290,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
     public function toggleMailbox(int $mailboxId): void
     {
-        $mailbox = Mailbox::with('emailDomain.domain')->find($mailboxId);
+        $mailbox = Mailbox::whereHas('emailDomain.domain', fn ($q) => $q->where('user_id', Auth::id()))->with('emailDomain.domain')->find($mailboxId);
         if (! $mailbox) {
             Notification::make()->title(__('Mailbox not found'))->danger()->send();
 

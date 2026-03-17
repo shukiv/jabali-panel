@@ -83,7 +83,7 @@ class PhpSettings extends Page implements HasActions, HasForms
 
     protected function loadDomains(): void
     {
-        if ((bool) env('JABALI_DEMO', false)) {
+        if ((bool) config('jabali.demo')) {
             $this->domains = [
                 ['domain' => 'jabali-panel.com'],
                 ['domain' => 'demo-site.com'],
@@ -102,7 +102,7 @@ class PhpSettings extends Page implements HasActions, HasForms
 
     protected function loadPhpVersions(): void
     {
-        if ((bool) env('JABALI_DEMO', false)) {
+        if ((bool) config('jabali.demo')) {
             $this->phpVersions = [
                 '8.4' => 'PHP 8.4',
                 '8.3' => 'PHP 8.3',
@@ -141,7 +141,7 @@ class PhpSettings extends Page implements HasActions, HasForms
             return;
         }
 
-        if ((bool) env('JABALI_DEMO', false)) {
+        if ((bool) config('jabali.demo')) {
             $this->data = [
                 'php_version' => array_key_first($this->phpVersions),
                 'memory_limit' => '256M',

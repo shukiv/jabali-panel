@@ -57,7 +57,7 @@ class BackupDownloadController extends Controller
         }
 
         // Verify admin access
-        $user = Auth::guard('web')->user();
+        $user = Auth::guard('admin')->user();
         if (! $user || ! $user->is_admin) {
             abort(403, 'Unauthorized');
         }
