@@ -2,6 +2,27 @@
 
 All notable changes to Jabali Panel will be documented in this file.
 
+## [0.9-rc124] - 2026-03-17
+
+### Added
+
+- **Tabbed Databases page** -- MySQL and PostgreSQL are now on a single "Databases" page with tabs instead of two separate nav items. The old `/postgresql` URL redirects automatically. PostgreSQL inputs now enforce username-prefixed alphanumeric validation matching MySQL. (#38)
+- **Passphrase password generator** -- Optional 3-random-word passwords (e.g., `falcon-meadow-stella`) for panel login, mailbox, and database users. Controlled by a toggle in Server Settings > General > Security. Uses a curated 2048-word list of fruits, vegetables, animals, happy words, and names. (#39)
+- **Email disclaimers** -- Per-domain disclaimer text appended to all outbound emails. New "Disclaimer" tab on the Email page. Uses altermime with a Postfix content_filter on submission/smtps ports. DKIM signing happens after disclaimer insertion so signatures stay valid. (#33)
+- **Standard IMAP folders on mailbox creation** -- New mailboxes get Sent, Drafts, Trash, Junk, and Archive folders pre-created with a subscriptions file so they show up in mail clients immediately. (#41)
+- **Diagnostic report email** -- "Send via Email" button in the diagnostic report modal opens the user's default email client with the encrypted report pre-addressed to Jabali support.
+- **APT repository** -- Packages now published to `deb.jabali-panel.com` for easy install via `apt install jabali-panel`.
+
+### Fixed
+
+- **Mail SSL SNI overwrite** -- `sslMailConfigure()` was overwriting the global Postfix/Dovecot cert every time a mail cert was issued, breaking SMTP for previously configured domains. Now uses per-domain SNI entries (Postfix `sni_maps` and Dovecot `local_name` blocks). Global cert only set when replacing snakeoil. (#35)
+- **Mail cert renewal** -- Scheduled SSL check now properly calls `sslMailIssue` for mail-service certificates instead of `sslRenew` which only handles web certs.
+- **Passphrase passwords rejected by mailbox creation** -- When passphrase mode was enabled, mailbox password fields still enforced uppercase/number regex rules, rejecting word-style passwords. (#42)
+
+### Changed
+
+- **Support page** -- Diagnostic report modal rebuilt with native Filament components, removing all custom CSS and Alpine.js modal code.
+
 ## [0.9-rc123] - 2026-03-13
 
 ### Added

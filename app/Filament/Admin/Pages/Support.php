@@ -10,6 +10,8 @@ use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Contracts\Support\Htmlable;
+use Illuminate\Contracts\View\View;
+use Illuminate\Support\Facades\Artisan;
 
 class Support extends Page
 {
@@ -33,19 +35,22 @@ class Support extends Page
         return __('Support');
     }
 
-    public function generateReport(): void
+    public function copyReport(): void
     {
-        try {
-            \Illuminate\Support\Facades\Artisan::call('jabali:report');
-            $this->diagnosticReport = trim(\Illuminate\Support\Facades\Artisan::output());
-            $this->dispatch('report-generated');
-        } catch (Exception $e) {
-            Notification::make()
-                ->title(__('Report generation failed'))
-                ->body($e->getMessage())
-                ->danger()
-                ->send();
-        }
+        $encoded = base64_encode($this->diagnosticReport);
+        $this->js("navigator.clipboard.writeText(atob('{$encoded}'))");
+
+        Notification::make()
+            ->title(__('Copied to clipboard'))
+            ->success()
+            ->duration(2000)
+            ->send();
+    }
+
+    public function emailReport(): void
+    {
+        $encoded = base64_encode($this->diagnosticReport);
+        $this->js("window.location.href = 'mailto:webmaster@jabali-panel.com?subject=' + encodeURIComponent('[Jabali] Diagnostic Report') + '&body=' + encodeURIComponent(atob('{$encoded}'))");
     }
 
     protected function getHeaderActions(): array
@@ -55,11 +60,36 @@ class Support extends Page
                 ->label(__('Diagnostic Report'))
                 ->icon('heroicon-o-document-arrow-down')
                 ->color('gray')
-                ->requiresConfirmation()
-                ->modalHeading(__('Generate Diagnostic Report'))
-                ->modalDescription(__('This will generate an encrypted diagnostic report containing system information, service statuses, and recent logs. The report is encrypted and can only be read by the Jabali team. You can paste it in a GitHub issue.'))
-                ->modalSubmitActionLabel(__('Generate'))
-                ->action(fn () => $this->generateReport()),
+                ->modalHeading(__('Diagnostic Report'))
+                ->modalDescription(__('The report is encrypted — only the Jabali team can read it. Copy it into a GitHub issue or send it via email.'))
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel(__('Close'))
+                ->mountUsing(function () {
+                    try {
+                        Artisan::call('jabali:report');
+                        $this->diagnosticReport = trim(Artisan::output());
+                    } catch (Exception $e) {
+                        Notification::make()
+                            ->title(__('Report generation failed'))
+                            ->body($e->getMessage())
+                            ->danger()
+                            ->send();
+                    }
+                })
+                ->modalContent(fn (): View => view('filament.admin.pages.support-report', [
+                    'report' => $this->diagnosticReport,
+                ]))
+                ->extraModalFooterActions([
+                    Action::make('emailReport')
+                        ->label(__('Send via Email'))
+                        ->icon('heroicon-o-envelope')
+                        ->color('success')
+                        ->action(fn () => $this->emailReport()),
+                    Action::make('copyReport')
+                        ->label(__('Copy to Clipboard'))
+                        ->icon('heroicon-o-clipboard-document')
+                        ->action(fn () => $this->copyReport()),
+                ]),
         ];
     }
 }

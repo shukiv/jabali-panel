@@ -7,6 +7,7 @@ namespace App\Filament\Jabali\Pages;
 use App\Models\AuditLog;
 use App\Models\Autoresponder;
 use App\Models\DnsRecord;
+use App\Models\DnsSetting;
 use App\Models\Domain;
 use App\Models\EmailDomain;
 use App\Models\EmailForwarder;
@@ -18,6 +19,7 @@ use App\Services\MailboxSharingService;
 use App\Services\RoundcubeIdentityService;
 use App\Services\System\MailRoutingSyncService;
 use App\Support\ServerFacts;
+use App\Support\WordList;
 use BackedEnum;
 use Exception;
 use Filament\Actions\Action;
@@ -116,6 +118,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
             'forwarders', 'Forwarders' => 'forwarders',
             'autoresponders', 'Autoresponders' => 'autoresponders',
             'catchall', 'catch-all', 'Catch-All' => 'catchall',
+            'disclaimer', 'Disclaimer' => 'disclaimer',
             'sharing', 'Sharing', 'shared', 'Shared Folders' => 'sharing',
             'logs', 'Logs' => 'logs',
             'spam', 'Spam' => 'spam',
@@ -130,9 +133,10 @@ class Email extends Page implements HasActions, HasForms, HasTable
             'forwarders' => 2,
             'autoresponders' => 3,
             'catchall' => 4,
-            'sharing' => 5,
-            'logs' => 6,
-            'spam' => 7,
+            'disclaimer' => 5,
+            'sharing' => 6,
+            'logs' => 7,
+            'spam' => 8,
             default => 1,
         };
     }
@@ -166,6 +170,11 @@ class Email extends Page implements HasActions, HasForms, HasTable
                         ]),
                     'catchall' => Tab::make(__('Catch-All'))
                         ->icon('heroicon-o-inbox-stack')
+                        ->schema([
+                            View::make('filament.jabali.pages.email-tab-table'),
+                        ]),
+                    'disclaimer' => Tab::make(__('Disclaimer'))
+                        ->icon('heroicon-o-document-text')
                         ->schema([
                             View::make('filament.jabali.pages.email-tab-table'),
                         ]),
@@ -320,6 +329,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
             'forwarders' => $this->forwardersTable($table),
             'autoresponders' => $this->autorespondersTable($table),
             'catchall' => $this->catchAllTable($table),
+            'disclaimer' => $this->disclaimerTable($table),
             'sharing' => $this->sharingTable($table),
             'logs' => $this->emailLogsTable($table),
             'spam' => $this->mailboxesTable($table),
@@ -471,17 +481,20 @@ class Email extends Page implements HasActions, HasForms, HasTable
                             ->revealable()
                             ->required()
                             ->minLength(8)
-                            ->rules([
-                                'regex:/[a-z]/',      // lowercase
-                                'regex:/[A-Z]/',      // uppercase
-                                'regex:/[0-9]/',      // number
+                            ->rules(fn () => (bool) DnsSetting::get('passphrase_passwords') ? [] : [
+                                'regex:/[a-z]/',
+                                'regex:/[A-Z]/',
+                                'regex:/[0-9]/',
                             ])
-                            ->default(fn () => $this->generateSecurePassword())
+                            ->default(fn () => (bool) DnsSetting::get('passphrase_passwords') ? WordList::generate() : $this->generateSecurePassword())
                             ->suffixActions([
                                 Action::make('generatePassword')
                                     ->icon('heroicon-o-arrow-path')
                                     ->tooltip(__('Generate secure password'))
-                                    ->action(fn ($set) => $set('password', $this->generateSecurePassword())),
+                                    ->action(function ($set) {
+                                        $password = (bool) DnsSetting::get('passphrase_passwords') ? WordList::generate() : $this->generateSecurePassword();
+                                        $set('password', $password);
+                                    }),
                                 Action::make('copyPassword')
                                     ->icon('heroicon-o-clipboard-document')
                                     ->tooltip(__('Copy to clipboard'))
@@ -497,7 +510,9 @@ class Email extends Page implements HasActions, HasForms, HasTable
                                         }
                                     }),
                             ])
-                            ->helperText(__('Minimum 8 characters with uppercase, lowercase, and numbers')),
+                            ->helperText(fn () => (bool) DnsSetting::get('passphrase_passwords')
+                                ? __('Password will be generated as easy-to-remember words')
+                                : __('Minimum 8 characters with uppercase, lowercase, and numbers')),
                     ])
                     ->action(fn (Mailbox $record, array $data) => $this->changeMailboxPasswordDirect($record, $data['password'])),
                 Action::make('toggle')
@@ -778,6 +793,59 @@ class Email extends Page implements HasActions, HasForms, HasTable
             ->emptyStateHeading(__('No email domains'))
             ->emptyStateDescription(__('Create a mailbox first to enable email for a domain.'))
             ->emptyStateIcon('heroicon-o-inbox-stack')
+            ->striped();
+    }
+
+    protected function disclaimerTable(Table $table): Table
+    {
+        return $table
+            ->query(
+                EmailDomain::query()
+                    ->whereHas('domain', fn (Builder $q) => $q->where('user_id', Auth::id()))
+                    ->with('domain')
+            )
+            ->columns([
+                TextColumn::make('domain.domain')
+                    ->label(__('Domain'))
+                    ->icon('heroicon-o-globe-alt')
+                    ->iconColor('primary')
+                    ->searchable()
+                    ->sortable(),
+                TextColumn::make('disclaimer_enabled')
+                    ->label(__('Status'))
+                    ->badge()
+                    ->formatStateUsing(fn (bool $state) => $state ? __('Enabled') : __('Disabled'))
+                    ->color(fn (bool $state) => $state ? 'success' : 'gray'),
+            ])
+            ->recordActions([
+                Action::make('configure')
+                    ->label(__('Configure'))
+                    ->icon('heroicon-o-cog-6-tooth')
+                    ->color('info')
+                    ->modalHeading(__('Email Disclaimer'))
+                    ->modalDescription(fn (EmailDomain $record) => $record->domain->domain)
+                    ->modalIcon('heroicon-o-document-text')
+                    ->modalIconColor('info')
+                    ->modalSubmitActionLabel(__('Save'))
+                    ->fillForm(fn (EmailDomain $record) => [
+                        'enabled' => $record->disclaimer_enabled,
+                        'text' => $record->disclaimer_text ?? __('If you received this email by mistake, please notify the sender and delete it.'),
+                    ])
+                    ->form([
+                        Toggle::make('enabled')
+                            ->label(__('Enable Disclaimer'))
+                            ->helperText(__('Append a disclaimer to all outbound emails from this domain')),
+                        Textarea::make('text')
+                            ->label(__('Disclaimer Text'))
+                            ->rows(4)
+                            ->helperText(__('This text will be appended to every outgoing email'))
+                            ->required(),
+                    ])
+                    ->action(fn (EmailDomain $record, array $data) => $this->updateDisclaimer($record, $data)),
+            ])
+            ->emptyStateHeading(__('No email domains'))
+            ->emptyStateDescription(__('Create a mailbox first to enable email for a domain.'))
+            ->emptyStateIcon('heroicon-o-document-text')
             ->striped();
     }
 
@@ -1081,17 +1149,20 @@ class Email extends Page implements HasActions, HasForms, HasTable
                     ->required(fn (Get $get): bool => filled($get('domain_id')))
                     ->visible(fn (Get $get): bool => filled($get('domain_id')))
                     ->minLength(8)
-                    ->rules([
-                        'regex:/[a-z]/',      // lowercase
-                        'regex:/[A-Z]/',      // uppercase
-                        'regex:/[0-9]/',      // number
+                    ->rules(fn () => (bool) DnsSetting::get('passphrase_passwords') ? [] : [
+                        'regex:/[a-z]/',
+                        'regex:/[A-Z]/',
+                        'regex:/[0-9]/',
                     ])
-                    ->default(fn () => $this->generateSecurePassword())
+                    ->default(fn () => (bool) DnsSetting::get('passphrase_passwords') ? WordList::generate() : $this->generateSecurePassword())
                     ->suffixActions([
                         Action::make('generatePassword')
                             ->icon('heroicon-o-arrow-path')
                             ->tooltip(__('Generate secure password'))
-                            ->action(fn ($set) => $set('password', $this->generateSecurePassword())),
+                            ->action(function ($set) {
+                                $password = (bool) DnsSetting::get('passphrase_passwords') ? WordList::generate() : $this->generateSecurePassword();
+                                $set('password', $password);
+                            }),
                         Action::make('copyPassword')
                             ->icon('heroicon-o-clipboard-document')
                             ->tooltip(__('Copy to clipboard'))
@@ -1107,6 +1178,9 @@ class Email extends Page implements HasActions, HasForms, HasTable
                                 }
                             }),
                     ])
+                    ->helperText(fn () => (bool) DnsSetting::get('passphrase_passwords')
+                        ? __('Password will be generated as easy-to-remember words')
+                        : __('Minimum 8 characters with uppercase, lowercase, and numbers'))
                     ->helperText(__('Minimum 8 characters with uppercase, lowercase, and numbers')),
                 TextInput::make('quota_mb')
                     ->label(__('Quota (MB)'))
@@ -1915,6 +1989,32 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             Notification::make()
                 ->title($enabled ? __('Catch-all enabled') : __('Catch-all disabled'))
+                ->success()
+                ->send();
+        } catch (Exception $e) {
+            Notification::make()->title(__('Error'))->body($e->getMessage())->danger()->send();
+        }
+    }
+
+    public function updateDisclaimer(EmailDomain $emailDomain, array $data): void
+    {
+        try {
+            $enabled = $data['enabled'] ?? false;
+            $text = $data['text'] ?? '';
+
+            $this->getAgent()->send('email.disclaimer_update', [
+                'domain' => $emailDomain->domain->domain,
+                'enabled' => $enabled,
+                'text' => $text,
+            ]);
+
+            $emailDomain->update([
+                'disclaimer_enabled' => $enabled,
+                'disclaimer_text' => $text,
+            ]);
+
+            Notification::make()
+                ->title($enabled ? __('Disclaimer enabled') : __('Disclaimer disabled'))
                 ->success()
                 ->send();
         } catch (Exception $e) {

@@ -594,6 +594,7 @@ function handleAction(array $request): array
         'email.forwarder_update' => emailForwarderUpdate($params),
         'email.forwarder_toggle' => emailForwarderToggle($params),
         'email.catchall_update' => emailCatchallUpdate($params),
+        'email.disclaimer_update' => emailDisclaimerUpdate($params),
         'email.sync_maps' => emailSyncMaps($params),
         'email.get_logs' => emailGetLogs($params),
         'email.autoresponder_set' => emailAutoresponderSet($params),
@@ -10194,6 +10195,34 @@ function emailMailboxCreate(array $params): array
         chgrp($dir, $gid);
     }
 
+    // Create standard IMAP folders (Maildir++ convention: .FolderName/{cur,new,tmp})
+    $standardFolders = ['Sent', 'Drafts', 'Trash', 'Junk', 'Archive'];
+    foreach ($standardFolders as $folder) {
+        foreach (['', '/cur', '/new', '/tmp'] as $subdir) {
+            $dir = $mailboxDir . '/.' . $folder . $subdir;
+            if (!is_dir($dir)) {
+                mkdir($dir, 0750, true);
+            }
+            chown($dir, $uid);
+            chgrp($dir, $gid);
+        }
+        // Maildir++ marker file
+        $marker = $mailboxDir . '/.' . $folder . '/maildirfolder';
+        if (!file_exists($marker)) {
+            file_put_contents($marker, '');
+            chown($marker, $uid);
+            chgrp($marker, $gid);
+        }
+    }
+
+    // Write subscriptions file so folders appear in IMAP clients
+    $subscriptionsFile = $mailboxDir . '/subscriptions';
+    $existing = file_exists($subscriptionsFile) ? array_filter(explode("\n", file_get_contents($subscriptionsFile))) : [];
+    $merged = array_unique(array_merge($existing, $standardFolders));
+    file_put_contents($subscriptionsFile, implode("\n", $merged) . "\n");
+    chown($subscriptionsFile, $uid);
+    chgrp($subscriptionsFile, $gid);
+
     // Generate password hash using doveadm
     $hashCmd = sprintf('doveadm pw -s SHA512-CRYPT -p %s 2>&1', escapeshellarg($password));
     $passwordHash = trim(shell_exec($hashCmd));
@@ -10857,6 +10886,158 @@ function emailCatchallUpdate(array $params): array
 
     $status = $enabled ? "enabled (-> $address)" : 'disabled';
     logger("Catch-all $status for domain: $domain");
+    return ['success' => true];
+}
+
+/**
+ * Update email disclaimer for a domain.
+ * Sets up altermime content_filter pipeline on first use.
+ */
+function emailDisclaimerUpdate(array $params): array
+{
+    $domain = $params['domain'] ?? '';
+    $enabled = $params['enabled'] ?? false;
+    $text = $params['text'] ?? '';
+
+    if (empty($domain)) {
+        return ['success' => false, 'error' => 'Missing domain parameter'];
+    }
+
+    $disclaimerDir = '/etc/postfix/disclaimer';
+    $filterScript = $disclaimerDir . '/disclaimer-filter.sh';
+    $spoolDir = '/var/spool/filter';
+
+    // Ensure altermime is installed
+    exec('which altermime 2>/dev/null', $output, $code);
+    if ($code !== 0) {
+        exec('DEBIAN_FRONTEND=noninteractive apt-get install -y altermime 2>&1', $output, $code);
+        if ($code !== 0) {
+            return ['success' => false, 'error' => 'Failed to install altermime'];
+        }
+    }
+
+    // Create directories
+    if (!is_dir($disclaimerDir)) {
+        mkdir($disclaimerDir, 0755, true);
+    }
+    if (!is_dir($spoolDir)) {
+        mkdir($spoolDir, 0750, true);
+    }
+    // Ensure filter user exists
+    exec('id filter 2>/dev/null', $output, $code);
+    if ($code !== 0) {
+        exec('useradd -r -s /usr/sbin/nologin -d /var/spool/filter filter 2>&1');
+    }
+    chown($spoolDir, 'filter');
+    chgrp($spoolDir, 'filter');
+
+    // Write or remove disclaimer text file for this domain
+    $textFile = $disclaimerDir . '/' . $domain . '.txt';
+    if ($enabled && !empty($text)) {
+        file_put_contents($textFile, $text);
+    } elseif (file_exists($textFile)) {
+        unlink($textFile);
+    }
+
+    // Create the filter script
+    $script = <<<'BASH'
+#!/bin/bash
+# Postfix disclaimer filter - managed by Jabali Panel
+INSPECT_DIR=/var/spool/filter
+SENDMAIL=/usr/sbin/sendmail
+
+# Extract sender from arguments
+SENDER=""
+ARGS=()
+while [ $# -gt 0 ]; do
+    if [ "$1" = "-f" ]; then
+        shift
+        SENDER="$1"
+        ARGS+=("-f" "$SENDER")
+    else
+        ARGS+=("$1")
+    fi
+    shift
+done
+
+# Extract domain from sender
+DOMAIN="${SENDER##*@}"
+DISCLAIMER_FILE="/etc/postfix/disclaimer/${DOMAIN}.txt"
+
+# Create temp file
+TMPFILE=$(mktemp ${INSPECT_DIR}/disclaimer.XXXXXX) || exit 1
+trap "rm -f $TMPFILE" EXIT
+cat > "$TMPFILE"
+
+# Apply disclaimer if file exists for this domain
+if [ -f "$DISCLAIMER_FILE" ]; then
+    /usr/bin/altermime --input="$TMPFILE" --disclaimer="$DISCLAIMER_FILE" --force-for-bad-rcpt 2>/dev/null
+fi
+
+$SENDMAIL -G -i "${ARGS[@]}" < "$TMPFILE"
+exit $?
+BASH;
+
+    file_put_contents($filterScript, $script);
+    chmod($filterScript, 0755);
+
+    // Set up Postfix content_filter pipeline (idempotent)
+    $masterCf = '/etc/postfix/master.cf';
+    $masterContent = file_get_contents($masterCf);
+
+    // Add dfilt service if not present
+    if (!str_contains($masterContent, 'dfilt')) {
+        $dfiltService = <<<'MASTER'
+
+# Disclaimer filter service - managed by Jabali Panel
+dfilt  unix  -  n  n  -  10  pipe
+  flags=Rq user=filter argv=/etc/postfix/disclaimer/disclaimer-filter.sh -f ${sender} -- ${recipient}
+
+# After-filter re-injection with DKIM signing
+127.0.0.1:10026 inet  n  -  n  -  10  smtpd
+  -o content_filter=
+  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+  -o smtpd_helo_restrictions=
+  -o smtpd_client_restrictions=
+  -o smtpd_sender_restrictions=
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject
+  -o mynetworks=127.0.0.0/8
+  -o smtpd_authorized_xforward_hosts=127.0.0.0/8
+  -o smtpd_milters=unix:opendkim/opendkim.sock
+  -o non_smtpd_milters=unix:opendkim/opendkim.sock
+  -o milter_default_action=accept
+MASTER;
+        file_put_contents($masterCf, $masterContent . $dfiltService);
+
+        // Add content_filter to submission/smtps and remove milters (DKIM signs on re-injection instead)
+        $masterContent = file_get_contents($masterCf);
+
+        // Add content_filter=dfilt: to submission service
+        $masterContent = preg_replace(
+            '/(^submission\s+inet.*\n(?:\s+-o\s+.*\n)*)/m',
+            "$1  -o content_filter=dfilt:\n  -o smtpd_milters=\n",
+            $masterContent
+        );
+
+        // Add content_filter=dfilt: to smtps service
+        $masterContent = preg_replace(
+            '/(^smtps\s+inet.*\n(?:\s+-o\s+.*\n)*)/m',
+            "$1  -o content_filter=dfilt:\n  -o smtpd_milters=\n",
+            $masterContent
+        );
+
+        file_put_contents($masterCf, $masterContent);
+    }
+
+    // Reload Postfix
+    exec('postfix check 2>&1', $checkOutput, $checkCode);
+    if ($checkCode !== 0) {
+        return ['success' => false, 'error' => 'Postfix config check failed: ' . implode("\n", $checkOutput)];
+    }
+    exec('systemctl reload postfix 2>&1');
+
+    $status = $enabled ? 'enabled' : 'disabled';
+    logger("Disclaimer $status for domain: $domain");
     return ['success' => true];
 }
 
