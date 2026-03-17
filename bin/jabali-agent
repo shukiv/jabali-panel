@@ -1359,7 +1359,18 @@ server {
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
-    
+
+    # Block access to sensitive directories and files
+    location ~ ^/(vendor|node_modules|storage)/ {
+        deny all;
+        return 404;
+    }
+
+    location ~ /\.(env|git|svn|htaccess|htpasswd|DS_Store) {
+        deny all;
+        return 404;
+    }
+
     location ~ \.php$ {
         fastcgi_pass unix:SOCKET_PLACEHOLDER;
         fastcgi_next_upstream error timeout invalid_header http_500 http_503;
@@ -14516,11 +14527,18 @@ function sslMailIssue(array $params): array
         return ['success' => false, 'error' => 'Certbot is not installed'];
     }
 
-    // Verify hostname resolves to this server
+    // Verify hostname resolves — try system DNS first, then local BIND
     $serverIp = trim(shell_exec("curl -s ifconfig.me 2>/dev/null") ?? '');
     $hostnameIp = gethostbyname($hostname);
     if ($hostnameIp === $hostname) {
-        return ['success' => false, 'error' => "Hostname $hostname does not resolve to any IP address"];
+        // System DNS failed, try local BIND server
+        $localResult = trim(shell_exec("dig @127.0.0.1 " . escapeshellarg($hostname) . " A +short 2>/dev/null") ?? '');
+        if (!empty($localResult) && filter_var($localResult, FILTER_VALIDATE_IP)) {
+            $hostnameIp = $localResult;
+            logger("Resolved $hostname via local BIND: $hostnameIp");
+        } else {
+            return ['success' => false, 'error' => "Hostname $hostname does not resolve to any IP address. Ensure DNS is configured and propagated."];
+        }
     }
     if (!empty($serverIp) && $hostnameIp !== $serverIp) {
         logger("Warning: $hostname resolves to $hostnameIp but server IP is $serverIp");

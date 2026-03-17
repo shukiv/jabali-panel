@@ -24,9 +24,9 @@ class DomainObserver
 
     protected function scheduleSSLIssuance(Domain $domain): void
     {
-        // Dispatch SSL issuance job with a 30 second delay
+        // Dispatch SSL issuance job with a 120 second delay
         // This gives time for DNS to propagate and web server to be configured
-        IssueSslCertificate::dispatch($domain->id)->delay(now()->addSeconds(30));
+        IssueSslCertificate::dispatch($domain->id)->delay(now()->addSeconds(120));
         Log::info("Scheduled SSL certificate issuance for {$domain->domain}");
     }
 
