@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\AvatarProviders;
 
 use Filament\AvatarProviders\Contracts\AvatarProvider;
@@ -20,7 +22,7 @@ class InitialsAvatarProvider implements AvatarProvider
         // Generate SVG avatar
         $svg = $this->generateSvg($initials, $hue);
 
-        return 'data:image/svg+xml;base64,' . base64_encode($svg);
+        return 'data:image/svg+xml;base64,'.base64_encode($svg);
     }
 
     private function getInitials(string $name): string
@@ -29,7 +31,7 @@ class InitialsAvatarProvider implements AvatarProvider
         $initials = '';
 
         foreach ($words as $word) {
-            if (!empty($word)) {
+            if (! empty($word)) {
                 $initials .= mb_strtoupper(mb_substr($word, 0, 1));
                 if (mb_strlen($initials) >= 2) {
                     break;

@@ -23,10 +23,15 @@ class GitDeployment extends Model
         'secret_token',
     ];
 
-    protected $casts = [
-        'auto_deploy' => 'boolean',
-        'last_deployed_at' => 'datetime',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'auto_deploy' => 'boolean',
+            'last_deployed_at' => 'datetime',
+        ];
+
+    }
 
     public function user(): BelongsTo
     {

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Middleware;
 
 use Closure;
@@ -31,13 +33,13 @@ class SetLocale
         }
 
         // Check authenticated user's preference
-        if (!$locale && auth()->check() && auth()->user()->locale) {
+        if (! $locale && auth()->check() && auth()->user()->locale) {
             $locale = auth()->user()->locale;
             Session::put($sessionKey, $locale);
         }
 
         // Check browser's Accept-Language header
-        if (!$locale) {
+        if (! $locale) {
             $browserLocale = $this->getBrowserLocale($request, $supportedLanguages);
             if ($browserLocale) {
                 $locale = $browserLocale;
@@ -45,7 +47,7 @@ class SetLocale
         }
 
         // Fallback to default
-        if (!$locale || !in_array($locale, $supportedLanguages)) {
+        if (! $locale || ! in_array($locale, $supportedLanguages)) {
             $locale = $defaultLanguage;
         }
 
@@ -67,7 +69,7 @@ class SetLocale
     {
         $acceptLanguage = $request->header('Accept-Language');
 
-        if (!$acceptLanguage) {
+        if (! $acceptLanguage) {
             return null;
         }
 

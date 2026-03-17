@@ -50,4 +50,10 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl restart jabali-agent jabali-queue jabali-health-monitor >/dev/null 2>&1 || true
 fi
 
+# Install schedule:run crontab for www-data if not already present
+CRON_ENTRY="* * * * * cd $APP_DIR && $PHP_BIN artisan schedule:run >> /dev/null 2>&1"
+if ! crontab -u www-data -l 2>/dev/null | grep -q "schedule:run"; then
+  (crontab -u www-data -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -u www-data -
+fi
+
 exit 0

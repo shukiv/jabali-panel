@@ -16,9 +16,14 @@ class UserSetting extends Model
         'value',
     ];
 
-    protected $casts = [
-        'value' => 'json',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'value' => 'json',
+        ];
+
+    }
 
     public function user(): BelongsTo
     {

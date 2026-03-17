@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Console\Commands;
 
 use App\Models\CronJob;
@@ -9,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 class RunUserCronJobs extends Command
 {
     protected $signature = 'jabali:run-cron-jobs';
+
     protected $description = 'Run due user cron jobs and track their execution';
 
     public function handle(): int
@@ -52,18 +55,21 @@ class RunUserCronJobs extends Command
         // Handle */n (step values)
         if (str_starts_with($pattern, '*/')) {
             $step = (int) substr($pattern, 2);
+
             return $step > 0 && $value % $step === 0;
         }
 
         // Handle ranges (e.g., 1-5)
         if (str_contains($pattern, '-')) {
             [$start, $end] = explode('-', $pattern);
+
             return $value >= (int) $start && $value <= (int) $end;
         }
 
         // Handle lists (e.g., 1,3,5)
         if (str_contains($pattern, ',')) {
             $values = array_map('intval', explode(',', $pattern));
+
             return in_array($value, $values);
         }
 
@@ -75,8 +81,9 @@ class RunUserCronJobs extends Command
     {
         $username = $job->user->username ?? null;
 
-        if (!$username) {
+        if (! $username) {
             Log::warning("Cron job {$job->id} has no valid user");
+
             return;
         }
 

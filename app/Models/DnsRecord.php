@@ -10,7 +10,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class DnsRecord extends Model
 {
     protected $fillable = ['domain_id', 'name', 'type', 'content', 'ttl', 'priority'];
-    protected $casts = ['ttl' => 'integer', 'priority' => 'integer'];
+
+    protected function casts(): array
+    {
+
+        return ['ttl' => 'integer', 'priority' => 'integer'];
+
+    }
 
     public function domain(): BelongsTo
     {
@@ -19,7 +25,7 @@ class DnsRecord extends Model
 
     public function getFullNameAttribute(): string
     {
-        return $this->name === '@' ? $this->domain->domain : $this->name . '.' . $this->domain->domain;
+        return $this->name === '@' ? $this->domain->domain : $this->name.'.'.$this->domain->domain;
     }
 
     public static function getTypes(): array
