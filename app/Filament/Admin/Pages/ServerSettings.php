@@ -304,7 +304,7 @@ class ServerSettings extends Page implements HasActions, HasForms
                                     ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp'])
                                     ->maxSize(1024)
                                     ->required()
-                                    ->helperText(__('SVG, PNG, JPEG or WebP, max 1MB')),
+                                    ->helperText(__('PNG, JPEG or WebP, max 1MB')),
                             ])
                             ->action(function (array $data): void {
                                 $this->uploadLogo($data);
@@ -1362,7 +1362,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                 'mail_hostname', 'mail_default_quota_mb', 'max_mailboxes_per_domain', 'webmail_url', 'webmail_product_name',
                 'admin_email_recipients', 'notify_ssl_errors', 'notify_backup_failures', 'notify_backup_success',
                 'notify_disk_quota', 'notify_login_failures', 'notify_ssh_logins', 'notify_system_updates',
-                'notify_service_health', 'notify_high_load',
+                'notify_service_health', 'notify_high_load', 'load_threshold', 'load_alert_minutes',
+                'fpm_pm_max_children', 'fpm_pm_max_requests', 'fpm_rlimit_files',
+                'fpm_process_priority', 'fpm_request_terminate_timeout', 'fpm_memory_limit',
             ];
 
             $importedSettings = 0;

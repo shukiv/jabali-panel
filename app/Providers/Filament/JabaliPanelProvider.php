@@ -136,8 +136,8 @@ $this->getRtlScript()
 
     protected function getOpenGraphTags(string $title, string $description): string
     {
-        $url = url()->current();
-        $image = asset('images/og-image.png');
+        $url = e(url()->current());
+        $image = e(asset('images/og-image.png'));
         $siteName = e(DnsSetting::get('panel_name', 'Jabali'));
         $title = e($title);
         $description = e($description);

@@ -24,6 +24,7 @@ class User extends Authenticatable implements FilamentUser
         'email',
         'password',
         'sftp_password',
+        'is_admin',
         'is_active',
         'hosting_package_id',
         'locale',
