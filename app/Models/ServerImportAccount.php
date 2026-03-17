@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -25,13 +27,18 @@ class ServerImportAccount extends Model
         'error',
     ];
 
-    protected $casts = [
-        'addon_domains' => 'array',
-        'subdomains' => 'array',
-        'databases' => 'array',
-        'email_accounts' => 'array',
-        'import_log' => 'array',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'addon_domains' => 'array',
+            'subdomains' => 'array',
+            'databases' => 'array',
+            'email_accounts' => 'array',
+            'import_log' => 'array',
+        ];
+
+    }
 
     public function serverImport(): BelongsTo
     {
@@ -52,13 +59,14 @@ class ServerImportAccount extends Model
     {
         $bytes = $this->disk_usage;
         if ($bytes >= 1073741824) {
-            return number_format($bytes / 1073741824, 2) . ' GB';
+            return number_format($bytes / 1073741824, 2).' GB';
         } elseif ($bytes >= 1048576) {
-            return number_format($bytes / 1048576, 2) . ' MB';
+            return number_format($bytes / 1048576, 2).' MB';
         } elseif ($bytes >= 1024) {
-            return number_format($bytes / 1024, 2) . ' KB';
+            return number_format($bytes / 1024, 2).' KB';
         }
-        return $bytes . ' B';
+
+        return $bytes.' B';
     }
 
     public function getStatusColorAttribute(): string

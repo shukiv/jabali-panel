@@ -21,11 +21,16 @@ class ServerProcess extends Model
         'captured_at',
     ];
 
-    protected $casts = [
-        'cpu' => 'decimal:2',
-        'memory' => 'decimal:2',
-        'captured_at' => 'datetime',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'cpu' => 'decimal:2',
+            'memory' => 'decimal:2',
+            'captured_at' => 'datetime',
+        ];
+
+    }
 
     public function scopeLatestBatch($query)
     {

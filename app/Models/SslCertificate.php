@@ -26,13 +26,18 @@ class SslCertificate extends Model
         'auto_renew',
     ];
 
-    protected $casts = [
-        'issued_at' => 'datetime',
-        'expires_at' => 'datetime',
-        'last_check_at' => 'datetime',
-        'auto_renew' => 'boolean',
-        'private_key' => 'encrypted',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'issued_at' => 'datetime',
+            'expires_at' => 'datetime',
+            'last_check_at' => 'datetime',
+            'auto_renew' => 'boolean',
+            'private_key' => 'encrypted',
+        ];
+
+    }
 
     protected $hidden = [
         'private_key',
@@ -55,18 +60,20 @@ class SslCertificate extends Model
 
     public function isExpiringSoon(int $days = 30): bool
     {
-        if (!$this->expires_at) {
+        if (! $this->expires_at) {
             return false;
         }
         $daysUntilExpiry = now()->diffInDays($this->expires_at, false);
+
         return $daysUntilExpiry >= 0 && $daysUntilExpiry <= $days;
     }
 
     public function getDaysUntilExpiryAttribute(): ?int
     {
-        if (!$this->expires_at) {
+        if (! $this->expires_at) {
             return null;
         }
+
         return (int) now()->diffInDays($this->expires_at, false);
     }
 

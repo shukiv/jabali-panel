@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -20,11 +22,16 @@ class CronJob extends Model
         'last_run_output',
     ];
 
-    protected $casts = [
-        'metadata' => 'array',
-        'is_active' => 'boolean',
-        'last_run_at' => 'datetime',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'metadata' => 'array',
+            'is_active' => 'boolean',
+            'last_run_at' => 'datetime',
+        ];
+
+    }
 
     public function user(): BelongsTo
     {
@@ -41,18 +48,42 @@ class CronJob extends Model
         [$minute, $hour, $day, $month, $weekday] = $parts;
 
         // Common patterns
-        if ($this->schedule === '* * * * *') return 'Every minute';
-        if ($this->schedule === '*/5 * * * *') return 'Every 5 minutes';
-        if ($this->schedule === '*/10 * * * *') return 'Every 10 minutes';
-        if ($this->schedule === '*/15 * * * *') return 'Every 15 minutes';
-        if ($this->schedule === '*/30 * * * *') return 'Every 30 minutes';
-        if ($this->schedule === '0 * * * *') return 'Every hour';
-        if ($this->schedule === '0 */2 * * *') return 'Every 2 hours';
-        if ($this->schedule === '0 */6 * * *') return 'Every 6 hours';
-        if ($this->schedule === '0 */12 * * *') return 'Every 12 hours';
-        if ($this->schedule === '0 0 * * *') return 'Daily at midnight';
-        if ($this->schedule === '0 0 * * 0') return 'Weekly on Sunday';
-        if ($this->schedule === '0 0 1 * *') return 'Monthly on the 1st';
+        if ($this->schedule === '* * * * *') {
+            return 'Every minute';
+        }
+        if ($this->schedule === '*/5 * * * *') {
+            return 'Every 5 minutes';
+        }
+        if ($this->schedule === '*/10 * * * *') {
+            return 'Every 10 minutes';
+        }
+        if ($this->schedule === '*/15 * * * *') {
+            return 'Every 15 minutes';
+        }
+        if ($this->schedule === '*/30 * * * *') {
+            return 'Every 30 minutes';
+        }
+        if ($this->schedule === '0 * * * *') {
+            return 'Every hour';
+        }
+        if ($this->schedule === '0 */2 * * *') {
+            return 'Every 2 hours';
+        }
+        if ($this->schedule === '0 */6 * * *') {
+            return 'Every 6 hours';
+        }
+        if ($this->schedule === '0 */12 * * *') {
+            return 'Every 12 hours';
+        }
+        if ($this->schedule === '0 0 * * *') {
+            return 'Daily at midnight';
+        }
+        if ($this->schedule === '0 0 * * 0') {
+            return 'Weekly on Sunday';
+        }
+        if ($this->schedule === '0 0 1 * *') {
+            return 'Monthly on the 1st';
+        }
 
         return $this->schedule;
     }

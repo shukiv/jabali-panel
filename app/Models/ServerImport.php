@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -29,17 +31,22 @@ class ServerImport extends Model
         'completed_at',
     ];
 
-    protected $casts = [
-        'discovered_accounts' => 'array',
-        'selected_accounts' => 'array',
-        'import_options' => 'array',
-        'import_log' => 'array',
-        'errors' => 'array',
-        'started_at' => 'datetime',
-        'completed_at' => 'datetime',
-        'remote_password' => 'encrypted',
-        'remote_api_token' => 'encrypted',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'discovered_accounts' => 'array',
+            'selected_accounts' => 'array',
+            'import_options' => 'array',
+            'import_log' => 'array',
+            'errors' => 'array',
+            'started_at' => 'datetime',
+            'completed_at' => 'datetime',
+            'remote_password' => 'encrypted',
+            'remote_api_token' => 'encrypted',
+        ];
+
+    }
 
     public function accounts(): HasMany
     {

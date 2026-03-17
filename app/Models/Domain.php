@@ -75,11 +75,16 @@ class Domain extends Model
         'page_cache_enabled',
     ];
 
-    protected $casts = [
-        'is_active' => 'boolean',
-        'ssl_enabled' => 'boolean',
-        'page_cache_enabled' => 'boolean',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'is_active' => 'boolean',
+            'ssl_enabled' => 'boolean',
+            'page_cache_enabled' => 'boolean',
+        ];
+
+    }
 
     public function user(): BelongsTo
     {

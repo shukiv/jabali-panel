@@ -502,6 +502,9 @@ if [[ "$SKIP_NPM" -eq 0 ]]; then
     remote_run_www "npm run build"
 fi
 
+echo "Entering maintenance mode..."
+remote_run_www "php artisan down --retry=60 --refresh=15" || true
+
 if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
     echo "Running migrations..."
     remote_run_www "php artisan migrate --force"
@@ -515,6 +518,9 @@ if [[ "$SKIP_CACHE" -eq 0 ]]; then
     remote_run_www "php artisan view:cache"
     remote_run_www "php artisan queue:restart"
 fi
+
+echo "Exiting maintenance mode..."
+remote_run_www "php artisan up" || true
 
 if [[ "$SKIP_AGENT_RESTART" -eq 0 ]]; then
     echo "Restarting services..."

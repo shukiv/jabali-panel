@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
@@ -14,7 +16,7 @@ class LanguageController extends Controller
     {
         $supportedLanguages = array_keys(config('languages.supported', ['en' => []]));
 
-        if (!in_array($locale, $supportedLanguages)) {
+        if (! in_array($locale, $supportedLanguages)) {
             abort(400, 'Unsupported language');
         }
 

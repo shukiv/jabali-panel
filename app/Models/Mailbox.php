@@ -32,15 +32,20 @@ class Mailbox extends Model
         'last_login_at',
     ];
 
-    protected $casts = [
-        'is_active' => 'boolean',
-        'imap_enabled' => 'boolean',
-        'pop3_enabled' => 'boolean',
-        'smtp_enabled' => 'boolean',
-        'quota_bytes' => 'integer',
-        'quota_used_bytes' => 'integer',
-        'last_login_at' => 'datetime',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'is_active' => 'boolean',
+            'imap_enabled' => 'boolean',
+            'pop3_enabled' => 'boolean',
+            'smtp_enabled' => 'boolean',
+            'quota_bytes' => 'integer',
+            'quota_used_bytes' => 'integer',
+            'last_login_at' => 'datetime',
+        ];
+
+    }
 
     protected $hidden = [
         'password_hash',

@@ -24,14 +24,19 @@ class EmailDomain extends Model
         'max_quota_bytes',
     ];
 
-    protected $casts = [
-        'is_active' => 'boolean',
-        'catch_all_enabled' => 'boolean',
-        'disclaimer_enabled' => 'boolean',
-        'max_mailboxes' => 'integer',
-        'max_quota_bytes' => 'integer',
-        'dkim_private_key' => 'encrypted',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'is_active' => 'boolean',
+            'catch_all_enabled' => 'boolean',
+            'disclaimer_enabled' => 'boolean',
+            'max_mailboxes' => 'integer',
+            'max_quota_bytes' => 'integer',
+            'dkim_private_key' => 'encrypted',
+        ];
+
+    }
 
     protected $hidden = [
         'dkim_private_key',

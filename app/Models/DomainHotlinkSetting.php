@@ -18,10 +18,15 @@ class DomainHotlinkSetting extends Model
         'redirect_url',
     ];
 
-    protected $casts = [
-        'is_enabled' => 'boolean',
-        'block_blank_referrer' => 'boolean',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'is_enabled' => 'boolean',
+            'block_blank_referrer' => 'boolean',
+        ];
+
+    }
 
     public function domain(): BelongsTo
     {
@@ -33,6 +38,7 @@ class DomainHotlinkSetting extends Model
         if (empty($this->allowed_domains)) {
             return [];
         }
+
         // Split by newlines (form uses one domain per line)
         return array_filter(array_map('trim', preg_split('/[\r\n]+/', $this->allowed_domains)));
     }
@@ -42,6 +48,7 @@ class DomainHotlinkSetting extends Model
         if (empty($this->protected_extensions)) {
             return [];
         }
+
         return array_filter(array_map('trim', explode(',', $this->protected_extensions)));
     }
 

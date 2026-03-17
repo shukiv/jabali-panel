@@ -17,10 +17,15 @@ class EmailForwarder extends Model
         'is_active',
     ];
 
-    protected $casts = [
-        'destinations' => 'array',
-        'is_active' => 'boolean',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'destinations' => 'array',
+            'is_active' => 'boolean',
+        ];
+
+    }
 
     public function emailDomain(): BelongsTo
     {
@@ -34,7 +39,7 @@ class EmailForwarder extends Model
 
     public function getEmailAttribute(): string
     {
-        return $this->local_part . '@' . $this->emailDomain->domain->domain;
+        return $this->local_part.'@'.$this->emailDomain->domain->domain;
     }
 
     public function getDestinationsFormattedAttribute(): string

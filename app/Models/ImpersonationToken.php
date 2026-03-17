@@ -19,10 +19,15 @@ class ImpersonationToken extends Model
         'ip_address',
     ];
 
-    protected $casts = [
-        'expires_at' => 'datetime',
-        'used_at' => 'datetime',
-    ];
+    protected function casts(): array
+    {
+
+        return [
+            'expires_at' => 'datetime',
+            'used_at' => 'datetime',
+        ];
+
+    }
 
     public function admin(): BelongsTo
     {
