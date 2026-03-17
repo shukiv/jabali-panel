@@ -127,7 +127,7 @@ class ServerChartsWidget extends Widget
         foreach ($mounts as $line) {
             $parts = preg_split('/\s+/', $line);
             $device = $parts[0] ?? '';
-            $mount = $parts[1] ?? '';
+            $mount = stripcslashes($parts[1] ?? '');
             $fstype = $parts[2] ?? '';
 
             if (! str_starts_with($device, '/dev/') || isset($seen[$device])) {

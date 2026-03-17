@@ -1,18 +1,7 @@
 import * as echarts from 'echarts';
 import 'echarts/theme/shine';
-import 'echarts/theme/dark';
 
-// Override dark theme background to transparent so it works inside Filament sections
-const darkOverride = { backgroundColor: 'transparent' };
 echarts.registerTheme('jabali-dark', {
-    ...(() => {
-        // Get the dark theme and override backgroundColor
-        const tmp = document.createElement('div');
-        const chart = echarts.init(tmp, 'dark');
-        const theme = chart.getOption();
-        chart.dispose();
-        return {};
-    })(),
     darkMode: true,
     color: ['#4992ff', '#7cffb2', '#fddd60', '#ff6e76', '#58d9f9', '#05c091', '#ff8a45', '#8d48e3', '#dd79ff'],
     backgroundColor: 'transparent',

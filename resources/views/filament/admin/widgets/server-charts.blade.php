@@ -47,69 +47,88 @@
     <x-filament::section compact>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
             x-data="{
-                instances: [],
+                charts: {},
                 get isDark() { return document.documentElement.classList.contains('dark') },
                 init() {
-                    this.$nextTick(() => {
-                        this.bar(this.$refs.cpu, {{ \Illuminate\Support\Js::from($cpuChart) }});
-                        this.bar(this.$refs.mem, {{ \Illuminate\Support\Js::from($memChart) }});
-                        this.bar(this.$refs.disk, {{ \Illuminate\Support\Js::from($diskChart) }});
-                    });
+                    this.$nextTick(() => this.buildAll());
                     new MutationObserver(() => this.rebuildAll()).observe(
                         document.documentElement, { attributes: true, attributeFilter: ['class'] }
                     );
                 },
-                rebuildAll() {
-                    this.instances.forEach(i => { i.chart.dispose(); i.build(); });
+                buildAll() {
+                    this.update(this.$refs.cpu, 'cpu', {{ \Illuminate\Support\Js::from($cpuChart) }});
+                    this.update(this.$refs.mem, 'mem', {{ \Illuminate\Support\Js::from($memChart) }});
+                    this.update(this.$refs.disk, 'disk', {{ \Illuminate\Support\Js::from($diskChart) }});
                 },
-                bar(el, d) {
-                    const build = () => {
-                        const dark = this.isDark;
-                        const chart = echarts.init(el, dark ? 'jabali-dark' : 'shine', { renderer: 'canvas' });
-                        chart.setOption({
-                            grid: { left: 4, right: 4, top: 2, bottom: 2 },
-                            xAxis: { type: 'value', max: 100, show: false },
-                            yAxis: { type: 'category', data: d.names, inverse: true, show: false },
-                            series: [{
-                                type: 'bar',
-                                barWidth: '80%',
-                                barGap: '10%',
-                                showBackground: true,
-                                backgroundStyle: { borderRadius: 0 },
-                                animationDuration: 600,
-                                data: d.values.map((v, i) => ({
-                                    value: v,
-                                    itemStyle: { color: d.colors[i], borderRadius: 0 },
-                                    label: {
-                                        show: true,
-                                        position: v > 3 ? 'insideLeft' : 'right',
-                                        fontWeight: 'normal',
-                                        fontSize: 11,
-                                        formatter: d.labels[i],
-                                    },
-                                })),
-                            }],
-                        });
-                        return chart;
+                rebuildAll() {
+                    Object.keys(this.charts).forEach(key => {
+                        const entry = this.charts[key];
+                        entry.chart.dispose();
+                        entry.chart = this.createChart(entry.el, entry.data);
+                    });
+                },
+                update(el, key, d) {
+                    if (this.charts[key]) {
+                        this.charts[key].data = d;
+                        this.updateChart(this.charts[key].chart, d);
+                    } else {
+                        this.charts[key] = { el, data: d, chart: this.createChart(el, d) };
+                    }
+                },
+                createChart(el, d) {
+                    const chart = echarts.init(el, this.isDark ? 'jabali-dark' : 'shine', { renderer: 'canvas' });
+                    chart.setOption(this.buildOption(d));
+                    return chart;
+                },
+                updateChart(chart, d) {
+                    chart.setOption(this.buildOption(d));
+                },
+                buildOption(d) {
+                    return {
+                        grid: { left: 4, right: 4, top: 2, bottom: 2 },
+                        xAxis: { type: 'value', max: 100, show: false },
+                        yAxis: { type: 'category', data: d.names, inverse: true, show: false },
+                        series: [{
+                            type: 'bar',
+                            barWidth: '80%',
+                            barGap: '10%',
+                            showBackground: true,
+                            backgroundStyle: { borderRadius: 0 },
+                            animationDuration: 600,
+                            data: d.values.map((v, i) => ({
+                                value: v,
+                                itemStyle: { color: d.colors[i], borderRadius: 0 },
+                                label: {
+                                    show: true,
+                                    position: v > 3 ? 'insideLeft' : 'right',
+                                    fontWeight: 'normal',
+                                    fontSize: 11,
+                                    formatter: d.labels[i],
+                                },
+                            })),
+                        }],
                     };
-                    const entry = { chart: build(), build };
-                    this.instances.push(entry);
                 },
             }"
+            x-init="$wire.on('$refresh', () => $nextTick(() => buildAll()))"
         >
             {{-- CPU & IO Wait --}}
-            <div class="px-4 py-3" wire:ignore>
+            <div class="px-4 py-3">
                 <div x-ref="cpu" class="h-[70px] w-full"></div>
             </div>
 
             {{-- Memory & Swap --}}
-            <div class="px-4 py-3" wire:ignore>
+            <div class="px-4 py-3">
                 <div x-ref="mem" class="h-[70px] w-full"></div>
             </div>
 
             {{-- Disk --}}
-            <div class="px-4 py-3" wire:ignore>
-                <div x-ref="disk" class="h-[70px] w-full"></div>
+            <div class="px-4 py-3">
+                @if(empty($disk))
+                    <p class="flex h-[70px] items-center text-xs opacity-60">{{ __('No disk data') }}</p>
+                @else
+                    <div x-ref="disk" class="h-[70px] w-full"></div>
+                @endif
             </div>
 
             {{-- Network --}}

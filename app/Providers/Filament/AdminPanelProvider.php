@@ -47,7 +47,7 @@ class AdminPanelProvider extends PanelProvider
             ->renderHook(
                 PanelsRenderHook::HEAD_END,
                 fn () => $this->getOpenGraphTags($this->getAdminBrandName(), 'Server administration panel for Jabali - Manage your hosting infrastructure').
-                    \Illuminate\Support\Facades\Vite::useBuildDirectory('build')->withEntryPoints(['resources/css/app.css', 'resources/js/server-charts.js', 'resources/js/echarts.js'])->toHtml().
+                    \Illuminate\Support\Facades\Vite::useBuildDirectory('build')->withEntryPoints(['resources/css/app.css', 'resources/js/echarts.js'])->toHtml().
 $this->getRtlScript()
             )
             ->renderHook(

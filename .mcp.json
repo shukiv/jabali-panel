@@ -5,7 +5,7 @@
             "command": "npx",
             "args": [
                 "-y",
-                "@modelcontextprotocol/server-filesystem",
+                "@anthropic-ai/mcp-server-filesystem@latest",
                 "/var/www/jabali",
                 "/home",
                 "/etc/nginx",
@@ -17,7 +17,7 @@
             "command": "npx",
             "args": [
                 "-y",
-                "@benborla29/mcp-server-mysql"
+                "@anthropic-ai/mcp-server-mysql@latest"
             ],
             "env": {
                 "MYSQL_HOST": "localhost",
