@@ -18,6 +18,8 @@ class EmailDomain extends Model
         'dkim_public_key',
         'catch_all_enabled',
         'catch_all_address',
+        'disclaimer_enabled',
+        'disclaimer_text',
         'max_mailboxes',
         'max_quota_bytes',
     ];
@@ -25,6 +27,7 @@ class EmailDomain extends Model
     protected $casts = [
         'is_active' => 'boolean',
         'catch_all_enabled' => 'boolean',
+        'disclaimer_enabled' => 'boolean',
         'max_mailboxes' => 'integer',
         'max_quota_bytes' => 'integer',
         'dkim_private_key' => 'encrypted',

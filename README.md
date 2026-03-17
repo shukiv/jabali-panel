@@ -28,7 +28,16 @@ Optional flags:
 - `JABALI_FULL=1` to force all optional components
 - `--debug` to show full command output instead of spinner
 
-Debian packages:
+APT repository (recommended):
+
+```
+curl -fsSL https://deb.jabali-panel.com/jabali-panel.gpg | sudo gpg --dearmor -o /usr/share/keyrings/jabali-panel-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/jabali-panel-archive-keyring.gpg] https://deb.jabali-panel.com stable main" | sudo tee /etc/apt/sources.list.d/jabali-panel.list
+sudo apt update
+sudo apt install jabali-deps jabali-panel
+```
+
+Build packages locally:
 
 ```
 ./scripts/build-jabali-deps-deb.sh
@@ -58,7 +67,8 @@ After install:
 - User and server backups with schedules and retention
 - WordPress management (install, updates, scans, and SSO)
 - Security center with firewall, Fail2ban, ClamAV, and scanners
-- Encrypted diagnostic reports for support
+- Encrypted diagnostic reports with email and clipboard support
+- Passphrase password generator (optional, 3 random words)
 - Audit logs and admin notifications
 
 ## Feature Map
@@ -82,12 +92,12 @@ After install:
 
 - Domains, redirects, and Nginx config
 - DNS records editor
-- Mail domains, mailboxes, forwarders, and shared folders
+- Mail domains, mailboxes, forwarders, shared folders, and per-domain disclaimers
 - IMAP sync (single and bulk mail migration)
 - Webmail SSO (Roundcube)
 - WordPress manager (install, scan, SSO)
 - File manager plus SFTP/SSH keys
-- Databases and permissions
+- Databases (MySQL and PostgreSQL in tabbed view)
 - PHP settings per account
 - SSL management
 - Cron jobs
