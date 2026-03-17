@@ -500,8 +500,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                                     ->tooltip(__('Copy to clipboard'))
                                     ->action(function ($state, $livewire) {
                                         if ($state) {
-                                            $escaped = addslashes($state);
-                                            $livewire->js("navigator.clipboard.writeText('{$escaped}')");
+                                            $livewire->js('navigator.clipboard.writeText('.json_encode($state, JSON_HEX_TAG).')');
                                             Notification::make()
                                                 ->title(__('Copied to clipboard'))
                                                 ->success()
@@ -1168,8 +1167,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                             ->tooltip(__('Copy to clipboard'))
                             ->action(function ($state, $livewire) {
                                 if ($state) {
-                                    $escaped = addslashes($state);
-                                    $livewire->js("navigator.clipboard.writeText('{$escaped}')");
+                                    $livewire->js('navigator.clipboard.writeText('.json_encode($state, JSON_HEX_TAG).')');
                                     Notification::make()
                                         ->title(__('Copied to clipboard'))
                                         ->success()

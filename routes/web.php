@@ -99,7 +99,7 @@ Route::get('/jabali-panel/backup-download', [BackupDownloadController::class, 'd
 */
 
 Route::get('/jabali-admin/backup-download', [BackupDownloadController::class, 'adminDownload'])
-    ->middleware(['web', 'auth'])
+    ->middleware(['web', 'auth:admin'])
     ->name('filament.admin.pages.backup-download');
 
 /*

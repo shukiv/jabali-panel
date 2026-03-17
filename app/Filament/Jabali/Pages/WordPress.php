@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace App\Filament\Jabali\Pages;
 
-use App\Models\Domain;
+use App\Jobs\RunWpscanScan;
 use App\Models\DnsRecord;
 use App\Models\DnsSetting;
+use App\Models\Domain;
 use App\Models\MysqlCredential;
-use App\Jobs\RunWpscanScan;
 use App\Services\Agent\AgentClient;
 use App\Support\ServerFacts;
 use BackedEnum;
@@ -543,8 +543,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                             ->tooltip(__('Copy to clipboard'))
                             ->action(function ($state, $livewire) {
                                 if ($state) {
-                                    $escaped = addslashes($state);
-                                    $livewire->js("navigator.clipboard.writeText('{$escaped}')");
+                                    $livewire->js('navigator.clipboard.writeText('.json_encode($state, JSON_HEX_TAG).')');
                                     Notification::make()
                                         ->title(__('Copied to clipboard'))
                                         ->success()
@@ -693,7 +692,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
 
             if ($result['success'] ?? false) {
                 $loginUrl = $result['login_url'];
-                $this->js("window.open('{$loginUrl}', '_blank')");
+                $this->js('window.open('.json_encode($loginUrl, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG).', \'_blank\')');
             } else {
                 throw new Exception($result['error'] ?? __('Failed to generate login link'));
             }
@@ -1192,6 +1191,7 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                 'scan_time' => now()->format('Y-m-d H:i:s'),
             ];
             $this->isSecurityScanning = false;
+
             return;
         }
 
