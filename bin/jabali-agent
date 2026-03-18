@@ -152,7 +152,7 @@ class StalwartApiClient
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
             CURLOPT_HTTPHEADER => [
-                'Authorization: Bearer ' . $this->token,
+                'Authorization: Basic ' . base64_encode('admin:' . $this->token),
                 'Content-Type: application/json',
                 'Accept: application/json',
             ],
@@ -10530,7 +10530,7 @@ function stalwartEmailSyncVirtualUsers(array $params): array
 
     // Stalwart reads directly from the MySQL DB — no hash files to rebuild.
     // Optionally reload Stalwart to pick up any config changes.
-    exec('systemctl reload stalwart-mail 2>&1', $output, $code);
+    exec('systemctl restart stalwart-mail 2>&1', $output, $code);
 
     logger("Synced virtual users for domain: {$domain} (Stalwart — reload triggered)");
     return ['success' => true, 'message' => "Virtual users synced for {$domain}"];
@@ -10586,7 +10586,7 @@ function stalwartEmailSyncMaps(array $params): array
 
 function stalwartEmailReloadServices(array $params): array
 {
-    exec('systemctl reload stalwart-mail 2>&1', $output, $code);
+    exec('systemctl restart stalwart-mail 2>&1', $output, $code);
     if ($code !== 0) {
         return ['success' => false, 'error' => 'Stalwart reload failed: ' . implode(' ', $output)];
     }
@@ -11234,7 +11234,7 @@ function stalwartSslMailConfigure(string $hostname, string $certPath, string $ke
     }
 
     // Reload Stalwart to pick up new cert
-    exec('systemctl reload stalwart-mail 2>&1', $output, $code);
+    exec('systemctl restart stalwart-mail 2>&1', $output, $code);
     if ($code !== 0) {
         return ['success' => false, 'error' => 'Failed to reload Stalwart'];
     }

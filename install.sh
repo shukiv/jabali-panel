@@ -2217,103 +2217,82 @@ EOF
     _db_pass_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${_db_pass}', safe=''))" 2>/dev/null || echo "${_db_pass}")
 
     # Write Stalwart TOML configuration
+    # Generate admin password hash for Stalwart fallback-admin
+    local admin_hash
+    admin_hash=$(openssl passwd -6 "${api_token}")
+
+    # Use stalwart --init to generate base config, then customize
+    local stalwart_data="/var/lib/stalwart-mail"
+
     cat > /etc/stalwart-mail/config.toml <<STALWART_CONF
 # Stalwart Mail Server Configuration - Managed by Jabali Panel
-# https://stalw.art/docs/configuration
-
-[server]
-hostname = "${SERVER_HOSTNAME}"
-admin-token = "${api_token}"
 
 [server.listener.smtp]
-bind = ["0.0.0.0:25"]
+bind = ["[::]:25"]
 protocol = "smtp"
 
 [server.listener.submission]
-bind = ["0.0.0.0:587"]
+bind = ["[::]:587"]
 protocol = "smtp"
-tls.implicit = false
-tls.starttls = true
 
-[server.listener.smtps]
-bind = ["0.0.0.0:465"]
+[server.listener.submissions]
+bind = ["[::]:465"]
 protocol = "smtp"
 tls.implicit = true
 
 [server.listener.imap]
-bind = ["0.0.0.0:143"]
+bind = ["[::]:143"]
 protocol = "imap"
-tls.implicit = false
-tls.starttls = true
 
-[server.listener.imaps]
-bind = ["0.0.0.0:993"]
+[server.listener.imaptls]
+bind = ["[::]:993"]
 protocol = "imap"
 tls.implicit = true
 
 [server.listener.pop3s]
-bind = ["0.0.0.0:995"]
+bind = ["[::]:995"]
 protocol = "pop3"
 tls.implicit = true
 
-[server.listener.jmap]
-bind = ["0.0.0.0:8080"]
-protocol = "http"
-
-[server.listener.managesieve]
-bind = ["0.0.0.0:4190"]
+[server.listener.sieve]
+bind = ["[::]:4190"]
 protocol = "managesieve"
 
-[server.tls]
-certificate = "/etc/ssl/certs/ssl-cert-snakeoil.pem"
-private-key = "/etc/ssl/private/ssl-cert-snakeoil.key"
-
-# Disable built-in webadmin — Jabali panel is the only UI
-[server.http]
-admin-allowed-ips = ["127.0.0.1", "::1"]
-
-# SQL authentication backend (reads from Jabali panel's MySQL DB)
-[directory."sql"]
-type = "sql"
-address = "mysql://${_db_user}:${_db_pass_encoded}@${_db_host}/${_db_name}"
-
-[directory."sql".query]
-login = "SELECT CONCAT(m.local_part, '@', d.domain) AS name, m.password_hash AS secret FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = ? AND m.is_active = 1 AND e.is_active = 1"
-name = "SELECT CONCAT(m.local_part, '@', d.domain) AS name FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = ? AND m.is_active = 1"
-members = "SELECT CONCAT(m.local_part, '@', d.domain) AS member FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE m.is_active = 1"
-domains = "SELECT DISTINCT d.domain FROM email_domains e JOIN domains d ON e.domain_id = d.id WHERE e.is_active = 1"
+[server.listener.http]
+protocol = "http"
+bind = ["[::]:8080"]
 
 [storage]
-directory = "sql"
+data = "rocksdb"
+fts = "rocksdb"
+blob = "rocksdb"
+lookup = "rocksdb"
+directory = "internal"
 
-[storage.data]
-path = "/var/lib/stalwart-mail/data"
+[store.rocksdb]
+type = "rocksdb"
+path = "${stalwart_data}/data"
+compression = "lz4"
 
-[storage.blob]
-type = "fs"
-path = "/var/lib/stalwart-mail/blobs"
+[directory.internal]
+type = "internal"
+store = "rocksdb"
 
-# DKIM signing — Stalwart auto-generates keys per domain
-[signature.dkim]
-verify = true
-sign = true
-
-# Spam filtering (built-in, replaces Rspamd)
-[spam-filter]
-enabled = true
-
-[spam-filter.header]
-is-spam = "X-Spam-Status"
-
-# Queue configuration
-[queue]
-path = "/var/lib/stalwart-mail/queue"
-
-# Logging
-[tracing.log]
-path = "/var/log/stalwart-mail/stalwart.log"
+[tracer.log]
+type = "log"
 level = "info"
+path = "/var/log/stalwart-mail"
+prefix = "stalwart.log"
+rotate = "daily"
+ansi = false
+enable = true
+
+[authentication.fallback-admin]
+user = "admin"
+secret = "${admin_hash}"
 STALWART_CONF
+
+    chmod 640 /etc/stalwart-mail/config.toml
 
     # Create systemd service if not in container
     if [[ ! -f /.dockerenv ]] && [[ ! -f /run/.containerenv ]]; then
