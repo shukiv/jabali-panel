@@ -523,6 +523,7 @@ install_packages() {
         redis-server
 
         # SSL
+        ssl-cert
         certbot
         python3-certbot-nginx
 
