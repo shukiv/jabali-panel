@@ -168,7 +168,7 @@ class MailMigrateCommand extends Command
 
     private function ensureStalwartInstalled(): bool
     {
-        $result = $this->executeCommand('which stalwart-mail 2>/dev/null || which /usr/local/bin/stalwart-mail 2>/dev/null');
+        $result = $this->executeCommand('which stalwart 2>/dev/null || which /usr/local/bin/stalwart 2>/dev/null');
         if ($result['exitCode'] === 0 && $result['output'] !== '') {
             $this->line('  Stalwart binary found: '.trim($result['output']));
 
@@ -177,11 +177,17 @@ class MailMigrateCommand extends Command
 
         $this->line('  Stalwart not found. Installing...');
         $archResult = $this->executeCommand('dpkg --print-architecture');
-        $arch = trim($archResult['output']);
-        $url = "https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-mail-server-{$arch}-unknown-linux-gnu.tar.gz";
+        $dpkgArch = trim($archResult['output']);
+        $rustArch = match ($dpkgArch) {
+            'amd64' => 'x86_64',
+            'arm64' => 'aarch64',
+            'armhf' => 'armv7',
+            default => $dpkgArch,
+        };
+        $url = "https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-{$rustArch}-unknown-linux-gnu.tar.gz";
 
         $result = $this->executeCommand(
-            'curl -fsSL '.escapeshellarg($url).' | tar -xz -C /usr/local/bin/ stalwart-mail && chmod 755 /usr/local/bin/stalwart-mail',
+            'curl -fsSL '.escapeshellarg($url).' | tar -xz -C /usr/local/bin/ stalwart && chmod 755 /usr/local/bin/stalwart',
             120
         );
 
@@ -255,7 +261,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/stalwart-mail --config /etc/stalwart-mail/config.toml
+ExecStart=/usr/local/bin/stalwart --config /etc/stalwart-mail/config.toml
 Restart=always
 RestartSec=5
 # TODO: Run as dedicated 'stalwart' user instead of root (requires user creation and port capabilities)

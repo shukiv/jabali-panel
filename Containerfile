@@ -81,9 +81,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Stalwart Mail Server (downloaded at build time, activated by MAIL_BACKEND=stalwart)
 ARG TARGETARCH
-RUN curl -fsSL "https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-mail-server-$(dpkg --print-architecture)-unknown-linux-gnu.tar.gz" \
-    | tar -xz -C /usr/local/bin/ stalwart-mail \
-    && chmod 755 /usr/local/bin/stalwart-mail \
+RUN RUST_ARCH=$(case "$(dpkg --print-architecture)" in amd64) echo x86_64;; arm64) echo aarch64;; armhf) echo armv7;; *) echo unknown;; esac) \
+    && curl -fsSL "https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-${RUST_ARCH}-unknown-linux-gnu.tar.gz" \
+    | tar -xz -C /usr/local/bin/ stalwart \
+    && chmod 755 /usr/local/bin/stalwart \
     && mkdir -p /etc/stalwart-mail /var/lib/stalwart-mail /var/log/stalwart-mail
 
 # Bind MariaDB to localhost only

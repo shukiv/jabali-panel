@@ -2148,28 +2148,35 @@ configure_stalwart() {
 
     # Install Stalwart Mail Server
     info "Installing Stalwart Mail Server..."
-    if command -v apt-get >/dev/null 2>&1; then
-        # Try apt repository first
-        if ! dpkg -l stalwart-mail 2>/dev/null | grep -q "^ii"; then
-            # Download and install latest Stalwart binary
-            local stalwart_version="0.11"
-            local arch
-            arch=$(dpkg --print-architecture)
-            local stalwart_url="https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-mail-server-${arch}-unknown-linux-gnu.tar.gz"
+    if ! command -v stalwart >/dev/null 2>&1 && [[ ! -x /usr/local/bin/stalwart ]]; then
+        # Map dpkg architecture to Rust target triple
+        local dpkg_arch
+        dpkg_arch=$(dpkg --print-architecture)
+        local rust_arch
+        case "$dpkg_arch" in
+            amd64)  rust_arch="x86_64" ;;
+            arm64)  rust_arch="aarch64" ;;
+            armhf)  rust_arch="armv7" ;;
+            *)      error "Unsupported architecture: $dpkg_arch"; return 1 ;;
+        esac
 
-            info "Downloading Stalwart Mail Server..."
-            local tmp_dir
-            tmp_dir=$(mktemp -d)
-            if curl -fsSL "$stalwart_url" -o "${tmp_dir}/stalwart.tar.gz"; then
-                tar -xzf "${tmp_dir}/stalwart.tar.gz" -C "${tmp_dir}"
-                install -m 755 "${tmp_dir}/stalwart-mail" /usr/local/bin/stalwart-mail
-                rm -rf "${tmp_dir}"
-            else
-                rm -rf "${tmp_dir}"
-                error "Failed to download Stalwart Mail Server"
-                return 1
-            fi
+        local stalwart_url="https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-${rust_arch}-unknown-linux-gnu.tar.gz"
+
+        info "Downloading Stalwart Mail Server..."
+        local tmp_dir
+        tmp_dir=$(mktemp -d)
+        if curl -fsSL "$stalwart_url" -o "${tmp_dir}/stalwart.tar.gz"; then
+            tar -xzf "${tmp_dir}/stalwart.tar.gz" -C "${tmp_dir}"
+            install -m 755 "${tmp_dir}/stalwart" /usr/local/bin/stalwart
+            rm -rf "${tmp_dir}"
+            log "Stalwart Mail Server installed to /usr/local/bin/stalwart"
+        else
+            rm -rf "${tmp_dir}"
+            error "Failed to download Stalwart Mail Server"
+            return 1
         fi
+    else
+        info "Stalwart already installed"
     fi
 
     # Create Stalwart directories
@@ -2317,7 +2324,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/stalwart-mail --config /etc/stalwart-mail/config.toml
+ExecStart=/usr/local/bin/stalwart --config /etc/stalwart-mail/config.toml
 Restart=always
 RestartSec=5
 # TODO: Run as dedicated 'stalwart' user instead of root (requires user creation and port capabilities)
