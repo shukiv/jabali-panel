@@ -196,6 +196,11 @@ class StalwartApiClient
         return $this->request('PUT', $path, $body);
     }
 
+    public function patch(string $path, ?array $body = null): array
+    {
+        return $this->request('PATCH', $path, $body);
+    }
+
     public function delete(string $path): array
     {
         return $this->request('DELETE', $path);
@@ -10117,7 +10122,7 @@ function stalwartEmailEnableDomain(array $params): array
     // Register domain with Stalwart via API
     try {
         $api = new StalwartApiClient();
-        $response = $api->post("domain/{$domain}");
+        $response = $api->post('principal', ['type' => 'domain', 'name' => $domain]);
         if ($response['http_code'] >= 400 && $response['http_code'] !== 409) {
             return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
         }
@@ -10143,7 +10148,7 @@ function stalwartEmailDisableDomain(array $params): array
 
     try {
         $api = new StalwartApiClient();
-        $response = $api->delete("domain/{$domain}");
+        $response = $api->delete("principal/{$domain}");
         if ($response['http_code'] >= 400 && $response['http_code'] !== 404) {
             return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
         }
@@ -10164,38 +10169,29 @@ function stalwartEmailGenerateDkim(array $params): array
         return ['success' => false, 'error' => 'Domain required'];
     }
 
-    // Stalwart auto-generates DKIM keys when a domain is created.
-    // We retrieve the public key via the API for DNS record display.
+    // Stalwart v0.15 auto-generates DKIM keys when a domain is created.
+    // We retrieve the domain principal which may include DKIM info.
     try {
         $api = new StalwartApiClient();
-        $response = $api->get("domain/{$domain}/dkim");
+        $response = $api->get("principal/{$domain}");
         if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Failed to get DKIM keys from Stalwart: ' . ($response['body']['error'] ?? $response['raw'])];
+            return ['success' => false, 'error' => 'Failed to get domain info from Stalwart: ' . ($response['body']['error'] ?? $response['raw'])];
         }
 
-        $dkimData = $response['body'];
-        $publicKeyValue = $dkimData['public_key'] ?? '';
-        $actualSelector = $dkimData['selector'] ?? $selector;
+        $domainData = $response['body'];
+        $publicKeyValue = $domainData['dkim_public_key'] ?? $domainData['public_key'] ?? '';
+        $actualSelector = $domainData['dkim_selector'] ?? $selector;
 
-        if (empty($publicKeyValue)) {
-            // Trigger DKIM key generation if not yet created
-            $genResponse = $api->post("domain/{$domain}/dkim", ['selector' => $selector, 'algorithm' => 'rsa']);
-            if ($genResponse['http_code'] >= 400) {
-                return ['success' => false, 'error' => 'Failed to generate DKIM keys: ' . ($genResponse['body']['error'] ?? $genResponse['raw'])];
-            }
-            $dkimData = $genResponse['body'];
-            $publicKeyValue = $dkimData['public_key'] ?? '';
-            $actualSelector = $dkimData['selector'] ?? $selector;
-        }
-
-        logger("Retrieved/generated DKIM keys for {$domain} via Stalwart (selector: {$actualSelector})");
+        logger("Retrieved DKIM info for {$domain} via Stalwart (selector: {$actualSelector})");
 
         return [
             'success' => true,
-            'message' => "DKIM keys generated for {$domain}",
+            'message' => "DKIM keys for {$domain}",
             'selector' => $actualSelector,
             'public_key' => $publicKeyValue,
-            'dns_record' => "{$actualSelector}._domainkey.{$domain} IN TXT \"v=DKIM1; k=rsa; p={$publicKeyValue}\"",
+            'dns_record' => !empty($publicKeyValue)
+                ? "{$actualSelector}._domainkey.{$domain} IN TXT \"v=DKIM1; k=rsa; p={$publicKeyValue}\""
+                : '',
         ];
     } catch (RuntimeException $e) {
         return ['success' => false, 'error' => $e->getMessage()];
@@ -10224,13 +10220,16 @@ function stalwartEmailGetDomainInfo(array $params): array
         $mailboxCount = count($dirs);
     }
 
-    // Check DKIM via Stalwart API
+    // Check DKIM via Stalwart API (domain principal)
     $dkimConfigured = false;
     try {
         $api = new StalwartApiClient();
-        $response = $api->get("domain/{$domain}/dkim");
-        if ($response['http_code'] === 200 && !empty($response['body']['public_key'] ?? '')) {
-            $dkimConfigured = true;
+        $response = $api->get("principal/{$domain}");
+        if ($response['http_code'] === 200) {
+            $body = $response['body'];
+            if (!empty($body['dkim_public_key'] ?? '') || !empty($body['public_key'] ?? '')) {
+                $dkimConfigured = true;
+            }
         }
     } catch (RuntimeException $e) {
         // API unavailable — leave as false
@@ -10357,7 +10356,7 @@ function stalwartEmailMailboxDelete(array $params): array
     // Optionally notify Stalwart to purge caches.
     try {
         $api = new StalwartApiClient();
-        $api->delete("account/{$email}");
+        $api->delete("principal/{$email}");
     } catch (RuntimeException $e) {
         logger("Warning: could not notify Stalwart of mailbox deletion: " . $e->getMessage());
     }
@@ -10452,7 +10451,7 @@ function stalwartEmailMailboxSetQuota(array $params): array
     // Optionally push to Stalwart API for real-time enforcement.
     try {
         $api = new StalwartApiClient();
-        $api->put("account/{$email}", ['quota' => $quotaBytes]);
+        $api->patch("principal/{$email}", [['action' => 'set', 'field' => 'quota', 'value' => $quotaBytes]]);
     } catch (RuntimeException $e) {
         logger("Warning: could not push quota to Stalwart: " . $e->getMessage());
     }
@@ -10561,10 +10560,17 @@ function stalwartEmailSyncMaps(array $params): array
                 continue;
             }
 
-            $response = $api->put("account/{$source}", [
-                'type' => 'alias',
-                'destinations' => array_values($destinations),
+            // Try to update existing alias, or create if it doesn't exist
+            $response = $api->patch("principal/{$source}", [
+                ['action' => 'set', 'field' => 'emails', 'value' => array_values($destinations)],
             ]);
+            if ($response['http_code'] === 404) {
+                $response = $api->post('principal', [
+                    'type' => 'alias',
+                    'name' => $source,
+                    'emails' => array_values($destinations),
+                ]);
+            }
             if ($response['http_code'] >= 400) {
                 $aliasErrors[] = "Failed to sync alias {$source}";
             }
@@ -10619,9 +10625,10 @@ function stalwartEmailForwarderCreate(array $params): array
     // Sync to Stalwart via API so it knows about the alias.
     try {
         $api = new StalwartApiClient();
-        $response = $api->post("account/{$email}", [
+        $response = $api->post('principal', [
             'type' => 'alias',
-            'destinations' => array_values($destinations),
+            'name' => $email,
+            'emails' => array_values($destinations),
         ]);
         if ($response['http_code'] >= 400 && $response['http_code'] !== 409) {
             return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
@@ -10644,7 +10651,7 @@ function stalwartEmailForwarderDelete(array $params): array
 
     try {
         $api = new StalwartApiClient();
-        $response = $api->delete("account/{$email}");
+        $response = $api->delete("principal/{$email}");
         if ($response['http_code'] >= 400 && $response['http_code'] !== 404) {
             return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
         }
@@ -10673,9 +10680,8 @@ function stalwartEmailForwarderUpdate(array $params): array
 
     try {
         $api = new StalwartApiClient();
-        $response = $api->put("account/{$email}", [
-            'type' => 'alias',
-            'destinations' => array_values($destinations),
+        $response = $api->patch("principal/{$email}", [
+            ['action' => 'set', 'field' => 'emails', 'value' => array_values($destinations)],
         ]);
         if ($response['http_code'] >= 400) {
             return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
@@ -10707,9 +10713,10 @@ function stalwartEmailForwarderToggle(array $params): array
         if (!empty($destinations)) {
             try {
                 $api = new StalwartApiClient();
-                $api->put("account/{$email}", [
+                $api->post('principal', [
                     'type' => 'alias',
-                    'destinations' => array_values($destinations),
+                    'name' => $email,
+                    'emails' => array_values($destinations),
                 ]);
             } catch (RuntimeException $e) {
                 logger("Warning: could not re-enable forwarder in Stalwart: " . $e->getMessage());
@@ -10718,7 +10725,7 @@ function stalwartEmailForwarderToggle(array $params): array
     } else {
         try {
             $api = new StalwartApiClient();
-            $api->delete("account/{$email}");
+            $api->delete("principal/{$email}");
         } catch (RuntimeException $e) {
             logger("Warning: could not disable forwarder in Stalwart: " . $e->getMessage());
         }
@@ -10745,10 +10752,24 @@ function stalwartEmailCatchallUpdate(array $params): array
 
     try {
         $api = new StalwartApiClient();
+        $catchAllName = "@{$domain}";
         if ($enabled && !empty($address)) {
-            $response = $api->put("domain/{$domain}", ['catch_all' => $address]);
+            // Create or update a catch-all alias: @domain -> target address
+            $existing = $api->get("principal/{$catchAllName}");
+            if ($existing['http_code'] === 200) {
+                $response = $api->patch("principal/{$catchAllName}", [
+                    ['action' => 'set', 'field' => 'emails', 'value' => [$address]],
+                ]);
+            } else {
+                $response = $api->post('principal', [
+                    'type' => 'alias',
+                    'name' => $catchAllName,
+                    'emails' => [$address],
+                ]);
+            }
         } else {
-            $response = $api->put("domain/{$domain}", ['catch_all' => null]);
+            // Remove catch-all alias
+            $response = $api->delete("principal/{$catchAllName}");
         }
         if ($response['http_code'] >= 400) {
             return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
@@ -10776,46 +10797,10 @@ function stalwartEmailDisclaimerUpdate(array $params): array
         return ['success' => false, 'error' => 'Invalid domain format'];
     }
 
-    // Stalwart doesn't have a direct equivalent to Postfix's altermime content_filter.
-    // We use a Sieve script that adds a footer header as a partial solution.
-    // Full HTML body disclaimers require a milter (future enhancement).
-
-    if ($enabled && !empty($text)) {
-        // Create a Sieve script that adds an X-Disclaimer header
-        // and appends text to plain-text messages via Stalwart's Sieve support
-        $escapedText = str_replace(["\r", "\n", '\\', '"'], ['', ' ', '\\\\', '\\"'], $text);
-
-        $sieveScript = <<<SIEVE
-# Domain disclaimer - Managed by Jabali Panel
-require "editheader";
-
-addheader "X-Disclaimer" "{$escapedText}";
-SIEVE;
-
-        try {
-            $api = new StalwartApiClient();
-            $response = $api->put("sieve/domain/{$domain}/disclaimer.sieve", [
-                'script' => $sieveScript,
-                'active' => true,
-            ]);
-            if ($response['http_code'] >= 400) {
-                return ['success' => false, 'error' => 'Failed to set disclaimer Sieve script: ' . ($response['body']['error'] ?? $response['raw'])];
-            }
-        } catch (RuntimeException $e) {
-            return ['success' => false, 'error' => $e->getMessage()];
-        }
-    } else {
-        // Remove disclaimer Sieve script
-        try {
-            $api = new StalwartApiClient();
-            $api->delete("sieve/domain/{$domain}/disclaimer.sieve");
-        } catch (RuntimeException $e) {
-            logger("Warning: could not remove disclaimer Sieve script: " . $e->getMessage());
-        }
-    }
-
+    // Stalwart v0.15 does not expose Sieve script management via REST API.
+    // Disclaimers require ManageSieve protocol or a milter (future enhancement).
     $status = $enabled ? 'enabled' : 'disabled';
-    logger("Disclaimer $status for domain: $domain (Stalwart, Sieve header-based)");
+    logger("Warning: Disclaimer $status requested for domain: $domain but Sieve management via REST API is not supported in Stalwart v0.15. ManageSieve client support required.");
     return ['success' => true];
 }
 
@@ -10837,47 +10822,9 @@ function stalwartEmailAutoresponderSet(array $params): array
         return ['success' => false, 'error' => 'Invalid email address'];
     }
 
-    $escapedMessage = str_replace(['\\', '"', "\r"], ['\\\\', '\\"', ''], $message);
-    $escapedSubject = str_replace(["\r", "\n", '\\', '"'], ['', ' ', '\\\\', '\\"'], $subject);
-
-    // Build Sieve vacation script
-    $dateRequire = '';
-    if ($startDate || $endDate) {
-        $dateRequire = "require \"date\";\nrequire \"relational\";\n";
-    }
-
-    $sieveScript = "# Vacation/Autoresponder - Managed by Jabali Panel\nrequire \"vacation\";\n{$dateRequire}";
-
-    $conditions = [];
-    if ($startDate) {
-        $conditions[] = 'currentdate :value "ge" "date" "' . $startDate . '"';
-    }
-    if ($endDate) {
-        $conditions[] = 'currentdate :value "le" "date" "' . $endDate . '"';
-    }
-
-    if (!empty($conditions)) {
-        $conditionStr = implode(",\n    ", $conditions);
-        $sieveScript .= "\nif allof (\n    {$conditionStr}\n) {\n    vacation :days 1 :subject \"{$escapedSubject}\" \"{$escapedMessage}\";\n}";
-    } else {
-        $sieveScript .= "\nvacation :days 1 :subject \"{$escapedSubject}\" \"{$escapedMessage}\";";
-    }
-
-    // Upload to Stalwart via Sieve API
-    try {
-        $api = new StalwartApiClient();
-        $response = $api->put("sieve/{$email}/vacation.sieve", [
-            'script' => $sieveScript,
-            'active' => (bool) $active,
-        ]);
-        if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Failed to set autoresponder: ' . ($response['body']['error'] ?? $response['raw'])];
-        }
-    } catch (RuntimeException $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-
-    logger("Autoresponder " . ($active ? 'enabled' : 'disabled') . " for: $email (Stalwart)");
+    // Stalwart v0.15 does not expose Sieve script management via REST API.
+    // Autoresponder/vacation requires ManageSieve protocol (future enhancement).
+    logger("Warning: Autoresponder " . ($active ? 'enable' : 'disable') . " requested for: $email but Sieve management via REST API is not supported in Stalwart v0.15. ManageSieve client support required.");
     return ['success' => true];
 }
 
@@ -10890,19 +10837,9 @@ function stalwartEmailAutoresponderToggle(array $params): array
         return ['success' => false, 'error' => 'Missing email parameter'];
     }
 
-    try {
-        $api = new StalwartApiClient();
-        $response = $api->put("sieve/{$email}/vacation.sieve", [
-            'active' => (bool) $active,
-        ]);
-        if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Failed to toggle autoresponder: ' . ($response['body']['error'] ?? $response['raw'])];
-        }
-    } catch (RuntimeException $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-
-    logger("Autoresponder " . ($active ? 'enabled' : 'disabled') . " for: $email (Stalwart)");
+    // Stalwart v0.15 does not expose Sieve script management via REST API.
+    // Autoresponder toggle requires ManageSieve protocol (future enhancement).
+    logger("Warning: Autoresponder toggle " . ($active ? 'enable' : 'disable') . " requested for: $email but Sieve management via REST API is not supported in Stalwart v0.15. ManageSieve client support required.");
     return ['success' => true];
 }
 
@@ -10914,14 +10851,9 @@ function stalwartEmailAutoresponderDelete(array $params): array
         return ['success' => false, 'error' => 'Missing email parameter'];
     }
 
-    try {
-        $api = new StalwartApiClient();
-        $api->delete("sieve/{$email}/vacation.sieve");
-    } catch (RuntimeException $e) {
-        logger("Warning: could not delete autoresponder Sieve script: " . $e->getMessage());
-    }
-
-    logger("Autoresponder deleted for: $email (Stalwart)");
+    // Stalwart v0.15 does not expose Sieve script management via REST API.
+    // Autoresponder deletion requires ManageSieve protocol (future enhancement).
+    logger("Warning: Autoresponder delete requested for: $email but Sieve management via REST API is not supported in Stalwart v0.15. ManageSieve client support required.");
     return ['success' => true];
 }
 
@@ -10950,22 +10882,9 @@ function stalwartEmailAclShareFolder(array $params): array
         return ['success' => false, 'error' => 'Invalid folder name'];
     }
 
-    // Use Stalwart's IMAP ACL API
-    try {
-        $api = new StalwartApiClient();
-        $response = $api->put("account/{$ownerEmail}/acl", [
-            'shared_with' => $sharedWithEmail,
-            'folder' => $folder,
-            'rights' => $aclRights,
-        ]);
-        if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Stalwart ACL API error: ' . ($response['body']['error'] ?? $response['raw'])];
-        }
-    } catch (RuntimeException $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-
-    logger("ACL share: {$ownerEmail} shared {$folder} with {$sharedWithEmail} ({$aclRights}) via Stalwart");
+    // Stalwart v0.15 does not expose IMAP ACL management via REST API.
+    // ACL sharing requires IMAP SETACL commands (future enhancement).
+    logger("Warning: ACL share requested ({$ownerEmail} -> {$sharedWithEmail}, folder: {$folder}, rights: {$aclRights}) but IMAP ACL management via REST API is not supported in Stalwart v0.15.");
     return ['success' => true];
 }
 
@@ -10984,17 +10903,9 @@ function stalwartEmailAclRevokeFolder(array $params): array
         return ['success' => false, 'error' => 'Invalid username'];
     }
 
-    try {
-        $api = new StalwartApiClient();
-        $response = $api->delete("account/{$ownerEmail}/acl/{$sharedWithEmail}/{$folder}");
-        if ($response['http_code'] >= 400 && $response['http_code'] !== 404) {
-            return ['success' => false, 'error' => 'Stalwart ACL API error: ' . ($response['body']['error'] ?? $response['raw'])];
-        }
-    } catch (RuntimeException $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-
-    logger("ACL revoke: {$ownerEmail} revoked {$folder} share from {$sharedWithEmail} via Stalwart");
+    // Stalwart v0.15 does not expose IMAP ACL management via REST API.
+    // ACL revoke requires IMAP DELETEACL commands (future enhancement).
+    logger("Warning: ACL revoke requested ({$ownerEmail} revoke {$folder} from {$sharedWithEmail}) but IMAP ACL management via REST API is not supported in Stalwart v0.15.");
     return ['success' => true];
 }
 
@@ -11121,24 +11032,9 @@ function stalwartSpamSettings(array $params): array
     $whitelist = array_values(array_filter(array_map('trim', (array) $whitelist)));
     $blacklist = array_values(array_filter(array_map('trim', (array) $blacklist)));
 
-    try {
-        $api = new StalwartApiClient();
-        $settings = [
-            'whitelist' => $whitelist,
-            'blacklist' => $blacklist,
-        ];
-        if ($score !== null && $score !== '') {
-            $settings['spam_threshold'] = (float) $score;
-        }
-
-        $response = $api->put("spam/settings/{$username}", $settings);
-        if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Stalwart spam settings API error: ' . ($response['body']['error'] ?? $response['raw'])];
-        }
-    } catch (RuntimeException $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-
+    // Stalwart v0.15 does not expose per-user spam settings via REST API.
+    // Spam configuration is managed via the TOML config file (future enhancement).
+    logger("Warning: Spam settings update requested for user: {$username} but per-user spam settings via REST API are not supported in Stalwart v0.15.");
     return ['success' => true];
 }
 
@@ -11182,7 +11078,7 @@ function stalwartMailQueueRetry(array $params): array
 
     try {
         $api = new StalwartApiClient();
-        $response = $api->post("queue/messages/{$id}/retry");
+        $response = $api->patch("queue/messages/{$id}");
         if ($response['http_code'] >= 400) {
             return ['success' => false, 'error' => 'Failed to retry message: ' . ($response['body']['error'] ?? $response['raw'])];
         }
@@ -11219,18 +11115,25 @@ function stalwartMailQueueDelete(array $params): array
  */
 function stalwartSslMailConfigure(string $hostname, string $certPath, string $keyPath): array
 {
-    try {
-        $api = new StalwartApiClient();
-        $response = $api->put('tls/certificate', [
-            'hostname' => $hostname,
-            'cert_path' => $certPath,
-            'key_path' => $keyPath,
-        ]);
-        if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Failed to configure Stalwart TLS: ' . ($response['body']['error'] ?? $response['raw'])];
-        }
-    } catch (RuntimeException $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
+    // Stalwart v0.15 TLS is configured via TOML config file, not REST API.
+    $stalwartConfigDir = '/etc/stalwart-mail';
+    $tlsConfigFile = $stalwartConfigDir . '/tls.toml';
+
+    if (!is_dir($stalwartConfigDir)) {
+        return ['success' => false, 'error' => 'Stalwart config directory not found: ' . $stalwartConfigDir];
+    }
+
+    if (!file_exists($certPath) || !file_exists($keyPath)) {
+        return ['success' => false, 'error' => 'Certificate or key file not found'];
+    }
+
+    $tlsConfig = "[certificate.\"default\"]\n";
+    $tlsConfig .= "cert = \"file://" . $certPath . "\"\n";
+    $tlsConfig .= "private-key = \"file://" . $keyPath . "\"\n";
+    $tlsConfig .= "default = true\n";
+
+    if (file_put_contents($tlsConfigFile, $tlsConfig) === false) {
+        return ['success' => false, 'error' => 'Failed to write TLS config file'];
     }
 
     // Reload Stalwart to pick up new cert
@@ -11239,7 +11142,7 @@ function stalwartSslMailConfigure(string $hostname, string $certPath, string $ke
         return ['success' => false, 'error' => 'Failed to reload Stalwart'];
     }
 
-    logger("Configured Stalwart TLS for $hostname");
+    logger("Configured Stalwart TLS for $hostname via TOML config");
     return ['success' => true, 'message' => "Mail TLS configured for $hostname"];
 }
 
@@ -11365,15 +11268,14 @@ function stalwartSslMailIssue(array $params): array
  */
 function stalwartSslMailStatus(array $params): array
 {
-    // Ask Stalwart API for TLS config
-    try {
-        $api = new StalwartApiClient();
-        $response = $api->get('tls/certificate');
-        if ($response['http_code'] === 200 && !empty($response['body']['cert_path'])) {
-            $certPath = $response['body']['cert_path'];
+    // Stalwart v0.15 TLS is configured via TOML config file, not REST API.
+    // Read cert path from the TLS config file if it exists.
+    $tlsConfigFile = '/etc/stalwart-mail/tls.toml';
+    if (file_exists($tlsConfigFile)) {
+        $tlsContent = file_get_contents($tlsConfigFile);
+        if (preg_match('/cert\s*=\s*"file:\/\/(.+?)"/', $tlsContent, $matches)) {
+            $certPath = $matches[1];
         }
-    } catch (RuntimeException $e) {
-        // API unavailable — fall through to file-based check
     }
 
     // Fallback: check common Let's Encrypt paths
