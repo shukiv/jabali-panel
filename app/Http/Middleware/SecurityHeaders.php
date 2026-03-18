@@ -32,16 +32,15 @@ class SecurityHeaders
         ]);
 
         $response->headers->set('Content-Security-Policy', $csp);
-        $response->headers->set('X-Content-Type-Options', 'nosniff');
-        $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
-        $response->headers->set('X-XSS-Protection', '1; mode=block');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+        $response->headers->set('Cross-Origin-Resource-Policy', 'same-origin');
 
-        // Only add HSTS in production with HTTPS
-        if ($request->secure() && app()->environment('production')) {
-            $response->headers->set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-        }
+        // X-Content-Type-Options and X-Frame-Options are set here as fallback.
+        // Nginx also sets these + HSTS via add_header — we skip HSTS here
+        // to avoid duplicate header warnings from security scanners.
+        $response->headers->set('X-Content-Type-Options', 'nosniff');
+        $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
 
         return $response;
     }
