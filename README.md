@@ -53,6 +53,58 @@ After install:
 - User panel: `https://your-host/jabali-panel`
 - Webmail: `https://your-host/webmail`
 
+## Container Deployment
+
+Jabali can run as a single container with all 13 services managed by supervisord (MariaDB, Redis, Nginx, PHP-FPM, jabali-agent, queue-worker, cron, BIND9, OpenDKIM, Rspamd, Postfix, Dovecot, fail2ban). The `Containerfile` uses a multi-stage build based on `debian:bookworm-slim`.
+
+### Quick Start (Docker Hub)
+
+```bash
+docker pull shukivaknin/jabali-panel:latest
+
+docker run -d --name jabali \
+  --hostname panel.example.com \
+  -p 80:80 -p 443:443 \
+  -p 25:25 -p 587:587 -p 993:993 -p 110:110 \
+  -p 53:53/tcp -p 53:53/udp \
+  -v jabali-mysql:/var/lib/mysql \
+  -v jabali-storage:/var/www/jabali/storage \
+  -v jabali-mail:/var/mail \
+  -v jabali-home:/home \
+  -v jabali-letsencrypt:/etc/letsencrypt \
+  -e APP_URL=https://panel.example.com \
+  -e SERVER_HOSTNAME=panel.example.com \
+  --cap-add NET_BIND_SERVICE \
+  --cap-add NET_RAW \
+  shukivaknin/jabali-panel:latest
+```
+
+The entrypoint handles first-run initialization (database setup, key generation, migrations, self-signed SSL). Persistent data is stored in the named volumes listed above.
+
+After the container starts, create an admin user:
+
+```bash
+docker exec -it jabali php /var/www/jabali/artisan tinker --execute="
+\$u = new App\Models\User();
+\$u->name = 'Admin';
+\$u->username = 'admin';
+\$u->email = 'admin@example.com';
+\$u->password = bcrypt('changeme');
+\$u->is_admin = true;
+\$u->save();
+"
+```
+
+Then open `https://panel.example.com/jabali-admin` to log in.
+
+### Build from Source
+
+Requires `auth.json` for Filament packages:
+
+```bash
+podman build --secret id=composer_auth,src=auth.json -t jabali-panel:latest .
+```
+
 ## Highlights
 
 - Per-user Linux accounts and PHP-FPM isolation
