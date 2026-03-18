@@ -1490,22 +1490,12 @@ server {
         include fastcgi_params;
     }
 
-    # Roundcube Webmail (served via panel PHP-FPM pool)
+    # Webmail — Bulwark (Stalwart backend) or Roundcube (legacy backend)
     location = /webmail {
         return 301 /webmail/;
     }
 
-    location ^~ /webmail/ {
-        alias /var/lib/roundcube/public_html/;
-        index index.php;
-
-        location ~ \.php$ {
-            fastcgi_pass unix:PANEL_SOCKET_PLACEHOLDER;
-            fastcgi_param SCRIPT_FILENAME $request_filename;
-            include fastcgi_params;
-            fastcgi_read_timeout 600;
-        }
-    }
+    WEBMAIL_LOCATION_PLACEHOLDER
 
     # GoAccess statistics reports
     location /stats/ {
@@ -1527,8 +1517,39 @@ NGINXCONF;
 
     $panelSocket = '/run/php/php' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '-fpm-panel.sock';
 
+    // Choose webmail location block based on mail backend
+    $mailBackend = getMailBackend();
+    if ($mailBackend === 'stalwart') {
+        $webmailLocation = <<<'NGINX'
+    location ^~ /webmail/ {
+        proxy_pass http://127.0.0.1:3000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+NGINX;
+    } else {
+        $webmailLocation = <<<NGINX
+    location ^~ /webmail/ {
+        alias /var/lib/roundcube/public_html/;
+        index index.php;
+
+        location ~ \.php$ {
+            fastcgi_pass unix:{$panelSocket};
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            include fastcgi_params;
+            fastcgi_read_timeout 600;
+        }
+    }
+NGINX;
+    }
+
     $config = str_replace('DOMAIN_PLACEHOLDER', $domain, $config);
     $config = str_replace('DOCROOT_PLACEHOLDER', $publicHtml, $config);
+    $config = str_replace('WEBMAIL_LOCATION_PLACEHOLDER', $webmailLocation, $config);
     $config = str_replace('PANEL_SOCKET_PLACEHOLDER', $panelSocket, $config);
     $config = str_replace('SOCKET_PLACEHOLDER', $fpmSocket, $config);
     $config = str_replace('LOGS_PLACEHOLDER', $logs, $config);

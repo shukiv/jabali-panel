@@ -2319,7 +2319,79 @@ SYSTEMD
         systemctl start stalwart-mail
     fi
 
-    log "Stalwart Mail Server configured with MySQL authentication"
+    log "Stalwart Mail Server configured"
+
+    # Install Bulwark Webmail (JMAP client for Stalwart)
+    info "Installing Bulwark Webmail..."
+    local bulwark_dir="/opt/bulwark"
+
+    if [[ ! -d "$bulwark_dir" ]]; then
+        # Pull Docker image or install from source
+        if command -v docker >/dev/null 2>&1; then
+            docker pull ghcr.io/bulwarkmail/webmail:latest 2>/dev/null || true
+        fi
+
+        # Install standalone (no Docker dependency)
+        mkdir -p "$bulwark_dir"
+        cd "$bulwark_dir"
+
+        # Check if Node.js is available (installed as part of base packages)
+        if ! command -v node >/dev/null 2>&1; then
+            info "Installing Node.js for Bulwark..."
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash - 2>/dev/null
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs 2>/dev/null
+        fi
+
+        # Clone and build Bulwark
+        if git clone --depth 1 https://github.com/bulwarkmail/webmail.git "$bulwark_dir" 2>/dev/null; then
+            cd "$bulwark_dir"
+
+            # Configure Bulwark to connect to local Stalwart
+            cat > .env.local <<BULWARK_ENV
+JMAP_SERVER_URL=http://127.0.0.1:8080
+HOSTNAME=127.0.0.1
+PORT=3000
+APP_NAME=Webmail
+SESSION_SECRET=$(openssl rand -base64 32)
+BULWARK_ENV
+
+            npm install --production 2>/dev/null
+            npm run build 2>/dev/null
+
+            log "Bulwark Webmail installed at $bulwark_dir"
+        else
+            warn "Could not clone Bulwark repository — webmail will not be available"
+            cd "$JABALI_DIR"
+        fi
+    fi
+
+    # Create Bulwark systemd service
+    if [[ -d "$bulwark_dir" ]] && [[ ! -f /.dockerenv ]] && [[ ! -f /run/.containerenv ]]; then
+        cat > /etc/systemd/system/bulwark.service <<BULWARK_SVC
+[Unit]
+Description=Bulwark Webmail
+After=network.target stalwart-mail.service
+
+[Service]
+Type=simple
+WorkingDirectory=${bulwark_dir}
+ExecStart=/usr/bin/node ${bulwark_dir}/node_modules/.bin/next start -p 3000 -H 127.0.0.1
+Restart=always
+RestartSec=5
+User=www-data
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+BULWARK_SVC
+        systemctl daemon-reload
+        systemctl enable bulwark > /dev/null 2>&1
+        systemctl start bulwark
+        log "Bulwark Webmail service started on port 3000"
+    fi
+
+    cd "$JABALI_DIR"
+    log "Stalwart Mail Server configured with Bulwark Webmail"
 }
 
 # Create webmaster mailbox for system notifications
