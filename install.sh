@@ -1132,7 +1132,7 @@ install_phpmyadmin() {
     echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect" | debconf-set-selections 2>/dev/null || true
 
     run_quiet "Installing phpMyAdmin package..." \
-        apt-get install -y -qq phpmyadmin
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq phpmyadmin
 
     # Copy Jabali signon script
     if [[ -f "$JABALI_DIR/stubs/phpmyadmin/jabali-signon.php" ]]; then
