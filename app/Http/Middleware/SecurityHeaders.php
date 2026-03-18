@@ -17,7 +17,7 @@ class SecurityHeaders
     {
         $response = $next($request);
 
-        // Content Security Policy
+        // Content Security Policy — strict as possible while supporting Livewire/Alpine/Filament
         $csp = implode('; ', [
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Required for Livewire/Alpine
@@ -33,14 +33,27 @@ class SecurityHeaders
 
         $response->headers->set('Content-Security-Policy', $csp);
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-        $response->headers->set('Cross-Origin-Resource-Policy', 'same-origin');
+        $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()');
 
-        // X-Content-Type-Options and X-Frame-Options are set here as fallback.
-        // Nginx also sets these + HSTS via add_header — we skip HSTS here
-        // to avoid duplicate header warnings from security scanners.
+        // Cross-origin isolation headers (CORP, COOP, COEP also set by nginx for static assets)
+        if (! $response->headers->has('Cross-Origin-Resource-Policy')) {
+            $response->headers->set('Cross-Origin-Resource-Policy', 'same-origin');
+        }
+        if (! $response->headers->has('Cross-Origin-Opener-Policy')) {
+            $response->headers->set('Cross-Origin-Opener-Policy', 'same-origin');
+        }
+        if (! $response->headers->has('Cross-Origin-Embedder-Policy')) {
+            $response->headers->set('Cross-Origin-Embedder-Policy', 'credentialless');
+        }
+
+        // X-Content-Type-Options and X-Frame-Options — nginx also sets these + HSTS
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
+
+        // Strip body from redirect responses to prevent information leakage
+        if ($response->isRedirection()) {
+            $response->setContent('');
+        }
 
         return $response;
     }
