@@ -9,6 +9,11 @@ use App\Models\MailboxShare;
 use App\Services\Agent\AgentClient;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Agent calls (emailAclShareFolder, emailAclRevokeFolder, emailAclUpdateFolder) are
+ * routed at the agent dispatch level to the correct backend (Dovecot ACLs for legacy,
+ * Stalwart JMAP sharing for stalwart). No conditional logic needed here.
+ */
 class MailboxSharingService
 {
     protected const ALLOWED_RIGHTS = ['lrs', 'lrswite', 'lrswitekx', 'lrswitekxa'];

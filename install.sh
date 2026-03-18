@@ -45,6 +45,9 @@ INSTALL_DNS=true
 INSTALL_FIREWALL=true
 INSTALL_SECURITY=true  # Fail2ban + ClamAV
 
+# Mail backend: "legacy" (Postfix+Dovecot+OpenDKIM+Rspamd) or "stalwart" (all-in-one)
+MAIL_BACKEND="${MAIL_BACKEND:-legacy}"
+
 # Feature selection menu
 select_features() {
     echo ""
@@ -2089,6 +2092,205 @@ OPENDKIM_CONF
     log "Mail server configured with MySQL authentication"
 }
 
+# Configure Stalwart Mail Server (all-in-one replacement for Postfix+Dovecot+OpenDKIM+Rspamd)
+configure_stalwart() {
+    header "Configuring Stalwart Mail Server"
+
+    # Create vmail user (same UID/GID as legacy for migration compat)
+    mkdir -p /var/mail/vhosts
+    groupadd -g 5000 vmail 2>/dev/null || true
+    useradd -g vmail -u 5000 vmail -d /var/mail 2>/dev/null || true
+    chown -R vmail:vmail /var/mail
+
+    # Install Stalwart Mail Server
+    info "Installing Stalwart Mail Server..."
+    if command -v apt-get >/dev/null 2>&1; then
+        # Try apt repository first
+        if ! dpkg -l stalwart-mail 2>/dev/null | grep -q "^ii"; then
+            # Download and install latest Stalwart binary
+            local stalwart_version="0.11"
+            local arch
+            arch=$(dpkg --print-architecture)
+            local stalwart_url="https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-mail-server-${arch}-unknown-linux-gnu.tar.gz"
+
+            info "Downloading Stalwart Mail Server..."
+            local tmp_dir
+            tmp_dir=$(mktemp -d)
+            if curl -fsSL "$stalwart_url" -o "${tmp_dir}/stalwart.tar.gz"; then
+                tar -xzf "${tmp_dir}/stalwart.tar.gz" -C "${tmp_dir}"
+                install -m 755 "${tmp_dir}/stalwart-mail" /usr/local/bin/stalwart-mail
+                rm -rf "${tmp_dir}"
+            else
+                rm -rf "${tmp_dir}"
+                error "Failed to download Stalwart Mail Server"
+                return 1
+            fi
+        fi
+    fi
+
+    # Create Stalwart directories
+    mkdir -p /etc/stalwart-mail
+    mkdir -p /var/lib/stalwart-mail
+    mkdir -p /var/log/stalwart-mail
+
+    # Read DB credentials
+    local _db_pass=""
+    local _db_host="${DB_HOST:-127.0.0.1}"
+    local _db_user="${DB_USERNAME:-jabali}"
+    local _db_name="${DB_DATABASE:-jabali}"
+    if [[ -f /root/.jabali_db_credentials ]]; then
+        _db_pass=$(grep '^DB_PASSWORD=' /root/.jabali_db_credentials | cut -d= -f2-)
+    elif [[ -f "$JABALI_DIR/.env" ]]; then
+        _db_pass=$(grep '^DB_PASSWORD=' "$JABALI_DIR/.env" | cut -d= -f2-)
+    fi
+
+    # Generate admin API token
+    local api_token
+    api_token=$(openssl rand -hex 32)
+
+    mkdir -p /etc/jabali
+    cat > /etc/jabali/stalwart-api.conf <<EOF
+STALWART_API_TOKEN=${api_token}
+EOF
+    chown root:www-data /etc/jabali/stalwart-api.conf
+    chmod 640 /etc/jabali/stalwart-api.conf
+
+    # Create SSO token directory for webmail auto-login
+    mkdir -p /var/lib/jabali/sso-tokens
+    chown www-data:www-data /var/lib/jabali/sso-tokens
+    chmod 700 /var/lib/jabali/sso-tokens
+
+    # URL-encode the DB password for the connection string
+    local _db_pass_encoded
+    _db_pass_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${_db_pass}', safe=''))" 2>/dev/null || echo "${_db_pass}")
+
+    # Write Stalwart TOML configuration
+    cat > /etc/stalwart-mail/config.toml <<STALWART_CONF
+# Stalwart Mail Server Configuration - Managed by Jabali Panel
+# https://stalw.art/docs/configuration
+
+[server]
+hostname = "${SERVER_HOSTNAME}"
+admin-token = "${api_token}"
+
+[server.listener.smtp]
+bind = ["0.0.0.0:25"]
+protocol = "smtp"
+
+[server.listener.submission]
+bind = ["0.0.0.0:587"]
+protocol = "smtp"
+tls.implicit = false
+tls.starttls = true
+
+[server.listener.smtps]
+bind = ["0.0.0.0:465"]
+protocol = "smtp"
+tls.implicit = true
+
+[server.listener.imap]
+bind = ["0.0.0.0:143"]
+protocol = "imap"
+tls.implicit = false
+tls.starttls = true
+
+[server.listener.imaps]
+bind = ["0.0.0.0:993"]
+protocol = "imap"
+tls.implicit = true
+
+[server.listener.pop3s]
+bind = ["0.0.0.0:995"]
+protocol = "pop3"
+tls.implicit = true
+
+[server.listener.jmap]
+bind = ["0.0.0.0:8080"]
+protocol = "http"
+
+[server.listener.managesieve]
+bind = ["0.0.0.0:4190"]
+protocol = "managesieve"
+
+[server.tls]
+certificate = "/etc/ssl/certs/ssl-cert-snakeoil.pem"
+private-key = "/etc/ssl/private/ssl-cert-snakeoil.key"
+
+# Disable built-in webadmin — Jabali panel is the only UI
+[server.http]
+admin-allowed-ips = ["127.0.0.1", "::1"]
+
+# SQL authentication backend (reads from Jabali panel's MySQL DB)
+[directory."sql"]
+type = "sql"
+address = "mysql://${_db_user}:${_db_pass_encoded}@${_db_host}/${_db_name}"
+
+[directory."sql".query]
+login = "SELECT CONCAT(m.local_part, '@', d.domain) AS name, m.password_hash AS secret FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = ? AND m.is_active = 1 AND e.is_active = 1"
+name = "SELECT CONCAT(m.local_part, '@', d.domain) AS name FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE CONCAT(m.local_part, '@', d.domain) = ? AND m.is_active = 1"
+members = "SELECT CONCAT(m.local_part, '@', d.domain) AS member FROM mailboxes m JOIN email_domains e ON m.email_domain_id = e.id JOIN domains d ON e.domain_id = d.id WHERE m.is_active = 1"
+domains = "SELECT DISTINCT d.domain FROM email_domains e JOIN domains d ON e.domain_id = d.id WHERE e.is_active = 1"
+
+[storage]
+directory = "sql"
+
+[storage.data]
+path = "/var/lib/stalwart-mail/data"
+
+[storage.blob]
+type = "fs"
+path = "/var/lib/stalwart-mail/blobs"
+
+# DKIM signing — Stalwart auto-generates keys per domain
+[signature.dkim]
+verify = true
+sign = true
+
+# Spam filtering (built-in, replaces Rspamd)
+[spam-filter]
+enabled = true
+
+[spam-filter.header]
+is-spam = "X-Spam-Status"
+
+# Queue configuration
+[queue]
+path = "/var/lib/stalwart-mail/queue"
+
+# Logging
+[tracing.log]
+path = "/var/log/stalwart-mail/stalwart.log"
+level = "info"
+STALWART_CONF
+
+    # Create systemd service if not in container
+    if [[ ! -f /.dockerenv ]] && [[ ! -f /run/.containerenv ]]; then
+        cat > /etc/systemd/system/stalwart-mail.service <<'SYSTEMD'
+[Unit]
+Description=Stalwart Mail Server
+After=network.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/stalwart-mail --config /etc/stalwart-mail/config.toml
+Restart=always
+RestartSec=5
+# TODO: Run as dedicated 'stalwart' user instead of root (requires user creation and port capabilities)
+User=root
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD
+        systemctl daemon-reload
+        systemctl enable stalwart-mail > /dev/null 2>&1
+        systemctl start stalwart-mail
+    fi
+
+    log "Stalwart Mail Server configured with MySQL authentication"
+}
+
 # Create webmaster mailbox for system notifications
 create_webmaster_mailbox() {
     if [[ "$INSTALL_MAIL" != "true" ]]; then
@@ -4092,7 +4294,11 @@ main() {
 
     # Optional components based on feature selection
     if [[ "$INSTALL_MAIL" == "true" ]]; then
-        configure_mail
+        if [[ "${MAIL_BACKEND:-legacy}" == "stalwart" ]]; then
+            configure_stalwart
+        else
+            configure_mail
+        fi
     else
         info "Skipping Mail Server configuration"
     fi

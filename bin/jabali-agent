@@ -17,6 +17,10 @@ define('POSTFIX_VIRTUAL_MAILBOXES', '/etc/postfix/virtual_mailbox_maps');
 define('POSTFIX_VIRTUAL_ALIASES', '/etc/postfix/virtual_alias_maps');
 define('DKIM_KEYS_DIR', '/etc/opendkim/keys');
 
+// Stalwart Mail Server constants
+define('STALWART_API_BASE', 'http://127.0.0.1:8080/api');
+define('STALWART_API_CONF', '/etc/jabali/stalwart-api.conf');
+
 // DNSSEC constants
 define('DNSSEC_KEYS_DIR', '/etc/bind/keys');
 define('DNSSEC_ALGORITHM', 'ECDSAP256SHA256'); // Algorithm 13 - recommended for modern DNSSEC
@@ -31,7 +35,7 @@ define('JABALI_GEO_HTTP_CONF', '/etc/nginx/conf.d/jabali-geoip.conf');
 
 $protectedUsers = ['root', 'www-data', 'mysql', 'postgres', 'nobody', 'ubuntu', 'debian'];
 $phpVer = PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;
-$allowedServices = ['nginx', 'apache2', 'php-fpm', "php{$phpVer}-fpm", 'mysql', 'mariadb', 'postfix', 'dovecot', 'bind9', 'named'];
+$allowedServices = ['nginx', 'apache2', 'php-fpm', "php{$phpVer}-fpm", 'mysql', 'mariadb', 'postfix', 'dovecot', 'stalwart-mail', 'bind9', 'named'];
 
 function logger(string $message, string $level = 'INFO'): void
 {
@@ -95,6 +99,107 @@ function validateUserPath(string $username, string $path): ?string
     }
     
     return $realPath;
+}
+
+function getMailBackend(): string
+{
+    // Read from Laravel .env file
+    $envFile = '/var/www/jabali/.env';
+    if (file_exists($envFile)) {
+        $content = file_get_contents($envFile);
+        if (preg_match('/^MAIL_BACKEND=(\S+)/m', $content, $matches)) {
+            return $matches[1];
+        }
+    }
+    return 'legacy';
+}
+
+/**
+ * HTTP client for Stalwart Mail Server REST API.
+ * Reads admin token from /etc/jabali/stalwart-api.conf.
+ */
+class StalwartApiClient
+{
+    private string $baseUrl;
+    private string $token;
+
+    public function __construct()
+    {
+        $this->baseUrl = rtrim(STALWART_API_BASE, '/');
+        $this->token = $this->loadToken();
+    }
+
+    private function loadToken(): string
+    {
+        $confFile = STALWART_API_CONF;
+        if (!file_exists($confFile)) {
+            throw new RuntimeException('Stalwart API config not found: ' . $confFile);
+        }
+        $content = file_get_contents($confFile);
+        if (preg_match('/^STALWART_API_TOKEN=(.+)$/m', $content, $matches)) {
+            return trim($matches[1]);
+        }
+        throw new RuntimeException('STALWART_API_TOKEN not found in ' . $confFile);
+    }
+
+    public function request(string $method, string $path, ?array $body = null): array
+    {
+        $url = $this->baseUrl . '/' . ltrim($path, '/');
+
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $this->token,
+                'Content-Type: application/json',
+                'Accept: application/json',
+            ],
+            CURLOPT_CUSTOMREQUEST => strtoupper($method),
+        ]);
+
+        if ($body !== null) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+        }
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($error) {
+            throw new RuntimeException('Stalwart API error: ' . $error);
+        }
+
+        $decoded = json_decode($response, true);
+
+        return [
+            'http_code' => $httpCode,
+            'body' => $decoded ?? [],
+            'raw' => $response,
+        ];
+    }
+
+    public function get(string $path): array
+    {
+        return $this->request('GET', $path);
+    }
+
+    public function post(string $path, ?array $body = null): array
+    {
+        return $this->request('POST', $path, $body);
+    }
+
+    public function put(string $path, ?array $body = null): array
+    {
+        return $this->request('PUT', $path, $body);
+    }
+
+    public function delete(string $path): array
+    {
+        return $this->request('DELETE', $path);
+    }
 }
 
 /**
@@ -536,7 +641,7 @@ function handleAction(array $request): array
         'ssh.generate_key' => sshGenerateKey($params),
         'git.generate_key' => gitGenerateKey($params),
         'git.deploy' => gitDeploy($params),
-        'rspamd.user_settings' => rspamdUserSettings($params),
+        'rspamd.user_settings' => getMailBackend() === 'stalwart' ? stalwartSpamSettings($params) : rspamdUserSettings($params),
         'usage.bandwidth_total' => usageBandwidthTotal($params),
         'usage.user_resources' => usageUserResources($params),
         'server.set_hostname' => setHostname($params),
@@ -576,40 +681,40 @@ function handleAction(array $request): array
         'server.create_zone' => createServerZone($params),
         'nginx.enable_compression' => nginxEnableCompression($params),
         'nginx.get_compression_status' => nginxGetCompressionStatus($params),
-        // Email operations
-        'email.enable_domain' => emailEnableDomain($params),
-        'email.disable_domain' => emailDisableDomain($params),
-        'email.generate_dkim' => emailGenerateDkim($params),
-        'email.domain_info' => emailGetDomainInfo($params),
-        'email.mailbox_create' => emailMailboxCreate($params),
-        'email.mailbox_delete' => emailMailboxDelete($params),
-        'email.mailbox_change_password' => emailMailboxChangePassword($params),
-        'email.mailbox_set_quota' => emailMailboxSetQuota($params),
-        'email.mailbox_quota_usage' => emailMailboxGetQuotaUsage($params),
-        'email.mailbox_toggle' => emailMailboxToggle($params),
-        'email.sync_virtual_users' => emailSyncVirtualUsers($params),
-        'email.reload_services' => emailReloadServices($params),
-        'email.forwarder_create' => emailForwarderCreate($params),
-        'email.forwarder_delete' => emailForwarderDelete($params),
-        'email.forwarder_update' => emailForwarderUpdate($params),
-        'email.forwarder_toggle' => emailForwarderToggle($params),
-        'email.catchall_update' => emailCatchallUpdate($params),
-        'email.disclaimer_update' => emailDisclaimerUpdate($params),
-        'email.sync_maps' => emailSyncMaps($params),
-        'email.get_logs' => emailGetLogs($params),
-        'email.autoresponder_set' => emailAutoresponderSet($params),
-        'email.autoresponder_toggle' => emailAutoresponderToggle($params),
-        'email.autoresponder_delete' => emailAutoresponderDelete($params),
-        'email.acl_share_folder' => emailAclShareFolder($params),
-        'email.acl_revoke_folder' => emailAclRevokeFolder($params),
-        'email.acl_update_folder' => emailAclUpdateFolder($params),
-        'email.hash_password' => emailHashPassword($params),
+        // Email operations (backend-aware routing)
+        'email.enable_domain' => getMailBackend() === 'stalwart' ? stalwartEmailEnableDomain($params) : emailEnableDomain($params),
+        'email.disable_domain' => getMailBackend() === 'stalwart' ? stalwartEmailDisableDomain($params) : emailDisableDomain($params),
+        'email.generate_dkim' => getMailBackend() === 'stalwart' ? stalwartEmailGenerateDkim($params) : emailGenerateDkim($params),
+        'email.domain_info' => getMailBackend() === 'stalwart' ? stalwartEmailGetDomainInfo($params) : emailGetDomainInfo($params),
+        'email.mailbox_create' => getMailBackend() === 'stalwart' ? stalwartEmailMailboxCreate($params) : emailMailboxCreate($params),
+        'email.mailbox_delete' => getMailBackend() === 'stalwart' ? stalwartEmailMailboxDelete($params) : emailMailboxDelete($params),
+        'email.mailbox_change_password' => getMailBackend() === 'stalwart' ? stalwartEmailMailboxChangePassword($params) : emailMailboxChangePassword($params),
+        'email.mailbox_set_quota' => getMailBackend() === 'stalwart' ? stalwartEmailMailboxSetQuota($params) : emailMailboxSetQuota($params),
+        'email.mailbox_quota_usage' => getMailBackend() === 'stalwart' ? stalwartEmailMailboxGetQuotaUsage($params) : emailMailboxGetQuotaUsage($params),
+        'email.mailbox_toggle' => getMailBackend() === 'stalwart' ? stalwartEmailMailboxToggle($params) : emailMailboxToggle($params),
+        'email.sync_virtual_users' => getMailBackend() === 'stalwart' ? stalwartEmailSyncVirtualUsers($params) : emailSyncVirtualUsers($params),
+        'email.reload_services' => getMailBackend() === 'stalwart' ? stalwartEmailReloadServices($params) : emailReloadServices($params),
+        'email.forwarder_create' => getMailBackend() === 'stalwart' ? stalwartEmailForwarderCreate($params) : emailForwarderCreate($params),
+        'email.forwarder_delete' => getMailBackend() === 'stalwart' ? stalwartEmailForwarderDelete($params) : emailForwarderDelete($params),
+        'email.forwarder_update' => getMailBackend() === 'stalwart' ? stalwartEmailForwarderUpdate($params) : emailForwarderUpdate($params),
+        'email.forwarder_toggle' => getMailBackend() === 'stalwart' ? stalwartEmailForwarderToggle($params) : emailForwarderToggle($params),
+        'email.catchall_update' => getMailBackend() === 'stalwart' ? stalwartEmailCatchallUpdate($params) : emailCatchallUpdate($params),
+        'email.disclaimer_update' => getMailBackend() === 'stalwart' ? stalwartEmailDisclaimerUpdate($params) : emailDisclaimerUpdate($params),
+        'email.sync_maps' => getMailBackend() === 'stalwart' ? stalwartEmailSyncMaps($params) : emailSyncMaps($params),
+        'email.get_logs' => getMailBackend() === 'stalwart' ? stalwartEmailGetLogs($params) : emailGetLogs($params),
+        'email.autoresponder_set' => getMailBackend() === 'stalwart' ? stalwartEmailAutoresponderSet($params) : emailAutoresponderSet($params),
+        'email.autoresponder_toggle' => getMailBackend() === 'stalwart' ? stalwartEmailAutoresponderToggle($params) : emailAutoresponderToggle($params),
+        'email.autoresponder_delete' => getMailBackend() === 'stalwart' ? stalwartEmailAutoresponderDelete($params) : emailAutoresponderDelete($params),
+        'email.acl_share_folder' => getMailBackend() === 'stalwart' ? stalwartEmailAclShareFolder($params) : emailAclShareFolder($params),
+        'email.acl_revoke_folder' => getMailBackend() === 'stalwart' ? stalwartEmailAclRevokeFolder($params) : emailAclRevokeFolder($params),
+        'email.acl_update_folder' => getMailBackend() === 'stalwart' ? stalwartEmailAclUpdateFolder($params) : emailAclUpdateFolder($params),
+        'email.hash_password' => getMailBackend() === 'stalwart' ? stalwartEmailHashPassword($params) : emailHashPassword($params),
         'email.imap_test_connection' => emailImapTestConnection($params),
         'email.imap_sync_run' => emailImapSyncRun($params),
-        // Mail queue operations
-        'mail.queue_list' => mailQueueList($params),
-        'mail.queue_retry' => mailQueueRetry($params),
-        'mail.queue_delete' => mailQueueDelete($params),
+        // Mail queue operations (backend-aware routing)
+        'mail.queue_list' => getMailBackend() === 'stalwart' ? stalwartMailQueueList($params) : mailQueueList($params),
+        'mail.queue_retry' => getMailBackend() === 'stalwart' ? stalwartMailQueueRetry($params) : mailQueueRetry($params),
+        'mail.queue_delete' => getMailBackend() === 'stalwart' ? stalwartMailQueueDelete($params) : mailQueueDelete($params),
         'service.list' => serviceList($params),
         'service.start' => serviceStart($params),
         'service.stop' => serviceStop($params),
@@ -626,8 +731,8 @@ function handleAction(array $request): array
         'ssl.renew' => sslRenew($params),
         'ssl.generate_self_signed' => sslGenerateSelfSigned($params),
         'ssl.delete' => sslDelete($params),
-        'ssl.mail.issue' => sslMailIssue($params),
-        'ssl.mail.status' => sslMailStatus($params),
+        'ssl.mail.issue' => getMailBackend() === 'stalwart' ? stalwartSslMailIssue($params) : sslMailIssue($params),
+        'ssl.mail.status' => getMailBackend() === 'stalwart' ? stalwartSslMailStatus($params) : sslMailStatus($params),
         // Backup operations
         'backup.create' => backupCreate($params),
         'backup.create_server' => backupCreateServer($params),
@@ -9967,6 +10072,1362 @@ function dnsGetDsRecords(array $params): array {
         'ds_records' => $dsRecords,
         'dnskey' => $dnskeyRecord,
         'instructions' => 'Add the DS record (SHA-256 recommended) to your domain registrar to complete DNSSEC setup.'
+    ];
+}
+
+// ============ STALWART MAIL SERVER FUNCTIONS ============
+
+function stalwartEmailEnableDomain(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $domain = strtolower(trim($params['domain'] ?? ''));
+
+    if (empty($username) || !validateUsername($username)) {
+        return ['success' => false, 'error' => 'Valid username required'];
+    }
+
+    if (empty($domain) || !preg_match('/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/', $domain)) {
+        return ['success' => false, 'error' => 'Invalid domain format'];
+    }
+
+    // Get user's UID/GID for mail directory ownership
+    $userInfo = posix_getpwnam($username);
+    if (!$userInfo) {
+        return ['success' => false, 'error' => 'System user not found'];
+    }
+    $uid = $userInfo['uid'];
+    $gid = $userInfo['gid'];
+
+    // Create mail directory structure (same paths as legacy for migration compat)
+    $userMailDir = "/home/{$username}/mail";
+    $domainDir = "{$userMailDir}/{$domain}";
+
+    if (!is_dir($userMailDir)) {
+        mkdir($userMailDir, 0750, true);
+        chown($userMailDir, $uid);
+        chgrp($userMailDir, $gid);
+    }
+
+    if (!is_dir($domainDir)) {
+        mkdir($domainDir, 0750, true);
+        chown($domainDir, $uid);
+        chgrp($domainDir, $gid);
+    }
+
+    // Register domain with Stalwart via API
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->post("domain/{$domain}");
+        if ($response['http_code'] >= 400 && $response['http_code'] !== 409) {
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("Enabled email for domain: {$domain} (user: {$username}) via Stalwart");
+    return ['success' => true, 'message' => "Email enabled for {$domain}"];
+}
+
+function stalwartEmailDisableDomain(array $params): array
+{
+    $domain = strtolower(trim($params['domain'] ?? ''));
+
+    if (empty($domain)) {
+        return ['success' => false, 'error' => 'Domain required'];
+    }
+
+    if (!preg_match('/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/', $domain)) {
+        return ['success' => false, 'error' => 'Invalid domain format'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->delete("domain/{$domain}");
+        if ($response['http_code'] >= 400 && $response['http_code'] !== 404) {
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("Disabled email for domain: {$domain} via Stalwart");
+    return ['success' => true, 'message' => "Email disabled for {$domain}"];
+}
+
+function stalwartEmailGenerateDkim(array $params): array
+{
+    $domain = strtolower(trim($params['domain'] ?? ''));
+    $selector = $params['selector'] ?? 'default';
+
+    if (empty($domain)) {
+        return ['success' => false, 'error' => 'Domain required'];
+    }
+
+    // Stalwart auto-generates DKIM keys when a domain is created.
+    // We retrieve the public key via the API for DNS record display.
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->get("domain/{$domain}/dkim");
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to get DKIM keys from Stalwart: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+
+        $dkimData = $response['body'];
+        $publicKeyValue = $dkimData['public_key'] ?? '';
+        $actualSelector = $dkimData['selector'] ?? $selector;
+
+        if (empty($publicKeyValue)) {
+            // Trigger DKIM key generation if not yet created
+            $genResponse = $api->post("domain/{$domain}/dkim", ['selector' => $selector, 'algorithm' => 'rsa']);
+            if ($genResponse['http_code'] >= 400) {
+                return ['success' => false, 'error' => 'Failed to generate DKIM keys: ' . ($genResponse['body']['error'] ?? $genResponse['raw'])];
+            }
+            $dkimData = $genResponse['body'];
+            $publicKeyValue = $dkimData['public_key'] ?? '';
+            $actualSelector = $dkimData['selector'] ?? $selector;
+        }
+
+        logger("Retrieved/generated DKIM keys for {$domain} via Stalwart (selector: {$actualSelector})");
+
+        return [
+            'success' => true,
+            'message' => "DKIM keys generated for {$domain}",
+            'selector' => $actualSelector,
+            'public_key' => $publicKeyValue,
+            'dns_record' => "{$actualSelector}._domainkey.{$domain} IN TXT \"v=DKIM1; k=rsa; p={$publicKeyValue}\"",
+        ];
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+function stalwartEmailGetDomainInfo(array $params): array
+{
+    $domain = strtolower(trim($params['domain'] ?? ''));
+    $username = $params['username'] ?? '';
+
+    if (empty($domain)) {
+        return ['success' => false, 'error' => 'Domain required'];
+    }
+
+    if (!empty($username) && !validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    $domainDir = !empty($username) ? "/home/{$username}/mail/{$domain}" : null;
+    $enabled = $domainDir && is_dir($domainDir);
+
+    $mailboxCount = 0;
+    if ($enabled && is_dir($domainDir)) {
+        $dirs = glob($domainDir . '/*', GLOB_ONLYDIR);
+        $mailboxCount = count($dirs);
+    }
+
+    // Check DKIM via Stalwart API
+    $dkimConfigured = false;
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->get("domain/{$domain}/dkim");
+        if ($response['http_code'] === 200 && !empty($response['body']['public_key'] ?? '')) {
+            $dkimConfigured = true;
+        }
+    } catch (RuntimeException $e) {
+        // API unavailable — leave as false
+    }
+
+    return [
+        'success' => true,
+        'domain' => $domain,
+        'enabled' => $enabled,
+        'mailbox_count' => $mailboxCount,
+        'dkim_configured' => $dkimConfigured,
+    ];
+}
+
+function stalwartEmailMailboxCreate(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $email = strtolower(trim($params['email'] ?? ''));
+    $password = $params['password'] ?? '';
+    $quotaBytes = (int) ($params['quota_bytes'] ?? 1073741824);
+
+    if (empty($username) || !validateUsername($username)) {
+        return ['success' => false, 'error' => 'Valid username required'];
+    }
+
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    if (empty($password) || strlen($password) < 8) {
+        return ['success' => false, 'error' => 'Password must be at least 8 characters'];
+    }
+
+    list($localPart, $domain) = explode('@', $email);
+
+    $userInfo = posix_getpwnam($username);
+    if (!$userInfo) {
+        return ['success' => false, 'error' => 'System user not found'];
+    }
+    $uid = $userInfo['uid'];
+    $gid = $userInfo['gid'];
+
+    $userMailDir = "/home/{$username}/mail";
+    $domainDir = "{$userMailDir}/{$domain}";
+    if (!is_dir($domainDir)) {
+        return ['success' => false, 'error' => 'Email is not enabled for this domain'];
+    }
+
+    // Create Maildir structure (Stalwart configured to use Maildir at same paths)
+    $mailboxDir = "{$domainDir}/{$localPart}";
+    $folderExists = is_dir($mailboxDir);
+
+    foreach (['', '/cur', '/new', '/tmp'] as $subdir) {
+        $dir = $mailboxDir . $subdir;
+        if (!is_dir($dir)) {
+            mkdir($dir, 0750, true);
+        }
+        chown($dir, $uid);
+        chgrp($dir, $gid);
+    }
+
+    $standardFolders = ['Sent', 'Drafts', 'Trash', 'Junk', 'Archive'];
+    foreach ($standardFolders as $folder) {
+        foreach (['', '/cur', '/new', '/tmp'] as $subdir) {
+            $dir = $mailboxDir . '/.' . $folder . $subdir;
+            if (!is_dir($dir)) {
+                mkdir($dir, 0750, true);
+            }
+            chown($dir, $uid);
+            chgrp($dir, $gid);
+        }
+        $marker = $mailboxDir . '/.' . $folder . '/maildirfolder';
+        if (!file_exists($marker)) {
+            file_put_contents($marker, '');
+            chown($marker, $uid);
+            chgrp($marker, $gid);
+        }
+    }
+
+    $subscriptionsFile = $mailboxDir . '/subscriptions';
+    $existing = file_exists($subscriptionsFile) ? array_filter(explode("\n", file_get_contents($subscriptionsFile))) : [];
+    $merged = array_unique(array_merge($existing, $standardFolders));
+    file_put_contents($subscriptionsFile, implode("\n", $merged) . "\n");
+    chown($subscriptionsFile, $uid);
+    chgrp($subscriptionsFile, $gid);
+
+    // Generate password hash — Stalwart supports SHA512-CRYPT via SQL backend
+    $passwordHash = '{SHA512-CRYPT}' . crypt($password, '$6$' . bin2hex(random_bytes(8)) . '$');
+
+    $maildirPath = "/home/{$username}/mail/{$domain}/{$localPart}/";
+
+    // Stalwart reads auth from the panel's MySQL DB via SQL backend,
+    // so we just need to ensure the DB row exists (handled by Laravel caller).
+    // No Postfix postmap needed.
+
+    $action = $folderExists ? 'Recreated' : 'Created';
+    logger("{$action} mailbox: {$email} at {$maildirPath} (Stalwart backend)");
+
+    return [
+        'success' => true,
+        'message' => "Mailbox {$email} {$action}",
+        'email' => $email,
+        'password_hash' => $passwordHash,
+        'maildir_path' => $maildirPath,
+        'uid' => $uid,
+        'gid' => $gid,
+    ];
+}
+
+function stalwartEmailMailboxDelete(array $params): array
+{
+    $email = strtolower(trim($params['email'] ?? ''));
+    $deleteFiles = (bool) ($params['delete_files'] ?? false);
+    $maildirPath = $params['maildir_path'] ?? '';
+    $username = $params['username'] ?? '';
+
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    list($localPart, $domain) = explode('@', $email);
+
+    // No Postfix map to update — Stalwart reads from DB directly.
+    // Optionally notify Stalwart to purge caches.
+    try {
+        $api = new StalwartApiClient();
+        $api->delete("account/{$email}");
+    } catch (RuntimeException $e) {
+        logger("Warning: could not notify Stalwart of mailbox deletion: " . $e->getMessage());
+    }
+
+    if ($deleteFiles) {
+        $mailboxDir = null;
+        if (!empty($maildirPath) && strpos($maildirPath, '/home/') === 0) {
+            $mailboxDir = rtrim($maildirPath, '/');
+            // Resolve symlinks and validate path is truly under /home/
+            $realDir = realpath($mailboxDir);
+            if ($realDir === false || !str_starts_with($realDir, '/home/')) {
+                $mailboxDir = null;
+            }
+        }
+        if (empty($mailboxDir) || !is_dir($mailboxDir)) {
+            if (!empty($username)) {
+                $tryPath = "/home/$username/mail/$domain/$localPart";
+                if (is_dir($tryPath)) {
+                    $mailboxDir = $tryPath;
+                }
+            }
+            if (empty($mailboxDir)) {
+                $pattern = "/home/*/mail/$domain/$localPart";
+                $matches = glob($pattern);
+                if (!empty($matches) && is_dir($matches[0])) {
+                    $mailboxDir = $matches[0];
+                }
+            }
+        }
+        if (!empty($mailboxDir) && is_dir($mailboxDir)) {
+            exec('rm -rf ' . escapeshellarg($mailboxDir));
+            logger("Deleted mailbox files: {$mailboxDir}");
+        }
+    }
+
+    logger("Deleted mailbox: {$email}" . ($deleteFiles ? " with files" : "") . " (Stalwart backend)");
+    return ['success' => true, 'message' => "Mailbox {$email} deleted"];
+}
+
+function stalwartEmailMailboxChangePassword(array $params): array
+{
+    $email = strtolower(trim($params['email'] ?? ''));
+    $password = $params['password'] ?? '';
+
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    if (empty($password) || strlen($password) < 8) {
+        return ['success' => false, 'error' => 'Password must be at least 8 characters'];
+    }
+
+    // Generate SHA512-CRYPT hash — Stalwart SQL backend reads this from DB
+    $passwordHash = '{SHA512-CRYPT}' . crypt($password, '$6$' . bin2hex(random_bytes(8)) . '$');
+
+    logger("Changed password for mailbox: {$email} (Stalwart backend)");
+
+    return [
+        'success' => true,
+        'message' => "Password changed for {$email}",
+        'password_hash' => $passwordHash,
+    ];
+}
+
+function stalwartEmailHashPassword(array $params): array
+{
+    $password = $params['password'] ?? '';
+
+    if (empty($password)) {
+        return ['success' => false, 'error' => 'Password is required'];
+    }
+
+    // Stalwart supports SHA512-CRYPT, same as Dovecot
+    $passwordHash = '{SHA512-CRYPT}' . crypt($password, '$6$' . bin2hex(random_bytes(8)) . '$');
+
+    return [
+        'success' => true,
+        'password_hash' => $passwordHash,
+    ];
+}
+
+function stalwartEmailMailboxSetQuota(array $params): array
+{
+    $email = strtolower(trim($params['email'] ?? ''));
+    $quotaBytes = (int) ($params['quota_bytes'] ?? 0);
+
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    // Quota is managed in the panel DB. Stalwart SQL backend reads it directly.
+    // Optionally push to Stalwart API for real-time enforcement.
+    try {
+        $api = new StalwartApiClient();
+        $api->put("account/{$email}", ['quota' => $quotaBytes]);
+    } catch (RuntimeException $e) {
+        logger("Warning: could not push quota to Stalwart: " . $e->getMessage());
+    }
+
+    logger("Set quota for {$email}: {$quotaBytes} bytes (Stalwart backend)");
+
+    return [
+        'success' => true,
+        'message' => "Quota set for {$email}",
+        'quota_bytes' => $quotaBytes,
+    ];
+}
+
+function stalwartEmailMailboxGetQuotaUsage(array $params): array
+{
+    $email = strtolower(trim($params['email'] ?? ''));
+    $maildirPath = $params['maildir_path'] ?? '';
+
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    if (empty($maildirPath)) {
+        return ['success' => false, 'error' => 'maildir_path parameter required'];
+    }
+
+    $mailboxDir = rtrim($maildirPath, '/');
+
+    // Validate path is within /home/ to prevent arbitrary directory measurement
+    $realDir = realpath($mailboxDir);
+    if ($realDir === false || !str_starts_with($realDir, '/home/')) {
+        return ['success' => false, 'error' => 'Invalid mailbox path'];
+    }
+
+    if (!is_dir($mailboxDir)) {
+        return ['success' => false, 'error' => 'Mailbox not found'];
+    }
+
+    $sizeCmd = sprintf('du -sb %s 2>/dev/null | cut -f1', escapeshellarg($mailboxDir));
+    $sizeBytes = (int) trim(shell_exec($sizeCmd));
+
+    return [
+        'success' => true,
+        'email' => $email,
+        'quota_used_bytes' => $sizeBytes,
+    ];
+}
+
+function stalwartEmailMailboxToggle(array $params): array
+{
+    $email = strtolower(trim($params['email'] ?? ''));
+    $active = (bool) ($params['active'] ?? true);
+
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    // Status managed in panel DB — Stalwart SQL query checks is_active field.
+
+    logger("Toggled mailbox {$email}: " . ($active ? 'active' : 'inactive') . " (Stalwart backend)");
+
+    return [
+        'success' => true,
+        'message' => "Mailbox {$email} " . ($active ? 'activated' : 'deactivated'),
+    ];
+}
+
+function stalwartEmailSyncVirtualUsers(array $params): array
+{
+    $domain = strtolower(trim($params['domain'] ?? ''));
+
+    if (empty($domain)) {
+        return ['success' => false, 'error' => 'Domain required'];
+    }
+
+    // Stalwart reads directly from the MySQL DB — no hash files to rebuild.
+    // Optionally reload Stalwart to pick up any config changes.
+    exec('systemctl reload stalwart-mail 2>&1', $output, $code);
+
+    logger("Synced virtual users for domain: {$domain} (Stalwart — reload triggered)");
+    return ['success' => true, 'message' => "Virtual users synced for {$domain}"];
+}
+
+function stalwartEmailSyncMaps(array $params): array
+{
+    $domains = $params['domains'] ?? [];
+    $mailboxes = $params['mailboxes'] ?? [];
+    $aliases = $params['aliases'] ?? [];
+
+    // Stalwart reads domains/mailboxes from the MySQL DB directly.
+    // Aliases need to be synced via the API since Stalwart manages them internally.
+    $aliasErrors = [];
+
+    try {
+        $api = new StalwartApiClient();
+
+        // Sync aliases via API
+        foreach ($aliases as $alias) {
+            $source = strtolower(trim((string) ($alias['source'] ?? '')));
+            $destinations = $alias['destinations'] ?? [];
+            if ($source === '') {
+                continue;
+            }
+            $destinations = array_filter(array_map('trim', (array) $destinations), fn ($dest) => filter_var($dest, FILTER_VALIDATE_EMAIL));
+            if (empty($destinations)) {
+                continue;
+            }
+
+            $response = $api->put("account/{$source}", [
+                'type' => 'alias',
+                'destinations' => array_values($destinations),
+            ]);
+            if ($response['http_code'] >= 400) {
+                $aliasErrors[] = "Failed to sync alias {$source}";
+            }
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => 'Stalwart API error: ' . $e->getMessage()];
+    }
+
+    logger("Synced Stalwart maps (domains: " . count($domains) . ", mailboxes: " . count($mailboxes) . ", aliases: " . count($aliases) . ")");
+
+    return [
+        'success' => true,
+        'domains' => count($domains),
+        'mailboxes' => count($mailboxes),
+        'aliases' => count($aliases),
+        'alias_errors' => $aliasErrors,
+    ];
+}
+
+function stalwartEmailReloadServices(array $params): array
+{
+    exec('systemctl reload stalwart-mail 2>&1', $output, $code);
+    if ($code !== 0) {
+        return ['success' => false, 'error' => 'Stalwart reload failed: ' . implode(' ', $output)];
+    }
+
+    logger("Reloaded Stalwart mail service");
+    return ['success' => true, 'message' => 'Email services reloaded'];
+}
+
+function stalwartEmailForwarderCreate(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $email = $params['email'] ?? '';
+    $destinations = $params['destinations'] ?? [];
+
+    if (empty($username) || empty($email) || empty($destinations)) {
+        return ['success' => false, 'error' => 'Missing required parameters'];
+    }
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    foreach ($destinations as $dest) {
+        if (!filter_var($dest, FILTER_VALIDATE_EMAIL)) {
+            return ['success' => false, 'error' => "Invalid destination email: $dest"];
+        }
+    }
+
+    // Forwarder state is stored in the panel DB (email_forwarders table).
+    // Sync to Stalwart via API so it knows about the alias.
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->post("account/{$email}", [
+            'type' => 'alias',
+            'destinations' => array_values($destinations),
+        ]);
+        if ($response['http_code'] >= 400 && $response['http_code'] !== 409) {
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("Created forwarder: $email -> " . implode(', ', $destinations) . " (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailForwarderDelete(array $params): array
+{
+    $email = $params['email'] ?? '';
+
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->delete("account/{$email}");
+        if ($response['http_code'] >= 400 && $response['http_code'] !== 404) {
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("Deleted forwarder: $email (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailForwarderUpdate(array $params): array
+{
+    $email = $params['email'] ?? '';
+    $destinations = $params['destinations'] ?? [];
+
+    if (empty($email) || empty($destinations)) {
+        return ['success' => false, 'error' => 'Missing required parameters'];
+    }
+
+    foreach ($destinations as $dest) {
+        if (!filter_var($dest, FILTER_VALIDATE_EMAIL)) {
+            return ['success' => false, 'error' => "Invalid destination email: $dest"];
+        }
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->put("account/{$email}", [
+            'type' => 'alias',
+            'destinations' => array_values($destinations),
+        ]);
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("Updated forwarder: $email -> " . implode(', ', $destinations) . " (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailForwarderToggle(array $params): array
+{
+    $email = $params['email'] ?? '';
+    $active = $params['active'] ?? true;
+
+    if (empty($email)) {
+        return ['success' => false, 'error' => 'Missing email parameter'];
+    }
+
+    // Forwarder active state is stored in the panel DB (email_forwarders.is_active).
+    // When inactive, we remove it from Stalwart; when active, we re-create it.
+    // The caller (Laravel) handles the DB side; we handle Stalwart sync here.
+
+    if ($active) {
+        // Re-read destinations from panel to re-add — caller must pass them.
+        $destinations = $params['destinations'] ?? [];
+        if (!empty($destinations)) {
+            try {
+                $api = new StalwartApiClient();
+                $api->put("account/{$email}", [
+                    'type' => 'alias',
+                    'destinations' => array_values($destinations),
+                ]);
+            } catch (RuntimeException $e) {
+                logger("Warning: could not re-enable forwarder in Stalwart: " . $e->getMessage());
+            }
+        }
+    } else {
+        try {
+            $api = new StalwartApiClient();
+            $api->delete("account/{$email}");
+        } catch (RuntimeException $e) {
+            logger("Warning: could not disable forwarder in Stalwart: " . $e->getMessage());
+        }
+    }
+
+    $status = $active ? 'enabled' : 'disabled';
+    logger("Forwarder $status: $email (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailCatchallUpdate(array $params): array
+{
+    $domain = strtolower(trim($params['domain'] ?? ''));
+    $enabled = $params['enabled'] ?? false;
+    $address = $params['address'] ?? '';
+
+    if (empty($domain)) {
+        return ['success' => false, 'error' => 'Missing domain parameter'];
+    }
+
+    if (!preg_match('/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/', $domain)) {
+        return ['success' => false, 'error' => 'Invalid domain format'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        if ($enabled && !empty($address)) {
+            $response = $api->put("domain/{$domain}", ['catch_all' => $address]);
+        } else {
+            $response = $api->put("domain/{$domain}", ['catch_all' => null]);
+        }
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    $status = $enabled ? "enabled (-> $address)" : 'disabled';
+    logger("Catch-all $status for domain: $domain (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailDisclaimerUpdate(array $params): array
+{
+    $domain = strtolower(trim($params['domain'] ?? ''));
+    $enabled = $params['enabled'] ?? false;
+    $text = $params['text'] ?? '';
+
+    if (empty($domain)) {
+        return ['success' => false, 'error' => 'Missing domain parameter'];
+    }
+
+    if (!preg_match('/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/', $domain)) {
+        return ['success' => false, 'error' => 'Invalid domain format'];
+    }
+
+    // Stalwart doesn't have a direct equivalent to Postfix's altermime content_filter.
+    // We use a Sieve script that adds a footer header as a partial solution.
+    // Full HTML body disclaimers require a milter (future enhancement).
+
+    if ($enabled && !empty($text)) {
+        // Create a Sieve script that adds an X-Disclaimer header
+        // and appends text to plain-text messages via Stalwart's Sieve support
+        $escapedText = str_replace(["\r", "\n", '\\', '"'], ['', ' ', '\\\\', '\\"'], $text);
+
+        $sieveScript = <<<SIEVE
+# Domain disclaimer - Managed by Jabali Panel
+require "editheader";
+
+addheader "X-Disclaimer" "{$escapedText}";
+SIEVE;
+
+        try {
+            $api = new StalwartApiClient();
+            $response = $api->put("sieve/domain/{$domain}/disclaimer.sieve", [
+                'script' => $sieveScript,
+                'active' => true,
+            ]);
+            if ($response['http_code'] >= 400) {
+                return ['success' => false, 'error' => 'Failed to set disclaimer Sieve script: ' . ($response['body']['error'] ?? $response['raw'])];
+            }
+        } catch (RuntimeException $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    } else {
+        // Remove disclaimer Sieve script
+        try {
+            $api = new StalwartApiClient();
+            $api->delete("sieve/domain/{$domain}/disclaimer.sieve");
+        } catch (RuntimeException $e) {
+            logger("Warning: could not remove disclaimer Sieve script: " . $e->getMessage());
+        }
+    }
+
+    $status = $enabled ? 'enabled' : 'disabled';
+    logger("Disclaimer $status for domain: $domain (Stalwart, Sieve header-based)");
+    return ['success' => true];
+}
+
+function stalwartEmailAutoresponderSet(array $params): array
+{
+    $email = $params['email'] ?? '';
+    $subject = $params['subject'] ?? 'Out of Office';
+    $message = $params['message'] ?? '';
+    $startDate = $params['start_date'] ?? null;
+    $endDate = $params['end_date'] ?? null;
+    $active = $params['active'] ?? true;
+
+    if (empty($email) || empty($message)) {
+        return ['success' => false, 'error' => 'Missing email or message parameter'];
+    }
+
+    $parts = explode('@', $email);
+    if (count($parts) !== 2) {
+        return ['success' => false, 'error' => 'Invalid email address'];
+    }
+
+    $escapedMessage = str_replace(['\\', '"', "\r"], ['\\\\', '\\"', ''], $message);
+    $escapedSubject = str_replace(["\r", "\n", '\\', '"'], ['', ' ', '\\\\', '\\"'], $subject);
+
+    // Build Sieve vacation script
+    $dateRequire = '';
+    if ($startDate || $endDate) {
+        $dateRequire = "require \"date\";\nrequire \"relational\";\n";
+    }
+
+    $sieveScript = "# Vacation/Autoresponder - Managed by Jabali Panel\nrequire \"vacation\";\n{$dateRequire}";
+
+    $conditions = [];
+    if ($startDate) {
+        $conditions[] = 'currentdate :value "ge" "date" "' . $startDate . '"';
+    }
+    if ($endDate) {
+        $conditions[] = 'currentdate :value "le" "date" "' . $endDate . '"';
+    }
+
+    if (!empty($conditions)) {
+        $conditionStr = implode(",\n    ", $conditions);
+        $sieveScript .= "\nif allof (\n    {$conditionStr}\n) {\n    vacation :days 1 :subject \"{$escapedSubject}\" \"{$escapedMessage}\";\n}";
+    } else {
+        $sieveScript .= "\nvacation :days 1 :subject \"{$escapedSubject}\" \"{$escapedMessage}\";";
+    }
+
+    // Upload to Stalwart via Sieve API
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->put("sieve/{$email}/vacation.sieve", [
+            'script' => $sieveScript,
+            'active' => (bool) $active,
+        ]);
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to set autoresponder: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("Autoresponder " . ($active ? 'enabled' : 'disabled') . " for: $email (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailAutoresponderToggle(array $params): array
+{
+    $email = $params['email'] ?? '';
+    $active = $params['active'] ?? false;
+
+    if (empty($email)) {
+        return ['success' => false, 'error' => 'Missing email parameter'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->put("sieve/{$email}/vacation.sieve", [
+            'active' => (bool) $active,
+        ]);
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to toggle autoresponder: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("Autoresponder " . ($active ? 'enabled' : 'disabled') . " for: $email (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailAutoresponderDelete(array $params): array
+{
+    $email = $params['email'] ?? '';
+
+    if (empty($email)) {
+        return ['success' => false, 'error' => 'Missing email parameter'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $api->delete("sieve/{$email}/vacation.sieve");
+    } catch (RuntimeException $e) {
+        logger("Warning: could not delete autoresponder Sieve script: " . $e->getMessage());
+    }
+
+    logger("Autoresponder deleted for: $email (Stalwart)");
+    return ['success' => true];
+}
+
+function stalwartEmailAclShareFolder(array $params): array
+{
+    $ownerEmail = $params['owner_email'] ?? '';
+    $sharedWithEmail = $params['shared_with_email'] ?? '';
+    $folder = $params['folder'] ?? 'INBOX';
+    $aclRights = $params['acl_rights'] ?? 'lrs';
+    $username = $params['username'] ?? '';
+
+    if (empty($ownerEmail) || empty($sharedWithEmail) || empty($username)) {
+        return ['success' => false, 'error' => 'Missing required parameters'];
+    }
+
+    if (!validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    $allowedRights = ['lrs', 'lrswite', 'lrswitekx', 'lrswitekxa'];
+    if (!in_array($aclRights, $allowedRights, true)) {
+        return ['success' => false, 'error' => 'Invalid ACL rights'];
+    }
+
+    if ($folder !== 'INBOX' && !preg_match('/^[A-Za-z0-9._-]+$/', $folder)) {
+        return ['success' => false, 'error' => 'Invalid folder name'];
+    }
+
+    // Use Stalwart's IMAP ACL API
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->put("account/{$ownerEmail}/acl", [
+            'shared_with' => $sharedWithEmail,
+            'folder' => $folder,
+            'rights' => $aclRights,
+        ]);
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Stalwart ACL API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("ACL share: {$ownerEmail} shared {$folder} with {$sharedWithEmail} ({$aclRights}) via Stalwart");
+    return ['success' => true];
+}
+
+function stalwartEmailAclRevokeFolder(array $params): array
+{
+    $ownerEmail = $params['owner_email'] ?? '';
+    $sharedWithEmail = $params['shared_with_email'] ?? '';
+    $folder = $params['folder'] ?? 'INBOX';
+    $username = $params['username'] ?? '';
+
+    if (empty($ownerEmail) || empty($sharedWithEmail) || empty($username)) {
+        return ['success' => false, 'error' => 'Missing required parameters'];
+    }
+
+    if (!validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->delete("account/{$ownerEmail}/acl/{$sharedWithEmail}/{$folder}");
+        if ($response['http_code'] >= 400 && $response['http_code'] !== 404) {
+            return ['success' => false, 'error' => 'Stalwart ACL API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    logger("ACL revoke: {$ownerEmail} revoked {$folder} share from {$sharedWithEmail} via Stalwart");
+    return ['success' => true];
+}
+
+function stalwartEmailAclUpdateFolder(array $params): array
+{
+    return stalwartEmailAclShareFolder($params);
+}
+
+function stalwartEmailGetLogs(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $limit = min($params['limit'] ?? 100, 500);
+
+    $logs = [];
+
+    // Stalwart logs to its own structured log file or journald
+    $output = [];
+    exec("journalctl -u stalwart-mail --no-pager -n 1000 -o json 2>/dev/null", $output, $code);
+
+    if ($code !== 0 || empty($output)) {
+        // Fallback to Stalwart log file
+        $stalwartLog = '/var/log/stalwart-mail/stalwart.log';
+        if (file_exists($stalwartLog)) {
+            exec("tail -n 1000 " . escapeshellarg($stalwartLog), $output);
+        } else {
+            return ['success' => true, 'logs' => []];
+        }
+
+        // Parse plain text log lines
+        $messageIndex = [];
+        foreach ($output as $line) {
+            if (preg_match('/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(\w+)\s+(.+)$/', $line, $matches)) {
+                $timestamp = strtotime($matches[1]);
+                $level = $matches[2];
+                $message = $matches[3];
+
+                $entry = [
+                    'timestamp' => $timestamp,
+                    'queue_id' => '',
+                    'component' => 'stalwart',
+                    'from' => null,
+                    'to' => null,
+                    'subject' => null,
+                    'status' => strtolower($level) === 'error' ? 'error' : 'info',
+                    'message' => $message,
+                ];
+
+                if (preg_match('/from=<([^>]*)>/', $message, $fromMatch)) {
+                    $entry['from'] = $fromMatch[1];
+                }
+                if (preg_match('/to=<([^>]*)>/', $message, $toMatch)) {
+                    $entry['to'] = $toMatch[1];
+                }
+                if (preg_match('/status[=:]\s*(\w+)/i', $message, $statusMatch)) {
+                    $entry['status'] = $statusMatch[1];
+                }
+                if (preg_match('/id[=:]\s*([A-Za-z0-9]+)/i', $message, $idMatch)) {
+                    $entry['queue_id'] = $idMatch[1];
+                }
+
+                $messageIndex[] = $entry;
+            }
+        }
+
+        usort($messageIndex, fn($a, $b) => $b['timestamp'] <=> $a['timestamp']);
+        return ['success' => true, 'logs' => array_slice($messageIndex, 0, $limit)];
+    }
+
+    // Parse journald JSON output
+    $messageIndex = [];
+    foreach ($output as $line) {
+        $entry = json_decode($line, true);
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $timestamp = isset($entry['__REALTIME_TIMESTAMP'])
+            ? (int) ($entry['__REALTIME_TIMESTAMP'] / 1000000)
+            : time();
+        $message = $entry['MESSAGE'] ?? '';
+
+        $logEntry = [
+            'timestamp' => $timestamp,
+            'queue_id' => '',
+            'component' => 'stalwart',
+            'from' => null,
+            'to' => null,
+            'subject' => null,
+            'status' => 'info',
+            'message' => $message,
+        ];
+
+        if (preg_match('/from=<([^>]*)>/', $message, $fromMatch)) {
+            $logEntry['from'] = $fromMatch[1];
+        }
+        if (preg_match('/to=<([^>]*)>/', $message, $toMatch)) {
+            $logEntry['to'] = $toMatch[1];
+        }
+        if (preg_match('/status[=:]\s*(\w+)/i', $message, $statusMatch)) {
+            $logEntry['status'] = $statusMatch[1];
+        }
+        if (preg_match('/id[=:]\s*([A-Za-z0-9]+)/i', $message, $idMatch)) {
+            $logEntry['queue_id'] = $idMatch[1];
+        }
+
+        $messageIndex[] = $logEntry;
+    }
+
+    usort($messageIndex, fn($a, $b) => $b['timestamp'] <=> $a['timestamp']);
+    return ['success' => true, 'logs' => array_slice($messageIndex, 0, $limit)];
+}
+
+function stalwartSpamSettings(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $whitelist = $params['whitelist'] ?? [];
+    $blacklist = $params['blacklist'] ?? [];
+    $score = $params['score'] ?? null;
+
+    if (!validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    $whitelist = array_values(array_filter(array_map('trim', (array) $whitelist)));
+    $blacklist = array_values(array_filter(array_map('trim', (array) $blacklist)));
+
+    try {
+        $api = new StalwartApiClient();
+        $settings = [
+            'whitelist' => $whitelist,
+            'blacklist' => $blacklist,
+        ];
+        if ($score !== null && $score !== '') {
+            $settings['spam_threshold'] = (float) $score;
+        }
+
+        $response = $api->put("spam/settings/{$username}", $settings);
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Stalwart spam settings API error: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    return ['success' => true];
+}
+
+function stalwartMailQueueList(array $params): array
+{
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->get('queue/messages');
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to read Stalwart queue: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+
+        $queue = [];
+        $messages = $response['body']['items'] ?? $response['body'] ?? [];
+
+        if (is_array($messages)) {
+            foreach ($messages as $msg) {
+                $queue[] = [
+                    'id' => $msg['id'] ?? '',
+                    'arrival' => isset($msg['created']) ? date('Y-m-d H:i:s', (int) $msg['created']) : '',
+                    'sender' => $msg['sender'] ?? $msg['from'] ?? '',
+                    'recipients' => $msg['recipients'] ?? [],
+                    'size' => isset($msg['size']) ? formatBytes((int) $msg['size']) : '',
+                    'status' => $msg['status'] ?? '',
+                ];
+            }
+        }
+
+        return ['success' => true, 'queue' => $queue];
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+function stalwartMailQueueRetry(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if (empty($id) || !preg_match('/^[A-Za-z0-9_-]{3,}$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid queue ID'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->post("queue/messages/{$id}/retry");
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to retry message: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    return ['success' => true];
+}
+
+function stalwartMailQueueDelete(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if (empty($id) || !preg_match('/^[A-Za-z0-9_-]{3,}$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid queue ID'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->delete("queue/messages/{$id}");
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to delete message: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    return ['success' => true];
+}
+
+/**
+ * Configure Stalwart to use the given SSL certificate.
+ * Stalwart handles TLS natively — no separate Postfix/Dovecot SNI config needed.
+ */
+function stalwartSslMailConfigure(string $hostname, string $certPath, string $keyPath): array
+{
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->put('tls/certificate', [
+            'hostname' => $hostname,
+            'cert_path' => $certPath,
+            'key_path' => $keyPath,
+        ]);
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to configure Stalwart TLS: ' . ($response['body']['error'] ?? $response['raw'])];
+        }
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+
+    // Reload Stalwart to pick up new cert
+    exec('systemctl reload stalwart-mail 2>&1', $output, $code);
+    if ($code !== 0) {
+        return ['success' => false, 'error' => 'Failed to reload Stalwart'];
+    }
+
+    logger("Configured Stalwart TLS for $hostname");
+    return ['success' => true, 'message' => "Mail TLS configured for $hostname"];
+}
+
+/**
+ * Issue or renew Let's Encrypt SSL certificate for the mail hostname
+ * and configure Stalwart to use it.
+ */
+function stalwartSslMailIssue(array $params): array
+{
+    $hostname = $params['hostname'] ?? '';
+    $email = $params['email'] ?? '';
+
+    if (empty($hostname)) {
+        return ['success' => false, 'error' => 'Mail hostname is required'];
+    }
+
+    if (!validateDomain($hostname)) {
+        return ['success' => false, 'error' => 'Invalid mail hostname format'];
+    }
+
+    if (empty($email)) {
+        $email = 'admin@' . preg_replace('/^mail\./', '', $hostname);
+    }
+
+    logger("Issuing mail SSL certificate for: $hostname (Stalwart backend)");
+
+    // Check if certbot is installed
+    $output = [];
+    exec('which certbot 2>/dev/null', $output, $code);
+    if ($code !== 0) {
+        return ['success' => false, 'error' => 'Certbot is not installed'];
+    }
+
+    // Verify hostname resolves
+    $serverIp = trim(shell_exec("curl -s ifconfig.me 2>/dev/null") ?? '');
+    $hostnameIp = gethostbyname($hostname);
+    if ($hostnameIp === $hostname) {
+        $localResult = trim(shell_exec("dig @127.0.0.1 " . escapeshellarg($hostname) . " A +short 2>/dev/null") ?? '');
+        if (!empty($localResult) && filter_var($localResult, FILTER_VALIDATE_IP)) {
+            $hostnameIp = $localResult;
+            logger("Resolved $hostname via local BIND: $hostnameIp");
+        } else {
+            return ['success' => false, 'error' => "Hostname $hostname does not resolve to any IP address. Ensure DNS is configured and propagated."];
+        }
+    }
+    if (!empty($serverIp) && $hostnameIp !== $serverIp) {
+        logger("Warning: $hostname resolves to $hostnameIp but server IP is $serverIp");
+    }
+
+    $certPath = "/etc/letsencrypt/live/$hostname/fullchain.pem";
+    $keyPath = "/etc/letsencrypt/live/$hostname/privkey.pem";
+
+    // Check if cert already exists and is still valid (> 30 days)
+    if (file_exists($certPath)) {
+        $certContent = file_get_contents($certPath);
+        $certData = openssl_x509_parse($certContent);
+        $expiresAt = $certData['validTo_time_t'] ?? 0;
+        $daysLeft = ($expiresAt - time()) / 86400;
+
+        if ($daysLeft > 30) {
+            $configResult = stalwartSslMailConfigure($hostname, $certPath, $keyPath);
+            return [
+                'success' => true,
+                'message' => "Existing certificate is still valid (" . round($daysLeft) . " days left). Stalwart TLS reconfigured.",
+                'cert_path' => $certPath,
+                'key_path' => $keyPath,
+                'expires_at' => date('Y-m-d H:i:s', $expiresAt),
+                'days_left' => round($daysLeft),
+                'reconfigured' => true,
+            ];
+        }
+    }
+
+    // Issue/renew using standalone
+    $cmd = sprintf(
+        'certbot certonly --standalone --preferred-challenges http -d %s --email %s --agree-tos --non-interactive %s 2>&1',
+        escapeshellarg($hostname),
+        escapeshellarg($email),
+        file_exists($certPath) ? '--force-renewal' : ''
+    );
+
+    exec('systemctl stop nginx 2>/dev/null');
+    try {
+        logger("Running certbot for mail SSL: $cmd");
+        $certOutput = [];
+        exec($cmd, $certOutput, $exitCode);
+        $outputStr = implode("\n", $certOutput);
+        logger("Certbot mail SSL output: $outputStr");
+    } finally {
+        exec('systemctl start nginx 2>/dev/null');
+    }
+
+    if ($exitCode !== 0) {
+        return ['success' => false, 'error' => "Certbot failed: $outputStr"];
+    }
+
+    if (!file_exists($certPath) || !file_exists($keyPath)) {
+        return ['success' => false, 'error' => 'Certificate files not found after certbot'];
+    }
+
+    // Configure Stalwart
+    $configResult = stalwartSslMailConfigure($hostname, $certPath, $keyPath);
+    if (!$configResult['success']) {
+        return $configResult;
+    }
+
+    $certContent = file_get_contents($certPath);
+    $certData = openssl_x509_parse($certContent);
+
+    return [
+        'success' => true,
+        'message' => "Mail SSL certificate issued for $hostname (Stalwart)",
+        'cert_path' => $certPath,
+        'key_path' => $keyPath,
+        'issuer' => "Let's Encrypt",
+        'expires_at' => date('Y-m-d H:i:s', $certData['validTo_time_t'] ?? 0),
+        'days_left' => round(($certData['validTo_time_t'] - time()) / 86400),
+    ];
+}
+
+/**
+ * Check the current SSL certificate status for Stalwart mail services.
+ */
+function stalwartSslMailStatus(array $params): array
+{
+    // Ask Stalwart API for TLS config
+    try {
+        $api = new StalwartApiClient();
+        $response = $api->get('tls/certificate');
+        if ($response['http_code'] === 200 && !empty($response['body']['cert_path'])) {
+            $certPath = $response['body']['cert_path'];
+        }
+    } catch (RuntimeException $e) {
+        // API unavailable — fall through to file-based check
+    }
+
+    // Fallback: check common Let's Encrypt paths
+    if (empty($certPath)) {
+        $hostname = $params['hostname'] ?? '';
+        if (!empty($hostname)) {
+            $tryPath = "/etc/letsencrypt/live/$hostname/fullchain.pem";
+            if (file_exists($tryPath)) {
+                $certPath = $tryPath;
+            }
+        }
+    }
+
+    if (empty($certPath) || !file_exists($certPath)) {
+        return [
+            'success' => true,
+            'configured' => false,
+            'message' => 'No SSL certificate configured for Stalwart mail services',
+        ];
+    }
+
+    $certContent = file_get_contents($certPath);
+    $certData = openssl_x509_parse($certContent);
+
+    if (!$certData) {
+        return [
+            'success' => true,
+            'configured' => true,
+            'valid' => false,
+            'cert_path' => $certPath,
+            'message' => 'Certificate file exists but could not be parsed',
+        ];
+    }
+
+    $expiresAt = $certData['validTo_time_t'] ?? 0;
+    $issuedAt = $certData['validFrom_time_t'] ?? 0;
+    $daysLeft = round(($expiresAt - time()) / 86400);
+    $issuer = $certData['issuer']['O'] ?? ($certData['issuer']['CN'] ?? 'Unknown');
+    $cn = $certData['subject']['CN'] ?? '';
+
+    $isSelfSigned = str_contains($certPath, 'snakeoil') ||
+                    ($certData['issuer']['CN'] ?? '') === ($certData['subject']['CN'] ?? '');
+
+    return [
+        'success' => true,
+        'configured' => true,
+        'valid' => $daysLeft > 0,
+        'self_signed' => $isSelfSigned,
+        'cert_path' => $certPath,
+        'common_name' => $cn,
+        'issuer' => $issuer,
+        'issued_at' => date('Y-m-d H:i:s', $issuedAt),
+        'expires_at' => date('Y-m-d H:i:s', $expiresAt),
+        'days_left' => $daysLeft,
     ];
 }
 

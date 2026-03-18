@@ -122,7 +122,8 @@ Route::get('/language/{locale}', [LanguageController::class, 'switch'])
 | Webmail SSO
 |--------------------------------------------------------------------------
 |
-| Generates SSO token and redirects to Roundcube webmail.
+| Generates SSO token and redirects to webmail.
+| Supports Bulwark (Stalwart backend) and Roundcube (legacy backend).
 | Opens in new tab, so uses signed URL for security.
 |
 */
@@ -138,6 +139,28 @@ Route::get('/webmail-sso/{mailbox}', function (\App\Models\Mailbox $mailbox) {
         abort(500, 'SSO token directory could not be created. Run: mkdir -p /var/lib/jabali/sso-tokens && chown www-data:www-data /var/lib/jabali/sso-tokens && chmod 700 /var/lib/jabali/sso-tokens');
     }
 
+    if (config('jabali.mail_backend') === 'stalwart') {
+        // Bulwark webmail — SSO via token file
+        $webmailUrl = \App\Models\DnsSetting::get('webmail_url', '/webmail/');
+        $token = bin2hex(random_bytes(32));
+        $tokenData = [
+            'email' => $mailbox->email,
+            'expires' => time() + 60,
+        ];
+
+        if ($mailbox->plain_password) {
+            $tokenData['password'] = $mailbox->plain_password;
+            $tokenData['use_direct'] = true;
+        }
+
+        $ssoFile = $ssoDir.'/bulwark_sso_'.$token;
+        file_put_contents($ssoFile, json_encode($tokenData), LOCK_EX);
+        chmod($ssoFile, 0600);
+
+        return redirect($webmailUrl.'?sso_token='.$token);
+    }
+
+    // Legacy Roundcube SSO
     $password = $mailbox->plain_password;
     if ($password) {
         // Create SSO token for auto-login

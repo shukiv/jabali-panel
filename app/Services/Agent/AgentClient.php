@@ -260,7 +260,7 @@ class AgentClient implements AgentClientInterface
         ]);
     }
 
-    // Spam settings (Rspamd)
+    // Spam settings (Rspamd) — legacy backend only; stalwart uses Stalwart's built-in sieve filters
     public function rspamdUserSettings(string $username, array $whitelist = [], array $blacklist = [], ?float $score = null): array
     {
         return $this->send('rspamd.user_settings', [
@@ -638,7 +638,7 @@ class AgentClient implements AgentClientInterface
         return $this->send('user.create', ['username' => $username, 'password' => $password]);
     }
 
-    // Email Domain operations
+    // Email Domain operations — agent dispatches to legacy (Postfix/Dovecot) or stalwart (JMAP) backend
     public function emailEnableDomain(string $username, string $domain): array
     {
         return $this->send('email.enable_domain', ['username' => $username, 'domain' => $domain]);
@@ -1371,7 +1371,7 @@ class AgentClient implements AgentClientInterface
         return $this->send('scanner.get_scan_status', ['scanner' => $scanner]);
     }
 
-    // Mail queue operations
+    // Mail queue operations — agent dispatches to Postfix (legacy) or Stalwart (stalwart) queue
     public function mailQueueList(): array
     {
         return $this->send('mail.queue_list');

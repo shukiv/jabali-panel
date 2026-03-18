@@ -86,7 +86,9 @@
         <div class="email">{{ $email }}</div>
         @if (($has_password_hash ?? false))
             <p>{{ __('This mailbox was migrated, so one-click webmail login is unavailable. You can sign in directly using your existing mailbox password.') }}</p>
-            <a href="{{ url('/webmail') }}" class="btn">{{ __('Open Webmail Login') }}</a>
+            <a href="{{ url('/webmail') }}" class="btn">
+                {{ config('jabali.mail_backend') === 'stalwart' ? __('Open Bulwark Webmail') : __('Open Webmail Login') }}
+            </a>
             <div class="hint">
                 {{ __('If you want one-click webmail access, reset the mailbox password in Email settings.') }}
             </div>

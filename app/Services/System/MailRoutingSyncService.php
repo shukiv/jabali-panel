@@ -62,6 +62,8 @@ class MailRoutingSyncService
 
         $aliases = array_merge($aliases, $catchAll);
 
+        // Both legacy (Postfix hash files) and stalwart (JMAP provisioning) backends
+        // are handled at the agent dispatch level — the agent routes to the correct handler.
         $agent = app(AgentClient::class);
         $agent->emailSyncMaps($domains, $mailboxes, $aliases);
     }

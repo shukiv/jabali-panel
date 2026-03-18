@@ -107,7 +107,7 @@ Schedule::call(function () {
     if (! is_dir($dir)) {
         return;
     }
-    foreach (glob($dir.'/roundcube_sso_*') as $file) {
+    foreach (glob($dir.'/*_sso_*') as $file) {
         $data = @json_decode(@file_get_contents($file), true);
         if (! is_array($data) || ($data['expires'] ?? 0) < time()) {
             @unlink($file);

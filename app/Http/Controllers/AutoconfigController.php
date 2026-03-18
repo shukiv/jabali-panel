@@ -224,6 +224,19 @@ MOBILECONFIG;
         $escapedMailServer = $this->escapeXml($mailServer);
         $escapedDisplayName = $this->escapeXml($displayName);
 
+        $jmapSection = '';
+        if (config('jabali.mail_backend') === 'stalwart') {
+            $jmapSection = <<<JMAP
+        <incomingServer type="jmap">
+            <hostname>{$escapedMailServer}</hostname>
+            <port>443</port>
+            <socketType>SSL</socketType>
+            <authentication>password-cleartext</authentication>
+            <username>%EMAILADDRESS%</username>
+        </incomingServer>
+JMAP;
+        }
+
         $xml = <<<XML
 <?xml version="1.0" encoding="UTF-8"?>
 <clientConfig version="1.1">
@@ -245,6 +258,7 @@ MOBILECONFIG;
             <authentication>password-cleartext</authentication>
             <username>%EMAILADDRESS%</username>
         </incomingServer>
+{$jmapSection}
         <outgoingServer type="smtp">
             <hostname>{$escapedMailServer}</hostname>
             <port>465</port>

@@ -22,6 +22,10 @@ class RoundcubeIdentityService
      */
     public function addIdentity(string $mailboxEmail, string $aliasEmail, string $name = ''): bool
     {
+        if (config('jabali.mail_backend') === 'stalwart') {
+            return true; // Bulwark handles identities via JMAP
+        }
+
         $db = $this->getDb();
         if (! $db) {
             return false;
@@ -82,6 +86,10 @@ class RoundcubeIdentityService
      */
     public function removeIdentity(string $mailboxEmail, string $aliasEmail): bool
     {
+        if (config('jabali.mail_backend') === 'stalwart') {
+            return true; // Bulwark handles identities via JMAP
+        }
+
         $db = $this->getDb();
         if (! $db) {
             return false;
@@ -123,6 +131,10 @@ class RoundcubeIdentityService
      */
     public function syncIdentities(string $mailboxEmail, array $aliasEmails): void
     {
+        if (config('jabali.mail_backend') === 'stalwart') {
+            return; // Bulwark handles identities via JMAP
+        }
+
         $db = $this->getDb();
         if (! $db) {
             return;

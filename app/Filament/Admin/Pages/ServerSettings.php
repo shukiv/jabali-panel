@@ -597,7 +597,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                         TextInput::make('emailData.webmail_url')
                             ->label(__('Webmail URL'))
                             ->placeholder(__('/webmail'))
-                            ->helperText(__('URL path for Roundcube webmail')),
+                            ->helperText(config('jabali.mail_backend') === 'stalwart'
+                                ? __('URL path for Bulwark webmail')
+                                : __('URL path for Roundcube webmail')),
                         TextInput::make('emailData.webmail_product_name')
                             ->label(__('Webmail Product Name'))
                             ->placeholder(__('Jabali Webmail'))
@@ -1038,19 +1040,21 @@ class ServerSettings extends Page implements HasActions, HasForms
         DnsSetting::set('webmail_product_name', $data['webmail_product_name']);
         DnsSetting::clearCache();
 
-        // Update Roundcube config
-        $configFile = '/etc/roundcube/config.inc.php';
-        if (file_exists($configFile)) {
-            try {
-                $content = file_get_contents($configFile);
-                $content = preg_replace(
-                    "/\\\$config\['product_name'\]\s*=\s*'[^']*';/",
-                    "\$config['product_name'] = '".addslashes($data['webmail_product_name'])."';",
-                    $content
-                );
-                file_put_contents($configFile, $content);
-            } catch (Exception $e) {
-                // Silently fail
+        // Update Roundcube config (legacy backend only)
+        if (config('jabali.mail_backend') !== 'stalwart') {
+            $configFile = '/etc/roundcube/config.inc.php';
+            if (file_exists($configFile)) {
+                try {
+                    $content = file_get_contents($configFile);
+                    $content = preg_replace(
+                        "/\\\$config\['product_name'\]\s*=\s*'[^']*';/",
+                        "\$config['product_name'] = '".addslashes($data['webmail_product_name'])."';",
+                        $content
+                    );
+                    file_put_contents($configFile, $content);
+                } catch (Exception $e) {
+                    // Silently fail
+                }
             }
         }
 

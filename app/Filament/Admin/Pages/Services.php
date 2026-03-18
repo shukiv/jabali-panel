@@ -52,16 +52,26 @@ class Services extends Page implements HasActions, HasForms, HasTable
             return $this->managedServices;
         }
 
+        $isStalwart = config('jabali.mail_backend') === 'stalwart';
+
         $baseServices = [
             'nginx' => ['name' => 'Nginx', 'description' => __('Web Server'), 'icon' => 'globe'],
             'mariadb' => ['name' => 'MariaDB', 'description' => __('Database Server'), 'icon' => 'database'],
             'redis-server' => ['name' => 'Redis', 'description' => __('Cache Server'), 'icon' => 'bolt'],
-            'postfix' => ['name' => 'Postfix', 'description' => __('Mail Transfer Agent'), 'icon' => 'envelope'],
-            'dovecot' => ['name' => 'Dovecot', 'description' => __('IMAP/POP3 Server'), 'icon' => 'inbox'],
-            'rspamd' => ['name' => 'Rspamd', 'description' => __('Spam Filter'), 'icon' => 'shield'],
+        ];
+
+        if ($isStalwart) {
+            $baseServices['stalwart-mail'] = ['name' => 'Stalwart', 'description' => __('Mail Server'), 'icon' => 'envelope'];
+        } else {
+            $baseServices['postfix'] = ['name' => 'Postfix', 'description' => __('Mail Transfer Agent'), 'icon' => 'envelope'];
+            $baseServices['dovecot'] = ['name' => 'Dovecot', 'description' => __('IMAP/POP3 Server'), 'icon' => 'inbox'];
+            $baseServices['rspamd'] = ['name' => 'Rspamd', 'description' => __('Spam Filter'), 'icon' => 'shield'];
+            $baseServices['opendkim'] = ['name' => 'OpenDKIM', 'description' => __('DKIM Signing'), 'icon' => 'key'];
+        }
+
+        $baseServices += [
             'clamav-daemon' => ['name' => 'ClamAV', 'description' => __('Antivirus Scanner'), 'icon' => 'bug'],
             'named' => ['name' => 'BIND9', 'description' => __('DNS Server'), 'icon' => 'server'],
-            'opendkim' => ['name' => 'OpenDKIM', 'description' => __('DKIM Signing'), 'icon' => 'key'],
             'fail2ban' => ['name' => 'Fail2Ban', 'description' => __('Intrusion Prevention'), 'icon' => 'lock'],
             'ssh' => ['name' => 'SSH', 'description' => __('Secure Shell'), 'icon' => 'terminal'],
             'cron' => ['name' => 'Cron', 'description' => __('Task Scheduler'), 'icon' => 'clock'],

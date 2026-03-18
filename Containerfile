@@ -79,6 +79,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd -g 5000 vmail || true \
     && useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail || true
 
+# Stalwart Mail Server (downloaded at build time, activated by MAIL_BACKEND=stalwart)
+ARG TARGETARCH
+RUN curl -fsSL "https://github.com/stalwartlabs/mail-server/releases/latest/download/stalwart-mail-server-$(dpkg --print-architecture)-unknown-linux-gnu.tar.gz" \
+    | tar -xz -C /usr/local/bin/ stalwart-mail \
+    && chmod 755 /usr/local/bin/stalwart-mail \
+    && mkdir -p /etc/stalwart-mail /var/lib/stalwart-mail /var/log/stalwart-mail
+
 # Bind MariaDB to localhost only
 RUN printf '[mysqld]\nbind-address = 127.0.0.1\n' > /etc/mysql/mariadb.conf.d/99-container.cnf
 
@@ -105,7 +112,7 @@ RUN chmod +x /usr/local/bin/container-entrypoint.sh
 RUN chown -R www-data:www-data /var/www/jabali/storage /var/www/jabali/bootstrap/cache \
     && chmod -R ug+rwX /var/www/jabali/storage /var/www/jabali/bootstrap/cache
 
-EXPOSE 80 443 25 587 993 110 53/tcp 53/udp
+EXPOSE 80 443 25 587 993 110 53/tcp 53/udp 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -sf http://localhost/up || exit 1
