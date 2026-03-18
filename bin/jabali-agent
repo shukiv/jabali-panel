@@ -10170,32 +10170,30 @@ function stalwartEmailGenerateDkim(array $params): array
     }
 
     // Stalwart v0.15 auto-generates DKIM keys when a domain is created.
-    // We retrieve the domain principal which may include DKIM info.
+    // The DKIM public key is managed internally by Stalwart and not exposed
+    // via the principal REST API. The key is auto-configured for signing.
+    // Retrieving the DNS record requires the Stalwart CLI or webadmin.
+
     try {
         $api = new StalwartApiClient();
         $response = $api->get("principal/{$domain}");
         if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Failed to get domain info from Stalwart: ' . ($response['body']['error'] ?? $response['raw'])];
+            return ['success' => false, 'error' => 'Domain not found in Stalwart: ' . ($response['body']['detail'] ?? $response['raw'])];
         }
-
-        $domainData = $response['body'];
-        $publicKeyValue = $domainData['dkim_public_key'] ?? $domainData['public_key'] ?? '';
-        $actualSelector = $domainData['dkim_selector'] ?? $selector;
-
-        logger("Retrieved DKIM info for {$domain} via Stalwart (selector: {$actualSelector})");
-
-        return [
-            'success' => true,
-            'message' => "DKIM keys for {$domain}",
-            'selector' => $actualSelector,
-            'public_key' => $publicKeyValue,
-            'dns_record' => !empty($publicKeyValue)
-                ? "{$actualSelector}._domainkey.{$domain} IN TXT \"v=DKIM1; k=rsa; p={$publicKeyValue}\""
-                : '',
-        ];
     } catch (RuntimeException $e) {
         return ['success' => false, 'error' => $e->getMessage()];
     }
+
+    logger("DKIM is auto-managed by Stalwart for {$domain} (selector: {$selector})");
+
+    return [
+        'success' => true,
+        'message' => "DKIM is auto-managed by Stalwart for {$domain}",
+        'selector' => $selector,
+        'public_key' => '',
+        'dns_record' => '',
+        'stalwart_managed' => true,
+    ];
 }
 
 function stalwartEmailGetDomainInfo(array $params): array
@@ -10560,15 +10558,18 @@ function stalwartEmailSyncMaps(array $params): array
                 continue;
             }
 
-            // Try to update existing alias, or create if it doesn't exist
-            $response = $api->patch("principal/{$source}", [
-                ['action' => 'set', 'field' => 'emails', 'value' => array_values($destinations)],
+            // Try to update existing list, or create if it doesn't exist
+            $aliasParts = explode('@', $source);
+            $principalName = "fwd-{$aliasParts[0]}-" . ($aliasParts[1] ?? 'unknown');
+            $response = $api->patch("principal/{$principalName}", [
+                ['action' => 'set', 'field' => 'externalMembers', 'value' => array_values($destinations)],
             ]);
             if ($response['http_code'] === 404) {
                 $response = $api->post('principal', [
-                    'type' => 'alias',
-                    'name' => $source,
-                    'emails' => array_values($destinations),
+                    'type' => 'list',
+                    'name' => $principalName,
+                    'emails' => [$source],
+                    'externalMembers' => array_values($destinations),
                 ]);
             }
             if ($response['http_code'] >= 400) {
@@ -10621,17 +10622,21 @@ function stalwartEmailForwarderCreate(array $params): array
         }
     }
 
-    // Forwarder state is stored in the panel DB (email_forwarders table).
-    // Sync to Stalwart via API so it knows about the alias.
+    // Stalwart uses "list" principal type for forwarders.
+    // The "name" is a short identifier, "emails" is the forwarder address,
+    // and "externalMembers" holds the destination addresses.
+    list($localPart, $domain) = explode('@', $email);
+
     try {
         $api = new StalwartApiClient();
         $response = $api->post('principal', [
-            'type' => 'alias',
-            'name' => $email,
-            'emails' => array_values($destinations),
+            'type' => 'list',
+            'name' => "fwd-{$localPart}-{$domain}",
+            'emails' => [$email],
+            'externalMembers' => array_values($destinations),
         ]);
         if ($response['http_code'] >= 400 && $response['http_code'] !== 409) {
-            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['detail'] ?? $response['raw'])];
         }
     } catch (RuntimeException $e) {
         return ['success' => false, 'error' => $e->getMessage()];
@@ -10651,9 +10656,11 @@ function stalwartEmailForwarderDelete(array $params): array
 
     try {
         $api = new StalwartApiClient();
-        $response = $api->delete("principal/{$email}");
+        list($localPart, $domain) = explode('@', $email);
+        $principalName = "fwd-{$localPart}-{$domain}";
+        $response = $api->delete("principal/{$principalName}");
         if ($response['http_code'] >= 400 && $response['http_code'] !== 404) {
-            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['detail'] ?? $response['raw'])];
         }
     } catch (RuntimeException $e) {
         return ['success' => false, 'error' => $e->getMessage()];
@@ -10680,11 +10687,13 @@ function stalwartEmailForwarderUpdate(array $params): array
 
     try {
         $api = new StalwartApiClient();
-        $response = $api->patch("principal/{$email}", [
-            ['action' => 'set', 'field' => 'emails', 'value' => array_values($destinations)],
+        list($localPart, $domain) = explode('@', $email);
+        $principalName = "fwd-{$localPart}-{$domain}";
+        $response = $api->patch("principal/{$principalName}", [
+            ['action' => 'set', 'field' => 'externalMembers', 'value' => array_values($destinations)],
         ]);
         if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['error'] ?? $response['raw'])];
+            return ['success' => false, 'error' => 'Stalwart API error: ' . ($response['body']['detail'] ?? $response['raw'])];
         }
     } catch (RuntimeException $e) {
         return ['success' => false, 'error' => $e->getMessage()];
@@ -10707,16 +10716,19 @@ function stalwartEmailForwarderToggle(array $params): array
     // When inactive, we remove it from Stalwart; when active, we re-create it.
     // The caller (Laravel) handles the DB side; we handle Stalwart sync here.
 
+    list($localPart, $domain) = explode('@', $email);
+    $principalName = "fwd-{$localPart}-{$domain}";
+
     if ($active) {
-        // Re-read destinations from panel to re-add — caller must pass them.
         $destinations = $params['destinations'] ?? [];
         if (!empty($destinations)) {
             try {
                 $api = new StalwartApiClient();
                 $api->post('principal', [
-                    'type' => 'alias',
-                    'name' => $email,
-                    'emails' => array_values($destinations),
+                    'type' => 'list',
+                    'name' => $principalName,
+                    'emails' => [$email],
+                    'externalMembers' => array_values($destinations),
                 ]);
             } catch (RuntimeException $e) {
                 logger("Warning: could not re-enable forwarder in Stalwart: " . $e->getMessage());
@@ -10725,7 +10737,7 @@ function stalwartEmailForwarderToggle(array $params): array
     } else {
         try {
             $api = new StalwartApiClient();
-            $api->delete("principal/{$email}");
+            $api->delete("principal/{$principalName}");
         } catch (RuntimeException $e) {
             logger("Warning: could not disable forwarder in Stalwart: " . $e->getMessage());
         }
