@@ -45,8 +45,10 @@ INSTALL_DNS=true
 INSTALL_FIREWALL=true
 INSTALL_SECURITY=true  # Fail2ban + ClamAV
 
-# Mail backend: "legacy" (Postfix+Dovecot+OpenDKIM+Rspamd) or "stalwart" (all-in-one)
-MAIL_BACKEND="${MAIL_BACKEND:-legacy}"
+# Mail backend: "stalwart" (all-in-one) or "legacy" (Postfix+Dovecot+OpenDKIM+Rspamd)
+# If MAIL_BACKEND is set externally, skip the interactive prompt
+MAIL_BACKEND_PRESET="${MAIL_BACKEND:-}"
+MAIL_BACKEND="${MAIL_BACKEND:-stalwart}"
 
 # Feature selection menu
 select_features() {
@@ -75,7 +77,7 @@ select_features() {
     echo ""
     echo "  1) Full Installation (Recommended)"
     echo "     - Web Server (Nginx, PHP, MariaDB, Redis)"
-    echo "     - Mail Server (Postfix, Dovecot, Rspamd)"
+    echo "     - Mail Server"
     echo "     - DNS Server (BIND9)"
     echo "     - Security (Firewall, Fail2ban, ClamAV)"
     echo ""
@@ -106,7 +108,7 @@ select_features() {
             echo ""
 
             # Mail Server
-            read -p "Install Mail Server (Postfix, Dovecot)? [Y/n]: " mail_choice < /dev/tty
+            read -p "Install Mail Server? [Y/n]: " mail_choice < /dev/tty
             if [[ "$mail_choice" =~ ^[Nn]$ ]]; then
                 INSTALL_MAIL=false
             fi
@@ -137,10 +139,45 @@ select_features() {
             ;;
     esac
 
+    # If mail is enabled and backend not pre-set via env, ask which backend
+    if [[ "$INSTALL_MAIL" == "true" && -z "${MAIL_BACKEND_PRESET:-}" ]]; then
+        echo ""
+        echo -e "${BOLD}Mail Server Backend${NC}"
+        echo ""
+        echo "  1) Stalwart Mail Server (Recommended)"
+        echo "     All-in-one: SMTP, IMAP, JMAP, DKIM, spam filter"
+        echo "     Single binary, modern, low resource usage"
+        echo ""
+        echo "  2) Legacy Stack"
+        echo "     Postfix + Dovecot + OpenDKIM + Rspamd"
+        echo ""
+
+        local mail_choice
+        read -p "Enter choice [1-2]: " mail_choice < /dev/tty
+        case $mail_choice in
+            2)
+                MAIL_BACKEND="legacy"
+                info "Legacy mail stack selected (Postfix + Dovecot)"
+                ;;
+            *)
+                MAIL_BACKEND="stalwart"
+                info "Stalwart Mail Server selected"
+                ;;
+        esac
+    fi
+
     echo ""
     echo -e "${BOLD}Components to install:${NC}"
     echo -e "  - Web Server: ${GREEN}Yes${NC}"
-    [[ "$INSTALL_MAIL" == "true" ]] && echo -e "  - Mail Server: ${GREEN}Yes${NC}" || echo -e "  - Mail Server: ${YELLOW}No${NC}"
+    if [[ "$INSTALL_MAIL" == "true" ]]; then
+        if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
+            echo -e "  - Mail Server: ${GREEN}Yes${NC} (Stalwart)"
+        else
+            echo -e "  - Mail Server: ${GREEN}Yes${NC} (Postfix + Dovecot)"
+        fi
+    else
+        echo -e "  - Mail Server: ${YELLOW}No${NC}"
+    fi
     [[ "$INSTALL_DNS" == "true" ]] && echo -e "  - DNS Server: ${GREEN}Yes${NC}" || echo -e "  - DNS Server: ${YELLOW}No${NC}"
     [[ "$INSTALL_FIREWALL" == "true" ]] && echo -e "  - Firewall: ${GREEN}Yes${NC}" || echo -e "  - Firewall: ${YELLOW}No${NC}"
     [[ "$INSTALL_SECURITY" == "true" ]] && echo -e "  - Security Tools: ${GREEN}Yes${NC}" || echo -e "  - Security Tools: ${YELLOW}No${NC}"
@@ -527,25 +564,32 @@ install_packages() {
 
     # Add Mail Server packages if enabled
     if [[ "$INSTALL_MAIL" == "true" ]]; then
-        info "Including Mail Server packages..."
+        if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
+            info "Including Stalwart Mail Server dependencies..."
+            # Stalwart is a single binary downloaded separately — only need imapsync deps here
+        else
+            info "Including Legacy Mail Server packages..."
+            base_packages+=(
+                postfix
+                postfix-mysql
+                dovecot-core
+                dovecot-imapd
+                dovecot-pop3d
+                dovecot-lmtpd
+                dovecot-mysql
+                dovecot-sqlite
+                opendkim
+                opendkim-tools
+                rspamd
+                # Webmail
+                roundcube
+                roundcube-core
+                roundcube-sqlite3
+                roundcube-plugins
+            )
+        fi
+        # IMAP sync dependencies (needed for both backends)
         base_packages+=(
-            postfix
-            postfix-mysql
-            dovecot-core
-            dovecot-imapd
-            dovecot-pop3d
-            dovecot-lmtpd
-            dovecot-mysql
-            dovecot-sqlite
-            opendkim
-            opendkim-tools
-            rspamd
-            # Webmail
-            roundcube
-            roundcube-core
-            roundcube-sqlite3
-            roundcube-plugins
-            # IMAP sync dependencies
             libmail-imapclient-perl
             libio-tee-perl
             libterm-readkey-perl
@@ -639,9 +683,9 @@ install_packages() {
     info "Blocking Apache2 and mod-php installation (we use nginx + php-fpm)..."
     apt-mark hold apache2 libapache2-mod-php libapache2-mod-php${PHP_VERSION:-8.4} 2>/dev/null || true
 
-    # Pre-configure postfix and roundcube to avoid interactive prompts
+    # Pre-configure postfix and roundcube to avoid interactive prompts (legacy backend only)
     # Note: debconf templates may not exist yet on fresh install, so suppress errors
-    if [[ "$INSTALL_MAIL" == "true" ]]; then
+    if [[ "$INSTALL_MAIL" == "true" && "$MAIL_BACKEND" != "stalwart" ]]; then
         echo "postfix postfix/mailname string $SERVER_HOSTNAME" | debconf-set-selections 2>/dev/null || true
         echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections 2>/dev/null || true
         # Skip roundcube dbconfig - we configure it manually
@@ -3281,6 +3325,8 @@ REDIS_PORT=6379
 MAIL_MAILER=sendmail
 MAIL_FROM_ADDRESS=webmaster@${SERVER_HOSTNAME}
 MAIL_FROM_NAME="Jabali Panel"
+
+MAIL_BACKEND=${MAIL_BACKEND}
 ENV
 
     # Ensure mail settings are correct (in case .env.example was used)
@@ -4235,6 +4281,7 @@ show_usage() {
     echo "  SERVER_HOSTNAME      Set the server hostname"
     echo "  JABALI_FULL          Install all components (set to any value)"
     echo "  JABALI_MINIMAL       Install only core components (set to any value)"
+    echo "  MAIL_BACKEND         Mail backend: 'stalwart' (default) or 'legacy'"
     echo ""
     echo "Installation Modes:"
     echo "  Full Installation    - Web, Mail, DNS, Firewall, Security tools"
