@@ -2322,33 +2322,34 @@ SYSTEMD
     log "Stalwart Mail Server configured"
 
     # Install Bulwark Webmail (JMAP client for Stalwart)
+    # This runs in a subshell so failures never abort the main install
     info "Installing Bulwark Webmail..."
-    local bulwark_dir="/opt/bulwark"
+    (
+        set +e
+        local bulwark_dir="/opt/bulwark"
 
-    # Bulwark failures must not abort the rest of the install
-    set +e
-    if [[ ! -d "$bulwark_dir" ]]; then
-        # Pull Docker image or install from source
-        if command -v docker >/dev/null 2>&1; then
-            docker pull ghcr.io/bulwarkmail/webmail:latest 2>/dev/null || true
-        fi
-
-        # Install standalone (no Docker dependency)
-        mkdir -p "$bulwark_dir"
-        cd "$bulwark_dir"
-
-        # Check if Node.js is available (installed as part of base packages)
+        # Ensure Node.js is available
         if ! command -v node >/dev/null 2>&1; then
             info "Installing Node.js for Bulwark..."
-            curl -fsSL https://deb.nodesource.com/setup_22.x | bash - 2>/dev/null
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs 2>/dev/null
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs >/dev/null 2>&1
         fi
 
-        # Clone and build Bulwark
-        if git clone --depth 1 https://github.com/bulwarkmail/webmail.git "$bulwark_dir" 2>/dev/null; then
+        if ! command -v node >/dev/null 2>&1; then
+            warn "Node.js not available — skipping Bulwark webmail"
+            exit 0
+        fi
+
+        # Clone Bulwark (remove partial dir if exists)
+        if [[ ! -f "${bulwark_dir}/.next/BUILD_ID" ]]; then
+            rm -rf "$bulwark_dir"
+            if ! git clone --depth 1 https://github.com/bulwarkmail/webmail.git "$bulwark_dir" 2>/dev/null; then
+                warn "Could not clone Bulwark repository — webmail will not be available"
+                exit 0
+            fi
+
             cd "$bulwark_dir"
 
-            # Configure Bulwark to connect to local Stalwart
             cat > .env.local <<BULWARK_ENV
 JMAP_SERVER_URL=http://127.0.0.1:8080
 HOSTNAME=127.0.0.1
@@ -2357,24 +2358,22 @@ APP_NAME=Webmail
 SESSION_SECRET=$(openssl rand -base64 32)
 BULWARK_ENV
 
-            npm install 2>/dev/null || warn "npm install had warnings"
-            npm run build 2>/dev/null || warn "Bulwark build had warnings"
+            info "Building Bulwark (this may take a minute)..."
+            npm install >/dev/null 2>&1
+            npm run build >/dev/null 2>&1
 
-            if [[ -f "${bulwark_dir}/.next/BUILD_ID" ]]; then
-                chown -R www-data:www-data "${bulwark_dir}/.next" "${bulwark_dir}/.env.local"
-                log "Bulwark Webmail installed at $bulwark_dir"
-            else
-                warn "Bulwark build did not produce output — webmail may not be available"
+            if [[ ! -f "${bulwark_dir}/.next/BUILD_ID" ]]; then
+                warn "Bulwark build failed — webmail will not be available"
+                exit 0
             fi
-        else
-            warn "Could not clone Bulwark repository — webmail will not be available"
-        fi
-        cd "$JABALI_DIR"
-    fi
 
-    # Create Bulwark systemd service
-    if [[ -d "$bulwark_dir" ]] && [[ ! -f /.dockerenv ]] && [[ ! -f /run/.containerenv ]]; then
-        cat > /etc/systemd/system/bulwark.service <<BULWARK_SVC
+            chown -R www-data:www-data "${bulwark_dir}/.next" "${bulwark_dir}/.env.local"
+            log "Bulwark Webmail built successfully"
+        fi
+
+        # Create systemd service (bare metal only)
+        if [[ ! -f /.dockerenv ]] && [[ ! -f /run/.containerenv ]]; then
+            cat > /etc/systemd/system/bulwark.service <<BULWARK_SVC
 [Unit]
 Description=Bulwark Webmail
 After=network.target stalwart-mail.service
@@ -2391,13 +2390,13 @@ Environment=NODE_ENV=production
 [Install]
 WantedBy=multi-user.target
 BULWARK_SVC
-        systemctl daemon-reload
-        systemctl enable bulwark > /dev/null 2>&1
-        systemctl start bulwark
-        log "Bulwark Webmail service started on port 3000"
-    fi
+            systemctl daemon-reload
+            systemctl enable bulwark > /dev/null 2>&1
+            systemctl start bulwark
+            log "Bulwark Webmail service started on port 3000"
+        fi
+    ) || warn "Bulwark installation encountered errors"
 
-    set -e
     cd "$JABALI_DIR"
     log "Stalwart Mail Server configured with Bulwark Webmail"
 }
