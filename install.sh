@@ -2325,6 +2325,8 @@ SYSTEMD
     info "Installing Bulwark Webmail..."
     local bulwark_dir="/opt/bulwark"
 
+    # Bulwark failures must not abort the rest of the install
+    set +e
     if [[ ! -d "$bulwark_dir" ]]; then
         # Pull Docker image or install from source
         if command -v docker >/dev/null 2>&1; then
@@ -2355,14 +2357,19 @@ APP_NAME=Webmail
 SESSION_SECRET=$(openssl rand -base64 32)
 BULWARK_ENV
 
-            npm install --production 2>/dev/null
-            npm run build 2>/dev/null
+            npm install 2>/dev/null || warn "npm install had warnings"
+            npm run build 2>/dev/null || warn "Bulwark build had warnings"
 
-            log "Bulwark Webmail installed at $bulwark_dir"
+            if [[ -f "${bulwark_dir}/.next/BUILD_ID" ]]; then
+                chown -R www-data:www-data "${bulwark_dir}/.next" "${bulwark_dir}/.env.local"
+                log "Bulwark Webmail installed at $bulwark_dir"
+            else
+                warn "Bulwark build did not produce output — webmail may not be available"
+            fi
         else
             warn "Could not clone Bulwark repository — webmail will not be available"
-            cd "$JABALI_DIR"
         fi
+        cd "$JABALI_DIR"
     fi
 
     # Create Bulwark systemd service
@@ -2390,6 +2397,7 @@ BULWARK_SVC
         log "Bulwark Webmail service started on port 3000"
     fi
 
+    set -e
     cd "$JABALI_DIR"
     log "Stalwart Mail Server configured with Bulwark Webmail"
 }
