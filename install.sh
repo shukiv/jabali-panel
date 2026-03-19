@@ -1553,12 +1553,72 @@ NGINX
 
     # Replace webmail location block based on mail backend
     local panel_conf="/etc/nginx/sites-available/${SERVER_HOSTNAME}"
+    local webmail_tmp="/tmp/jabali_webmail_block.conf"
     if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
-        local webmail_block='# JMAP proxy for Bulwark webmail\n    location = /.well-known/jmap {\n        return 301 /jmap/session;\n    }\n\n    location ^~ /jmap/ {\n        proxy_pass http://127.0.0.1:8080;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        sub_filter_types application/json;\n        sub_filter_once off;\n        sub_filter \"http://'${SERVER_HOSTNAME}':8080\" \"https://'${SERVER_HOSTNAME}'\";\n        sub_filter \"ws://'${SERVER_HOSTNAME}':8080\" \"wss://'${SERVER_HOSTNAME}'\";\n        sub_filter \"http://127.0.0.1:8080\" \"https://'${SERVER_HOSTNAME}'\";\n    }\n\n    # Bulwark webmail\n    location = /webmail {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }\n\n    location ^~ /webmail/ {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_buffering off;\n    }'
+        cat > "$webmail_tmp" <<WEBMAIL_BLOCK
+    # JMAP proxy for Bulwark webmail
+    location = /.well-known/jmap {
+        return 301 /jmap/session;
+    }
+
+    location ^~ /jmap/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        sub_filter_types application/json;
+        sub_filter_once off;
+        sub_filter "http://${SERVER_HOSTNAME}:8080" "https://${SERVER_HOSTNAME}";
+        sub_filter "ws://${SERVER_HOSTNAME}:8080" "wss://${SERVER_HOSTNAME}";
+        sub_filter "http://127.0.0.1:8080" "https://${SERVER_HOSTNAME}";
+    }
+
+    # Bulwark webmail
+    location = /webmail {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location ^~ /webmail/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+    }
+WEBMAIL_BLOCK
     else
-        local webmail_block="location = /webmail {\n        return 301 /webmail/;\n    }\n\n    location ^~ /webmail/ {\n        alias /var/lib/roundcube/public_html/;\n        index index.php;\n\n        location ~ \\.php\$ {\n            fastcgi_pass unix:${panel_sock};\n            fastcgi_param SCRIPT_FILENAME \\\$request_filename;\n            include fastcgi_params;\n            fastcgi_read_timeout 600;\n        }\n    }"
+        cat > "$webmail_tmp" <<WEBMAIL_BLOCK
+    location = /webmail {
+        return 301 /webmail/;
+    }
+
+    location ^~ /webmail/ {
+        alias /var/lib/roundcube/public_html/;
+        index index.php;
+
+        location ~ \\.php\$ {
+            fastcgi_pass unix:${panel_sock};
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            include fastcgi_params;
+            fastcgi_read_timeout 600;
+        }
+    }
+WEBMAIL_BLOCK
     fi
-    sed -i "s|WEBMAIL_LOCATION_BLOCK|${webmail_block}|" "$panel_conf"
+    sed -i '/WEBMAIL_LOCATION_BLOCK/r '"$webmail_tmp" "$panel_conf"
+    sed -i '/WEBMAIL_LOCATION_BLOCK/d' "$panel_conf"
+    rm -f "$webmail_tmp"
 
     ln -sf /etc/nginx/sites-available/${SERVER_HOSTNAME} /etc/nginx/sites-enabled/
 
