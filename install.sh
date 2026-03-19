@@ -2412,22 +2412,33 @@ SYSTEMD
             exit 0
         fi
 
-        # Clone Bulwark (remove partial dir if exists)
-        if [[ ! -f "${bulwark_dir}/.next/BUILD_ID" ]]; then
+        # Clone Bulwark if not present
+        if [[ ! -d "${bulwark_dir}/.git" ]]; then
             rm -rf "$bulwark_dir"
             if ! git clone --depth 1 https://github.com/bulwarkmail/webmail.git "$bulwark_dir" 2>/dev/null; then
                 warn "Could not clone Bulwark repository — webmail will not be available"
                 exit 0
             fi
-
+        else
+            # Update existing clone
             cd "$bulwark_dir"
+            git fetch --depth 1 origin main 2>/dev/null && git reset --hard origin/main 2>/dev/null || true
+        fi
 
-            cat > .env.local <<BULWARK_ENV
+        cd "$bulwark_dir"
+
+        # Preserve SESSION_SECRET across rebuilds
+        local existing_secret=""
+        if [[ -f .env.local ]]; then
+            existing_secret=$(grep '^SESSION_SECRET=' .env.local 2>/dev/null | cut -d= -f2)
+        fi
+
+        cat > .env.local <<BULWARK_ENV
 JMAP_SERVER_URL=https://${SERVER_HOSTNAME}
 HOSTNAME=127.0.0.1
 PORT=3000
 APP_NAME=Webmail
-SESSION_SECRET=$(openssl rand -base64 32)
+SESSION_SECRET=${existing_secret:-$(openssl rand -base64 32)}
 BULWARK_ENV
 
             # Configure basePath so Bulwark serves under /webmail/
@@ -2549,6 +2560,42 @@ export async function GET(request: NextRequest) {
 }
 SSO_ROUTE
 
+            # Patch auth-store to check session cookie on page load (SSO support)
+            # Without this, SSO sets the cookie but checkAuth() skips restore
+            # because localStorage has no prior auth state
+            if grep -q "set({ isLoading: false });" stores/auth-store.ts 2>/dev/null && \
+               ! grep -q "SSO fallback" stores/auth-store.ts 2>/dev/null; then
+                python3 -c "
+content = open('stores/auth-store.ts').read()
+old = '        set({ isLoading: false });\n      },'
+new = '''        // SSO fallback: check session cookie even when not authenticated
+        if (!state.isAuthenticated && !state.client) {
+          try {
+            const res = await fetch('/webmail/api/auth/session');
+            if (res.ok) {
+              const data = await res.json();
+              if (data.serverUrl && data.username && data.password) {
+                set({ isLoading: true });
+                const { serverUrl, username, password } = data;
+                const client = new JMAPClient(serverUrl, username, password);
+                client.onConnectionChange((connected) => { set({ connectionLost: !connected }); });
+                await client.connect();
+                const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), username);
+                initializeFeatureStores(client);
+                set({ isAuthenticated: true, isLoading: false, serverUrl, username, client, identities, primaryIdentity, authMode: 'basic', rememberMe: true });
+                return;
+              }
+            }
+          } catch (error) { debug.error('SSO session check failed:', error); }
+        }
+
+        set({ isLoading: false });
+      },'''
+if old in content:
+    open('stores/auth-store.ts', 'w').write(content.replace(old, new, 1))
+" 2>/dev/null || true
+            fi
+
             info "Building Bulwark (this may take a minute)..."
             npm install >/dev/null 2>&1
             npm run build >/dev/null 2>&1
@@ -2565,7 +2612,6 @@ SSO_ROUTE
 
             chown -R www-data:www-data "${bulwark_dir}/.next" "${bulwark_dir}/.env.local"
             log "Bulwark Webmail built successfully"
-        fi
 
         # Create systemd service (bare metal only)
         if [[ ! -f /.dockerenv ]] && [[ ! -f /run/.containerenv ]]; then
