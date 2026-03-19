@@ -11053,21 +11053,35 @@ function stalwartEmailGetLogs(array $params): array
     exec("journalctl -u stalwart-mail --no-pager -n 1000 -o json 2>/dev/null", $output, $code);
 
     if ($code !== 0 || empty($output)) {
-        // Fallback to Stalwart log file
-        $stalwartLog = '/var/log/stalwart-mail/stalwart.log';
-        if (file_exists($stalwartLog)) {
-            exec("tail -n 1000 " . escapeshellarg($stalwartLog), $output);
-        } else {
+        // Fallback to Stalwart log files (named with date suffix: stalwart.log.YYYY-MM-DD)
+        $logDir = '/var/log/stalwart-mail';
+        $output = [];
+        if (is_dir($logDir)) {
+            $today = date('Y-m-d');
+            $yesterday = date('Y-m-d', strtotime('-1 day'));
+            foreach (["$logDir/stalwart.log.$today", "$logDir/stalwart.log.$yesterday"] as $logFile) {
+                if (file_exists($logFile)) {
+                    exec("tail -n 1000 " . escapeshellarg($logFile), $output);
+                }
+            }
+        }
+        if (empty($output)) {
             return ['success' => true, 'logs' => []];
         }
 
-        // Parse plain text log lines
+        // Parse Stalwart plain text log lines
+        // Format: 2026-03-19T20:22:55Z INFO Message text (event.type) key = value, key = "value"
         $messageIndex = [];
         foreach ($output as $line) {
-            if (preg_match('/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(\w+)\s+(.+)$/', $line, $matches)) {
+            if (preg_match('/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?)\s+(\w+)\s+(.+)$/', $line, $matches)) {
                 $timestamp = strtotime($matches[1]);
-                $level = $matches[2];
+                $level = strtolower($matches[2]);
                 $message = $matches[3];
+
+                // Only show mail-related events
+                if (!preg_match('/smtp\.|delivery\.|message-ingest|queue\.|auth\.success/', $message)) {
+                    continue;
+                }
 
                 $entry = [
                     'timestamp' => $timestamp,
@@ -11076,21 +11090,37 @@ function stalwartEmailGetLogs(array $params): array
                     'from' => null,
                     'to' => null,
                     'subject' => null,
-                    'status' => strtolower($level) === 'error' ? 'error' : 'info',
+                    'status' => $level === 'error' || $level === 'warn' ? 'error' : 'info',
                     'message' => $message,
                 ];
 
-                if (preg_match('/from=<([^>]*)>/', $message, $fromMatch)) {
-                    $entry['from'] = $fromMatch[1];
+                // Stalwart format: from = "user@domain"
+                if (preg_match('/\bfrom\s*=\s*"([^"]*)"/', $message, $fromMatch)) {
+                    $entry['from'] = trim($fromMatch[1], '<>');
                 }
-                if (preg_match('/to=<([^>]*)>/', $message, $toMatch)) {
+                // Stalwart format: to = ["user@domain"] or to = "user@domain"
+                if (preg_match('/\bto\s*=\s*\["([^"]*)"/', $message, $toMatch)) {
+                    $entry['to'] = $toMatch[1];
+                } elseif (preg_match('/\bto\s*=\s*"([^"]*)"/', $message, $toMatch)) {
                     $entry['to'] = $toMatch[1];
                 }
-                if (preg_match('/status[=:]\s*(\w+)/i', $message, $statusMatch)) {
-                    $entry['status'] = $statusMatch[1];
+                // accountName for auth events
+                if (preg_match('/accountName\s*=\s*"([^"]*)"/', $message, $nameMatch)) {
+                    $entry['from'] = $nameMatch[1];
                 }
-                if (preg_match('/id[=:]\s*([A-Za-z0-9]+)/i', $message, $idMatch)) {
+                if (preg_match('/queueId\s*=\s*(\d+)/', $message, $idMatch)) {
                     $entry['queue_id'] = $idMatch[1];
+                }
+                // Map Stalwart event types to statuses
+                if (str_contains($message, 'delivery.completed') || str_contains($message, 'dsn-success')) {
+                    $entry['status'] = 'sent';
+                } elseif (str_contains($message, 'message-ingest.ham') || str_contains($message, 'message-ingest.jmap-append')) {
+                    $entry['status'] = 'delivered';
+                } elseif (str_contains($message, 'auth.success')) {
+                    $entry['status'] = 'info';
+                    $entry['message'] = 'Login: ' . ($entry['from'] ?? 'unknown');
+                } elseif (str_contains($message, 'queue.queue-message')) {
+                    $entry['status'] = 'queued';
                 }
 
                 $messageIndex[] = $entry;
