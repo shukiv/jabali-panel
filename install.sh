@@ -2358,6 +2358,14 @@ APP_NAME=Webmail
 SESSION_SECRET=$(openssl rand -base64 32)
 BULWARK_ENV
 
+            # Configure basePath so Bulwark serves under /webmail/
+            sed -i 's|output: "standalone",|output: "standalone",\n  basePath: "/webmail",|' next.config.ts
+
+            # Fix next-intl matcher for basePath support (must include "/" for root)
+            if ! grep -q '^\s*"/",' proxy.ts 2>/dev/null; then
+                sed -i 's|matcher: \[|matcher: [\n    "/",|' proxy.ts
+            fi
+
             info "Building Bulwark (this may take a minute)..."
             npm install >/dev/null 2>&1
             npm run build >/dev/null 2>&1
