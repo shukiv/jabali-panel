@@ -11078,8 +11078,8 @@ function stalwartEmailGetLogs(array $params): array
                 $level = strtolower($matches[2]);
                 $message = $matches[3];
 
-                // Only show mail-related events
-                if (!preg_match('/smtp\.|delivery\.|message-ingest|queue\.|auth\.success/', $message)) {
+                // Only show mail-related events and startup
+                if (!preg_match('/smtp\.|delivery\.|message-ingest|queue\.|auth\.success|server\.startup/', $message)) {
                     continue;
                 }
 
@@ -11121,6 +11121,9 @@ function stalwartEmailGetLogs(array $params): array
                     $entry['message'] = 'Login: ' . ($entry['from'] ?? 'unknown');
                 } elseif (str_contains($message, 'queue.queue-message')) {
                     $entry['status'] = 'queued';
+                } elseif (str_contains($message, 'server.startup')) {
+                    $entry['status'] = 'info';
+                    $entry['message'] = 'Stalwart Mail Server started';
                 }
 
                 $messageIndex[] = $entry;
