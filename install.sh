@@ -2267,6 +2267,7 @@ configure_stalwart() {
 
     # Create Stalwart directories
     mkdir -p /etc/stalwart-mail
+    mkdir -p /etc/stalwart-mail/acme
     mkdir -p /var/lib/stalwart-mail
     mkdir -p /var/log/stalwart-mail
 
@@ -2378,6 +2379,14 @@ prefix = "stalwart.log"
 rotate = "daily"
 ansi = false
 enable = true
+
+[acme."letsencrypt"]
+directory = "https://acme-v02.api.letsencrypt.org/directory"
+challenge = "tls-alpn-01"
+contact = ["postmaster@${SERVER_HOSTNAME}"]
+domains = ["${SERVER_HOSTNAME}", "mail.${SERVER_HOSTNAME}"]
+cache = "/etc/stalwart-mail/acme"
+renew-before = "30d"
 
 [certificate.default]
 cert = "/etc/ssl/jabali/panel.crt"
@@ -4056,13 +4065,9 @@ MAILNGINX
                 log "Let's Encrypt certificate issued for $mail_hostname"
 
                 if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
-                    # Update Stalwart TLS certificate to use Let's Encrypt cert
-                    if [[ -f /etc/stalwart-mail/config.toml ]]; then
-                        sed -i "s|^cert = .*|cert = \"/etc/letsencrypt/live/$mail_hostname/fullchain.pem\"|" /etc/stalwart-mail/config.toml
-                        sed -i "s|^private-key = .*|private-key = \"/etc/letsencrypt/live/$mail_hostname/privkey.pem\"|" /etc/stalwart-mail/config.toml
-                        systemctl restart stalwart-mail 2>/dev/null || true
-                    fi
-                    log "Stalwart TLS updated with Let's Encrypt certificate"
+                    # Stalwart manages its own TLS via built-in ACME (tls-alpn-01)
+                    # No need to configure certs manually — ACME handles it
+                    log "Stalwart ACME will handle TLS for mail domains automatically"
                 else
                     # Update Postfix to use the certificate
                     postconf -e "smtpd_tls_cert_file=/etc/letsencrypt/live/$mail_hostname/fullchain.pem"

@@ -10149,6 +10149,77 @@ function dnsGetDsRecords(array $params): array {
 
 // ============ STALWART MAIL SERVER FUNCTIONS ============
 
+/**
+ * Add mail.domain to Stalwart's ACME domains list for automatic TLS cert issuance.
+ * Reads the config, appends the domain if not present, writes back, and reloads.
+ */
+function stalwartAcmeAddDomain(string $domain): void
+{
+    $mailHostname = "mail.{$domain}";
+    $configFile = '/etc/stalwart-mail/config.toml';
+
+    if (!file_exists($configFile)) {
+        return;
+    }
+
+    $config = file_get_contents($configFile);
+
+    // Check if ACME section exists
+    if (!str_contains($config, '[acme.')) {
+        return;
+    }
+
+    // Check if domain is already in the ACME domains list
+    if (str_contains($config, "\"$mailHostname\"")) {
+        return;
+    }
+
+    // Append the domain to the ACME domains array
+    $config = preg_replace(
+        '/(domains\s*=\s*\[[^\]]*)(])/',
+        '$1, "' . $mailHostname . '"$2',
+        $config,
+        1
+    );
+
+    file_put_contents($configFile, $config, LOCK_EX);
+
+    // Reload Stalwart config to pick up new ACME domain
+    exec('systemctl reload stalwart-mail 2>/dev/null || systemctl restart stalwart-mail 2>/dev/null');
+
+    logger("Added {$mailHostname} to Stalwart ACME domains");
+}
+
+/**
+ * Remove mail.domain from Stalwart's ACME domains list.
+ */
+function stalwartAcmeRemoveDomain(string $domain): void
+{
+    $mailHostname = "mail.{$domain}";
+    $configFile = '/etc/stalwart-mail/config.toml';
+
+    if (!file_exists($configFile)) {
+        return;
+    }
+
+    $config = file_get_contents($configFile);
+
+    if (!str_contains($config, "\"$mailHostname\"")) {
+        return;
+    }
+
+    // Remove the domain from the ACME domains array
+    $config = str_replace(", \"{$mailHostname}\"", '', $config);
+    $config = str_replace("\"{$mailHostname}\", ", '', $config);
+    $config = str_replace("\"{$mailHostname}\"", '', $config);
+
+    file_put_contents($configFile, $config, LOCK_EX);
+
+    exec('systemctl reload stalwart-mail 2>/dev/null || systemctl restart stalwart-mail 2>/dev/null');
+
+    logger("Removed {$mailHostname} from Stalwart ACME domains");
+}
+
 function stalwartEmailEnableDomain(array $params): array
 {
     $username = $params['username'] ?? '';
@@ -10197,6 +10268,9 @@ function stalwartEmailEnableDomain(array $params): array
         return ['success' => false, 'error' => $e->getMessage()];
     }
 
+    // Add mail.domain to Stalwart ACME for automatic TLS cert
+    stalwartAcmeAddDomain($domain);
+
     logger("Enabled email for domain: {$domain} (user: {$username}) via Stalwart");
     return ['success' => true, 'message' => "Email enabled for {$domain}"];
 }
@@ -10222,6 +10296,9 @@ function stalwartEmailDisableDomain(array $params): array
     } catch (RuntimeException $e) {
         return ['success' => false, 'error' => $e->getMessage()];
     }
+
+    // Remove mail.domain from Stalwart ACME
+    stalwartAcmeRemoveDomain($domain);
 
     logger("Disabled email for domain: {$domain} via Stalwart");
     return ['success' => true, 'message' => "Email disabled for {$domain}"];
