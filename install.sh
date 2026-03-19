@@ -702,6 +702,15 @@ install_packages() {
         done
     }
 
+    # Remove Debian default MTA (exim4) when using Stalwart — it conflicts on port 25
+    if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
+        if dpkg -l exim4-base >/dev/null 2>&1; then
+            run_quiet "Removing exim4 (conflicts with Stalwart on port 25)..." \
+                env DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq 'exim4*'
+            apt-get autoremove -y -qq >/dev/null 2>&1
+        fi
+    fi
+
     # Install imapsync binary (not in Debian repos)
     if [[ "$INSTALL_MAIL" == "true" ]] && ! command -v imapsync >/dev/null 2>&1; then
         info "Installing imapsync..."
