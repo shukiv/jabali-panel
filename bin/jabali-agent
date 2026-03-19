@@ -10458,15 +10458,22 @@ function stalwartEmailMailboxChangePassword(array $params): array
     $passwordHash = '{SHA512-CRYPT}' . crypt($password, '$6$' . bin2hex(random_bytes(8)) . '$');
 
     // Update password in Stalwart's internal directory via API
+    // Stalwart 0.15.x doesn't support PATCH/PUT on principals reliably,
+    // so delete + recreate to preserve all fields with the new password
     try {
         $api = new StalwartApiClient();
-        $result = $api->request('PUT', "principal/{$email}", [
-            'type' => 'individual',
-            'name' => $email,
-            'secrets' => [$password],
-        ]);
-        if ($result['http_code'] >= 400) {
-            logger("Warning: Stalwart API password update failed (HTTP {$result['http_code']}): " . ($result['raw'] ?? ''));
+        $existing = $api->get("principal/{$email}");
+        if (($existing['http_code'] ?? 0) === 200 && isset($existing['body']['data'])) {
+            $principal = $existing['body']['data'];
+            $api->delete("principal/{$email}");
+            $api->post('principal', [
+                'type' => $principal['type'] ?? 'individual',
+                'name' => $email,
+                'emails' => $principal['emails'] ?? [$email],
+                'secrets' => [$password],
+                'roles' => $principal['roles'] ?? ['user'],
+                'quota' => $principal['quota'] ?? 0,
+            ]);
         }
     } catch (RuntimeException $e) {
         logger("Warning: could not update Stalwart password for {$email}: " . $e->getMessage());
@@ -10507,11 +10514,22 @@ function stalwartEmailMailboxSetQuota(array $params): array
         return ['success' => false, 'error' => 'Invalid email address'];
     }
 
-    // Quota is managed in the panel DB. Stalwart SQL backend reads it directly.
-    // Optionally push to Stalwart API for real-time enforcement.
+    // Update quota in Stalwart via delete + recreate
     try {
         $api = new StalwartApiClient();
-        $api->patch("principal/{$email}", [['action' => 'set', 'field' => 'quota', 'value' => $quotaBytes]]);
+        $existing = $api->get("principal/{$email}");
+        if (($existing['http_code'] ?? 0) === 200 && isset($existing['body']['data'])) {
+            $principal = $existing['body']['data'];
+            $api->delete("principal/{$email}");
+            $api->post('principal', [
+                'type' => $principal['type'] ?? 'individual',
+                'name' => $email,
+                'emails' => $principal['emails'] ?? [$email],
+                'secrets' => $principal['secrets'] ?? [],
+                'roles' => $principal['roles'] ?? ['user'],
+                'quota' => $quotaBytes,
+            ]);
+        }
     } catch (RuntimeException $e) {
         logger("Warning: could not push quota to Stalwart: " . $e->getMessage());
     }
@@ -10570,21 +10588,20 @@ function stalwartEmailMailboxToggle(array $params): array
     }
 
     // Toggle account in Stalwart's internal directory via API
+    // Toggle by delete + recreate with updated roles
     try {
         $api = new StalwartApiClient();
-        if ($active) {
-            // Re-enable: ensure account has user role
-            $api->request('PUT', "principal/{$email}", [
-                'type' => 'individual',
+        $existing = $api->get("principal/{$email}");
+        if (($existing['http_code'] ?? 0) === 200 && isset($existing['body']['data'])) {
+            $principal = $existing['body']['data'];
+            $api->delete("principal/{$email}");
+            $api->post('principal', [
+                'type' => $principal['type'] ?? 'individual',
                 'name' => $email,
-                'roles' => ['user'],
-            ]);
-        } else {
-            // Disable: remove all roles
-            $api->request('PUT', "principal/{$email}", [
-                'type' => 'individual',
-                'name' => $email,
-                'roles' => [],
+                'emails' => $principal['emails'] ?? [$email],
+                'secrets' => $principal['secrets'] ?? [],
+                'roles' => $active ? ['user'] : [],
+                'quota' => $principal['quota'] ?? 0,
             ]);
         }
     } catch (RuntimeException $e) {
