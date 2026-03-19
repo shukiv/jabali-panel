@@ -2355,6 +2355,9 @@ name.junk = "Junk"
 name.drafts = "Drafts"
 name.archive = "Archive"
 
+[calendar.default]
+display-name = "Personal"
+
 [storage]
 data = "rocksdb"
 fts = "rocksdb"
