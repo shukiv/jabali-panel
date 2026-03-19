@@ -2355,6 +2355,10 @@ rotate = "daily"
 ansi = false
 enable = true
 
+[certificate.default]
+cert = "/etc/ssl/jabali/panel.crt"
+private-key = "/etc/ssl/jabali/panel.key"
+
 [authentication.fallback-admin]
 user = "admin"
 secret = "${admin_hash}"
@@ -3981,23 +3985,33 @@ MAILNGINX
             if certbot certonly --webroot -w /var/www/html -d "$mail_hostname" --non-interactive --agree-tos --email "$ADMIN_EMAIL" 2>/dev/null; then
                 log "Let's Encrypt certificate issued for $mail_hostname"
 
-                # Update Postfix to use the certificate
-                postconf -e "smtpd_tls_cert_file=/etc/letsencrypt/live/$mail_hostname/fullchain.pem"
-                postconf -e "smtpd_tls_key_file=/etc/letsencrypt/live/$mail_hostname/privkey.pem"
-                systemctl reload postfix 2>/dev/null || true
-
-                # Update Dovecot to use the certificate
-                # Dovecot 2.4+ (Debian 13) uses ssl_server_cert_file / ssl_server_key_file
-                # Dovecot 2.3  (Debian 12) uses ssl_cert / ssl_key
-                if [[ -f /etc/dovecot/conf.d/10-ssl.conf ]]; then
-                    if grep -q '^ssl_server_cert_file' /etc/dovecot/conf.d/10-ssl.conf; then
-                        sed -i "s|^ssl_server_cert_file = .*|ssl_server_cert_file = /etc/letsencrypt/live/$mail_hostname/fullchain.pem|" /etc/dovecot/conf.d/10-ssl.conf
-                        sed -i "s|^ssl_server_key_file = .*|ssl_server_key_file = /etc/letsencrypt/live/$mail_hostname/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
-                    else
-                        sed -i "s|^ssl_cert = .*|ssl_cert = </etc/letsencrypt/live/$mail_hostname/fullchain.pem|" /etc/dovecot/conf.d/10-ssl.conf
-                        sed -i "s|^ssl_key = .*|ssl_key = </etc/letsencrypt/live/$mail_hostname/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
+                    # Update Stalwart TLS certificate to use Let's Encrypt cert
+                    if [[ -f /etc/stalwart-mail/config.toml ]]; then
+                        sed -i "s|^cert = .*|cert = \"/etc/letsencrypt/live/$mail_hostname/fullchain.pem\"|" /etc/stalwart-mail/config.toml
+                        sed -i "s|^private-key = .*|private-key = \"/etc/letsencrypt/live/$mail_hostname/privkey.pem\"|" /etc/stalwart-mail/config.toml
+                        systemctl restart stalwart-mail 2>/dev/null || true
                     fi
-                    systemctl reload dovecot 2>/dev/null || true
+                    log "Stalwart TLS updated with Let's Encrypt certificate"
+                else
+                    # Update Postfix to use the certificate
+                    postconf -e "smtpd_tls_cert_file=/etc/letsencrypt/live/$mail_hostname/fullchain.pem"
+                    postconf -e "smtpd_tls_key_file=/etc/letsencrypt/live/$mail_hostname/privkey.pem"
+                    systemctl reload postfix 2>/dev/null || true
+
+                    # Update Dovecot to use the certificate
+                    # Dovecot 2.4+ (Debian 13) uses ssl_server_cert_file / ssl_server_key_file
+                    # Dovecot 2.3  (Debian 12) uses ssl_cert / ssl_key
+                    if [[ -f /etc/dovecot/conf.d/10-ssl.conf ]]; then
+                        if grep -q '^ssl_server_cert_file' /etc/dovecot/conf.d/10-ssl.conf; then
+                            sed -i "s|^ssl_server_cert_file = .*|ssl_server_cert_file = /etc/letsencrypt/live/$mail_hostname/fullchain.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                            sed -i "s|^ssl_server_key_file = .*|ssl_server_key_file = /etc/letsencrypt/live/$mail_hostname/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                        else
+                            sed -i "s|^ssl_cert = .*|ssl_cert = </etc/letsencrypt/live/$mail_hostname/fullchain.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                            sed -i "s|^ssl_key = .*|ssl_key = </etc/letsencrypt/live/$mail_hostname/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
+                        fi
+                        systemctl reload dovecot 2>/dev/null || true
+                    fi
                 fi
                 log "Mail services updated to use Let's Encrypt certificate"
             else

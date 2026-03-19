@@ -35,13 +35,14 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
 
     protected function loadServices(): void
     {
+        $isStalwart = config('jabali.mail_backend') === 'stalwart';
+
         $preferredOrder = [
             'nginx',
             'mariadb', // can fall back to mysql
             ...array_keys($this->detectPhpFpmServices()),
             'php-fpm',
-            'postfix',
-            'dovecot',
+            ...($isStalwart ? ['stalwart-mail'] : ['postfix', 'dovecot']),
             'named', // can fall back to bind9
             'redis-server',
             'fail2ban',
@@ -52,6 +53,7 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
             'mariadb' => 'MariaDB',
             'mysql' => 'MariaDB',
             'php-fpm' => 'PHP-FPM',
+            'stalwart-mail' => 'Stalwart',
             'postfix' => 'Postfix',
             'dovecot' => 'Dovecot',
             'named' => 'BIND DNS',

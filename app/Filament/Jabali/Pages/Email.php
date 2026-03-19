@@ -385,7 +385,8 @@ class Email extends Page implements HasActions, HasForms, HasTable
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel(__('Close'))
                     ->infolist(function (Mailbox $record): array {
-                        $serverHostname = \App\Models\Setting::get('mail_hostname') ?: request()->getHost();
+                        $domain = $record->emailDomain?->domain?->domain ?? '';
+                        $serverHostname = $domain ? "mail.{$domain}" : (\App\Models\Setting::get('mail_hostname') ?: request()->getHost());
 
                         return [
                             Section::make(__('IMAP Settings'))
