@@ -702,13 +702,17 @@ install_packages() {
         done
     }
 
-    # Remove Debian default MTA (exim4) when using Stalwart — it conflicts on port 25
+    # Remove conflicting MTAs when using Stalwart — they grab port 25 first
+    # Proxmox LXC templates ship Postfix; Debian base installs exim4
     if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
-        if dpkg -l exim4-base >/dev/null 2>&1; then
-            run_quiet "Removing exim4 (conflicts with Stalwart on port 25)..." \
-                env DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq 'exim4*'
-            apt-get autoremove -y -qq >/dev/null 2>&1
-        fi
+        for mta_pkg in postfix exim4-base; do
+            if dpkg -l "$mta_pkg" >/dev/null 2>&1; then
+                local mta_name="${mta_pkg%%-*}"
+                run_quiet "Removing ${mta_name} (conflicts with Stalwart on port 25)..." \
+                    env DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${mta_name}*"
+            fi
+        done
+        apt-get autoremove -y -qq >/dev/null 2>&1
     fi
 
     # Install imapsync binary (not in Debian repos)
