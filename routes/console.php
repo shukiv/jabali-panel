@@ -66,6 +66,11 @@ Schedule::command('jabali:sync-mailbox-quotas')
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/mailbox-quota-sync.log'));
 
+Schedule::command('jabali:sync-mailbox-logins')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Audit Log Rotation - runs daily to prune old audit logs (default: 90 days retention)
 Schedule::call(function () {
     $deleted = AuditLog::prune();
