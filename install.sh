@@ -1539,7 +1539,6 @@ server {
 
     # Webmail
     WEBMAIL_LOCATION_BLOCK
-    }
 }
 NGINX
 
