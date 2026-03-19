@@ -1560,6 +1560,23 @@ NGINX
     local webmail_tmp="/tmp/jabali_webmail_block.conf"
     if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
         cat > "$webmail_tmp" <<WEBMAIL_BLOCK
+    # DAV proxy (CalDAV, CardDAV, WebDAV) via Stalwart
+    location = /.well-known/caldav {
+        return 301 /dav/cal;
+    }
+
+    location = /.well-known/carddav {
+        return 301 /dav/card;
+    }
+
+    location ^~ /dav/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
     # JMAP proxy for Bulwark webmail
     location = /.well-known/jmap {
         return 301 /jmap/session;
