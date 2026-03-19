@@ -2347,6 +2347,13 @@ protocol = "managesieve"
 protocol = "http"
 bind = ["[::]:8080"]
 
+[jmap.mailbox]
+name.sent = "Sent"
+name.trash = "Trash"
+name.junk = "Junk"
+name.drafts = "Drafts"
+name.archive = "Archive"
+
 [storage]
 data = "rocksdb"
 fts = "rocksdb"

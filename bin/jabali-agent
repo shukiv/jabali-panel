@@ -710,6 +710,8 @@ function handleAction(array $request): array
         'email.autoresponder_set' => getMailBackend() === 'stalwart' ? stalwartEmailAutoresponderSet($params) : emailAutoresponderSet($params),
         'email.autoresponder_toggle' => getMailBackend() === 'stalwart' ? stalwartEmailAutoresponderToggle($params) : emailAutoresponderToggle($params),
         'email.autoresponder_delete' => getMailBackend() === 'stalwart' ? stalwartEmailAutoresponderDelete($params) : emailAutoresponderDelete($params),
+        'email.stalwart_add_identity' => stalwartAddIdentity($params),
+        'email.stalwart_remove_identity' => stalwartRemoveIdentity($params),
         'email.acl_share_folder' => getMailBackend() === 'stalwart' ? stalwartEmailAclShareFolder($params) : emailAclShareFolder($params),
         'email.acl_revoke_folder' => getMailBackend() === 'stalwart' ? stalwartEmailAclRevokeFolder($params) : emailAclRevokeFolder($params),
         'email.acl_update_folder' => getMailBackend() === 'stalwart' ? stalwartEmailAclUpdateFolder($params) : emailAclUpdateFolder($params),
@@ -1465,6 +1467,26 @@ server {
 
     index index.php index.html;
     client_max_body_size 50M;
+
+    # Redirect mail.domain.ext to webmail (exclude autoconfig/autodiscover)
+    if ($host ~* ^mail\.) {
+        set $mail_redirect 1;
+    }
+    if ($request_uri ~* ^/(autodiscover|autoconfig|mail/config|\.well-known/autoconfig)) {
+        set $mail_redirect 0;
+    }
+    if ($request_uri ~* ^/webmail) {
+        set $mail_redirect 0;
+    }
+    if ($request_uri ~* ^/dav) {
+        set $mail_redirect 0;
+    }
+    if ($request_uri ~* ^/jmap) {
+        set $mail_redirect 0;
+    }
+    if ($mail_redirect = 1) {
+        return 301 $scheme://$host/webmail/;
+    }
 
     location / {
         try_files $uri $uri/ /index.php?$query_string;
@@ -10630,6 +10652,84 @@ function stalwartEmailMailboxToggle(array $params): array
         'success' => true,
         'message' => "Mailbox {$email} " . ($active ? 'activated' : 'deactivated'),
     ];
+}
+
+function stalwartAddIdentity(array $params): array
+{
+    $email = strtolower(trim($params['email'] ?? ''));
+    $identity = strtolower(trim($params['identity'] ?? ''));
+
+    if (empty($email) || empty($identity)) {
+        return ['success' => false, 'error' => 'Email and identity required'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $existing = $api->get("principal/{$email}");
+        if (($existing['http_code'] ?? 0) !== 200 || !isset($existing['body']['data'])) {
+            return ['success' => false, 'error' => 'Account not found in Stalwart'];
+        }
+
+        $principal = $existing['body']['data'];
+        $emails = $principal['emails'] ?? [$email];
+
+        if (!in_array($identity, $emails, true)) {
+            $emails[] = $identity;
+            $api->delete("principal/{$email}");
+            $api->post('principal', [
+                'type' => $principal['type'] ?? 'individual',
+                'name' => $email,
+                'emails' => $emails,
+                'secrets' => $principal['secrets'] ?? [],
+                'roles' => $principal['roles'] ?? ['user'],
+                'quota' => $principal['quota'] ?? 0,
+            ]);
+            logger("Added identity {$identity} to {$email} (Stalwart)");
+        }
+
+        return ['success' => true, 'message' => "Identity {$identity} added to {$email}"];
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+function stalwartRemoveIdentity(array $params): array
+{
+    $email = strtolower(trim($params['email'] ?? ''));
+    $identity = strtolower(trim($params['identity'] ?? ''));
+
+    if (empty($email) || empty($identity)) {
+        return ['success' => false, 'error' => 'Email and identity required'];
+    }
+
+    try {
+        $api = new StalwartApiClient();
+        $existing = $api->get("principal/{$email}");
+        if (($existing['http_code'] ?? 0) !== 200 || !isset($existing['body']['data'])) {
+            return ['success' => false, 'error' => 'Account not found in Stalwart'];
+        }
+
+        $principal = $existing['body']['data'];
+        $emails = $principal['emails'] ?? [$email];
+        $emails = array_values(array_filter($emails, fn($e) => $e !== $identity));
+
+        if (count($emails) !== count($principal['emails'] ?? [])) {
+            $api->delete("principal/{$email}");
+            $api->post('principal', [
+                'type' => $principal['type'] ?? 'individual',
+                'name' => $email,
+                'emails' => $emails,
+                'secrets' => $principal['secrets'] ?? [],
+                'roles' => $principal['roles'] ?? ['user'],
+                'quota' => $principal['quota'] ?? 0,
+            ]);
+            logger("Removed identity {$identity} from {$email} (Stalwart)");
+        }
+
+        return ['success' => true, 'message' => "Identity {$identity} removed from {$email}"];
+    } catch (RuntimeException $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
 }
 
 function stalwartEmailSyncVirtualUsers(array $params): array

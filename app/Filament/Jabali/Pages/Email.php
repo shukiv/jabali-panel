@@ -1418,8 +1418,12 @@ class Email extends Page implements HasActions, HasForms, HasTable
                         'is_active' => true,
                     ]);
 
-                    // Sync Roundcube identities for local mailboxes in destinations
-                    $this->syncRoundcubeIdentitiesForForwarder($email, $destinations);
+                    // Sync identities for local mailboxes in destinations
+                    if (config('jabali.mail_backend') === 'stalwart') {
+                        $this->syncStalwartIdentitiesForForwarder($email, $destinations);
+                    } else {
+                        $this->syncRoundcubeIdentitiesForForwarder($email, $destinations);
+                    }
 
                     $this->syncMailRouting();
 
@@ -1452,9 +1456,14 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             $forwarder->update(['destinations' => $destinations]);
 
-            // Update Roundcube identities: remove old, add new
-            $this->removeRoundcubeIdentitiesForForwarder($forwarder->email, $oldDestinations);
-            $this->syncRoundcubeIdentitiesForForwarder($forwarder->email, $destinations);
+            // Update identities: remove old, add new
+            if (config('jabali.mail_backend') === 'stalwart') {
+                $this->removeStalwartIdentitiesForForwarder($forwarder->email, $oldDestinations);
+                $this->syncStalwartIdentitiesForForwarder($forwarder->email, $destinations);
+            } else {
+                $this->removeRoundcubeIdentitiesForForwarder($forwarder->email, $oldDestinations);
+                $this->syncRoundcubeIdentitiesForForwarder($forwarder->email, $destinations);
+            }
 
             $this->syncMailRouting();
 
@@ -1506,8 +1515,12 @@ class Email extends Page implements HasActions, HasForms, HasTable
 
             $forwarder->delete();
 
-            // Remove Roundcube identities for this forwarder
-            $this->removeRoundcubeIdentitiesForForwarder($forwarderEmail, $forwarderDestinations);
+            // Remove identities for this forwarder
+            if (config('jabali.mail_backend') === 'stalwart') {
+                $this->removeStalwartIdentitiesForForwarder($forwarderEmail, $forwarderDestinations);
+            } else {
+                $this->removeRoundcubeIdentitiesForForwarder($forwarderEmail, $forwarderDestinations);
+            }
 
             $this->syncMailRouting();
 
@@ -1554,6 +1567,51 @@ class Email extends Page implements HasActions, HasForms, HasTable
             }
         } catch (Exception $e) {
             Log::warning("Failed to remove Roundcube identities: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Sync Stalwart identities when a forwarder is created.
+     * For each destination that is a local mailbox, add the forwarder address to the principal's emails.
+     */
+    protected function syncStalwartIdentitiesForForwarder(string $forwarderEmail, array $destinations): void
+    {
+        try {
+            foreach ($destinations as $destination) {
+                $mailbox = $this->findLocalMailbox($destination);
+                if (! $mailbox) {
+                    continue;
+                }
+
+                $result = $this->getAgent()->send('email.stalwart_add_identity', [
+                    'email' => $mailbox->email,
+                    'identity' => $forwarderEmail,
+                ]);
+            }
+        } catch (Exception $e) {
+            Log::warning("Failed to sync Stalwart identities: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Remove Stalwart identities when a forwarder is deleted.
+     */
+    protected function removeStalwartIdentitiesForForwarder(string $forwarderEmail, array $destinations): void
+    {
+        try {
+            foreach ($destinations as $destination) {
+                $mailbox = $this->findLocalMailbox($destination);
+                if (! $mailbox) {
+                    continue;
+                }
+
+                $result = $this->getAgent()->send('email.stalwart_remove_identity', [
+                    'email' => $mailbox->email,
+                    'identity' => $forwarderEmail,
+                ]);
+            }
+        } catch (Exception $e) {
+            Log::warning("Failed to remove Stalwart identities: {$e->getMessage()}");
         }
     }
 
