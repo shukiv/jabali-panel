@@ -1537,24 +1537,24 @@ server {
         }
     }
 
-    # Roundcube Webmail
+    # Webmail
     location = /webmail {
         return 301 /webmail/;
     }
 
-    location ^~ /webmail/ {
-        alias /var/lib/roundcube/public_html/;
-        index index.php;
-
-        location ~ \.php\$ {
-            fastcgi_pass unix:${panel_sock};
-            fastcgi_param SCRIPT_FILENAME \$request_filename;
-            include fastcgi_params;
-            fastcgi_read_timeout 600;
-        }
+    WEBMAIL_LOCATION_BLOCK
     }
 }
 NGINX
+
+    # Replace webmail location block based on mail backend
+    local panel_conf="/etc/nginx/sites-available/${SERVER_HOSTNAME}"
+    if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
+        local webmail_block='location ^~ /webmail/ {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_buffering off;\n    }'
+    else
+        local webmail_block="location ^~ /webmail/ {\n        alias /var/lib/roundcube/public_html/;\n        index index.php;\n\n        location ~ \\.php\$ {\n            fastcgi_pass unix:${panel_sock};\n            fastcgi_param SCRIPT_FILENAME \\\$request_filename;\n            include fastcgi_params;\n            fastcgi_read_timeout 600;\n        }\n    }"
+    fi
+    sed -i "s|WEBMAIL_LOCATION_BLOCK|${webmail_block}|" "$panel_conf"
 
     ln -sf /etc/nginx/sites-available/${SERVER_HOSTNAME} /etc/nginx/sites-enabled/
 
