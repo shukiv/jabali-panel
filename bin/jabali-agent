@@ -11048,12 +11048,9 @@ function stalwartEmailGetLogs(array $params): array
 
     $logs = [];
 
-    // Stalwart logs to its own structured log file or journald
-    $output = [];
-    exec("journalctl -u stalwart-mail --no-pager -n 1000 -o json 2>/dev/null", $output, $code);
-
-    if ($code !== 0 || empty($output)) {
-        // Fallback to Stalwart log files (named with date suffix: stalwart.log.YYYY-MM-DD)
+    // Stalwart logs detailed events to its own log files, not journald.
+    // journald only has systemd service start/stop messages.
+    {
         $logDir = '/var/log/stalwart-mail';
         $output = [];
         if (is_dir($logDir)) {
@@ -11133,49 +11130,6 @@ function stalwartEmailGetLogs(array $params): array
         usort($messageIndex, fn($a, $b) => $b['timestamp'] <=> $a['timestamp']);
         return ['success' => true, 'logs' => array_slice($messageIndex, 0, $limit)];
     }
-
-    // Parse journald JSON output
-    $messageIndex = [];
-    foreach ($output as $line) {
-        $entry = json_decode($line, true);
-        if (!is_array($entry)) {
-            continue;
-        }
-
-        $timestamp = isset($entry['__REALTIME_TIMESTAMP'])
-            ? (int) ($entry['__REALTIME_TIMESTAMP'] / 1000000)
-            : time();
-        $message = $entry['MESSAGE'] ?? '';
-
-        $logEntry = [
-            'timestamp' => $timestamp,
-            'queue_id' => '',
-            'component' => 'stalwart',
-            'from' => null,
-            'to' => null,
-            'subject' => null,
-            'status' => 'info',
-            'message' => $message,
-        ];
-
-        if (preg_match('/from=<([^>]*)>/', $message, $fromMatch)) {
-            $logEntry['from'] = $fromMatch[1];
-        }
-        if (preg_match('/to=<([^>]*)>/', $message, $toMatch)) {
-            $logEntry['to'] = $toMatch[1];
-        }
-        if (preg_match('/status[=:]\s*(\w+)/i', $message, $statusMatch)) {
-            $logEntry['status'] = $statusMatch[1];
-        }
-        if (preg_match('/id[=:]\s*([A-Za-z0-9]+)/i', $message, $idMatch)) {
-            $logEntry['queue_id'] = $idMatch[1];
-        }
-
-        $messageIndex[] = $logEntry;
-    }
-
-    usort($messageIndex, fn($a, $b) => $b['timestamp'] <=> $a['timestamp']);
-    return ['success' => true, 'logs' => array_slice($messageIndex, 0, $limit)];
 }
 
 function stalwartSpamSettings(array $params): array
