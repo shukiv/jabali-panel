@@ -1538,10 +1538,6 @@ server {
     }
 
     # Webmail
-    location = /webmail {
-        return 301 /webmail/;
-    }
-
     WEBMAIL_LOCATION_BLOCK
     }
 }
@@ -1550,9 +1546,9 @@ NGINX
     # Replace webmail location block based on mail backend
     local panel_conf="/etc/nginx/sites-available/${SERVER_HOSTNAME}"
     if [[ "$MAIL_BACKEND" == "stalwart" ]]; then
-        local webmail_block='location ^~ /webmail/ {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_buffering off;\n    }'
+        local webmail_block='# JMAP proxy for Bulwark webmail\n    location = /.well-known/jmap {\n        return 301 /jmap/session;\n    }\n\n    location ^~ /jmap/ {\n        proxy_pass http://127.0.0.1:8080;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        sub_filter_types application/json;\n        sub_filter_once off;\n        sub_filter \"http://'${SERVER_HOSTNAME}':8080\" \"https://'${SERVER_HOSTNAME}'\";\n        sub_filter \"ws://'${SERVER_HOSTNAME}':8080\" \"wss://'${SERVER_HOSTNAME}'\";\n        sub_filter \"http://127.0.0.1:8080\" \"https://'${SERVER_HOSTNAME}'\";\n    }\n\n    # Bulwark webmail\n    location = /webmail {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }\n\n    location ^~ /webmail/ {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_buffering off;\n    }'
     else
-        local webmail_block="location ^~ /webmail/ {\n        alias /var/lib/roundcube/public_html/;\n        index index.php;\n\n        location ~ \\.php\$ {\n            fastcgi_pass unix:${panel_sock};\n            fastcgi_param SCRIPT_FILENAME \\\$request_filename;\n            include fastcgi_params;\n            fastcgi_read_timeout 600;\n        }\n    }"
+        local webmail_block="location = /webmail {\n        return 301 /webmail/;\n    }\n\n    location ^~ /webmail/ {\n        alias /var/lib/roundcube/public_html/;\n        index index.php;\n\n        location ~ \\.php\$ {\n            fastcgi_pass unix:${panel_sock};\n            fastcgi_param SCRIPT_FILENAME \\\$request_filename;\n            include fastcgi_params;\n            fastcgi_read_timeout 600;\n        }\n    }"
     fi
     sed -i "s|WEBMAIL_LOCATION_BLOCK|${webmail_block}|" "$panel_conf"
 
@@ -2351,7 +2347,7 @@ SYSTEMD
             cd "$bulwark_dir"
 
             cat > .env.local <<BULWARK_ENV
-JMAP_SERVER_URL=http://127.0.0.1:8080
+JMAP_SERVER_URL=https://${SERVER_HOSTNAME}
 HOSTNAME=127.0.0.1
 PORT=3000
 APP_NAME=Webmail
@@ -2361,10 +2357,121 @@ BULWARK_ENV
             # Configure basePath so Bulwark serves under /webmail/
             sed -i 's|output: "standalone",|output: "standalone",\n  basePath: "/webmail",|' next.config.ts
 
-            # Fix next-intl matcher for basePath support (must include "/" for root)
-            if ! grep -q '^\s*"/",' proxy.ts 2>/dev/null; then
-                sed -i 's|matcher: \[|matcher: [\n    "/",|' proxy.ts
-            fi
+            # Use localePrefix: 'always' to avoid rewrite loops in Next.js 16 proxy mode
+            sed -i "s|localePrefix: 'never'|localePrefix: 'always'|" i18n/routing.ts
+
+            # Rewrite proxy.ts to skip intl middleware for locale-prefixed paths
+            # (Next.js 16 proxy rewrites make HTTP requests to self, causing loops)
+            cat > proxy.ts <<'PROXY_TS'
+import { type NextRequest, NextResponse } from "next/server";
+import createIntlMiddleware from "next-intl/middleware";
+import { routing } from "./i18n/routing";
+
+const intlMiddleware = createIntlMiddleware(routing);
+
+function addSecurityHeaders(response: ReturnType<typeof NextResponse.next>, request: NextRequest) {
+  const nonce = crypto.randomUUID();
+  const isDev = process.env.NODE_ENV === "development";
+  const scriptSrc = `'self' 'nonce-${nonce}' 'unsafe-eval'`;
+  const connectSrc = isDev ? `'self' https: ws: wss:` : `'self' https:`;
+  const csp = [
+    `default-src 'self'`, `script-src ${scriptSrc}`,
+    `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https:`,
+    `font-src 'self'`, `connect-src ${connectSrc}`,
+    `frame-src 'none'`, `object-src 'none'`,
+    `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`,
+  ].join("; ");
+  const existing = response.headers.get("x-middleware-override-headers");
+  response.headers.set("x-middleware-override-headers", existing ? `${existing},x-nonce` : "x-nonce");
+  response.headers.set("x-middleware-request-x-nonce", nonce);
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("X-XSS-Protection", "0");
+  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  response.headers.set("Content-Security-Policy-Report-Only", csp);
+  return response;
+}
+
+export function proxy(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const locales = routing.locales as readonly string[];
+  const hasLocale = locales.some((l) => pathname === `/${l}` || pathname.startsWith(`/${l}/`));
+  if (hasLocale) {
+    return addSecurityHeaders(NextResponse.next(), request);
+  }
+  let intlResponse: ReturnType<typeof intlMiddleware> | null = null;
+  try { intlResponse = intlMiddleware(request); } catch (error) { console.error("Locale middleware error:", error); }
+  return addSecurityHeaders(intlResponse ?? NextResponse.next(), request);
+}
+
+export const config = {
+  matcher: ["/", "/((?!api|_next|.*\\..*).*)" ],
+};
+PROXY_TS
+
+            # Fix client-side fetch calls to include basePath (raw fetch ignores Next.js basePath)
+            find hooks/ lib/ stores/ components/ -name '*.ts' -o -name '*.tsx' 2>/dev/null | \
+                xargs grep -l "fetch('/api/" 2>/dev/null | \
+                xargs -r sed -i "s|fetch('/api/|fetch('/webmail/api/|g"
+            find components/ -name '*.tsx' 2>/dev/null | \
+                xargs grep -l 'fetch("/api/' 2>/dev/null | \
+                xargs -r sed -i 's|fetch("/api/|fetch("/webmail/api/|g'
+
+            # Add SSO API route for Jabali panel single sign-on
+            mkdir -p app/api/auth/sso
+            cat > app/api/auth/sso/route.ts <<'SSO_ROUTE'
+import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { readFileSync, unlinkSync, existsSync } from 'node:fs';
+import { logger } from '@/lib/logger';
+import { encryptSession } from '@/lib/auth/crypto';
+import { SESSION_COOKIE, SESSION_COOKIE_MAX_AGE } from '@/lib/auth/session-cookie';
+
+const SSO_TOKEN_DIR = '/var/lib/jabali/sso-tokens';
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax' as const,
+  path: '/',
+  maxAge: SESSION_COOKIE_MAX_AGE,
+};
+
+function getBaseUrl(request: NextRequest): string {
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || 'localhost';
+  const proto = request.headers.get('x-forwarded-proto') || 'https';
+  return `${proto}://${host}`;
+}
+
+export async function GET(request: NextRequest) {
+  const token = request.nextUrl.searchParams.get('token');
+  const baseUrl = getBaseUrl(request);
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+    return NextResponse.redirect(`${baseUrl}/webmail/en/login`);
+  }
+  const tokenFile = `${SSO_TOKEN_DIR}/bulwark_sso_${token}`;
+  try {
+    if (!existsSync(tokenFile)) {
+      return NextResponse.redirect(`${baseUrl}/webmail/en/login`);
+    }
+    const raw = readFileSync(tokenFile, 'utf-8');
+    try { unlinkSync(tokenFile); } catch {}
+    const data = JSON.parse(raw);
+    if (!data.email || !data.expires || data.expires < Math.floor(Date.now() / 1000) || !data.password) {
+      return NextResponse.redirect(`${baseUrl}/webmail/en/login`);
+    }
+    const jmapServerUrl = process.env.JMAP_SERVER_URL || '';
+    const sessionToken = encryptSession(jmapServerUrl, data.email, data.password);
+    const cookieStore = await cookies();
+    cookieStore.set(SESSION_COOKIE, sessionToken, COOKIE_OPTIONS);
+    logger.info('SSO login successful', { email: data.email });
+    return NextResponse.redirect(`${baseUrl}/webmail/en`);
+  } catch (error) {
+    logger.error('SSO error', { error: error instanceof Error ? error.message : 'Unknown' });
+    return NextResponse.redirect(`${baseUrl}/webmail/en/login`);
+  }
+}
+SSO_ROUTE
 
             info "Building Bulwark (this may take a minute)..."
             npm install >/dev/null 2>&1
@@ -2374,6 +2481,11 @@ BULWARK_ENV
                 warn "Bulwark build failed — webmail will not be available"
                 exit 0
             fi
+
+            # Standalone output requires static, public, and env to be symlinked
+            ln -sfn "${bulwark_dir}/.next/static" "${bulwark_dir}/.next/standalone/.next/static"
+            ln -sfn "${bulwark_dir}/public" "${bulwark_dir}/.next/standalone/public"
+            ln -sfn "${bulwark_dir}/.env.local" "${bulwark_dir}/.next/standalone/.env.local"
 
             chown -R www-data:www-data "${bulwark_dir}/.next" "${bulwark_dir}/.env.local"
             log "Bulwark Webmail built successfully"
@@ -2389,11 +2501,11 @@ After=network.target stalwart-mail.service
 [Service]
 Type=simple
 WorkingDirectory=${bulwark_dir}
-ExecStart=/usr/bin/node ${bulwark_dir}/node_modules/.bin/next start -p 3000 -H 127.0.0.1
+ExecStart=/usr/bin/node ${bulwark_dir}/.next/standalone/server.js
 Restart=always
 RestartSec=5
 User=www-data
-Environment=NODE_ENV=production
+Environment=NODE_ENV=production HOSTNAME=127.0.0.1 PORT=3000
 
 [Install]
 WantedBy=multi-user.target

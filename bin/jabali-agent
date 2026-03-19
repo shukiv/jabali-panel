@@ -1491,10 +1491,6 @@ server {
     }
 
     # Webmail — Bulwark (Stalwart backend) or Roundcube (legacy backend)
-    location = /webmail {
-        return 301 /webmail/;
-    }
-
     WEBMAIL_LOCATION_PLACEHOLDER
 
     # GoAccess statistics reports
@@ -1521,6 +1517,14 @@ NGINXCONF;
     $mailBackend = getMailBackend();
     if ($mailBackend === 'stalwart') {
         $webmailLocation = <<<'NGINX'
+    location = /webmail {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location ^~ /webmail/ {
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
@@ -1533,6 +1537,10 @@ NGINXCONF;
 NGINX;
     } else {
         $webmailLocation = <<<NGINX
+    location = /webmail {
+        return 301 /webmail/;
+    }
+
     location ^~ /webmail/ {
         alias /var/lib/roundcube/public_html/;
         index index.php;
@@ -10335,14 +10343,32 @@ function stalwartEmailMailboxCreate(array $params): array
     chown($subscriptionsFile, $uid);
     chgrp($subscriptionsFile, $gid);
 
-    // Generate password hash — Stalwart supports SHA512-CRYPT via SQL backend
+    // Generate password hash for the panel DB
     $passwordHash = '{SHA512-CRYPT}' . crypt($password, '$6$' . bin2hex(random_bytes(8)) . '$');
 
     $maildirPath = "/home/{$username}/mail/{$domain}/{$localPart}/";
 
-    // Stalwart reads auth from the panel's MySQL DB via SQL backend,
-    // so we just need to ensure the DB row exists (handled by Laravel caller).
-    // No Postfix postmap needed.
+    // Create or update account in Stalwart's internal directory via API
+    try {
+        $api = new StalwartApiClient();
+        // Delete existing account if recreating
+        if ($folderExists) {
+            $api->delete("principal/{$email}");
+        }
+        $result = $api->post('principal', [
+            'type' => 'individual',
+            'name' => $email,
+            'emails' => [$email],
+            'secrets' => [$password],
+            'roles' => ['user'],
+            'quota' => $quotaBytes,
+        ]);
+        if ($result['http_code'] >= 400) {
+            logger("Warning: Stalwart API create failed (HTTP {$result['http_code']}): " . ($result['raw'] ?? ''));
+        }
+    } catch (RuntimeException $e) {
+        logger("Warning: could not create Stalwart account for {$email}: " . $e->getMessage());
+    }
 
     $action = $folderExists ? 'Recreated' : 'Created';
     logger("{$action} mailbox: {$email} at {$maildirPath} (Stalwart backend)");
@@ -10428,8 +10454,23 @@ function stalwartEmailMailboxChangePassword(array $params): array
         return ['success' => false, 'error' => 'Password must be at least 8 characters'];
     }
 
-    // Generate SHA512-CRYPT hash — Stalwart SQL backend reads this from DB
+    // Generate SHA512-CRYPT hash for the panel DB
     $passwordHash = '{SHA512-CRYPT}' . crypt($password, '$6$' . bin2hex(random_bytes(8)) . '$');
+
+    // Update password in Stalwart's internal directory via API
+    try {
+        $api = new StalwartApiClient();
+        $result = $api->request('PUT', "principal/{$email}", [
+            'type' => 'individual',
+            'name' => $email,
+            'secrets' => [$password],
+        ]);
+        if ($result['http_code'] >= 400) {
+            logger("Warning: Stalwart API password update failed (HTTP {$result['http_code']}): " . ($result['raw'] ?? ''));
+        }
+    } catch (RuntimeException $e) {
+        logger("Warning: could not update Stalwart password for {$email}: " . $e->getMessage());
+    }
 
     logger("Changed password for mailbox: {$email} (Stalwart backend)");
 
@@ -10528,7 +10569,27 @@ function stalwartEmailMailboxToggle(array $params): array
         return ['success' => false, 'error' => 'Invalid email address'];
     }
 
-    // Status managed in panel DB — Stalwart SQL query checks is_active field.
+    // Toggle account in Stalwart's internal directory via API
+    try {
+        $api = new StalwartApiClient();
+        if ($active) {
+            // Re-enable: ensure account has user role
+            $api->request('PUT', "principal/{$email}", [
+                'type' => 'individual',
+                'name' => $email,
+                'roles' => ['user'],
+            ]);
+        } else {
+            // Disable: remove all roles
+            $api->request('PUT', "principal/{$email}", [
+                'type' => 'individual',
+                'name' => $email,
+                'roles' => [],
+            ]);
+        }
+    } catch (RuntimeException $e) {
+        logger("Warning: could not toggle Stalwart account for {$email}: " . $e->getMessage());
+    }
 
     logger("Toggled mailbox {$email}: " . ($active ? 'active' : 'inactive') . " (Stalwart backend)");
 

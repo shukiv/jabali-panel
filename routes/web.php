@@ -157,7 +157,7 @@ Route::get('/webmail-sso/{mailbox}', function (\App\Models\Mailbox $mailbox) {
         file_put_contents($ssoFile, json_encode($tokenData), LOCK_EX);
         chmod($ssoFile, 0600);
 
-        return redirect($webmailUrl.'?sso_token='.$token);
+        return redirect('/webmail/api/auth/sso?token='.$token);
     }
 
     // Legacy Roundcube SSO
