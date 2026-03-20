@@ -1586,6 +1586,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 $result = $this->getAgent()->send('email.stalwart_add_identity', [
                     'email' => $mailbox->email,
                     'identity' => $forwarderEmail,
+                    'password' => $mailbox->plain_password ?? '',
                 ]);
             }
         } catch (Exception $e) {
@@ -1608,6 +1609,7 @@ class Email extends Page implements HasActions, HasForms, HasTable
                 $result = $this->getAgent()->send('email.stalwart_remove_identity', [
                     'email' => $mailbox->email,
                     'identity' => $forwarderEmail,
+                    'password' => $mailbox->plain_password ?? '',
                 ]);
             }
         } catch (Exception $e) {

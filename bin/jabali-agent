@@ -10735,6 +10735,7 @@ function stalwartAddIdentity(array $params): array
 {
     $email = strtolower(trim($params['email'] ?? ''));
     $identity = strtolower(trim($params['identity'] ?? ''));
+    $password = $params['password'] ?? '';
 
     if (empty($email) || empty($identity)) {
         return ['success' => false, 'error' => 'Email and identity required'];
@@ -10752,12 +10753,15 @@ function stalwartAddIdentity(array $params): array
 
         if (!in_array($identity, $emails, true)) {
             $emails[] = $identity;
+            // Use plaintext password from panel DB, not secrets from Stalwart
+            // (Stalwart may hash secrets internally, re-posting would double-hash)
+            $secrets = !empty($password) ? [$password] : ($principal['secrets'] ?? []);
             $api->delete("principal/{$email}");
             $api->post('principal', [
                 'type' => $principal['type'] ?? 'individual',
                 'name' => $email,
                 'emails' => $emails,
-                'secrets' => $principal['secrets'] ?? [],
+                'secrets' => $secrets,
                 'roles' => $principal['roles'] ?? ['user'],
                 'quota' => $principal['quota'] ?? 0,
             ]);
@@ -10774,6 +10778,7 @@ function stalwartRemoveIdentity(array $params): array
 {
     $email = strtolower(trim($params['email'] ?? ''));
     $identity = strtolower(trim($params['identity'] ?? ''));
+    $password = $params['password'] ?? '';
 
     if (empty($email) || empty($identity)) {
         return ['success' => false, 'error' => 'Email and identity required'];
@@ -10791,12 +10796,13 @@ function stalwartRemoveIdentity(array $params): array
         $emails = array_values(array_filter($emails, fn($e) => $e !== $identity));
 
         if (count($emails) !== count($principal['emails'] ?? [])) {
+            $secrets = !empty($password) ? [$password] : ($principal['secrets'] ?? []);
             $api->delete("principal/{$email}");
             $api->post('principal', [
                 'type' => $principal['type'] ?? 'individual',
                 'name' => $email,
                 'emails' => $emails,
-                'secrets' => $principal['secrets'] ?? [],
+                'secrets' => $secrets,
                 'roles' => $principal['roles'] ?? ['user'],
                 'quota' => $principal['quota'] ?? 0,
             ]);
