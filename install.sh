@@ -2358,6 +2358,9 @@ name.archive = "Archive"
 [calendar.default]
 display-name = "Personal"
 
+[contacts.default]
+display-name = "Personal"
+
 [storage]
 data = "rocksdb"
 fts = "rocksdb"
