@@ -10271,8 +10271,16 @@ function stalwartEmailEnableDomain(array $params): array
     // Add mail.domain to Stalwart ACME for automatic TLS cert
     stalwartAcmeAddDomain($domain);
 
+    // Generate DKIM key for the domain
+    $dkimResult = stalwartEmailGenerateDkim(['domain' => $domain, 'selector' => 'default']);
+
     logger("Enabled email for domain: {$domain} (user: {$username}) via Stalwart");
-    return ['success' => true, 'message' => "Email enabled for {$domain}"];
+    return [
+        'success' => true,
+        'message' => "Email enabled for {$domain}",
+        'dkim_dns_record' => $dkimResult['dns_record'] ?? '',
+        'dkim_selector' => $dkimResult['selector'] ?? 'default',
+    ];
 }
 
 function stalwartEmailDisableDomain(array $params): array
@@ -10313,31 +10321,46 @@ function stalwartEmailGenerateDkim(array $params): array
         return ['success' => false, 'error' => 'Domain required'];
     }
 
-    // Stalwart v0.15 auto-generates DKIM keys when a domain is created.
-    // The DKIM public key is managed internally by Stalwart and not exposed
-    // via the principal REST API. The key is auto-configured for signing.
-    // Retrieving the DNS record requires the Stalwart CLI or webadmin.
-
     try {
         $api = new StalwartApiClient();
-        $response = $api->get("principal/{$domain}");
+
+        // Generate Ed25519 DKIM key via Stalwart API
+        $response = $api->post('dkim', [
+            'algorithm' => 'Ed25519',
+            'domain' => $domain,
+            'selector' => $selector,
+        ]);
+
         if ($response['http_code'] >= 400) {
-            return ['success' => false, 'error' => 'Domain not found in Stalwart: ' . ($response['body']['detail'] ?? $response['raw'])];
+            // Try RSA as fallback
+            $response = $api->post('dkim', [
+                'algorithm' => 'RSA',
+                'domain' => $domain,
+                'selector' => $selector,
+            ]);
         }
+
+        if ($response['http_code'] >= 400) {
+            return ['success' => false, 'error' => 'Failed to generate DKIM: ' . ($response['body']['detail'] ?? $response['raw'])];
+        }
+
+        $data = $response['body']['data'] ?? $response['body'] ?? [];
+        $dnsRecord = $data['dns_record'] ?? '';
+        $publicKey = $data['public_key'] ?? '';
+        $actualSelector = $data['selector'] ?? $selector;
+
+        logger("Generated DKIM key for {$domain} (selector: {$actualSelector})");
+
+        return [
+            'success' => true,
+            'message' => "DKIM key generated for {$domain}",
+            'selector' => $actualSelector,
+            'public_key' => $publicKey,
+            'dns_record' => $dnsRecord,
+        ];
     } catch (RuntimeException $e) {
         return ['success' => false, 'error' => $e->getMessage()];
     }
-
-    logger("DKIM is auto-managed by Stalwart for {$domain} (selector: {$selector})");
-
-    return [
-        'success' => true,
-        'message' => "DKIM is auto-managed by Stalwart for {$domain}",
-        'selector' => $selector,
-        'public_key' => '',
-        'dns_record' => '',
-        'stalwart_managed' => true,
-    ];
 }
 
 function stalwartEmailGetDomainInfo(array $params): array
