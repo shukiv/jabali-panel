@@ -2348,12 +2348,30 @@ protocol = "managesieve"
 protocol = "http"
 bind = ["[::]:8080"]
 
-[jmap.mailbox]
-name.sent = "Sent"
-name.trash = "Trash"
-name.junk = "Junk"
-name.drafts = "Drafts"
-name.archive = "Archive"
+[email.folders.sent]
+name = "Sent"
+create = true
+subscribe = true
+
+[email.folders.trash]
+name = "Trash"
+create = true
+subscribe = true
+
+[email.folders.junk]
+name = "Junk"
+create = true
+subscribe = true
+
+[email.folders.drafts]
+name = "Drafts"
+create = true
+subscribe = true
+
+[email.folders.archive]
+name = "Archive"
+create = true
+subscribe = true
 
 [calendar.default]
 display-name = "Personal"
