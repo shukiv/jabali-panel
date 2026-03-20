@@ -2604,7 +2604,7 @@ export async function GET(request: NextRequest) {
     if (!data.email || !data.expires || data.expires < Math.floor(Date.now() / 1000) || !data.password) {
       return NextResponse.redirect(`${baseUrl}/webmail/en/login`);
     }
-    const jmapServerUrl = process.env.JMAP_SERVER_URL || '';
+    const jmapServerUrl = baseUrl || process.env.JMAP_SERVER_URL || '';
     const sessionToken = encryptSession(jmapServerUrl, data.email, data.password);
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE, sessionToken, COOKIE_OPTIONS);
