@@ -25,9 +25,16 @@ class EditHostingPackage extends EditRecord
             ->whereNull('ssh_isolation_mode')
             ->get();
 
+        $mode = $this->record->ssh_isolation_mode;
+
         foreach ($users as $user) {
             try {
-                $agent->sshSetShellMode($user->username, $this->record->ssh_isolation_mode);
+                if ($mode === 'disabled') {
+                    $agent->send('ssh.disable_shell', ['username' => $user->username]);
+                } else {
+                    $agent->send('ssh.enable_shell', ['username' => $user->username]);
+                    $agent->sshSetShellMode($user->username, $mode);
+                }
             } catch (\Throwable) {
                 // Best-effort
             }

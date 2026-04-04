@@ -66,10 +66,15 @@ class EditUser extends EditRecord
         }
 
         try {
-            app(AgentClient::class)->sshSetShellMode(
-                $this->record->username,
-                $this->record->getEffectiveSshIsolationMode(),
-            );
+            $agent = app(AgentClient::class);
+            $mode = $this->record->getEffectiveSshIsolationMode();
+
+            if ($mode === 'disabled') {
+                $agent->send('ssh.disable_shell', ['username' => $this->record->username]);
+            } else {
+                $agent->send('ssh.enable_shell', ['username' => $this->record->username]);
+                $agent->sshSetShellMode($this->record->username, $mode);
+            }
         } catch (\Throwable) {
             // Best-effort
         }

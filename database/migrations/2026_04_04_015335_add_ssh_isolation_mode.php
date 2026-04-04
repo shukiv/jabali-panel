@@ -11,7 +11,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('hosting_packages', function (Blueprint $table) {
-            $table->string('ssh_isolation_mode', 20)->default('container')->after('ssh_shell_enabled');
+            $table->string('ssh_isolation_mode', 20)->default('disabled')->after('ssh_shell_enabled');
         });
 
         Schema::table('users', function (Blueprint $table) {

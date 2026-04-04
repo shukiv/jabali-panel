@@ -63,15 +63,13 @@ class CreateUser extends CreateRecord
                 // Apply disk quota if enabled
                 $this->applyDiskQuota();
 
-                // Enable SSH shell if hosting package has it enabled
-                if ($this->selectedPackage?->ssh_shell_enabled) {
+                // Enable SSH shell based on effective isolation mode
+                $mode = $this->record->getEffectiveSshIsolationMode();
+                if ($mode !== 'disabled') {
                     try {
                         $agent = app(AgentClient::class);
                         $agent->send('ssh.enable_shell', ['username' => $this->record->username]);
-                        $agent->sshSetShellMode(
-                            $this->record->username,
-                            $this->record->getEffectiveSshIsolationMode(),
-                        );
+                        $agent->sshSetShellMode($this->record->username, $mode);
                     } catch (\Throwable) {
                         // Best-effort — don't fail user creation
                     }

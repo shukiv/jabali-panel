@@ -102,7 +102,7 @@ class User extends Authenticatable implements FilamentUser
     {
         return $this->ssh_isolation_mode
             ?? $this->hostingPackage?->ssh_isolation_mode
-            ?? 'container';
+            ?? 'disabled';
     }
 
     /**

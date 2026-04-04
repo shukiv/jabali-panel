@@ -142,16 +142,17 @@ class UserForm
                             ->inline(false),
 
                         Select::make('ssh_isolation_mode')
-                            ->label(__('SSH Isolation Mode'))
+                            ->label(__('SSH Access Mode'))
                             ->options([
-                                'container' => __('Container (nspawn) — high isolation, full security'),
+                                'disabled' => __('Disabled — SFTP only'),
+                                'container' => __('Container (nspawn) — high isolation'),
                                 'sandbox' => __('Sandbox (bwrap) — moderate isolation, IDE-compatible'),
-                                'standard' => __('Standard — no isolation, for trusted users only'),
+                                'standard' => __('Standard — plain shell, no isolation'),
                             ])
                             ->placeholder(__('Inherit from package'))
                             ->default(null)
                             ->helperText(fn (Get $get): string => match (true) {
-                                blank($get('hosting_package_id')) => __('No package selected — defaults to Container'),
+                                blank($get('hosting_package_id')) => __('No package selected — defaults to Disabled'),
                                 default => __('Leave empty to inherit from hosting package'),
                             }),
 

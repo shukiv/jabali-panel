@@ -9,7 +9,6 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 class HostingPackageForm
@@ -33,21 +32,16 @@ class HostingPackageForm
                         Toggle::make('is_active')
                             ->label(__('Active'))
                             ->default(true),
-                        Toggle::make('ssh_shell_enabled')
-                            ->label(__('SSH Shell Access'))
-                            ->helperText(__('New accounts with this package get SSH shell access instead of SFTP-only'))
-                            ->default(false)
-                            ->live(),
                         Select::make('ssh_isolation_mode')
-                            ->label(__('SSH Isolation Mode'))
+                            ->label(__('SSH Access Mode'))
                             ->options([
-                                'container' => __('Container (nspawn) — full isolation'),
-                                'sandbox' => __('Sandbox (bwrap) — lighter, IDE-compatible'),
+                                'disabled' => __('Disabled — SFTP only'),
+                                'container' => __('Container (nspawn) — high isolation'),
+                                'sandbox' => __('Sandbox (bwrap) — moderate isolation, IDE-compatible'),
                                 'standard' => __('Standard — plain shell, no isolation'),
                             ])
-                            ->default('container')
-                            ->visible(fn (Get $get): bool => (bool) $get('ssh_shell_enabled'))
-                            ->helperText(__('Container is most secure. Sandbox works better with VS Code Remote SSH. Standard has no isolation.')),
+                            ->default('disabled')
+                            ->helperText(__('Controls SSH shell access for users on this package. Disabled = SFTP only.')),
                     ])
                     ->columns(2),
 
