@@ -17484,7 +17484,8 @@ function sshSaveSettings(array $params): array
     $content = file_get_contents($sshdConfig);
 
     // Create backup
-    copy($sshdConfig, $sshdConfig.'.bak.'.date('YmdHis'));
+    $backupFile = $sshdConfig.'.bak.'.date('YmdHis');
+    copy($sshdConfig, $backupFile);
 
     // Update or add settings
     $settings = [
@@ -17494,14 +17495,22 @@ function sshSaveSettings(array $params): array
     ];
 
     foreach ($settings as $key => $value) {
-        // Try to replace existing setting (commented or not)
-        $pattern = '/^#?\s*'.preg_quote($key, '/').'\s+.*/mi';
-        if (preg_match($pattern, $content)) {
-            $content = preg_replace($pattern, "$key $value", $content, 1);
-        } else {
-            // Add new setting at the end
-            $content .= "\n$key $value";
-        }
+        // Remove ALL occurrences (commented and uncommented) to avoid duplicates
+        $pattern = '/^#?\s*'.preg_quote($key, '/').'\s+.*\n?/mi';
+        $content = preg_replace($pattern, '', $content);
+    }
+
+    // Insert settings BEFORE the first Match block (settings after Match are scoped, not global)
+    $settingsBlock = '';
+    foreach ($settings as $key => $value) {
+        $settingsBlock .= "$key $value\n";
+    }
+
+    if (preg_match('/^Match\s/mi', $content, $m, PREG_OFFSET_MATCH)) {
+        $pos = $m[0][1];
+        $content = substr($content, 0, $pos).$settingsBlock."\n".substr($content, $pos);
+    } else {
+        $content = rtrim($content)."\n".$settingsBlock;
     }
 
     // Write config
@@ -17511,7 +17520,7 @@ function sshSaveSettings(array $params): array
     exec('sshd -t 2>&1', $testOutput, $testCode);
     if ($testCode !== 0) {
         // Restore backup
-        copy($sshdConfig.'.bak.'.date('YmdHis'), $sshdConfig);
+        copy($backupFile, $sshdConfig);
 
         return ['success' => false, 'error' => 'Invalid configuration: '.implode("\n", $testOutput)];
     }
