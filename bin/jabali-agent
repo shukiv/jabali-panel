@@ -17506,7 +17506,7 @@ function sshSaveSettings(array $params): array
         $settingsBlock .= "$key $value\n";
     }
 
-    if (preg_match('/^Match\s/mi', $content, $m, PREG_OFFSET_MATCH)) {
+    if (preg_match('/^Match\s/mi', $content, $m, PREG_OFFSET_CAPTURE)) {
         $pos = $m[0][1];
         $content = substr($content, 0, $pos).$settingsBlock."\n".substr($content, $pos);
     } else {
