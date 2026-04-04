@@ -102,22 +102,6 @@ class UserForm
 
                 Section::make(__('Account Settings'))
                     ->schema([
-                        Toggle::make('is_admin')
-                            ->label(__('Administrator'))
-                            ->helperText(__('Grant full administrative access'))
-                            ->inline(false),
-
-                        Toggle::make('is_active')
-                            ->label(__('Active'))
-                            ->default(true)
-                            ->helperText(__('Inactive users cannot log in'))
-                            ->inline(false),
-
-                        Placeholder::make('package_notice')
-                            ->label(__('Hosting Package'))
-                            ->content(__('No hosting package selected. This user will have unlimited quotas.'))
-                            ->visible(fn ($get) => blank($get('hosting_package_id'))),
-
                         Select::make('hosting_package_id')
                             ->label(__('Hosting Package'))
                             ->searchable()
@@ -133,12 +117,15 @@ class UserForm
                             ->helperText(__('Assign a package to set quotas.'))
                             ->columnSpanFull(),
 
-                        Toggle::make('create_linux_user')
-                            ->label(__('Create Linux User'))
+                        Toggle::make('is_admin')
+                            ->label(__('Administrator'))
+                            ->helperText(__('Grant full administrative access'))
+                            ->inline(false),
+
+                        Toggle::make('is_active')
+                            ->label(__('Active'))
                             ->default(true)
-                            ->helperText(__('Create a system user account'))
-                            ->visibleOn('create')
-                            ->dehydrated(false)
+                            ->helperText(__('Inactive users cannot log in'))
                             ->inline(false),
 
                         Select::make('ssh_isolation_mode')
@@ -158,6 +145,14 @@ class UserForm
 
                         DateTimePicker::make('email_verified_at')
                             ->label(__('Email Verified At')),
+
+                        Toggle::make('create_linux_user')
+                            ->label(__('Create Linux User'))
+                            ->default(true)
+                            ->helperText(__('Create a system user account'))
+                            ->visibleOn('create')
+                            ->dehydrated(false)
+                            ->inline(false),
                     ])
                     ->columns(4),
 
