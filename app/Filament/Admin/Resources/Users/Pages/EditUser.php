@@ -61,10 +61,6 @@ class EditUser extends EditRecord
 
     protected function syncShellMode(): void
     {
-        if (! $this->record->wasChanged('ssh_isolation_mode')) {
-            return;
-        }
-
         try {
             $agent = app(AgentClient::class);
             $mode = $this->record->getEffectiveSshIsolationMode();

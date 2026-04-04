@@ -15,11 +15,7 @@ class EditHostingPackage extends EditRecord
 
     protected function afterSave(): void
     {
-        if (! $this->record->wasChanged('ssh_isolation_mode')) {
-            return;
-        }
-
-        // Sync config file for all users on this package that inherit (no per-user override)
+        // Always sync shell mode for all users that inherit from this package
         $agent = app(AgentClient::class);
         $users = $this->record->users()
             ->whereNull('ssh_isolation_mode')
