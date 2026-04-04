@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Admin\Resources\Users\Tables;
 
+use App\Services\Agent\AgentClient;
 use App\Services\System\LinuxUserService;
 use App\Support\SafeError;
 use Exception;
@@ -126,6 +127,41 @@ class UsersTable
                         $url = route('impersonate', ['token' => $token->raw_token]);
 
                         $livewire->js("window.open('{$url}', '_blank')");
+                    }),
+                Action::make('toggleShell')
+                    ->label(function ($record) {
+                        $shell = @posix_getpwnam($record->username)['shell'] ?? '/usr/sbin/nologin';
+
+                        return $shell === '/usr/local/bin/jabali-shell' ? __('Disable Shell') : __('Enable Shell');
+                    })
+                    ->icon(function ($record) {
+                        $shell = @posix_getpwnam($record->username)['shell'] ?? '/usr/sbin/nologin';
+
+                        return $shell === '/usr/local/bin/jabali-shell' ? 'heroicon-o-x-circle' : 'heroicon-o-check-circle';
+                    })
+                    ->color(function ($record) {
+                        $shell = @posix_getpwnam($record->username)['shell'] ?? '/usr/sbin/nologin';
+
+                        return $shell === '/usr/local/bin/jabali-shell' ? 'danger' : 'success';
+                    })
+                    ->visible(fn ($record) => ! $record->is_admin)
+                    ->requiresConfirmation()
+                    ->action(function ($record) {
+                        $shell = @posix_getpwnam($record->username)['shell'] ?? '/usr/sbin/nologin';
+                        $agent = app(AgentClient::class);
+
+                        try {
+                            if ($shell === '/usr/local/bin/jabali-shell') {
+                                $agent->send('ssh.disable_shell', ['username' => $record->username]);
+                                Notification::make()->title(__('Shell disabled for :user', ['user' => $record->username]))->success()->send();
+                            } else {
+                                $agent->send('ssh.enable_shell', ['username' => $record->username]);
+                                $agent->sshSetShellMode($record->username, $record->getEffectiveSshIsolationMode());
+                                Notification::make()->title(__('Shell enabled for :user', ['user' => $record->username]))->success()->send();
+                            }
+                        } catch (\Throwable $e) {
+                            Notification::make()->title(__('Failed'))->body($e->getMessage())->danger()->send();
+                        }
                     }),
                 EditAction::make(),
                 DeleteAction::make()

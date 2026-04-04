@@ -97,6 +97,8 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public ?array $panelPortData = [];
 
+    public ?array $sshData = [];
+
     // Version info (non-form)
     public bool $isSystemdResolved = false;
 
@@ -197,6 +199,16 @@ class ServerSettings extends Page implements HasActions, HasForms
         $this->panelPortData = [
             'port' => (int) (env('PANEL_PORT', 8443)),
         ];
+
+        try {
+            $sshSettings = app(AgentClient::class)->send('ssh.get_settings', []);
+            $this->sshData = [
+                'port' => $sshSettings['port'] ?? 22,
+                'password_auth' => $sshSettings['password_auth'] ?? false,
+            ];
+        } catch (\Throwable) {
+            $this->sshData = ['port' => 22, 'password_auth' => false];
+        }
 
         $this->dnsData = [
             'ns1' => $settings['ns1'] ?? "ns1.{$hostname}",
@@ -357,6 +369,32 @@ class ServerSettings extends Page implements HasActions, HasForms
                         FormAction::make('saveTimezone')
                             ->label(__('Save Timezone'))
                             ->action('saveTimezone'),
+                    ]),
+                ]),
+            Section::make(__('SSH Access'))
+                ->icon('heroicon-o-command-line')
+                ->description(__('Configure SSH server settings. Shell access per user is controlled via hosting packages.'))
+                ->schema([
+                    Grid::make(['default' => 1, 'md' => 2])->schema([
+                        TextInput::make('sshData.port')
+                            ->label(__('SSH Port'))
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(65535)
+                            ->required(),
+                        Toggle::make('sshData.password_auth')
+                            ->label(__('Password Authentication'))
+                            ->helperText(__('Allow SSH login with password. Disable to require SSH keys only.'))
+                            ->inline(false),
+                    ]),
+                    Actions::make([
+                        FormAction::make('saveSshSettings')
+                            ->label(__('Save SSH Settings'))
+                            ->action('saveSshSettings')
+                            ->requiresConfirmation()
+                            ->modalHeading(__('Update SSH Settings'))
+                            ->modalDescription(__('This will update sshd configuration and restart the SSH service. Existing connections will not be affected.'))
+                            ->color('warning'),
                     ]),
                 ]),
         ];
@@ -1044,6 +1082,45 @@ class ServerSettings extends Page implements HasActions, HasForms
             ->success()
             ->duration(10000)
             ->send();
+    }
+
+    public function saveSshSettings(): void
+    {
+        $port = (int) ($this->sshData['port'] ?? 22);
+        $passwordAuth = (bool) ($this->sshData['password_auth'] ?? false);
+
+        if ($port < 1 || $port > 65535) {
+            Notification::make()->title(__('Port must be between 1 and 65535'))->danger()->send();
+
+            return;
+        }
+
+        try {
+            $result = app(AgentClient::class)->send('ssh.save_settings', [
+                'port' => $port,
+                'password_auth' => $passwordAuth,
+                'pubkey_auth' => true,
+            ]);
+
+            if (! ($result['success'] ?? false)) {
+                throw new \Exception($result['error'] ?? __('Unknown error'));
+            }
+
+            Notification::make()
+                ->title(__('SSH settings saved'))
+                ->body(__('Port: :port, Password auth: :auth', [
+                    'port' => $port,
+                    'auth' => $passwordAuth ? __('enabled') : __('disabled'),
+                ]))
+                ->success()
+                ->send();
+        } catch (\Throwable $e) {
+            Notification::make()
+                ->title(__('Failed to save SSH settings'))
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
     }
 
     public function saveDns(): void

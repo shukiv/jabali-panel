@@ -12207,23 +12207,9 @@ function sshGenerateKey(array $params): array
 function sshEnableShell(array $params): array
 {
     $username = $params['username'] ?? '';
-    $force = $params['force'] ?? false;
 
     if (! validateUsername($username)) {
         return ['success' => false, 'error' => 'Invalid username'];
-    }
-
-    // Respect jabali-security's SSH_SHELL_ACCESS_ENABLED setting
-    if (! $force) {
-        $secConf = '/etc/jabali-security/jabali-security.conf';
-        if (file_exists($secConf)) {
-            $content = file_get_contents($secConf);
-            if ($content !== false && preg_match('/^SSH_SHELL_ACCESS_ENABLED="([^"]*)"$/m', $content, $m)) {
-                if (strtolower($m[1]) === 'no') {
-                    return ['success' => false, 'error' => 'Shell access is disabled (SSH_SHELL_ACCESS_ENABLED=no in jabali-security config)'];
-                }
-            }
-        }
     }
 
     $userInfo = posix_getpwnam($username);
