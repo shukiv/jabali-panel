@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\Backup;
+use App\Models\BackupDestination;
+use App\Services\Agent\AgentClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -65,6 +67,11 @@ class BackupDownloadController extends Controller
         $backup = Backup::find($backupId);
         if (! $backup) {
             abort(404, 'Backup not found');
+        }
+
+        // For restic snapshots without a local file, export first
+        if ($backup->snapshot_id && (empty($backup->local_path) || ! file_exists($backup->local_path))) {
+            return $this->downloadResticSnapshot($backup);
         }
 
         $path = $backup->local_path;
@@ -129,5 +136,30 @@ class BackupDownloadController extends Controller
         }
 
         return response()->download($realPath);
+    }
+
+    private function downloadResticSnapshot(Backup $backup): BinaryFileResponse
+    {
+        $repo = $backup->destination
+            ? $backup->destination->getResticRepoUrl()
+            : BackupDestination::defaultRepo();
+        $destConfig = $backup->destination
+            ? array_merge($backup->destination->config ?? [], ['type' => $backup->destination->type])
+            : [];
+
+        $result = app(AgentClient::class)->send('backup.export_snapshot', [
+            'snapshot_id' => $backup->snapshot_id,
+            'repo' => $repo,
+            'destination' => $destConfig,
+        ]);
+
+        if (! ($result['success'] ?? false)) {
+            abort(500, $result['error'] ?? 'Failed to export snapshot');
+        }
+
+        $exportPath = $result['path'];
+        $filename = ($backup->name ?: 'backup').'.tar.gz';
+
+        return response()->download($exportPath, $filename)->deleteFileAfterSend();
     }
 }

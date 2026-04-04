@@ -791,6 +791,7 @@ function handleAction(array $request): array
         'backup.list_contents' => backupListContents($params),
         'backup.list_domain_files' => backupListDomainFiles($params),
         'backup.read_snapshot_file' => backupReadSnapshotFile($params),
+        'backup.export_snapshot' => backupExportSnapshot($params),
         // cPanel migration operations
         'cpanel.analyze_backup' => cpanelAnalyzeBackup($params),
         'cpanel.validate_backup' => cpanelValidateBackup($params),
@@ -17117,6 +17118,61 @@ function backupReadSnapshotFile(array $params): array
     }
 
     return ['success' => true, 'content' => $result['output']];
+}
+
+/**
+ * Export a restic snapshot as a tar.gz file for download.
+ * Uses `restic dump <snapshot> / --archive tar` piped to gzip.
+ */
+function backupExportSnapshot(array $params): array
+{
+    $snapshotId = $params['snapshot_id'] ?? '';
+    $repo = $params['repo'] ?? '';
+    $destination = $params['destination'] ?? [];
+
+    if (empty($snapshotId)) {
+        return ['success' => false, 'error' => 'snapshot_id required'];
+    }
+
+    if (! preg_match('/^[a-f0-9]+$/', $snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    $exportDir = '/tmp/jabali-exports';
+    if (! is_dir($exportDir)) {
+        mkdir($exportDir, 0700, true);
+    }
+
+    $shortId = substr($snapshotId, 0, 8);
+    $exportFile = $exportDir . '/backup-' . $shortId . '-' . date('YmdHis') . '.tar.gz';
+
+    $repo = $repo ?: '/var/backups/jabali/restic';
+    $passwordFile = '/etc/jabali/restic-password';
+
+    $envParts = [
+        'RESTIC_REPOSITORY=' . escapeshellarg($repo),
+        'RESTIC_PASSWORD_FILE=' . escapeshellarg($passwordFile),
+    ];
+
+    if (str_starts_with($repo, 'sftp:') && ! empty($destination['password'])) {
+        $envParts[] = 'SSHPASS=' . escapeshellarg($destination['password']);
+    }
+
+    $env = implode(' ', $envParts);
+    $cmd = "$env restic dump " . escapeshellarg($snapshotId) . ' / --archive tar 2>/dev/null | gzip > ' . escapeshellarg($exportFile);
+
+    exec($cmd, $output, $exitCode);
+
+    if ($exitCode !== 0 || ! file_exists($exportFile) || filesize($exportFile) < 100) {
+        @unlink($exportFile);
+        return ['success' => false, 'error' => 'Failed to export snapshot'];
+    }
+
+    return [
+        'success' => true,
+        'path' => $exportFile,
+        'size' => filesize($exportFile),
+    ];
 }
 
 // ── Aliases for panel compatibility ─────────────────────────────────────────

@@ -131,6 +131,13 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->actions([
+                Action::make('download')
+                    ->label(__('Download'))
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('gray')
+                    ->visible(fn (Backup $record) => $record->status === 'completed' && $record->snapshot_id)
+                    ->url(fn (Backup $record) => route('filament.admin.pages.backup-download', ['id' => $record->id]))
+                    ->openUrlInNewTab(),
                 Action::make('restore')
                     ->label(__('Restore'))
                     ->icon('heroicon-o-arrow-path')
