@@ -638,6 +638,8 @@ function handleAction(array $request): array
         'ssh.shell_status' => sshGetShellStatus($params),
         'ssh.migrate_shell_users' => sshMigrateShellUsers($params),
         'ssh.set_shell_mode' => sshSetShellMode($params),
+        'ssh.get_settings' => sshGetSettings($params),
+        'ssh.save_settings' => sshSaveSettings($params),
         'file.list' => fileList($params),
         'file.read' => fileRead($params),
         'file.write' => fileWrite($params),
