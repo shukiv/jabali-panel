@@ -143,6 +143,7 @@ class UserForm
 
                         Select::make('ssh_isolation_mode')
                             ->label(__('SSH Access Mode'))
+                            ->columnSpan(2)
                             ->options([
                                 'disabled' => __('Disabled — SFTP only'),
                                 'container' => __('Container (nspawn) — high isolation'),
@@ -157,7 +158,8 @@ class UserForm
                             }),
 
                         DateTimePicker::make('email_verified_at')
-                            ->label(__('Email Verified At')),
+                            ->label(__('Email Verified At'))
+                            ->columnSpan(2),
                     ])
                     ->columns(4),
 
