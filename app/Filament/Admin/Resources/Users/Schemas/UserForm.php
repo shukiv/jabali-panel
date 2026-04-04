@@ -9,7 +9,6 @@ use App\Models\HostingPackage;
 use App\Support\PasswordGenerator;
 use App\Support\WordList;
 use Filament\Actions\Action;
-use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -143,9 +142,6 @@ class UserForm
                                 default => __('Leave empty to inherit from hosting package'),
                             }),
 
-                        DateTimePicker::make('email_verified_at')
-                            ->label(__('Email Verified At')),
-
                         Toggle::make('create_linux_user')
                             ->label(__('Create Linux User'))
                             ->default(true)
@@ -154,7 +150,7 @@ class UserForm
                             ->dehydrated(false)
                             ->inline(false),
                     ])
-                    ->columns(4),
+                    ->columns(3),
 
                 Section::make(__('System Information'))
                     ->schema([
