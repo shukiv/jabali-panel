@@ -15,6 +15,15 @@ set -euo pipefail
 JUSER="$(whoami)"
 CONTAINER="${JUSER}-php"
 
+# Handle SFTP/SCP — pass through directly without isolation
+# ForceCommand overrides subsystem requests, so we detect and proxy them
+if [[ "${SSH_ORIGINAL_COMMAND:-}" == *"sftp-server"* ]] || [[ "${SSH_ORIGINAL_COMMAND:-}" == "/usr/lib/openssh/sftp-server" ]]; then
+    exec /usr/lib/openssh/sftp-server
+fi
+if [[ "${SSH_ORIGINAL_COMMAND:-}" == "scp "* ]]; then
+    exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"
+fi
+
 # Read configured isolation mode (default: container)
 SHELL_MODE="container"
 MODE_FILE="${HOME}/.jabali-shell-mode"
