@@ -1605,7 +1605,7 @@ listen.group = www-data
 listen.mode = 0660
 
 ; Process manager settings
-pm = dynamic
+pm = {$pmType}
 pm.max_children = {$pmMaxChildren}
 pm.start_servers = {$pmStartServers}
 pm.min_spare_servers = {$pmMinSpareServers}
@@ -1703,10 +1703,14 @@ function phpUpdatePoolLimits(array $params): array
     }
 
     // Get limits from params with defaults
+    $pmType = $params['pm'] ?? 'dynamic';
+    if (! in_array($pmType, ['dynamic', 'static', 'ondemand'], true)) {
+        $pmType = 'dynamic';
+    }
     $pmMaxChildren = (int) ($params['pm_max_children'] ?? 5);
-    $pmStartServers = max(1, (int) ($pmMaxChildren / 5));
-    $pmMinSpareServers = max(1, (int) ($pmMaxChildren / 5));
-    $pmMaxSpareServers = max(2, (int) ($pmMaxChildren / 2));
+    $pmStartServers = (int) ($params['pm_start_servers'] ?? max(1, (int) ($pmMaxChildren / 5)));
+    $pmMinSpareServers = (int) ($params['pm_min_spare_servers'] ?? max(1, (int) ($pmMaxChildren / 5)));
+    $pmMaxSpareServers = (int) ($params['pm_max_spare_servers'] ?? max(2, (int) ($pmMaxChildren / 2)));
     $pmMaxRequests = (int) ($params['pm_max_requests'] ?? 200);
     $rlimitFiles = (int) ($params['rlimit_files'] ?? 1024);
     $processPriority = (int) ($params['process_priority'] ?? 0);
@@ -1730,7 +1734,7 @@ listen.group = www-data
 listen.mode = 0660
 
 ; Process manager settings
-pm = dynamic
+pm = {$pmType}
 pm.max_children = {$pmMaxChildren}
 pm.start_servers = {$pmStartServers}
 pm.min_spare_servers = {$pmMinSpareServers}

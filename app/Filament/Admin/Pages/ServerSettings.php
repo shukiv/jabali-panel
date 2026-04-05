@@ -36,6 +36,7 @@ use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Facades\DB;
@@ -257,7 +258,11 @@ class ServerSettings extends Page implements HasActions, HasForms
         ];
 
         $this->phpFpmData = [
+            'pm' => $settings['fpm_pm'] ?? 'dynamic',
             'pm_max_children' => (int) ($settings['fpm_pm_max_children'] ?? 5),
+            'pm_start_servers' => (int) ($settings['fpm_pm_start_servers'] ?? 2),
+            'pm_min_spare_servers' => (int) ($settings['fpm_pm_min_spare_servers'] ?? 1),
+            'pm_max_spare_servers' => (int) ($settings['fpm_pm_max_spare_servers'] ?? 3),
             'pm_max_requests' => (int) ($settings['fpm_pm_max_requests'] ?? 200),
             'rlimit_files' => (int) ($settings['fpm_rlimit_files'] ?? 1024),
             'process_priority' => (int) ($settings['fpm_process_priority'] ?? 0),
@@ -740,7 +745,17 @@ class ServerSettings extends Page implements HasActions, HasForms
                 ->description(__('These settings apply to new user pools. Use "Apply to All" to update existing pools.'))
                 ->icon('heroicon-o-adjustments-horizontal')
                 ->schema([
-                    Grid::make(['default' => 1, 'md' => 2, 'lg' => 3])->schema([
+                    Grid::make(['default' => 1, 'md' => 2, 'lg' => 4])->schema([
+                        Select::make('phpFpmData.pm')
+                            ->label(__('Process Manager'))
+                            ->options([
+                                'dynamic' => __('Dynamic — adjusts workers based on load'),
+                                'static' => __('Static — fixed number of workers'),
+                                'ondemand' => __('On Demand — spawns workers only when needed'),
+                            ])
+                            ->default('dynamic')
+                            ->live()
+                            ->helperText(__('How PHP-FPM manages worker processes')),
                         TextInput::make('phpFpmData.pm_max_children')
                             ->label(__('Max Processes'))
                             ->numeric()
@@ -758,6 +773,28 @@ class ServerSettings extends Page implements HasActions, HasForms
                             ->placeholder(__('512M'))
                             ->helperText(__('PHP memory_limit (e.g., 512M, 1G)')),
                     ]),
+                    Grid::make(['default' => 1, 'md' => 3])
+                        ->schema([
+                            TextInput::make('phpFpmData.pm_start_servers')
+                                ->label(__('Start Servers'))
+                                ->numeric()
+                                ->minValue(1)
+                                ->maxValue(20)
+                                ->helperText(__('Workers created on startup')),
+                            TextInput::make('phpFpmData.pm_min_spare_servers')
+                                ->label(__('Min Spare Servers'))
+                                ->numeric()
+                                ->minValue(1)
+                                ->maxValue(20)
+                                ->helperText(__('Minimum idle workers')),
+                            TextInput::make('phpFpmData.pm_max_spare_servers')
+                                ->label(__('Max Spare Servers'))
+                                ->numeric()
+                                ->minValue(1)
+                                ->maxValue(20)
+                                ->helperText(__('Maximum idle workers')),
+                        ])
+                        ->visible(fn (Get $get): bool => ($get('phpFpmData.pm') ?? 'dynamic') === 'dynamic'),
                     Grid::make(['default' => 1, 'md' => 2, 'lg' => 3])->schema([
                         TextInput::make('phpFpmData.rlimit_files')
                             ->label(__('Open Files Limit'))
@@ -1478,7 +1515,11 @@ class ServerSettings extends Page implements HasActions, HasForms
         try {
             $service = app(ServerSettingsService::class);
             $result = $service->applyFpmToAllUsers([
+                'pm' => $data['pm'] ?? 'dynamic',
                 'pm_max_children' => (int) $data['pm_max_children'],
+                'pm_start_servers' => (int) ($data['pm_start_servers'] ?? 2),
+                'pm_min_spare_servers' => (int) ($data['pm_min_spare_servers'] ?? 1),
+                'pm_max_spare_servers' => (int) ($data['pm_max_spare_servers'] ?? 3),
                 'pm_max_requests' => (int) $data['pm_max_requests'],
                 'rlimit_files' => (int) $data['rlimit_files'],
                 'process_priority' => (int) $data['process_priority'],
@@ -1634,7 +1675,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                 'admin_email_recipients', 'notify_ssl_errors',
                 'notify_disk_quota', 'notify_system_updates',
                 'notify_service_health', 'notify_high_load', 'load_threshold', 'load_alert_minutes',
-                'fpm_pm_max_children', 'fpm_pm_max_requests', 'fpm_rlimit_files',
+                'fpm_pm', 'fpm_pm_max_children', 'fpm_pm_start_servers',
+                'fpm_pm_min_spare_servers', 'fpm_pm_max_spare_servers',
+                'fpm_pm_max_requests', 'fpm_rlimit_files',
                 'fpm_process_priority', 'fpm_request_terminate_timeout', 'fpm_memory_limit',
             ];
 
