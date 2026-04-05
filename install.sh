@@ -4704,16 +4704,15 @@ SSHD_SFTP
     if ! grep -q "Match Group shellusers" "$sshd_config" 2>/dev/null; then
         cat >> "$sshd_config" <<'SSHD_SHELL'
 
-# Jabali Panel — shell users (nspawn container or bwrap sandbox)
+# Jabali Panel — shell users (login shell handles isolation, no ForceCommand)
 Match Group shellusers
-    ForceCommand /usr/local/bin/jabali-shell
     AllowTcpForwarding yes
     X11Forwarding no
 SSHD_SHELL
         log "Added shell users block to sshd_config"
     else
         # Existing shellusers block — replace it with current config
-        # Handles: jail→nspawn migration, AllowTcpForwarding no→yes, etc.
+        # Migration: removes ForceCommand (now using login shell via chsh)
         awk '
             /^Match Group shellusers/ { skip=1; next }
             /^Match / && skip { skip=0 }
@@ -4722,17 +4721,15 @@ SSHD_SHELL
         chmod 644 "$sshd_config"
         cat >> "$sshd_config" <<'SSHD_SHELL'
 
-# Jabali Panel — shell users (nspawn container or bwrap sandbox)
+# Jabali Panel — shell users (login shell handles isolation, no ForceCommand)
 Match Group shellusers
-    ForceCommand /usr/local/bin/jabali-shell
     AllowTcpForwarding yes
     X11Forwarding no
 SSHD_SHELL
-        log "Updated shellusers SSH config"
+        log "Updated shellusers SSH config (removed ForceCommand, using login shell)"
     fi
 
-    # Fix home dir ownership for existing shell users (one-time migration)
-    # Shell users don't use ChrootDirectory, so home dir should be user-owned
+    # Migrate existing shell users: set login shell, fix home ownership
     if getent group shellusers &>/dev/null; then
         local shell_members
         shell_members=$(getent group shellusers | cut -d: -f4)
@@ -4740,6 +4737,14 @@ SSHD_SHELL
             IFS=',' read -ra members <<< "$shell_members"
             for member in "${members[@]}"; do
                 local member_home="/home/$member"
+                # Set login shell to jabali-shell (migration from ForceCommand)
+                local current_shell
+                current_shell=$(getent passwd "$member" | cut -d: -f7)
+                if [[ "$current_shell" != "/usr/local/bin/jabali-shell" ]]; then
+                    usermod -s /usr/local/bin/jabali-shell "$member" 2>/dev/null || true
+                    info "Set login shell for shell user: $member"
+                fi
+                # Fix home dir ownership
                 if [[ -d "$member_home" ]] && [[ "$(stat -c '%U' "$member_home" 2>/dev/null)" == "root" ]]; then
                     chown "$member":"$member" "$member_home"
                     chmod 755 "$member_home"

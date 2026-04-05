@@ -1,39 +1,33 @@
 #!/bin/bash
-# jabali-shell — SSH login shell for Jabali Panel users
+# jabali-shell — Login shell for Jabali Panel users
+#
+# Set as the user's login shell via chsh (not ForceCommand).
+# This ensures clean stdout/stderr for tools like VS Code Remote SSH.
 #
 # Isolation modes (configured per-user via panel):
-#   container — full nspawn container via jabali-isolator
+#   container — nsenter into nspawn container
 #   sandbox   — bubblewrap sandbox (lighter, IDE-compatible)
 #   standard  — plain bash shell, no isolation
 #
-# Three modes per tier:
-#   1. Interactive SSH login: ssh user@host → bash inside sandbox
-#   2. Command execution: ssh user@host "cmd" → run inside sandbox
-#   3. SFTP/SCP/rsync: handled transparently
-set -euo pipefail
+# Invocation modes (handled by login shell convention):
+#   Interactive:  ssh user@host        → $0 is a login shell, no args
+#   Command:      ssh user@host "cmd"  → $0 -c "cmd"
+#   SFTP/SCP:     handled by sshd directly (user is in sftpusers group with ChrootDirectory)
 
-# Suppress stderr during shell startup for non-interactive sessions (e.g. VS Code Remote SSH).
-# Bash startup messages on stderr cause VS Code to misdetect the platform as "windows".
-# stderr is restored before exec-ing into the actual shell/container.
-if [[ -n "${SSH_ORIGINAL_COMMAND:-}" ]] || ! tty -s 2>/dev/null; then
-    exec 3>&2 2>/dev/null
-    trap 'exec 2>&3 3>&-' EXIT
-fi
+# No output before exec — VS Code probes depend on clean stdout
+set -euo pipefail
 
 JUSER="$(whoami)"
 CONTAINER="${JUSER}-php"
 
-# Handle SFTP/SCP — pass through directly without isolation
-# ForceCommand overrides subsystem requests, so we detect and proxy them
-if [[ "${SSH_ORIGINAL_COMMAND:-}" == *"sftp-server"* ]] || [[ "${SSH_ORIGINAL_COMMAND:-}" == "/usr/lib/openssh/sftp-server" ]]; then
-    exec /usr/lib/openssh/sftp-server
-fi
-if [[ "${SSH_ORIGINAL_COMMAND:-}" == "scp "* ]]; then
-    exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"
+# Detect if invoked as login shell with -c "command" (ssh user@host "cmd")
+REMOTE_CMD=""
+if [[ "${1:-}" == "-c" && -n "${2:-}" ]]; then
+    REMOTE_CMD="$2"
 fi
 
-# Read configured isolation mode (default: container)
-SHELL_MODE="container"
+# Read configured isolation mode (default: standard)
+SHELL_MODE="standard"
 MODE_FILE="${HOME}/.jabali-shell-mode"
 if [[ -r "$MODE_FILE" ]]; then
     SHELL_MODE="$(head -1 "$MODE_FILE" | tr -d '[:space:]')"
@@ -42,10 +36,10 @@ fi
 # Validate mode
 case "$SHELL_MODE" in
     container|sandbox|standard) ;;
-    *) SHELL_MODE="container" ;;
+    *) SHELL_MODE="standard" ;;
 esac
 
-# --- Tier 1: nspawn container ---
+# --- nspawn container ---
 try_nspawn() {
     command -v machinectl &>/dev/null || return 1
 
@@ -76,7 +70,7 @@ try_nspawn() {
     uid_num="$(id -u)"
     gid_num="$(id -g)"
 
-    if [[ -z "${SSH_ORIGINAL_COMMAND:-}" ]]; then
+    if [[ -z "$REMOTE_CMD" ]]; then
         exec sudo nsenter --target "$leader" --mount --pid --ipc --uts --no-fork \
             setpriv --reuid="$uid_num" --regid="$gid_num" --init-groups \
             env HOME="/home/$JUSER" USER="$JUSER" SHELL=/bin/bash TERM="${TERM:-xterm-256color}" \
@@ -86,10 +80,10 @@ try_nspawn() {
     exec sudo nsenter --target "$leader" --mount --pid --ipc --uts \
         setpriv --reuid="$uid_num" --regid="$gid_num" --init-groups \
         env HOME="/home/$JUSER" USER="$JUSER" SHELL=/bin/bash \
-        /bin/sh -c "$SSH_ORIGINAL_COMMAND"
+        /bin/sh -c "$REMOTE_CMD"
 }
 
-# --- Tier 2: bubblewrap sandbox ---
+# --- bubblewrap sandbox ---
 try_bwrap() {
     command -v bwrap &>/dev/null || return 1
 
@@ -101,13 +95,13 @@ try_bwrap() {
     return 1
 }
 
-# --- Tier 3: standard shell (no isolation) ---
+# --- standard shell (no isolation) ---
 try_standard() {
-    if [[ -z "${SSH_ORIGINAL_COMMAND:-}" ]]; then
+    if [[ -z "$REMOTE_CMD" ]]; then
         exec /bin/bash -il
     fi
 
-    exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"
+    exec /bin/sh -c "$REMOTE_CMD"
 }
 
 # --- Main: dispatch based on configured mode ---
@@ -115,12 +109,12 @@ case "$SHELL_MODE" in
     container)
         if try_nspawn; then exit 0; fi
         if try_bwrap; then exit 0; fi
-        echo "Error: Container isolation unavailable (nspawn and bwrap both failed). Contact your administrator." >&2
+        echo "Error: Container isolation unavailable. Contact your administrator." >&2
         exit 1
         ;;
     sandbox)
         if try_bwrap; then exit 0; fi
-        echo "Error: Sandbox isolation unavailable (bwrap not found). Contact your administrator." >&2
+        echo "Error: Sandbox isolation unavailable. Contact your administrator." >&2
         exit 1
         ;;
     standard)

@@ -12258,8 +12258,8 @@ function sshEnableShell(array $params): array
     chgrp($homeDir, $username);
     chmod($homeDir, 0755);
 
-    // Set login shell to bash (OpenSSH rejects nologin before ForceCommand runs)
-    exec('usermod -s /bin/bash ' . escapeshellarg($username));
+    // Set login shell to jabali-shell (acts as login shell, not ForceCommand)
+    exec('usermod -s /usr/local/bin/jabali-shell ' . escapeshellarg($username));
 
     // Ensure nspawn container exists and is running
     $containerRunning = false;
