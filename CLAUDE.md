@@ -14,11 +14,12 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - **Mail**: Stalwart Mail Server (SMTP, IMAP, JMAP, ManageSieve) — the only mail backend
 - **DNS**: PowerDNS with REST API and MySQL backend (DNSSEC supported)
 - **Databases**: MariaDB (always enabled) + PostgreSQL (optional, enabled/disabled via Server Settings > Databases tab)
+- **PHP-FPM**: Configurable pm type (dynamic, static, ondemand) with conditional start/min/max spare server fields; settings applied to new pools or all existing pools
 - **Backups**: Fully removed; will be rebuilt as standalone tool (jabali-backup)
 - **SSL**: Certbot webroot for domains (includes mail.$domain), panel cert via `ssl.panel.issue` agent command
 - **Stats**: GoAccess in daemon mode with real-time WebSocket updates
 - **Bandwidth**: Daily sync from nginx access logs, displayed on Users and Domains pages
-- **File browser**: Live files via agent
+- **File browser**: Live files via agent; supports `$readOnly` mode and per-instance `$disabledFeatures` to restrict operations
 - **Security**: jabali-security daemon (separate repo) with Filament plugin
 - **Isolation**: jabali-isolator (separate repo) — nspawn containers for SSH shell access (login shell via chsh); web serving uses host FPM pools
 - **CLI**: `jabali` command with noun:verb pattern (e.g. `jabali user:create`)
@@ -56,12 +57,14 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - Service management functions must check `$allowedServices` global array
 - Nginx vhost config files use `.conf` extension (`/etc/nginx/sites-available/$domain.conf`)
 - Agent `sslCheck` and `sslInstallCertificate` must try `.conf` extension first, then fall back
-- Filament v5 `FormAction` closures in `->action()` silently fail on this page — use `wire:click` in Blade for branding
+- Filament v5: Use `Filament\Actions\Action` for actions, NOT `Filament\Forms\Components\Actions\Action` (doesn't exist in v5)
+- Filament v5 `FormAction` closures in `->action()` silently fail on server settings page — use `wire:click` in Blade for branding
 - Logo/file URLs must use relative paths (`/storage/...`), not `asset()` — APP_URL has IP, user accesses via hostname
 - FrankenPHP Caddyfile must NOT block `/storage/*` — uploaded files are served via public/storage symlink
 - Bulwark patches (basePath, SSO, auth-store, proxy.ts) are applied via `patch_bulwark()` in install.sh — called from both install and `upgrade_bulwark()`
 - Bulwark SSO fallback must use PUT to `/webmail/api/auth/session` (upstream strips password from GET)
 - Bump `jabali_patch_version` in `upgrade_bulwark()` when changing any Bulwark patch — version marker written only after successful build
+- FrankenPHP systemd service has `TimeoutStopSec=10` and `KillMode=mixed` to prevent shutdown hangs
 
 ## Security Rules
 

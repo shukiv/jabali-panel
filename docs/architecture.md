@@ -10,6 +10,7 @@ User Browser
 nginx (port 80, 443)
     ↓
 FrankenPHP Panel (port 8443, PANEL_PORT env configurable)
+    ├── Systemd service: TimeoutStopSec=10, KillMode=mixed (graceful shutdown)
     ├── Filament Admin UI (/jabali-admin/)
     ├── Filament User UI (/jabali-panel/)
     └── REST API endpoints
@@ -104,7 +105,15 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **MariaDB**: Always enabled, supports CRUD operations, user management, privilege assignment, backup (mysqldump), and restore (file upload).
 
-**PostgreSQL**: Optional. Admins enable/disable from Server Settings > Databases tab. Supports service control, database CRUD, role/privilege management (CREATE, CONNECT, TEMPORARY, ALL), backup (pg_dump), restore (file upload), and database info queries.
+**PostgreSQL**: Optional. Admins enable/disable from Server Settings > Databases tab. Supports service control, database CRUD, role/privilege management (CREATE, CONNECT, TEMPORARY, ALL), backup (pg_dump), restore (file upload), and database info queries. Appears in ServicesTableWidget when enabled.
+
+#### PHP-FPM Configuration
+
+**Pool Management**: Server Settings > PHP-FPM tab provides configurable defaults:
+- **Process Manager type**: Dynamic (adjusts based on load), Static (fixed workers), or On Demand (spawns only when needed)
+- **Conditional fields**: Dynamic mode shows start/min/max spare server controls; static and on-demand modes hide these
+- **Per-pool settings**: Max processes, max requests, memory limit, open files limit, process priority, request timeout
+- **Application scope**: Settings apply to new user pools by default, or can be applied to all existing pools via "Apply to All" action
 
 #### Backup System
 
@@ -131,6 +140,17 @@ jabali-agent (PHP binary, bin/jabali-agent)
 **Configuration**: Reads nginx access logs, generates HTML report. WebSocket server for live updates.
 
 **Integration**: Panel displays bandwidth and visitor statistics on user domains page.
+
+### 3b. File Browser
+
+**Role**: Live file browsing and management via Filament page.
+
+**Flexibility**: 
+- Subclasses can set `$readOnly = true` to disable write operations
+- Per-instance `$disabledFeatures` array allows disabling specific features without affecting global plugin config
+- All operations validated and scoped to user ownership
+
+**Integration**: Accessible from user or admin panel based on permissions.
 
 ### 4. Webmail (Bulwark)
 
