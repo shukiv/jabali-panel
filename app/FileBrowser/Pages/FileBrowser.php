@@ -205,8 +205,32 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
 
     // ─── Feature Checks ───────────────────────────────────────
 
+    /**
+     * Features disabled on this page instance. Subclasses override this
+     * to hide actions without affecting the global plugin config.
+     *
+     * Example: protected array $disabledFeatures = ['upload', 'edit', 'trash', 'extract', 'permissions'];
+     *
+     * @var list<string>
+     */
+    protected array $disabledFeatures = [];
+
+    /**
+     * Whether this instance is read-only (disables all write operations).
+     * Shortcut for disabling upload, edit, trash, extract, and permissions.
+     */
+    protected bool $readOnly = false;
+
     protected function featureEnabled(string $feature): bool
     {
+        // Per-instance overrides take priority
+        if ($this->readOnly && in_array($feature, ['upload', 'edit', 'trash', 'extract', 'permissions'], true)) {
+            return false;
+        }
+        if (in_array($feature, $this->disabledFeatures, true)) {
+            return false;
+        }
+
         $adapter = $this->getAdapter();
 
         $adapterSupports = match ($feature) {
@@ -513,7 +537,7 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                     ->label(__('Rename'))
                     ->icon('heroicon-o-pencil')
                     ->color('gray')
-                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false))
+                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false) && ! $this->readOnly)
                     ->modalHeading(__('Rename'))
                     ->form(fn (array $record): array => [
                         TextInput::make('name')
@@ -528,11 +552,11 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                     ->label(__('Trash'))
                     ->icon('heroicon-o-trash')
                     ->color('danger')
-                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false))
+                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false) && ! $this->readOnly)
                     ->requiresConfirmation()
                     ->action(fn (array $record) => $this->fileOps()->trashOrDelete($record['path'], $this->featureEnabled('trash'))),
             ])
-            ->bulkActions([
+            ->bulkActions($this->readOnly ? [] : [
                 \Filament\Actions\BulkAction::make('bulkTrash')
                     ->label(__('Trash'))
                     ->icon('heroicon-o-trash')
@@ -728,6 +752,7 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
         return Action::make('newFolder')
             ->label(__('New Folder'))
             ->icon('heroicon-o-folder-plus')
+            ->visible(! $this->readOnly)
             ->modalHeading(__('Create New Folder'))
             ->modalDescription(__('Enter a name for the new folder'))
             ->modalIcon('heroicon-o-folder-plus')
