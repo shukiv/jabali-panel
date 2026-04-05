@@ -1068,7 +1068,7 @@ install_frankenphp() {
 setup_frankenphp_config() {
     header "Configuring FrankenPHP"
 
-    mkdir -p /etc/jabali /etc/frankenphp
+    mkdir -p /etc/jabali /etc/jabali/agent.d /etc/frankenphp
     mkdir -p /var/lib/jabali/caddy
     chown www-data:www-data /var/lib/jabali/caddy
 

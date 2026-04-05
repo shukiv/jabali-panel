@@ -842,8 +842,47 @@ function handleAction(array $request): array
         // Redis ACL management
         'redis.create_user' => redisCreateUser($params),
         'server.upgrade_infra' => serverUpgradeInfra($params),
-        default => ['success' => false, 'error' => "Unknown action: $action"],
+        default => handleAddonAction($action, $params),
     };
+}
+
+/**
+ * Load and dispatch to addon route files.
+ *
+ * Addons place a PHP file in /etc/jabali/agent.d/ that returns an associative array
+ * mapping action names to callables. Example addon file:
+ *
+ *   <?php
+ *   return [
+ *       'backup.list_snapshots' => fn(array $p) => backupListSnapshots($p),
+ *       'backup.run' => fn(array $p) => backupRun($p),
+ *   ];
+ *
+ * The addon file can also define its handler functions inline or require them
+ * from its own lib directory.
+ */
+function handleAddonAction(string $action, array $params): array
+{
+    static $addonRoutes = null;
+
+    if ($addonRoutes === null) {
+        $addonRoutes = [];
+        $addonDir = '/etc/jabali/agent.d';
+        if (is_dir($addonDir)) {
+            foreach (glob("$addonDir/*.php") as $file) {
+                $routes = require $file;
+                if (is_array($routes)) {
+                    $addonRoutes = array_merge($addonRoutes, $routes);
+                }
+            }
+        }
+    }
+
+    if (isset($addonRoutes[$action])) {
+        return ($addonRoutes[$action])($params);
+    }
+
+    return ['success' => false, 'error' => "Unknown action: $action"];
 }
 
 // ============ USER MANAGEMENT ============
