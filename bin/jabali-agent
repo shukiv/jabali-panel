@@ -17159,13 +17159,23 @@ function backupExportSnapshot(array $params): array
     }
 
     $env = implode(' ', $envParts);
-    $cmd = "$env restic dump " . escapeshellarg($snapshotId) . ' / --archive tar 2>/dev/null | gzip > ' . escapeshellarg($exportFile);
+    $errFile = tempnam(sys_get_temp_dir(), 'restic_err_');
+
+    // Use pipefail so we catch restic failures, not just gzip's exit code
+    $cmd = "bash -c 'set -o pipefail; $env restic dump "
+        . escapeshellarg($snapshotId)
+        . " / --archive tar 2>" . escapeshellarg($errFile)
+        . " | gzip > " . escapeshellarg($exportFile) . "'";
 
     exec($cmd, $output, $exitCode);
 
+    $stderrOutput = @file_get_contents($errFile);
+    @unlink($errFile);
+
     if ($exitCode !== 0 || ! file_exists($exportFile) || filesize($exportFile) < 100) {
         @unlink($exportFile);
-        return ['success' => false, 'error' => 'Failed to export snapshot'];
+        $detail = trim($stderrOutput ?: '');
+        return ['success' => false, 'error' => 'Failed to export snapshot' . ($detail ? ": $detail" : '')];
     }
 
     return [
