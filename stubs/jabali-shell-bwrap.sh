@@ -7,15 +7,19 @@
 #   - PID namespace (user can't see other users' processes)
 #   - /tmp isolation (per-session tmpdir)
 #
-# Two modes:
-#   1. Interactive: ssh user@host → bash inside sandbox
-#   2. Command:     ssh user@host "cmd" → run inside sandbox
+# Called from jabali-shell, which passes through $@ (e.g. -c "command")
 set -euo pipefail
 
 JUSER="$(whoami)"
 HOME_DIR="/home/$JUSER"
 UID_NUM="$(id -u)"
 GID_NUM="$(id -g)"
+
+# Detect remote command (login shell passes -c "cmd")
+REMOTE_CMD=""
+if [[ "${1:-}" == "-c" && -n "${2:-}" ]]; then
+    REMOTE_CMD="$2"
+fi
 
 if [[ ! -d "$HOME_DIR" ]]; then
     echo "Error: Home directory $HOME_DIR does not exist." >&2
@@ -76,10 +80,16 @@ if [[ -n "${TERM:-}" ]]; then
     ENV_ARGS+=(--setenv TERM "$TERM")
 fi
 
-# No command → interactive shell
-if [[ -z "${SSH_ORIGINAL_COMMAND:-}" ]]; then
-    exec bwrap "${BWRAP_ARGS[@]}" "${ENV_ARGS[@]}" /bin/bash -il
+# Command provided → run inside sandbox
+if [[ -n "$REMOTE_CMD" ]]; then
+    exec bwrap "${BWRAP_ARGS[@]}" "${ENV_ARGS[@]}" /bin/sh -c "$REMOTE_CMD"
 fi
 
-# Command provided → execute inside sandbox (SFTP, SCP, rsync, VS Code, etc.)
-exec bwrap "${BWRAP_ARGS[@]}" "${ENV_ARGS[@]}" /bin/sh -c "$SSH_ORIGINAL_COMMAND"
+# No command → shell session
+if tty -s 2>/dev/null; then
+    # Interactive: user has a terminal
+    exec bwrap "${BWRAP_ARGS[@]}" "${ENV_ARGS[@]}" /bin/bash -il
+else
+    # Non-interactive: VS Code, rsync, etc. — no prompt noise
+    exec bwrap "${BWRAP_ARGS[@]}" "${ENV_ARGS[@]}" /bin/bash --login
+fi

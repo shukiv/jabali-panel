@@ -101,7 +101,7 @@ try_bwrap() {
 
     local bwrap_shell="/usr/local/bin/jabali-shell-bwrap"
     if [[ -x "$bwrap_shell" ]]; then
-        exec "$bwrap_shell"
+        exec "$bwrap_shell" "$@"
     fi
 
     return 1
@@ -126,12 +126,12 @@ try_standard() {
 case "$SHELL_MODE" in
     container)
         if try_nspawn; then exit 0; fi
-        if try_bwrap; then exit 0; fi
+        if try_bwrap "$@"; then exit 0; fi
         echo "Error: Container isolation unavailable. Contact your administrator." >&2
         exit 1
         ;;
     sandbox)
-        if try_bwrap; then exit 0; fi
+        if try_bwrap "$@"; then exit 0; fi
         echo "Error: Sandbox isolation unavailable. Contact your administrator." >&2
         exit 1
         ;;
