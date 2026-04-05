@@ -138,7 +138,7 @@ class BackupDownloadController extends Controller
         return response()->download($realPath);
     }
 
-    private function downloadResticSnapshot(Backup $backup): BinaryFileResponse|\Illuminate\Http\Response
+    private function downloadResticSnapshot(Backup $backup): StreamedResponse|\Illuminate\Http\Response
     {
         try {
             $repo = $backup->destination
@@ -159,10 +159,29 @@ class BackupDownloadController extends Controller
                     ->header('Content-Type', 'text/plain');
             }
 
-            $exportPath = $result['path'];
+            $pipePath = $result['pipe'];
             $filename = ($backup->name ?: 'backup').'.tar.gz';
 
-            return response()->download($exportPath, $filename)->deleteFileAfterSend();
+            // Stream directly from the named pipe — no temp file on disk
+            return response()->stream(function () use ($pipePath): void {
+                $fp = fopen($pipePath, 'rb');
+                if (! $fp) {
+                    return;
+                }
+                while (! feof($fp)) {
+                    $chunk = fread($fp, 65536);
+                    if ($chunk !== false && $chunk !== '') {
+                        echo $chunk;
+                        flush();
+                    }
+                }
+                fclose($fp);
+                @unlink($pipePath);
+            }, 200, [
+                'Content-Type' => 'application/gzip',
+                'Content-Disposition' => 'attachment; filename="'.$filename.'"',
+                'Cache-Control' => 'no-cache',
+            ]);
         } catch (\Throwable $e) {
             return response('Backup export failed: '.$e->getMessage(), 500)
                 ->header('Content-Type', 'text/plain');

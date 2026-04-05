@@ -17121,8 +17121,10 @@ function backupReadSnapshotFile(array $params): array
 }
 
 /**
- * Export a restic snapshot as a tar.gz file for download.
- * Uses `restic dump <snapshot> / --archive tar` piped to gzip.
+ * Prepare a named pipe for streaming a restic snapshot as tar.gz.
+ * The agent starts restic dump in the background writing to a FIFO,
+ * and returns the pipe path immediately. The controller reads the pipe
+ * and streams directly to the browser — no temp file on disk.
  */
 function backupExportSnapshot(array $params): array
 {
@@ -17138,14 +17140,7 @@ function backupExportSnapshot(array $params): array
         return ['success' => false, 'error' => 'Invalid snapshot ID'];
     }
 
-    $exportDir = '/tmp/jabali-exports';
-    if (! is_dir($exportDir)) {
-        mkdir($exportDir, 0700, true);
-    }
-
-    $shortId = substr($snapshotId, 0, 8);
-    $exportFile = $exportDir . '/backup-' . $shortId . '-' . date('YmdHis') . '.tar.gz';
-
+    // First verify the snapshot exists
     $repo = $repo ?: '/var/backups/jabali/restic';
     $passwordFile = '/etc/jabali/restic-password';
 
@@ -17159,29 +17154,34 @@ function backupExportSnapshot(array $params): array
     }
 
     $env = implode(' ', $envParts);
-    $errFile = tempnam(sys_get_temp_dir(), 'restic_err_');
 
-    // Use pipefail so we catch restic failures, not just gzip's exit code
-    $cmd = "bash -c 'set -o pipefail; $env restic dump "
-        . escapeshellarg($snapshotId)
-        . " / --archive tar 2>" . escapeshellarg($errFile)
-        . " | gzip > " . escapeshellarg($exportFile) . "'";
-
-    exec($cmd, $output, $exitCode);
-
-    $stderrOutput = @file_get_contents($errFile);
-    @unlink($errFile);
-
-    if ($exitCode !== 0 || ! file_exists($exportFile) || filesize($exportFile) < 100) {
-        @unlink($exportFile);
-        $detail = trim($stderrOutput ?: '');
-        return ['success' => false, 'error' => 'Failed to export snapshot' . ($detail ? ": $detail" : '')];
+    // Verify snapshot is accessible
+    $checkCmd = "$env restic snapshots " . escapeshellarg($snapshotId) . " --json 2>&1";
+    exec($checkCmd, $checkOutput, $checkCode);
+    if ($checkCode !== 0) {
+        $detail = trim(implode("\n", $checkOutput));
+        return ['success' => false, 'error' => 'Cannot access snapshot: ' . $detail];
     }
+
+    // Create a named pipe (FIFO)
+    $pipeDir = '/tmp/jabali-exports';
+    if (! is_dir($pipeDir)) {
+        mkdir($pipeDir, 0700, true);
+    }
+    $pipePath = $pipeDir . '/pipe-' . bin2hex(random_bytes(8));
+    posix_mkfifo($pipePath, 0600);
+    // Allow www-data to read it
+    chmod($pipePath, 0644);
+
+    // Start restic dump in background, writing through gzip to the pipe
+    $bgCmd = "($env restic dump " . escapeshellarg($snapshotId)
+        . " / --archive tar 2>/dev/null | gzip > " . escapeshellarg($pipePath)
+        . "; rm -f " . escapeshellarg($pipePath) . ") &";
+    exec($bgCmd);
 
     return [
         'success' => true,
-        'path' => $exportFile,
-        'size' => filesize($exportFile),
+        'pipe' => $pipePath,
     ];
 }
 
