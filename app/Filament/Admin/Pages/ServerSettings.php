@@ -848,7 +848,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             }
         }
 
-        $this->loadPostgresStatus();
+        $this->redirect('/jabali-admin/server-settings?tab=database');
     }
 
     protected function databaseTabContent(): array
