@@ -140,26 +140,30 @@ class BackupDownloadController extends Controller
 
     private function downloadResticSnapshot(Backup $backup): BinaryFileResponse
     {
-        $repo = $backup->destination
-            ? $backup->destination->getResticRepoUrl()
-            : BackupDestination::defaultRepo();
-        $destConfig = $backup->destination
-            ? array_merge($backup->destination->config ?? [], ['type' => $backup->destination->type])
-            : [];
+        try {
+            $repo = $backup->destination
+                ? $backup->destination->getResticRepoUrl()
+                : BackupDestination::defaultRepo();
+            $destConfig = $backup->destination
+                ? array_merge($backup->destination->config ?? [], ['type' => $backup->destination->type])
+                : [];
 
-        $result = app(AgentClient::class)->send('backup.export_snapshot', [
-            'snapshot_id' => $backup->snapshot_id,
-            'repo' => $repo,
-            'destination' => $destConfig,
-        ]);
+            $result = app(AgentClient::class)->send('backup.export_snapshot', [
+                'snapshot_id' => $backup->snapshot_id,
+                'repo' => $repo,
+                'destination' => $destConfig,
+            ]);
 
-        if (! ($result['success'] ?? false)) {
-            abort(500, $result['error'] ?? 'Failed to export snapshot');
+            if (! ($result['success'] ?? false)) {
+                abort(500, $result['error'] ?? 'Failed to export snapshot');
+            }
+
+            $exportPath = $result['path'];
+            $filename = ($backup->name ?: 'backup').'.tar.gz';
+
+            return response()->download($exportPath, $filename)->deleteFileAfterSend();
+        } catch (\Throwable $e) {
+            abort(500, 'Backup export failed: '.$e->getMessage());
         }
-
-        $exportPath = $result['path'];
-        $filename = ($backup->name ?: 'backup').'.tar.gz';
-
-        return response()->download($exportPath, $filename)->deleteFileAfterSend();
     }
 }
