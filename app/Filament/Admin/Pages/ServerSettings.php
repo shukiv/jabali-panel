@@ -795,7 +795,7 @@ class ServerSettings extends Page implements HasActions, HasForms
         ];
     }
 
-    public bool $postgresInstalled = false;
+    public bool $postgresEnabled = false;
 
     public bool $postgresActive = false;
 
@@ -803,14 +803,19 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     protected function loadPostgresStatus(): void
     {
-        try {
-            $result = app(\App\Services\Agent\AgentClient::class)->send('postgres.status', []);
-            $this->postgresInstalled = $result['installed'] ?? false;
-            $this->postgresActive = $result['active'] ?? false;
-            $this->postgresVersion = $result['version'] ?? null;
-        } catch (\Throwable) {
-            $this->postgresInstalled = false;
+        $this->postgresEnabled = (bool) DnsSetting::get('postgres_enabled', false);
+
+        if ($this->postgresEnabled) {
+            try {
+                $result = app(\App\Services\Agent\AgentClient::class)->send('postgres.status', []);
+                $this->postgresActive = $result['active'] ?? false;
+                $this->postgresVersion = $result['version'] ?? null;
+            } catch (\Throwable) {
+                $this->postgresActive = false;
+            }
+        } else {
             $this->postgresActive = false;
+            $this->postgresVersion = null;
         }
     }
 
@@ -818,7 +823,7 @@ class ServerSettings extends Page implements HasActions, HasForms
     {
         $agent = app(\App\Services\Agent\AgentClient::class);
 
-        if ($this->postgresInstalled) {
+        if ($this->postgresEnabled) {
             // Disable
             try {
                 $result = $agent->send('postgres.uninstall', ['remove_data' => false]);
@@ -857,20 +862,20 @@ class ServerSettings extends Page implements HasActions, HasForms
 
         return [
             Section::make(__('PostgreSQL'))
-                ->description($this->postgresInstalled
-                    ? __('PostgreSQL is installed and :status.', ['status' => $this->postgresActive ? __('running') : __('stopped')])
+                ->description($this->postgresEnabled
+                    ? __('PostgreSQL is enabled and :status.', ['status' => $this->postgresActive ? __('running') : __('stopped')])
                     .($this->postgresVersion ? " ({$this->postgresVersion})" : '')
-                    : __('PostgreSQL is not installed. Enable it to allow users to create PostgreSQL databases.'))
+                    : __('PostgreSQL is not enabled. Enable it to allow users to create PostgreSQL databases.'))
                 ->icon('heroicon-o-circle-stack')
                 ->schema([
                     Actions::make([
                         FormAction::make('togglePostgres')
-                            ->label($this->postgresInstalled ? __('Disable PostgreSQL') : __('Enable PostgreSQL'))
-                            ->icon($this->postgresInstalled ? 'heroicon-o-x-circle' : 'heroicon-o-check-circle')
-                            ->color($this->postgresInstalled ? 'danger' : 'success')
+                            ->label($this->postgresEnabled ? __('Disable PostgreSQL') : __('Enable PostgreSQL'))
+                            ->icon($this->postgresEnabled ? 'heroicon-o-x-circle' : 'heroicon-o-check-circle')
+                            ->color($this->postgresEnabled ? 'danger' : 'success')
                             ->requiresConfirmation()
-                            ->modalHeading($this->postgresInstalled ? __('Disable PostgreSQL') : __('Enable PostgreSQL'))
-                            ->modalDescription($this->postgresInstalled
+                            ->modalHeading($this->postgresEnabled ? __('Disable PostgreSQL') : __('Enable PostgreSQL'))
+                            ->modalDescription($this->postgresEnabled
                                 ? __('This will stop PostgreSQL and remove packages. Existing databases will be preserved on disk.')
                                 : __('This will install PostgreSQL packages and start the service.'))
                             ->action('togglePostgres'),
