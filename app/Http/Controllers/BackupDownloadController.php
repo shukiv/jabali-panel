@@ -50,7 +50,7 @@ class BackupDownloadController extends Controller
         return response()->download($realPath);
     }
 
-    public function adminDownload(Request $request): BinaryFileResponse|StreamedResponse
+    public function adminDownload(Request $request): BinaryFileResponse|StreamedResponse|\Illuminate\Http\Response
     {
         $backupId = $request->query('id');
 
@@ -138,7 +138,7 @@ class BackupDownloadController extends Controller
         return response()->download($realPath);
     }
 
-    private function downloadResticSnapshot(Backup $backup): BinaryFileResponse
+    private function downloadResticSnapshot(Backup $backup): BinaryFileResponse|\Illuminate\Http\Response
     {
         try {
             $repo = $backup->destination
@@ -155,7 +155,8 @@ class BackupDownloadController extends Controller
             ]);
 
             if (! ($result['success'] ?? false)) {
-                abort(500, $result['error'] ?? 'Failed to export snapshot');
+                return response($result['error'] ?? 'Failed to export snapshot', 500)
+                    ->header('Content-Type', 'text/plain');
             }
 
             $exportPath = $result['path'];
@@ -163,7 +164,8 @@ class BackupDownloadController extends Controller
 
             return response()->download($exportPath, $filename)->deleteFileAfterSend();
         } catch (\Throwable $e) {
-            abort(500, 'Backup export failed: '.$e->getMessage());
+            return response('Backup export failed: '.$e->getMessage(), 500)
+                ->header('Content-Type', 'text/plain');
         }
     }
 }
