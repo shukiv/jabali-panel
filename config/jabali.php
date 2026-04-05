@@ -8,10 +8,6 @@ return [
         'timeout' => env('JABALI_AGENT_TIMEOUT', 30),
     ],
 
-    'backup' => [
-        'default_repo' => env('JABALI_BACKUP_REPO', '/var/backups/jabali/restic'),
-    ],
-
     'panel' => [
         'hostname' => env('PANEL_HOSTNAME', env('SERVER_HOSTNAME', '')),
         'port' => (int) env('PANEL_PORT', 8443),

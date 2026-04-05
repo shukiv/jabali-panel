@@ -248,8 +248,6 @@ class ServerSettings extends Page implements HasActions, HasForms
         $this->notificationsData = [
             'admin_email_recipients' => $settings['admin_email_recipients'] ?? '',
             'notify_ssl_errors' => (bool) ($settings['notify_ssl_errors'] ?? true),
-            'notify_backup_failures' => (bool) ($settings['notify_backup_failures'] ?? true),
-            'notify_backup_success' => (bool) ($settings['notify_backup_success'] ?? false),
             'notify_disk_quota' => (bool) ($settings['notify_disk_quota'] ?? true),
             'notify_system_updates' => (bool) ($settings['notify_system_updates'] ?? false),
             'notify_service_health' => (bool) ($settings['notify_service_health'] ?? true),
@@ -268,7 +266,6 @@ class ServerSettings extends Page implements HasActions, HasForms
         ];
 
         $this->logsData = [
-            'backup_log_retention_days' => (int) ($settings['backup_log_retention_days'] ?? 60),
             'audit_log_retention_days' => (int) ($settings['audit_log_retention_days'] ?? 90),
         ];
 
@@ -684,12 +681,6 @@ class ServerSettings extends Page implements HasActions, HasForms
                         Toggle::make('notificationsData.notify_ssl_errors')
                             ->label(__('SSL Certificate Alerts'))
                             ->helperText(__('Errors and expiring certificates')),
-                        Toggle::make('notificationsData.notify_backup_failures')
-                            ->label(__('Backup Failures'))
-                            ->helperText(__('Failed scheduled backups')),
-                        Toggle::make('notificationsData.notify_backup_success')
-                            ->label(__('Backup Success'))
-                            ->helperText(__('Successful backup completions')),
                         Toggle::make('notificationsData.notify_disk_quota')
                             ->label(__('Disk Quota Warnings'))
                             ->helperText(__('When users reach 90% quota')),
@@ -832,13 +823,6 @@ class ServerSettings extends Page implements HasActions, HasForms
                 ->schema([
                     Grid::make(['default' => 1, 'md' => 2])
                         ->schema([
-                            TextInput::make('logsData.backup_log_retention_days')
-                                ->label(__('Backup Log Retention'))
-                                ->numeric()
-                                ->minValue(7)
-                                ->maxValue(365)
-                                ->suffix(__('days'))
-                                ->helperText(__('Backup logs older than this will be hidden from the Backups log viewer')),
                             TextInput::make('logsData.audit_log_retention_days')
                                 ->label(__('Audit Log Retention'))
                                 ->numeric()
@@ -860,11 +844,6 @@ class ServerSettings extends Page implements HasActions, HasForms
     {
         $data = $this->logsData;
 
-        // NOTE: ServerSettingsService::saveLogSettings() saves different keys
-        // (log_retention_days, log_max_size) than what this page needs
-        // (backup_log_retention_days, audit_log_retention_days), so we keep
-        // direct DnsSetting calls here until the service is updated.
-        DnsSetting::set('backup_log_retention_days', (int) ($data['backup_log_retention_days'] ?? 60));
         DnsSetting::set('audit_log_retention_days', (int) ($data['audit_log_retention_days'] ?? 90));
         DnsSetting::clearCache();
 
@@ -1284,8 +1263,6 @@ class ServerSettings extends Page implements HasActions, HasForms
         $this->notificationsData['admin_email_recipients'] = $emailsValue;
         DnsSetting::set('admin_email_recipients', $emailsValue);
         DnsSetting::set('notify_ssl_errors', $data['notify_ssl_errors'] ? '1' : '0');
-        DnsSetting::set('notify_backup_failures', $data['notify_backup_failures'] ? '1' : '0');
-        DnsSetting::set('notify_backup_success', $data['notify_backup_success'] ? '1' : '0');
         DnsSetting::set('notify_disk_quota', $data['notify_disk_quota'] ? '1' : '0');
         DnsSetting::set('notify_system_updates', $data['notify_system_updates'] ? '1' : '0');
         DnsSetting::set('notify_service_health', $data['notify_service_health'] ? '1' : '0');
@@ -1571,7 +1548,7 @@ class ServerSettings extends Page implements HasActions, HasForms
                 'ns1', 'ns1_ip', 'ns2', 'ns2_ip', 'default_ip', 'default_ipv6', 'default_ttl', 'admin_email',
                 'quotas_enabled', 'default_quota_mb', 'max_upload_size_mb',
                 'mail_hostname', 'mail_default_quota_mb', 'max_mailboxes_per_domain', 'webmail_url', 'webmail_product_name',
-                'admin_email_recipients', 'notify_ssl_errors', 'notify_backup_failures', 'notify_backup_success',
+                'admin_email_recipients', 'notify_ssl_errors',
                 'notify_disk_quota', 'notify_system_updates',
                 'notify_service_health', 'notify_high_load', 'load_threshold', 'load_alert_minutes',
                 'fpm_pm_max_children', 'fpm_pm_max_requests', 'fpm_rlimit_files',

@@ -31,13 +31,6 @@ Schedule::command('jabali:ssl-check --renew-only')
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/ssl-renewal.log'));
 
-// Backup Schedules - runs every 5 minutes to check for due backups
-Schedule::command('backups:run-schedules')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->runInBackground()
-    ->appendOutputTo(storage_path('logs/backup-schedules.log'));
-
 // Disk Quota Check - runs twice daily to check for users approaching quota limits
 Schedule::command('jabali:check-quotas')
     ->twiceDaily(6, 18)

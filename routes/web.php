@@ -2,7 +2,6 @@
 
 use App\Http\Controllers\AutoconfigController;
 use App\Http\Controllers\AutoDiscoverController;
-use App\Http\Controllers\BackupDownloadController;
 use App\Http\Controllers\ImpersonationController;
 use App\Http\Controllers\LanguageController;
 use Illuminate\Support\Facades\Cache;
@@ -137,30 +136,6 @@ Route::post('/impersonate/stop', [ImpersonationController::class, 'stop'])
 
 Route::get('/impersonate/{token}', [ImpersonationController::class, 'impersonate'])
     ->name('impersonate');
-
-/*
-|--------------------------------------------------------------------------
-| User Panel Backup Download
-|--------------------------------------------------------------------------
-*/
-
-Route::get('/jabali-panel/backup-download', [BackupDownloadController::class, 'download'])
-    ->middleware(['web', 'auth'])
-    ->name('filament.jabali.pages.backup-download');
-
-Route::get('/jabali-panel/backup-snapshot-download', [BackupDownloadController::class, 'userSnapshotDownload'])
-    ->middleware(['web', 'auth'])
-    ->name('filament.jabali.pages.backup-snapshot-download');
-
-/*
-|--------------------------------------------------------------------------
-| Admin Panel Backup Download
-|--------------------------------------------------------------------------
-*/
-
-Route::get('/jabali-admin/backup-download', [BackupDownloadController::class, 'adminDownload'])
-    ->middleware(['web', 'auth:admin'])
-    ->name('filament.admin.pages.backup-download');
 
 /*
 |--------------------------------------------------------------------------

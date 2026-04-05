@@ -7,7 +7,6 @@ namespace App\Filament\Jabali\Pages;
 use App\Filament\Jabali\Widgets\DiskUsageWidget;
 use App\Filament\Jabali\Widgets\DomainsWidget;
 use App\Filament\Jabali\Widgets\MailboxesWidget;
-use App\Filament\Jabali\Widgets\RecentBackupsWidget;
 use App\Filament\Jabali\Widgets\StatsOverview;
 use App\Models\AuditLog;
 use App\Models\DnsSetting;
@@ -38,7 +37,6 @@ class Dashboard extends BaseDashboard
             DiskUsageWidget::class,
             DomainsWidget::class,
             MailboxesWidget::class,
-            RecentBackupsWidget::class,
         ];
     }
 
