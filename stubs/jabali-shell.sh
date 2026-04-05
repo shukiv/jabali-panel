@@ -15,6 +15,9 @@
 #   SFTP/SCP:     handled by sshd directly (user is in sftpusers group with ChrootDirectory)
 
 # No output before exec — VS Code probes depend on clean stdout
+# Fix missing locale (prevents "setlocale: LC_ALL: cannot change locale" warnings)
+export LANG="${LANG:-C.UTF-8}"
+export LC_ALL="${LC_ALL:-C.UTF-8}"
 set -euo pipefail
 
 JUSER="$(whoami)"
