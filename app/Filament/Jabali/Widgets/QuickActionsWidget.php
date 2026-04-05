@@ -53,11 +53,6 @@ class QuickActionsWidget extends Widget
                 'url' => route('filament.jabali.pages.ssl'),
             ],
             [
-                'label' => __('Backups'),
-                'icon' => 'heroicon-o-archive-box',
-                'url' => route('filament.jabali.pages.backups'),
-            ],
-            [
                 'label' => __('Cron'),
                 'icon' => 'heroicon-o-clock',
                 'url' => route('filament.jabali.pages.cron-jobs'),

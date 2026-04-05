@@ -52,11 +52,6 @@ class QuickActions extends Widget
                 'icon' => 'heroicon-o-server-stack',
                 'url' => route('filament.admin.pages.dns-zones'),
             ],
-            [
-                'label' => __('Backups'),
-                'icon' => 'heroicon-o-archive-box',
-                'url' => route('filament.admin.pages.backups'),
-            ],
         ];
     }
 }

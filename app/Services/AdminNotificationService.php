@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\Models\DnsSetting;
 use App\Models\NotificationLog;
-use App\Support\Formatter;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -107,35 +106,6 @@ class AdminNotificationService
             "SSL Certificate Expiring: {$domain}",
             "The SSL certificate for {$domain} will expire in {$daysUntilExpiry} days.",
             ['Domain' => $domain, 'Days Until Expiry' => $daysUntilExpiry]
-        );
-    }
-
-    public static function backupFailure(string $backupName, string $error): bool
-    {
-        return self::send(
-            'backup_failures',
-            "Backup Failed: {$backupName}",
-            'A scheduled backup has failed.',
-            ['Backup Name' => $backupName, 'Error' => $error]
-        );
-    }
-
-    public static function backupSuccess(string $backupName, int $sizeBytes, ?string $destination = null): bool
-    {
-        $size = Formatter::bytes($sizeBytes);
-        $context = [
-            'Backup Name' => $backupName,
-            'Size' => $size,
-        ];
-        if ($destination) {
-            $context['Destination'] = $destination;
-        }
-
-        return self::send(
-            'backup_success',
-            "Backup Completed: {$backupName}",
-            'A backup has completed successfully.',
-            $context
         );
     }
 

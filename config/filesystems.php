@@ -38,12 +38,6 @@ return [
             'throw' => false,
         ],
 
-        // Server-wide backups folder (created by install.sh)
-        'backups' => [
-            'driver' => 'local',
-            'root' => env('JABALI_BACKUPS_ROOT', '/var/backups/jabali'),
-            'throw' => false,
-        ],
     ],
 
     'links' => [

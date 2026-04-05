@@ -132,11 +132,6 @@ class SmokeTest extends Command
                 $this->test_word_press_scan();
             }
 
-            $this->section('Backups');
-            $this->test_create_backup();
-            $this->test_list_backups();
-            $this->test_verify_backup();
-
             $this->section('SSH Keys');
             $this->test_ssh_key_generate();
             $this->test_ssh_key_list();
@@ -834,41 +829,6 @@ class SmokeTest extends Command
         });
     }
 
-    // ── Backups ──
-
-    private function test_create_backup(): void
-    {
-        $this->check('Create user backup', function () {
-            $outputPath = "/home/{$this->testUsername}/backups/smoke-test-backup.tar.gz";
-            $result = $this->agent->backupCreate($this->testUsername, $outputPath, [
-                'include_files' => true,
-                'include_databases' => false,
-                'include_emails' => false,
-            ]);
-
-            return $result['success'] ?? false;
-        });
-    }
-
-    private function test_list_backups(): void
-    {
-        $this->check('List backups', function () {
-            $result = $this->agent->backupList($this->testUsername, 'backups');
-
-            return $result['success'] ?? false;
-        });
-    }
-
-    private function test_verify_backup(): void
-    {
-        $this->check('Verify backup', function () {
-            $path = "/home/{$this->testUsername}/backups/smoke-test-backup.tar.gz";
-            $result = $this->agent->backupVerify($path);
-
-            return $result['success'] ?? false;
-        });
-    }
-
     // ── SSH Keys ──
 
     private function test_ssh_key_generate(): void
@@ -1098,7 +1058,6 @@ class SmokeTest extends Command
             '/jabali-admin' => 'Admin Dashboard',
             '/jabali-admin/server-settings' => 'Server Settings',
             '/jabali-admin/services' => 'Services',
-            '/jabali-admin/backups' => 'Backups',
             '/jabali-admin/ssl-manager' => 'SSL Manager',
             '/jabali-admin/dns-zones' => 'DNS Zones',
             '/jabali-admin/server-status' => 'Server Status',
@@ -1115,7 +1074,6 @@ class SmokeTest extends Command
             '/jabali-panel/email' => 'Email',
             '/jabali-panel/databases' => 'Databases',
             '/jabali-panel/files' => 'Files',
-            '/jabali-panel/backups' => 'User Backups',
             '/jabali-panel/ssl' => 'User SSL',
             '/jabali-panel/dns-records' => 'DNS Records',
             '/jabali-panel/wordpress' => 'WordPress',
