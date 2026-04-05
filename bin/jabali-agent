@@ -17321,10 +17321,11 @@ function backupExportSnapshot(array $params): array
     $errFile = $pipePath . '.err';
 
     // Start restic dump in background, writing through gzip to the pipe
-    $bgCmd = "($env restic $sftpOption dump " . escapeshellarg($snapshotId)
+    // Redirect stdout/stderr and use nohup to fully detach from agent process
+    $bgCmd = "nohup bash -c '($env restic $sftpOption dump " . escapeshellarg($snapshotId)
         . " / --archive tar 2>" . escapeshellarg($errFile)
         . " | gzip > " . escapeshellarg($pipePath)
-        . "; rm -f " . escapeshellarg($pipePath) . ") &";
+        . "; rm -f " . escapeshellarg($pipePath) . ")' > /dev/null 2>&1 &";
     exec($bgCmd);
 
     return [
