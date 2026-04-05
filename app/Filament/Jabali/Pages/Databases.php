@@ -450,7 +450,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                                 ->required()
                                 ->minLength(8)
                                 ->suffixActions([
-                                    \Filament\Forms\Components\Actions\Action::make('generate')
+                                    Action::make('generate')
                                         ->icon('heroicon-o-arrow-path')
                                         ->action(fn ($set) => $set('password', \Illuminate\Support\Str::random(16))),
                                 ]),
