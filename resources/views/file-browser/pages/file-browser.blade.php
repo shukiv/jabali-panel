@@ -66,6 +66,49 @@
 
     @script
     <script>
+        // Permission toggle ↔ mode sync (event delegation, no Livewire roundtrip)
+        function permSyncTogglesFromMode(modal, mode) {
+            if (!/^[0-7]{3,4}$/.test(mode)) return;
+            const digits = mode.slice(-3).split('').map(Number);
+            modal.querySelectorAll('[data-perm-bit]').forEach(btn => {
+                const [group, bit] = btn.dataset.permBit.split('-').map(Number);
+                const shouldBeOn = (digits[group] & bit) !== 0;
+                const isOn = btn.getAttribute('aria-checked') === 'true';
+                if (shouldBeOn !== isOn) btn.click();
+            });
+        }
+
+        function permSyncModeFromToggles(modal) {
+            const digits = [0, 0, 0];
+            modal.querySelectorAll('[data-perm-bit]').forEach(btn => {
+                const [group, bit] = btn.dataset.permBit.split('-').map(Number);
+                if (btn.getAttribute('aria-checked') === 'true') digits[group] += bit;
+            });
+            const input = modal.querySelector('[data-perm-mode]');
+            if (input) {
+                input.value = digits.join('');
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        }
+
+        // Toggle → mode: click on any toggle button recalculates the mode
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-perm-bit]');
+            if (!btn) return;
+            const modal = btn.closest('.fi-modal');
+            if (!modal) return;
+            // Wait for Alpine to update aria-checked
+            setTimeout(() => permSyncModeFromToggles(modal), 50);
+        });
+
+        // Mode → toggles: typing in the mode input updates the toggles
+        document.addEventListener('change', (e) => {
+            if (!e.target.matches('[data-perm-mode]')) return;
+            const modal = e.target.closest('.fi-modal');
+            if (!modal) return;
+            permSyncTogglesFromMode(modal, e.target.value);
+        });
+
         // File download handler
         $wire.on('download-file', ({ content, filename }) => {
             const blob = new Blob([Uint8Array.from(atob(content), c => c.charCodeAt(0))]);
