@@ -34,7 +34,7 @@ class RunServerBackup implements ShouldQueue
             return;
         }
 
-        $orchestrator->execute($backup);
+        $orchestrator->executePerAccount($backup);
     }
 
     public function failed(Throwable $exception): void

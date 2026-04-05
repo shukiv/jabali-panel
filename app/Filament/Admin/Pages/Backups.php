@@ -98,12 +98,17 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     private function backupsTable(Table $table): Table
     {
         return $table
-            ->query(Backup::query()->with('destination')->latest())
+            ->query(Backup::query()->with(['destination', 'user'])->latest())
             ->columns([
+                TextColumn::make('user.username')
+                    ->label(__('Account'))
+                    ->searchable()
+                    ->sortable()
+                    ->placeholder(__('Server-wide')),
                 TextColumn::make('name')
                     ->label(__('Name'))
                     ->searchable()
-                    ->limit(40),
+                    ->limit(30),
                 TextColumn::make('status')
                     ->label(__('Status'))
                     ->badge()
@@ -124,11 +129,12 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->label(__('Created'))
                     ->dateTime('M j, Y H:i')
                     ->sortable(),
-                TextColumn::make('snapshot_id')
-                    ->label(__('Snapshot'))
-                    ->limit(8)
-                    ->placeholder('-')
-                    ->toggleable(isToggledHiddenByDefault: true),
+            ])
+            ->filters([
+                \Filament\Tables\Filters\SelectFilter::make('user_id')
+                    ->label(__('Account'))
+                    ->options(fn () => User::where('is_active', true)->pluck('username', 'id')->toArray())
+                    ->searchable(),
             ])
             ->actions([
                 Action::make('download')

@@ -84,6 +84,11 @@ class RestoreBackup extends Page implements HasActions, HasForms
 
             return;
         }
+
+        // Auto-select user for per-account backups
+        if ($backup->user_id && $backup->user) {
+            $this->selectedUser = $backup->user->username;
+        }
     }
 
     public function getTitle(): string|Htmlable
@@ -123,7 +128,8 @@ class RestoreBackup extends Page implements HasActions, HasForms
                             ->options(fn () => User::where('is_active', true)->pluck('username', 'username')->toArray())
                             ->required()
                             ->live()
-                            ->searchable(),
+                            ->searchable()
+                            ->disabled(fn () => $this->getBackup()?->user_id !== null),
                         Placeholder::make('backup_info')
                             ->label(__('Backup'))
                             ->content(function (): HtmlString {

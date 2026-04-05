@@ -776,6 +776,7 @@ function handleAction(array $request): array
         'ssl.certbot_log' => sslCertbotLog($params),
         // Backup operations
         'backup.create' => backupCreate($params),
+        'backup.create_user_snapshot' => backupCreateUserSnapshot($params),
         'backup.create_server' => backupCreateServer($params),
         'backup.restore' => backupRestore($params),
         'backup.list' => backupList($params),
@@ -16400,7 +16401,150 @@ function dumpUserDatabases(string $username, string $outputDir): array
     return $databases;
 }
 
-// ── Backup Create Server ────────────────────────────────────────────────────
+// ── Backup Create User Snapshot ─────────────────────────────────────────────
+
+/**
+ * Create a restic snapshot for a single user account.
+ * Includes domains, databases, mail, DNS zones, and SSL certs.
+ */
+function backupCreateUserSnapshot(array $params): array
+{
+    $username    = $params['username'] ?? '';
+    $destination = $params['destination'] ?? [];
+    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $includeFiles = $params['include_files'] ?? true;
+    $includeDbs   = $params['include_databases'] ?? true;
+    $includeMail  = $params['include_mailboxes'] ?? true;
+    $includeDns   = $params['include_dns'] ?? true;
+    $includeSsl   = $params['include_ssl'] ?? true;
+
+    if (empty($username) || ! validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    $homeDir = "/home/{$username}";
+    if (! is_dir($homeDir)) {
+        return ['success' => false, 'error' => "Home directory not found: {$homeDir}"];
+    }
+
+    if (! resticEnsureRepo($repo, $destination)) {
+        return ['success' => false, 'error' => 'Failed to initialize restic repository'];
+    }
+
+    $paths = [];
+    $domains = [];
+    $databases = [];
+    $mailboxes = [];
+
+    // Domain files
+    if ($includeFiles && is_dir("{$homeDir}/domains")) {
+        $paths[] = "{$homeDir}/domains";
+        $domains = array_values(array_filter(scandir("{$homeDir}/domains"), fn($d) => $d !== '.' && $d !== '..' && is_dir("{$homeDir}/domains/{$d}")));
+    }
+
+    // Databases
+    if ($includeDbs) {
+        $dbDir = "{$homeDir}/.jabali-backup/databases";
+        @mkdir($dbDir, 0700, true);
+        $dbs = dumpUserDatabases($username, $dbDir);
+        if (! empty($dbs)) {
+            $paths[] = $dbDir;
+            $databases = $dbs;
+        }
+    }
+
+    // Mailboxes
+    if ($includeMail && is_dir('/var/mail/vhosts')) {
+        foreach ($domains as $domain) {
+            $mailPath = "/var/mail/vhosts/{$domain}";
+            if (is_dir($mailPath)) {
+                $paths[] = $mailPath;
+                $mboxUsers = array_filter(scandir($mailPath), fn($d) => $d !== '.' && $d !== '..');
+                foreach ($mboxUsers as $m) {
+                    $mailboxes[] = "{$m}@{$domain}";
+                }
+            }
+        }
+    }
+
+    // SSL certs
+    if ($includeSsl) {
+        foreach ($domains as $domain) {
+            $certDir = "/etc/letsencrypt/live/{$domain}";
+            if (is_dir($certDir)) {
+                $paths[] = $certDir;
+            }
+        }
+    }
+
+    // DNS zones
+    if ($includeDns) {
+        $dnsDir = "{$homeDir}/.jabali-backup/dns";
+        @mkdir($dnsDir, 0700, true);
+        foreach ($domains as $domain) {
+            $zo = [];
+            exec('pdnsutil list-zone ' . escapeshellarg($domain) . ' 2>/dev/null', $zo, $ret);
+            if ($ret === 0 && ! empty($zo)) {
+                file_put_contents("{$dnsDir}/{$domain}.zone", implode("\n", $zo));
+                $paths[] = "{$dnsDir}/{$domain}.zone";
+            }
+        }
+    }
+
+    // Manifest
+    $manifestDir = "{$homeDir}/.jabali-backup";
+    @mkdir($manifestDir, 0700, true);
+    file_put_contents("{$manifestDir}/manifest.json", json_encode([
+        'version' => '3.0', 'username' => $username, 'created_at' => date('c'),
+        'domains' => $domains, 'databases' => $databases, 'mailboxes' => $mailboxes,
+    ], JSON_PRETTY_PRINT));
+    $paths[] = "{$manifestDir}/manifest.json";
+
+    if (empty($paths)) {
+        return ['success' => false, 'error' => 'Nothing to backup for user ' . $username];
+    }
+
+    // Restic backup — single user, tagged
+    $pathArgs = implode(' ', array_map('escapeshellarg', array_unique($paths)));
+    $excludes = '--exclude-caches --exclude=' . escapeshellarg('*.log')
+        . ' --exclude=' . escapeshellarg('node_modules')
+        . ' --exclude=' . escapeshellarg('vendor')
+        . ' --exclude=' . escapeshellarg('.cache');
+    $tags = '--tag ' . escapeshellarg("user:{$username}") . ' --tag ' . escapeshellarg('type:account');
+
+    $result = resticCmd("backup {$pathArgs} {$excludes} {$tags} --json", $repo, $destination);
+
+    // Cleanup staging
+    exec('rm -rf ' . escapeshellarg("{$homeDir}/.jabali-backup"));
+
+    if ($result['exitCode'] !== 0) {
+        return ['success' => false, 'error' => 'Restic backup failed: ' . $result['output']];
+    }
+
+    $snapshotId = null;
+    $totalSize = 0;
+    $fileCount = 0;
+    foreach ($result['lines'] as $line) {
+        $json = @json_decode($line, true);
+        if ($json && ($json['message_type'] ?? '') === 'summary') {
+            $snapshotId = $json['snapshot_id'] ?? null;
+            $totalSize = $json['total_bytes_processed'] ?? 0;
+            $fileCount = $json['total_files_processed'] ?? 0;
+        }
+    }
+
+    return [
+        'success' => true,
+        'snapshot_id' => $snapshotId,
+        'size_bytes' => $totalSize,
+        'file_count' => $fileCount,
+        'domains' => $domains,
+        'databases' => $databases,
+        'mailboxes' => $mailboxes,
+    ];
+}
+
+// ── Backup Create Server (legacy — backs up all users in one snapshot) ──────
 
 function backupCreateServer(array $params): array
 {

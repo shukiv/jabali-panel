@@ -20,9 +20,125 @@ class BackupOrchestrator
     public function __construct(private AgentClient $agent) {}
 
     /**
-     * Build the destination config array for agent calls.
+     * Execute a server backup — creates one restic snapshot per user account.
      *
-     * @return array<string, mixed>
+     * @return array{completed: int, failed: int, backups: list<Backup>}
+     */
+    public function executePerAccount(Backup $parentBackup): array
+    {
+        $repo = $parentBackup->destination
+            ? $parentBackup->destination->getResticRepoUrl()
+            : BackupDestination::defaultRepo();
+        $destConfig = $parentBackup->destination
+            ? array_merge($parentBackup->destination->config ?? [], ['type' => $parentBackup->destination->type])
+            : [];
+
+        // Get users to back up
+        $users = ! empty($parentBackup->users)
+            ? User::whereIn('username', $parentBackup->users)->where('is_active', true)->get()
+            : User::where('is_active', true)->get();
+
+        $completed = 0;
+        $failed = 0;
+        $backups = [];
+        $totalSize = 0;
+
+        foreach ($users as $user) {
+            $timestamp = now()->format('Y-m-d_His');
+            $backup = Backup::create([
+                'user_id' => $user->id,
+                'name' => $parentBackup->name.' — '.$user->username,
+                'type' => 'account',
+                'status' => 'running',
+                'started_at' => now(),
+                'destination_id' => $parentBackup->destination_id,
+                'schedule_id' => $parentBackup->schedule_id,
+                'include_files' => $parentBackup->include_files,
+                'include_databases' => $parentBackup->include_databases,
+                'include_mailboxes' => $parentBackup->include_mailboxes,
+                'include_dns' => $parentBackup->include_dns,
+                'include_ssl' => $parentBackup->include_ssl ?? true,
+            ]);
+
+            try {
+                $result = $this->agent->send('backup.create_user_snapshot', [
+                    'username' => $user->username,
+                    'include_files' => $parentBackup->include_files,
+                    'include_databases' => $parentBackup->include_databases,
+                    'include_mailboxes' => $parentBackup->include_mailboxes,
+                    'include_dns' => $parentBackup->include_dns,
+                    'include_ssl' => $parentBackup->include_ssl ?? true,
+                    'destination' => $destConfig,
+                    'repo' => $repo,
+                ]);
+
+                if (! ($result['success'] ?? false)) {
+                    throw new Exception($result['error'] ?? 'Backup failed');
+                }
+
+                $backup->update([
+                    'status' => 'completed',
+                    'completed_at' => now(),
+                    'snapshot_id' => $result['snapshot_id'] ?? null,
+                    'size_bytes' => $result['size_bytes'] ?? 0,
+                    'file_count' => $result['file_count'] ?? 0,
+                    'domains' => $result['domains'] ?? null,
+                    'databases' => $result['databases'] ?? null,
+                    'mailboxes' => $result['mailboxes'] ?? null,
+                ]);
+
+                $totalSize += $result['size_bytes'] ?? 0;
+                $completed++;
+                Log::info("BackupOrchestrator: Account backup for {$user->username} completed (snapshot: ".($result['snapshot_id'] ?? 'unknown').')');
+            } catch (Exception $e) {
+                $backup->update([
+                    'status' => 'failed',
+                    'completed_at' => now(),
+                    'error_message' => $e->getMessage(),
+                ]);
+                $failed++;
+                Log::error("BackupOrchestrator: Account backup for {$user->username} failed: ".$e->getMessage());
+            }
+
+            $backups[] = $backup;
+        }
+
+        // Delete the parent placeholder
+        $parentBackup->delete();
+
+        // Index snapshots for discovery
+        if ($parentBackup->destination_id) {
+            IndexRemoteBackups::dispatch($parentBackup->destination_id);
+        }
+
+        // Apply retention per-user
+        if ($parentBackup->schedule_id) {
+            $schedule = BackupSchedule::find($parentBackup->schedule_id);
+            if ($schedule) {
+                $this->applyRetention($schedule, $repo);
+            }
+        }
+
+        if ($failed === 0) {
+            AdminNotificationService::backupSuccess(
+                $parentBackup->name,
+                $totalSize,
+                $parentBackup->destination?->name
+            );
+        } else {
+            AdminNotificationService::backupFailure(
+                $parentBackup->name,
+                "{$failed} account(s) failed, {$completed} succeeded"
+            );
+        }
+
+        return ['completed' => $completed, 'failed' => $failed, 'backups' => $backups];
+    }
+
+    /**
+     * Execute a server backup (legacy — one snapshot for all users).
+     *
+     * @deprecated Use executePerAccount() instead
      */
     public function execute(Backup $backup): void
     {
@@ -33,12 +149,9 @@ class BackupOrchestrator
         $backup->update(['status' => 'running', 'started_at' => now()]);
 
         try {
-            // Determine Restic repo URL from destination or use local default
             $repo = $backup->destination
                 ? $backup->destination->getResticRepoUrl()
                 : BackupDestination::defaultRepo();
-
-            // Pass full destination config so agent can handle SFTP/S3 auth
             $destConfig = $backup->destination
                 ? array_merge($backup->destination->config ?? [], ['type' => $backup->destination->type])
                 : [];
@@ -71,12 +184,10 @@ class BackupOrchestrator
 
             Log::info("BackupOrchestrator: Backup {$backup->id} completed (snapshot: ".($result['snapshot_id'] ?? 'unknown').')');
 
-            // Index snapshots for discovery
             if ($backup->destination_id) {
                 IndexRemoteBackups::dispatch($backup->destination_id);
             }
 
-            // Apply retention policy
             if ($backup->schedule_id) {
                 $schedule = BackupSchedule::find($backup->schedule_id);
                 if ($schedule) {
