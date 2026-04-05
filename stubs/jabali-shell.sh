@@ -12,6 +12,14 @@
 #   3. SFTP/SCP/rsync: handled transparently
 set -euo pipefail
 
+# Suppress stderr during shell startup for non-interactive sessions (e.g. VS Code Remote SSH).
+# Bash startup messages on stderr cause VS Code to misdetect the platform as "windows".
+# stderr is restored before exec-ing into the actual shell/container.
+if [[ -n "${SSH_ORIGINAL_COMMAND:-}" ]] || ! tty -s 2>/dev/null; then
+    exec 3>&2 2>/dev/null
+    trap 'exec 2>&3 3>&-' EXIT
+fi
+
 JUSER="$(whoami)"
 CONTAINER="${JUSER}-php"
 
