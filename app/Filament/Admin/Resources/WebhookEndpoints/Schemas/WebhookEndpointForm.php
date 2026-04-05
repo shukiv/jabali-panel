@@ -31,7 +31,6 @@ class WebhookEndpointForm
                         CheckboxList::make('events')
                             ->label(__('Events'))
                             ->options([
-                                'backup.completed' => __('Backup Completed'),
                                 'ssl.expiring' => __('SSL Expiring'),
                                 'migration.completed' => __('Migration Completed'),
                                 'user.suspended' => __('User Suspended'),

@@ -56,7 +56,6 @@ class NotificationLog extends Model
     {
         return match ($this->type) {
             'ssl_errors' => __('SSL Certificate'),
-            'backup_failures' => __('Backup'),
             'disk_quota' => __('Disk Quota'),
             'login_failures' => __('Login Failure'),
             'ssh_logins' => __('SSH Login'),
