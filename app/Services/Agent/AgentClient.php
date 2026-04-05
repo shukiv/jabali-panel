@@ -423,6 +423,61 @@ class AgentClient implements AgentClientInterface
         ]);
     }
 
+    public function postgresRevokePrivileges(string $username, string $database, string $dbUser): array
+    {
+        return $this->send('postgres.revoke_privileges', [
+            'username' => $username,
+            'database' => $database,
+            'db_user' => $dbUser,
+        ]);
+    }
+
+    /** @param array<string> $privileges */
+    public function postgresSetPrivileges(string $username, string $database, string $dbUser, array $privileges): array
+    {
+        return $this->send('postgres.set_privileges', [
+            'username' => $username,
+            'database' => $database,
+            'db_user' => $dbUser,
+            'privileges' => $privileges,
+        ]);
+    }
+
+    public function postgresGetPrivileges(string $username, string $database, string $dbUser): array
+    {
+        return $this->send('postgres.get_privileges', [
+            'username' => $username,
+            'database' => $database,
+            'db_user' => $dbUser,
+        ]);
+    }
+
+    public function postgresGetDatabaseInfo(string $username, string $database): array
+    {
+        return $this->send('postgres.get_database_info', [
+            'username' => $username,
+            'database' => $database,
+        ]);
+    }
+
+    public function postgresExportDatabase(string $username, string $database, string $outputPath): array
+    {
+        return $this->send('postgres.export_database', [
+            'username' => $username,
+            'database' => $database,
+            'output_path' => $outputPath,
+        ]);
+    }
+
+    public function postgresImportDatabase(string $username, string $database, string $inputPath): array
+    {
+        return $this->send('postgres.import_database', [
+            'username' => $username,
+            'database' => $database,
+            'input_path' => $inputPath,
+        ]);
+    }
+
     // Domain operations
     public function domainCreate(string $username, string $domain): array
     {

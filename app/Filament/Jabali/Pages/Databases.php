@@ -16,6 +16,7 @@ use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -444,6 +445,38 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                         ->searchable(),
                 ])
                 ->recordActions([
+                    Action::make('changePassword')
+                        ->label(__('Password'))
+                        ->icon('heroicon-o-key')
+                        ->color('gray')
+                        ->form([
+                            TextInput::make('password')
+                                ->label(__('New Password'))
+                                ->password()
+                                ->required()
+                                ->minLength(8)
+                                ->suffixActions([
+                                    \Filament\Forms\Components\Actions\Action::make('generate')
+                                        ->icon('heroicon-o-arrow-path')
+                                        ->action(fn ($set) => $set('password', \Illuminate\Support\Str::random(16))),
+                                ]),
+                        ])
+                        ->action(function (array $record, array $data): void {
+                            try {
+                                $result = $this->agent()->postgresChangePassword(
+                                    $this->getUsername(),
+                                    $record['username'],
+                                    $data['password']
+                                );
+                                if ($result['success'] ?? false) {
+                                    Notification::make()->title(__('Password changed'))->success()->send();
+                                } else {
+                                    throw new Exception($result['error'] ?? 'Failed');
+                                }
+                            } catch (Exception $e) {
+                                Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
+                            }
+                        }),
                     Action::make('delete')
                         ->label(__('Delete'))
                         ->icon('heroicon-o-trash')
@@ -471,18 +504,157 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             ->columns([
                 TextColumn::make('name')
                     ->label(__('Database'))
+                    ->icon('heroicon-o-circle-stack')
+                    ->iconColor('info')
+                    ->weight('medium')
                     ->searchable(),
                 TextColumn::make('size_bytes')
                     ->label(__('Size'))
+                    ->badge()
                     ->formatStateUsing(fn ($state) => Formatter::bytes((int) $state))
-                    ->color('gray'),
+                    ->color(fn (array $record): string => match (true) {
+                        ($record['size_bytes'] ?? 0) > 1073741824 => 'danger',
+                        ($record['size_bytes'] ?? 0) > 104857600 => 'warning',
+                        default => 'gray',
+                    }),
             ])
             ->recordActions([
+                Action::make('privileges')
+                    ->label(__('Privileges'))
+                    ->icon('heroicon-o-shield-check')
+                    ->color('info')
+                    ->form(function (array $record): array {
+                        $userOptions = $this->getPgUserOptions();
+                        if (empty($userOptions)) {
+                            return [
+                                Placeholder::make('no_users')
+                                    ->content(__('Create a PostgreSQL user first.')),
+                            ];
+                        }
+
+                        return [
+                            Select::make('db_user')
+                                ->label(__('User'))
+                                ->options($userOptions)
+                                ->required()
+                                ->live(),
+                            CheckboxList::make('privileges')
+                                ->label(__('Privileges'))
+                                ->options([
+                                    'ALL' => __('All Privileges'),
+                                    'CREATE' => __('Create'),
+                                    'CONNECT' => __('Connect'),
+                                    'TEMPORARY' => __('Temporary'),
+                                ])
+                                ->default(['ALL']),
+                        ];
+                    })
+                    ->action(function (array $record, array $data): void {
+                        try {
+                            $result = $this->agent()->postgresSetPrivileges(
+                                $this->getUsername(),
+                                $record['name'],
+                                $data['db_user'],
+                                $data['privileges'] ?? []
+                            );
+                            if ($result['success'] ?? false) {
+                                Notification::make()->title(__('Privileges updated'))->success()->send();
+                            } else {
+                                throw new Exception($result['error'] ?? 'Failed');
+                            }
+                        } catch (Exception $e) {
+                            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
+                        }
+                    }),
+                Action::make('backup')
+                    ->label(__('Backup'))
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('success')
+                    ->action(function (array $record): void {
+                        try {
+                            $timestamp = now()->format('Y-m-d_His');
+                            $outputPath = "/home/{$this->getUsername()}/backups/{$record['name']}_{$timestamp}.sql.gz";
+                            $result = $this->agent()->postgresExportDatabase(
+                                $this->getUsername(),
+                                $record['name'],
+                                $outputPath
+                            );
+                            if ($result['success'] ?? false) {
+                                Notification::make()
+                                    ->title(__('Backup created'))
+                                    ->body(__('Saved to :path (:size)', [
+                                        'path' => basename($outputPath),
+                                        'size' => Formatter::bytes($result['size'] ?? 0),
+                                    ]))
+                                    ->success()
+                                    ->send();
+                            } else {
+                                throw new Exception($result['error'] ?? 'Export failed');
+                            }
+                        } catch (Exception $e) {
+                            Notification::make()->title(__('Backup failed'))->body(SafeError::message($e))->danger()->send();
+                        }
+                    }),
+                Action::make('restore')
+                    ->label(__('Restore'))
+                    ->icon('heroicon-o-arrow-up-tray')
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalHeading(__('Restore PostgreSQL Database'))
+                    ->modalDescription(fn (array $record): string => __("This will overwrite all data in ':database'. Make sure you have a backup.", ['database' => $record['name']]))
+                    ->modalIcon('heroicon-o-exclamation-triangle')
+                    ->modalIconColor('warning')
+                    ->form([
+                        FileUpload::make('sql_file')
+                            ->label(__('Backup File'))
+                            ->required()
+                            ->acceptedFileTypes(['text/plain', 'text/sql', 'application/sql', 'application/gzip', 'application/x-gzip', 'application/octet-stream'])
+                            ->maxSize(512000)
+                            ->disk('local')
+                            ->directory('temp/sql-uploads')
+                            ->helperText(__('Supported: .sql, .sql.gz (max 500MB)')),
+                    ])
+                    ->action(function (array $record, array $data): void {
+                        try {
+                            $file = $data['sql_file'];
+                            $storagePath = storage_path('app/private/temp/sql-uploads/'.$file);
+                            if (! file_exists($storagePath)) {
+                                $storagePath = storage_path('app/temp/sql-uploads/'.$file);
+                            }
+
+                            $username = $this->getUsername();
+                            $importDir = "/home/{$username}/tmp";
+                            $importPath = "{$importDir}/{$file}";
+
+                            $this->agent()->send('file.ensure_dir', ['path' => $importDir, 'username' => $username]);
+                            $this->agent()->send('file.write', [
+                                'path' => $importPath,
+                                'content' => base64_encode(file_get_contents($storagePath)),
+                                'encoding' => 'base64',
+                                'username' => $username,
+                            ]);
+
+                            $result = $this->agent()->postgresImportDatabase($username, $record['name'], $importPath);
+
+                            $this->agent()->send('file.delete', ['path' => $importPath, 'username' => $username]);
+                            @unlink($storagePath);
+
+                            if ($result['success'] ?? false) {
+                                Notification::make()->title(__('Database restored'))->success()->send();
+                            } else {
+                                throw new Exception($result['error'] ?? 'Import failed');
+                            }
+                        } catch (Exception $e) {
+                            Notification::make()->title(__('Restore failed'))->body(SafeError::message($e))->danger()->send();
+                        }
+                    }),
                 Action::make('delete')
                     ->label(__('Delete'))
                     ->icon('heroicon-o-trash')
                     ->color('danger')
                     ->requiresConfirmation()
+                    ->modalHeading(__('Delete Database'))
+                    ->modalDescription(fn (array $record): string => __("Delete ':database'? All data will be permanently lost.", ['database' => $record['name']]))
                     ->action(function (array $record): void {
                         $result = $this->agent()->postgresDeleteDatabase($this->getUsername(), $record['name']);
                         if ($result['success'] ?? false) {

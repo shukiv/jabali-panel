@@ -55,6 +55,7 @@ class Services extends Page implements HasActions, HasForms, HasTable
             'jabali-panel' => ['name' => 'FrankenPHP', 'description' => __('Panel Web Server'), 'icon' => 'globe'],
             'nginx' => ['name' => 'Nginx', 'description' => __('Web Server'), 'icon' => 'globe'],
             'mariadb' => ['name' => 'MariaDB', 'description' => __('Database Server'), 'icon' => 'database'],
+            'postgresql' => ['name' => 'PostgreSQL', 'description' => __('PostgreSQL Database'), 'icon' => 'database'],
             'redis-server' => ['name' => 'Redis', 'description' => __('Cache Server'), 'icon' => 'bolt'],
             'stalwart-mail' => ['name' => 'Stalwart', 'description' => __('Mail Server'), 'icon' => 'envelope'],
         ];

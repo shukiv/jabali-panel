@@ -28,7 +28,7 @@ define('JABALI_GEO_HTTP_CONF', '/etc/nginx/conf.d/jabali-geoip.conf');
 
 $protectedUsers = ['root', 'www-data', 'mysql', 'postgres', 'nobody', 'ubuntu', 'debian'];
 $phpVer = PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;
-$allowedServices = ['nginx', 'apache2', 'php-fpm', "php{$phpVer}-fpm", 'mysql', 'mariadb', 'stalwart-mail', 'pdns', 'ssh', 'sshd', 'cron', 'redis-server', 'fail2ban', 'jabali-agent', 'jabali-panel', 'jabali-queue'];
+$allowedServices = ['nginx', 'apache2', 'php-fpm', "php{$phpVer}-fpm", 'mysql', 'mariadb', 'postgresql', 'stalwart-mail', 'pdns', 'ssh', 'sshd', 'cron', 'redis-server', 'fail2ban', 'jabali-agent', 'jabali-panel', 'jabali-queue'];
 
 function logger(string $message, string $level = 'INFO'): void
 {
@@ -681,6 +681,12 @@ function handleAction(array $request): array
         'postgres.delete_user' => postgresDeleteUser($params),
         'postgres.change_password' => postgresChangePassword($params),
         'postgres.grant_privileges' => postgresGrantPrivileges($params),
+        'postgres.revoke_privileges' => postgresRevokePrivileges($params),
+        'postgres.set_privileges' => postgresSetPrivileges($params),
+        'postgres.get_privileges' => postgresGetPrivileges($params),
+        'postgres.get_database_info' => postgresGetDatabaseInfo($params),
+        'postgres.export_database' => postgresExportDatabase($params),
+        'postgres.import_database' => postgresImportDatabase($params),
         'service.restart' => restartService($params),
         'service.reload' => reloadService($params),
         'service.status' => getServiceStatus($params),
@@ -23722,6 +23728,235 @@ function postgresGrantPrivileges(array $params): array
     }
 
     return ['success' => true];
+}
+
+
+function postgresRevokePrivileges(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $database = $params['database'] ?? '';
+    $dbUser = $params['db_user'] ?? '';
+
+    if (! validateUsername($username) || ! validateDbIdentifier($database) || ! validateDbIdentifier($dbUser)) {
+        return ['success' => false, 'error' => 'Invalid parameters'];
+    }
+
+    $sql = 'REVOKE ALL PRIVILEGES ON DATABASE "'.addslashes($database).'" FROM "'.addslashes($dbUser).'"';
+    exec('sudo -u postgres psql -At -c '.escapeshellarg($sql).' 2>&1', $out, $code);
+    if ($code !== 0) {
+        return ['success' => false, 'error' => implode("\n", $out)];
+    }
+
+    return ['success' => true];
+}
+
+function postgresSetPrivileges(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $database = $params['database'] ?? '';
+    $dbUser = $params['db_user'] ?? '';
+    $privileges = $params['privileges'] ?? [];
+
+    if (! validateUsername($username) || ! validateDbIdentifier($database) || ! validateDbIdentifier($dbUser)) {
+        return ['success' => false, 'error' => 'Invalid parameters'];
+    }
+
+    $validPrivileges = ['CREATE', 'CONNECT', 'TEMPORARY', 'ALL'];
+    $escapedDb = addslashes($database);
+    $escapedUser = addslashes($dbUser);
+
+    // Revoke all first
+    $sql = "REVOKE ALL PRIVILEGES ON DATABASE \"{$escapedDb}\" FROM \"{$escapedUser}\"";
+    exec('sudo -u postgres psql -At -c '.escapeshellarg($sql).' 2>&1', $rOut, $rCode);
+
+    if (empty($privileges)) {
+        return ['success' => true, 'message' => 'All privileges revoked'];
+    }
+
+    // Grant requested privileges
+    $filtered = array_intersect(array_map('strtoupper', $privileges), $validPrivileges);
+    if (empty($filtered)) {
+        return ['success' => false, 'error' => 'No valid privileges specified'];
+    }
+
+    $privList = implode(', ', $filtered);
+    $sql = "GRANT {$privList} ON DATABASE \"{$escapedDb}\" TO \"{$escapedUser}\"";
+    exec('sudo -u postgres psql -At -c '.escapeshellarg($sql).' 2>&1', $out, $code);
+    if ($code !== 0) {
+        return ['success' => false, 'error' => implode("\n", $out)];
+    }
+
+    // Also grant schema-level privileges for CREATE/CONNECT to be useful
+    if (in_array('ALL', $filtered) || in_array('CREATE', $filtered)) {
+        $schemaSql = "GRANT ALL ON SCHEMA public TO \"{$escapedUser}\"";
+        exec('sudo -u postgres psql -At -d '.escapeshellarg($database).' -c '.escapeshellarg($schemaSql).' 2>&1');
+
+        $tableSql = "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"{$escapedUser}\"";
+        exec('sudo -u postgres psql -At -d '.escapeshellarg($database).' -c '.escapeshellarg($tableSql).' 2>&1');
+
+        $defaultSql = "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"{$escapedUser}\"";
+        exec('sudo -u postgres psql -At -d '.escapeshellarg($database).' -c '.escapeshellarg($defaultSql).' 2>&1');
+    }
+
+    return ['success' => true, 'granted' => $filtered];
+}
+
+function postgresGetPrivileges(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $database = $params['database'] ?? '';
+    $dbUser = $params['db_user'] ?? '';
+
+    if (! validateUsername($username) || ! validateDbIdentifier($database) || ! validateDbIdentifier($dbUser)) {
+        return ['success' => false, 'error' => 'Invalid parameters'];
+    }
+
+    // Check database-level privileges
+    $sql = "SELECT privilege_type FROM information_schema.role_usage_grants WHERE grantee = '".addslashes($dbUser)."' UNION SELECT CASE WHEN has_database_privilege('".addslashes($dbUser)."', '".addslashes($database)."', priv) THEN priv ELSE NULL END FROM unnest(ARRAY['CREATE', 'CONNECT', 'TEMPORARY']) AS priv";
+    exec('sudo -u postgres psql -At -d '.escapeshellarg($database).' -c '.escapeshellarg($sql).' 2>&1', $out, $code);
+
+    $privileges = [];
+    foreach ($out as $line) {
+        $line = trim($line);
+        if (! empty($line) && $line !== '' && ! str_starts_with($line, 'ERROR')) {
+            $privileges[] = strtoupper($line);
+        }
+    }
+
+    // Simpler check — just test each privilege directly
+    $privileges = [];
+    foreach (['CREATE', 'CONNECT', 'TEMPORARY'] as $priv) {
+        $checkSql = "SELECT has_database_privilege('".addslashes($dbUser)."', '".addslashes($database)."', '".addslashes($priv)."')";
+        $checkOut = [];
+        exec('sudo -u postgres psql -At -c '.escapeshellarg($checkSql).' 2>&1', $checkOut);
+        if (trim($checkOut[0] ?? '') === 't') {
+            $privileges[] = $priv;
+        }
+    }
+
+    return ['success' => true, 'privileges' => array_unique($privileges)];
+}
+
+function postgresGetDatabaseInfo(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $database = $params['database'] ?? '';
+
+    if (! validateUsername($username) || ! validateDbIdentifier($database)) {
+        return ['success' => false, 'error' => 'Invalid parameters'];
+    }
+
+    $sql = "SELECT pg_database_size('".addslashes($database)."'), pg_encoding_to_char(encoding), datcollate, datistemplate, datallowconn FROM pg_database WHERE datname = '".addslashes($database)."'";
+    exec('sudo -u postgres psql -At -c '.escapeshellarg($sql).' 2>&1', $out, $code);
+
+    if ($code !== 0 || empty($out[0])) {
+        return ['success' => false, 'error' => 'Database not found'];
+    }
+
+    $parts = explode('|', $out[0]);
+
+    // Get owner
+    $ownerSql = "SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_database WHERE datname = '".addslashes($database)."'";
+    $ownerOut = [];
+    exec('sudo -u postgres psql -At -c '.escapeshellarg($ownerSql).' 2>&1', $ownerOut);
+
+    // Count tables
+    $tablesSql = "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'";
+    $tablesOut = [];
+    exec('sudo -u postgres psql -At -d '.escapeshellarg($database).' -c '.escapeshellarg($tablesSql).' 2>&1', $tablesOut);
+
+    return [
+        'success' => true,
+        'size_bytes' => (int) ($parts[0] ?? 0),
+        'encoding' => trim($parts[1] ?? 'UTF8'),
+        'collation' => trim($parts[2] ?? ''),
+        'owner' => trim($ownerOut[0] ?? ''),
+        'tables' => (int) ($tablesOut[0] ?? 0),
+    ];
+}
+
+function postgresExportDatabase(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $database = $params['database'] ?? '';
+    $outputPath = $params['output_path'] ?? '';
+
+    if (! validateUsername($username) || ! validateDbIdentifier($database)) {
+        return ['success' => false, 'error' => 'Invalid parameters'];
+    }
+
+    if (empty($outputPath) || str_contains($outputPath, '..')) {
+        return ['success' => false, 'error' => 'Invalid output path'];
+    }
+
+    // Validate path is within user's home
+    if (! str_starts_with($outputPath, "/home/{$username}/")) {
+        return ['success' => false, 'error' => 'Output path must be within user home directory'];
+    }
+
+    $dir = dirname($outputPath);
+    if (! is_dir($dir)) {
+        mkdir($dir, 0755, true);
+        chown($dir, $username);
+        chgrp($dir, $username);
+    }
+
+    $cmd = 'sudo -u postgres pg_dump --no-owner --no-acl '
+        . escapeshellarg($database)
+        . ' 2>&1 | gzip > '
+        . escapeshellarg($outputPath);
+
+    exec($cmd, $out, $code);
+
+    if (! file_exists($outputPath) || filesize($outputPath) < 20) {
+        @unlink($outputPath);
+        return ['success' => false, 'error' => 'Export failed: ' . implode("\n", $out)];
+    }
+
+    chown($outputPath, $username);
+    chgrp($outputPath, $username);
+
+    return [
+        'success' => true,
+        'path' => $outputPath,
+        'size' => filesize($outputPath),
+    ];
+}
+
+function postgresImportDatabase(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $database = $params['database'] ?? '';
+    $inputPath = $params['input_path'] ?? '';
+
+    if (! validateUsername($username) || ! validateDbIdentifier($database)) {
+        return ['success' => false, 'error' => 'Invalid parameters'];
+    }
+
+    if (empty($inputPath) || str_contains($inputPath, '..') || ! file_exists($inputPath)) {
+        return ['success' => false, 'error' => 'Input file not found'];
+    }
+
+    if (! str_starts_with(realpath($inputPath), "/home/{$username}/")) {
+        return ['success' => false, 'error' => 'Input path must be within user home directory'];
+    }
+
+    // Detect gzip
+    $isGzip = str_ends_with($inputPath, '.gz') || str_ends_with($inputPath, '.sql.gz');
+
+    if ($isGzip) {
+        $cmd = 'gunzip -c ' . escapeshellarg($inputPath) . ' | sudo -u postgres psql ' . escapeshellarg($database) . ' 2>&1';
+    } else {
+        $cmd = 'sudo -u postgres psql ' . escapeshellarg($database) . ' < ' . escapeshellarg($inputPath) . ' 2>&1';
+    }
+
+    exec($cmd, $out, $code);
+
+    if ($code !== 0) {
+        return ['success' => false, 'error' => 'Import failed: ' . implode("\n", array_slice($out, -5))];
+    }
+
+    return ['success' => true, 'output' => implode("\n", array_slice($out, -5))];
 }
 
 
