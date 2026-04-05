@@ -17163,14 +17163,6 @@ function backupExportSnapshot(array $params): array
 
     $env = implode(' ', $envParts);
 
-    // Verify snapshot is accessible
-    $checkCmd = "$env restic $sftpOption snapshots " . escapeshellarg($snapshotId) . " --json 2>&1";
-    exec($checkCmd, $checkOutput, $checkCode);
-    if ($checkCode !== 0) {
-        $detail = trim(implode("\n", $checkOutput));
-        return ['success' => false, 'error' => 'Cannot access snapshot: ' . $detail];
-    }
-
     // Create a named pipe (FIFO)
     $pipeDir = '/tmp/jabali-exports';
     if (! is_dir($pipeDir)) {
@@ -17181,15 +17173,20 @@ function backupExportSnapshot(array $params): array
     // Allow www-data to read it
     chmod($pipePath, 0644);
 
+    // Error file — controller checks this if stream is empty
+    $errFile = $pipePath . '.err';
+
     // Start restic dump in background, writing through gzip to the pipe
     $bgCmd = "($env restic $sftpOption dump " . escapeshellarg($snapshotId)
-        . " / --archive tar 2>/dev/null | gzip > " . escapeshellarg($pipePath)
+        . " / --archive tar 2>" . escapeshellarg($errFile)
+        . " | gzip > " . escapeshellarg($pipePath)
         . "; rm -f " . escapeshellarg($pipePath) . ") &";
     exec($bgCmd);
 
     return [
         'success' => true,
         'pipe' => $pipePath,
+        'error_file' => $errFile,
     ];
 }
 

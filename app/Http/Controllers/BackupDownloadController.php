@@ -160,23 +160,32 @@ class BackupDownloadController extends Controller
             }
 
             $pipePath = $result['pipe'];
+            $errFile = $result['error_file'] ?? $pipePath.'.err';
             $filename = ($backup->name ?: 'backup').'.tar.gz';
 
             // Stream directly from the named pipe — no temp file on disk
-            return response()->stream(function () use ($pipePath): void {
+            return response()->stream(function () use ($pipePath, $errFile): void {
                 $fp = fopen($pipePath, 'rb');
                 if (! $fp) {
+                    // Pipe failed to open — check error file
+                    $err = @file_get_contents($errFile);
+                    @unlink($errFile);
+                    echo 'Export failed: '.($err ?: 'Could not open stream');
+
                     return;
                 }
+                $bytesWritten = 0;
                 while (! feof($fp)) {
                     $chunk = fread($fp, 65536);
                     if ($chunk !== false && $chunk !== '') {
                         echo $chunk;
                         flush();
+                        $bytesWritten += strlen($chunk);
                     }
                 }
                 fclose($fp);
                 @unlink($pipePath);
+                @unlink($errFile);
             }, 200, [
                 'Content-Type' => 'application/gzip',
                 'Content-Disposition' => 'attachment; filename="'.$filename.'"',
