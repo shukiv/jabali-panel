@@ -3187,7 +3187,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/var/www/jabali
-ExecStart=/usr/bin/php /var/www/jabali/artisan queue:work --sleep=3 --tries=1 --timeout=120
+ExecStart=/usr/bin/php /var/www/jabali/artisan queue:work --sleep=3 --tries=1 --timeout=3600
 Restart=always
 RestartSec=5
 StandardOutput=journal
