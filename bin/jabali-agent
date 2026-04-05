@@ -673,6 +673,9 @@ function handleAction(array $request): array
         'mysql.create_master_user' => mysqlCreateMasterUser($params),
         'mysql.import_database' => mysqlImportDatabase($params),
         'mysql.export_database' => mysqlExportDatabase($params),
+        'postgres.install' => postgresInstall($params),
+        'postgres.uninstall' => postgresUninstall($params),
+        'postgres.status' => postgresStatus($params),
         'postgres.list_databases' => postgresListDatabases($params),
         'postgres.list_users' => postgresListUsers($params),
         'postgres.create_database' => postgresCreateDatabase($params),
@@ -23567,6 +23570,89 @@ function imageOptimize(array $params): array
     }
 
     return ['success' => true, 'optimized' => $optimized];
+}
+
+function postgresInstall(array $params): array
+{
+    // Check if already installed
+    exec('which psql 2>/dev/null', $checkOut, $checkCode);
+    if ($checkCode === 0) {
+        // Already installed — just ensure service is running
+        exec('systemctl enable postgresql 2>&1', $out1);
+        exec('systemctl start postgresql 2>&1', $out2);
+
+        return ['success' => true, 'message' => 'PostgreSQL already installed, service started'];
+    }
+
+    // Install PostgreSQL
+    exec('apt-get update -y 2>&1', $updateOut, $updateCode);
+    exec('apt-get install -y postgresql postgresql-client 2>&1', $installOut, $installCode);
+
+    if ($installCode !== 0) {
+        return ['success' => false, 'error' => 'Installation failed: ' . implode("\n", array_slice($installOut, -5))];
+    }
+
+    // Enable and start
+    exec('systemctl enable postgresql 2>&1');
+    exec('systemctl start postgresql 2>&1');
+
+    // Verify
+    exec('systemctl is-active postgresql 2>&1', $statusOut);
+    $isActive = trim($statusOut[0] ?? '') === 'active';
+
+    logger('PostgreSQL installed and ' . ($isActive ? 'started' : 'failed to start'));
+
+    return [
+        'success' => true,
+        'message' => 'PostgreSQL installed',
+        'active' => $isActive,
+        'version' => trim(shell_exec('psql --version 2>/dev/null') ?: 'unknown'),
+    ];
+}
+
+function postgresUninstall(array $params): array
+{
+    $removeDatabases = $params['remove_data'] ?? false;
+
+    // Stop and disable
+    exec('systemctl stop postgresql 2>&1');
+    exec('systemctl disable postgresql 2>&1');
+
+    if ($removeDatabases) {
+        exec('apt-get purge -y postgresql postgresql-* 2>&1', $out, $code);
+        exec('rm -rf /var/lib/postgresql 2>&1');
+    } else {
+        exec('apt-get remove -y postgresql postgresql-client 2>&1', $out, $code);
+    }
+
+    exec('apt-get autoremove -y 2>&1');
+
+    logger('PostgreSQL uninstalled' . ($removeDatabases ? ' (data removed)' : ' (data preserved)'));
+
+    return ['success' => true, 'message' => 'PostgreSQL removed', 'data_removed' => $removeDatabases];
+}
+
+function postgresStatus(array $params): array
+{
+    $installed = false;
+    $active = false;
+    $version = null;
+
+    exec('which psql 2>/dev/null', $out, $code);
+    $installed = $code === 0;
+
+    if ($installed) {
+        $version = trim(shell_exec('psql --version 2>/dev/null') ?: '');
+        exec('systemctl is-active postgresql 2>&1', $statusOut);
+        $active = trim($statusOut[0] ?? '') === 'active';
+    }
+
+    return [
+        'success' => true,
+        'installed' => $installed,
+        'active' => $active,
+        'version' => $version,
+    ];
 }
 
 function postgresListDatabases(array $params): array

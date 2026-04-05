@@ -297,7 +297,7 @@ class ServerSettings extends Page implements HasActions, HasForms
                         'php-fpm' => Tab::make(__('PHP-FPM'))
                             ->icon('heroicon-o-cpu-chip')
                             ->schema($this->phpFpmTabContent()),
-                        'database' => Tab::make(__('Database Tuning'))
+                        'database' => Tab::make(__('Databases'))
                             ->icon('heroicon-o-circle-stack')
                             ->schema($this->databaseTabContent()),
                         'logs' => Tab::make(__('Logs'))
@@ -795,20 +795,98 @@ class ServerSettings extends Page implements HasActions, HasForms
         ];
     }
 
+    public bool $postgresInstalled = false;
+
+    public bool $postgresActive = false;
+
+    public ?string $postgresVersion = null;
+
+    protected function loadPostgresStatus(): void
+    {
+        try {
+            $result = app(\App\Services\Agent\AgentClient::class)->send('postgres.status', []);
+            $this->postgresInstalled = $result['installed'] ?? false;
+            $this->postgresActive = $result['active'] ?? false;
+            $this->postgresVersion = $result['version'] ?? null;
+        } catch (\Throwable) {
+            $this->postgresInstalled = false;
+            $this->postgresActive = false;
+        }
+    }
+
+    public function togglePostgres(): void
+    {
+        $agent = app(\App\Services\Agent\AgentClient::class);
+
+        if ($this->postgresInstalled) {
+            // Disable
+            try {
+                $result = $agent->send('postgres.uninstall', ['remove_data' => false]);
+                if ($result['success'] ?? false) {
+                    DnsSetting::set('postgres_enabled', '0');
+                    DnsSetting::clearCache();
+                    Notification::make()->title(__('PostgreSQL disabled'))->body(__('Packages removed. Database data is preserved.'))->success()->send();
+                } else {
+                    throw new \Exception($result['error'] ?? 'Failed');
+                }
+            } catch (\Throwable $e) {
+                Notification::make()->title(__('Failed'))->body(SafeError::message($e))->danger()->send();
+            }
+        } else {
+            // Enable
+            try {
+                $result = $agent->send('postgres.install', []);
+                if ($result['success'] ?? false) {
+                    DnsSetting::set('postgres_enabled', '1');
+                    DnsSetting::clearCache();
+                    Notification::make()->title(__('PostgreSQL enabled'))->body($result['version'] ?? __('Installed and running'))->success()->send();
+                } else {
+                    throw new \Exception($result['error'] ?? 'Installation failed');
+                }
+            } catch (\Throwable $e) {
+                Notification::make()->title(__('Installation failed'))->body(SafeError::message($e))->danger()->send();
+            }
+        }
+
+        $this->loadPostgresStatus();
+    }
+
     protected function databaseTabContent(): array
     {
+        $this->loadPostgresStatus();
+
         return [
-            Section::make(__('Warning: Changing database settings can impact performance or cause outages'))
-                ->description(__('Apply changes only if you understand their effects, and prefer doing so during maintenance windows.'))
-                ->icon('heroicon-o-exclamation-triangle')
-                ->iconColor('warning')
-                ->collapsed(false)
-                ->collapsible(false)
-                ->compact(),
-            Section::make(__('Database Tuning'))
-                ->description(__('Adjust MariaDB/MySQL global variables.'))
+            Section::make(__('PostgreSQL'))
+                ->description($this->postgresInstalled
+                    ? __('PostgreSQL is installed and :status.', ['status' => $this->postgresActive ? __('running') : __('stopped')])
+                    .($this->postgresVersion ? " ({$this->postgresVersion})" : '')
+                    : __('PostgreSQL is not installed. Enable it to allow users to create PostgreSQL databases.'))
                 ->icon('heroicon-o-circle-stack')
                 ->schema([
+                    Actions::make([
+                        FormAction::make('togglePostgres')
+                            ->label($this->postgresInstalled ? __('Disable PostgreSQL') : __('Enable PostgreSQL'))
+                            ->icon($this->postgresInstalled ? 'heroicon-o-x-circle' : 'heroicon-o-check-circle')
+                            ->color($this->postgresInstalled ? 'danger' : 'success')
+                            ->requiresConfirmation()
+                            ->modalHeading($this->postgresInstalled ? __('Disable PostgreSQL') : __('Enable PostgreSQL'))
+                            ->modalDescription($this->postgresInstalled
+                                ? __('This will stop PostgreSQL and remove packages. Existing databases will be preserved on disk.')
+                                : __('This will install PostgreSQL packages and start the service.'))
+                            ->action('togglePostgres'),
+                    ]),
+                ]),
+            Section::make(__('MariaDB/MySQL Tuning'))
+                ->description(__('Adjust MariaDB/MySQL global variables.'))
+                ->icon('heroicon-o-wrench-screwdriver')
+                ->schema([
+                    Section::make(__('Warning: Changing database settings can impact performance or cause outages'))
+                        ->description(__('Apply changes only if you understand their effects, and prefer doing so during maintenance windows.'))
+                        ->icon('heroicon-o-exclamation-triangle')
+                        ->iconColor('warning')
+                        ->collapsed(false)
+                        ->collapsible(false)
+                        ->compact(),
                     EmbeddedTable::make(DatabaseTuningTable::class),
                 ]),
         ];

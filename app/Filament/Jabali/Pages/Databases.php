@@ -108,13 +108,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
             return true;
         }
 
-        try {
-            $result = $this->agent()->postgresListDatabases($this->getUsername());
-
-            return $result['success'] ?? false;
-        } catch (\Throwable) {
-            return false;
-        }
+        return (bool) \App\Models\DnsSetting::get('postgres_enabled', false);
     }
 
     public function updatedActiveTab(): void
