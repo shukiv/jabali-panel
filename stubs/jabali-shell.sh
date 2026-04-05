@@ -74,10 +74,19 @@ try_nspawn() {
     gid_num="$(id -g)"
 
     if [[ -z "$REMOTE_CMD" ]]; then
-        exec sudo nsenter --target "$leader" --mount --pid --ipc --uts --no-fork \
-            setpriv --reuid="$uid_num" --regid="$gid_num" --init-groups \
-            env HOME="/home/$JUSER" USER="$JUSER" SHELL=/bin/bash TERM="${TERM:-xterm-256color}" \
-            /bin/bash -il
+        if tty -s 2>/dev/null; then
+            # Interactive: terminal attached
+            exec sudo nsenter --target "$leader" --mount --pid --ipc --uts --no-fork \
+                setpriv --reuid="$uid_num" --regid="$gid_num" --init-groups \
+                env HOME="/home/$JUSER" USER="$JUSER" SHELL=/bin/bash TERM="${TERM:-xterm-256color}" \
+                /bin/bash -il
+        else
+            # Non-interactive: VS Code, rsync, etc.
+            exec sudo nsenter --target "$leader" --mount --pid --ipc --uts \
+                setpriv --reuid="$uid_num" --regid="$gid_num" --init-groups \
+                env HOME="/home/$JUSER" USER="$JUSER" SHELL=/bin/bash \
+                /bin/bash --login
+        fi
     fi
 
     exec sudo nsenter --target "$leader" --mount --pid --ipc --uts \
@@ -101,7 +110,13 @@ try_bwrap() {
 # --- standard shell (no isolation) ---
 try_standard() {
     if [[ -z "$REMOTE_CMD" ]]; then
-        exec /bin/bash -il
+        if tty -s 2>/dev/null; then
+            # Interactive SSH: user has a terminal
+            exec /bin/bash -il
+        else
+            # Non-interactive: VS Code, rsync, etc. — no prompt, no job control
+            exec /bin/bash --login
+        fi
     fi
 
     exec /bin/sh -c "$REMOTE_CMD"
