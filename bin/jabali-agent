@@ -17149,14 +17149,22 @@ function backupExportSnapshot(array $params): array
         'RESTIC_PASSWORD_FILE=' . escapeshellarg($passwordFile),
     ];
 
+    $sftpOption = '';
     if (str_starts_with($repo, 'sftp:') && ! empty($destination['password'])) {
         $envParts[] = 'SSHPASS=' . escapeshellarg($destination['password']);
+        $port = (int) ($destination['port'] ?? 22);
+        $host = $destination['host'] ?? '';
+        $user = $destination['username'] ?? '';
+        if (preg_match('/^[a-zA-Z0-9._-]+$/', $user) && preg_match('/^[a-zA-Z0-9._:-]+$/', $host)) {
+            $sftpCmd = "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o RequestTTY=no -p {$port} {$user}@{$host} -s sftp";
+            $sftpOption = '-o sftp.command=' . escapeshellarg($sftpCmd);
+        }
     }
 
     $env = implode(' ', $envParts);
 
     // Verify snapshot is accessible
-    $checkCmd = "$env restic snapshots " . escapeshellarg($snapshotId) . " --json 2>&1";
+    $checkCmd = "$env restic $sftpOption snapshots " . escapeshellarg($snapshotId) . " --json 2>&1";
     exec($checkCmd, $checkOutput, $checkCode);
     if ($checkCode !== 0) {
         $detail = trim(implode("\n", $checkOutput));
@@ -17174,7 +17182,7 @@ function backupExportSnapshot(array $params): array
     chmod($pipePath, 0644);
 
     // Start restic dump in background, writing through gzip to the pipe
-    $bgCmd = "($env restic dump " . escapeshellarg($snapshotId)
+    $bgCmd = "($env restic $sftpOption dump " . escapeshellarg($snapshotId)
         . " / --archive tar 2>/dev/null | gzip > " . escapeshellarg($pipePath)
         . "; rm -f " . escapeshellarg($pipePath) . ") &";
     exec($bgCmd);
