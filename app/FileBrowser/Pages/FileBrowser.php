@@ -536,29 +536,29 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                                 \Filament\Schemas\Components\Section::make(__('Owner'))
                                     ->schema([
                                         Toggle::make('owner_read')->label(__('Read'))
-                                            ->extraAttributes(['data-perm-bit' => '0-4', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '0-4', 'x-init' => $this->permWatchJs()]),
                                         Toggle::make('owner_write')->label(__('Write'))
-                                            ->extraAttributes(['data-perm-bit' => '0-2', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '0-2', 'x-init' => $this->permWatchJs()]),
                                         Toggle::make('owner_execute')->label(__('Execute'))
-                                            ->extraAttributes(['data-perm-bit' => '0-1', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '0-1', 'x-init' => $this->permWatchJs()]),
                                     ]),
                                 \Filament\Schemas\Components\Section::make(__('Group'))
                                     ->schema([
                                         Toggle::make('group_read')->label(__('Read'))
-                                            ->extraAttributes(['data-perm-bit' => '1-4', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '1-4', 'x-init' => $this->permWatchJs()]),
                                         Toggle::make('group_write')->label(__('Write'))
-                                            ->extraAttributes(['data-perm-bit' => '1-2', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '1-2', 'x-init' => $this->permWatchJs()]),
                                         Toggle::make('group_execute')->label(__('Execute'))
-                                            ->extraAttributes(['data-perm-bit' => '1-1', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '1-1', 'x-init' => $this->permWatchJs()]),
                                     ]),
                                 \Filament\Schemas\Components\Section::make(__('Others'))
                                     ->schema([
                                         Toggle::make('other_read')->label(__('Read'))
-                                            ->extraAttributes(['data-perm-bit' => '2-4', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '2-4', 'x-init' => $this->permWatchJs()]),
                                         Toggle::make('other_write')->label(__('Write'))
-                                            ->extraAttributes(['data-perm-bit' => '2-2', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '2-2', 'x-init' => $this->permWatchJs()]),
                                         Toggle::make('other_execute')->label(__('Execute'))
-                                            ->extraAttributes(['data-perm-bit' => '2-1', 'x-on:click' => $this->permSyncJs()]),
+                                            ->extraAttributes(['data-perm-bit' => '2-1', 'x-init' => $this->permWatchJs()]),
                                     ]),
                             ]),
                     ])
@@ -998,16 +998,16 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
 
     // ─── Permission sync (Alpine.js, no server roundtrip) ──
 
-    protected function permSyncJs(): string
+    protected function permWatchJs(): string
     {
         return <<<'JS'
-            $nextTick(() => {
+            $watch('state', () => {
                 let modal = $el.closest('.fi-modal-content');
                 if (!modal) return;
                 let digits = [0, 0, 0];
-                modal.querySelectorAll('[data-perm-bit]').forEach(toggle => {
-                    let [group, bit] = toggle.dataset.permBit.split('-').map(Number);
-                    if (toggle.querySelector('button').getAttribute('aria-checked') === 'true') {
+                modal.querySelectorAll('[data-perm-bit]').forEach(btn => {
+                    let [group, bit] = btn.dataset.permBit.split('-').map(Number);
+                    if (btn.getAttribute('aria-checked') === 'true') {
                         digits[group] += bit;
                     }
                 });
