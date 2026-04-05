@@ -27,8 +27,6 @@ use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Grid;
-use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Components\Utilities\Set;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -518,45 +516,49 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                             ->placeholder(__('755'))
                             ->maxLength(4)
                             ->helperText(__('Enter octal mode (e.g., 755, 644)'))
-                            ->live(onBlur: true)
-                            ->afterStateUpdated(function (Set $set, ?string $state): void {
-                                if ($state === null || $state === '' || ! preg_match('/^[0-7]{3,4}$/', $state)) {
-                                    return;
-                                }
-                                $toggles = FilePermission::fromOctal($state)->toFormState();
-                                unset($toggles['mode']);
-                                foreach ($toggles as $key => $value) {
-                                    $set($key, $value);
-                                }
-                            }),
+                            ->extraInputAttributes([
+                                'x-on:input' => "
+                                    let v = \$event.target.value.replace(/[^0-7]/g, '').slice(-3);
+                                    if (v.length === 3) {
+                                        let digits = v.split('').map(Number);
+                                        \$el.closest('.fi-modal-content').querySelectorAll('[data-perm-bit]').forEach(toggle => {
+                                            let [group, bit] = toggle.dataset.permBit.split('-').map(Number);
+                                            let on = (digits[group] & bit) !== 0;
+                                            if (toggle.querySelector('button').getAttribute('aria-checked') !== String(on)) {
+                                                toggle.querySelector('button').click();
+                                            }
+                                        });
+                                    }
+                                ",
+                            ]),
                         Grid::make(3)
                             ->schema([
                                 \Filament\Schemas\Components\Section::make(__('Owner'))
                                     ->schema([
-                                        Toggle::make('owner_read')->label(__('Read'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
-                                        Toggle::make('owner_write')->label(__('Write'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
-                                        Toggle::make('owner_execute')->label(__('Execute'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('owner_read')->label(__('Read'))
+                                            ->extraAttributes(['data-perm-bit' => '0-4', 'x-on:click' => $this->permSyncJs()]),
+                                        Toggle::make('owner_write')->label(__('Write'))
+                                            ->extraAttributes(['data-perm-bit' => '0-2', 'x-on:click' => $this->permSyncJs()]),
+                                        Toggle::make('owner_execute')->label(__('Execute'))
+                                            ->extraAttributes(['data-perm-bit' => '0-1', 'x-on:click' => $this->permSyncJs()]),
                                     ]),
                                 \Filament\Schemas\Components\Section::make(__('Group'))
                                     ->schema([
-                                        Toggle::make('group_read')->label(__('Read'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
-                                        Toggle::make('group_write')->label(__('Write'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
-                                        Toggle::make('group_execute')->label(__('Execute'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('group_read')->label(__('Read'))
+                                            ->extraAttributes(['data-perm-bit' => '1-4', 'x-on:click' => $this->permSyncJs()]),
+                                        Toggle::make('group_write')->label(__('Write'))
+                                            ->extraAttributes(['data-perm-bit' => '1-2', 'x-on:click' => $this->permSyncJs()]),
+                                        Toggle::make('group_execute')->label(__('Execute'))
+                                            ->extraAttributes(['data-perm-bit' => '1-1', 'x-on:click' => $this->permSyncJs()]),
                                     ]),
                                 \Filament\Schemas\Components\Section::make(__('Others'))
                                     ->schema([
-                                        Toggle::make('other_read')->label(__('Read'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
-                                        Toggle::make('other_write')->label(__('Write'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
-                                        Toggle::make('other_execute')->label(__('Execute'))->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('other_read')->label(__('Read'))
+                                            ->extraAttributes(['data-perm-bit' => '2-4', 'x-on:click' => $this->permSyncJs()]),
+                                        Toggle::make('other_write')->label(__('Write'))
+                                            ->extraAttributes(['data-perm-bit' => '2-2', 'x-on:click' => $this->permSyncJs()]),
+                                        Toggle::make('other_execute')->label(__('Execute'))
+                                            ->extraAttributes(['data-perm-bit' => '2-1', 'x-on:click' => $this->permSyncJs()]),
                                     ]),
                             ]),
                     ])
@@ -992,6 +994,30 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
             'cpp', 'c', 'h', 'hpp' => Language::Cpp,
             default => null,
         };
+    }
+
+    // ─── Permission sync (Alpine.js, no server roundtrip) ──
+
+    protected function permSyncJs(): string
+    {
+        return <<<'JS'
+            $nextTick(() => {
+                let modal = $el.closest('.fi-modal-content');
+                if (!modal) return;
+                let digits = [0, 0, 0];
+                modal.querySelectorAll('[data-perm-bit]').forEach(toggle => {
+                    let [group, bit] = toggle.dataset.permBit.split('-').map(Number);
+                    if (toggle.querySelector('button').getAttribute('aria-checked') === 'true') {
+                        digits[group] += bit;
+                    }
+                });
+                let input = modal.querySelector('input[type="text"]');
+                if (input) {
+                    input.value = digits.join('');
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            })
+        JS;
     }
 
     // ─── Refresh listener ─────────────────────────────────────
