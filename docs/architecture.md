@@ -98,19 +98,9 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **Integration**: Panel manages DNS records for domains and subdomains, including mail.$domain (MX records).
 
-#### Restic Backup
+#### Backup System
 
-**Role**: Incremental, deduplicated backup system with encryption. Stores snapshots (not continuous archives).
-
-**Configuration**: Local or remote destinations (SFTP, S3, B2). Password-encrypted repository.
-
-**Management**:
-- `jabali backup:*` commands (create, list, info, restore, delete, password)
-- Snapshots browsable/restorable from panel
-- User-level backups (home directory and domains)
-- Encryption password set via `backup:password`
-
-**Integration**: Panel initiates backups, lists snapshots, displays restoration wizard, verifies Restic binary availability.
+**Status**: Removed in current session. Will be rebuilt from scratch in future phases using a different architecture.
 
 #### Certbot / Let's Encrypt
 
@@ -170,9 +160,10 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **Architecture**:
 - One container per user with user-owned filesystem
-- SSH login via `/opt/jabali-shell.sh` wrapper (nsenter into container)
+- SSH login via jabali-shell set as login shell (via `chsh`), uses `nsenter` to enter container
 - Container idle timeout via systemd timer (`jabali-container-idle-check.sh`)
 - Web serving (PHP-FPM) runs on host, not in container
+- Safe locale fallback (C.UTF-8) to prevent setlocale warnings
 
 **Integration**: `ssh_shell_enabled` toggle on hosting packages, auto-enabled on user creation.
 
@@ -223,7 +214,6 @@ jabali-agent (PHP binary, bin/jabali-agent)
 │   ├── mail.md
 │   ├── ssl.md
 │   ├── security.md
-│   ├── backups.md
 │   ├── dns.md
 │   ├── one-time-login.md
 │   └── diagnostic-logs.md
@@ -238,8 +228,8 @@ jabali-agent (PHP binary, bin/jabali-agent)
 │   ├── logs/                                  # Log files
 │   └── uploads/                               # User uploads (symlinked to public/storage)
 ├── stubs/
-│   ├── jabali-shell.sh                        # SSH login wrapper
-│   ├── jabali-container-idle-check.sh         # Container idle timeout
+│   ├── jabali-shell.sh                        # SSH login shell (set via chsh, nsenter into container)
+│   ├── jabali-container-idle-check.sh         # Container idle timeout (systemd timer)
 │   └── [config templates]                     # nginx, PHP-FPM, service templates
 ├── tests/
 │   ├── Feature/                               # Feature tests (Livewire, API)
@@ -285,12 +275,3 @@ jabali-agent (PHP binary, bin/jabali-agent)
 6. Panel stores certificate metadata (expiration, issuer)
 7. Auto-renewal via systemd timer
 
-### Backup Restoration
-
-1. User selects snapshot from backup list
-2. Filament opens restoration wizard (select files, restore location)
-3. User submits
-4. Panel dispatches `RestoreBackupJob`
-5. Job calls agent `restoreBackup(snapshot_id, target_path)`
-6. Agent mounts Restic snapshot (readonly), copies files to user home
-7. Panel marks restoration complete, displays result

@@ -22,7 +22,7 @@ Shell users run inside nspawn containers managed by jabali-isolator:
 - Auto-stop after 5 minutes of idle time
 - 256 MB memory limit per container
 - Home directory ownership: `user:user 755` for shell users, `root:user 750` for SFTP-only
-- `ForceCommand /usr/local/bin/jabali-shell` in sshd_config routes through `nsenter`
+- Login shell set to jabali-shell via `chsh`, which uses `nsenter` to enter the container
 
 ## jabali-security Daemon
 

@@ -261,44 +261,6 @@ jabali dns:sync <domain>
 ```
 Synchronizes a zone from PowerDNS (useful after bulk imports).
 
-## Backup Management
-
-### Create Backup
-```bash
-jabali backup:create <username> [--json]
-```
-Initiates a new backup for a user's home directory.
-
-### List Backups
-```bash
-jabali backup:list [--user=] [--json]
-```
-Shows available backup snapshots. Filter by user with `--user=`.
-
-### Backup Info
-```bash
-jabali backup:info <path> [--json]
-```
-Displays size, timestamp, and file count for a backup snapshot.
-
-### Restore Backup
-```bash
-jabali backup:restore <path> [--user=] [--json]
-```
-Restores files from a snapshot to a user's home directory.
-
-### Delete Backup
-```bash
-jabali backup:delete <path>
-```
-Permanently removes a backup snapshot.
-
-### Backup Password
-```bash
-jabali backup:password [--set=]
-```
-Sets or changes the encryption password for new backups. Password is required for restore operations.
-
 ## Cron Job Management
 
 ### Create Cron Job

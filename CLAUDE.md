@@ -13,13 +13,13 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - **User panel**: `/jabali-panel/` (Filament, `web` guard)
 - **Mail**: Stalwart Mail Server (SMTP, IMAP, JMAP, ManageSieve) — the only mail backend
 - **DNS**: PowerDNS with REST API and MySQL backend (DNSSEC supported)
-- **Backups**: Restic-based with snapshot browsing, restore wizard, remote destinations (SFTP, S3, B2)
+- **Backups**: Planned for rebuild (removed in this session)
 - **SSL**: Certbot webroot for domains (includes mail.$domain), panel cert via `ssl.panel.issue` agent command
 - **Stats**: GoAccess in daemon mode with real-time WebSocket updates
 - **Bandwidth**: Daily sync from nginx access logs, displayed on Users and Domains pages
-- **File browser**: Two adapters — live files via agent, backup snapshots via Restic
+- **File browser**: Live files via agent (backup snapshots adapter removed)
 - **Security**: jabali-security daemon (separate repo) with Filament plugin
-- **Isolation**: jabali-isolator (separate repo) — nspawn containers for SSH shell access only; web serving uses host FPM pools
+- **Isolation**: jabali-isolator (separate repo) — nspawn containers for SSH shell access (login shell via chsh); web serving uses host FPM pools
 - **CLI**: `jabali` command with noun:verb pattern (e.g. `jabali backup create`)
 - **Webmail**: Bulwark (Next.js JMAP client) at `/opt/bulwark`, served under `/webmail/` via nginx proxy to port 3000
 - **Webmail SSO**: Token file at `/var/lib/jabali/sso-tokens/`, Bulwark reads via custom API route, session uses PUT (not GET) for credentials
