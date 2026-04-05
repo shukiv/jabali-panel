@@ -56,6 +56,11 @@ class ServicesTableWidget extends Component implements HasActions, HasSchemas, H
             'redis-server' => 'Redis',
         ];
 
+        if ((bool) \App\Models\DnsSetting::get('postgres_enabled', false)) {
+            array_splice($preferredOrder, 3, 0, ['postgresql']);
+            $labels['postgresql'] = 'PostgreSQL';
+        }
+
         $phpLabels = $this->detectPhpFpmServices();
         foreach ($phpLabels as $service => $name) {
             $labels[$service] = $name;
