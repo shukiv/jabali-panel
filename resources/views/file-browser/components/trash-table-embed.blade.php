@@ -1,3 +1,3 @@
 <div>
-    @livewire('file-browser::trash-table')
+    @livewire('file-browser-trash-table')
 </div>

@@ -27,6 +27,8 @@ use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -221,10 +223,19 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
      */
     protected bool $readOnly = false;
 
+    /**
+     * Write operations disabled when readOnly is true.
+     * 'download' and 'view' are deliberately excluded — they stay available in read-only mode.
+     */
+    private const WRITE_FEATURES = [
+        'upload', 'edit', 'trash', 'extract', 'permissions',
+        'rename', 'newFolder', 'newFile', 'move', 'copy',
+    ];
+
     protected function featureEnabled(string $feature): bool
     {
         // Per-instance overrides take priority
-        if ($this->readOnly && in_array($feature, ['upload', 'edit', 'trash', 'extract', 'permissions'], true)) {
+        if ($this->readOnly && in_array($feature, self::WRITE_FEATURES, true)) {
             return false;
         }
         if (in_array($feature, $this->disabledFeatures, true)) {
@@ -237,7 +248,6 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
             'trash' => true, // TrashManager handles this separately
             'extract' => $adapter->archiver() !== null,
             'permissions' => $adapter->permissions() !== null,
-            'upload', 'edit' => true,
             default => true,
         };
 
@@ -436,7 +446,7 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                     ->label(__('View'))
                     ->icon('heroicon-o-eye')
                     ->color('info')
-                    ->visible(fn (array $record): bool => ! $record['is_dir'] && $this->isImage($record['name']))
+                    ->visible(fn (array $record): bool => ! $record['is_dir'] && $this->isImage($record['name']) && $this->featureEnabled('view'))
                     ->modalHeading(fn (array $record): string => basename($record['path']))
                     ->modalWidth('4xl')
                     ->modalSubmitAction(false)
@@ -472,7 +482,7 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                     ->label(__('Download'))
                     ->icon('heroicon-o-arrow-down-tray')
                     ->color('gray')
-                    ->visible(fn (array $record): bool => ! $record['is_dir'])
+                    ->visible(fn (array $record): bool => ! $record['is_dir'] && $this->featureEnabled('download'))
                     ->action(fn (array $record) => $this->downloadFile($record['path'])),
                 Action::make('extract')
                     ->label(__('Extract'))
@@ -507,26 +517,46 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                             ->label(__('Numeric Mode'))
                             ->placeholder(__('755'))
                             ->maxLength(4)
-                            ->helperText(__('Enter octal mode (e.g., 755, 644)')),
+                            ->helperText(__('Enter octal mode (e.g., 755, 644)'))
+                            ->live(onBlur: true)
+                            ->afterStateUpdated(function (Set $set, ?string $state): void {
+                                if ($state === null || $state === '' || ! preg_match('/^[0-7]{3,4}$/', $state)) {
+                                    return;
+                                }
+                                $toggles = FilePermission::fromOctal($state)->toFormState();
+                                unset($toggles['mode']);
+                                foreach ($toggles as $key => $value) {
+                                    $set($key, $value);
+                                }
+                            }),
                         Grid::make(3)
                             ->schema([
                                 \Filament\Schemas\Components\Section::make(__('Owner'))
                                     ->schema([
-                                        Toggle::make('owner_read')->label(__('Read')),
-                                        Toggle::make('owner_write')->label(__('Write')),
-                                        Toggle::make('owner_execute')->label(__('Execute')),
+                                        Toggle::make('owner_read')->label(__('Read'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('owner_write')->label(__('Write'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('owner_execute')->label(__('Execute'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
                                     ]),
                                 \Filament\Schemas\Components\Section::make(__('Group'))
                                     ->schema([
-                                        Toggle::make('group_read')->label(__('Read')),
-                                        Toggle::make('group_write')->label(__('Write')),
-                                        Toggle::make('group_execute')->label(__('Execute')),
+                                        Toggle::make('group_read')->label(__('Read'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('group_write')->label(__('Write'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('group_execute')->label(__('Execute'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
                                     ]),
                                 \Filament\Schemas\Components\Section::make(__('Others'))
                                     ->schema([
-                                        Toggle::make('other_read')->label(__('Read')),
-                                        Toggle::make('other_write')->label(__('Write')),
-                                        Toggle::make('other_execute')->label(__('Execute')),
+                                        Toggle::make('other_read')->label(__('Read'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('other_write')->label(__('Write'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
+                                        Toggle::make('other_execute')->label(__('Execute'))->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => $set('mode', FilePermission::fromToggles($get('/'))->toOctal())),
                                     ]),
                             ]),
                     ])
@@ -537,7 +567,7 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                     ->label(__('Rename'))
                     ->icon('heroicon-o-pencil')
                     ->color('gray')
-                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false) && ! $this->readOnly)
+                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false) && $this->featureEnabled('rename'))
                     ->modalHeading(__('Rename'))
                     ->form(fn (array $record): array => [
                         TextInput::make('name')
@@ -552,65 +582,11 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
                     ->label(__('Trash'))
                     ->icon('heroicon-o-trash')
                     ->color('danger')
-                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false) && ! $this->readOnly)
+                    ->visible(fn (array $record): bool => ! ($record['is_parent'] ?? false) && $this->featureEnabled('trash'))
                     ->requiresConfirmation()
                     ->action(fn (array $record) => $this->fileOps()->trashOrDelete($record['path'], $this->featureEnabled('trash'))),
             ])
-            ->bulkActions($this->readOnly ? [] : [
-                \Filament\Actions\BulkAction::make('bulkTrash')
-                    ->label(__('Trash'))
-                    ->icon('heroicon-o-trash')
-                    ->color('danger')
-                    ->size('sm')
-                    ->requiresConfirmation()
-                    ->modalHeading(__('Move to Trash'))
-                    ->modalDescription(__('Move selected items to trash? You can restore them later.'))
-                    ->modalSubmitActionLabel(__('Move to Trash'))
-                    ->modalIcon('heroicon-o-trash')
-                    ->modalIconColor('warning')
-                    ->deselectRecordsAfterCompletion()
-                    ->action(function (\Illuminate\Support\Collection $records): void {
-                        $this->fileOps()->bulkTrashOrDelete($records, $this->featureEnabled('trash'));
-                    }),
-                \Filament\Actions\BulkAction::make('bulkMove')
-                    ->label(__('Move'))
-                    ->icon('heroicon-o-arrow-right')
-                    ->color('warning')
-                    ->size('sm')
-                    ->modalHeading(__('Move Selected Items'))
-                    ->modalDescription(__('Select the destination folder'))
-                    ->modalSubmitActionLabel(__('Move'))
-                    ->form([
-                        TextInput::make('destination')
-                            ->label(__('Destination Path'))
-                            ->placeholder(__('e.g., path/to/folder'))
-                            ->required()
-                            ->helperText(__('Enter the path relative to your root directory')),
-                    ])
-                    ->deselectRecordsAfterCompletion()
-                    ->action(function (\Illuminate\Support\Collection $records, array $data): void {
-                        $this->fileOps()->bulkMove($records, $data['destination']);
-                    }),
-                \Filament\Actions\BulkAction::make('bulkCopy')
-                    ->label(__('Copy'))
-                    ->icon('heroicon-o-document-duplicate')
-                    ->color('info')
-                    ->size('sm')
-                    ->modalHeading(__('Copy Selected Items'))
-                    ->modalDescription(__('Select the destination folder'))
-                    ->modalSubmitActionLabel(__('Copy'))
-                    ->form([
-                        TextInput::make('destination')
-                            ->label(__('Destination Path'))
-                            ->placeholder(__('e.g., path/to/folder'))
-                            ->required()
-                            ->helperText(__('Enter the path relative to your root directory')),
-                    ])
-                    ->deselectRecordsAfterCompletion()
-                    ->action(function (\Illuminate\Support\Collection $records, array $data): void {
-                        $this->fileOps()->bulkCopy($records, $data['destination']);
-                    }),
-            ])
+            ->bulkActions($this->getBulkActions())
             ->checkIfRecordIsSelectableUsing(fn (array $record): bool => ! ($record['is_parent'] ?? false))
             ->headerActions([
                 $this->newFolderAction(),
@@ -639,6 +615,75 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
             ->emptyStateDescription(__('Create a new file or folder to get started'))
             ->emptyStateIcon('heroicon-o-folder-open')
             ->striped();
+    }
+
+    protected function getBulkActions(): array
+    {
+        $actions = [];
+
+        if ($this->featureEnabled('trash')) {
+            $actions[] = \Filament\Actions\BulkAction::make('bulkTrash')
+                ->label(__('Trash'))
+                ->icon('heroicon-o-trash')
+                ->color('danger')
+                ->size('sm')
+                ->requiresConfirmation()
+                ->modalHeading(__('Move to Trash'))
+                ->modalDescription(__('Move selected items to trash? You can restore them later.'))
+                ->modalSubmitActionLabel(__('Move to Trash'))
+                ->modalIcon('heroicon-o-trash')
+                ->modalIconColor('warning')
+                ->deselectRecordsAfterCompletion()
+                ->action(function (\Illuminate\Support\Collection $records): void {
+                    $this->fileOps()->bulkTrashOrDelete($records, $this->featureEnabled('trash'));
+                });
+        }
+
+        if ($this->featureEnabled('move')) {
+            $actions[] = \Filament\Actions\BulkAction::make('bulkMove')
+                ->label(__('Move'))
+                ->icon('heroicon-o-arrow-right')
+                ->color('warning')
+                ->size('sm')
+                ->modalHeading(__('Move Selected Items'))
+                ->modalDescription(__('Select the destination folder'))
+                ->modalSubmitActionLabel(__('Move'))
+                ->form([
+                    TextInput::make('destination')
+                        ->label(__('Destination Path'))
+                        ->placeholder(__('e.g., path/to/folder'))
+                        ->required()
+                        ->helperText(__('Enter the path relative to your root directory')),
+                ])
+                ->deselectRecordsAfterCompletion()
+                ->action(function (\Illuminate\Support\Collection $records, array $data): void {
+                    $this->fileOps()->bulkMove($records, $data['destination']);
+                });
+        }
+
+        if ($this->featureEnabled('copy')) {
+            $actions[] = \Filament\Actions\BulkAction::make('bulkCopy')
+                ->label(__('Copy'))
+                ->icon('heroicon-o-document-duplicate')
+                ->color('info')
+                ->size('sm')
+                ->modalHeading(__('Copy Selected Items'))
+                ->modalDescription(__('Select the destination folder'))
+                ->modalSubmitActionLabel(__('Copy'))
+                ->form([
+                    TextInput::make('destination')
+                        ->label(__('Destination Path'))
+                        ->placeholder(__('e.g., path/to/folder'))
+                        ->required()
+                        ->helperText(__('Enter the path relative to your root directory')),
+                ])
+                ->deselectRecordsAfterCompletion()
+                ->action(function (\Illuminate\Support\Collection $records, array $data): void {
+                    $this->fileOps()->bulkCopy($records, $data['destination']);
+                });
+        }
+
+        return $actions;
     }
 
     public function getTableRecordKey(Model|array $record): string
@@ -752,7 +797,7 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
         return Action::make('newFolder')
             ->label(__('New Folder'))
             ->icon('heroicon-o-folder-plus')
-            ->visible(! $this->readOnly)
+            ->visible($this->featureEnabled('newFolder'))
             ->modalHeading(__('Create New Folder'))
             ->modalDescription(__('Enter a name for the new folder'))
             ->modalIcon('heroicon-o-folder-plus')
@@ -775,6 +820,7 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
         return Action::make('newFile')
             ->label(__('New File'))
             ->icon('heroicon-o-document-plus')
+            ->visible($this->featureEnabled('newFile'))
             ->modalHeading(__('Create New File'))
             ->modalDescription(__('Create a new file with optional content'))
             ->modalIcon('heroicon-o-document-plus')

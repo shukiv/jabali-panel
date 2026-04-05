@@ -41,7 +41,7 @@ class FileBrowserServiceProvider extends ServiceProvider
         $this->loadViewsFrom(resource_path('views/file-browser'), 'file-browser');
 
         if (class_exists(Livewire::class)) {
-            Livewire::component('file-browser::trash-table', \App\FileBrowser\Livewire\TrashTable::class);
+            Livewire::component('file-browser-trash-table', \App\FileBrowser\Livewire\TrashTable::class);
         }
 
         if ($this->app->runningInConsole()) {
