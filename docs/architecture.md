@@ -51,6 +51,8 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **Communication**: Unix socket at `/var/run/jabali-agent.sock`. Panel communicates via `AgentClient::call()`, passing JSON-encoded command and arguments. Returns JSON response.
 
+**Addons**: Agent loads addon route handlers from `/etc/jabali/agent.d/*.php`. Addons return action→handler arrays for custom operations (e.g., jabali-backup plugin).
+
 **Responsibility**: All operations requiring root privileges:
 - File ownership/permissions
 - Service start/stop/restart
@@ -98,9 +100,15 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **Integration**: Panel manages DNS records for domains and subdomains, including mail.$domain (MX records).
 
+#### Database Systems
+
+**MariaDB**: Always enabled, supports CRUD operations, user management, privilege assignment, backup (mysqldump), and restore (file upload).
+
+**PostgreSQL**: Optional. Admins enable/disable from Server Settings > Databases tab. Supports service control, database CRUD, role/privilege management (CREATE, CONNECT, TEMPORARY, ALL), backup (pg_dump), restore (file upload), and database info queries.
+
 #### Backup System
 
-**Status**: Removed in current session. Will be rebuilt from scratch in future phases using a different architecture.
+**Status**: Fully removed in this session. Will be rebuilt as standalone tool (jabali-backup) with addon architecture.
 
 #### Certbot / Let's Encrypt
 
@@ -160,10 +168,11 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **Architecture**:
 - One container per user with user-owned filesystem
-- SSH login via jabali-shell set as login shell (via `chsh`), uses `nsenter` to enter container
+- SSH login via `jabali-shell` set as user's login shell (via `chsh`), not ForceCommand in sshd_config
+- `jabali-shell` uses login shell args and TTY detection for VS Code Remote SSH compatibility
+- `jabali-shell` sets C.UTF-8 locale fallback to prevent setlocale warnings and supports container nsenter
 - Container idle timeout via systemd timer (`jabali-container-idle-check.sh`)
 - Web serving (PHP-FPM) runs on host, not in container
-- Safe locale fallback (C.UTF-8) to prevent setlocale warnings
 
 **Integration**: `ssh_shell_enabled` toggle on hosting packages, auto-enabled on user creation.
 
@@ -228,9 +237,9 @@ jabali-agent (PHP binary, bin/jabali-agent)
 │   ├── logs/                                  # Log files
 │   └── uploads/                               # User uploads (symlinked to public/storage)
 ├── stubs/
-│   ├── jabali-shell.sh                        # SSH login shell (set via chsh, nsenter into container)
+│   ├── jabali-shell.sh                        # SSH login shell (login shell via chsh, login args, TTY detection, nsenter, locale)
 │   ├── jabali-container-idle-check.sh         # Container idle timeout (systemd timer)
-│   └── [config templates]                     # nginx, PHP-FPM, service templates
+│   └── [config templates]                     # nginx, PHP-FPM, service templates (sshd_config before Match blocks)
 ├── tests/
 │   ├── Feature/                               # Feature tests (Livewire, API)
 │   ├── Unit/                                  # Unit tests

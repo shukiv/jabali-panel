@@ -22,7 +22,11 @@ Shell users run inside nspawn containers managed by jabali-isolator:
 - Auto-stop after 5 minutes of idle time
 - 256 MB memory limit per container
 - Home directory ownership: `user:user 755` for shell users, `root:user 750` for SFTP-only
-- Login shell set to jabali-shell via `chsh`, which uses `nsenter` to enter the container
+- Login shell set to `jabali-shell` via `chsh` (not ForceCommand in sshd_config), which:
+  - Uses login shell args for VS Code Remote SSH compatibility
+  - Detects TTY for interactive vs non-interactive mode
+  - Sets C.UTF-8 locale fallback to prevent setlocale warnings
+  - Uses `nsenter` to enter the user's nspawn container
 
 ## jabali-security Daemon
 

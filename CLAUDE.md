@@ -7,20 +7,21 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 ## Architecture
 
 - **Panel**: Laravel app on FrankenPHP, port 8443 (configurable via PANEL_PORT env, independent of nginx)
-- **Agent**: PHP binary (`bin/jabali-agent`) for root operations via Unix socket
+- **Agent**: PHP binary (`bin/jabali-agent`) for root operations via Unix socket; addons loaded from `/etc/jabali/agent.d/*.php`
 - **Agent client**: `App\Services\Agent\AgentClient` — all privileged ops go through the agent
 - **Admin panel**: `/jabali-admin/` (Filament, `admin` guard)
 - **User panel**: `/jabali-panel/` (Filament, `web` guard)
 - **Mail**: Stalwart Mail Server (SMTP, IMAP, JMAP, ManageSieve) — the only mail backend
 - **DNS**: PowerDNS with REST API and MySQL backend (DNSSEC supported)
-- **Backups**: Planned for rebuild (removed in this session)
+- **Databases**: MariaDB (always enabled) + PostgreSQL (optional, enabled/disabled via Server Settings > Databases tab)
+- **Backups**: Fully removed; will be rebuilt as standalone tool (jabali-backup)
 - **SSL**: Certbot webroot for domains (includes mail.$domain), panel cert via `ssl.panel.issue` agent command
 - **Stats**: GoAccess in daemon mode with real-time WebSocket updates
 - **Bandwidth**: Daily sync from nginx access logs, displayed on Users and Domains pages
-- **File browser**: Live files via agent (backup snapshots adapter removed)
+- **File browser**: Live files via agent
 - **Security**: jabali-security daemon (separate repo) with Filament plugin
 - **Isolation**: jabali-isolator (separate repo) — nspawn containers for SSH shell access (login shell via chsh); web serving uses host FPM pools
-- **CLI**: `jabali` command with noun:verb pattern (e.g. `jabali backup create`)
+- **CLI**: `jabali` command with noun:verb pattern (e.g. `jabali user:create`)
 - **Webmail**: Bulwark (Next.js JMAP client) at `/opt/bulwark`, served under `/webmail/` via nginx proxy to port 3000
 - **Webmail SSO**: Token file at `/var/lib/jabali/sso-tokens/`, Bulwark reads via custom API route, session uses PUT (not GET) for credentials
 - **WordPress plugin**: `resources/wordpress/jabali-cache/` (separate PHP codebase, not Laravel)
@@ -36,7 +37,7 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - `resources/wordpress/jabali-cache/` — WordPress cache plugin (standalone PHP, not Laravel)
 - `install.sh` — server installer script
 - `stubs/` — config file templates deployed during install
-- `stubs/jabali-shell.sh` — SSH login shell wrapper (nsenter into nspawn container)
+- `stubs/jabali-shell.sh` — SSH login shell (set via chsh, uses login shell args and TTY detection; nsenter into nspawn container with C.UTF-8 locale fallback)
 - `stubs/jabali-container-idle-check.sh` — stops idle containers (systemd timer, every 5 min)
 
 ## Development Rules
