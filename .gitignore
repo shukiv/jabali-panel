@@ -46,3 +46,4 @@ frankenphp-worker.php
 
 # Claude Flow session data
 .claude-flow/
+.swarm/
