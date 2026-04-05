@@ -1204,6 +1204,8 @@ Environment=GODEBUG=cgocheck=0
 Environment=GOMEMLIMIT=512MiB
 ExecStart=/usr/local/bin/frankenphp run --config /etc/jabali/Caddyfile
 ExecReload=/usr/local/bin/frankenphp reload --config /etc/jabali/Caddyfile
+TimeoutStopSec=10
+KillMode=mixed
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
