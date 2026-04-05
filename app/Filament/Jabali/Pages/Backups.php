@@ -159,6 +159,13 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->sortable(),
             ])
             ->actions([
+                Action::make('download')
+                    ->label(__('Download'))
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('gray')
+                    ->visible(fn (Backup $record) => $record->status === 'completed' && $record->snapshot_id)
+                    ->url(fn (Backup $record) => route('filament.jabali.pages.backup-snapshot-download', ['id' => $record->id]))
+                    ->openUrlInNewTab(),
                 Action::make('browse')
                     ->label(__('Browse'))
                     ->icon('heroicon-o-folder-open')

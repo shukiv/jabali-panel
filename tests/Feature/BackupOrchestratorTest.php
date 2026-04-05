@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Models\Backup;
+use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Services\Backup\BackupOrchestrator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -15,58 +16,75 @@ class BackupOrchestratorTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_execute_runs_full_backup_and_marks_completed(): void
+    public function test_execute_creates_per_account_backups(): void
     {
-        $backup = Backup::create([
-            'name' => 'Test Backup',
-            'filename' => 'test-backup.tar.gz',
+        $user = User::factory()->create(['username' => 'testuser', 'is_active' => true]);
+
+        $parentBackup = Backup::create([
+            'name' => 'Daily Server Backup',
+            'filename' => 'server-backup.tar.gz',
             'type' => 'server',
             'status' => 'pending',
-            'local_path' => '/tmp/test-backup.tar.gz',
         ]);
 
         $agent = Mockery::mock(AgentClient::class);
         $agent->shouldReceive('send')
-            ->with('backup.create_server', Mockery::type('array'))
+            ->with('backup.create_user_snapshot', Mockery::type('array'))
             ->once()
             ->andReturn([
                 'success' => true,
                 'snapshot_id' => 'abc12345',
-                'size' => 1024000,
-                'users' => ['admin'],
-                'user_count' => 1,
+                'size_bytes' => 1024000,
+                'file_count' => 42,
+                'domains' => ['example.com'],
+                'databases' => ['testuser_wp'],
+                'mailboxes' => ['info@example.com'],
             ]);
 
         $orchestrator = new BackupOrchestrator($agent);
-        $orchestrator->execute($backup);
+        $result = $orchestrator->executePerAccount($parentBackup);
 
-        $backup->refresh();
-        $this->assertEquals('completed', $backup->status);
-        $this->assertEquals(1024000, $backup->size_bytes);
-        $this->assertNotNull($backup->completed_at);
+        $this->assertEquals(1, $result['completed']);
+        $this->assertEquals(0, $result['failed']);
+
+        // Parent should be deleted
+        $this->assertNull(Backup::find($parentBackup->id));
+
+        // Per-user backup should exist
+        $userBackup = Backup::where('user_id', $user->id)->first();
+        $this->assertNotNull($userBackup);
+        $this->assertEquals('completed', $userBackup->status);
+        $this->assertEquals('abc12345', $userBackup->snapshot_id);
+        $this->assertEquals(1024000, $userBackup->size_bytes);
+        $this->assertEquals('account', $userBackup->type);
     }
 
-    public function test_execute_marks_failed_on_agent_error(): void
+    public function test_execute_handles_per_account_failure(): void
     {
-        $backup = Backup::create([
+        $user = User::factory()->create(['username' => 'failuser', 'is_active' => true]);
+
+        $parentBackup = Backup::create([
             'name' => 'Failing Backup',
             'filename' => 'fail-backup.tar.gz',
             'type' => 'server',
             'status' => 'pending',
-            'local_path' => '/tmp/fail-backup.tar.gz',
         ]);
 
         $agent = Mockery::mock(AgentClient::class);
         $agent->shouldReceive('send')
-            ->with('backup.create_server', Mockery::type('array'))
+            ->with('backup.create_user_snapshot', Mockery::type('array'))
             ->once()
             ->andThrow(new \Exception('Disk full'));
 
         $orchestrator = new BackupOrchestrator($agent);
-        $orchestrator->execute($backup);
+        $result = $orchestrator->executePerAccount($parentBackup);
 
-        $backup->refresh();
-        $this->assertEquals('failed', $backup->status);
-        $this->assertEquals('Disk full', $backup->error_message);
+        $this->assertEquals(0, $result['completed']);
+        $this->assertEquals(1, $result['failed']);
+
+        $userBackup = Backup::where('user_id', $user->id)->first();
+        $this->assertNotNull($userBackup);
+        $this->assertEquals('failed', $userBackup->status);
+        $this->assertEquals('Disk full', $userBackup->error_message);
     }
 }

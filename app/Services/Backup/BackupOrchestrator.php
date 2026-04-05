@@ -48,15 +48,16 @@ class BackupOrchestrator
             $backup = Backup::create([
                 'user_id' => $user->id,
                 'name' => $parentBackup->name.' — '.$user->username,
+                'filename' => $user->username.'_'.$timestamp.'.tar.gz',
                 'type' => 'account',
                 'status' => 'running',
                 'started_at' => now(),
                 'destination_id' => $parentBackup->destination_id,
                 'schedule_id' => $parentBackup->schedule_id,
-                'include_files' => $parentBackup->include_files,
-                'include_databases' => $parentBackup->include_databases,
-                'include_mailboxes' => $parentBackup->include_mailboxes,
-                'include_dns' => $parentBackup->include_dns,
+                'include_files' => $parentBackup->include_files ?? true,
+                'include_databases' => $parentBackup->include_databases ?? true,
+                'include_mailboxes' => $parentBackup->include_mailboxes ?? true,
+                'include_dns' => $parentBackup->include_dns ?? true,
                 'include_ssl' => $parentBackup->include_ssl ?? true,
             ]);
 
@@ -136,80 +137,11 @@ class BackupOrchestrator
     }
 
     /**
-     * Execute a server backup (legacy — one snapshot for all users).
-     *
-     * @deprecated Use executePerAccount() instead
+     * Execute a server backup — alias for executePerAccount.
      */
     public function execute(Backup $backup): void
     {
-        if (in_array($backup->status, ['completed', 'failed'])) {
-            return;
-        }
-
-        $backup->update(['status' => 'running', 'started_at' => now()]);
-
-        try {
-            $repo = $backup->destination
-                ? $backup->destination->getResticRepoUrl()
-                : BackupDestination::defaultRepo();
-            $destConfig = $backup->destination
-                ? array_merge($backup->destination->config ?? [], ['type' => $backup->destination->type])
-                : [];
-
-            $result = $this->agent->send('backup.create_server', [
-                'users' => $backup->users,
-                'include_files' => $backup->include_files,
-                'include_databases' => $backup->include_databases,
-                'include_mailboxes' => $backup->include_mailboxes,
-                'include_dns' => $backup->include_dns,
-                'include_ssl' => $backup->include_ssl ?? true,
-                'destination' => $destConfig,
-                'repo' => $repo,
-            ]);
-
-            if (! ($result['success'] ?? false)) {
-                throw new Exception($result['error'] ?? 'Backup failed');
-            }
-
-            $backup->update([
-                'status' => 'completed',
-                'completed_at' => now(),
-                'snapshot_id' => $result['snapshot_id'] ?? null,
-                'size_bytes' => $result['size'] ?? 0,
-                'users' => $result['users'] ?? $backup->users,
-                'metadata' => array_merge($backup->metadata ?? [], [
-                    'user_count' => $result['user_count'] ?? 0,
-                ]),
-            ]);
-
-            Log::info("BackupOrchestrator: Backup {$backup->id} completed (snapshot: ".($result['snapshot_id'] ?? 'unknown').')');
-
-            if ($backup->destination_id) {
-                IndexRemoteBackups::dispatch($backup->destination_id);
-            }
-
-            if ($backup->schedule_id) {
-                $schedule = BackupSchedule::find($backup->schedule_id);
-                if ($schedule) {
-                    $this->applyRetention($schedule, $repo);
-                }
-            }
-
-            AdminNotificationService::backupSuccess(
-                $backup->name,
-                $result['size'] ?? 0,
-                $backup->destination?->name
-            );
-        } catch (Exception $e) {
-            $backup->update([
-                'status' => 'failed',
-                'completed_at' => now(),
-                'error_message' => $e->getMessage(),
-            ]);
-
-            Log::error("BackupOrchestrator: Backup {$backup->id} failed: ".$e->getMessage());
-            AdminNotificationService::backupFailure($backup->name, $e->getMessage());
-        }
+        $this->executePerAccount($backup);
     }
 
     /**

@@ -50,6 +50,26 @@ class BackupDownloadController extends Controller
         return response()->download($realPath);
     }
 
+    public function userSnapshotDownload(Request $request): StreamedResponse|\Illuminate\Http\Response
+    {
+        $backupId = $request->query('id');
+        $user = Auth::guard('web')->user();
+
+        if (empty($backupId) || ! $user) {
+            abort(404);
+        }
+
+        $backup = Backup::where('id', $backupId)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (! $backup || ! $backup->snapshot_id) {
+            abort(404, 'Backup not found');
+        }
+
+        return $this->downloadResticSnapshot($backup);
+    }
+
     public function adminDownload(Request $request): BinaryFileResponse|StreamedResponse|\Illuminate\Http\Response
     {
         $backupId = $request->query('id');

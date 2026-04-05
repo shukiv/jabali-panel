@@ -148,6 +148,10 @@ Route::get('/jabali-panel/backup-download', [BackupDownloadController::class, 'd
     ->middleware(['web', 'auth'])
     ->name('filament.jabali.pages.backup-download');
 
+Route::get('/jabali-panel/backup-snapshot-download', [BackupDownloadController::class, 'userSnapshotDownload'])
+    ->middleware(['web', 'auth'])
+    ->name('filament.jabali.pages.backup-snapshot-download');
+
 /*
 |--------------------------------------------------------------------------
 | Admin Panel Backup Download
