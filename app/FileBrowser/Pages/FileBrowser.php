@@ -890,6 +890,10 @@ class FileBrowser extends Page implements HasActions, HasForms, HasTable
 
     public function downloadFile(string $path): void
     {
+        if (! $this->featureEnabled('download')) {
+            return;
+        }
+
         $result = $this->fileOps()->read($path);
         if ($result === null) {
             return;

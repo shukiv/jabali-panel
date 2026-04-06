@@ -19,7 +19,7 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - **SSL**: Certbot webroot for domains (includes mail.$domain), panel cert via `ssl.panel.issue` agent command
 - **Stats**: GoAccess in daemon mode with real-time WebSocket updates
 - **Bandwidth**: Daily sync from nginx access logs, displayed on Users and Domains pages
-- **File browser**: Live files via agent; supports `$readOnly` mode and per-instance `$disabledFeatures` to restrict operations
+- **File browser**: Live files via agent; supports `$readOnly` mode and per-instance `$disabledFeatures` to control any action (upload, edit, trash, rename, newFile, newFolder, move, copy, extract, permissions, download, view); permission toggles sync with numeric mode via Alpine.js event delegation (no Livewire roundtrip); Livewire component name uses dashes not `::` (Livewire v4 treats `::` as namespace separator)
 - **Security**: jabali-security daemon (separate repo) with Filament plugin
 - **Isolation**: jabali-isolator (separate repo) — nspawn containers for SSH shell access (login shell via chsh); web serving uses host FPM pools
 - **CLI**: `jabali` command with noun:verb pattern (e.g. `jabali user:create`)
@@ -65,6 +65,8 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - Bulwark SSO fallback must use PUT to `/webmail/api/auth/session` (upstream strips password from GET)
 - Bump `jabali_patch_version` in `upgrade_bulwark()` when changing any Bulwark patch — version marker written only after successful build
 - FrankenPHP systemd service has `TimeoutStopSec=10` and `KillMode=mixed` to prevent shutdown hangs
+- Livewire v4: Register components with dashes (`file-browser-trash-table`), NOT `::` — Livewire v4 treats `::` as namespace separator and skips `classComponents` lookup
+- Filament v5: `->live()` does NOT work inside record action modal forms (causes "action tried to resolve without a name") — use Alpine.js for client-side reactivity instead
 
 ## Security Rules
 
