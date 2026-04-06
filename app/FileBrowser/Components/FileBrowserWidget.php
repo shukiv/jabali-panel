@@ -26,7 +26,7 @@ use Livewire\Component;
 /**
  * Embeddable file browser widget.
  *
- * Usage (adapter class + config — survives Livewire re-hydration):
+ * Usage:
  *
  *   @livewire('file-browser-widget', [
  *       'adapterClass' => ResticSnapshotAdapter::class,
@@ -35,14 +35,12 @@ use Livewire\Component;
  *       'selectable' => true,
  *   ])
  *
- * Or with an adapter instance (converted to class+config automatically):
- *   @livewire('file-browser-widget', [
- *       'adapter' => $myAdapter,   // must implement toArray()
- *       'readOnly' => true,
- *   ])
+ * Adapter classes must implement FileBrowserAdapter and have a static
+ * fromConfig(array $config) method for Livewire re-hydration.
  *
- * Adapter classes must have a static fromConfig(array $config) method
- * that recreates the adapter from serializable config.
+ * IMPORTANT: Always pass adapterClass + adapterConfig (strings/arrays).
+ * Never pass adapter instances — they can't survive Livewire re-hydration,
+ * and type-hinted interfaces trigger Laravel DI auto-resolution.
  */
 class FileBrowserWidget extends Component implements HasActions, HasForms, HasTable
 {
@@ -71,8 +69,14 @@ class FileBrowserWidget extends Component implements HasActions, HasForms, HasTa
 
     protected ?FileBrowserAdapter $resolvedAdapter = null;
 
+    /**
+     * @param  string  $adapterClass  FQCN of a FileBrowserAdapter with static fromConfig()
+     * @param  array<string, mixed>  $adapterConfig  Serializable config passed to fromConfig()
+     *
+     * Note: Do NOT type-hint $adapterClass as FileBrowserAdapter — Laravel's DI
+     * would auto-resolve it from the container, overriding the caller's config.
+     */
     public function mount(
-        ?FileBrowserAdapter $adapter = null,
         string $adapterClass = '',
         array $adapterConfig = [],
         bool $readOnly = false,
@@ -80,14 +84,8 @@ class FileBrowserWidget extends Component implements HasActions, HasForms, HasTa
         array $disabledFeatures = [],
         string $path = '',
     ): void {
-        if ($adapter !== null) {
-            $this->adapterClass = $adapter::class;
-            $this->adapterConfig = method_exists($adapter, 'toArray') ? $adapter->toArray() : $adapterConfig;
-            $this->resolvedAdapter = $adapter;
-        } else {
-            $this->adapterClass = $adapterClass;
-            $this->adapterConfig = $adapterConfig;
-        }
+        $this->adapterClass = $adapterClass;
+        $this->adapterConfig = $adapterConfig;
 
         $this->readOnly = $readOnly;
         $this->selectable = $selectable;
