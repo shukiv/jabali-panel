@@ -27,12 +27,14 @@ usage() {
 Usage: sudo ./install.sh [command]
 
 Commands:
-  install   Install jabali-backup CLI + panel addon (default)
-  update    Update CLI + panel, preserve config & secrets
+  install     Install jabali-backup CLI + panel addon (default)
+  update      Update CLI + panel, preserve config & secrets
+  uninstall   Remove jabali-backup CLI + panel addon
 
 Examples:
-  sudo ./install.sh            # Fresh install
-  sudo ./install.sh update     # Update existing installation
+  sudo ./install.sh              # Fresh install
+  sudo ./install.sh update       # Update existing installation
+  sudo ./install.sh uninstall    # Remove everything
 EOF
     exit 0
 }
@@ -41,9 +43,9 @@ EOF
 
 CMD="${1:-install}"
 case "$CMD" in
-    install|update) ;;
+    install|update|uninstall) ;;
     -h|--help|help) usage ;;
-    *) fail "Unknown command: $CMD (use install or update)" ;;
+    *) fail "Unknown command: $CMD (use install, update, or uninstall)" ;;
 esac
 
 # ─── Pre-flight ───────────────────────────────────────
@@ -56,8 +58,88 @@ if [[ $EUID -ne 0 ]]; then
     fail "This must be run as root (sudo ./install.sh $CMD)"
 fi
 
-if [[ ! -f "$SCRIPT_DIR/bin/jabali-backup" ]]; then
+if [[ "$CMD" != "uninstall" && ! -f "$SCRIPT_DIR/bin/jabali-backup" ]]; then
     fail "Source files not found. Run from the jabali-backup project directory."
+fi
+
+# ─── Uninstall ────────────────────────────────────────
+
+if [[ "$CMD" == "uninstall" ]]; then
+    JABALI_PATH="${JABALI_PATH:-/var/www/jabali}"
+
+    section "Stopping Services"
+
+    if systemctl is-active --quiet jabali-backup.timer 2>/dev/null; then
+        systemctl stop jabali-backup.timer
+    fi
+    systemctl disable jabali-backup.timer 2>/dev/null || true
+    ok "Backup timer stopped and disabled"
+
+    section "Removing Panel Addon"
+
+    for f in \
+        /etc/jabali/agent.d/jabali-backup.php \
+        "$JABALI_PATH/app/Filament/Admin/Pages/Backups.php" \
+        "$JABALI_PATH/app/Filament/Admin/Pages/SnapshotBrowser.php" \
+        "$JABALI_PATH/app/Filament/Jabali/Pages/UserBackups.php" \
+        "$JABALI_PATH/app/Backup/Adapters/ResticSnapshotAdapter.php" \
+        "$JABALI_PATH/app/Backup/BackupServiceProvider.php" \
+        "$JABALI_PATH/public/backup-download.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/backups.blade.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/partials/snapshot-browser-embed.blade.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/partials/restore-file-badges.blade.php" \
+        "$JABALI_PATH/resources/views/filament/jabali/pages/backups.blade.php"
+    do
+        if [[ -f "$f" ]]; then
+            rm "$f"
+            ok "Removed ${f##*/}"
+        fi
+    done
+
+    # Remove service provider registration
+    if [[ -f "$JABALI_PATH/bootstrap/providers.php" ]]; then
+        sed -i '/BackupServiceProvider/d' "$JABALI_PATH/bootstrap/providers.php" 2>/dev/null || true
+        ok "Unregistered BackupServiceProvider"
+    fi
+
+    # Clear panel caches
+    if [[ -f "$JABALI_PATH/artisan" ]]; then
+        cd "$JABALI_PATH"
+        php artisan view:clear 2>/dev/null || true
+        php artisan filament:cache-components 2>/dev/null || true
+        ok "Panel caches cleared"
+        systemctl restart jabali-agent 2>/dev/null || true
+        systemctl restart php8.5-fpm 2>/dev/null || systemctl restart php8.4-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
+        ok "Services restarted"
+    fi
+
+    section "Removing CLI"
+
+    for f in /etc/systemd/system/jabali-backup.service /etc/systemd/system/jabali-backup.timer; do
+        [[ -f "$f" ]] && rm "$f"
+    done
+    systemctl daemon-reload 2>/dev/null || true
+    ok "Systemd units removed"
+
+    [[ -f /usr/local/bin/jabali-backup ]] && rm /usr/local/bin/jabali-backup
+    ok "Removed /usr/local/bin/jabali-backup"
+
+    [[ -d /usr/local/lib/jabali-backup ]] && rm -rf /usr/local/lib/jabali-backup
+    ok "Removed /usr/local/lib/jabali-backup/"
+
+    [[ -f /etc/bash_completion.d/jabali-backup ]] && rm /etc/bash_completion.d/jabali-backup
+    ok "Removed bash completions"
+
+    section "Uninstall Complete"
+
+    ok "jabali-backup removed"
+    echo ""
+    info "Kept (remove manually if desired):"
+    echo "    /etc/jabali-backup/          (config & secrets)"
+    echo "    /var/log/jabali-backup.log   (log file)"
+    echo "    /var/cache/jabali-backup/    (restic cache)"
+    echo ""
+    exit 0
 fi
 
 # ─── Detect existing install & pull ───────────────────
