@@ -55,6 +55,7 @@ class SslCheckCommand extends Command
             $this->processSingleDomain($domain);
         } else {
             if (! $renewOnly) {
+                $this->checkPanelCertificate();
                 $this->issueMissingCertificates();
                 $this->issueMissingMailCertificates();
             }
@@ -171,6 +172,66 @@ class SslCheckCommand extends Command
 
         if ($deletedCount > 0) {
             $this->log("Cleaned up {$deletedCount} old log files (older than 3 months)");
+        }
+    }
+
+    private function checkPanelCertificate(): void
+    {
+        $this->log('Checking panel SSL certificate...');
+        $this->info('Checking panel SSL certificate...');
+
+        $certPath = '/etc/ssl/jabali/panel.crt';
+        if (! file_exists($certPath)) {
+            $this->log('Panel certificate not found, skipping', 'WARN');
+            $this->skipped++;
+
+            return;
+        }
+
+        $certData = openssl_x509_parse(file_get_contents($certPath));
+        if (! $certData) {
+            $this->log('Failed to parse panel certificate', 'WARN');
+            $this->skipped++;
+
+            return;
+        }
+
+        $issuerCN = $certData['issuer']['CN'] ?? '';
+        $subjectCN = $certData['subject']['CN'] ?? '';
+        $isSelfSigned = ($issuerCN === $subjectCN);
+        $expiryTime = $certData['validTo_time_t'] ?? 0;
+        $needsRenewal = $expiryTime <= time() + (30 * 86400); // 30 days
+
+        if (! $isSelfSigned && ! $needsRenewal) {
+            $this->log('Panel certificate is valid LE cert, expires: '.date('Y-m-d', $expiryTime));
+            $this->line('  Panel certificate is valid, expires: '.date('Y-m-d', $expiryTime));
+            $this->skipped++;
+
+            return;
+        }
+
+        $reason = $isSelfSigned ? 'self-signed' : 'expiring in <30 days';
+        $this->log("Panel certificate needs replacement ({$reason}), attempting LE issuance");
+        $this->line("  Panel certificate is {$reason}, attempting LE issuance...");
+
+        try {
+            $agent = app(\App\Services\Agent\AgentClient::class);
+            $result = $agent->call('ssl.panel.issue', []);
+
+            if ($result->success) {
+                $this->log('SUCCESS: Panel SSL certificate issued: '.($result->get('message', '')), 'SUCCESS');
+                $this->info('    ✓ Panel certificate issued successfully');
+                $this->issued++;
+            } else {
+                $error = $result->get('error', 'Unknown error');
+                $this->log("Panel SSL issuance failed: {$error}", 'WARN');
+                $this->warn("    ✗ Panel SSL failed: {$error}");
+                $this->skipped++;
+            }
+        } catch (\Exception $e) {
+            $this->log("Panel SSL issuance error: {$e->getMessage()}", 'ERROR');
+            $this->warn("    ✗ Panel SSL error: {$e->getMessage()}");
+            $this->skipped++;
         }
     }
 
