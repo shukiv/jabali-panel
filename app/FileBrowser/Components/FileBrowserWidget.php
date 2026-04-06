@@ -26,17 +26,23 @@ use Livewire\Component;
 /**
  * Embeddable file browser widget.
  *
- * Usage:
+ * Usage (adapter class + config — survives Livewire re-hydration):
  *
  *   @livewire('file-browser-widget', [
- *       'adapter' => $myAdapter,          // FileBrowserAdapter instance
- *       'readOnly' => true,               // hide all write actions
- *       'selectable' => true,             // show checkboxes, dispatch selection events
- *       'disabledFeatures' => ['view'],   // hide specific actions
+ *       'adapterClass' => ResticSnapshotAdapter::class,
+ *       'adapterConfig' => ['username' => 'shuki', 'snapshot_id' => 'a9ee58cd'],
+ *       'readOnly' => true,
+ *       'selectable' => true,
  *   ])
  *
- * Events dispatched:
- *   'file-browser-selection' => ['paths' => [...]]  (when selectable and selection changes)
+ * Or with an adapter instance (converted to class+config automatically):
+ *   @livewire('file-browser-widget', [
+ *       'adapter' => $myAdapter,   // must implement toArray()
+ *       'readOnly' => true,
+ *   ])
+ *
+ * Adapter classes must have a static fromConfig(array $config) method
+ * that recreates the adapter from serializable config.
  */
 class FileBrowserWidget extends Component implements HasActions, HasForms, HasTable
 {
@@ -57,16 +63,32 @@ class FileBrowserWidget extends Component implements HasActions, HasForms, HasTa
     /** @var list<string> */
     public array $disabledFeatures = [];
 
-    protected FileBrowserAdapter $adapterInstance;
+    /** @var class-string<FileBrowserAdapter> */
+    public string $adapterClass = '';
+
+    /** @var array<string, mixed> Serializable adapter config */
+    public array $adapterConfig = [];
+
+    protected ?FileBrowserAdapter $resolvedAdapter = null;
 
     public function mount(
-        FileBrowserAdapter $adapter,
+        ?FileBrowserAdapter $adapter = null,
+        string $adapterClass = '',
+        array $adapterConfig = [],
         bool $readOnly = false,
         bool $selectable = false,
         array $disabledFeatures = [],
         string $path = '',
     ): void {
-        $this->adapterInstance = $adapter;
+        if ($adapter !== null) {
+            $this->adapterClass = $adapter::class;
+            $this->adapterConfig = method_exists($adapter, 'toArray') ? $adapter->toArray() : $adapterConfig;
+            $this->resolvedAdapter = $adapter;
+        } else {
+            $this->adapterClass = $adapterClass;
+            $this->adapterConfig = $adapterConfig;
+        }
+
         $this->readOnly = $readOnly;
         $this->selectable = $selectable;
         $this->disabledFeatures = $disabledFeatures;
@@ -84,7 +106,12 @@ class FileBrowserWidget extends Component implements HasActions, HasForms, HasTa
 
     public function getAdapter(): FileBrowserAdapter
     {
-        return $this->adapterInstance;
+        if ($this->resolvedAdapter === null) {
+            $class = $this->adapterClass;
+            $this->resolvedAdapter = $class::fromConfig($this->adapterConfig);
+        }
+
+        return $this->resolvedAdapter;
     }
 
     // ─── Feature Checks ───────────────────────────────────────
