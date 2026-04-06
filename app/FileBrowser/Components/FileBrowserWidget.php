@@ -205,6 +205,7 @@ class FileBrowserWidget extends Component implements HasActions, HasForms, HasTa
         return $table
             ->paginated([100, 250, 500])
             ->defaultPaginationPageOption(100)
+            ->selectable($this->selectable)
             ->records(function (?array $filters, ?string $search, int|string $page, int|string $recordsPerPage, ?string $sortColumn, ?string $sortDirection) {
                 $records = collect($this->items)
                     ->mapWithKeys(function (array $item, int $index): array {
