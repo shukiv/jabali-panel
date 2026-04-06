@@ -132,7 +132,62 @@ cp "$SCRIPT_DIR"/lib/collectors/*.sh "$INSTALL_LIB/collectors/"
 cp "$SCRIPT_DIR"/lib/restorers/*.sh  "$INSTALL_LIB/restorers/"
 ok "Libraries -> $INSTALL_LIB/"
 
-# ─── Configuration ────────────────────────────────────
+# ─── Configuration & secrets ──────────────────────────
+
+JABALI_PATH="${JABALI_PATH:-/var/www/jabali}"
+JABALI_ENV="$JABALI_PATH/.env"
+
+section "Configuring Secrets"
+
+# Extract secrets from Jabali .env
+if [[ -f "$JABALI_ENV" ]]; then
+    # DB password
+    if [[ ! -f "$INSTALL_ETC/db-password" ]]; then
+        DB_PASS=$(grep -oP '^DB_PASSWORD=\K.*' "$JABALI_ENV" 2>/dev/null || true)
+        if [[ -n "$DB_PASS" ]]; then
+            echo "$DB_PASS" > "$INSTALL_ETC/db-password"
+            chmod 600 "$INSTALL_ETC/db-password"
+            ok "DB password extracted from Jabali .env"
+        else
+            warn "DB_PASSWORD not found in $JABALI_ENV — set manually"
+        fi
+    else
+        ok "DB password exists (preserved)"
+    fi
+
+    # APP_KEY
+    if [[ ! -f "$INSTALL_ETC/app-key" ]]; then
+        APP_KEY=$(grep -oP '^APP_KEY=\K.*' "$JABALI_ENV" 2>/dev/null || true)
+        if [[ -n "$APP_KEY" ]]; then
+            echo "$APP_KEY" > "$INSTALL_ETC/app-key"
+            chmod 600 "$INSTALL_ETC/app-key"
+            ok "APP_KEY extracted from Jabali .env"
+        else
+            warn "APP_KEY not found in $JABALI_ENV — set manually"
+        fi
+    else
+        ok "APP_KEY exists (preserved)"
+    fi
+
+    # DB host/name/user from .env
+    DB_HOST=$(grep -oP '^DB_HOST=\K.*' "$JABALI_ENV" 2>/dev/null || echo "localhost")
+    DB_NAME=$(grep -oP '^DB_DATABASE=\K.*' "$JABALI_ENV" 2>/dev/null || echo "jabali")
+    DB_USER=$(grep -oP '^DB_USERNAME=\K.*' "$JABALI_ENV" 2>/dev/null || echo "root")
+else
+    DB_HOST="localhost"
+    DB_NAME="jabali"
+    DB_USER="root"
+    warn "Jabali .env not found at $JABALI_ENV — secrets must be set manually"
+fi
+
+# Restic password — generate if missing
+if [[ ! -f "$INSTALL_ETC/restic-password" ]]; then
+    openssl rand -base64 32 > "$INSTALL_ETC/restic-password"
+    chmod 600 "$INSTALL_ETC/restic-password"
+    ok "Restic password generated"
+else
+    ok "Restic password exists (preserved)"
+fi
 
 section "Configuration"
 
@@ -143,9 +198,14 @@ if [[ -f "$INSTALL_ETC/config.conf" ]]; then
         ok "Updated config.conf.example for reference"
     fi
 else
-    cp "$SCRIPT_DIR/etc/config.conf.example" "$INSTALL_ETC/config.conf"
+    # Generate config from template with auto-detected values
+    sed -e "s|^db_host=.*|db_host=${DB_HOST}|" \
+        -e "s|^db_name=.*|db_name=${DB_NAME}|" \
+        -e "s|^db_user=.*|db_user=${DB_USER}|" \
+        -e "s|^jabali_path=.*|jabali_path=${JABALI_PATH}|" \
+        "$SCRIPT_DIR/etc/config.conf.example" > "$INSTALL_ETC/config.conf"
     chmod 640 "$INSTALL_ETC/config.conf"
-    ok "Created $INSTALL_ETC/config.conf"
+    ok "Config generated with auto-detected values"
 fi
 
 # ─── Bash completions ────────────────────────────────
@@ -249,7 +309,6 @@ ok "Cache dir: /var/cache/jabali-backup/restic/"
 
 # ─── Panel integration ────────────────────────────────
 
-JABALI_PATH="${JABALI_PATH:-/var/www/jabali}"
 PANEL_DIR="${SCRIPT_DIR}/panel"
 
 if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
@@ -324,13 +383,38 @@ else
     fi
 fi
 
+# ─── Initialize restic repo ───────────────────────────
+
+if [[ "$IS_UPDATE" == false ]]; then
+    section "Initializing Backup Repository"
+
+    if "$INSTALL_BIN/jabali-backup" init 2>/dev/null; then
+        ok "Restic repository initialized"
+    else
+        # May already be initialized or config incomplete
+        if "$INSTALL_BIN/jabali-backup" check 2>/dev/null; then
+            ok "Restic repository already initialized"
+        else
+            warn "Could not initialize repository — run 'jabali-backup init' after verifying config"
+        fi
+    fi
+fi
+
+# ─── Enable timer ─────────────────────────────────────
+
+section "Enabling Backup Schedule"
+
+systemctl enable jabali-backup.timer 2>/dev/null || true
+systemctl start jabali-backup.timer 2>/dev/null || true
+ok "Daily backup timer enabled (02:00 with 15min jitter)"
+
 # ─── Done ─────────────────────────────────────────────
 
 if [[ "$IS_UPDATE" == true ]]; then
     section "Update Complete"
     ok "jabali-backup updated to v${JABALI_BACKUP_VERSION}"
     ok "Config preserved at $INSTALL_ETC/config.conf"
-    ok "Secrets preserved (db-password, restic-password, app-key)"
+    ok "Secrets preserved"
     echo ""
     info "Verify: jabali-backup doctor"
     echo ""
@@ -338,15 +422,7 @@ else
     section "Installation Complete"
     ok "jabali-backup v${JABALI_BACKUP_VERSION} installed"
     echo ""
-    echo "Next steps:"
-    echo "  1. Edit /etc/jabali-backup/config.conf"
-    echo "  2. Set up secrets:"
-    echo "     echo 'DB_PASSWORD' > /etc/jabali-backup/db-password"
-    echo "     echo 'RESTIC_PASSWORD' > /etc/jabali-backup/restic-password"
-    echo "     grep APP_KEY /var/www/jabali/.env | cut -d= -f2 > /etc/jabali-backup/app-key"
-    echo "     chmod 600 /etc/jabali-backup/{db-password,restic-password,app-key}"
-    echo "  3. Initialize:  jabali-backup init"
-    echo "  4. Verify:      jabali-backup doctor && jabali-backup config test"
-    echo "  5. Enable timer: systemctl enable --now jabali-backup.timer"
+    info "Verify: jabali-backup doctor"
+    info "First backup: jabali-backup run"
     echo ""
 fi
