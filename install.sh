@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
-REPO_URL="https://github.com/shukiv/jabali-backup.git"
-CLONE_DEST="/opt/jabali-backup"
-
-# If piped via curl (no source file), clone and re-exec from repo
-if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" ]]; then
+# ─── Remote install (piped via curl) ──────────────────
+# Detect pipe before set -u, since BASH_SOURCE is unset when piped
+_SELF="${BASH_SOURCE[0]:-}"
+if [[ -z "$_SELF" || "$_SELF" == "bash" || "$_SELF" == "/dev/stdin" ]]; then
+    set -eo pipefail
+    REPO_URL="https://github.com/shukiv/jabali-backup.git"
+    CLONE_DEST="/opt/jabali-backup"
     [[ $EUID -ne 0 ]] && echo "[✗] Run as root: curl ... | sudo bash" >&2 && exit 1
     command -v git &>/dev/null || { apt-get update -qq && apt-get install -y -qq git; }
 
@@ -14,9 +15,11 @@ if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" ]]; then
         exec "$CLONE_DEST/install.sh" update
     else
         git clone "$REPO_URL" "$CLONE_DEST"
-        exec "$CLONE_DEST/install.sh" "${@:-install}"
+        exec "$CLONE_DEST/install.sh"
     fi
 fi
+
+set -euo pipefail
 
 JABALI_BACKUP_VERSION="0.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
