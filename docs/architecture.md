@@ -145,12 +145,29 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **Role**: Live file browsing and management via Filament page.
 
-**Flexibility**: 
-- Subclasses can set `$readOnly = true` to disable write operations
-- Per-instance `$disabledFeatures` array allows disabling specific features without affecting global plugin config
-- All operations validated and scoped to user ownership
+**Two components**:
+- `App\FileBrowser\Pages\FileBrowser` — full Filament page with all actions (upload, edit, rename, permissions, trash, etc.)
+- `App\FileBrowser\Components\FileBrowserWidget` — embeddable Livewire component for nesting inside other pages (e.g. backup restore modal)
 
-**Integration**: Accessible from user or admin panel based on permissions.
+**Feature control**:
+- `$readOnly = true` disables all write operations (upload, edit, rename, trash, permissions, extract, newFile, newFolder, move, copy)
+- `$disabledFeatures` array controls individual actions: `['upload', 'edit', 'trash', 'rename', 'view', 'download', ...]`
+- `$selectable = true` (widget only) shows row checkboxes for file selection
+- All checks enforced server-side via Filament's action resolution — not just UI hiding
+
+**Embedding the widget**:
+```blade
+@livewire('file-browser-widget', [
+    'adapterClass' => ResticSnapshotAdapter::class,
+    'adapterConfig' => ['username' => 'shuki', 'snapshot_id' => 'a9ee58cd'],
+    'readOnly' => true,
+    'selectable' => true,
+])
+```
+
+**Adapter contract**: Custom adapters must implement `FileBrowserAdapter` and provide a static `fromConfig(array $config): static` method for Livewire re-hydration (adapters are PHP objects that can't survive between requests).
+
+**Integration**: Full page accessible from user/admin panel. Widget embeddable by addons (e.g. jabali-backup restore flow).
 
 ### 4. Webmail (Bulwark)
 

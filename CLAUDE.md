@@ -19,7 +19,7 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - **SSL**: Certbot webroot for domains (includes mail.$domain), panel cert via `ssl.panel.issue` agent command
 - **Stats**: GoAccess in daemon mode with real-time WebSocket updates
 - **Bandwidth**: Daily sync from nginx access logs, displayed on Users and Domains pages
-- **File browser**: Live files via agent; supports `$readOnly` mode and per-instance `$disabledFeatures` to control any action (upload, edit, trash, rename, newFile, newFolder, move, copy, extract, permissions, download, view); permission toggles sync with numeric mode via Alpine.js event delegation (no Livewire roundtrip); Livewire component name uses dashes not `::` (Livewire v4 treats `::` as namespace separator)
+- **File browser**: Live files via agent; full page (`FileBrowser`) and embeddable widget (`FileBrowserWidget` via `@livewire('file-browser-widget', [...])`); supports `$readOnly`, `$selectable`, `$disabledFeatures`; widget accepts `adapterClass` + `adapterConfig` for Livewire re-hydration (adapters need static `fromConfig()`); permission toggles sync via Alpine.js event delegation; Livewire component names use dashes not `::` (v4 namespace separator)
 - **Security**: jabali-security daemon (separate repo) with Filament plugin
 - **Isolation**: jabali-isolator (separate repo) — nspawn containers for SSH shell access (login shell via chsh); web serving uses host FPM pools
 - **CLI**: `jabali` command with noun:verb pattern (e.g. `jabali user:create`)
