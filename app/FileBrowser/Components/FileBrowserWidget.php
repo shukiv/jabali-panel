@@ -288,6 +288,17 @@ class FileBrowserWidget extends Component implements HasActions, HasForms, HasTa
                         $this->resetTable();
                     }),
             ])
+            ->bulkActions($this->selectable ? [
+                \Filament\Actions\BulkAction::make('addToRestore')
+                    ->label(__('Add Selected to Restore'))
+                    ->icon('heroicon-o-plus-circle')
+                    ->color('primary')
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (\Illuminate\Support\Collection $records): void {
+                        $paths = $records->pluck('path')->values()->all();
+                        $this->dispatch('files-selected-for-restore', paths: $paths);
+                    }),
+            ] : [])
             ->checkIfRecordIsSelectableUsing(fn (array $record): bool => $this->selectable && ! ($record['is_parent'] ?? false))
             ->emptyStateHeading(__('This folder is empty'))
             ->emptyStateIcon('heroicon-o-folder-open')
