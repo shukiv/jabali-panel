@@ -10,7 +10,7 @@ use Illuminate\Console\Command;
 
 class DomainCommand extends Command
 {
-    protected $signature = 'domain {action=list : list|create|show|delete} {--id= : Domain ID or name} {--user= : User ID or email} {--domain= : Domain name} {--force : Skip confirmation}';
+    protected $signature = 'domain {action=list : list|create|show|delete} {--id= : Domain ID or name} {--user= : User ID, email or username} {--domain= : Domain name} {--force : Skip confirmation}';
 
     protected $description = 'Manage domains: list, create, show, delete';
 
@@ -53,8 +53,10 @@ class DomainCommand extends Command
             return 1;
         }
 
-        $userId = $this->option('user') ?? $this->ask('User ID or email');
-        $user = is_numeric($userId) ? User::find($userId) : User::where('email', $userId)->first();
+        $userId = $this->option('user') ?? $this->ask('User ID, email or username');
+        $user = is_numeric($userId)
+            ? User::find($userId)
+            : User::where('email', $userId)->orWhere('username', $userId)->first();
         if (! $user) {
             $this->error("User not found: $userId");
 

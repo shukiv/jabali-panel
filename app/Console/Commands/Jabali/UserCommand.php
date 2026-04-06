@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Hash;
 
 class UserCommand extends Command
 {
-    protected $signature = 'user {action=list : list|create|show|update|delete|password} {--id= : User ID or email} {--name= : Name} {--email= : Email} {--password= : Password} {--role= : Role} {--force : Skip confirmation}';
+    protected $signature = 'user {action=list : list|create|show|update|delete|password} {--id= : User ID, email or username} {--name= : Name} {--username= : System username} {--email= : Email} {--password= : Password} {--role= : Role} {--force : Skip confirmation}';
 
     protected $description = 'Manage users: list, create, show, update, delete, password';
 
@@ -62,6 +62,7 @@ class UserCommand extends Command
     private function createUser(): int
     {
         $name = $this->option('name') ?? $this->ask('Name');
+        $username = $this->option('username') ?? $this->ask('System username');
         $email = $this->option('email') ?? $this->ask('Email');
         $gen = ! $this->option('password');
         $password = $this->option('password') ?? $this->generateSecurePassword();
@@ -75,7 +76,12 @@ class UserCommand extends Command
 
             return 1;
         }
-        $user = User::create(['name' => $name, 'email' => $email, 'password' => Hash::make($password), 'role' => $this->option('role') ?? 'user', 'email_verified_at' => now()]);
+        if (User::where('username', $username)->exists()) {
+            $this->error("Username '{$username}' already exists!");
+
+            return 1;
+        }
+        $user = User::create(['name' => $name, 'username' => $username, 'email' => $email, 'password' => Hash::make($password), 'role' => $this->option('role') ?? 'user', 'email_verified_at' => now()]);
         $this->info("✓ Created user #{$user->id}: {$email}");
         if ($gen) {
             $this->warn("🔑 Password: $password");
@@ -152,8 +158,10 @@ class UserCommand extends Command
 
     private function findUser(): ?User
     {
-        $id = $this->option('id') ?? $this->ask('User ID or email');
-        $user = is_numeric($id) ? User::find($id) : User::where('email', $id)->first();
+        $id = $this->option('id') ?? $this->ask('User ID, email or username');
+        $user = is_numeric($id)
+            ? User::find($id)
+            : User::where('email', $id)->orWhere('username', $id)->first();
         if (! $user) {
             $this->error("User not found: $id");
         }
