@@ -8,13 +8,23 @@ Discovers accounts from Jabali's database, collects all per-account data (files,
 
 - **restic** >= 0.16
 - **mysql** client (for mysqldump)
+- **jq** (for destination management)
 - **php** >= 8.1 (for encrypted column decryption)
 - **pg_dump** (optional, for PostgreSQL backups)
 - **wp-cli** (optional, for WordPress exports)
 - **rclone** (optional, for Google Drive / other rclone backends)
 - Root access on the Jabali server
 
+<!-- AUTO-GENERATED:install-start -->
 ## Installation
+
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/get.sh | sudo bash
+```
+
+### Manual install
 
 ```bash
 git clone https://github.com/shukiv/jabali-backup.git
@@ -22,44 +32,60 @@ cd jabali-backup
 sudo ./install.sh
 ```
 
-This installs:
+### Update
+
+```bash
+sudo ./install.sh update
+```
+
+Pulls latest from git, updates CLI + libraries, preserves config and secrets.
+
+### Panel addon
+
+```bash
+sudo ./install.sh panel
+```
+
+Installs the Filament admin/user pages into the Jabali panel.
+
+### What gets installed
 
 | Path | Contents |
 |------|----------|
 | `/usr/local/bin/jabali-backup` | CLI entry point |
 | `/usr/local/lib/jabali-backup/` | Library scripts, collectors, and restorers |
 | `/etc/jabali-backup/` | Configuration and secret files |
+| `/etc/bash_completion.d/jabali-backup` | Bash tab completions |
+| `/etc/systemd/system/jabali-backup.timer` | Daily backup timer (02:00) |
+<!-- AUTO-GENERATED:install-end -->
 
 ## Quick Start
 
 ```bash
-# 1. Copy and edit configuration
-sudo cp /etc/jabali-backup/config.conf.example /etc/jabali-backup/config.conf
+# 1. Edit configuration
 sudo nano /etc/jabali-backup/config.conf
 
 # 2. Set up secrets
-echo "YOUR_DB_PASSWORD" | sudo tee /etc/jabali-backup/db-password
-echo "YOUR_RESTIC_PASSWORD" | sudo tee /etc/jabali-backup/restic-password
-grep APP_KEY /var/www/jabali/.env | cut -d= -f2 | sudo tee /etc/jabali-backup/app-key
+echo 'YOUR_DB_PASSWORD' | sudo tee /etc/jabali-backup/db-password > /dev/null
+echo 'YOUR_RESTIC_PASSWORD' | sudo tee /etc/jabali-backup/restic-password > /dev/null
+grep APP_KEY /var/www/jabali/.env | cut -d= -f2 | sudo tee /etc/jabali-backup/app-key > /dev/null
 sudo chmod 600 /etc/jabali-backup/{db-password,restic-password,app-key}
 
-# 3. Create read-only DB user
-sudo mysql < /etc/jabali-backup/create-backup-user.sql
-
-# 4. Initialize restic repository
+# 3. Initialize restic repository
 sudo jabali-backup init
 
-# 5. Verify setup
+# 4. Verify setup
 sudo jabali-backup doctor
 sudo jabali-backup config test
 
-# 6. Run first backup
+# 5. Run first backup
 sudo jabali-backup run
 
-# 7. Install daily schedule
-sudo jabali-backup schedule install
+# 6. Enable daily backups
+sudo systemctl enable --now jabali-backup.timer
 ```
 
+<!-- AUTO-GENERATED:commands-start -->
 ## Commands
 
 ### `jabali-backup run [username]`
@@ -73,7 +99,7 @@ jabali-backup run --only=files,mysql       # selected collectors only
 jabali-backup run --exclude=wordpress      # skip specific collectors
 jabali-backup run --dry-run                # preview without executing
 jabali-backup run --parallel=4             # 4 accounts concurrently
-jabali-backup run --resume                 # skip already-backed-up accounts
+jabali-backup run --destination=offsite    # use a specific destination
 ```
 
 ### `jabali-backup restore <username>`
@@ -97,16 +123,10 @@ Download one or more backup snapshots as a compressed archive.
 ```bash
 jabali-backup download alice                             # latest snapshot
 jabali-backup download alice bob                         # multiple users
-jabali-backup download alice --snapshot=abc123de        # specific snapshot
-jabali-backup download alice --only=files,mysql         # selected components
+jabali-backup download alice --snapshot=abc123de         # specific snapshot
+jabali-backup download alice --only=files,mysql          # selected components
 jabali-backup download alice --output=/tmp/backup.tar.gz # save to path
-jabali-backup download alice --output=-                  # stream to stdout (for piping)
-```
-
-For streaming via named pipe (panel integration):
-```bash
-# Creates a FIFO pipe that blocks until data is read, then cleans up
-jabali-backup download alice --output=-
+jabali-backup download alice --output=-                  # stream to stdout
 ```
 
 ### `jabali-backup ls <username> [path]`
@@ -125,27 +145,30 @@ List accounts or snapshots.
 
 ```bash
 jabali-backup list accounts
-jabali-backup list accounts --active
 jabali-backup list snapshots
 jabali-backup list snapshots --user=alice
 jabali-backup list domains --user=alice
+```
+
+### `jabali-backup destination`
+
+Manage backup destinations (multiple storage backends).
+
+```bash
+jabali-backup destination add         # interactive setup
+jabali-backup destination list        # show all destinations
+jabali-backup destination test NAME   # verify connectivity
+jabali-backup destination remove NAME
+jabali-backup destination default NAME
 ```
 
 ### `jabali-backup init`
 
 Initialize the restic repository on the configured backend.
 
-```bash
-jabali-backup init
-```
-
 ### `jabali-backup check`
 
 Verify repository integrity.
-
-```bash
-jabali-backup check
-```
 
 ### `jabali-backup forget`
 
@@ -181,9 +204,10 @@ jabali-backup config show                  # print active config (secrets masked
 
 Check that all dependencies are installed and configured.
 
-```bash
-jabali-backup doctor
-```
+### `jabali-backup version`
+
+Show version.
+<!-- AUTO-GENERATED:commands-end -->
 
 ## What Gets Backed Up
 
@@ -233,8 +257,30 @@ Each account backup includes:
 | rclone | `rclone:remote:path` | Pre-configured rclone remote (Google Drive, etc.) |
 | Local | `/path/to/repo` | None |
 
+<!-- AUTO-GENERATED:collectors-start -->
 ## Collector Reference
 
 Available collectors for `--only` and `--exclude` flags:
 
 `files`, `mysql`, `postgres`, `dns`, `email`, `ssl`, `nginx`, `php`, `wordpress`, `cron`, `metadata`
+<!-- AUTO-GENERATED:collectors-end -->
+
+## Configuration
+
+See [CONFIGURATION.md](CONFIGURATION.md) for full config file reference.
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for system design and data flow.
+
+## Architecture Decision Records
+
+See [adr/](adr/README.md) for recorded architectural decisions.
+
+## Panel Integration
+
+See [PANEL-INTEGRATION.md](PANEL-INTEGRATION.md) for details on the Filament admin/user pages.
+
+## License
+
+Proprietary. All rights reserved.
