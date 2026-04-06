@@ -131,8 +131,14 @@ if [[ "$CMD" == "uninstall" ]]; then
         fi
     done
 
-    # 4. Reload services (reload, not restart — keeps FPM alive if pool configs have issues)
+    # 4. Clear caches again after files are gone (route cache, Filament component cache)
     if [[ -f "$JABALI_PATH/artisan" ]]; then
+        cd "$JABALI_PATH"
+        php artisan route:clear 2>/dev/null || true
+        php artisan optimize:clear 2>/dev/null || true
+        php artisan filament:cache-components 2>/dev/null || true
+        ok "Caches rebuilt without backup pages"
+
         systemctl restart jabali-agent 2>/dev/null || true
         systemctl reload php8.5-fpm 2>/dev/null || systemctl reload php8.4-fpm 2>/dev/null || systemctl reload php8.3-fpm 2>/dev/null || true
         ok "Services reloaded"
