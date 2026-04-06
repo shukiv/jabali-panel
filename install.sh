@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# If piped via curl, redirect to get.sh
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" ]]; then
+    exec bash <(curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/get.sh) "$@"
+fi
+
 JABALI_BACKUP_VERSION="0.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
