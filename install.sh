@@ -8,22 +8,19 @@ INSTALL_BIN="/usr/local/bin"
 INSTALL_LIB="/usr/local/lib/jabali-backup"
 INSTALL_ETC="/etc/jabali-backup"
 
-# ─── Helpers ──────────────────────────────────────────
+# ─── Colors & helpers ─────────────────────────────────
 
-info()  { echo "  [+] $*"; }
-warn()  { echo "  [!] $*" >&2; }
-fatal() { echo "  [x] $*" >&2; exit 1; }
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-check_dep() {
-    local cmd="$1" pkg="${2:-$1}"
-    if command -v "$cmd" &>/dev/null; then
-        info "$cmd $(command -v "$cmd")"
-        return 0
-    else
-        warn "$cmd not found — install $pkg"
-        return 1
-    fi
-}
+section() { echo -e "\n${YELLOW}=== $* ===${NC}\n"; }
+ok()      { echo -e "[${GREEN}✓${NC}] $*"; }
+info()    { echo -e "[${CYAN}i${NC}] $*"; }
+warn()    { echo -e "[${YELLOW}!${NC}] $*" >&2; }
+fail()    { echo -e "[${RED}✗${NC}] $*" >&2; exit 1; }
 
 usage() {
     cat <<EOF
@@ -48,71 +45,67 @@ CMD="${1:-install}"
 case "$CMD" in
     install|update|panel) ;;
     -h|--help|help) usage ;;
-    *) fatal "Unknown command: $CMD (use install, update, or panel)" ;;
+    *) fail "Unknown command: $CMD (use install, update, or panel)" ;;
 esac
 
 # ─── Pre-flight ───────────────────────────────────────
 
 echo ""
-echo "jabali-backup v${JABALI_BACKUP_VERSION} — $CMD"
-echo "========================================"
+echo -e "  jabali-backup ${CYAN}v${JABALI_BACKUP_VERSION}${NC} — $CMD"
 echo ""
 
 if [[ $EUID -ne 0 ]]; then
-    fatal "This must be run as root (sudo ./install.sh $CMD)"
+    fail "This must be run as root (sudo ./install.sh $CMD)"
 fi
 
 if [[ ! -f "$SCRIPT_DIR/bin/jabali-backup" ]]; then
-    fatal "Source files not found. Run from the jabali-backup project directory."
+    fail "Source files not found. Run from the jabali-backup project directory."
 fi
 
 # ─── Panel addon shortcut ─────────────────────────────
 
 if [[ "$CMD" == "panel" ]]; then
     if [[ ! -f "$SCRIPT_DIR/install-panel.sh" ]]; then
-        fatal "install-panel.sh not found"
+        fail "install-panel.sh not found"
     fi
     exec "$SCRIPT_DIR/install-panel.sh"
 fi
 
-# ─── Detect existing install ─────────────────────────
+# ─── Detect existing install & pull ───────────────────
 
 IS_UPDATE=false
 if [[ "$CMD" == "update" ]]; then
     if [[ ! -f "$INSTALL_BIN/jabali-backup" ]]; then
-        fatal "No existing installation found. Run ./install.sh install first."
+        fail "No existing installation found. Run ./install.sh install first."
     fi
     IS_UPDATE=true
-    INSTALLED_VERSION=$("$INSTALL_BIN/jabali-backup" version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
-    info "Updating from v${INSTALLED_VERSION} -> v${JABALI_BACKUP_VERSION}"
-    echo ""
 
-    # Pull latest from git
+    section "Pulling Latest"
+
+    INSTALLED_VERSION=$("$INSTALL_BIN/jabali-backup" version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+    info "Installed version: v${INSTALLED_VERSION}"
+
     if [[ -d "$SCRIPT_DIR/.git" ]]; then
-        echo "[0/6] Pulling latest from git..."
-        git -C "$SCRIPT_DIR" pull --ff-only || fatal "git pull failed. Resolve conflicts and re-run."
-        # Re-read version after pull (it may have changed)
+        git -C "$SCRIPT_DIR" pull --ff-only || fail "git pull failed. Resolve conflicts and re-run."
         JABALI_BACKUP_VERSION=$(grep -oP 'JABALI_BACKUP_VERSION="\K[^"]+' "$SCRIPT_DIR/bin/jabali-backup" || echo "$JABALI_BACKUP_VERSION")
-        info "Source updated to v${JABALI_BACKUP_VERSION}"
-        echo ""
+        ok "Source updated to v${JABALI_BACKUP_VERSION}"
     else
-        warn "Not a git checkout — skipping pull. Update source files manually."
-        echo ""
+        warn "Not a git checkout — skipping pull"
     fi
 fi
 
-# ─── Dependency check ─────────────────────────────────
+# ─── Dependencies ─────────────────────────────────────
 
-echo "[1/6] Checking dependencies..."
+section "Checking Dependencies"
 
 DEPS_TO_INSTALL=()
 
 check_or_queue() {
     local cmd="$1" pkg="$2"
     if command -v "$cmd" &>/dev/null; then
-        info "$cmd $(command -v "$cmd")"
+        ok "$cmd $(command -v "$cmd")"
     else
-        warn "$cmd not found — will install $pkg"
+        info "$cmd not found — will install $pkg"
         DEPS_TO_INSTALL+=("$pkg")
     fi
 }
@@ -127,14 +120,13 @@ if [[ ${#DEPS_TO_INSTALL[@]} -gt 0 ]]; then
     echo ""
     info "Installing missing: ${DEPS_TO_INSTALL[*]}"
     apt-get update -qq
-    apt-get install -y -qq "${DEPS_TO_INSTALL[@]}" || fatal "Failed to install dependencies. Install manually: apt install ${DEPS_TO_INSTALL[*]}"
-    info "Dependencies installed"
+    apt-get install -y -qq "${DEPS_TO_INSTALL[@]}" || fail "Failed to install: ${DEPS_TO_INSTALL[*]}"
+    ok "Dependencies installed"
 fi
-echo ""
 
-# ─── Install / update CLI ────────────────────────────
+# ─── Install CLI ──────────────────────────────────────
 
-echo "[2/6] Installing CLI..."
+section "Installing CLI"
 
 mkdir -p "$INSTALL_BIN" \
          "$INSTALL_LIB/collectors" \
@@ -143,36 +135,33 @@ mkdir -p "$INSTALL_BIN" \
 
 cp "$SCRIPT_DIR/bin/jabali-backup" "$INSTALL_BIN/jabali-backup"
 chmod 755 "$INSTALL_BIN/jabali-backup"
-info "jabali-backup -> $INSTALL_BIN/jabali-backup"
+ok "jabali-backup -> $INSTALL_BIN/jabali-backup"
 
 cp "$SCRIPT_DIR"/lib/*.sh  "$INSTALL_LIB/"
 cp "$SCRIPT_DIR"/lib/*.php "$INSTALL_LIB/"
 cp "$SCRIPT_DIR"/lib/collectors/*.sh "$INSTALL_LIB/collectors/"
 cp "$SCRIPT_DIR"/lib/restorers/*.sh  "$INSTALL_LIB/restorers/"
-info "Libraries -> $INSTALL_LIB/"
-echo ""
+ok "Libraries -> $INSTALL_LIB/"
 
-# ─── Config ───────────────────────────────────────────
+# ─── Configuration ────────────────────────────────────
 
-echo "[3/6] Configuration..."
+section "Configuration"
 
 if [[ -f "$INSTALL_ETC/config.conf" ]]; then
-    info "Config exists at $INSTALL_ETC/config.conf (preserved)"
-    # On update, install new example alongside for reference
+    ok "Config exists at $INSTALL_ETC/config.conf (preserved)"
     if [[ "$IS_UPDATE" == true ]]; then
         cp "$SCRIPT_DIR/etc/config.conf.example" "$INSTALL_ETC/config.conf.example"
-        info "Updated config.conf.example for reference"
+        ok "Updated config.conf.example for reference"
     fi
 else
     cp "$SCRIPT_DIR/etc/config.conf.example" "$INSTALL_ETC/config.conf"
     chmod 640 "$INSTALL_ETC/config.conf"
-    info "Created $INSTALL_ETC/config.conf (edit this file)"
+    ok "Created $INSTALL_ETC/config.conf"
 fi
-echo ""
 
 # ─── Bash completions ────────────────────────────────
 
-echo "[4/6] Bash completions..."
+section "Setting Up Bash Completions"
 
 COMP_DIR="/etc/bash_completion.d"
 mkdir -p "$COMP_DIR"
@@ -190,7 +179,6 @@ _jabali_backup() {
             return 0
             ;;
         run|restore)
-            # Complete with system usernames from /home
             local users
             users=$(ls /home/ 2>/dev/null | tr '\n' ' ')
             COMPREPLY=( $(compgen -W "$users" -- "$cur") )
@@ -219,12 +207,11 @@ _jabali_backup() {
 complete -F _jabali_backup jabali-backup
 COMP
 
-info "Installed $COMP_DIR/jabali-backup"
-echo ""
+ok "Installed $COMP_DIR/jabali-backup"
 
 # ─── Systemd timer ────────────────────────────────────
 
-echo "[5/6] Systemd timer..."
+section "Setting Up Backup Timer"
 
 cat > /etc/systemd/system/jabali-backup.service << 'UNIT'
 [Unit]
@@ -254,42 +241,36 @@ WantedBy=timers.target
 TIMER
 
 systemctl daemon-reload
-info "Created jabali-backup.service + jabali-backup.timer"
+ok "Created jabali-backup.service + jabali-backup.timer"
 if [[ "$IS_UPDATE" == false ]]; then
     info "Enable with: systemctl enable --now jabali-backup.timer"
 fi
-echo ""
 
 # ─── Directories & permissions ────────────────────────
 
-echo "[6/6] Directories & permissions..."
+section "Setting Up Directories"
 
 mkdir -p /var/log
 touch /var/log/jabali-backup.log
 chmod 640 /var/log/jabali-backup.log
+ok "Log file: /var/log/jabali-backup.log"
 
 mkdir -p /var/cache/jabali-backup/restic
-
-info "/var/log/jabali-backup.log"
-info "/var/cache/jabali-backup/restic/"
-echo ""
+ok "Cache dir: /var/cache/jabali-backup/restic/"
 
 # ─── Done ─────────────────────────────────────────────
 
 if [[ "$IS_UPDATE" == true ]]; then
-    echo "========================================"
-    echo "  Updated jabali-backup to v${JABALI_BACKUP_VERSION}"
-    echo "========================================"
+    section "Update Complete"
+    ok "jabali-backup updated to v${JABALI_BACKUP_VERSION}"
+    ok "Config preserved at $INSTALL_ETC/config.conf"
+    ok "Secrets preserved (db-password, restic-password, app-key)"
     echo ""
-    echo "  Config preserved at $INSTALL_ETC/config.conf"
-    echo "  Secrets preserved (db-password, restic-password, app-key)"
-    echo ""
-    echo "  Verify: jabali-backup doctor"
+    info "Verify: jabali-backup doctor"
     echo ""
 else
-    echo "========================================"
-    echo "  Installed jabali-backup v${JABALI_BACKUP_VERSION}"
-    echo "========================================"
+    section "Installation Complete"
+    ok "jabali-backup v${JABALI_BACKUP_VERSION} installed"
     echo ""
     echo "Next steps:"
     echo "  1. Edit /etc/jabali-backup/config.conf"
@@ -302,7 +283,6 @@ else
     echo "  4. Verify:      jabali-backup doctor && jabali-backup config test"
     echo "  5. Enable timer: systemctl enable --now jabali-backup.timer"
     echo ""
-    echo "Optional — install the panel UI addon:"
-    echo "  sudo ./install.sh panel"
+    info "Install the panel UI addon: sudo ./install.sh panel"
     echo ""
 fi
