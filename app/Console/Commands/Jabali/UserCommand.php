@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Hash;
 
 class UserCommand extends Command
 {
-    protected $signature = 'user {action=list : list|create|show|update|delete|password} {--id= : User ID, email or username} {--name= : Name} {--username= : System username} {--email= : Email} {--password= : Password} {--role= : Role} {--force : Skip confirmation}';
+    protected $signature = 'user {action=list : list|create|show|update|delete|password} {target? : User ID, email or username (positional shortcut for --id)} {extra? : Extra argument (e.g. password for password command)} {--id= : User ID, email or username} {--name= : Name} {--username= : System username} {--email= : Email} {--password= : Password} {--role= : Role} {--force : Skip confirmation}';
 
     protected $description = 'Manage users: list, create, show, update, delete, password';
 
@@ -140,8 +140,9 @@ class UserCommand extends Command
         if (! $user) {
             return 1;
         }
-        $gen = ! $this->option('password');
-        $password = $this->option('password') ?? $this->generateSecurePassword();
+        $password = $this->option('password') ?? $this->argument('extra');
+        $gen = $password === null;
+        $password = $password ?? $this->generateSecurePassword();
         if ($error = $this->validatePassword($password)) {
             $this->error($error);
 
@@ -158,7 +159,7 @@ class UserCommand extends Command
 
     private function findUser(): ?User
     {
-        $id = $this->option('id') ?? $this->ask('User ID, email or username');
+        $id = $this->option('id') ?? $this->argument('target') ?? $this->ask('User ID, email or username');
         $user = is_numeric($id)
             ? User::find($id)
             : User::where('email', $id)->orWhere('username', $id)->first();
