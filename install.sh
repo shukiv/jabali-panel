@@ -11,10 +11,10 @@ case "$0" in
 
         if [ -d "$CLONE_DEST/.git" ]; then
             git -C "$CLONE_DEST" pull --ff-only
-            exec "$CLONE_DEST/install.sh" update
+            exec "$CLONE_DEST/install.sh" "${1:-update}"
         else
             git clone "$REPO_URL" "$CLONE_DEST"
-            exec "$CLONE_DEST/install.sh"
+            exec "$CLONE_DEST/install.sh" "${1:-install}"
         fi
         ;;
 esac
