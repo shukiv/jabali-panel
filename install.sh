@@ -167,9 +167,14 @@ fi
 IS_UPDATE=false
 if [[ "$CMD" == "update" ]]; then
     if [[ ! -f "$INSTALL_BIN/jabali-backup" ]]; then
-        fail "No existing installation found. Run ./install.sh install first."
+        info "No existing installation found — switching to install"
+        CMD="install"
+    else
+        IS_UPDATE=true
     fi
-    IS_UPDATE=true
+fi
+
+if [[ "$IS_UPDATE" == true ]]; then
 
     section "Pulling Latest"
 
