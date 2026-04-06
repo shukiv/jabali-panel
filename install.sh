@@ -25,19 +25,80 @@ check_dep() {
     fi
 }
 
+usage() {
+    cat <<EOF
+Usage: sudo ./install.sh [command]
+
+Commands:
+  install   Install jabali-backup (default)
+  update    Update CLI + libraries, preserve config & secrets
+  panel     Install the panel UI addon (runs install-panel.sh)
+
+Examples:
+  sudo ./install.sh            # Fresh install
+  sudo ./install.sh update     # Update existing installation
+  sudo ./install.sh panel      # Install panel addon
+EOF
+    exit 0
+}
+
+# ─── Parse command ────────────────────────────────────
+
+CMD="${1:-install}"
+case "$CMD" in
+    install|update|panel) ;;
+    -h|--help|help) usage ;;
+    *) fatal "Unknown command: $CMD (use install, update, or panel)" ;;
+esac
+
 # ─── Pre-flight ───────────────────────────────────────
 
 echo ""
-echo "jabali-backup v${JABALI_BACKUP_VERSION} installer"
+echo "jabali-backup v${JABALI_BACKUP_VERSION} — $CMD"
 echo "========================================"
 echo ""
 
 if [[ $EUID -ne 0 ]]; then
-    fatal "This installer must be run as root (sudo ./install.sh)"
+    fatal "This must be run as root (sudo ./install.sh $CMD)"
 fi
 
 if [[ ! -f "$SCRIPT_DIR/bin/jabali-backup" ]]; then
     fatal "Source files not found. Run from the jabali-backup project directory."
+fi
+
+# ─── Panel addon shortcut ─────────────────────────────
+
+if [[ "$CMD" == "panel" ]]; then
+    if [[ ! -f "$SCRIPT_DIR/install-panel.sh" ]]; then
+        fatal "install-panel.sh not found"
+    fi
+    exec "$SCRIPT_DIR/install-panel.sh"
+fi
+
+# ─── Detect existing install ─────────────────────────
+
+IS_UPDATE=false
+if [[ "$CMD" == "update" ]]; then
+    if [[ ! -f "$INSTALL_BIN/jabali-backup" ]]; then
+        fatal "No existing installation found. Run ./install.sh install first."
+    fi
+    IS_UPDATE=true
+    INSTALLED_VERSION=$("$INSTALL_BIN/jabali-backup" version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+    info "Updating from v${INSTALLED_VERSION} -> v${JABALI_BACKUP_VERSION}"
+    echo ""
+
+    # Pull latest from git
+    if [[ -d "$SCRIPT_DIR/.git" ]]; then
+        echo "[0/6] Pulling latest from git..."
+        git -C "$SCRIPT_DIR" pull --ff-only || fatal "git pull failed. Resolve conflicts and re-run."
+        # Re-read version after pull (it may have changed)
+        JABALI_BACKUP_VERSION=$(grep -oP 'JABALI_BACKUP_VERSION="\K[^"]+' "$SCRIPT_DIR/bin/jabali-backup" || echo "$JABALI_BACKUP_VERSION")
+        info "Source updated to v${JABALI_BACKUP_VERSION}"
+        echo ""
+    else
+        warn "Not a git checkout — skipping pull. Update source files manually."
+        echo ""
+    fi
 fi
 
 # ─── Dependency check ─────────────────────────────────
@@ -59,7 +120,7 @@ if [[ $missing -gt 0 ]]; then
 fi
 echo ""
 
-# ─── Install CLI ──────────────────────────────────────
+# ─── Install / update CLI ────────────────────────────
 
 echo "[2/6] Installing CLI..."
 
@@ -84,7 +145,12 @@ echo ""
 echo "[3/6] Configuration..."
 
 if [[ -f "$INSTALL_ETC/config.conf" ]]; then
-    info "Config exists at $INSTALL_ETC/config.conf (not overwritten)"
+    info "Config exists at $INSTALL_ETC/config.conf (preserved)"
+    # On update, install new example alongside for reference
+    if [[ "$IS_UPDATE" == true ]]; then
+        cp "$SCRIPT_DIR/etc/config.conf.example" "$INSTALL_ETC/config.conf.example"
+        info "Updated config.conf.example for reference"
+    fi
 else
     cp "$SCRIPT_DIR/etc/config.conf.example" "$INSTALL_ETC/config.conf"
     chmod 640 "$INSTALL_ETC/config.conf"
@@ -177,7 +243,9 @@ TIMER
 
 systemctl daemon-reload
 info "Created jabali-backup.service + jabali-backup.timer"
-info "Enable with: systemctl enable --now jabali-backup.timer"
+if [[ "$IS_UPDATE" == false ]]; then
+    info "Enable with: systemctl enable --now jabali-backup.timer"
+fi
 echo ""
 
 # ─── Directories & permissions ────────────────────────
@@ -196,21 +264,33 @@ echo ""
 
 # ─── Done ─────────────────────────────────────────────
 
-echo "========================================"
-echo "  Installed jabali-backup v${JABALI_BACKUP_VERSION}"
-echo "========================================"
-echo ""
-echo "Next steps:"
-echo "  1. Edit /etc/jabali-backup/config.conf"
-echo "  2. Set up secrets:"
-echo "     echo 'DB_PASSWORD' > /etc/jabali-backup/db-password"
-echo "     echo 'RESTIC_PASSWORD' > /etc/jabali-backup/restic-password"
-echo "     grep APP_KEY /var/www/jabali/.env | cut -d= -f2 > /etc/jabali-backup/app-key"
-echo "     chmod 600 /etc/jabali-backup/{db-password,restic-password,app-key}"
-echo "  3. Initialize:  jabali-backup init"
-echo "  4. Verify:      jabali-backup doctor && jabali-backup config test"
-echo "  5. Enable timer: systemctl enable --now jabali-backup.timer"
-echo ""
-echo "Optional — install the panel UI addon:"
-echo "  sudo ./install-panel.sh"
-echo ""
+if [[ "$IS_UPDATE" == true ]]; then
+    echo "========================================"
+    echo "  Updated jabali-backup to v${JABALI_BACKUP_VERSION}"
+    echo "========================================"
+    echo ""
+    echo "  Config preserved at $INSTALL_ETC/config.conf"
+    echo "  Secrets preserved (db-password, restic-password, app-key)"
+    echo ""
+    echo "  Verify: jabali-backup doctor"
+    echo ""
+else
+    echo "========================================"
+    echo "  Installed jabali-backup v${JABALI_BACKUP_VERSION}"
+    echo "========================================"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Edit /etc/jabali-backup/config.conf"
+    echo "  2. Set up secrets:"
+    echo "     echo 'DB_PASSWORD' > /etc/jabali-backup/db-password"
+    echo "     echo 'RESTIC_PASSWORD' > /etc/jabali-backup/restic-password"
+    echo "     grep APP_KEY /var/www/jabali/.env | cut -d= -f2 > /etc/jabali-backup/app-key"
+    echo "     chmod 600 /etc/jabali-backup/{db-password,restic-password,app-key}"
+    echo "  3. Initialize:  jabali-backup init"
+    echo "  4. Verify:      jabali-backup doctor && jabali-backup config test"
+    echo "  5. Enable timer: systemctl enable --now jabali-backup.timer"
+    echo ""
+    echo "Optional — install the panel UI addon:"
+    echo "  sudo ./install.sh panel"
+    echo ""
+fi

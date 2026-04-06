@@ -17,7 +17,7 @@ Discovers accounts from Jabali's database, collects all per-account data (files,
 ## Installation
 
 ```bash
-git clone https://github.com/example/jabali-backup.git
+git clone https://github.com/shukiv/jabali-backup.git
 cd jabali-backup
 sudo ./install.sh
 ```
