@@ -3934,8 +3934,10 @@ function main(): void
             continue;
         }
 
-        // Set short timeout for reading
+        // Client socket inherits non-blocking from server — switch to blocking for I/O
+        socket_set_block($client);
         socket_set_option($client, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 30, 'usec' => 0]);
+        socket_set_option($client, SOL_SOCKET, SO_SNDTIMEO, ['sec' => 120, 'usec' => 0]);
 
         $data = '';
         while (($chunk = @socket_read($client, 65536)) !== false && $chunk !== '') {
