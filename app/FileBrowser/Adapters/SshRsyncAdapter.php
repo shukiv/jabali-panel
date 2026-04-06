@@ -27,6 +27,11 @@ class SshRsyncAdapter implements Archiver, FileBrowserAdapter, FileOperations, P
 
     private PathSanitizer $paths;
 
+    public static function fromConfig(array $config): static
+    {
+        return new static($config);
+    }
+
     public function __construct(array $config)
     {
         $this->host = $config['host'] ?? '';

@@ -13,6 +13,18 @@ class LocalAdapter implements Archiver, FileBrowserAdapter, FileOperations, Perm
 
     private PathSanitizer $paths;
 
+    /** @param array{root: string} $config */
+    public static function fromConfig(array $config): static
+    {
+        return new static($config['root']);
+    }
+
+    /** @return array{root: string} */
+    public function toArray(): array
+    {
+        return ['root' => $this->rootPath];
+    }
+
     public function __construct(string $rootPath)
     {
         $this->rootPath = rtrim($rootPath, '/');

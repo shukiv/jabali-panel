@@ -27,6 +27,18 @@ class AgentAdapter implements FileBrowserAdapter
         $this->archiver = new AgentArchiver($agent, $username);
     }
 
+    /** @param array{username: string} $config */
+    public static function fromConfig(array $config): static
+    {
+        return new static(app(AgentClient::class), $config['username']);
+    }
+
+    /** @return array{username: string} */
+    public function toArray(): array
+    {
+        return ['username' => $this->username];
+    }
+
     public function files(): FileOperations
     {
         return $this->fileOps;

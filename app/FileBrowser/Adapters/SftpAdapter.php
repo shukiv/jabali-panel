@@ -13,6 +13,11 @@ class SftpAdapter implements FileBrowserAdapter, FileOperations
 
     protected string $root;
 
+    public static function fromConfig(array $config): static
+    {
+        return new static($config);
+    }
+
     public function __construct(array $config)
     {
         if (! class_exists(\League\Flysystem\PhpseclibV3\SftpAdapter::class)) {
