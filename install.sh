@@ -383,23 +383,6 @@ else
     fi
 fi
 
-# ─── Initialize restic repo ───────────────────────────
-
-if [[ "$IS_UPDATE" == false ]]; then
-    section "Initializing Backup Repository"
-
-    if "$INSTALL_BIN/jabali-backup" init 2>/dev/null; then
-        ok "Restic repository initialized"
-    else
-        # May already be initialized or config incomplete
-        if "$INSTALL_BIN/jabali-backup" check 2>/dev/null; then
-            ok "Restic repository already initialized"
-        else
-            warn "Could not initialize repository — run 'jabali-backup init' after verifying config"
-        fi
-    fi
-fi
-
 # ─── Enable timer ─────────────────────────────────────
 
 section "Enabling Backup Schedule"
@@ -422,7 +405,6 @@ else
     section "Installation Complete"
     ok "jabali-backup v${JABALI_BACKUP_VERSION} installed"
     echo ""
-    info "Verify: jabali-backup doctor"
-    info "First backup: jabali-backup run"
+    info "Add a backup destination in the panel: Backups > Destination > Add Destination"
     echo ""
 fi
