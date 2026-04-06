@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 
 # ─── Remote install (piped via curl) ──────────────────
-# Detect pipe before set -u, since BASH_SOURCE is unset when piped
-_SELF="${BASH_SOURCE[0]:-}"
-if [[ -z "$_SELF" || "$_SELF" == "bash" || "$_SELF" == "/dev/stdin" ]]; then
-    set -eo pipefail
-    REPO_URL="https://github.com/shukiv/jabali-backup.git"
-    CLONE_DEST="/opt/jabali-backup"
-    [[ $EUID -ne 0 ]] && echo "[✗] Run as root: curl ... | sudo bash" >&2 && exit 1
-    command -v git &>/dev/null || { apt-get update -qq && apt-get install -y -qq git; }
+case "$0" in
+    bash|-bash|*/bash|sh|-sh|*/sh|/dev/stdin)
+        set -eo pipefail
+        REPO_URL="https://github.com/shukiv/jabali-backup.git"
+        CLONE_DEST="/opt/jabali-backup"
+        [ "$(id -u)" -ne 0 ] && echo "[✗] Run as root: curl ... | sudo bash" >&2 && exit 1
+        command -v git >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq git; }
 
-    if [[ -d "$CLONE_DEST/.git" ]]; then
-        git -C "$CLONE_DEST" pull --ff-only
-        exec "$CLONE_DEST/install.sh" update
-    else
-        git clone "$REPO_URL" "$CLONE_DEST"
-        exec "$CLONE_DEST/install.sh"
-    fi
-fi
+        if [ -d "$CLONE_DEST/.git" ]; then
+            git -C "$CLONE_DEST" pull --ff-only
+            exec "$CLONE_DEST/install.sh" update
+        else
+            git clone "$REPO_URL" "$CLONE_DEST"
+            exec "$CLONE_DEST/install.sh"
+        fi
+        ;;
+esac
 
 set -euo pipefail
 
