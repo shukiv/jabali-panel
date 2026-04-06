@@ -484,11 +484,12 @@ if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
         ok "BackupServiceProvider already registered"
     fi
 
-    # Clear caches & restart
+    # Clear caches & rebuild
     cd "$JABALI_PATH"
-    php artisan view:clear 2>/dev/null || true
+    php artisan route:clear 2>/dev/null || true
+    php artisan optimize:clear 2>/dev/null || true
     php artisan filament:cache-components 2>/dev/null || true
-    ok "Caches cleared"
+    ok "Caches rebuilt"
 
     systemctl restart jabali-agent 2>/dev/null || true
     systemctl reload php8.5-fpm 2>/dev/null || systemctl reload php8.4-fpm 2>/dev/null || systemctl reload php8.3-fpm 2>/dev/null || true
