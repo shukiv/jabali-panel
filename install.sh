@@ -97,6 +97,21 @@ if [[ "$CMD" == "uninstall" ]]; then
 
     section "Removing Panel Addon"
 
+    # 1. Unregister service provider FIRST (before deleting files)
+    if [[ -f "$JABALI_PATH/bootstrap/providers.php" ]]; then
+        sed -i '/BackupServiceProvider/d' "$JABALI_PATH/bootstrap/providers.php" 2>/dev/null || true
+        ok "Unregistered BackupServiceProvider"
+    fi
+
+    # 2. Clear caches while files still exist (prevents stale references)
+    if [[ -f "$JABALI_PATH/artisan" ]]; then
+        cd "$JABALI_PATH"
+        php artisan optimize:clear 2>/dev/null || true
+        php artisan filament:cache-components 2>/dev/null || true
+        ok "Panel caches cleared"
+    fi
+
+    # 3. Remove addon files
     for f in \
         /etc/jabali/agent.d/jabali-backup.php \
         "$JABALI_PATH/app/Filament/Admin/Pages/Backups.php" \
@@ -116,18 +131,8 @@ if [[ "$CMD" == "uninstall" ]]; then
         fi
     done
 
-    # Remove service provider registration
-    if [[ -f "$JABALI_PATH/bootstrap/providers.php" ]]; then
-        sed -i '/BackupServiceProvider/d' "$JABALI_PATH/bootstrap/providers.php" 2>/dev/null || true
-        ok "Unregistered BackupServiceProvider"
-    fi
-
-    # Clear panel caches
+    # 4. Restart services
     if [[ -f "$JABALI_PATH/artisan" ]]; then
-        cd "$JABALI_PATH"
-        php artisan view:clear 2>/dev/null || true
-        php artisan filament:cache-components 2>/dev/null || true
-        ok "Panel caches cleared"
         systemctl restart jabali-agent 2>/dev/null || true
         systemctl restart php8.5-fpm 2>/dev/null || systemctl restart php8.4-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
         ok "Services restarted"
