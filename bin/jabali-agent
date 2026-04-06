@@ -3960,7 +3960,16 @@ function main(): void
                 }
             }
 
-            socket_write($client, json_encode($response));
+            $json = json_encode($response);
+            $len = strlen($json);
+            $sent = 0;
+            while ($sent < $len) {
+                $written = @socket_write($client, substr($json, $sent));
+                if ($written === false) {
+                    break;
+                }
+                $sent += $written;
+            }
         }
 
         socket_close($client);

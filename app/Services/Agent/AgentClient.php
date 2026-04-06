@@ -56,7 +56,7 @@ class AgentClient implements AgentClientInterface
 
         $response = '';
         while (true) {
-            $buf = socket_read($socket, 8192);
+            $buf = @socket_read($socket, 65536);
             if ($buf === '' || $buf === false) {
                 break;
             }
@@ -67,7 +67,8 @@ class AgentClient implements AgentClientInterface
 
         $decoded = json_decode($response, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new Exception('Invalid response from agent: '.$response);
+            $preview = substr($response, 0, 200).'...['.strlen($response).' bytes, json error: '.json_last_error_msg().']';
+            throw new Exception('Invalid response from agent: '.$preview);
         }
 
         // Callers must check $decoded['success'] — error responses are returned as-is, not thrown.
