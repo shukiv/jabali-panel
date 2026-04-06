@@ -105,18 +105,30 @@ fi
 
 echo "[1/6] Checking dependencies..."
 
-missing=0
-check_dep restic       restic       || missing=$((missing + 1))
-check_dep mysql        mysql-client || missing=$((missing + 1))
-check_dep jq           jq           || missing=$((missing + 1))
-check_dep tar          tar          || missing=$((missing + 1))
-check_dep gzip         gzip         || missing=$((missing + 1))
+DEPS_TO_INSTALL=()
 
-if [[ $missing -gt 0 ]]; then
+check_or_queue() {
+    local cmd="$1" pkg="$2"
+    if command -v "$cmd" &>/dev/null; then
+        info "$cmd $(command -v "$cmd")"
+    else
+        warn "$cmd not found — will install $pkg"
+        DEPS_TO_INSTALL+=("$pkg")
+    fi
+}
+
+check_or_queue restic       restic
+check_or_queue mysql        mysql-client
+check_or_queue jq           jq
+check_or_queue tar          tar
+check_or_queue gzip         gzip
+
+if [[ ${#DEPS_TO_INSTALL[@]} -gt 0 ]]; then
     echo ""
-    warn "$missing missing dependency(ies). Install them and re-run."
-    warn "  apt install restic mysql-client jq tar gzip"
-    exit 1
+    info "Installing missing: ${DEPS_TO_INSTALL[*]}"
+    apt-get update -qq
+    apt-get install -y -qq "${DEPS_TO_INSTALL[@]}" || fatal "Failed to install dependencies. Install manually: apt install ${DEPS_TO_INSTALL[*]}"
+    info "Dependencies installed"
 fi
 echo ""
 
