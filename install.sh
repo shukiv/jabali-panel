@@ -131,11 +131,11 @@ if [[ "$CMD" == "uninstall" ]]; then
         fi
     done
 
-    # 4. Restart services
+    # 4. Reload services (reload, not restart — keeps FPM alive if pool configs have issues)
     if [[ -f "$JABALI_PATH/artisan" ]]; then
         systemctl restart jabali-agent 2>/dev/null || true
-        systemctl restart php8.5-fpm 2>/dev/null || systemctl restart php8.4-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
-        ok "Services restarted"
+        systemctl reload php8.5-fpm 2>/dev/null || systemctl reload php8.4-fpm 2>/dev/null || systemctl reload php8.3-fpm 2>/dev/null || true
+        ok "Services reloaded"
     fi
 
     section "Removing CLI"
@@ -485,8 +485,8 @@ if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
     ok "Caches cleared"
 
     systemctl restart jabali-agent 2>/dev/null || true
-    systemctl restart php8.5-fpm 2>/dev/null || systemctl restart php8.4-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
-    ok "Services restarted (jabali-agent, php-fpm)"
+    systemctl reload php8.5-fpm 2>/dev/null || systemctl reload php8.4-fpm 2>/dev/null || systemctl reload php8.3-fpm 2>/dev/null || true
+    ok "Services reloaded (jabali-agent, php-fpm)"
 else
     if [[ ! -f "$JABALI_PATH/artisan" ]]; then
         section "Panel Addon"
