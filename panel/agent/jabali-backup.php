@@ -1,0 +1,1705 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Jabali-Backup Agent Addon
+ *
+ * Installed to /etc/jabali/agent.d/jabali-backup.php
+ * Provides RPC routes that wrap the jabali-backup CLI for the panel UI.
+ */
+
+define('JABALI_BACKUP_BIN', '/usr/local/bin/jabali-backup');
+
+// ─── Route Table ───
+
+return [
+    'jb.list_accounts'  => fn (array $p) => jbListAccounts($p),
+    'jb.list_snapshots' => fn (array $p) => jbListSnapshots($p),
+    'jb.backup_accounts' => fn (array $p) => jbBackupAccounts($p),
+    'jb.run'            => fn (array $p) => jbRun($p),
+    'jb.restore'        => fn (array $p) => jbRestore($p),
+    'jb.restore_files'  => fn (array $p) => jbRestoreFiles($p),
+    'jb.browse'         => fn (array $p) => jbBrowse($p),
+    'jb.read_file'      => fn (array $p) => jbReadFile($p),
+    'jb.delete'         => fn (array $p) => jbDelete($p),
+    'jb.check'          => fn (array $p) => jbCheck($p),
+    'jb.doctor'         => fn (array $p) => jbDoctor($p),
+    'jb.config_test'    => fn (array $p) => jbConfigTest($p),
+    'jb.init'           => fn (array $p) => jbInit($p),
+    'jb.forget'         => fn (array $p) => jbForget($p),
+    'jb.snapshot_inventory' => fn (array $p) => jbSnapshotInventory($p),
+    'jb.download'          => fn (array $p) => jbDownload($p),
+    'jb.download_status'   => fn (array $p) => jbDownloadStatus($p),
+    'jb.download_pipe'     => fn (array $p) => jbDownloadPipe($p),
+    'jb.schedule'          => fn (array $p) => jbSchedulesList($p),
+    'jb.schedules_list'    => fn (array $p) => jbSchedulesList($p),
+    'jb.schedules_add'     => fn (array $p) => jbSchedulesAdd($p),
+    'jb.schedules_update'  => fn (array $p) => jbSchedulesUpdate($p),
+    'jb.schedules_remove'  => fn (array $p) => jbSchedulesRemove($p),
+    'jb.schedules_enable'  => fn (array $p) => jbSchedulesEnable($p),
+    'jb.schedules_disable' => fn (array $p) => jbSchedulesDisable($p),
+    'jb.logs'              => fn (array $p) => jbLogs($p),
+    'jb.destinations_list' => fn (array $p) => jbDestinationsList($p),
+    'jb.destinations_add'  => fn (array $p) => jbDestinationsAdd($p),
+    'jb.destinations_update' => fn (array $p) => jbDestinationsUpdate($p),
+    'jb.destinations_remove' => fn (array $p) => jbDestinationsRemove($p),
+    'jb.destinations_test' => fn (array $p) => jbDestinationsTest($p),
+    'jb.destinations_init' => fn (array $p) => jbDestinationsInit($p),
+    'jb.destinations_set_default' => fn (array $p) => jbDestinationsSetDefault($p),
+    'jb.destinations_show' => fn (array $p) => jbDestinationsShow($p),
+    'jb.destinations_reinit' => fn (array $p) => jbDestinationsReinit($p),
+    'jb.ssh_keys'          => fn (array $p) => jbSshKeys($p),
+    'jb.destination'       => fn (array $p) => jbDestinationsList($p),
+];
+
+// ─── Helpers ───
+
+function jbExec(array $args, int $timeout = 120): array
+{
+    $cmd = array_merge([JABALI_BACKUP_BIN], $args);
+
+    $descriptors = [
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+
+    $proc = proc_open($cmd, $descriptors, $pipes);
+    if (! is_resource($proc)) {
+        return ['success' => false, 'error' => 'Failed to execute jabali-backup'];
+    }
+
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $stdout = '';
+    $stderr = '';
+    $start = time();
+
+    while (true) {
+        $status = proc_get_status($proc);
+        if (! $status['running']) {
+            break;
+        }
+        if ((time() - $start) > $timeout) {
+            proc_terminate($proc, 9);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            proc_close($proc);
+
+            return ['success' => false, 'error' => 'Command timed out'];
+        }
+        $stdout .= stream_get_contents($pipes[1]);
+        $stderr .= stream_get_contents($pipes[2]);
+        usleep(50000);
+    }
+
+    $stdout .= stream_get_contents($pipes[1]);
+    $stderr .= stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($proc);
+
+    return [
+        'exitCode' => $exitCode,
+        'stdout' => trim($stdout),
+        'stderr' => trim($stderr),
+    ];
+}
+
+function jbExecBackground(array $args): array
+{
+    $cmd = implode(' ', array_map('escapeshellarg', array_merge([JABALI_BACKUP_BIN], $args)));
+    $logFile = '/tmp/jabali-backup-' . bin2hex(random_bytes(4)) . '.log';
+
+    $bg = sprintf('nohup %s > %s 2>&1 &', $cmd, escapeshellarg($logFile));
+    proc_open(['bash', '-c', $bg], [], $pipes);
+
+    return ['success' => true, 'log' => $logFile];
+}
+
+function jbValidateUsername(string $username): bool
+{
+    return (bool) preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $username);
+}
+
+function jbValidateSnapshotId(string $id): bool
+{
+    return $id === 'latest' || (bool) preg_match('/^[a-f0-9]{6,64}$/', $id);
+}
+
+function jbValidateComponentList(string $csv): array
+{
+    $valid = ['files', 'mysql', 'postgres', 'email', 'dns', 'ssl', 'nginx', 'php', 'cron', 'wordpress', 'metadata'];
+
+    return array_values(array_intersect(array_map('trim', explode(',', $csv)), $valid));
+}
+
+function jbValidateName(string $name): bool
+{
+    return (bool) preg_match('/^[a-zA-Z0-9 _\-\.]{1,64}$/', $name);
+}
+
+function jbValidateCron(string $cron): bool
+{
+    return (bool) preg_match('/^[0-9 *\/,\-]+$/', $cron) && strlen($cron) <= 100;
+}
+
+function jbValidateDestinationId(string $id): bool
+{
+    return (bool) preg_match('/^[a-zA-Z0-9_\-\.]+$/', $id) && strlen($id) <= 64;
+}
+
+/**
+ * Load restic env/args for the default destination.
+ * Reads destinations.json, falls back to config.conf.
+ * Returns ['env' => [...], 'args' => [...]] or null on failure.
+ */
+function jbLoadResticEnv(): ?array
+{
+    $destFile = '/etc/jabali-backup/destinations.json';
+    $configFile = '/etc/jabali-backup/config.conf';
+    $env = [];
+    $args = [];
+
+    // Try destinations.json first (multi-destination system)
+    if (file_exists($destFile) && ($json = @json_decode((string) file_get_contents($destFile), true))) {
+        $dest = null;
+        foreach ($json as $d) {
+            if ($d['is_default'] ?? false) {
+                $dest = $d;
+                break;
+            }
+        }
+        if ($dest === null && ! empty($json)) {
+            $dest = reset($json);
+        }
+        if ($dest !== null) {
+            $repo = $dest['path'] ?? '';
+            $creds = $dest['credentials'] ?? [];
+            if ($repo === '') {
+                return null;
+            }
+
+            $args[] = '--repo';
+            $args[] = $repo;
+
+            // Restic repo password
+            $resPwFile = $creds['restic_password_file'] ?? '';
+            if ($resPwFile !== '' && file_exists($resPwFile)) {
+                $args[] = '--password-file';
+                $args[] = $resPwFile;
+            } elseif ($creds['insecure_no_password'] ?? false) {
+                $args[] = '--insecure-no-password';
+            }
+
+            // SFTP auth — parse user@host from the repo URI (sftp:user@host:/path)
+            $type = $dest['type'] ?? '';
+            if ($type === 'sftp') {
+                // Extract user@host from URI like sftp:user@host:/path
+                if (preg_match('/^sftp:([^@]+)@([^:]+)/', $repo, $m)) {
+                    $sshUser = $m[1];
+                    $sshHost = $m[2];
+                    $sshPwFile = $creds['ssh_password_file'] ?? '';
+                    $sshKeyFile = $creds['ssh_key_file'] ?? '';
+
+                    if ($sshKeyFile !== '' && file_exists($sshKeyFile)) {
+                        $sftpCmd = "ssh -i {$sshKeyFile} -o StrictHostKeyChecking=accept-new {$sshUser}@{$sshHost} -s sftp";
+                    } elseif ($sshPwFile !== '' && file_exists($sshPwFile)) {
+                        $env['SSHPASS'] = trim((string) file_get_contents($sshPwFile));
+                        $sftpCmd = "sshpass -e ssh -o StrictHostKeyChecking=accept-new {$sshUser}@{$sshHost} -s sftp";
+                    } else {
+                        $sftpCmd = "ssh -o StrictHostKeyChecking=accept-new {$sshUser}@{$sshHost} -s sftp";
+                    }
+                    $args[] = '-o';
+                    $args[] = "sftp.command={$sftpCmd}";
+                }
+            } elseif ($type === 's3') {
+                if (! empty($creds['aws_access_key'])) {
+                    $env['AWS_ACCESS_KEY_ID'] = $creds['aws_access_key'];
+                }
+                if (! empty($creds['aws_secret_key'])) {
+                    $env['AWS_SECRET_ACCESS_KEY'] = $creds['aws_secret_key'];
+                }
+            } elseif ($type === 'b2') {
+                if (! empty($creds['b2_account_id'])) {
+                    $env['B2_ACCOUNT_ID'] = $creds['b2_account_id'];
+                }
+                if (! empty($creds['b2_account_key'])) {
+                    $env['B2_ACCOUNT_KEY'] = $creds['b2_account_key'];
+                }
+            }
+
+            return ['env' => $env, 'args' => $args];
+        }
+    }
+
+    // Fall back to config.conf [repository]
+    if (file_exists($configFile)) {
+        $repoPath = '';
+        $inSection = false;
+        foreach (file($configFile) as $line) {
+            $line = trim($line);
+            if ($line === '[repository]') { $inSection = true; continue; }
+            if (str_starts_with($line, '[')) { $inSection = false; }
+            if ($inSection && str_starts_with($line, 'path=')) { $repoPath = substr($line, 5); }
+        }
+        $pwFile = '/etc/jabali-backup/restic-password';
+        if ($repoPath !== '' && file_exists($pwFile)) {
+            return ['env' => [], 'args' => ['--repo', $repoPath, '--password-file', $pwFile]];
+        }
+    }
+
+    return null;
+}
+
+// ─── Route Handlers ───
+
+function jbListAccounts(array $params): array
+{
+    $r = jbExec(['list', 'accounts']);
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+    }
+
+    // Parse the table output into structured data
+    $lines = explode("\n", $r['stdout']);
+    $accounts = [];
+    foreach ($lines as $line) {
+        if (preg_match('/^\s*(\d+)\s+(\S+)\s+(\/\S+)\s+(yes|no)/', $line, $m)) {
+            $accounts[] = [
+                'id' => (int) $m[1],
+                'username' => $m[2],
+                'home' => $m[3],
+                'active' => $m[4] === 'yes',
+            ];
+        }
+    }
+
+    if (empty($accounts) && ! empty($lines)) {
+        return ['success' => false, 'error' => 'Failed to parse account list output'];
+    }
+
+    return ['success' => true, 'accounts' => $accounts];
+}
+
+function jbListSnapshots(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $args = ['list', 'snapshots'];
+
+    if ($username !== '' && jbValidateUsername($username)) {
+        $args[] = '--user=' . $username;
+    }
+
+    $r = jbExec($args);
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+    }
+
+    // Parse restic snapshots table output
+    $lines = explode("\n", $r['stdout']);
+    $snapshots = [];
+    foreach ($lines as $line) {
+        if (preg_match('/^([a-f0-9]{8})\s+(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s+(\S+)\s+(.+?)\s{2,}(\/\S.*)$/', $line, $m)) {
+            $id = $m[1];
+            $tags = array_map('trim', explode(',', $m[4]));
+
+            $username = '';
+            $date = '';
+            $runId = '';
+            foreach ($tags as $tag) {
+                if (str_starts_with($tag, 'account:')) {
+                    $username = substr($tag, 8);
+                }
+                if (str_starts_with($tag, 'date:')) {
+                    $date = substr($tag, 5);
+                }
+                if (str_starts_with($tag, 'run:')) {
+                    $runId = substr($tag, 4);
+                }
+            }
+
+            $snapshots[] = [
+                'id' => $id,
+                'time' => trim($m[2]),
+                'run_id' => $runId,
+                'host' => trim($m[3]),
+                'username' => $username,
+                'date' => $date ?: substr(trim($m[2]), 0, 10),
+                'size' => preg_match('/(\d+[\.\d]*\s*(?:B|KiB|MiB|GiB|TiB))/', $m[5], $sm) ? $sm[1] : '',
+                'tags' => $tags,
+                'paths' => array_map('trim', explode("\n", trim($m[5]))),
+            ];
+        }
+    }
+
+    return ['success' => true, 'snapshots' => $snapshots];
+}
+
+function jbBackupAccounts(array $params): array
+{
+    // Get all snapshots, then group by account
+    $result = jbListSnapshots($params);
+    if (! ($result['success'] ?? false)) {
+        return $result;
+    }
+
+    $byAccount = [];
+    foreach ($result['snapshots'] ?? [] as $snap) {
+        $username = $snap['username'] ?? '';
+        if ($username === '') {
+            continue;
+        }
+        if (! isset($byAccount[$username])) {
+            $byAccount[$username] = [
+                'username' => $username,
+                'snapshot_count' => 0,
+                'latest_snapshot_id' => '',
+                'latest_date' => '',
+                'latest_time' => '',
+            ];
+        }
+        $byAccount[$username]['snapshot_count']++;
+        $snapDate = $snap['date'] ?? $snap['time'] ?? '';
+        if ($snapDate > $byAccount[$username]['latest_date'] || $byAccount[$username]['latest_date'] === '') {
+            $byAccount[$username]['latest_date'] = $snap['date'] ?? '';
+            $byAccount[$username]['latest_time'] = $snap['time'] ?? '';
+            $byAccount[$username]['latest_snapshot_id'] = $snap['id'] ?? '';
+        }
+    }
+
+    return ['success' => true, 'accounts' => array_values($byAccount)];
+}
+
+function jbRun(array $params): array
+{
+    $username = $params['username'] ?? '';
+    if ($username !== '' && ! jbValidateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+
+    $args = ['run'];
+
+    // Destination — validate alphanumeric/dash/underscore/dot only
+    $destination = $params['destination'] ?? '';
+    if ($destination !== '' && preg_match('/^[a-zA-Z0-9_\-\.]+$/', $destination)) {
+        $args[] = '--destination=' . $destination;
+    }
+
+    // Accounts: single username, comma-separated list, or all
+    $accounts = $params['accounts'] ?? '';
+    if ($username !== '') {
+        $args[] = $username;
+    } elseif ($accounts !== '' && $accounts !== 'all') {
+        foreach (explode(',', $accounts) as $acct) {
+            $acct = trim($acct);
+            if ($acct !== '' && jbValidateUsername($acct)) {
+                $args[] = $acct;
+            }
+        }
+    }
+
+    // Exclude accounts — validate each username individually
+    $excludeAccounts = $params['exclude_accounts'] ?? '';
+    if ($excludeAccounts !== '') {
+        $safe = [];
+        foreach (explode(',', $excludeAccounts) as $acct) {
+            $acct = trim($acct);
+            if ($acct !== '' && jbValidateUsername($acct)) {
+                $safe[] = $acct;
+            }
+        }
+        if (! empty($safe)) {
+            $args[] = '--exclude-accounts=' . implode(',', $safe);
+        }
+    }
+
+    // Build --only from component flags
+    $components = [];
+    $componentMap = [
+        'include_files' => 'files',
+        'include_databases' => 'mysql',
+        'include_mailboxes' => 'email',
+        'include_dns' => 'dns',
+        'include_ssl' => 'ssl',
+        'include_nginx' => 'nginx',
+        'include_php' => 'php',
+        'include_wordpress' => 'wordpress',
+        'include_cron' => 'cron',
+        'include_metadata' => 'metadata',
+    ];
+
+    $hasExclusion = false;
+    foreach ($componentMap as $key => $component) {
+        if (isset($params[$key]) && $params[$key] === false) {
+            $hasExclusion = true;
+        }
+    }
+
+    if ($hasExclusion) {
+        foreach ($componentMap as $key => $component) {
+            if (! isset($params[$key]) || $params[$key] !== false) {
+                $components[] = $component;
+            }
+        }
+        if (! empty($components)) {
+            $args[] = '--only=' . implode(',', $components);
+        }
+    }
+
+    // Run in background — backup can take minutes
+    $result = jbExecBackground($args);
+
+    return [
+        'success' => true,
+        'message' => $username
+            ? "Backup started for {$username}"
+            : 'Backup started for all accounts',
+        'log' => $result['log'],
+    ];
+}
+
+function jbRestore(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? 'latest';
+    $components = $params['components'] ?? [];
+    $force = $params['force'] ?? false;
+
+    if (! jbValidateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+    if (! jbValidateSnapshotId($snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    $args = ['restore', $username, '--snapshot=' . $snapshotId];
+
+    if (! empty($components)) {
+        $validComponents = ['files', 'mysql', 'postgres', 'email', 'dns', 'ssl', 'nginx', 'php', 'cron', 'wordpress', 'metadata'];
+        $safe = array_intersect($components, $validComponents);
+        if (! empty($safe)) {
+            $args[] = '--only=' . implode(',', $safe);
+        }
+    }
+    if ($force) {
+        $args[] = '--force';
+    }
+
+    $r = jbExec($args, 300);
+
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout'], 'output' => $r['stdout']];
+    }
+
+    return ['success' => true, 'output' => $r['stdout']];
+}
+
+function jbRestoreFiles(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? 'latest';
+    $files = $params['files'] ?? [];
+    $targetDir = $params['target'] ?? '';
+
+    if (! jbValidateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+    if (! jbValidateSnapshotId($snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    $args = ['restore', $username, '--snapshot=' . $snapshotId];
+
+    foreach ($files as $file) {
+        // Reject any file with traversal patterns or invalid characters
+        if (strpos($file, '..') !== false || strpos($file, "\0") !== false) {
+            continue;
+        }
+        if (! preg_match('#^[a-zA-Z0-9/_\-\.\s]+$#', $file)) {
+            continue;
+        }
+        $args[] = '--file=' . $file;
+    }
+
+    if ($targetDir !== '') {
+        if (strpos($targetDir, '..') !== false || strpos($targetDir, "\0") !== false) {
+            return ['success' => false, 'error' => 'Invalid target directory'];
+        }
+        if (! preg_match('#^[a-zA-Z0-9/_\-\.\s]+$#', $targetDir)) {
+            return ['success' => false, 'error' => 'Invalid target directory'];
+        }
+        $args[] = '--target=' . $targetDir;
+    }
+
+    $r = jbExec($args, 300);
+
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+    }
+
+    return ['success' => true, 'output' => $r['stdout']];
+}
+
+function jbBrowse(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $path = $params['path'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? 'latest';
+
+    if (! jbValidateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+    if ($snapshotId !== 'latest' && ! jbValidateSnapshotId($snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    // Sanitize path — reject traversal patterns
+    if (strpos($path, '..') !== false || strpos($path, "\0") !== false) {
+        return ['success' => false, 'error' => 'Invalid path'];
+    }
+
+    // Resolve snapshot ID if "latest"
+    $resolvedId = $snapshotId;
+    if ($snapshotId === 'latest') {
+        $listResult = jbExec(['list', 'snapshots', '--user=' . $username]);
+        if (preg_match_all('/^([a-f0-9]{8})\s/m', $listResult['stdout'], $matches)) {
+            $resolvedId = end($matches[1]);
+        } else {
+            return ['success' => false, 'error' => 'No snapshots found'];
+        }
+    }
+
+    // Build full path for restic ls
+    $fullPath = '/home/' . $username;
+    if ($path !== '') {
+        $fullPath .= '/' . ltrim($path, '/');
+    }
+
+    // Load destination config — use default destination from destinations.json
+    $env = jbLoadResticEnv();
+    if ($env === null) {
+        return ['success' => false, 'error' => 'Backup not configured'];
+    }
+
+    $cmd = [
+        'restic', 'ls', $resolvedId, $fullPath, '--json',
+    ];
+    // Add repo and password args from env
+    foreach ($env['args'] as $arg) {
+        $cmd[] = $arg;
+    }
+
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, ! empty($env['env']) ? array_merge(getenv(), $env['env']) : null);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($proc);
+
+    if ($exitCode !== 0) {
+        return ['success' => false, 'error' => trim($stderr ?: $stdout ?: 'restic ls failed')];
+    }
+
+    // Parse JSON lines output
+    $items = [];
+    $parentPath = rtrim($fullPath, '/');
+
+    foreach (explode("\n", $stdout) as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        $entry = @json_decode($line, true);
+        if (! $entry || ! isset($entry['path'])) {
+            continue;
+        }
+        if (($entry['struct_type'] ?? '') === 'snapshot') {
+            continue;
+        }
+
+        $entryPath = $entry['path'];
+        // Skip the parent directory itself
+        if ($entryPath === $parentPath || $entryPath === $parentPath . '/') {
+            continue;
+        }
+        // Only show direct children (one level deep)
+        $relative = ltrim(substr($entryPath, strlen($parentPath)), '/');
+        if ($relative === '' || str_contains($relative, '/')) {
+            continue;
+        }
+
+        $items[] = [
+            'name' => basename($entryPath),
+            'path' => ($path !== '' ? rtrim($path, '/') . '/' : '') . basename($entryPath),
+            'is_dir' => ($entry['type'] ?? '') === 'dir',
+            'size' => $entry['size'] ?? 0,
+            'permissions' => $entry['permissions'] ?? '',
+            'modified' => isset($entry['mtime']) ? strtotime($entry['mtime']) : 0,
+        ];
+    }
+
+    // Sort: directories first, then alphabetical
+    usort($items, function ($a, $b) {
+        if ($a['is_dir'] !== $b['is_dir']) {
+            return $b['is_dir'] <=> $a['is_dir'];
+        }
+
+        return strcasecmp($a['name'], $b['name']);
+    });
+
+    return ['success' => true, 'items' => $items, 'snapshot_id' => $resolvedId];
+}
+
+function jbSnapshotInventory(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? 'latest';
+
+    if (! jbValidateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+    if (! jbValidateSnapshotId($snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    $env = jbLoadResticEnv();
+    if (! $env) {
+        return ['success' => false, 'error' => 'Backup not configured'];
+    }
+
+    $procEnv = ! empty($env['env']) ? array_merge(getenv(), $env['env']) : null;
+
+    // Resolve snapshot ID
+    if ($snapshotId === 'latest') {
+        $cmd = array_merge(['restic', 'snapshots', '--json', '--tag', 'account:' . $username], $env['args']);
+        $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+        $json = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($proc);
+        $snaps = json_decode($json ?: '[]', true);
+        if (empty($snaps)) {
+            return ['success' => false, 'error' => 'No snapshots found for ' . $username];
+        }
+        usort($snaps, fn ($a, $b) => strcmp($a['time'] ?? '', $b['time'] ?? ''));
+        $snapshotId = end($snaps)['short_id'] ?? '';
+    }
+
+    // List all files in snapshot
+    $cmd = array_merge(['restic', 'ls', $snapshotId, '--tag', 'account:' . $username], $env['args']);
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+    $listing = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+    $lines = array_filter(explode("\n", $listing ?: ''));
+
+    $staging = "/tmp/jabali-backup/{$username}/";
+    $home = "/home/{$username}/";
+
+    $inventory = [
+        'metadata' => ['exists' => false],
+        'files' => ['exists' => false, 'top_dirs' => []],
+        'mysql' => ['exists' => false, 'databases' => [], 'users' => []],
+        'dns' => ['exists' => false, 'zones' => []],
+        'email' => ['exists' => false, 'domains' => [], 'mailboxes' => []],
+        'nginx' => ['exists' => false, 'configs' => []],
+        'php' => ['exists' => false, 'pools' => []],
+        'ssl' => ['exists' => false, 'domains' => []],
+        'cron' => ['exists' => false, 'jobs' => []],
+        'wordpress' => ['exists' => false, 'sites' => []],
+    ];
+
+    $homeDirs = [];
+    $homePaths = [];  // 2-level deep directory tree
+    $sslDomains = [];
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, 'snapshot ')) {
+            continue;
+        }
+
+        // Staging directory items
+        if (str_starts_with($line, $staging)) {
+            $rel = substr($line, strlen($staging));
+            $parts = explode('/', $rel, 2);
+            $component = $parts[0];
+            $subpath = $parts[1] ?? '';
+
+            switch ($component) {
+                case 'metadata':
+                    $inventory['metadata']['exists'] = true;
+                    break;
+                case 'mysql':
+                    $inventory['mysql']['exists'] = true;
+                    if (str_ends_with($subpath, '.sql.gz')) {
+                        $inventory['mysql']['databases'][] = basename($subpath, '.sql.gz');
+                    } elseif ($subpath === 'users.txt') {
+                        $inventory['mysql']['has_users'] = true;
+                    }
+                    break;
+                case 'dns':
+                    $inventory['dns']['exists'] = true;
+                    if (str_ends_with($subpath, '.json')) {
+                        $inventory['dns']['zones'][] = basename($subpath, '.json');
+                    }
+                    break;
+                case 'email':
+                    $inventory['email']['exists'] = true;
+                    if (str_starts_with($subpath, 'domains/') && str_ends_with($subpath, '.json')) {
+                        $inventory['email']['domains'][] = basename($subpath, '.json');
+                    }
+                    break;
+                case 'nginx':
+                    $inventory['nginx']['exists'] = true;
+                    if (str_ends_with($subpath, '.conf')) {
+                        $inventory['nginx']['configs'][] = basename($subpath, '.conf');
+                    }
+                    break;
+                case 'php':
+                    $inventory['php']['exists'] = true;
+                    if (str_ends_with($subpath, '.conf')) {
+                        $inventory['php']['pools'][] = basename($subpath, '.conf');
+                    }
+                    break;
+                case 'ssl':
+                    $inventory['ssl']['exists'] = true;
+                    if (str_contains($subpath, '/')) {
+                        $d = explode('/', $subpath)[0];
+                        if ($d !== '' && ! in_array($d, $sslDomains, true)) {
+                            $sslDomains[] = $d;
+                        }
+                    }
+                    break;
+                case 'cron':
+                    $inventory['cron']['exists'] = true;
+                    if ($subpath !== '' && ! str_contains($subpath, '/')) {
+                        $inventory['cron']['jobs'][] = $subpath;
+                    }
+                    break;
+                case 'wordpress':
+                    $inventory['wordpress']['exists'] = true;
+                    if ($subpath !== '' && ! str_contains($subpath, '/')) {
+                        $inventory['wordpress']['sites'][] = $subpath;
+                    }
+                    break;
+            }
+        }
+
+        // Home directory — collect up to 2 levels deep
+        if (str_starts_with($line, $home)) {
+            $rel = substr($line, strlen($home));
+            if ($rel === '') {
+                continue;
+            }
+            $parts = explode('/', $rel);
+            // Top-level entry
+            if (count($parts) === 1) {
+                $homeDirs[$rel] = true;
+            }
+            // 2-level path (e.g. domains/123123.com)
+            if (count($parts) === 2 && $parts[1] !== '') {
+                $homePaths[$parts[0] . '/' . $parts[1]] = true;
+            }
+        }
+    }
+
+    $inventory['files']['exists'] = ! empty($homeDirs);
+    $inventory['files']['top_dirs'] = array_keys($homeDirs);
+    sort($inventory['files']['top_dirs']);
+
+    // Build tree: group 2-level paths under their parent
+    $tree = [];
+    foreach (array_keys($homeDirs) as $dir) {
+        if (str_starts_with($dir, '.')) {
+            continue;
+        }
+        $children = [];
+        foreach (array_keys($homePaths) as $path) {
+            if (str_starts_with($path, $dir . '/')) {
+                $children[] = $path;
+            }
+        }
+        sort($children);
+        $tree[$dir] = $children;
+    }
+    $inventory['files']['tree'] = $tree;
+    $inventory['ssl']['domains'] = $sslDomains;
+
+    // Deduplicate arrays
+    foreach (['mysql' => 'databases', 'dns' => 'zones', 'email' => 'domains', 'wordpress' => 'sites'] as $comp => $key) {
+        $inventory[$comp][$key] = array_values(array_unique($inventory[$comp][$key]));
+    }
+
+    // Dump account.json for domain list
+    $dumpCmd = array_merge(
+        ['restic', 'dump', $snapshotId, '--tag', 'account:' . $username],
+        $env['args'],
+        ["/tmp/jabali-backup/{$username}/metadata/account.json"],
+    );
+    $proc = proc_open($dumpCmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+    $accountJson = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+    $account = json_decode($accountJson ?: '{}', true);
+
+    if (! empty($account)) {
+        $inventory['metadata']['user'] = $account['user'] ?? [];
+        $inventory['metadata']['domains'] = array_column($account['domains'] ?? [], 'domain');
+    }
+
+    // Dump mysql/users.txt for MySQL user list
+    if ($inventory['mysql']['has_users'] ?? false) {
+        $usersCmd = array_merge(
+            ['restic', 'dump', $snapshotId, '--tag', 'account:' . $username],
+            $env['args'],
+            ["/tmp/jabali-backup/{$username}/mysql/users.txt"],
+        );
+        $proc = proc_open($usersCmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+        $usersTxt = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($proc);
+        $inventory['mysql']['users'] = array_values(array_filter(array_map('trim', explode("\n", $usersTxt ?: ''))));
+    }
+
+    return [
+        'success' => true,
+        'username' => $username,
+        'snapshot_id' => $snapshotId,
+        'inventory' => $inventory,
+    ];
+}
+
+function jbDelete(array $params): array
+{
+    $snapshotId = $params['snapshot_id'] ?? '';
+    if (! jbValidateSnapshotId($snapshotId) || $snapshotId === 'latest') {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    // Use restic forget directly via jabali-backup's restic env
+    // jabali-backup forget doesn't support per-snapshot deletion yet,
+    // so we call restic directly with the configured password file
+    $passwordFile = '/etc/jabali-backup/restic-password';
+    if (! file_exists($passwordFile)) {
+        return ['success' => false, 'error' => 'Restic password file not found'];
+    }
+
+    // Read repo path from config
+    $configFile = '/etc/jabali-backup/config.conf';
+    $repoPath = '';
+    if (file_exists($configFile)) {
+        $inSection = false;
+        foreach (file($configFile) as $line) {
+            $line = trim($line);
+            if ($line === '[repository]') {
+                $inSection = true;
+
+                continue;
+            }
+            if (str_starts_with($line, '[')) {
+                $inSection = false;
+            }
+            if ($inSection && str_starts_with($line, 'path=')) {
+                $repoPath = substr($line, 5);
+            }
+        }
+    }
+
+    if ($repoPath === '') {
+        return ['success' => false, 'error' => 'Repository path not configured'];
+    }
+
+    $cmd = [
+        'restic', 'forget', $snapshotId, '--prune',
+        '--repo', $repoPath,
+        '--password-file', $passwordFile,
+    ];
+
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($proc);
+
+    if ($exitCode !== 0) {
+        return ['success' => false, 'error' => trim($stderr ?: $stdout)];
+    }
+
+    return ['success' => true, 'message' => 'Snapshot deleted'];
+}
+
+function jbCheck(array $params): array
+{
+    $r = jbExec(['check'], 300);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDoctor(array $params): array
+{
+    $r = jbExec(['doctor']);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+    ];
+}
+
+function jbConfigTest(array $params): array
+{
+    $r = jbExec(['config', 'test']);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+    ];
+}
+
+function jbInit(array $params): array
+{
+    $r = jbExec(['init']);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbForget(array $params): array
+{
+    $dryRun = $params['dry_run'] ?? false;
+    $args = ['forget'];
+    if ($dryRun) {
+        $args[] = '--dry-run';
+    }
+
+    $r = jbExec($args, 300);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDownload(array $params): array
+{
+    $accounts = $params['accounts'] ?? [];
+    if (empty($accounts)) {
+        return ['success' => false, 'error' => 'No accounts specified'];
+    }
+
+    $args = ['download'];
+    foreach ($accounts as $acct) {
+        if (jbValidateUsername($acct)) {
+            $args[] = $acct;
+        }
+    }
+
+    $only = $params['only'] ?? '';
+    if ($only !== '') {
+        $safe = jbValidateComponentList($only);
+        if (! empty($safe)) {
+            $args[] = '--only=' . implode(',', $safe);
+        }
+    }
+
+    $snapshot = $params['snapshot'] ?? 'latest';
+    if (! jbValidateSnapshotId($snapshot)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+    $args[] = '--snapshot=' . $snapshot;
+
+    // Generate output path with token for secure download
+    $token = bin2hex(random_bytes(16));
+    $outputFile = '/tmp/jabali-download-' . $token . '.tar.gz';
+    $args[] = '--output=' . $outputFile;
+
+    // Store download metadata with restricted permissions
+    $meta = [
+        'token' => $token,
+        'file' => $outputFile,
+        'accounts' => $accounts,
+        'started' => time(),
+        'expires' => time() + 3600,
+    ];
+    $metaFile = '/tmp/jabali-download-' . $token . '.json';
+    file_put_contents($metaFile, json_encode($meta));
+    chmod($metaFile, 0644);
+
+    // Run in background, chmod the output so www-data can read it
+    $cmd = implode(' ', array_map('escapeshellarg', array_merge([JABALI_BACKUP_BIN], $args)));
+    $logFile = '/tmp/jabali-backup-' . bin2hex(random_bytes(4)) . '.log';
+    $bg = sprintf('nohup bash -c %s > %s 2>&1; chmod 644 %s 2>/dev/null &',
+        escapeshellarg($cmd),
+        escapeshellarg($logFile),
+        escapeshellarg($outputFile),
+    );
+    proc_open(['bash', '-c', $bg], [], $pipes);
+
+    return [
+        'success' => true,
+        'token' => $token,
+        'message' => 'Download started for ' . implode(', ', $accounts),
+        'log' => $logFile,
+    ];
+}
+
+function jbDownloadPipe(array $params): array
+{
+    // Support single username or comma-separated list
+    $users = $params['users'] ?? $params['username'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? 'latest';
+
+    // Parse and validate usernames
+    $userList = array_filter(array_map('trim', explode(',', $users)));
+    $validUsers = [];
+    foreach ($userList as $u) {
+        if (jbValidateUsername($u)) {
+            $validUsers[] = $u;
+        }
+    }
+    if (empty($validUsers)) {
+        return ['success' => false, 'error' => 'No valid usernames'];
+    }
+    if (! jbValidateSnapshotId($snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    $pipeDir = '/tmp/jabali-exports';
+    if (! is_dir($pipeDir)) {
+        mkdir($pipeDir, 0700, true);
+    }
+
+    // Clean up old pipes (older than 10 minutes)
+    foreach (glob($pipeDir . '/pipe-*') as $old) {
+        if (filemtime($old) < time() - 600) {
+            @unlink($old);
+        }
+    }
+
+    $pipePath = $pipeDir . '/pipe-' . bin2hex(random_bytes(8));
+    posix_mkfifo($pipePath, 0600);
+    chmod($pipePath, 0644); // www-data needs to read it
+
+    // Load restic env for this destination
+    $env = jbLoadResticEnv();
+    $envPrefix = '';
+    foreach (['RESTIC_REPOSITORY', 'RESTIC_PASSWORD_FILE', 'SSHPASS'] as $var) {
+        if (! empty($env[$var])) {
+            $envPrefix .= sprintf('export %s=%s; ', $var, escapeshellarg($env[$var]));
+        }
+    }
+
+    // Build username args for CLI (supports multiple)
+    $userArgs = implode(' ', array_map('escapeshellarg', $validUsers));
+
+    // Fully detach: jabali-backup download writes tar.gz to the pipe, then removes it
+    $cmd = sprintf(
+        "nohup bash -c '%s/usr/local/bin/jabali-backup download %s --snapshot=%s --output=- > %s; rm -f %s' > /dev/null 2>&1 &",
+        $envPrefix,
+        $userArgs,
+        escapeshellarg($snapshotId),
+        escapeshellarg($pipePath),
+        escapeshellarg($pipePath),
+    );
+    proc_open(['bash', '-c', $cmd], [], $pipes);
+
+    return ['success' => true, 'pipe' => $pipePath, 'users' => $validUsers];
+}
+
+function jbDownloadStatus(array $params): array
+{
+    $token = $params['token'] ?? '';
+    if ($token === '' || ! preg_match('/^[a-f0-9]{32}$/', $token)) {
+        return ['success' => false, 'error' => 'Invalid token'];
+    }
+
+    $metaFile = '/tmp/jabali-download-' . $token . '.json';
+    if (! file_exists($metaFile)) {
+        return ['success' => false, 'error' => 'Download not found'];
+    }
+
+    $meta = json_decode(file_get_contents($metaFile), true);
+    $file = $meta['file'] ?? '';
+    $ready = file_exists($file) && filesize($file) > 0;
+
+    // Check expiry
+    if (time() > ($meta['expires'] ?? 0)) {
+        @unlink($file);
+        @unlink($metaFile);
+
+        return ['success' => false, 'error' => 'Download expired'];
+    }
+
+    $size = $ready ? filesize($file) : 0;
+
+    return [
+        'success' => true,
+        'ready' => $ready,
+        'size' => $size,
+        'accounts' => $meta['accounts'] ?? [],
+        'token' => $token,
+        'file' => $ready ? basename($file) : null,
+    ];
+}
+
+function jbSchedulesList(array $params): array
+{
+    $r = jbExec(['schedule', 'list', '--json']);
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+    }
+
+    $schedules = @json_decode($r['stdout'], true);
+    if (! is_array($schedules)) {
+        return ['success' => false, 'error' => 'Failed to parse schedules'];
+    }
+
+    return ['success' => true, 'schedules' => $schedules];
+}
+
+function jbSchedulesAdd(array $params): array
+{
+    $args = ['schedule', 'add'];
+
+    $name = $params['name'] ?? '';
+    if ($name !== '' && jbValidateName($name)) {
+        $args[] = '--name=' . $name;
+    }
+
+    $dest = $params['destination'] ?? '';
+    if ($dest !== '' && jbValidateDestinationId($dest)) {
+        $args[] = '--destination=' . $dest;
+    }
+
+    $cron = $params['cron'] ?? '';
+    if ($cron !== '' && jbValidateCron($cron)) {
+        $args[] = '--cron=' . $cron;
+    }
+
+    // Validate account lists
+    foreach (['accounts', 'exclude'] as $field) {
+        $val = $params[$field] ?? '';
+        if ($val !== '' && $val !== 'all') {
+            $safe = [];
+            foreach (explode(',', $val) as $acct) {
+                if (jbValidateUsername(trim($acct))) {
+                    $safe[] = trim($acct);
+                }
+            }
+            if (! empty($safe)) {
+                $args[] = '--' . $field . '=' . implode(',', $safe);
+            }
+        } elseif ($val === 'all') {
+            $args[] = '--' . $field . '=all';
+        }
+    }
+
+    // Numeric retention values
+    foreach (['keep_last', 'keep_daily', 'keep_weekly', 'keep_monthly'] as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && is_numeric($val)) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . (int) $val;
+        }
+    }
+
+    $r = jbExec($args);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbSchedulesUpdate(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid schedule ID'];
+    }
+
+    $args = ['schedule', 'update', '--id=' . $id];
+
+    $name = $params['name'] ?? '';
+    if ($name !== '' && jbValidateName($name)) {
+        $args[] = '--name=' . $name;
+    }
+
+    $dest = $params['destination'] ?? '';
+    if ($dest !== '' && jbValidateDestinationId($dest)) {
+        $args[] = '--destination=' . $dest;
+    }
+
+    $cron = $params['cron'] ?? '';
+    if ($cron !== '' && jbValidateCron($cron)) {
+        $args[] = '--cron=' . $cron;
+    }
+
+    foreach (['accounts', 'exclude'] as $field) {
+        $val = $params[$field] ?? '';
+        if ($val !== '' && $val !== 'all') {
+            $safe = [];
+            foreach (explode(',', $val) as $acct) {
+                if (jbValidateUsername(trim($acct))) {
+                    $safe[] = trim($acct);
+                }
+            }
+            if (! empty($safe)) {
+                $args[] = '--' . $field . '=' . implode(',', $safe);
+            }
+        } elseif ($val === 'all') {
+            $args[] = '--' . $field . '=all';
+        }
+    }
+
+    foreach (['keep_last', 'keep_daily', 'keep_weekly', 'keep_monthly'] as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && is_numeric($val)) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . (int) $val;
+        }
+    }
+
+    $r = jbExec($args);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbSchedulesRemove(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid schedule ID'];
+    }
+
+    $r = jbExec(['schedule', 'remove', '--id=' . $id]);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbSchedulesEnable(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid schedule ID'];
+    }
+
+    $r = jbExec(['schedule', 'enable', '--id=' . $id]);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbSchedulesDisable(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid schedule ID'];
+    }
+
+    $r = jbExec(['schedule', 'disable', '--id=' . $id]);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbReadFile(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? 'latest';
+    $path = $params['path'] ?? '';
+
+    if (! jbValidateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username'];
+    }
+    if (! jbValidateSnapshotId($snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    if (strpos($path, '..') !== false || strpos($path, "\0") !== false) {
+        return ['success' => false, 'error' => 'Invalid path'];
+    }
+    if ($path === '') {
+        return ['success' => false, 'error' => 'Path is required'];
+    }
+
+    // Resolve snapshot if latest
+    $resolvedId = $snapshotId;
+    if ($snapshotId === 'latest') {
+        $listResult = jbExec(['list', 'snapshots', '--user=' . $username]);
+        if (preg_match_all('/^([a-f0-9]{8})\s/m', $listResult['stdout'], $matches)) {
+            $resolvedId = end($matches[1]);
+        } else {
+            return ['success' => false, 'error' => 'No snapshots found'];
+        }
+    }
+
+    $fullPath = '/home/' . $username . '/' . ltrim($path, '/');
+
+    $env = jbLoadResticEnv();
+    if ($env === null) {
+        return ['success' => false, 'error' => 'Backup not configured'];
+    }
+
+    $cmd = ['restic', 'dump', $resolvedId, $fullPath];
+    foreach ($env['args'] as $arg) {
+        $cmd[] = $arg;
+    }
+
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, ! empty($env['env']) ? array_merge(getenv(), $env['env']) : null);
+    $stdout = stream_get_contents($pipes[1], 1048576); // 1MB limit
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($proc);
+
+    if ($exitCode !== 0) {
+        return ['success' => false, 'error' => trim($stderr ?: 'Failed to read file')];
+    }
+
+    return ['success' => true, 'content' => $stdout];
+}
+
+function jbLogs(array $params): array
+{
+    $lines = (int) ($params['lines'] ?? 100);
+    $lines = max(10, min($lines, 1000));
+
+    $logFile = '/var/log/jabali-backup.log';
+
+    // Try reading from config
+    $configFile = '/etc/jabali-backup/config.conf';
+    if (file_exists($configFile)) {
+        $inSection = false;
+        foreach (file($configFile) as $line) {
+            $line = trim($line);
+            if ($line === '[logging]') { $inSection = true; continue; }
+            if (str_starts_with($line, '[')) { $inSection = false; }
+            if ($inSection && str_starts_with($line, 'file=')) { $logFile = substr($line, 5); }
+        }
+    }
+
+    if (! file_exists($logFile)) {
+        return ['success' => true, 'output' => 'No log file found at ' . $logFile, 'log_file' => $logFile];
+    }
+
+    // Read last N lines efficiently
+    $cmd = ['tail', '-n', (string) $lines, $logFile];
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+
+    return ['success' => true, 'output' => trim($stdout), 'log_file' => $logFile];
+}
+
+// ─── Destination Routes (wrap CLI) ───
+
+function jbDestinationsList(array $params): array
+{
+    $r = jbExec(['destination', 'list', '--json']);
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+    }
+
+    $destinations = @json_decode($r['stdout'], true);
+    if (! is_array($destinations)) {
+        return ['success' => false, 'error' => 'Failed to parse destinations'];
+    }
+
+    // Read encryption key values from credential files
+    foreach ($destinations as &$dest) {
+        $pwdFile = $dest['credentials']['restic_password_file'] ?? '';
+        $dest['encryption_key'] = ($pwdFile !== '' && is_file($pwdFile))
+            ? trim((string) file_get_contents($pwdFile))
+            : '';
+    }
+    unset($dest);
+
+    return ['success' => true, 'destinations' => $destinations];
+}
+
+function jbDestinationsAdd(array $params): array
+{
+    $args = ['destination', 'add'];
+
+    if (! empty($params['no_encryption'])) {
+        $args[] = '--no-encryption';
+    }
+
+    // Validated fields with specific rules
+    $nameTypeFields = ['name', 'type', 'user', 'bucket', 'region', 'remote', 'account_name'];
+    foreach ($nameTypeFields as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && preg_match('/^[a-zA-Z0-9 _\-\.@]{1,128}$/', $val)) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . $val;
+        }
+    }
+
+    // Path/host/endpoint — allow more chars but reject shell metacharacters
+    $pathFields = ['path', 'host', 'endpoint', 'ssh_key'];
+    foreach ($pathFields as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && ! preg_match('/[;&|`$(){}]/', $val) && strlen($val) <= 512) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . $val;
+        }
+    }
+
+    // Port — numeric only
+    $port = $params['port'] ?? '';
+    if ($port !== '' && is_numeric($port) && (int) $port > 0 && (int) $port <= 65535) {
+        $args[] = '--port=' . (int) $port;
+    }
+
+    // Credentials — allow broad chars but reject shell metacharacters
+    $credFields = ['access_key', 'secret_key', 'account_id', 'account_key', 'ssh_password', 'restic_password'];
+    foreach ($credFields as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && ! preg_match('/[;&|`$()]/', $val) && strlen($val) <= 256) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . $val;
+        }
+    }
+
+    // Retention — numeric only
+    foreach (['keep_last', 'keep_daily', 'keep_weekly', 'keep_monthly'] as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && is_numeric($val)) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . (int) $val;
+        }
+    }
+
+    $r = jbExec($args);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDestinationsUpdate(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid destination ID'];
+    }
+
+    $args = ['destination', 'update', '--id=' . $id];
+
+    $nameTypeFields = ['name', 'type', 'user', 'bucket', 'region', 'remote', 'account_name'];
+    foreach ($nameTypeFields as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && preg_match('/^[a-zA-Z0-9 _\-\.@]{1,128}$/', $val)) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . $val;
+        }
+    }
+
+    $pathFields = ['path', 'host', 'endpoint', 'ssh_key'];
+    foreach ($pathFields as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && ! preg_match('/[;&|`$(){}]/', $val) && strlen($val) <= 512) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . $val;
+        }
+    }
+
+    $credFields = ['access_key', 'secret_key', 'account_id', 'account_key', 'ssh_password'];
+    foreach ($credFields as $key) {
+        $val = $params[$key] ?? '';
+        if ($val !== '' && ! preg_match('/[;&|`$()]/', $val) && strlen($val) <= 256) {
+            $args[] = '--' . str_replace('_', '-', $key) . '=' . $val;
+        }
+    }
+
+    $r = jbExec($args);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDestinationsRemove(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid destination ID'];
+    }
+
+    $r = jbExec(['destination', 'remove', '--id=' . $id]);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDestinationsTest(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid destination ID'];
+    }
+
+    $r = jbExec(['destination', 'test', '--id=' . $id], 30);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDestinationsInit(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid destination ID'];
+    }
+
+    $r = jbExec(['destination', 'init', '--id=' . $id], 60);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDestinationsSetDefault(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid destination ID'];
+    }
+
+    $r = jbExec(['destination', 'set-default', '--id=' . $id]);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDestinationsReinit(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid destination ID'];
+    }
+
+    $r = jbExec(['destination', 'reinit', '--id=' . $id, '--yes'], 120);
+
+    return [
+        'success' => $r['exitCode'] === 0,
+        'output' => $r['stdout'],
+        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+    ];
+}
+
+function jbDestinationsShow(array $params): array
+{
+    $id = $params['id'] ?? '';
+    if ($id === '' || ! preg_match('/^[a-z0-9-]+$/', $id)) {
+        return ['success' => false, 'error' => 'Invalid destination ID'];
+    }
+
+    $r = jbExec(['destination', 'show', '--id=' . $id]);
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+    }
+
+    $dest = @json_decode($r['stdout'], true);
+    if (! is_array($dest)) {
+        return ['success' => false, 'error' => 'Failed to parse destination'];
+    }
+
+    return ['success' => true, 'destination' => $dest];
+}
+
+function jbSshKeys(array $params): array
+{
+    $sshDir = '/root/.ssh';
+    $keys = [];
+
+    if (! is_dir($sshDir)) {
+        return ['success' => true, 'keys' => []];
+    }
+
+    $files = scandir($sshDir);
+    foreach ($files as $file) {
+        if ($file === '.' || $file === '..') {
+            continue;
+        }
+        $path = $sshDir . '/' . $file;
+        if (! is_file($path)) {
+            continue;
+        }
+
+        // Skip public keys, known_hosts, authorized_keys, config
+        if (preg_match('/\.(pub|old|bak)$/', $file)) {
+            continue;
+        }
+        if (in_array($file, ['known_hosts', 'authorized_keys', 'config'], true)) {
+            continue;
+        }
+
+        // Check if it looks like a private key
+        $firstLine = @file_get_contents($path, false, null, 0, 50);
+        if ($firstLine === false) {
+            continue;
+        }
+
+        $type = '';
+        if (str_contains($firstLine, 'OPENSSH PRIVATE KEY')) {
+            $type = 'openssh';
+        } elseif (str_contains($firstLine, 'RSA PRIVATE KEY')) {
+            $type = 'rsa';
+        } elseif (str_contains($firstLine, 'EC PRIVATE KEY')) {
+            $type = 'ecdsa';
+        } elseif (str_contains($firstLine, 'PRIVATE KEY')) {
+            $type = 'private key';
+        } else {
+            continue; // Not a private key
+        }
+
+        $keys[] = [
+            'name' => $file,
+            'path' => $path,
+            'type' => $type,
+        ];
+    }
+
+    return ['success' => true, 'keys' => $keys];
+}

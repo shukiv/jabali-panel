@@ -1,0 +1,5 @@
+/vendor/
+/auth.json
+/.mcp.json
+.env
+*.log
