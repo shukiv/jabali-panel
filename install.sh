@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# If piped via curl, redirect to get.sh
+REPO_URL="https://github.com/shukiv/jabali-backup.git"
+CLONE_DEST="/opt/jabali-backup"
+
+# If piped via curl (no source file), clone and re-exec from repo
 if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" ]]; then
-    exec bash <(curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/get.sh) "$@"
+    [[ $EUID -ne 0 ]] && echo "[✗] Run as root: curl ... | sudo bash" >&2 && exit 1
+    command -v git &>/dev/null || { apt-get update -qq && apt-get install -y -qq git; }
+
+    if [[ -d "$CLONE_DEST/.git" ]]; then
+        git -C "$CLONE_DEST" pull --ff-only
+        exec "$CLONE_DEST/install.sh" update
+    else
+        git clone "$REPO_URL" "$CLONE_DEST"
+        exec "$CLONE_DEST/install.sh" "${@:-install}"
+    fi
 fi
 
 JABALI_BACKUP_VERSION="0.1.0"

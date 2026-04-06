@@ -18,10 +18,10 @@ Discovers accounts from Jabali's database, collects all per-account data (files,
 <!-- AUTO-GENERATED:install-start -->
 ## Installation
 
-### One-line install
+### Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh | sudo bash
 ```
 
 ### Manual install
