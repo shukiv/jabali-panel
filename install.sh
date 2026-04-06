@@ -27,14 +27,12 @@ usage() {
 Usage: sudo ./install.sh [command]
 
 Commands:
-  install   Install jabali-backup (default)
-  update    Update CLI + libraries, preserve config & secrets
-  panel     Install the panel UI addon (runs install-panel.sh)
+  install   Install jabali-backup CLI + panel addon (default)
+  update    Update CLI + panel, preserve config & secrets
 
 Examples:
   sudo ./install.sh            # Fresh install
   sudo ./install.sh update     # Update existing installation
-  sudo ./install.sh panel      # Install panel addon
 EOF
     exit 0
 }
@@ -43,9 +41,9 @@ EOF
 
 CMD="${1:-install}"
 case "$CMD" in
-    install|update|panel) ;;
+    install|update) ;;
     -h|--help|help) usage ;;
-    *) fail "Unknown command: $CMD (use install, update, or panel)" ;;
+    *) fail "Unknown command: $CMD (use install or update)" ;;
 esac
 
 # ─── Pre-flight ───────────────────────────────────────
@@ -60,15 +58,6 @@ fi
 
 if [[ ! -f "$SCRIPT_DIR/bin/jabali-backup" ]]; then
     fail "Source files not found. Run from the jabali-backup project directory."
-fi
-
-# ─── Panel addon shortcut ─────────────────────────────
-
-if [[ "$CMD" == "panel" ]]; then
-    if [[ ! -f "$SCRIPT_DIR/install-panel.sh" ]]; then
-        fail "install-panel.sh not found"
-    fi
-    exec "$SCRIPT_DIR/install-panel.sh"
 fi
 
 # ─── Detect existing install & pull ───────────────────
@@ -258,6 +247,83 @@ ok "Log file: /var/log/jabali-backup.log"
 mkdir -p /var/cache/jabali-backup/restic
 ok "Cache dir: /var/cache/jabali-backup/restic/"
 
+# ─── Panel integration ────────────────────────────────
+
+JABALI_PATH="${JABALI_PATH:-/var/www/jabali}"
+PANEL_DIR="${SCRIPT_DIR}/panel"
+
+if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
+    section "Installing Panel Addon"
+
+    info "Jabali path: $JABALI_PATH"
+
+    # Agent routes
+    mkdir -p /etc/jabali/agent.d
+    cp "$PANEL_DIR/agent/jabali-backup.php" /etc/jabali/agent.d/jabali-backup.php
+    chmod 644 /etc/jabali/agent.d/jabali-backup.php
+    ok "Agent routes -> /etc/jabali/agent.d/jabali-backup.php"
+
+    # Admin Filament page
+    mkdir -p "$JABALI_PATH/app/Filament/Admin/Pages"
+    cp "$PANEL_DIR/filament/pages/Backups.php" "$JABALI_PATH/app/Filament/Admin/Pages/Backups.php"
+    ok "Admin page -> Backups.php"
+
+    # Admin Blade views
+    mkdir -p "$JABALI_PATH/resources/views/filament/admin/pages/partials"
+    cp "$PANEL_DIR/views/backups.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/backups.blade.php"
+    cp "$PANEL_DIR/views/partials/snapshot-browser-embed.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/snapshot-browser-embed.blade.php"
+    cp "$PANEL_DIR/views/partials/restore-file-badges.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/restore-file-badges.blade.php"
+    ok "Admin views -> backups.blade.php + partials"
+
+    # User Filament page
+    mkdir -p "$JABALI_PATH/app/Filament/Jabali/Pages"
+    cp "$PANEL_DIR/filament/pages/UserBackups.php" "$JABALI_PATH/app/Filament/Jabali/Pages/UserBackups.php"
+    ok "User page -> UserBackups.php"
+
+    # User Blade view
+    mkdir -p "$JABALI_PATH/resources/views/filament/jabali/pages"
+    cp "$PANEL_DIR/views/user/backups.blade.php" "$JABALI_PATH/resources/views/filament/jabali/pages/backups.blade.php"
+    ok "User view -> backups.blade.php"
+
+    # Backup addon classes
+    mkdir -p "$JABALI_PATH/app/Backup/Adapters"
+    cp "$PANEL_DIR/backup/Adapters/ResticSnapshotAdapter.php" "$JABALI_PATH/app/Backup/Adapters/ResticSnapshotAdapter.php"
+    cp "$PANEL_DIR/backup/BackupServiceProvider.php" "$JABALI_PATH/app/Backup/BackupServiceProvider.php"
+    ok "Backup classes -> ResticSnapshotAdapter, BackupServiceProvider"
+
+    # Snapshot browser page
+    cp "$PANEL_DIR/filament/pages/SnapshotBrowser.php" "$JABALI_PATH/app/Filament/Admin/Pages/SnapshotBrowser.php"
+    ok "Snapshot browser -> SnapshotBrowser.php"
+
+    # Download endpoint
+    cp "$PANEL_DIR/public/backup-download.php" "$JABALI_PATH/public/backup-download.php"
+    ok "Download endpoint -> backup-download.php"
+
+    # Register service provider
+    if ! grep -q 'BackupServiceProvider' "$JABALI_PATH/bootstrap/providers.php" 2>/dev/null; then
+        sed -i '/^];$/i\    App\\Backup\\BackupServiceProvider::class,' "$JABALI_PATH/bootstrap/providers.php"
+        ok "Registered BackupServiceProvider"
+    else
+        ok "BackupServiceProvider already registered"
+    fi
+
+    # Clear caches & restart
+    cd "$JABALI_PATH"
+    php artisan view:clear 2>/dev/null || true
+    php artisan filament:cache-components 2>/dev/null || true
+    ok "Caches cleared"
+
+    systemctl restart jabali-agent 2>/dev/null || true
+    systemctl restart php8.5-fpm 2>/dev/null || systemctl restart php8.4-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
+    ok "Services restarted (jabali-agent, php-fpm)"
+else
+    if [[ ! -f "$JABALI_PATH/artisan" ]]; then
+        section "Panel Addon"
+        info "Jabali panel not found at $JABALI_PATH — skipping panel install"
+        info "Set JABALI_PATH and re-run, or run: sudo ./install-panel.sh"
+    fi
+fi
+
 # ─── Done ─────────────────────────────────────────────
 
 if [[ "$IS_UPDATE" == true ]]; then
@@ -282,7 +348,5 @@ else
     echo "  3. Initialize:  jabali-backup init"
     echo "  4. Verify:      jabali-backup doctor && jabali-backup config test"
     echo "  5. Enable timer: systemctl enable --now jabali-backup.timer"
-    echo ""
-    info "Install the panel UI addon: sudo ./install.sh panel"
     echo ""
 fi
