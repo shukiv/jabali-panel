@@ -44,14 +44,12 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Attributes\Url;
-use Livewire\WithFileUploads;
 
 class ServerSettings extends Page implements HasActions, HasForms
 {
     use InteractsWithActions;
     use InteractsWithAgent;
     use InteractsWithForms;
-    use WithFileUploads;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
 
@@ -69,10 +67,10 @@ class ServerSettings extends Page implements HasActions, HasForms
     // Form data arrays
     public ?array $brandingData = [];
 
-    // Livewire file upload properties for branding logos
-    public $logoLightUpload = null;
+    // Branding logo file uploads (Filament FileUpload stores as arrays)
+    public ?array $logoLightUpload = [];
 
-    public $logoDarkUpload = null;
+    public ?array $logoDarkUpload = [];
 
     public ?string $currentLogoDark = null;
 
@@ -1033,56 +1031,28 @@ class ServerSettings extends Page implements HasActions, HasForms
         $service = app(ServerSettingsService::class);
         $service->saveBranding($data['panel_name']);
 
-        // Handle light logo upload
-        if (! empty($this->brandingLogo)) {
-            $this->uploadLogo(['logo' => $this->brandingLogo], 'custom_logo');
-        }
+        // Filament FileUpload stores paths as arrays
+        $this->saveUploadedLogo($this->logoLightUpload, 'custom_logo', 'currentLogo');
+        $this->saveUploadedLogo($this->logoDarkUpload, 'custom_logo_dark', 'currentLogoDark');
 
-        // Handle dark logo upload
-        if (! empty($this->brandingLogoDark)) {
-            $this->uploadLogo(['logo' => $this->brandingLogoDark], 'custom_logo_dark');
-        }
-
+        DnsSetting::clearCache();
         Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
     }
 
-    public function saveLogoLight(): void
+    private function saveUploadedLogo(?array $upload, string $settingKey, string $property): void
     {
-        $this->saveLivewireUpload($this->logoLightUpload, 'custom_logo', 'currentLogo');
-    }
-
-    public function saveLogoDark(): void
-    {
-        $this->saveLivewireUpload($this->logoDarkUpload, 'custom_logo_dark', 'currentLogoDark');
-    }
-
-    private function saveLivewireUpload($file, string $settingKey, string $property): void
-    {
-        if (! $file) {
-            Notification::make()->title(__('No file selected'))->warning()->send();
-
+        $path = $upload[0] ?? null;
+        if (! $path) {
             return;
         }
 
-        try {
-            $path = $file->store('branding', 'public');
-
-            // Delete old logo
-            if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
-                Storage::disk('public')->delete($this->{$property});
-            }
-
-            DnsSetting::set($settingKey, $path);
-            DnsSetting::clearCache();
-            $this->{$property} = $path;
-
-            // Reset the file input
-            $settingKey === 'custom_logo' ? $this->logoLightUpload = null : $this->logoDarkUpload = null;
-
-            Notification::make()->title(__('Logo uploaded'))->success()->send();
-        } catch (Exception $e) {
-            Notification::make()->title(__('Failed to upload logo'))->body(SafeError::message($e))->danger()->send();
+        // Delete old logo
+        if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
+            Storage::disk('public')->delete($this->{$property});
         }
+
+        DnsSetting::set($settingKey, $path);
+        $this->{$property} = $path;
     }
 
     public function saveTimezone(): void
@@ -1109,37 +1079,6 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         Notification::make()->title(__('Timezone updated to :tz', ['tz' => $timezone]))->success()->send();
-    }
-
-    public function uploadLogo(array $data, string $settingKey = 'custom_logo'): void
-    {
-        try {
-            $logo = $data['logo'] ?? null;
-
-            if (empty($logo)) {
-                return;
-            }
-
-            $path = is_array($logo) ? ($logo[0] ?? null) : $logo;
-
-            if ($path) {
-                $currentProperty = $settingKey === 'custom_logo_dark' ? 'currentLogoDark' : 'currentLogo';
-
-                // Delete old logo if exists
-                if ($this->{$currentProperty} && Storage::disk('public')->exists($this->{$currentProperty})) {
-                    Storage::disk('public')->delete($this->{$currentProperty});
-                }
-
-                DnsSetting::set($settingKey, $path);
-                DnsSetting::clearCache();
-                $this->{$currentProperty} = $path;
-
-                Notification::make()->title(__('Logo uploaded'))->success()->send();
-                $this->redirect(static::getUrl());
-            }
-        } catch (Exception $e) {
-            Notification::make()->title(__('Failed to upload logo'))->body(SafeError::message($e))->danger()->send();
-        }
     }
 
     public function removeLogo(): void
