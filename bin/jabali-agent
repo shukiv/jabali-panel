@@ -1703,7 +1703,7 @@ function createFpmPool(string $username, bool $reload = true): array
         }
     }
 
-    // Default PHP settings - can be overridden via admin settings
+    // Default PHP settings
     $memoryLimit = '512M';
     $uploadMaxFilesize = '64M';
     $postMaxSize = '64M';
@@ -1711,15 +1711,16 @@ function createFpmPool(string $username, bool $reload = true): array
     $maxInputTime = '300';
     $maxInputVars = '3000';
 
-    // Resource limits - configurable via admin settings
-    $pmMaxChildren = (int) ($params['pm_max_children'] ?? 5);
+    // Resource limits — defaults for new pools
+    $pmType = 'dynamic';
+    $pmMaxChildren = 5;
     $pmStartServers = max(1, (int) ($pmMaxChildren / 5));
     $pmMinSpareServers = max(1, (int) ($pmMaxChildren / 5));
     $pmMaxSpareServers = max(2, (int) ($pmMaxChildren / 2));
-    $pmMaxRequests = (int) ($params['pm_max_requests'] ?? 200);
-    $rlimitFiles = (int) ($params['rlimit_files'] ?? 1024);
-    $processPriority = (int) ($params['process_priority'] ?? 0);
-    $requestTerminateTimeout = (int) ($params['request_terminate_timeout'] ?? 300);
+    $pmMaxRequests = 200;
+    $rlimitFiles = 1024;
+    $processPriority = 0;
+    $requestTerminateTimeout = 300;
 
     $poolConfig = "[{$username}]
 user = {$username}

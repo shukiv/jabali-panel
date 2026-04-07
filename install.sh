@@ -4107,6 +4107,15 @@ with open(sys.argv[1], 'w') as f:
         done
     fi
 
+    # Fix FPM pool configs with empty pm= (bug: createFpmPool missed $pmType before v0.9.x)
+    for pool_conf in /etc/php/*/fpm/pool.d/*.conf; do
+        [[ -f "$pool_conf" ]] || continue
+        if grep -qE '^pm\s*=\s*$' "$pool_conf"; then
+            sed -i 's/^pm\s*=\s*$/pm = dynamic/' "$pool_conf"
+            info "Fixed empty pm= in $(basename "$pool_conf")"
+        fi
+    done
+
     # Restart services to pick up changes
     header "Restarting Services"
     if [[ "${JABALI_SKIP_AGENT_RESTART:-}" != "1" ]]; then
