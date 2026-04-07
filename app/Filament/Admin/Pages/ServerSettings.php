@@ -67,11 +67,6 @@ class ServerSettings extends Page implements HasActions, HasForms
     // Form data arrays
     public ?array $brandingData = [];
 
-    // Branding logo file uploads (Filament FileUpload — untyped for TemporaryUploadedFile compat)
-    public $logoLightUpload = null;
-
-    public $logoDarkUpload = null;
-
     public ?string $currentLogoDark = null;
 
     public ?array $hostnameData = [];
@@ -277,7 +272,6 @@ class ServerSettings extends Page implements HasActions, HasForms
     public function settingsForm(Schema $schema): Schema
     {
         return $schema
-            ->statePath('')
             ->schema([
                 Tabs::make(__('Server Settings Sections'))
                     ->contained()
@@ -321,27 +315,14 @@ class ServerSettings extends Page implements HasActions, HasForms
                         ->label(__('Control Panel Name'))
                         ->placeholder(__('Jabali'))
                         ->helperText(__('Appears in browser title and navigation')),
-                    Grid::make(2)
-                        ->schema([
-                            FileUpload::make('logoLightUpload')
-                                ->label(__('Light Logo'))
-                                ->image()
-                                ->imagePreviewHeight('80')
-                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                ->maxSize(2048)
-                                ->disk('public')
-                                ->directory('branding')
-                                ->visibility('public'),
-                            FileUpload::make('logoDarkUpload')
-                                ->label(__('Dark Logo'))
-                                ->image()
-                                ->imagePreviewHeight('80')
-                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                ->maxSize(2048)
-                                ->disk('public')
-                                ->directory('branding')
-                                ->visibility('public'),
-                        ]),
+                    Placeholder::make('logoInfo')
+                        ->label(__('Logos'))
+                        ->content(fn (): string => $this->currentLogo || $this->currentLogoDark
+                            ? __('Light: :light | Dark: :dark', [
+                                'light' => $this->currentLogo ? basename($this->currentLogo) : __('none'),
+                                'dark' => $this->currentLogoDark ? basename($this->currentLogoDark) : __('none'),
+                            ])
+                            : __('No logos uploaded. Use the file browser to upload logos to storage/branding/.')),
                     Actions::make([
                         FormAction::make('saveBranding')
                             ->label(__('Save Branding'))
@@ -1031,23 +1012,6 @@ class ServerSettings extends Page implements HasActions, HasForms
 
         $service = app(ServerSettingsService::class);
         $service->saveBranding($data['panel_name']);
-
-        // Filament FileUpload stores files automatically — save paths to settings
-        if ($this->logoLightUpload) {
-            if ($this->currentLogo && Storage::disk('public')->exists($this->currentLogo)) {
-                Storage::disk('public')->delete($this->currentLogo);
-            }
-            DnsSetting::set('custom_logo', $this->logoLightUpload);
-            $this->currentLogo = $this->logoLightUpload;
-        }
-
-        if ($this->logoDarkUpload) {
-            if ($this->currentLogoDark && Storage::disk('public')->exists($this->currentLogoDark)) {
-                Storage::disk('public')->delete($this->currentLogoDark);
-            }
-            DnsSetting::set('custom_logo_dark', $this->logoDarkUpload);
-            $this->currentLogoDark = $this->logoDarkUpload;
-        }
 
         DnsSetting::clearCache();
         Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();

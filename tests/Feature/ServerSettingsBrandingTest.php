@@ -48,7 +48,6 @@ class ServerSettingsBrandingTest extends TestCase
         $this->assertStringContainsString('Panel Branding', $html);
         $this->assertStringContainsString('Control Panel Name', $html);
         $this->assertStringContainsString('Save Branding', $html);
-        $this->assertStringContainsString('Light Logo', $html);
-        $this->assertStringContainsString('Dark Logo', $html);
+        $this->assertStringContainsString('Logos', $html);
     }
 }
