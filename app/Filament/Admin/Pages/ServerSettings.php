@@ -44,12 +44,14 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Attributes\Url;
+use Livewire\WithFileUploads;
 
 class ServerSettings extends Page implements HasActions, HasForms
 {
     use InteractsWithActions;
     use InteractsWithAgent;
     use InteractsWithForms;
+    use WithFileUploads;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
 
@@ -66,6 +68,11 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     // Form data arrays
     public ?array $brandingData = [];
+
+    // Branding logo file uploads (Livewire TemporaryUploadedFile)
+    public $logoLightUpload = null;
+
+    public $logoDarkUpload = null;
 
     public ?string $currentLogoDark = null;
 
@@ -310,19 +317,12 @@ class ServerSettings extends Page implements HasActions, HasForms
         return [
             Section::make(__('Panel Branding'))
                 ->icon('heroicon-o-paint-brush')
+                ->description(__('Logo uploads are managed below this section.'))
                 ->schema([
                     TextInput::make('brandingData.panel_name')
                         ->label(__('Control Panel Name'))
                         ->placeholder(__('Jabali'))
                         ->helperText(__('Appears in browser title and navigation')),
-                    Placeholder::make('logoInfo')
-                        ->label(__('Logos'))
-                        ->content(fn (): string => $this->currentLogo || $this->currentLogoDark
-                            ? __('Light: :light | Dark: :dark', [
-                                'light' => $this->currentLogo ? basename($this->currentLogo) : __('none'),
-                                'dark' => $this->currentLogoDark ? basename($this->currentLogoDark) : __('none'),
-                            ])
-                            : __('No logos uploaded. Use the file browser to upload logos to storage/branding/.')),
                     Actions::make([
                         FormAction::make('saveBranding')
                             ->label(__('Save Branding'))
@@ -1013,8 +1013,44 @@ class ServerSettings extends Page implements HasActions, HasForms
         $service = app(ServerSettingsService::class);
         $service->saveBranding($data['panel_name']);
 
-        DnsSetting::clearCache();
-        Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
+        Notification::make()->title(__('Panel name updated'))->body(__('Refresh to see changes.'))->success()->send();
+    }
+
+    public function saveLogoLight(): void
+    {
+        $this->saveLivewireUpload($this->logoLightUpload, 'custom_logo', 'currentLogo');
+    }
+
+    public function saveLogoDark(): void
+    {
+        $this->saveLivewireUpload($this->logoDarkUpload, 'custom_logo_dark', 'currentLogoDark');
+    }
+
+    private function saveLivewireUpload($file, string $settingKey, string $property): void
+    {
+        if (! $file) {
+            Notification::make()->title(__('No file selected'))->warning()->send();
+
+            return;
+        }
+
+        try {
+            $path = $file->store('branding', 'public');
+
+            if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
+                Storage::disk('public')->delete($this->{$property});
+            }
+
+            DnsSetting::set($settingKey, $path);
+            DnsSetting::clearCache();
+            $this->{$property} = $path;
+
+            $settingKey === 'custom_logo' ? $this->logoLightUpload = null : $this->logoDarkUpload = null;
+
+            Notification::make()->title(__('Logo uploaded'))->success()->send();
+        } catch (Exception $e) {
+            Notification::make()->title(__('Failed to upload logo'))->body(SafeError::message($e))->danger()->send();
+        }
     }
 
     public function saveTimezone(): void
