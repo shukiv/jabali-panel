@@ -503,7 +503,8 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         try {
                             $snaps = app(AgentClient::class)->send('jb.list_snapshots', ['username' => $record['username']]);
                             foreach ($snaps['snapshots'] ?? [] as $snap) {
-                                $snapshotOptions[$snap['id']] = ($snap['date'] ?? $snap['time'] ?? $snap['id']);
+                                $label = trim(($snap['date'] ?? '') . ' ' . ($snap['time'] ?? ''));
+                                $snapshotOptions[$snap['id']] = $label ?: $snap['id'];
                             }
                         } catch (\Throwable) {
                         }
@@ -763,7 +764,8 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                 try {
                                     $result = app(AgentClient::class)->send('jb.list_snapshots', ['username' => $record['username']]);
                                     foreach ($result['snapshots'] ?? [] as $snap) {
-                                        $options[$snap['id']] = ($snap['date'] ?? $snap['time'] ?? $snap['id']);
+                                        $label = trim(($snap['date'] ?? '') . ' ' . ($snap['time'] ?? ''));
+                                        $options[$snap['id']] = $label ?: $snap['id'];
                                     }
                                 } catch (\Throwable) {
                                 }
