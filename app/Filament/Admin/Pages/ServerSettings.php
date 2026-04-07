@@ -1978,9 +1978,11 @@ class ServerSettings extends Page implements HasActions, HasForms
                     ->success()
                     ->send();
             } else {
+                $error = $result->get('error', __('Unknown error'));
+                $output = $result->get('output');
                 Notification::make()
                     ->title(__('Operation failed'))
-                    ->body($result->get('error', __('Unknown error')))
+                    ->body($output ? "{$error}\n{$output}" : $error)
                     ->danger()
                     ->send();
             }

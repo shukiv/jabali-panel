@@ -129,26 +129,55 @@ class ServerSettingsAddonsTest extends TestCase
     public function test_manage_addon_install(): void
     {
         $mock = Mockery::mock(AgentClient::class);
-        // First call: addon.status for tab load
         $mock->shouldReceive('call')
-            ->with('addon.status', [])
-            ->andReturn(AgentResult::fromResponse([
-                'success' => true,
-                'addons' => [],
-            ]));
-        // Second call: addon.install
+            ->withAnyArgs()
+            ->andReturn(AgentResult::fromResponse(['success' => true, 'addons' => []]))
+            ->byDefault();
         $mock->shouldReceive('call')
             ->with('addon.install', ['addon' => 'jabali-backup'])
-            ->andReturn(AgentResult::fromResponse([
-                'success' => true,
-            ]));
-        // Third call: addon.status reload after install
+            ->once()
+            ->andReturn(AgentResult::fromResponse(['success' => true]));
+        $this->app->instance(AgentClient::class, $mock);
+
+        Livewire::actingAs($this->admin, 'admin')
+            ->test(ServerSettings::class, ['activeTab' => 'addons'])
+            ->call('manageAddon', 'jabali-backup', 'install')
+            ->assertNotified();
+    }
+
+    public function test_manage_addon_install_failure_shows_error(): void
+    {
+        $mock = Mockery::mock(AgentClient::class);
         $mock->shouldReceive('call')
-            ->with('addon.status', [])
+            ->withAnyArgs()
+            ->andReturn(AgentResult::fromResponse(['success' => true, 'addons' => []]))
+            ->byDefault();
+        $mock->shouldReceive('call')
+            ->with('addon.install', ['addon' => 'jabali-backup'])
+            ->once()
             ->andReturn(AgentResult::fromResponse([
-                'success' => true,
-                'addons' => [],
+                'success' => false,
+                'error' => 'Install failed (exit 1)',
             ]));
+        $this->app->instance(AgentClient::class, $mock);
+
+        Livewire::actingAs($this->admin, 'admin')
+            ->test(ServerSettings::class, ['activeTab' => 'addons'])
+            ->call('manageAddon', 'jabali-backup', 'install')
+            ->assertNotified();
+    }
+
+    public function test_manage_addon_agent_exception_shows_error(): void
+    {
+        $mock = Mockery::mock(AgentClient::class);
+        $mock->shouldReceive('call')
+            ->withAnyArgs()
+            ->andReturn(AgentResult::fromResponse(['success' => true, 'addons' => []]))
+            ->byDefault();
+        $mock->shouldReceive('call')
+            ->with('addon.install', ['addon' => 'jabali-backup'])
+            ->once()
+            ->andThrow(new \Exception('Connection timed out'));
         $this->app->instance(AgentClient::class, $mock);
 
         Livewire::actingAs($this->admin, 'admin')
