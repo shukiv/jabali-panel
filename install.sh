@@ -103,15 +103,7 @@ if [[ "$CMD" == "uninstall" ]]; then
         ok "Unregistered BackupServiceProvider"
     fi
 
-    # 2. Clear caches while files still exist (prevents stale references)
-    if [[ -f "$JABALI_PATH/artisan" ]]; then
-        cd "$JABALI_PATH"
-        php artisan optimize:clear 2>/dev/null || true
-        php artisan filament:cache-components 2>/dev/null || true
-        ok "Panel caches cleared"
-    fi
-
-    # 3. Remove addon files
+    # 2. Remove addon files
     for f in \
         /etc/jabali/agent.d/jabali-backup.php \
         "$JABALI_PATH/app/Filament/Admin/Pages/Backups.php" \
@@ -131,12 +123,25 @@ if [[ "$CMD" == "uninstall" ]]; then
         fi
     done
 
-    # 4. Clear caches again after files are gone (route cache, Filament component cache)
+    # 3. Delete Laravel + Filament cache files DIRECTLY (no PHP boot needed)
+    #    Artisan commands can't run here — booting Laravel loads the stale Filament
+    #    component cache which tries to autoload the just-deleted classes → crash.
+    #    Deleting the cache files bypasses this chicken-and-egg problem.
+    if [[ -d "$JABALI_PATH/bootstrap/cache" ]]; then
+        rm -f "$JABALI_PATH/bootstrap/cache/routes-v7.php" 2>/dev/null || true
+        rm -f "$JABALI_PATH/bootstrap/cache/config.php" 2>/dev/null || true
+        rm -f "$JABALI_PATH/bootstrap/cache/services.php" 2>/dev/null || true
+        rm -f "$JABALI_PATH/bootstrap/cache/packages.php" 2>/dev/null || true
+        rm -f "$JABALI_PATH/bootstrap/cache/events.php" 2>/dev/null || true
+        rm -rf "$JABALI_PATH/bootstrap/cache/filament" 2>/dev/null || true
+        ok "Deleted bootstrap cache files"
+    fi
+
+    # 4. Now artisan can boot cleanly — rebuild caches without backup pages
     if [[ -f "$JABALI_PATH/artisan" ]]; then
         cd "$JABALI_PATH"
-        php artisan route:clear 2>/dev/null || true
         php artisan optimize:clear 2>/dev/null || true
-        php artisan filament:cache-components 2>/dev/null || true
+        php artisan route:clear 2>/dev/null || true
         ok "Caches rebuilt without backup pages"
 
         systemctl restart jabali-agent 2>/dev/null || true
@@ -338,7 +343,7 @@ _jabali_backup() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="run restore ls list init check forget destination schedule config doctor version"
+    commands="run restore download ls list init check forget destination schedule config doctor version"
 
     case "$prev" in
         jabali-backup)
