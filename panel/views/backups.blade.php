@@ -92,6 +92,9 @@
                                 @foreach($job['events'] ?? [] as $event)
                                     <div class="flex items-start gap-2 text-sm">
                                         @switch($event['level'] ?? 'info')
+                                            @case('heading')
+                                                <span class="font-semibold text-gray-900 dark:text-gray-100 mt-2 mb-0.5">{{ $event['text'] }}</span>
+                                                @break
                                             @case('success')
                                                 <span class="text-success-500 shrink-0">&#x2713;</span>
                                                 <span class="text-gray-700 dark:text-gray-300">{{ $event['text'] }}</span>

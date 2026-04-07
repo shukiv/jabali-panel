@@ -1528,12 +1528,14 @@ function jbLogs(array $params): array
             if (! in_array($currentAccount, $currentJob['accounts'], true)) {
                 $currentJob['accounts'][] = $currentAccount;
             }
+            $currentJob['events'][] = ['level' => 'heading', 'text' => $currentAccount];
         }
         if (preg_match('/═══ Restoring account: (\S+)/', $line, $m)) {
             $currentAccount = $m[1];
             if (! in_array($currentAccount, $currentJob['accounts'], true)) {
                 $currentJob['accounts'][] = $currentAccount;
             }
+            $currentJob['events'][] = ['level' => 'heading', 'text' => $currentAccount];
         }
         if (preg_match('/Resolved latest snapshot for (\S+): (\S+)/', $line, $m)) {
             if (! in_array($m[1], $currentJob['accounts'], true)) {
@@ -1674,6 +1676,10 @@ function jbLogTranslateEvent(array &$job, string $line): void
         $job['events'][] = ['level' => 'warn', 'text' => $msg];
     } elseif (preg_match('/═══ Backup FAILED for (\S+)/', $line, $m)) {
         $job['events'][] = ['level' => 'error', 'text' => 'Backup failed for ' . $m[1]];
+    } elseif (preg_match('/═══ Backup complete for (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Backup complete for ' . $m[1]];
+    } elseif (preg_match('/═══ Restore complete for (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Restore complete for ' . $m[1]];
     }
 }
 
