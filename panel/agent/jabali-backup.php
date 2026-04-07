@@ -1464,6 +1464,14 @@ function jbDestinationsList(array $params): array
 
 function jbDestinationsAdd(array $params): array
 {
+    // Pre-validate required fields before calling CLI
+    if (empty($params['name'])) {
+        return ['success' => false, 'error' => 'Name is required'];
+    }
+    if (empty($params['type'])) {
+        return ['success' => false, 'error' => 'Type is required'];
+    }
+
     $args = ['destination', 'add'];
 
     if (! empty($params['no_encryption'])) {
@@ -1513,10 +1521,21 @@ function jbDestinationsAdd(array $params): array
 
     $r = jbExec($args);
 
+    $error = '';
+    if (($r['exitCode'] ?? -1) !== 0) {
+        $error = $r['stderr'] ?? '';
+        if ($error === '') {
+            $error = $r['stdout'] ?? '';
+        }
+        if ($error === '') {
+            $error = $r['error'] ?? 'CLI exited with code ' . ($r['exitCode'] ?? 'unknown');
+        }
+    }
+
     return [
-        'success' => $r['exitCode'] === 0,
-        'output' => $r['stdout'],
-        'error' => $r['exitCode'] !== 0 ? ($r['stderr'] ?: $r['stdout']) : '',
+        'success' => ($r['exitCode'] ?? -1) === 0,
+        'output' => $r['stdout'] ?? '',
+        'error' => $error,
     ];
 }
 
