@@ -34,7 +34,7 @@ class ServerSettingsBrandingTest extends TestCase
     {
         Livewire::actingAs($this->admin, 'admin')
             ->test(ServerSettings::class)
-            ->set('brandingData.panel_name', 'Test Panel')
+            ->set('data.brandingData.panel_name', 'Test Panel')
             ->call('saveBranding')
             ->assertNotified();
     }
