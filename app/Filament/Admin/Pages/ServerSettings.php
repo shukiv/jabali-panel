@@ -165,7 +165,7 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         // Fill form via Filament's statePath('data')
-        $this->settingsForm->fill([
+        $this->form->fill([
             'brandingData' => [
                 'panel_name' => $settings['panel_name'] ?? 'Jabali',
                 'logoLight' => $this->currentLogo,
@@ -239,7 +239,7 @@ class ServerSettings extends Page implements HasActions, HasForms
         ]);
     }
 
-    public function settingsForm(Schema $schema): Schema
+    public function form(Schema $schema): Schema
     {
         return $schema
             ->statePath('data')
@@ -520,7 +520,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             'resolver3' => $resolvers[2] ?? '',
         ]);
 
-        $form = $this->getForm('settingsForm');
+        $form = $this->getForm('form');
         if ($form) {
             $state = $form->getState();
             $state['resolversData'] = $this->data['resolversData'];
@@ -980,7 +980,7 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function getForms(): array
     {
         return [
-            'settingsForm',
+            'form',
         ];
     }
 
