@@ -9,6 +9,12 @@
 #
 # Falls back to the Stalwart REST API if stalwart-cli is not available.
 # Config: [stalwart] section in config.conf
+#
+# Relationship with email collector:
+#   The email collector handles Jabali DB metadata (domains, mailboxes,
+#   forwarders, autoresponders, shares). This collector handles mail content
+#   and JMAP state. When both are enabled, the email collector skips maildir
+#   paths to avoid duplicating mail content.
 
 collect_stalwart() {
     local user_id="$1" staging_dir="$2"
@@ -16,6 +22,12 @@ collect_stalwart() {
 
     # Check if Stalwart backup is enabled
     [[ "$CFG_STALWART_ENABLED" != "true" ]] && return 0
+
+    # Verify Stalwart is reachable before exporting
+    if ! _stalwart_ping; then
+        log_error "stalwart: Cannot reach Stalwart at ${CFG_STALWART_URL} — skipping"
+        return 1
+    fi
 
     # Discover mailboxes for this user to get Stalwart account names
     local mailboxes
@@ -34,6 +46,12 @@ collect_stalwart() {
         [[ -n "${exported_accounts[$account]:-}" ]] && continue
         exported_accounts[$account]=1
 
+        # Dry-run: just log what would be exported
+        if [[ "${JABALI_DRY_RUN:-0}" -eq 1 ]]; then
+            log_info "stalwart: Would export account $account (JMAP export — replaces maildir)"
+            continue
+        fi
+
         local account_dir="${stalwart_dir}/${account}"
         mkdir -p "$account_dir"
 
@@ -48,7 +66,19 @@ collect_stalwart() {
     done <<< "$mailboxes"
 
     # Export Stalwart principal metadata (domains, groups)
-    _stalwart_export_principals "$stalwart_dir"
+    if [[ "${JABALI_DRY_RUN:-0}" -ne 1 ]]; then
+        _stalwart_export_principals "$stalwart_dir"
+    fi
+}
+
+# Verify Stalwart is reachable
+_stalwart_ping() {
+    [[ -z "$CFG_STALWART_URL" ]] && return 1
+    [[ -z "$CFG_STALWART_ADMIN_TOKEN" ]] && return 1
+
+    curl -sfS -H "Authorization: Bearer ${CFG_STALWART_ADMIN_TOKEN}" \
+        -H 'Accept: application/json' \
+        "${CFG_STALWART_URL%/}/api/principal?limit=1" >/dev/null 2>&1
 }
 
 # Export via stalwart-cli (preferred — captures everything)

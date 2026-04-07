@@ -64,18 +64,25 @@ EOJSON
   "system_gid": ${sys_gid:-0}
 }
 EOJSON
-        # Collect mail storage path
-        local maildir="${CFG_STALWART_DATA}/${domain}/${local_part}"
-        if [[ -d "$maildir" ]]; then
-            mail_paths+=("$maildir")
+        # Collect mail storage path (skip when stalwart collector handles mail content)
+        if [[ "$CFG_STALWART_ENABLED" != "true" ]]; then
+            local maildir="${CFG_STALWART_DATA}/${domain}/${local_part}"
+            if [[ -d "$maildir" ]]; then
+                mail_paths+=("$maildir")
+            fi
         fi
         log_info "email: Exported mailbox ${local_part}@${domain}"
     done <<< "$mailboxes"
 
     # Print mail storage paths for restic (one per line)
-    for p in "${mail_paths[@]}"; do
-        echo "$p"
-    done
+    # Empty when stalwart collector is enabled (it handles mail content via JMAP export)
+    if [[ ${#mail_paths[@]} -gt 0 ]]; then
+        for p in "${mail_paths[@]}"; do
+            echo "$p"
+        done
+    elif [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
+        log_info "email: Skipping maildir paths (handled by stalwart collector)"
+    fi
 
     # Forwarders
     local fwds

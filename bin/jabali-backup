@@ -194,6 +194,20 @@ cmd_doctor() {
             done
     fi
 
+    # Stalwart
+    cfg_load 2>/dev/null
+    if [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
+        echo ""
+        echo "Stalwart:"
+        printf "  %-20s ✓ %s\n" "enabled" "$CFG_STALWART_URL"
+        if [[ -n "$CFG_STALWART_ADMIN_TOKEN" ]]; then
+            printf "  %-20s ✓ loaded\n" "admin token"
+        else
+            printf "  %-20s ✗ missing or empty\n" "admin token"
+            ok=1
+        fi
+    fi
+
     echo "────────────────────────────────────────"
     if [[ "$ok" -eq 0 ]]; then
         echo "All required dependencies satisfied."
@@ -230,6 +244,18 @@ cmd_config() {
                 echo "  Repository: $RESTIC_REPOSITORY"
             fi
             echo "  APP_KEY:    $(if [[ -n "$CFG_APP_KEY" ]]; then echo "✓ loaded"; else echo "✗ not available"; fi)"
+            # Test Stalwart connection
+            if [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
+                if [[ -z "$CFG_STALWART_ADMIN_TOKEN" ]]; then
+                    echo "  Stalwart:   ✗ admin token not configured"
+                elif curl -sfS -H "Authorization: Bearer ${CFG_STALWART_ADMIN_TOKEN}" \
+                    -H 'Accept: application/json' \
+                    "${CFG_STALWART_URL%/}/api/principal?limit=1" >/dev/null 2>&1; then
+                    echo "  Stalwart:   ✓ connected (${CFG_STALWART_URL})"
+                else
+                    echo "  Stalwart:   ✗ connection failed (${CFG_STALWART_URL})"
+                fi
+            fi
             ;;
         show)
             echo "Active configuration ($JABALI_BACKUP_CONFIG):"
@@ -505,6 +531,11 @@ cmd_run() {
             _should_run php       && echo "  php:      pool config"
             _should_run wordpress && echo "  wordpress: (scan at runtime)"
             _should_run cron      && echo "  cron:     $(discover_cron_jobs "$user_id" | wc -l) jobs"
+            if _should_run stalwart && [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
+                local _mb_count
+                _mb_count=$(discover_mailboxes "$user_id" | wc -l)
+                echo "  stalwart: $_mb_count account(s) (JMAP export — replaces maildir)"
+            fi
             _should_run metadata  && echo "  metadata: account record"
             continue
         fi

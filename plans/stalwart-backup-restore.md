@@ -2,7 +2,7 @@
 
 **Objective:** Complete the Stalwart mail server backup and restore integration — from the initial scaffolding (done) to production-ready with validation, error handling, panel UI, and cross-server migration support.
 
-**Status:** Steps 1–2 are done. Steps 3–9 remain.
+**Status:** Steps 1–5 are done. Steps 6–9 remain.
 
 ---
 
@@ -55,7 +55,7 @@ Added `[stalwart]` config section, wired collector/restorer into `cmd_run`/`cmd_
 
 ---
 
-## Step 3: Stalwart Doctor & Config Validation
+## Step 3: Stalwart Doctor & Config Validation ✅ DONE
 
 **Goal:** `jabali-backup doctor` and `jabali-backup config test` validate Stalwart connectivity when enabled.
 
@@ -99,7 +99,7 @@ sudo jabali-backup config test  # no Stalwart section
 
 ---
 
-## Step 4: Fix Collector & Restorer Bugs
+## Step 4: Fix Collector & Restorer Bugs ✅ DONE
 
 **Goal:** Fix the bugs identified in the gap analysis.
 
@@ -142,7 +142,7 @@ sudo jabali-backup restore alice --only=stalwart --dry-run
 
 ---
 
-## Step 5: Email vs Stalwart Collector Deduplication
+## Step 5: Email vs Stalwart Collector Deduplication ✅ DONE
 
 **Goal:** Prevent backing up the same mail data twice — once via `email` (Jabali DB + maildir paths) and again via `stalwart` (JMAP export).
 

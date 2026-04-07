@@ -2,8 +2,13 @@
 # Restorer: Stalwart mail server account import via stalwart-cli
 #
 # Imports JMAP account data exported by the stalwart collector.
-# Uses `stalwart-cli import messages` for Maildir/mbox data, and
-# the REST API for principal recreation.
+# Uses `stalwart-cli import account` for JMAP data, and the REST API
+# for principal creation/updates.
+#
+# Force behavior:
+#   --force applies to principal recreation (update existing principal).
+#   JMAP import via stalwart-cli is additive — it doesn't delete existing
+#   emails, so --force is not needed for message import.
 
 restore_stalwart() {
     local extract_dir="$1" username="$2" user_id="$3" force="${4:-0}"
@@ -11,9 +16,6 @@ restore_stalwart() {
 
     [[ ! -d "$staging" ]] && return 0
     [[ "$CFG_STALWART_ENABLED" != "true" ]] && { log_warn "restore/stalwart: Stalwart backup not enabled in config"; return 0; }
-
-    local base_url="${CFG_STALWART_URL%/}"
-    local auth_header="Authorization: Bearer ${CFG_STALWART_ADMIN_TOKEN}"
 
     # Restore each account
     for account_dir in "${staging}"/*/; do
@@ -37,11 +39,12 @@ restore_stalwart() {
 }
 
 # Check if the export directory contains CLI-exported JMAP data
+# stalwart-cli export produces JSON files (mailboxes, emails, sieve, etc.)
 _stalwart_has_cli_export() {
     local dir="$1"
-    # stalwart-cli export creates JSON files for mailboxes, emails, etc.
+    # Look for the specific files stalwart-cli export creates
     [[ -f "${dir}/mailboxes.json" ]] || [[ -f "${dir}/emails.json" ]] || \
-        compgen -G "${dir}/*.json" > /dev/null 2>&1
+        [[ -f "${dir}/sieve.json" ]] || [[ -f "${dir}/identities.json" ]]
 }
 
 # Import via stalwart-cli
@@ -59,7 +62,8 @@ _stalwart_import_cli() {
         cli_args+=(-c "$CFG_STALWART_ADMIN_TOKEN")
     fi
 
-    # stalwart-cli import expects the same structure as export
+    # stalwart-cli import account <ACCOUNT> <PATH>
+    # Imports the same structure produced by export account
     stalwart-cli "${cli_args[@]}" import account "$account" "$source_dir" 2>/dev/null || {
         log_warn "restore/stalwart: CLI import failed for $account"
         return 1
