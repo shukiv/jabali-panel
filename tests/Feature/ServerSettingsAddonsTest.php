@@ -80,6 +80,52 @@ class ServerSettingsAddonsTest extends TestCase
             ->assertOk();
     }
 
+    public function test_uninstall_button_renders_with_wire_click(): void
+    {
+        $this->mockAgentAddonStatus([
+            'jabali-backup' => [
+                'id' => 'jabali-backup',
+                'name' => 'Jabali Backup',
+                'description' => 'Restic-based backup',
+                'installed' => true,
+                'version' => '1.0.0',
+                'service_active' => null,
+            ],
+        ]);
+
+        $html = Livewire::actingAs($this->admin, 'admin')
+            ->test(ServerSettings::class, ['activeTab' => 'addons'])
+            ->html();
+
+        // Verify wire:click is present (may be HTML-encoded)
+        $this->assertTrue(
+            str_contains($html, "manageAddon('jabali-backup', 'uninstall')") ||
+            str_contains($html, 'manageAddon(&#039;jabali-backup&#039;, &#039;uninstall&#039;)') ||
+            str_contains($html, 'manageAddon(&apos;jabali-backup&apos;, &apos;uninstall&apos;)'),
+            'Uninstall wire:click not found in HTML. Snippet: '.substr($html, strpos($html, 'Uninstall') ?: 0, 500)
+        );
+        $this->assertStringContainsString('Uninstall', $html);
+    }
+
+    public function test_manage_addon_uninstall(): void
+    {
+        $mock = Mockery::mock(AgentClient::class);
+        $mock->shouldReceive('call')
+            ->withAnyArgs()
+            ->andReturn(AgentResult::fromResponse(['success' => true, 'addons' => []]))
+            ->byDefault();
+        $mock->shouldReceive('call')
+            ->with('addon.uninstall', ['addon' => 'jabali-backup'])
+            ->once()
+            ->andReturn(AgentResult::fromResponse(['success' => true]));
+        $this->app->instance(AgentClient::class, $mock);
+
+        Livewire::actingAs($this->admin, 'admin')
+            ->test(ServerSettings::class, ['activeTab' => 'addons'])
+            ->call('manageAddon', 'jabali-backup', 'uninstall')
+            ->assertNotified();
+    }
+
     public function test_manage_addon_install(): void
     {
         $mock = Mockery::mock(AgentClient::class);
