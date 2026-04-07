@@ -61,6 +61,7 @@ COMMANDS:
     schedule            Manage backup schedule
     config              Validate configuration
     doctor              Check dependencies
+    update              Update jabali-backup to latest version
     version             Show version
 
 GLOBAL OPTIONS:
@@ -103,6 +104,29 @@ EOF
 
 cmd_version() {
     echo "jabali-backup v${JABALI_BACKUP_VERSION}"
+}
+
+cmd_update() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "Update requires root. Run: sudo jabali-backup update" >&2
+        exit 1
+    fi
+
+    # Find the source repo (install.sh lives there)
+    local repo=""
+    if [[ -f /opt/jabali-backup/install.sh ]]; then
+        repo="/opt/jabali-backup"
+    elif [[ -f "${SCRIPT_DIR}/../install.sh" ]]; then
+        repo="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    fi
+
+    if [[ -z "$repo" ]]; then
+        echo "Source repo not found. Re-install with:" >&2
+        echo "  curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh | sudo bash" >&2
+        exit 1
+    fi
+
+    exec "$repo/install.sh" update
 }
 
 cmd_doctor() {
@@ -2575,6 +2599,7 @@ main() {
         schedule) cmd_schedule "$@" ;;
         config)   cmd_config "$@" ;;
         doctor)   cmd_doctor ;;
+        update)   cmd_update ;;
         version)  cmd_version ;;
         -h|--help|help|"")
                   usage ;;

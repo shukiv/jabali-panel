@@ -344,7 +344,7 @@ _jabali_backup() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="run restore download ls list init check forget destination schedule config doctor version"
+    commands="run restore download ls list init check forget destination schedule config doctor update version"
 
     case "$prev" in
         jabali-backup)
