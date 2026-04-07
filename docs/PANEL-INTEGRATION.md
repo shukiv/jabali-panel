@@ -12,14 +12,18 @@ Browser → Filament Page (PHP) → AgentClient → Unix Socket → jabali-agent
 
 The panel runs as `www-data`. It cannot run `jabali-backup` directly (needs root). All privileged operations go through the **agent** — a PHP daemon running as root on a Unix socket at `/var/run/jabali/agent.sock`.
 
-### Key files you'll touch
+### Key files installed by the addon
 
 | File | Purpose |
 |------|---------|
+| `/etc/jabali/agent.d/jabali-backup.php` | Agent RPC routes (addon, not patching core agent) |
 | `app/Filament/Admin/Pages/Backups.php` | Admin backup page |
-| `app/Filament/Jabali/Pages/Backups.php` | User backup page |
-| `bin/jabali-agent` | Add RPC routes that shell out to `jabali-backup` |
-| `app/Services/Agent/AgentClient.php` | How the panel talks to the agent |
+| `app/Filament/Admin/Pages/SnapshotBrowser.php` | Admin snapshot file browser |
+| `app/Filament/Jabali/Pages/UserBackups.php` | User backup page |
+| `app/Backup/BackupServiceProvider.php` | Registers addon with Laravel |
+| `app/Backup/Adapters/ResticSnapshotAdapter.php` | Restic snapshot data adapter |
+| `public/backup-download.php` | Streaming download endpoint |
+| `app/Services/Agent/AgentClient.php` | How the panel talks to the agent (core Jabali, not modified) |
 
 ## Step 1: Agent RPC Routes
 

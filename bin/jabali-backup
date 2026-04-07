@@ -51,6 +51,7 @@ USAGE:
 COMMANDS:
     run [username]      Run backup (all accounts or single account)
     restore <username>  Restore account from snapshot
+    download <username> Download snapshot as compressed archive
     ls <username> [path]  Browse files in a snapshot
     list <what>         List accounts, snapshots, or domains
     init                Initialize restic repository

@@ -36,11 +36,27 @@ jabali-backup/
     notify.sh                 Email + webhook notifications
     jabali-decrypt.php        Decrypt Laravel-encrypted DB values
     jabali-encrypt.php        Re-encrypt values for restore
+  panel/                      Panel addon source files
+    agent/
+      jabali-backup.php       Agent RPC routes (installed to /etc/jabali/agent.d/)
+    filament/pages/
+      Backups.php             Admin backup page
+      SnapshotBrowser.php     Admin snapshot file browser
+      UserBackups.php         User backup page
+    backup/
+      BackupServiceProvider.php    Laravel service provider
+      Adapters/
+        ResticSnapshotAdapter.php  Restic snapshot data adapter
+    views/                    Blade templates for admin and user pages
+    public/
+      backup-download.php     Streaming download endpoint
   etc/
     config.conf.example       Example configuration
   docs/                       Documentation
   plans/                      Implementation blueprints
-  install.sh                  Install to system paths
+  install.sh                  Unified installer (install/update/uninstall + panel)
+  install-panel.sh            Standalone panel installer (backward compat)
+  uninstall-panel.sh          Standalone panel uninstaller (backward compat)
 ```
 
 ## Backup Data Flow

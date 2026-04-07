@@ -27,62 +27,91 @@ curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.s
 ### Manual install
 
 ```bash
-git clone https://github.com/shukiv/jabali-backup.git
-cd jabali-backup
+git clone https://github.com/shukiv/jabali-backup.git /opt/jabali-backup
+cd /opt/jabali-backup
 sudo ./install.sh
 ```
 
 ### Update
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh | sudo bash -s -- update
+```
+
+Or from a local clone:
+
+```bash
 sudo ./install.sh update
 ```
 
-Pulls latest from git, updates CLI + libraries, preserves config and secrets.
+Pulls latest from git, updates CLI + panel addon, preserves config and secrets.
 
-### Panel addon
+### Uninstall
 
 ```bash
-sudo ./install.sh panel
+sudo ./install.sh uninstall
 ```
 
-Installs the Filament admin/user pages into the Jabali panel.
+Removes CLI, panel addon, systemd timer, and bash completions.
+Keeps `/etc/jabali-backup/` (config and secrets) for manual cleanup.
 
 ### What gets installed
 
 | Path | Contents |
 |------|----------|
 | `/usr/local/bin/jabali-backup` | CLI entry point |
-| `/usr/local/lib/jabali-backup/` | Library scripts, collectors, and restorers |
-| `/etc/jabali-backup/` | Configuration and secret files |
+| `/usr/local/lib/jabali-backup/` | Library scripts, collectors, restorers, PHP helpers |
+| `/etc/jabali-backup/` | Configuration, secrets (auto-configured from Jabali `.env`) |
 | `/etc/bash_completion.d/jabali-backup` | Bash tab completions |
-| `/etc/systemd/system/jabali-backup.timer` | Daily backup timer (02:00) |
+| `/etc/systemd/system/jabali-backup.timer` | Daily backup timer (02:00 with 15min jitter) |
+| `/etc/jabali/agent.d/jabali-backup.php` | Agent RPC routes (panel integration) |
+| Jabali panel `app/Filament/Admin/Pages/` | Admin backup + snapshot browser pages |
+| Jabali panel `app/Filament/Jabali/Pages/` | User backup page |
+| Jabali panel `app/Backup/` | Service provider + restic snapshot adapter |
+
+The panel addon is installed automatically when Jabali is detected at `/var/www/jabali`.
+Set `JABALI_PATH` to override the path.
+
+### Auto-configured secrets
+
+The installer extracts from `/var/www/jabali/.env`:
+
+| Secret | Source | File |
+|--------|--------|------|
+| DB password | `DB_PASSWORD` | `/etc/jabali-backup/db-password` |
+| APP_KEY | `APP_KEY` | `/etc/jabali-backup/app-key` |
+| Restic password | Auto-generated (`openssl rand`) | `/etc/jabali-backup/restic-password` |
+
+### Auto-installed dependencies
+
+Missing packages are installed via `apt-get`: `restic`, `mysql-client`, `jq`, `tar`, `gzip`.
 <!-- AUTO-GENERATED:install-end -->
 
 ## Quick Start
 
+After installation, secrets and config are auto-configured. You only need to:
+
 ```bash
-# 1. Edit configuration
-sudo nano /etc/jabali-backup/config.conf
+# 1. Add a backup destination (via panel or CLI)
+sudo jabali-backup destination add
 
-# 2. Set up secrets
-echo 'YOUR_DB_PASSWORD' | sudo tee /etc/jabali-backup/db-password > /dev/null
-echo 'YOUR_RESTIC_PASSWORD' | sudo tee /etc/jabali-backup/restic-password > /dev/null
-grep APP_KEY /var/www/jabali/.env | cut -d= -f2 | sudo tee /etc/jabali-backup/app-key > /dev/null
-sudo chmod 600 /etc/jabali-backup/{db-password,restic-password,app-key}
-
-# 3. Initialize restic repository
-sudo jabali-backup init
-
-# 4. Verify setup
+# 2. Verify setup
 sudo jabali-backup doctor
 sudo jabali-backup config test
 
-# 5. Run first backup
+# 3. Run first backup
 sudo jabali-backup run
 
-# 6. Enable daily backups
-sudo systemctl enable --now jabali-backup.timer
+# Daily backups are already enabled (02:00 with 15min jitter)
+```
+
+If you need to manually configure secrets (e.g., Jabali is not at `/var/www/jabali`):
+
+```bash
+echo 'YOUR_DB_PASSWORD' | sudo tee /etc/jabali-backup/db-password > /dev/null
+echo 'YOUR_RESTIC_PASSWORD' | sudo tee /etc/jabali-backup/restic-password > /dev/null
+grep APP_KEY /path/to/jabali/.env | cut -d= -f2 | sudo tee /etc/jabali-backup/app-key > /dev/null
+sudo chmod 600 /etc/jabali-backup/{db-password,restic-password,app-key}
 ```
 
 <!-- AUTO-GENERATED:commands-start -->
