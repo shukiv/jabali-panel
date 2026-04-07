@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Jabali\Pages;
 
+use App\Backup\Concerns\BrowsesSnapshots;
 use App\Services\Agent\AgentClient;
 use App\Support\Formatter;
 use App\Support\SafeError;
@@ -19,6 +20,7 @@ use Illuminate\Contracts\Support\Htmlable;
 
 class UserBackups extends Page implements HasActions, HasForms
 {
+    use BrowsesSnapshots;
     use InteractsWithActions;
     use InteractsWithForms;
 
@@ -142,70 +144,9 @@ class UserBackups extends Page implements HasActions, HasForms
         $this->loadBrowseItems();
     }
 
-    public function navigateTo(string $path): void
+    protected function browseUsername(): string
     {
-        $this->browsePath = $path;
-        $this->loadBrowseItems();
-    }
-
-    public function navigateUp(): void
-    {
-        $parts = array_filter(explode('/', $this->browsePath));
-        array_pop($parts);
-        $this->browsePath = implode('/', $parts);
-        $this->loadBrowseItems();
-    }
-
-    public function loadBrowseItems(): void
-    {
-        try {
-            $result = app(AgentClient::class)->send('jb.browse', [
-                'username' => $this->username(),
-                'path' => $this->browsePath,
-                'snapshot_id' => $this->browseSnapshotId,
-            ]);
-            $this->browseItems = $result['items'] ?? [];
-        } catch (\Throwable $e) {
-            $this->browseItems = [];
-        }
-    }
-
-    public function toggleFileSelection(string $path): void
-    {
-        if (in_array($path, $this->selectedFiles, true)) {
-            $this->selectedFiles = array_values(array_diff($this->selectedFiles, [$path]));
-        } else {
-            $this->selectedFiles[] = $path;
-        }
-    }
-
-    public function restoreSelectedFiles(): void
-    {
-        if (empty($this->selectedFiles)) {
-            Notification::make()->title(__('No files selected'))->warning()->send();
-
-            return;
-        }
-
-        try {
-            $result = app(AgentClient::class)->send('jb.restore_files', [
-                'username' => $this->username(),
-                'snapshot_id' => $this->browseSnapshotId,
-                'files' => $this->selectedFiles,
-            ]);
-            if ($result['success'] ?? false) {
-                Notification::make()
-                    ->title(__('Files restored'))
-                    ->body(__(':count item(s) restored', ['count' => count($this->selectedFiles)]))
-                    ->success()
-                    ->send();
-                $this->selectedFiles = [];
-            } else {
-                throw new \RuntimeException($result['error'] ?? 'Unknown error');
-            }
-        } catch (\Throwable $e) {
-            Notification::make()->title(__('Restore failed'))->body(SafeError::message($e))->danger()->send();
-        }
+        return $this->username();
     }
 
     // ─── Restore ───
@@ -258,19 +199,5 @@ class UserBackups extends Page implements HasActions, HasForms
     public function formatBytes(int|float|null $bytes): string
     {
         return Formatter::bytes($bytes ?? 0);
-    }
-
-    public function getFileBreadcrumbs(): array
-    {
-        $crumbs = [['label' => $this->username(), 'path' => '']];
-        $parts = array_filter(explode('/', $this->browsePath));
-        $accumulated = '';
-
-        foreach ($parts as $part) {
-            $accumulated .= ($accumulated ? '/' : '') . $part;
-            $crumbs[] = ['label' => $part, 'path' => $accumulated];
-        }
-
-        return $crumbs;
     }
 }

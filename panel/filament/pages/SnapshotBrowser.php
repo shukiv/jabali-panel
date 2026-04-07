@@ -102,7 +102,7 @@ class SnapshotBrowser extends FileBrowser
                             } else {
                                 Notification::make()
                                     ->title(__('Restore failed'))
-                                    ->body($result['error'] ?? __('Unknown error'))
+                                    ->body(SafeError::fromAgent($result['error'] ?? __('Unknown error')))
                                     ->danger()
                                     ->send();
                             }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Admin\Pages;
 
+use App\Backup\Concerns\BrowsesSnapshots;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Support\Formatter;
@@ -38,6 +39,7 @@ use Illuminate\Contracts\Support\Htmlable;
 
 class Backups extends Page implements HasActions, HasForms, HasTable
 {
+    use BrowsesSnapshots;
     use InteractsWithActions;
     use InteractsWithForms;
     use InteractsWithTable;
@@ -64,6 +66,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     /** @var list<string> Files/folders selected for restore via browser widget */
     public array $restoreFileList = [];
 
+    /** @var array<string, array> Snapshot inventory cache — class property, not static, to avoid Octane leaks */
+    public array $inventoryCache = [];
+
     // Destinations
     public array $destinations = [];
 
@@ -74,7 +79,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     // Browser
     public string $browseSnapshotId = '';
 
-    public string $browseUsername = '';
+    public string $browseUser = '';
 
     public string $browsePath = '';
 
@@ -475,10 +480,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->modalWidth('4xl')
                     ->steps(function (array $record): array {
                         // Load inventory from snapshot
-                        static $inventoryCache = [];
                         $cacheKey = $record['username'] . ':' . ($record['latest_snapshot_id'] ?? 'latest');
-                        if (isset($inventoryCache[$cacheKey])) {
-                            $inv = $inventoryCache[$cacheKey];
+                        if (isset($this->inventoryCache[$cacheKey])) {
+                            $inv = $this->inventoryCache[$cacheKey];
                         } else {
                             $inv = [];
                             try {
@@ -489,7 +493,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                 $inv = $result['inventory'] ?? [];
                             } catch (\Throwable) {
                             }
-                            $inventoryCache[$cacheKey] = $inv;
+                            $this->inventoryCache[$cacheKey] = $inv;
                         }
 
                         $snapshotOptions = ['latest' => __('Latest (most recent)')];
@@ -515,22 +519,21 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         }
 
                         if ($inv['files']['exists'] ?? false) {
-                            $this->restoreFileList = [];
                             $tabs[] = Tab::make(__('Home Dir Files'))
                                 ->icon('heroicon-o-folder')
                                 ->schema([
                                     Toggle::make('restore_files')
                                         ->label(__('Restore all home directory files'))
                                         ->default(true)
-                                        ->live()
+                                        ->extraAttributes(['x-model' => 'restoreAllFiles'])
                                         ->helperText(__('Turn off to select specific files below')),
                                     \Filament\Forms\Components\ViewField::make('restore_file_list')
                                         ->label('')
-                                        ->visible(fn (\Filament\Schemas\Components\Utilities\Get $get): bool => ! $get('restore_files'))
+                                        ->extraAttributes(['x-show' => '! restoreAllFiles', 'x-cloak' => true])
                                         ->view('filament.admin.pages.partials.restore-file-badges'),
                                     \Filament\Forms\Components\ViewField::make('file_browser')
                                         ->label('')
-                                        ->visible(fn (\Filament\Schemas\Components\Utilities\Get $get): bool => ! $get('restore_files'))
+                                        ->extraAttributes(['x-show' => '! restoreAllFiles', 'x-cloak' => true])
                                         ->view('filament.admin.pages.partials.snapshot-browser-embed')
                                         ->viewData([
                                             'snapshotId' => $record['latest_snapshot_id'] ?? 'latest',
@@ -566,7 +569,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             ]);
                         }
 
-                        if ($inv['ssl']['exists'] ?? false && ! empty($inv['ssl']['domains'])) {
+                        if (($inv['ssl']['exists'] ?? false) && ! empty($inv['ssl']['domains'])) {
                             $sslDomains = collect($inv['ssl']['domains'])->mapWithKeys(fn ($d) => [$d => $d])->all();
                             $tabs[] = Tab::make(__('SSL Certificates'))->icon('heroicon-o-lock-closed')->schema([
                                 CheckboxList::make('restore_ssl')->label(__('SSL certificates to restore'))->options($sslDomains)->default(array_keys($sslDomains)),
@@ -587,7 +590,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             ]);
                         }
 
-                        if ($inv['cron']['exists'] ?? false && ! empty($inv['cron']['jobs'])) {
+                        if (($inv['cron']['exists'] ?? false) && ! empty($inv['cron']['jobs'])) {
                             $tabs[] = Tab::make(__('Cron Jobs'))->icon('heroicon-o-clock')->schema([
                                 Toggle::make('restore_cron')->label(__('Restore cron jobs'))->default(true),
                             ]);
@@ -668,6 +671,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                         ->helperText(__('Warning: existing data will be replaced')),
                                 ]),
                         ];
+                    })
+                    ->before(function (): void {
+                        $this->restoreFileList = [];
                     })
                     ->action(function (array $data, array $record): void {
                         // Build components list from selected items
@@ -839,7 +845,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         }
     }
 
-    // ─── Browser ───
+    // ─── Browser (shared logic in BrowsesSnapshots trait) ───
 
     public function browseSnapshot(string $snapshotId, string $username): void
     {
@@ -854,75 +860,16 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             return;
         }
         $this->browseSnapshotId = $snapshotId;
-        $this->browseUsername = $username;
+        $this->browseUser = $username;
         $this->browsePath = '';
         $this->selectedFiles = [];
         $this->activeTab = 'restore_download';
         $this->loadBrowseItems();
     }
 
-    public function navigateTo(string $path): void
+    protected function browseUsername(): string
     {
-        $this->browsePath = $path;
-        $this->loadBrowseItems();
-    }
-
-    public function navigateUp(): void
-    {
-        $parts = array_filter(explode('/', $this->browsePath));
-        array_pop($parts);
-        $this->browsePath = implode('/', $parts);
-        $this->loadBrowseItems();
-    }
-
-    public function loadBrowseItems(): void
-    {
-        try {
-            $result = app(AgentClient::class)->send('jb.browse', [
-                'username' => $this->browseUsername,
-                'path' => $this->browsePath,
-                'snapshot_id' => $this->browseSnapshotId,
-            ]);
-            $this->browseItems = $result['items'] ?? [];
-        } catch (\Throwable $e) {
-            $this->browseItems = [];
-            Notification::make()->title(__('Browse failed'))->body(SafeError::message($e))->danger()->send();
-        }
-    }
-
-    public function toggleFileSelection(string $path): void
-    {
-        if (in_array($path, $this->selectedFiles, true)) {
-            $this->selectedFiles = array_values(array_diff($this->selectedFiles, [$path]));
-        } else {
-            $this->selectedFiles[] = $path;
-        }
-    }
-
-    public function restoreSelectedFiles(): void
-    {
-        if (empty($this->selectedFiles)) {
-            Notification::make()->title(__('No files selected'))->warning()->send();
-
-            return;
-        }
-
-        try {
-            $result = app(AgentClient::class)->send('jb.restore_files', [
-                'username' => $this->browseUsername,
-                'snapshot_id' => $this->browseSnapshotId,
-                'files' => $this->selectedFiles,
-            ]);
-            if ($result['success'] ?? false) {
-                Notification::make()->title(__('Files restored'))
-                    ->body(__(':count item(s) restored', ['count' => count($this->selectedFiles)]))->success()->send();
-                $this->selectedFiles = [];
-            } else {
-                Notification::make()->title(__('Error'))->body($result['error'] ?? $result['output'] ?? __('Unknown error'))->danger()->send();
-            }
-        } catch (\Throwable $e) {
-            Notification::make()->title(__('Restore failed'))->body(SafeError::message($e))->danger()->send();
-        }
+        return $this->browseUser;
     }
 
     // ─── Restore / Download Wizard ───
@@ -1574,19 +1521,5 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     public function formatBytes(int|float|null $bytes): string
     {
         return Formatter::bytes($bytes ?? 0);
-    }
-
-    public function getFileBreadcrumbs(): array
-    {
-        $crumbs = [['label' => $this->browseUsername, 'path' => '']];
-        $parts = array_filter(explode('/', $this->browsePath));
-        $accumulated = '';
-
-        foreach ($parts as $part) {
-            $accumulated .= ($accumulated ? '/' : '') . $part;
-            $crumbs[] = ['label' => $part, 'path' => $accumulated];
-        }
-
-        return $crumbs;
     }
 }

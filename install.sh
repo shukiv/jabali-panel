@@ -110,6 +110,7 @@ if [[ "$CMD" == "uninstall" ]]; then
         "$JABALI_PATH/app/Filament/Admin/Pages/SnapshotBrowser.php" \
         "$JABALI_PATH/app/Filament/Jabali/Pages/UserBackups.php" \
         "$JABALI_PATH/app/Backup/Adapters/ResticSnapshotAdapter.php" \
+        "$JABALI_PATH/app/Backup/Concerns/BrowsesSnapshots.php" \
         "$JABALI_PATH/app/Backup/BackupServiceProvider.php" \
         "$JABALI_PATH/public/backup-download.php" \
         "$JABALI_PATH/resources/views/filament/admin/pages/backups.blade.php" \
@@ -468,10 +469,11 @@ if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
     ok "User view -> backups.blade.php"
 
     # Backup addon classes
-    mkdir -p "$JABALI_PATH/app/Backup/Adapters"
+    mkdir -p "$JABALI_PATH/app/Backup/Adapters" "$JABALI_PATH/app/Backup/Concerns"
     cp "$PANEL_DIR/backup/Adapters/ResticSnapshotAdapter.php" "$JABALI_PATH/app/Backup/Adapters/ResticSnapshotAdapter.php"
+    cp "$PANEL_DIR/backup/Concerns/BrowsesSnapshots.php" "$JABALI_PATH/app/Backup/Concerns/BrowsesSnapshots.php"
     cp "$PANEL_DIR/backup/BackupServiceProvider.php" "$JABALI_PATH/app/Backup/BackupServiceProvider.php"
-    ok "Backup classes -> ResticSnapshotAdapter, BackupServiceProvider"
+    ok "Backup classes -> ResticSnapshotAdapter, BrowsesSnapshots, BackupServiceProvider"
 
     # Snapshot browser page
     cp "$PANEL_DIR/filament/pages/SnapshotBrowser.php" "$JABALI_PATH/app/Filament/Admin/Pages/SnapshotBrowser.php"
