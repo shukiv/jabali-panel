@@ -16014,7 +16014,7 @@ function importUserPanelData(string $username, array $data): array
                 $isActive = $emailDomain['is_active'] ?? 1;
                 $dkimSelector = $emailDomain['dkim_selector'] ?? 'default';
                 $catchAllEnabled = $emailDomain['catch_all_enabled'] ?? 0;
-                $maxMailboxes = $emailDomain['max_mailboxes'] ?? 10;
+                $maxMailboxes = $emailDomain['max_mailboxes'] ?? null;
                 $maxQuotaBytes = $emailDomain['max_quota_bytes'] ?? 5368709120;
                 $stmt->execute([$newDomainId, $isActive, $dkimSelector, $catchAllEnabled, $maxMailboxes, $maxQuotaBytes, $now, $now]);
                 $emailDomainIdMap[$oldId] = $pdo->lastInsertId();
@@ -22857,7 +22857,7 @@ function cpanelBuildPanelEmailData(string $username, array $domains, array $mail
             'is_active' => 1,
             'dkim_selector' => 'default',
             'catch_all_enabled' => 0,
-            'max_mailboxes' => 10,
+            'max_mailboxes' => null,
             'max_quota_bytes' => 5368709120,
         ];
         $emailDomainId++;
@@ -23080,7 +23080,7 @@ function cpanelEnsureEmailDomainRecord(PDO $pdo, int $domainId): ?int
 
     $stmt = $pdo->prepare("
         INSERT INTO email_domains (domain_id, is_active, dkim_selector, catch_all_enabled, max_mailboxes, max_quota_bytes, created_at, updated_at)
-        VALUES (?, 1, 'default', 0, 10, 5368709120, datetime('now'), datetime('now'))
+        VALUES (?, 1, 'default', 0, NULL, 5368709120, datetime('now'), datetime('now'))
     ");
     $stmt->execute([$domainId]);
 

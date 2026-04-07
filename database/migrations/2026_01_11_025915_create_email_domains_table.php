@@ -20,7 +20,7 @@ return new class extends Migration
             $table->text('dkim_public_key')->nullable();
             $table->boolean('catch_all_enabled')->default(false);
             $table->string('catch_all_address')->nullable();
-            $table->bigInteger('max_mailboxes')->default(10);
+            $table->bigInteger('max_mailboxes')->nullable();
             $table->bigInteger('max_quota_bytes')->default(5368709120); // 5GB default
             $table->timestamps();
 
