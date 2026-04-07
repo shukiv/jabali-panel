@@ -67,9 +67,6 @@
                                         <span class="text-xs text-danger-500">{{ $job['errors'] }} {{ __('error(s)') }}</span>
                                     @endif
                                 </div>
-                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    {{ implode(', ', $job['accounts'] ?? []) ?: __('No accounts') }}
-                                </div>
                             </div>
                         </div>
 
