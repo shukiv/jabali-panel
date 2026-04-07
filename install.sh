@@ -116,6 +116,7 @@ if [[ "$CMD" == "uninstall" ]]; then
         "$JABALI_PATH/resources/views/filament/admin/pages/backups.blade.php" \
         "$JABALI_PATH/resources/views/filament/admin/pages/partials/snapshot-browser-embed.blade.php" \
         "$JABALI_PATH/resources/views/filament/admin/pages/partials/restore-file-badges.blade.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/partials/files-restore-toggle.blade.php" \
         "$JABALI_PATH/resources/views/filament/jabali/pages/backups.blade.php"
     do
         if [[ -f "$f" ]]; then
@@ -482,6 +483,7 @@ if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
     cp "$PANEL_DIR/views/backups.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/backups.blade.php"
     cp "$PANEL_DIR/views/partials/snapshot-browser-embed.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/snapshot-browser-embed.blade.php"
     cp "$PANEL_DIR/views/partials/restore-file-badges.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/restore-file-badges.blade.php"
+    cp "$PANEL_DIR/views/partials/files-restore-toggle.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/files-restore-toggle.blade.php"
     ok "Admin views -> backups.blade.php + partials"
 
     # User Filament page

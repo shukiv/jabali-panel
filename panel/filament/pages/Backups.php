@@ -528,15 +528,15 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                     Toggle::make('restore_files')
                                         ->label(__('Restore all home directory files'))
                                         ->default(true)
-                                        ->extraAttributes(['x-model' => 'restoreAllFiles'])
+                                        ->live()
                                         ->helperText(__('Turn off to select specific files below')),
                                     \Filament\Forms\Components\ViewField::make('restore_file_list')
                                         ->label('')
-                                        ->extraAttributes(['x-show' => '! restoreAllFiles', 'x-cloak' => true])
+                                        ->visible(fn (\Filament\Schemas\Components\Utilities\Get $get): bool => ! $get('restore_files'))
                                         ->view('filament.admin.pages.partials.restore-file-badges'),
                                     \Filament\Forms\Components\ViewField::make('file_browser')
                                         ->label('')
-                                        ->extraAttributes(['x-show' => '! restoreAllFiles', 'x-cloak' => true])
+                                        ->visible(fn (\Filament\Schemas\Components\Utilities\Get $get): bool => ! $get('restore_files'))
                                         ->view('filament.admin.pages.partials.snapshot-browser-embed')
                                         ->viewData([
                                             'snapshotId' => $record['latest_snapshot_id'] ?? 'latest',
