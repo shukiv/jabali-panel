@@ -58,24 +58,8 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                     ->helperText(__('Appears in browser title and navigation')),
                 Grid::make(2)
                     ->schema([
-                        FileUpload::make('logoLight')
-                            ->label(__('Light Logo'))
-                            ->image()
-                            ->imagePreviewHeight('80')
-                            ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                            ->maxSize(2048)
-                            ->disk('public')
-                            ->directory('branding')
-                            ->visibility('public'),
-                        FileUpload::make('logoDark')
-                            ->label(__('Dark Logo'))
-                            ->image()
-                            ->imagePreviewHeight('80')
-                            ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                            ->maxSize(2048)
-                            ->disk('public')
-                            ->directory('branding')
-                            ->visibility('public'),
+                        $this->logoUploadField('logoLight', __('Light Logo')),
+                        $this->logoUploadField('logoDark', __('Dark Logo')),
                     ]),
                 Actions::make([
                     Action::make('saveBranding')
@@ -131,6 +115,38 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
         Notification::make()->title(__('Branding updated'))->success()->send();
 
         $this->redirect(request()->header('Referer', '/jabali-admin/server-settings?tab=branding'));
+    }
+
+    private function logoUploadField(string $name, string $label): FileUpload
+    {
+        return FileUpload::make($name)
+            ->label($label)
+            ->image()
+            ->imagePreviewHeight('80')
+            ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
+            ->maxSize(2048)
+            ->disk('public')
+            ->directory('branding')
+            ->visibility('public')
+            ->getUploadedFileUsing(static function (FileUpload $component, string $file): ?array {
+                $storage = $component->getDisk();
+
+                try {
+                    if (! $storage->exists($file)) {
+                        return null;
+                    }
+                } catch (\Throwable) {
+                    return null;
+                }
+
+                // Use relative URL to avoid CORS issues (APP_URL has IP, user accesses via hostname)
+                return [
+                    'name' => basename($file),
+                    'size' => $storage->size($file),
+                    'type' => $storage->mimeType($file),
+                    'url' => '/storage/'.$file,
+                ];
+            });
     }
 
     public function removeLogo(): void
