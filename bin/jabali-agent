@@ -851,8 +851,134 @@ function handleAction(array $request): array
         // Redis ACL management
         'redis.create_user' => redisCreateUser($params),
         'server.upgrade_infra' => serverUpgradeInfra($params),
+        // Addon management
+        'addon.status' => addonStatus($params),
+        'addon.install' => addonInstall($params),
+        'addon.uninstall' => addonUninstall($params),
         default => handleAddonAction($action, $params),
     };
+}
+
+// ============ ADDON MANAGEMENT ============
+
+function addonStatus(array $params): array
+{
+    $addons = [
+        'jabali-backup' => [
+            'name' => 'Jabali Backup',
+            'description' => 'Restic-based backup and restore tool',
+            'check' => '/usr/local/bin/jabali-backup',
+            'version_cmd' => 'jabali-backup --version 2>/dev/null',
+            'service' => null,
+        ],
+        'jabali-security' => [
+            'name' => 'Jabali Security',
+            'description' => 'Threat detection and GeoIP blocking',
+            'check' => '/usr/local/bin/jabali-security',
+            'version_cmd' => 'jabali-security --version 2>/dev/null',
+            'service' => 'jabali-security',
+        ],
+        'jabali-isolator' => [
+            'name' => 'Jabali Isolator',
+            'description' => 'SSH shell isolation via nspawn containers',
+            'check' => '/usr/local/bin/jabali-isolator',
+            'version_cmd' => 'jabali-isolator --version 2>/dev/null',
+            'service' => null,
+        ],
+    ];
+
+    $filter = $params['addon'] ?? null;
+    $results = [];
+
+    foreach ($addons as $id => $addon) {
+        if ($filter !== null && $id !== $filter) {
+            continue;
+        }
+        $installed = file_exists($addon['check']);
+        $version = null;
+        $serviceActive = null;
+
+        if ($installed && $addon['version_cmd']) {
+            $version = trim(shell_exec($addon['version_cmd']) ?? '');
+        }
+        if ($installed && $addon['service']) {
+            exec('systemctl is-active '.escapeshellarg($addon['service']).' 2>/dev/null', $out, $code);
+            $serviceActive = $code === 0;
+        }
+
+        $results[$id] = [
+            'id' => $id,
+            'name' => $addon['name'],
+            'description' => $addon['description'],
+            'installed' => $installed,
+            'version' => $version ?: null,
+            'service_active' => $serviceActive,
+        ];
+    }
+
+    return ['success' => true, 'addons' => $results];
+}
+
+function addonInstall(array $params): array
+{
+    $addon = $params['addon'] ?? '';
+    $urls = [
+        'jabali-backup' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
+        'jabali-security' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
+        'jabali-isolator' => 'https://raw.githubusercontent.com/shukiv/jabali-isolator/main/install.sh',
+    ];
+
+    if (! isset($urls[$addon])) {
+        return ['success' => false, 'error' => 'Unknown addon: '.$addon];
+    }
+
+    $url = $urls[$addon];
+    $cmd = sprintf('curl -fsSL %s | bash 2>&1', escapeshellarg($url));
+    logger("Installing addon {$addon}: {$cmd}");
+
+    exec($cmd, $output, $exitCode);
+    $outputStr = implode("\n", $output);
+
+    if ($exitCode !== 0) {
+        logger("Addon install failed for {$addon}: {$outputStr}");
+
+        return ['success' => false, 'error' => "Install failed (exit {$exitCode})", 'output' => $outputStr];
+    }
+
+    logger("Addon {$addon} installed successfully");
+
+    return ['success' => true, 'message' => "{$addon} installed successfully", 'output' => $outputStr];
+}
+
+function addonUninstall(array $params): array
+{
+    $addon = $params['addon'] ?? '';
+    $urls = [
+        'jabali-backup' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
+        'jabali-security' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
+        'jabali-isolator' => 'https://raw.githubusercontent.com/shukiv/jabali-isolator/main/install.sh',
+    ];
+
+    if (! isset($urls[$addon])) {
+        return ['success' => false, 'error' => 'Unknown addon: '.$addon];
+    }
+
+    $url = $urls[$addon];
+    $cmd = sprintf('curl -fsSL %s | bash -s -- uninstall 2>&1', escapeshellarg($url));
+    logger("Uninstalling addon {$addon}: {$cmd}");
+
+    exec($cmd, $output, $exitCode);
+    $outputStr = implode("\n", $output);
+
+    if ($exitCode !== 0) {
+        logger("Addon uninstall failed for {$addon}: {$outputStr}");
+
+        return ['success' => false, 'error' => "Uninstall failed (exit {$exitCode})", 'output' => $outputStr];
+    }
+
+    logger("Addon {$addon} uninstalled successfully");
+
+    return ['success' => true, 'message' => "{$addon} uninstalled successfully", 'output' => $outputStr];
 }
 
 /**

@@ -92,6 +92,8 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public ?array $logsData = [];
 
+    public array $addonsData = [];
+
     public ?array $phpFpmData = [];
 
     public ?array $timezoneData = [];
@@ -308,6 +310,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                         'logs' => Tab::make(__('Logs'))
                             ->icon('heroicon-o-document-text')
                             ->schema($this->logsTabContent()),
+                        'addons' => Tab::make(__('Addons'))
+                            ->icon('heroicon-o-puzzle-piece')
+                            ->schema($this->addonsTabContent()),
                     ]),
             ]);
     }
@@ -1934,5 +1939,129 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         return ['applied' => $applied, 'failed' => $failed];
+    }
+
+    // ─── Addons Tab ───────────────────────────────────────
+
+    protected function addonsTabContent(): array
+    {
+        return [
+            Section::make(__('Installed Addons'))
+                ->description(__('Extend Jabali with official addon tools. Install or remove addons from this page.'))
+                ->icon('heroicon-o-puzzle-piece')
+                ->schema([
+                    Actions::make([
+                        FormAction::make('refreshAddons')
+                            ->label(__('Refresh'))
+                            ->icon('heroicon-o-arrow-path')
+                            ->color('gray')
+                            ->action('loadAddons'),
+                    ]),
+                    Grid::make(['default' => 1, 'md' => 3])
+                        ->schema($this->addonCards()),
+                ]),
+        ];
+    }
+
+    public function loadAddons(): void
+    {
+        try {
+            $result = app(AgentClient::class)->call('addon.status', []);
+            $this->addonsData = $result->success ? $result->get('addons', []) : [];
+        } catch (Exception) {
+            $this->addonsData = [];
+        }
+    }
+
+    protected function addonCards(): array
+    {
+        if (empty($this->addonsData)) {
+            $this->loadAddons();
+        }
+
+        $cards = [];
+        foreach ($this->addonsData as $addon) {
+            $id = $addon['id'];
+            $installed = $addon['installed'] ?? false;
+            $version = $addon['version'] ?? null;
+            $serviceActive = $addon['service_active'] ?? null;
+
+            $status = $installed
+                ? ($serviceActive === false ? __('Installed (stopped)') : __('Installed'))
+                : __('Not Installed');
+
+            $statusColor = $installed
+                ? ($serviceActive === false ? 'warning' : 'success')
+                : 'gray';
+
+            $cards[] = Section::make($addon['name'])
+                ->description($addon['description'])
+                ->schema([
+                    Placeholder::make("addon_{$id}_status")
+                        ->label(__('Status'))
+                        ->content(new \Illuminate\Support\HtmlString(
+                            '<span class="fi-badge fi-color-'.$statusColor.' inline-flex items-center gap-x-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset">'
+                            .e($status)
+                            .($version ? ' <span class="text-gray-400">v'.$version.'</span>' : '')
+                            .'</span>'
+                        )),
+                    Actions::make(
+                        $installed
+                            ? [
+                                FormAction::make("uninstall_{$id}")
+                                    ->label(__('Uninstall'))
+                                    ->icon('heroicon-o-trash')
+                                    ->color('danger')
+                                    ->requiresConfirmation()
+                                    ->modalHeading(__('Uninstall :name', ['name' => $addon['name']]))
+                                    ->modalDescription(__('This will remove :name from the server. Existing data will not be deleted.', ['name' => $addon['name']]))
+                                    ->action(fn () => $this->manageAddon($id, 'uninstall')),
+                            ]
+                            : [
+                                FormAction::make("install_{$id}")
+                                    ->label(__('Install'))
+                                    ->icon('heroicon-o-arrow-down-tray')
+                                    ->color('primary')
+                                    ->requiresConfirmation()
+                                    ->modalHeading(__('Install :name', ['name' => $addon['name']]))
+                                    ->modalDescription(__('This will download and install :name on the server.', ['name' => $addon['name']]))
+                                    ->action(fn () => $this->manageAddon($id, 'install')),
+                            ]
+                    ),
+                ]);
+        }
+
+        return $cards;
+    }
+
+    public function manageAddon(string $addonId, string $operation): void
+    {
+        $action = $operation === 'install' ? 'addon.install' : 'addon.uninstall';
+        $label = $operation === 'install' ? __('installed') : __('uninstalled');
+
+        try {
+            $result = app(AgentClient::class)->call($action, ['addon' => $addonId]);
+
+            if ($result->success) {
+                Notification::make()
+                    ->title(__(':name :action', ['name' => $addonId, 'action' => $label]))
+                    ->success()
+                    ->send();
+            } else {
+                Notification::make()
+                    ->title(__('Operation failed'))
+                    ->body($result->get('error', __('Unknown error')))
+                    ->danger()
+                    ->send();
+            }
+        } catch (Exception $e) {
+            Notification::make()
+                ->title(__('Operation failed'))
+                ->body(SafeError::message($e))
+                ->danger()
+                ->send();
+        }
+
+        $this->loadAddons();
     }
 }
