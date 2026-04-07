@@ -44,12 +44,14 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Attributes\Url;
+use Livewire\WithFileUploads;
 
 class ServerSettings extends Page implements HasActions, HasForms
 {
     use InteractsWithActions;
     use InteractsWithAgent;
     use InteractsWithForms;
+    use WithFileUploads;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
 
@@ -67,10 +69,10 @@ class ServerSettings extends Page implements HasActions, HasForms
     // Form data arrays
     public ?array $brandingData = [];
 
-    // Branding logo file uploads (Filament FileUpload stores as arrays)
-    public ?array $logoLightUpload = [];
+    // Branding logo file uploads (Livewire TemporaryUploadedFile)
+    public $logoLightUpload = null;
 
-    public ?array $logoDarkUpload = [];
+    public $logoDarkUpload = null;
 
     public ?string $currentLogoDark = null;
 
@@ -315,32 +317,12 @@ class ServerSettings extends Page implements HasActions, HasForms
         return [
             Section::make(__('Panel Branding'))
                 ->icon('heroicon-o-paint-brush')
+                ->description(__('Logo uploads are managed below this section.'))
                 ->schema([
                     TextInput::make('brandingData.panel_name')
                         ->label(__('Control Panel Name'))
                         ->placeholder(__('Jabali'))
                         ->helperText(__('Appears in browser title and navigation')),
-                    Grid::make(2)
-                        ->schema([
-                            FileUpload::make('logoLightUpload')
-                                ->label(__('Light Logo'))
-                                ->image()
-                                ->imagePreviewHeight('80')
-                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                ->maxSize(2048)
-                                ->disk('public')
-                                ->directory('branding')
-                                ->visibility('public'),
-                            FileUpload::make('logoDarkUpload')
-                                ->label(__('Dark Logo'))
-                                ->image()
-                                ->imagePreviewHeight('80')
-                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                ->maxSize(2048)
-                                ->disk('public')
-                                ->directory('branding')
-                                ->visibility('public'),
-                        ]),
                     Actions::make([
                         FormAction::make('saveBranding')
                             ->label(__('Save Branding'))
@@ -1031,28 +1013,44 @@ class ServerSettings extends Page implements HasActions, HasForms
         $service = app(ServerSettingsService::class);
         $service->saveBranding($data['panel_name']);
 
-        // Filament FileUpload stores paths as arrays
-        $this->saveUploadedLogo($this->logoLightUpload, 'custom_logo', 'currentLogo');
-        $this->saveUploadedLogo($this->logoDarkUpload, 'custom_logo_dark', 'currentLogoDark');
-
-        DnsSetting::clearCache();
-        Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
+        Notification::make()->title(__('Panel name updated'))->body(__('Refresh to see changes.'))->success()->send();
     }
 
-    private function saveUploadedLogo(?array $upload, string $settingKey, string $property): void
+    public function saveLogoLight(): void
     {
-        $path = $upload[0] ?? null;
-        if (! $path) {
+        $this->saveLivewireUpload($this->logoLightUpload, 'custom_logo', 'currentLogo');
+    }
+
+    public function saveLogoDark(): void
+    {
+        $this->saveLivewireUpload($this->logoDarkUpload, 'custom_logo_dark', 'currentLogoDark');
+    }
+
+    private function saveLivewireUpload($file, string $settingKey, string $property): void
+    {
+        if (! $file) {
+            Notification::make()->title(__('No file selected'))->warning()->send();
+
             return;
         }
 
-        // Delete old logo
-        if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
-            Storage::disk('public')->delete($this->{$property});
-        }
+        try {
+            $path = $file->store('branding', 'public');
 
-        DnsSetting::set($settingKey, $path);
-        $this->{$property} = $path;
+            if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
+                Storage::disk('public')->delete($this->{$property});
+            }
+
+            DnsSetting::set($settingKey, $path);
+            DnsSetting::clearCache();
+            $this->{$property} = $path;
+
+            $settingKey === 'custom_logo' ? $this->logoLightUpload = null : $this->logoDarkUpload = null;
+
+            Notification::make()->title(__('Logo uploaded'))->success()->send();
+        } catch (Exception $e) {
+            Notification::make()->title(__('Failed to upload logo'))->body(SafeError::message($e))->danger()->send();
+        }
     }
 
     public function saveTimezone(): void
@@ -1549,42 +1547,6 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('uploadLogoLightModal')
-                ->modalHeading(__('Upload Light Logo'))
-                ->modalSubmitActionLabel(__('Upload'))
-                ->schema([
-                    FileUpload::make('logo')
-                        ->label(__('Logo Image'))
-                        ->disk('public')
-                        ->directory('branding')
-                        ->visibility('public')
-                        ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                        ->maxSize(512)
-                        ->required()
-                        ->helperText(__('PNG, JPEG, WebP or SVG. Max 512KB.')),
-                ])
-                ->action(function (array $data): void {
-                    $this->uploadLogo($data, 'custom_logo');
-                })
-                ->extraAttributes(['class' => 'hidden']),
-            Action::make('uploadLogoDarkModal')
-                ->modalHeading(__('Upload Dark Logo'))
-                ->modalSubmitActionLabel(__('Upload'))
-                ->schema([
-                    FileUpload::make('logo')
-                        ->label(__('Logo Image'))
-                        ->disk('public')
-                        ->directory('branding')
-                        ->visibility('public')
-                        ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                        ->maxSize(512)
-                        ->required()
-                        ->helperText(__('PNG, JPEG, WebP or SVG. Max 512KB.')),
-                ])
-                ->action(function (array $data): void {
-                    $this->uploadLogo($data, 'custom_logo_dark');
-                })
-                ->extraAttributes(['class' => 'hidden']),
             Action::make('export_config')
                 ->label(__('Export'))
                 ->icon('heroicon-o-arrow-down-tray')
