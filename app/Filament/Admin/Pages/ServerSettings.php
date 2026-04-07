@@ -168,8 +168,6 @@ class ServerSettings extends Page implements HasActions, HasForms
         $this->form->fill([
             'brandingData' => [
                 'panel_name' => $settings['panel_name'] ?? 'Jabali',
-                'logoLight' => $this->currentLogo,
-                'logoDark' => $this->currentLogoDark,
             ],
             'timezoneData' => [
                 'timezone' => $settings['server_timezone'] ?? @date_default_timezone_get(),
@@ -286,31 +284,52 @@ class ServerSettings extends Page implements HasActions, HasForms
                         ->label(__('Control Panel Name'))
                         ->placeholder(__('Jabali'))
                         ->helperText(__('Appears in browser title and navigation')),
-                    Grid::make(2)
-                        ->schema([
-                            FileUpload::make('brandingData.logoLight')
-                                ->label(__('Light Logo'))
-                                ->image()
-                                ->imagePreviewHeight('80')
-                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                ->maxSize(2048)
-                                ->disk('public')
-                                ->directory('branding')
-                                ->visibility('public'),
-                            FileUpload::make('brandingData.logoDark')
-                                ->label(__('Dark Logo'))
-                                ->image()
-                                ->imagePreviewHeight('80')
-                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                ->maxSize(2048)
-                                ->disk('public')
-                                ->directory('branding')
-                                ->visibility('public'),
-                        ]),
+                    Placeholder::make('currentLogos')
+                        ->label(__('Logos'))
+                        ->content(fn (): string => collect([
+                            __('Light').': '.($this->currentLogo ? basename($this->currentLogo) : __('none')),
+                            __('Dark').': '.($this->currentLogoDark ? basename($this->currentLogoDark) : __('none')),
+                        ])->join(' | ')),
                     Actions::make([
                         FormAction::make('saveBranding')
                             ->label(__('Save Branding'))
                             ->action('saveBranding'),
+                        FormAction::make('uploadLightLogo')
+                            ->label(__('Upload Light Logo'))
+                            ->icon('heroicon-o-arrow-up-tray')
+                            ->color('gray')
+                            ->form([
+                                FileUpload::make('logo')
+                                    ->label(__('Light Logo Image'))
+                                    ->image()
+                                    ->disk('public')
+                                    ->directory('branding')
+                                    ->visibility('public')
+                                    ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
+                                    ->maxSize(2048)
+                                    ->required(),
+                            ])
+                            ->action(function (array $data): void {
+                                $this->saveLogo($data['logo'], 'custom_logo', 'currentLogo');
+                            }),
+                        FormAction::make('uploadDarkLogo')
+                            ->label(__('Upload Dark Logo'))
+                            ->icon('heroicon-o-arrow-up-tray')
+                            ->color('gray')
+                            ->form([
+                                FileUpload::make('logo')
+                                    ->label(__('Dark Logo Image'))
+                                    ->image()
+                                    ->disk('public')
+                                    ->directory('branding')
+                                    ->visibility('public')
+                                    ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
+                                    ->maxSize(2048)
+                                    ->required(),
+                            ])
+                            ->action(function (array $data): void {
+                                $this->saveLogo($data['logo'], 'custom_logo_dark', 'currentLogoDark');
+                            }),
                         FormAction::make('removeLogo')
                             ->label(__('Remove Logos'))
                             ->icon('heroicon-o-trash')
@@ -997,27 +1016,21 @@ class ServerSettings extends Page implements HasActions, HasForms
         $service = app(ServerSettingsService::class);
         $service->saveBranding($data['panel_name']);
 
-        // FileUpload stores paths automatically via disk/directory config
-        $lightPath = $data['logoLight'] ?? null;
-        if ($lightPath) {
-            if ($this->currentLogo && $this->currentLogo !== $lightPath && Storage::disk('public')->exists($this->currentLogo)) {
-                Storage::disk('public')->delete($this->currentLogo);
-            }
-            DnsSetting::set('custom_logo', $lightPath);
-            $this->currentLogo = $lightPath;
-        }
-
-        $darkPath = $data['logoDark'] ?? null;
-        if ($darkPath) {
-            if ($this->currentLogoDark && $this->currentLogoDark !== $darkPath && Storage::disk('public')->exists($this->currentLogoDark)) {
-                Storage::disk('public')->delete($this->currentLogoDark);
-            }
-            DnsSetting::set('custom_logo_dark', $darkPath);
-            $this->currentLogoDark = $darkPath;
-        }
-
         DnsSetting::clearCache();
         Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
+    }
+
+    public function saveLogo(string $path, string $settingKey, string $property): void
+    {
+        if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
+            Storage::disk('public')->delete($this->{$property});
+        }
+
+        DnsSetting::set($settingKey, $path);
+        DnsSetting::clearCache();
+        $this->{$property} = $path;
+
+        Notification::make()->title(__('Logo uploaded'))->success()->send();
     }
 
     public function saveTimezone(): void
