@@ -7,7 +7,7 @@ RESTIC_EXTRA_OPTS=()
 # Set up restic environment based on config
 restic_env() {
     RESTIC_EXTRA_OPTS=()
-    export RESTIC_PASSWORD_FILE="$CFG_RESTIC_PASSWORD_FILE"
+    unset RESTIC_PASSWORD_FILE 2>/dev/null || true
     export RESTIC_CACHE_DIR="$CFG_RESTIC_CACHE"
 
     # If a destination JSON entry is loaded, use its credentials
@@ -15,6 +15,9 @@ restic_env() {
         _restic_env_from_destination
         return
     fi
+
+    # Legacy config: set password file
+    export RESTIC_PASSWORD_FILE="$CFG_RESTIC_PASSWORD_FILE"
 
     # Legacy: read credentials from config.conf
     case "$CFG_REPO_TYPE" in
@@ -49,11 +52,17 @@ _restic_env_from_destination() {
     local type="$CFG_REPO_TYPE"
     export RESTIC_REPOSITORY="$CFG_REPO_PATH"
 
-    # Handle unencrypted repos
+    # Handle repo password — insecure_no_password takes priority over password file
     local insecure
     insecure=$(echo "$_DEST_JSON" | jq -r '.credentials.insecure_no_password // false')
     if [[ "$insecure" == "true" ]]; then
         RESTIC_EXTRA_OPTS+=(--insecure-no-password)
+    else
+        local pwd_file
+        pwd_file=$(echo "$_DEST_JSON" | jq -r '.credentials.restic_password_file // empty')
+        if [[ -n "$pwd_file" ]] && [[ -f "$pwd_file" ]] && [[ -s "$pwd_file" ]]; then
+            export RESTIC_PASSWORD_FILE="$pwd_file"
+        fi
     fi
 
     # Extract user@host from sftp URI for sftp.command
