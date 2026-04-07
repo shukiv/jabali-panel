@@ -596,6 +596,19 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             ]);
                         }
 
+                        if (($inv['stalwart']['exists'] ?? false) && ! empty($inv['stalwart']['accounts'])) {
+                            $stalwartAccounts = collect($inv['stalwart']['accounts'])->mapWithKeys(fn ($a) => [$a => $a])->all();
+                            $tabs[] = Tab::make(__('Stalwart Mail'))
+                                ->icon('heroicon-o-inbox-stack')
+                                ->badge(count($stalwartAccounts))
+                                ->schema([
+                                    CheckboxList::make('restore_stalwart')
+                                        ->label(__('JMAP accounts to restore (emails, mailboxes, Sieve scripts, identities)'))
+                                        ->options($stalwartAccounts)
+                                        ->default(array_keys($stalwartAccounts)),
+                                ]);
+                        }
+
                         return [
                             // Step 1: Select what to restore
                             Step::make(__('Select Components'))
@@ -660,6 +673,10 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                             if ($get('restore_cron')) {
                                                 $lines[] = '&#x2705; ' . __('Cron jobs');
                                             }
+                                            $stalwart = $get('restore_stalwart') ?? [];
+                                            if (! empty($stalwart)) {
+                                                $lines[] = '&#x2705; ' . __('Stalwart: :list', ['list' => implode(', ', $stalwart)]);
+                                            }
                                             if (empty($lines)) {
                                                 $lines[] = '&#x26A0;&#xFE0F; ' . __('Nothing selected to restore.');
                                             }
@@ -706,6 +723,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         }
                         if (! empty($data['restore_cron'])) {
                             $components[] = 'cron';
+                        }
+                        if (! empty($data['restore_stalwart'])) {
+                            $components[] = 'stalwart';
                         }
 
                         $this->executeWizardRestore(

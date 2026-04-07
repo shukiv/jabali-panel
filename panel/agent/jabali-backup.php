@@ -710,6 +710,7 @@ function jbSnapshotInventory(array $params): array
         'ssl' => ['exists' => false, 'domains' => []],
         'cron' => ['exists' => false, 'jobs' => []],
         'wordpress' => ['exists' => false, 'sites' => []],
+        'stalwart' => ['exists' => false, 'accounts' => []],
     ];
 
     $homeDirs = [];
@@ -786,6 +787,16 @@ function jbSnapshotInventory(array $params): array
                         $inventory['wordpress']['sites'][] = $subpath;
                     }
                     break;
+                case 'stalwart':
+                    $inventory['stalwart']['exists'] = true;
+                    // Account directories are named user@domain
+                    if (str_contains($subpath, '/')) {
+                        $acct = explode('/', $subpath)[0];
+                        if ($acct !== '' && str_contains($acct, '@') && ! in_array($acct, $inventory['stalwart']['accounts'], true)) {
+                            $inventory['stalwart']['accounts'][] = $acct;
+                        }
+                    }
+                    break;
             }
         }
 
@@ -830,7 +841,7 @@ function jbSnapshotInventory(array $params): array
     $inventory['ssl']['domains'] = $sslDomains;
 
     // Deduplicate arrays
-    foreach (['mysql' => 'databases', 'dns' => 'zones', 'email' => 'domains', 'wordpress' => 'sites'] as $comp => $key) {
+    foreach (['mysql' => 'databases', 'dns' => 'zones', 'email' => 'domains', 'wordpress' => 'sites', 'stalwart' => 'accounts'] as $comp => $key) {
         $inventory[$comp][$key] = array_values(array_unique($inventory[$comp][$key]));
     }
 

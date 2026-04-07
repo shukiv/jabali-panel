@@ -2,7 +2,7 @@
 
 **Objective:** Complete the Stalwart mail server backup and restore integration — from the initial scaffolding (done) to production-ready with validation, error handling, panel UI, and cross-server migration support.
 
-**Status:** Steps 1–5 are done. Steps 6–9 remain.
+**Status:** Steps 1–7 are done. Steps 8–9 remain.
 
 ---
 
@@ -193,7 +193,7 @@ sudo jabali-backup run alice --dry-run
 
 ---
 
-## Step 6: Restore Wizard Inventory
+## Step 6: Restore Wizard Inventory ✅ DONE
 
 **Goal:** The panel's restore wizard shows Stalwart data as a selectable component.
 
@@ -246,7 +246,7 @@ The restore wizard in `Backups.php` calls `jb.snapshot_inventory` to discover wh
 
 ---
 
-## Step 7: Installer Auto-Detection
+## Step 7: Installer Auto-Detection ✅ DONE
 
 **Goal:** `install.sh` auto-detects Stalwart and pre-configures the `[stalwart]` section.
 

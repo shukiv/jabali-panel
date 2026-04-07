@@ -332,6 +332,32 @@ else
     ok "Config generated with auto-detected values"
 fi
 
+# ─── Stalwart detection ──────────────────────────────
+
+if command -v stalwart-cli &>/dev/null || [[ -d /opt/stalwart-mail ]] || [[ -d /var/lib/stalwart-mail ]]; then
+    info "Stalwart mail server detected"
+
+    if ! grep -q '^\[stalwart\]' "$INSTALL_ETC/config.conf" 2>/dev/null; then
+        cat >> "$INSTALL_ETC/config.conf" <<STALWART
+
+[stalwart]
+enabled=false
+url=http://localhost:8080
+admin_token_file=$INSTALL_ETC/stalwart-token
+STALWART
+        ok "Added [stalwart] section to config (disabled by default)"
+    fi
+
+    if [[ ! -f "$INSTALL_ETC/stalwart-token" ]]; then
+        warn "Set Stalwart admin token to enable mail backup:"
+        echo "    echo 'YOUR_TOKEN' | sudo tee $INSTALL_ETC/stalwart-token"
+        echo "    sudo chmod 600 $INSTALL_ETC/stalwart-token"
+        echo "    Then set enabled=true in $INSTALL_ETC/config.conf"
+    else
+        ok "Stalwart token exists at $INSTALL_ETC/stalwart-token"
+    fi
+fi
+
 # ─── Bash completions ────────────────────────────────
 
 section "Setting Up Bash Completions"
