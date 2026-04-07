@@ -127,7 +127,15 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
         }
 
         DnsSetting::clearCache();
-        Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
+
+        // Re-fill form with stored paths so FileUpload shows the saved files
+        $this->form->fill([
+            'panel_name' => $data['panel_name'],
+            'logoLight' => $this->currentLogo,
+            'logoDark' => $this->currentLogoDark,
+        ]);
+
+        Notification::make()->title(__('Branding updated'))->success()->send();
     }
 
     private function extractUploadPath(mixed $value): ?string
