@@ -315,6 +315,49 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function generalTabContent(): array
     {
         return [
+            Section::make(__('Panel Branding'))
+                ->icon('heroicon-o-paint-brush')
+                ->schema([
+                    TextInput::make('brandingData.panel_name')
+                        ->label(__('Control Panel Name'))
+                        ->placeholder(__('Jabali'))
+                        ->helperText(__('Appears in browser title and navigation')),
+                    Grid::make(2)
+                        ->schema([
+                            FileUpload::make('logoLightUpload')
+                                ->label(__('Light Logo'))
+                                ->image()
+                                ->imagePreviewHeight('80')
+                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
+                                ->maxSize(2048)
+                                ->disk('public')
+                                ->directory('branding')
+                                ->visibility('public'),
+                            FileUpload::make('logoDarkUpload')
+                                ->label(__('Dark Logo'))
+                                ->image()
+                                ->imagePreviewHeight('80')
+                                ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
+                                ->maxSize(2048)
+                                ->disk('public')
+                                ->directory('branding')
+                                ->visibility('public'),
+                        ]),
+                    Actions::make([
+                        FormAction::make('saveBranding')
+                            ->label(__('Save Branding'))
+                            ->action('saveBranding'),
+                        FormAction::make('removeLogo')
+                            ->label(__('Remove Logos'))
+                            ->icon('heroicon-o-trash')
+                            ->color('danger')
+                            ->requiresConfirmation()
+                            ->modalHeading(__('Remove Logos'))
+                            ->modalDescription(__('Are you sure you want to remove the logos?'))
+                            ->action('removeLogo')
+                            ->visible(fn (): bool => $this->currentLogo !== null || $this->currentLogoDark !== null),
+                    ]),
+                ]),
             Section::make(__('Server Hostname'))
                 ->icon('heroicon-o-server')
                 ->schema([

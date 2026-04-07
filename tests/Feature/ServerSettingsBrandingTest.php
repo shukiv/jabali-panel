@@ -39,15 +39,16 @@ class ServerSettingsBrandingTest extends TestCase
             ->assertNotified();
     }
 
-    public function test_branding_section_renders_with_file_inputs(): void
+    public function test_branding_section_renders(): void
     {
         $html = Livewire::actingAs($this->admin, 'admin')
             ->test(ServerSettings::class)
             ->html();
 
-        $this->assertStringContainsString('wire:model="logoLightUpload"', $html);
-        $this->assertStringContainsString('wire:model="logoDarkUpload"', $html);
+        $this->assertStringContainsString('Panel Branding', $html);
+        $this->assertStringContainsString('Control Panel Name', $html);
         $this->assertStringContainsString('Save Branding', $html);
-        $this->assertStringContainsString('Choose File', $html);
+        $this->assertStringContainsString('Light Logo', $html);
+        $this->assertStringContainsString('Dark Logo', $html);
     }
 }
