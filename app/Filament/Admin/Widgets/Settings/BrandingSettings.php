@@ -96,7 +96,7 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
 
     public function saveBranding(): void
     {
-        $data = $this->data;
+        $data = $this->form->getState();
 
         if (empty(trim($data['panel_name'] ?? ''))) {
             Notification::make()->title(__('Panel name cannot be empty'))->danger()->send();
