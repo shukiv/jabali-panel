@@ -187,13 +187,16 @@ function jbLoadResticEnv(): ?array
             $args[] = '--repo';
             $args[] = $repo;
 
-            // Restic repo password
-            $resPwFile = $creds['restic_password_file'] ?? '';
-            if ($resPwFile !== '' && file_exists($resPwFile)) {
-                $args[] = '--password-file';
-                $args[] = $resPwFile;
-            } elseif ($creds['insecure_no_password'] ?? false) {
+            // Restic repo password — check insecure_no_password first since the
+            // password file may exist but be empty (created by --no-encryption)
+            if ($creds['insecure_no_password'] ?? false) {
                 $args[] = '--insecure-no-password';
+            } else {
+                $resPwFile = $creds['restic_password_file'] ?? '';
+                if ($resPwFile !== '' && file_exists($resPwFile) && trim((string) file_get_contents($resPwFile)) !== '') {
+                    $args[] = '--password-file';
+                    $args[] = $resPwFile;
+                }
             }
 
             // SFTP auth — parse user@host from the repo URI (sftp:user@host:/path)
