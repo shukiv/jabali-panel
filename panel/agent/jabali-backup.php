@@ -1416,8 +1416,8 @@ function jbReadFile(array $params): array
 
 function jbLogs(array $params): array
 {
-    $lines = (int) ($params['lines'] ?? 100);
-    $lines = max(10, min($lines, 1000));
+    $lines = (int) ($params['lines'] ?? 500);
+    $lines = max(10, min($lines, 2000));
 
     $logFile = '/var/log/jabali-backup.log';
 
@@ -1434,19 +1434,131 @@ function jbLogs(array $params): array
     }
 
     if (! file_exists($logFile)) {
-        return ['success' => true, 'output' => 'No log file found at ' . $logFile, 'log_file' => $logFile];
+        return ['success' => true, 'jobs' => [], 'log_file' => $logFile];
     }
 
-    // Read last N lines efficiently
+    // Read last N lines
     $cmd = ['tail', '-n', (string) $lines, $logFile];
     $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
     $stdout = stream_get_contents($pipes[1]);
-    $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
     proc_close($proc);
 
-    return ['success' => true, 'output' => trim($stdout), 'log_file' => $logFile];
+    $logLines = explode("\n", trim($stdout ?: ''));
+
+    // Parse into jobs — each "Backup run:" or "Restore" starts a new job
+    $jobs = [];
+    $currentJob = null;
+    $currentAccount = null;
+
+    foreach ($logLines as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+
+        // Extract timestamp
+        $ts = '';
+        if (preg_match('/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/', $line, $m)) {
+            $ts = $m[1];
+        }
+
+        // New backup run
+        if (preg_match('/Backup run: (run-\S+)/', $line, $m)) {
+            if ($currentJob !== null) {
+                $jobs[] = $currentJob;
+            }
+            $currentJob = [
+                'id' => $m[1],
+                'type' => 'backup',
+                'started_at' => $ts,
+                'ended_at' => $ts,
+                'accounts' => [],
+                'status' => 'running',
+                'errors' => 0,
+                'log' => [],
+            ];
+            $currentAccount = null;
+        }
+
+        // New restore run
+        if (preg_match('/Restoring account: (\S+)/', $line, $m) && $currentJob === null) {
+            $currentJob = [
+                'id' => 'restore-' . ($ts ? str_replace(['-', ' ', ':'], '', $ts) : uniqid()),
+                'type' => 'restore',
+                'started_at' => $ts,
+                'ended_at' => $ts,
+                'accounts' => [],
+                'status' => 'running',
+                'errors' => 0,
+                'log' => [],
+            ];
+        }
+
+        if ($currentJob === null) {
+            continue;
+        }
+
+        // Track end time
+        if ($ts !== '') {
+            $currentJob['ended_at'] = $ts;
+        }
+
+        // Account start
+        if (preg_match('/═══ Backing up account: (\S+)/', $line, $m)) {
+            $currentAccount = $m[1];
+            if (! in_array($currentAccount, $currentJob['accounts'], true)) {
+                $currentJob['accounts'][] = $currentAccount;
+            }
+        }
+        if (preg_match('/Restoring account: (\S+)/', $line, $m)) {
+            $currentAccount = $m[1];
+            if (! in_array($currentAccount, $currentJob['accounts'], true)) {
+                $currentJob['accounts'][] = $currentAccount;
+            }
+        }
+
+        // Errors
+        if (str_contains($line, '[ERROR]') || str_contains($line, 'FAILED')) {
+            $currentJob['errors']++;
+        }
+
+        // Job completed markers
+        if (str_contains($line, 'Applying retention policy') || preg_match('/Backup Summary|Restore Summary/', $line)) {
+            $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
+        }
+        if (preg_match('/Backup FAILED|Fatal|Aborted/', $line)) {
+            $currentJob['status'] = 'failed';
+        }
+
+        $currentJob['log'][] = $line;
+    }
+
+    if ($currentJob !== null) {
+        // If no completion marker was found and it has accounts, assume it finished
+        if ($currentJob['status'] === 'running' && ! empty($currentJob['accounts'])) {
+            $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
+        }
+        $jobs[] = $currentJob;
+    }
+
+    // Most recent first
+    $jobs = array_reverse($jobs);
+
+    // Calculate duration for each job
+    foreach ($jobs as &$job) {
+        if ($job['started_at'] && $job['ended_at'] && $job['started_at'] !== $job['ended_at']) {
+            $start = strtotime($job['started_at']);
+            $end = strtotime($job['ended_at']);
+            if ($start && $end) {
+                $job['duration_seconds'] = $end - $start;
+            }
+        }
+    }
+    unset($job);
+
+    return ['success' => true, 'jobs' => $jobs, 'log_file' => $logFile];
 }
 
 // ─── Destination Routes (wrap CLI) ───

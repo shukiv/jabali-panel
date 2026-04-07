@@ -92,7 +92,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     // (download state removed — downloads use direct URL via backup-download.php)
 
     // Logs
-    public string $logsOutput = '';
+    public array $logJobs = [];
 
     // Settings
     public string $doctorOutput = '';
@@ -1552,10 +1552,10 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     public function loadLogs(): void
     {
         try {
-            $result = app(AgentClient::class)->send('jb.logs', ['lines' => 200]);
-            $this->logsOutput = $result['output'] ?? '';
-        } catch (\Throwable $e) {
-            $this->logsOutput = $e->getMessage();
+            $result = app(AgentClient::class)->send('jb.logs', ['lines' => 500]);
+            $this->logJobs = $result['jobs'] ?? [];
+        } catch (\Throwable) {
+            $this->logJobs = [];
         }
     }
 

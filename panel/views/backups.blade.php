@@ -33,18 +33,67 @@
 
             {{-- LOGS --}}
             @if($activeTab === 'logs')
-            <x-filament::section :heading="__('Backup Logs')" :description="__('Recent backup and restore activity.')" icon="heroicon-o-document-text">
+            <x-filament::section :heading="__('Backup Jobs')" :description="__('Recent backup and restore activity.')" icon="heroicon-o-document-text">
                 <x-slot name="afterHeader">
                     <x-filament::button wire:click="loadLogs" size="sm" color="gray" icon="heroicon-o-arrow-path">{{ __('Refresh') }}</x-filament::button>
                 </x-slot>
 
-                @if($logsOutput)
-                <x-filament::section compact>
-                    <code><pre>{{ $logsOutput }}</pre></code>
-                </x-filament::section>
-                @else
-                    <p>{{ __('No log entries found.') }}</p>
-                @endif
+                @forelse($logJobs as $job)
+                <div x-data="{ open: false }" class="border border-gray-200 dark:border-gray-700 rounded-xl mb-3 overflow-hidden">
+                    {{-- Job header --}}
+                    <button @click="open = !open" class="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-white/5 transition">
+                        <div class="flex items-center gap-3 min-w-0">
+                            @if($job['type'] === 'backup')
+                                <x-heroicon-o-cloud-arrow-up class="w-5 h-5 text-gray-400 shrink-0" />
+                            @else
+                                <x-heroicon-o-arrow-path class="w-5 h-5 text-gray-400 shrink-0" />
+                            @endif
+
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="font-medium text-sm text-gray-900 dark:text-gray-100">
+                                        {{ ucfirst($job['type']) }}
+                                    </span>
+                                    @if($job['status'] === 'success')
+                                        <x-filament::badge color="success" size="sm">{{ __('Success') }}</x-filament::badge>
+                                    @elseif($job['status'] === 'partial')
+                                        <x-filament::badge color="warning" size="sm">{{ __('Partial') }}</x-filament::badge>
+                                    @elseif($job['status'] === 'failed')
+                                        <x-filament::badge color="danger" size="sm">{{ __('Failed') }}</x-filament::badge>
+                                    @else
+                                        <x-filament::badge color="gray" size="sm">{{ __('Running') }}</x-filament::badge>
+                                    @endif
+                                    @if($job['errors'] > 0)
+                                        <span class="text-xs text-danger-500">{{ $job['errors'] }} {{ __('error(s)') }}</span>
+                                    @endif
+                                </div>
+                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                    {{ implode(', ', $job['accounts'] ?? []) ?: __('No accounts') }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-3 shrink-0">
+                            <div class="text-right text-xs text-gray-500 dark:text-gray-400">
+                                <div>{{ $job['started_at'] ?? '' }}</div>
+                                @if(isset($job['duration_seconds']))
+                                    <div>{{ $job['duration_seconds'] }}s</div>
+                                @endif
+                            </div>
+                            <x-heroicon-o-chevron-down class="w-4 h-4 text-gray-400 transition-transform" ::class="open && 'rotate-180'" />
+                        </div>
+                    </button>
+
+                    {{-- Expandable log output --}}
+                    <div x-show="open" x-cloak x-collapse>
+                        <div class="border-t border-gray-200 dark:border-gray-700 px-4 py-3">
+                            <pre class="text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-pre-wrap max-h-80 overflow-y-auto">{{ implode("\n", $job['log'] ?? []) }}</pre>
+                        </div>
+                    </div>
+                </div>
+                @empty
+                    <p class="text-sm text-gray-500">{{ __('No backup jobs found.') }}</p>
+                @endforelse
             </x-filament::section>
             @endif
 
