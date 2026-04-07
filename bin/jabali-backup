@@ -68,7 +68,7 @@ GLOBAL OPTIONS:
     --destination=NAME  Use a specific backup destination (default: the one marked default)
 
 RUN OPTIONS:
-    --only=COLLECTORS   Comma-separated list: files,mysql,postgres,dns,email,ssl,nginx,php,wordpress,cron,metadata
+    --only=COLLECTORS   Comma-separated list: files,mysql,postgres,dns,email,ssl,nginx,php,wordpress,cron,stalwart,metadata
     --exclude=COLL      Skip specific collectors
     --dry-run           Show what would be backed up
     --parallel=N        Backup N accounts concurrently (default: 1)
@@ -167,6 +167,7 @@ cmd_doctor() {
     _check_opt "wp-cli" "wp"
     _check_opt "rclone" "rclone"
     _check_opt "jq (destinations)" "jq"
+    _check_opt "stalwart-cli" "stalwart-cli"
     _check_opt "mail" "mail"
 
     # Config
@@ -572,6 +573,10 @@ cmd_run() {
             collect_cron "$user_id" "$username" "$staging" || log_warn "cron collector failed for $username"
         fi
 
+        if _collector_enabled stalwart "$only" "$exclude"; then
+            collect_stalwart "$user_id" "$staging" || log_warn "stalwart collector failed for $username"
+        fi
+
         if _collector_enabled metadata "$only" "$exclude"; then
             collect_metadata "$user_id" "$username" "$staging" || log_warn "metadata collector failed for $username"
         fi
@@ -892,6 +897,17 @@ cmd_restore() {
     # 10. Cron
     if _collector_enabled cron "$only" "$exclude" && [[ -d "${staging}/cron" ]]; then
         if restore_cron "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 11. Stalwart
+    if _collector_enabled stalwart "$only" "$exclude" && [[ -d "${staging}/stalwart" ]]; then
+        if restore_stalwart "$extract_dir" "$target_user" "$uid" "$force"; then
             restored=$((restored + 1))
         else
             failed=$((failed + 1))

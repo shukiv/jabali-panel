@@ -74,6 +74,10 @@ cfg_load() {
     CFG_PHP_FPM_POOLS="$(cfg_get paths php_fpm_pools '/etc/php/*/fpm/pool.d')"
     CFG_NGINX_SITES="$(cfg_get paths nginx_sites /etc/nginx/sites-available)"
 
+    CFG_STALWART_ENABLED="$(cfg_get stalwart enabled false)"
+    CFG_STALWART_URL="$(cfg_get stalwart url http://localhost:8080)"
+    CFG_STALWART_ADMIN_TOKEN="$(cfg_secret stalwart admin_token_file)"
+
     CFG_LOG_FILE="$(cfg_get logging file /var/log/jabali-backup.log)"
     CFG_LOG_LEVEL="$(cfg_get logging level info)"
 

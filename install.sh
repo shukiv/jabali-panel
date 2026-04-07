@@ -362,7 +362,7 @@ _jabali_backup() {
             return 0
             ;;
         --only|--exclude)
-            COMPREPLY=( $(compgen -W "files mysql postgres dns email ssl nginx php wordpress cron metadata" -- "$cur") )
+            COMPREPLY=( $(compgen -W "files mysql postgres dns email ssl nginx php wordpress cron stalwart metadata" -- "$cur") )
             return 0
             ;;
         --snapshot)

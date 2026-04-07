@@ -271,6 +271,7 @@ Each account backup includes:
 | User settings | Account preferences | JSON |
 | Bandwidth history | Per-domain usage stats | JSON |
 | Hosting package | Package name, limits, features | JSON |
+| Stalwart accounts | JMAP emails, mailboxes, Sieve scripts, identities, vacation responses | JSON (via `stalwart-cli`) |
 
 ## Supported Backends
 
@@ -291,7 +292,7 @@ Each account backup includes:
 
 Available collectors for `--only` and `--exclude` flags:
 
-`files`, `mysql`, `postgres`, `dns`, `email`, `ssl`, `nginx`, `php`, `wordpress`, `cron`, `metadata`
+`files`, `mysql`, `postgres`, `dns`, `email`, `ssl`, `nginx`, `php`, `wordpress`, `cron`, `stalwart`, `metadata`
 <!-- AUTO-GENERATED:collectors-end -->
 
 ## Configuration

@@ -136,6 +136,26 @@ Notifications on backup completion.
 | `email_to` | (empty) | Email address for notifications (requires `mail` or `sendmail`) |
 | `webhook_url` | (empty) | HTTP(S) URL for POST webhook notifications |
 
+### `[stalwart]`
+
+Stalwart mail server JMAP account backup. When enabled, uses `stalwart-cli export account` to capture the full JMAP state (emails, mailbox structure, Sieve scripts, identities, vacation responses). Falls back to REST API if the CLI is unavailable.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable Stalwart account-level backup |
+| `url` | `http://localhost:8080` | Stalwart server URL |
+| `admin_token_file` | `/etc/jabali-backup/stalwart-token` | Path to file containing the admin API token |
+
+To set up:
+```bash
+# Get an admin token from Stalwart's web UI or config
+echo 'YOUR_STALWART_ADMIN_TOKEN' | sudo tee /etc/jabali-backup/stalwart-token
+sudo chmod 600 /etc/jabali-backup/stalwart-token
+
+# Enable in config
+sudo sed -i 's/^enabled=false/enabled=true/' /etc/jabali-backup/config.conf
+```
+
 ### `[paths]`
 
 Server paths for data collection.

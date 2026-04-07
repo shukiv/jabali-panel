@@ -34,6 +34,15 @@ on_success=false
 email_to=
 webhook_url=
 
+[stalwart]
+# Enable Stalwart JMAP account backup (exports emails, mailboxes, Sieve scripts,
+# identities, vacation responses via stalwart-cli or REST API)
+enabled=false
+# Stalwart server URL (used by stalwart-cli and REST API fallback)
+url=http://localhost:8080
+# Path to file containing the Stalwart admin API token
+admin_token_file=/etc/jabali-backup/stalwart-token
+
 [paths]
 stalwart_data=/var/lib/stalwart-mail/data
 php_fpm_pools=/etc/php/*/fpm/pool.d
