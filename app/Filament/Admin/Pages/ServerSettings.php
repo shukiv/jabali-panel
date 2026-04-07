@@ -67,10 +67,10 @@ class ServerSettings extends Page implements HasActions, HasForms
     // Form data arrays
     public ?array $brandingData = [];
 
-    // Branding logo file uploads (Filament FileUpload stores path strings)
-    public ?string $logoLightUpload = null;
+    // Branding logo file uploads (Filament FileUpload — untyped for TemporaryUploadedFile compat)
+    public $logoLightUpload = null;
 
-    public ?string $logoDarkUpload = null;
+    public $logoDarkUpload = null;
 
     public ?string $currentLogoDark = null;
 
