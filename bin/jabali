@@ -300,6 +300,28 @@ function handleUpdate(array $options): void
         echo C_GREEN.'✓ Services restarted'.C_RESET."\n";
     }
 
+    // Step 9: Update installed addons
+    $addonBinaries = [
+        'jabali-backup' => '/usr/local/bin/jabali-backup',
+        'jabali-security' => '/usr/local/bin/jabali-security',
+        'jabali-isolator' => '/usr/local/bin/jabali-isolator',
+    ];
+    $addonUpdated = false;
+    foreach ($addonBinaries as $addon => $binary) {
+        if (file_exists($binary)) {
+            if (! $addonUpdated) {
+                step('Updating installed addons...');
+                $addonUpdated = true;
+            }
+            $updateResult = runShell(escapeshellarg($binary).' update 2>&1');
+            if ($updateResult === false) {
+                echo C_YELLOW."  ⚠ {$addon} update failed".C_RESET."\n";
+            } else {
+                echo C_GREEN."  ✓ {$addon} updated".C_RESET."\n";
+            }
+        }
+    }
+
     // Fix .git ownership after update so panel (www-data) can check for updates
     runShell('chown -R '.escapeshellarg($wwwUser).':'.escapeshellarg($wwwUser).' '.escapeshellarg($jabaliDir.'/.git').' 2>/dev/null');
 
