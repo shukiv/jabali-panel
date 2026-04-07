@@ -2,7 +2,7 @@
 
 **Objective:** Complete the Stalwart mail server backup and restore integration — from the initial scaffolding (done) to production-ready with validation, error handling, panel UI, and cross-server migration support.
 
-**Status:** Steps 1–7 are done. Steps 8–9 remain.
+**Status:** All 9 steps complete.
 
 ---
 
@@ -301,7 +301,7 @@ sudo ./install.sh
 
 ---
 
-## Step 8: Panel Stalwart Config UI
+## Step 8: Panel Stalwart Config UI ✅ DONE
 
 **Goal:** Admin can enable/disable Stalwart backup and test the connection from the panel.
 
@@ -342,7 +342,7 @@ sudo ./install.sh
 
 ---
 
-## Step 9: Cross-Server Migration Documentation
+## Step 9: Cross-Server Migration Documentation ✅ DONE
 
 **Goal:** Document how to use the Stalwart backup for migrating between servers.
 

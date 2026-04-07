@@ -62,6 +62,51 @@
                 </x-filament::section>
             </x-filament::section>
 
+            @if(! empty($stalwartStatus) && ($stalwartStatus['installed'] ?? false))
+            <x-filament::section :heading="__('Stalwart Mail Backup')" icon="heroicon-o-inbox-stack">
+                <div class="space-y-3">
+                    <div class="flex items-center gap-3">
+                        @if($stalwartStatus['enabled'] ?? false)
+                            <x-filament::badge color="success">{{ __('Enabled') }}</x-filament::badge>
+                        @else
+                            <x-filament::badge color="gray">{{ __('Disabled') }}</x-filament::badge>
+                        @endif
+                        <span class="text-sm text-gray-500 dark:text-gray-400">{{ $stalwartStatus['url'] ?? '' }}</span>
+                    </div>
+
+                    <div class="flex items-center gap-2 text-sm">
+                        <span>{{ __('Admin token') }}:</span>
+                        @if($stalwartStatus['has_token'] ?? false)
+                            <x-filament::badge color="success" size="sm">{{ __('Set') }}</x-filament::badge>
+                        @else
+                            <x-filament::badge color="danger" size="sm">{{ __('Missing') }}</x-filament::badge>
+                        @endif
+
+                        <span class="mx-2">|</span>
+
+                        <span>stalwart-cli:</span>
+                        @if($stalwartStatus['cli_available'] ?? false)
+                            <x-filament::badge color="success" size="sm">{{ __('Available') }}</x-filament::badge>
+                        @else
+                            <x-filament::badge color="warning" size="sm">{{ __('Not found') }}</x-filament::badge>
+                        @endif
+                    </div>
+
+                    <div class="flex gap-2">
+                        <x-filament::button
+                            wire:click="toggleStalwart"
+                            :color="($stalwartStatus['enabled'] ?? false) ? 'gray' : 'primary'"
+                            size="sm"
+                            :icon="($stalwartStatus['enabled'] ?? false) ? 'heroicon-o-pause' : 'heroicon-o-play'"
+                        >
+                            {{ ($stalwartStatus['enabled'] ?? false) ? __('Disable') : __('Enable') }}
+                        </x-filament::button>
+                        <x-filament::button wire:click="testStalwartConnection" color="gray" size="sm" icon="heroicon-o-signal">{{ __('Test Connection') }}</x-filament::button>
+                    </div>
+                </div>
+            </x-filament::section>
+            @endif
+
             <x-filament::section :heading="__('Maintenance')" icon="heroicon-o-wrench-screwdriver">
                 <x-filament::button wire:click="runForget" wire:confirm="{{ __('Prune old snapshots?') }}" color="gray" icon="heroicon-o-archive-box-x-mark">{{ __('Apply Retention') }}</x-filament::button>
             </x-filament::section>

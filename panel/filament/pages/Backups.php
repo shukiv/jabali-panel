@@ -99,6 +99,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     public string $configOutput = '';
 
+    // Stalwart
+    public array $stalwartStatus = [];
+
 
     public static function getNavigationLabel(): string
     {
@@ -945,6 +948,52 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             $this->configOutput = (app(AgentClient::class)->send('jb.config_test', []))['output'] ?? '';
         } catch (\Throwable) {
             $this->configOutput = '';
+        }
+        $this->loadStalwartStatus();
+    }
+
+    protected function loadStalwartStatus(): void
+    {
+        try {
+            $result = app(AgentClient::class)->send('jb.stalwart_status', []);
+            $this->stalwartStatus = ($result['success'] ?? false) ? $result : [];
+        } catch (\Throwable) {
+            $this->stalwartStatus = [];
+        }
+    }
+
+    public function testStalwartConnection(): void
+    {
+        try {
+            $result = app(AgentClient::class)->send('jb.stalwart_test', []);
+            if ($result['success'] ?? false) {
+                Notification::make()->title(__('Stalwart connected'))->body($result['message'] ?? '')->success()->send();
+            } else {
+                Notification::make()->title(__('Connection failed'))->body(SafeError::fromAgent($result['error'] ?? __('Unknown error')))->danger()->send();
+            }
+        } catch (\Throwable $e) {
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
+        }
+    }
+
+    public function toggleStalwart(): void
+    {
+        $currentlyEnabled = $this->stalwartStatus['enabled'] ?? false;
+        $enable = ! $currentlyEnabled;
+
+        try {
+            $result = app(AgentClient::class)->send('jb.stalwart_toggle', ['enable' => $enable]);
+            if ($result['success'] ?? false) {
+                Notification::make()
+                    ->title($enable ? __('Stalwart backup enabled') : __('Stalwart backup disabled'))
+                    ->success()
+                    ->send();
+                $this->loadStalwartStatus();
+            } else {
+                Notification::make()->title(__('Failed'))->body(SafeError::fromAgent($result['error'] ?? __('Unknown error')))->danger()->send();
+            }
+        } catch (\Throwable $e) {
+            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
         }
     }
 

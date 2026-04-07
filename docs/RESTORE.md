@@ -276,3 +276,93 @@ Ensure you are running as root. Mail storage requires correct UID/GID ownership.
 
 If encrypted fields fail to decrypt, verify the APP_KEY in `/etc/jabali-backup/app-key`
 matches the one used when the backup was created.
+
+## Stalwart Mail Server
+
+### What Gets Backed Up
+
+When Stalwart backup is enabled (`[stalwart] enabled=true`), the `stalwart` collector
+exports via `stalwart-cli export account`:
+
+| Component | Description |
+|-----------|-------------|
+| Emails | All messages with folder structure |
+| Mailboxes | Mailbox hierarchy and metadata |
+| Sieve scripts | Server-side mail filters |
+| Identities | User identities / send-as addresses |
+| Vacation responses | Auto-reply settings |
+
+The export uses Stalwart's native JMAP format. If `stalwart-cli` is not available,
+the collector falls back to the REST API for principal metadata only.
+
+### Same-Server Restore (Account Recovery)
+
+```bash
+# Restore Stalwart data from the latest snapshot
+sudo jabali-backup restore alice --snapshot=latest --only=stalwart
+```
+
+This re-imports the JMAP account data into Stalwart. The import is additive —
+existing emails are not deleted. Use `--force` to update the principal metadata
+(description, quota) even if the account exists.
+
+### Cross-Server Migration
+
+To migrate a mail account from one Jabali server to another:
+
+```bash
+# 1. Source server — run backup with stalwart collector
+sudo jabali-backup run alice --only=email,stalwart
+
+# 2. Transfer — either use a shared backup destination, or copy the snapshot
+#    Both servers must have the same destination configured, OR:
+sudo jabali-backup download alice --output=/tmp/alice-backup.tar.gz
+#    Then copy to the target server
+
+# 3. Target server — restore the account
+sudo jabali-backup restore alice --only=email,stalwart --force
+```
+
+Include `email` in both backup and restore to ensure the Jabali DB metadata
+(email domains, mailbox records, forwarders, autoresponders) is also migrated.
+The `stalwart` collector handles mail content; the `email` collector handles
+Jabali panel config.
+
+### What Does NOT Migrate
+
+- **Passwords** — Stalwart passwords are not exported. Users must reset their
+  passwords after migration.
+- **APP_KEY** — Not needed for Stalwart. Stalwart manages its own encryption
+  independently of Laravel's APP_KEY.
+- **Active sessions** — IMAP/JMAP sessions are not transferred.
+
+### Selective Account Restore
+
+The panel's restore wizard shows a "Stalwart Mail" tab listing all backed-up
+accounts (e.g., `alice@example.com`, `alice@other.com`). You can deselect
+individual accounts to skip them.
+
+### Troubleshooting
+
+#### "stalwart-cli not found"
+
+Install stalwart-cli from the Stalwart package, or ensure the REST API fallback
+is configured. Without stalwart-cli, only principal metadata is backed up — not
+full JMAP account data.
+
+#### "Connection failed"
+
+Check that the Stalwart URL and admin token are correct:
+```bash
+sudo jabali-backup config test
+# Shows: Stalwart: ✓ connected (http://localhost:8080)
+# Or:   Stalwart: ✗ connection failed
+```
+
+#### "Stalwart backup not enabled"
+
+Enable in the panel (Settings tab → Stalwart Mail Backup → Enable) or in the config:
+```ini
+[stalwart]
+enabled=true
+```

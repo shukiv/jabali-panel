@@ -51,6 +51,9 @@ return [
     'jb.destinations_reinit' => fn (array $p) => jbDestinationsReinit($p),
     'jb.ssh_keys'          => fn (array $p) => jbSshKeys($p),
     'jb.destination'       => fn (array $p) => jbDestinationsList($p),
+    'jb.stalwart_status'   => fn (array $p) => jbStalwartStatus($p),
+    'jb.stalwart_test'     => fn (array $p) => jbStalwartTest($p),
+    'jb.stalwart_toggle'   => fn (array $p) => jbStalwartToggle($p),
 ];
 
 // ─── Helpers ───
@@ -1713,4 +1716,122 @@ function jbSshKeys(array $params): array
     }
 
     return ['success' => true, 'keys' => $keys];
+}
+
+// ─── Stalwart ───
+
+function jbStalwartStatus(array $params): array
+{
+    $configFile = '/etc/jabali-backup/config.conf';
+    if (! file_exists($configFile)) {
+        return ['success' => true, 'installed' => false];
+    }
+
+    $config = parse_ini_file($configFile, true);
+    $stalwart = $config['stalwart'] ?? [];
+    $enabled = ($stalwart['enabled'] ?? 'false') === 'true';
+    $url = $stalwart['url'] ?? 'http://localhost:8080';
+    $tokenFile = $stalwart['admin_token_file'] ?? '/etc/jabali-backup/stalwart-token';
+    $hasToken = file_exists($tokenFile) && trim((string) file_get_contents($tokenFile)) !== '';
+    $cliAvailable = trim((string) shell_exec('which stalwart-cli 2>/dev/null')) !== '';
+
+    return [
+        'success' => true,
+        'installed' => isset($config['stalwart']),
+        'enabled' => $enabled,
+        'url' => $url,
+        'has_token' => $hasToken,
+        'cli_available' => $cliAvailable,
+    ];
+}
+
+function jbStalwartTest(array $params): array
+{
+    $configFile = '/etc/jabali-backup/config.conf';
+    if (! file_exists($configFile)) {
+        return ['success' => false, 'error' => 'Config file not found'];
+    }
+
+    $config = parse_ini_file($configFile, true);
+    $stalwart = $config['stalwart'] ?? [];
+    $url = rtrim($stalwart['url'] ?? 'http://localhost:8080', '/');
+    $tokenFile = $stalwart['admin_token_file'] ?? '/etc/jabali-backup/stalwart-token';
+
+    if (! file_exists($tokenFile)) {
+        return ['success' => false, 'error' => 'Admin token file not found: ' . $tokenFile];
+    }
+
+    $token = trim((string) file_get_contents($tokenFile));
+    if ($token === '') {
+        return ['success' => false, 'error' => 'Admin token file is empty'];
+    }
+
+    $ch = curl_init($url . '/api/principal?limit=1');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $token,
+            'Accept: application/json',
+        ],
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError !== '') {
+        return ['success' => false, 'error' => 'Connection failed: ' . $curlError];
+    }
+
+    if ($httpCode === 401 || $httpCode === 403) {
+        return ['success' => false, 'error' => 'Authentication failed (HTTP ' . $httpCode . ')'];
+    }
+
+    if ($httpCode !== 200) {
+        return ['success' => false, 'error' => 'Unexpected response (HTTP ' . $httpCode . ')'];
+    }
+
+    $data = json_decode($response ?: '{}', true);
+    $total = $data['data']['total'] ?? 0;
+
+    return ['success' => true, 'message' => 'Connected — ' . $total . ' principal(s)', 'url' => $url];
+}
+
+function jbStalwartToggle(array $params): array
+{
+    $enable = (bool) ($params['enable'] ?? false);
+    $configFile = '/etc/jabali-backup/config.conf';
+
+    if (! file_exists($configFile)) {
+        return ['success' => false, 'error' => 'Config file not found'];
+    }
+
+    // If enabling, verify token exists
+    if ($enable) {
+        $config = parse_ini_file($configFile, true);
+        $tokenFile = $config['stalwart']['admin_token_file'] ?? '/etc/jabali-backup/stalwart-token';
+        if (! file_exists($tokenFile) || trim((string) file_get_contents($tokenFile)) === '') {
+            return ['success' => false, 'error' => 'Set admin token before enabling: ' . $tokenFile];
+        }
+    }
+
+    $content = file_get_contents($configFile);
+    $newValue = $enable ? 'true' : 'false';
+
+    if (preg_match('/^\[stalwart\].*?^enabled\s*=\s*.*/ms', $content)) {
+        // Replace existing enabled= line within [stalwart] section
+        $content = preg_replace(
+            '/(^\[stalwart\].*?^enabled\s*=\s*).*/ms',
+            '${1}' . $newValue,
+            $content,
+            1,
+        );
+    } else {
+        return ['success' => false, 'error' => '[stalwart] section not found in config'];
+    }
+
+    file_put_contents($configFile, $content);
+
+    return ['success' => true, 'enabled' => $enable];
 }
