@@ -24,7 +24,7 @@ class SecurityHeaders
             "style-src 'self' 'unsafe-inline'", // Required for Tailwind/Filament
             "img-src 'self' data: blob:",
             "font-src 'self' data:",
-            "connect-src 'self' ws: wss:", // WebSocket for Livewire
+            "connect-src 'self' https: ws: wss:", // HTTPS for FilePond file preview, WS for Livewire
             "worker-src 'self' blob:", // Required for file upload workers
             "frame-ancestors 'self'",
             "form-action 'self'",
