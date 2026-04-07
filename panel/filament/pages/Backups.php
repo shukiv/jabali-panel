@@ -612,6 +612,16 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                 ]);
                         }
 
+                        // If no components discovered, show a message instead of empty tabs
+                        if (empty($tabs)) {
+                            $tabs[] = Tab::make(__('No Data'))
+                                ->icon('heroicon-o-exclamation-triangle')
+                                ->schema([
+                                    Placeholder::make('no_data')
+                                        ->content(__('No restorable components found in this snapshot. The snapshot may be empty or the inventory check failed.')),
+                                ]);
+                        }
+
                         return [
                             // Step 1: Select what to restore
                             Step::make(__('Select Components'))
