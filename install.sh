@@ -3968,6 +3968,15 @@ upgrade_infra() {
         detect_php_version
     fi
 
+    # Fix FPM pool configs with empty pm= (bug: createFpmPool missed $pmType before v0.9.x)
+    for pool_conf in /etc/php/*/fpm/pool.d/*.conf; do
+        [[ -f "$pool_conf" ]] || continue
+        if grep -qE '^pm\s*=\s*$' "$pool_conf"; then
+            sed -i 's/^pm\s*=\s*$/pm = dynamic/' "$pool_conf"
+            info "Fixed empty pm= in $(basename "$pool_conf")"
+        fi
+    done
+
     # Re-run safe configuration functions
     header "Updating PHP Configuration"
     configure_php
@@ -4106,15 +4115,6 @@ with open(sys.argv[1], 'w') as f:
             fi
         done
     fi
-
-    # Fix FPM pool configs with empty pm= (bug: createFpmPool missed $pmType before v0.9.x)
-    for pool_conf in /etc/php/*/fpm/pool.d/*.conf; do
-        [[ -f "$pool_conf" ]] || continue
-        if grep -qE '^pm\s*=\s*$' "$pool_conf"; then
-            sed -i 's/^pm\s*=\s*$/pm = dynamic/' "$pool_conf"
-            info "Fixed empty pm= in $(basename "$pool_conf")"
-        fi
-    done
 
     # Restart services to pick up changes
     header "Restarting Services"
