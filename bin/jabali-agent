@@ -868,22 +868,15 @@ function addonStatus(array $params): array
             'name' => 'Jabali Backup',
             'description' => 'Restic-based backup and restore tool',
             'check' => '/usr/local/bin/jabali-backup',
-            'version_cmd' => 'jabali-backup --version 2>/dev/null',
+            'version_cmd' => 'jabali-backup version 2>/dev/null | head -1',
             'service' => null,
         ],
         'jabali-security' => [
             'name' => 'Jabali Security',
             'description' => 'Threat detection and GeoIP blocking',
             'check' => '/usr/local/bin/jabali-security',
-            'version_cmd' => 'jabali-security --version 2>/dev/null',
+            'version_cmd' => 'jabali-security version 2>/dev/null | head -1',
             'service' => 'jabali-security',
-        ],
-        'jabali-isolator' => [
-            'name' => 'Jabali Isolator',
-            'description' => 'SSH shell isolation via nspawn containers',
-            'check' => '/usr/local/bin/jabali-isolator',
-            'version_cmd' => 'jabali-isolator --version 2>/dev/null',
-            'service' => null,
         ],
     ];
 
@@ -899,7 +892,12 @@ function addonStatus(array $params): array
         $serviceActive = null;
 
         if ($installed && $addon['version_cmd']) {
-            $version = trim(shell_exec($addon['version_cmd']) ?? '');
+            $raw = trim(shell_exec($addon['version_cmd']) ?? '');
+            if (preg_match('/v?(\d+\.\d+\.\d+)/', $raw, $m)) {
+                $version = $m[1];
+            } else {
+                $version = $raw;
+            }
         }
         if ($installed && $addon['service']) {
             exec('systemctl is-active '.escapeshellarg($addon['service']).' 2>/dev/null', $out, $code);
@@ -925,7 +923,6 @@ function addonInstall(array $params): array
     $urls = [
         'jabali-backup' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
         'jabali-security' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
-        'jabali-isolator' => 'https://raw.githubusercontent.com/shukiv/jabali-isolator/main/install.sh',
     ];
 
     if (! isset($urls[$addon])) {
@@ -956,7 +953,6 @@ function addonUninstall(array $params): array
     $urls = [
         'jabali-backup' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
         'jabali-security' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
-        'jabali-isolator' => 'https://raw.githubusercontent.com/shukiv/jabali-isolator/main/install.sh',
     ];
 
     if (! isset($urls[$addon])) {

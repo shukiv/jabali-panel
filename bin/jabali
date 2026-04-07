@@ -304,7 +304,6 @@ function handleUpdate(array $options): void
     $addonBinaries = [
         'jabali-backup' => '/usr/local/bin/jabali-backup',
         'jabali-security' => '/usr/local/bin/jabali-security',
-        'jabali-isolator' => '/usr/local/bin/jabali-isolator',
     ];
     $addonUpdated = false;
     foreach ($addonBinaries as $addon => $binary) {
