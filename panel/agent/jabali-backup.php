@@ -1107,8 +1107,9 @@ function jbDownloadPipe(array $params): array
 
     $pipeDir = '/tmp/jabali-exports';
     if (! is_dir($pipeDir)) {
-        mkdir($pipeDir, 0700, true);
+        mkdir($pipeDir, 0755, true);
     }
+    chmod($pipeDir, 0755);
 
     // Clean up old pipes (older than 10 minutes)
     foreach (glob($pipeDir . '/pipe-*') as $old) {
