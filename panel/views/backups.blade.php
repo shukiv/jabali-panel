@@ -84,10 +84,52 @@
                         </div>
                     </button>
 
-                    {{-- Expandable log output --}}
+                    {{-- Expandable events + raw log --}}
                     <div x-show="open" x-cloak x-collapse>
-                        <div class="border-t border-gray-200 dark:border-gray-700 px-4 py-3">
-                            <pre class="text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-pre-wrap max-h-80 overflow-y-auto">{{ implode("\n", $job['log'] ?? []) }}</pre>
+                        <div x-data="{ showRaw: false }" class="border-t border-gray-200 dark:border-gray-700 px-4 py-3 space-y-2">
+                            {{-- Human-readable events --}}
+                            <div x-show="!showRaw" class="space-y-1">
+                                @foreach($job['events'] ?? [] as $event)
+                                    <div class="flex items-start gap-2 text-sm">
+                                        @switch($event['level'] ?? 'info')
+                                            @case('heading')
+                                                <span class="font-semibold text-gray-900 dark:text-gray-100 mt-2 mb-0.5">{{ $event['text'] }}</span>
+                                                @break
+                                            @case('success')
+                                                <span class="text-success-500 shrink-0">&#x2713;</span>
+                                                <span class="text-gray-700 dark:text-gray-300">{{ $event['text'] }}</span>
+                                                @break
+                                            @case('error')
+                                                <span class="text-danger-500 shrink-0">&#x2717;</span>
+                                                <span class="text-danger-600 dark:text-danger-400">{{ $event['text'] }}</span>
+                                                @break
+                                            @case('warn')
+                                                <span class="text-warning-500 shrink-0">&#x26A0;</span>
+                                                <span class="text-warning-600 dark:text-warning-400">{{ $event['text'] }}</span>
+                                                @break
+                                            @case('skip')
+                                                <span class="text-gray-400 shrink-0">&mdash;</span>
+                                                <span class="text-gray-400">{{ $event['text'] }}</span>
+                                                @break
+                                            @default
+                                                <span class="text-gray-400 shrink-0">&#x2022;</span>
+                                                <span class="text-gray-600 dark:text-gray-400">{{ $event['text'] }}</span>
+                                        @endswitch
+                                    </div>
+                                @endforeach
+                                @if(empty($job['events']))
+                                    <p class="text-sm text-gray-400">{{ __('No details available.') }}</p>
+                                @endif
+                            </div>
+
+                            {{-- Raw log (toggle) --}}
+                            <div x-show="showRaw" x-cloak>
+                                <pre class="text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-pre-wrap max-h-80 overflow-y-auto bg-gray-50 dark:bg-gray-900 rounded-lg p-3">{{ implode("\n", $job['log'] ?? []) }}</pre>
+                            </div>
+
+                            <button @click="showRaw = !showRaw" class="text-xs text-primary-500 hover:underline">
+                                <span x-text="showRaw ? '{{ __('Show summary') }}' : '{{ __('Show raw log') }}'"></span>
+                            </button>
                         </div>
                     </div>
                 </div>

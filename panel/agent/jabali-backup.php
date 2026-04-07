@@ -1477,13 +1477,14 @@ function jbLogs(array $params): array
                 'accounts' => [],
                 'status' => 'running',
                 'errors' => 0,
+                'events' => [],
                 'log' => [],
             ];
             $currentAccount = null;
         }
 
         // New restore run
-        if (preg_match('/Restoring account: (\S+)/', $line, $m) && $currentJob === null) {
+        if (preg_match('/═══ Restoring account: (\S+)/', $line, $m) && $currentJob === null) {
             $currentJob = [
                 'id' => 'restore-' . ($ts ? str_replace(['-', ' ', ':'], '', $ts) : uniqid()),
                 'type' => 'restore',
@@ -1492,6 +1493,22 @@ function jbLogs(array $params): array
                 'accounts' => [],
                 'status' => 'running',
                 'errors' => 0,
+                'events' => [],
+                'log' => [],
+            ];
+        }
+
+        // File-level restore (standalone, no account wrapper)
+        if (preg_match('/File-level restore: (\d+) path/', $line, $m) && $currentJob === null) {
+            $currentJob = [
+                'id' => 'file-restore-' . ($ts ? str_replace(['-', ' ', ':'], '', $ts) : uniqid()),
+                'type' => 'file-restore',
+                'started_at' => $ts,
+                'ended_at' => $ts,
+                'accounts' => [],
+                'status' => 'success',
+                'errors' => 0,
+                'events' => [['level' => 'info', 'text' => 'Restored ' . $m[1] . ' file path(s)']],
                 'log' => [],
             ];
         }
@@ -1511,13 +1528,23 @@ function jbLogs(array $params): array
             if (! in_array($currentAccount, $currentJob['accounts'], true)) {
                 $currentJob['accounts'][] = $currentAccount;
             }
+            $currentJob['events'][] = ['level' => 'heading', 'text' => $currentAccount];
         }
-        if (preg_match('/Restoring account: (\S+)/', $line, $m)) {
+        if (preg_match('/═══ Restoring account: (\S+)/', $line, $m)) {
             $currentAccount = $m[1];
             if (! in_array($currentAccount, $currentJob['accounts'], true)) {
                 $currentJob['accounts'][] = $currentAccount;
             }
+            $currentJob['events'][] = ['level' => 'heading', 'text' => $currentAccount];
         }
+        if (preg_match('/Resolved latest snapshot for (\S+): (\S+)/', $line, $m)) {
+            if (! in_array($m[1], $currentJob['accounts'], true)) {
+                $currentJob['accounts'][] = $m[1];
+            }
+        }
+
+        // Translate log lines into human events
+        jbLogTranslateEvent($currentJob, $line);
 
         // Errors
         if (str_contains($line, '[ERROR]') || str_contains($line, 'FAILED')) {
@@ -1525,7 +1552,11 @@ function jbLogs(array $params): array
         }
 
         // Job completed markers
-        if (str_contains($line, 'Applying retention policy') || preg_match('/Backup Summary|Restore Summary/', $line)) {
+        if (str_contains($line, 'Applying retention policy')) {
+            $currentJob['events'][] = ['level' => 'info', 'text' => 'Retention policy applied'];
+            $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
+        }
+        if (preg_match('/═══ (Backup|Restore) complete for/', $line)) {
             $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
         }
         if (preg_match('/Backup FAILED|Fatal|Aborted/', $line)) {
@@ -1559,6 +1590,97 @@ function jbLogs(array $params): array
     unset($job);
 
     return ['success' => true, 'jobs' => $jobs, 'log_file' => $logFile];
+}
+
+/**
+ * Translate a raw log line into a human-readable event.
+ * Appends to $job['events'] when a line matches a known pattern.
+ */
+function jbLogTranslateEvent(array &$job, string $line): void
+{
+    // Backup collectors
+    if (preg_match('/files: Added \/home\/\S+ to backup paths/', $line)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Home directory files collected'];
+    } elseif (preg_match('/mysql: Backed up (\d+) database/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => $m[1] . ' database(s) backed up'];
+    } elseif (preg_match('/mysql: No databases found/', $line)) {
+        $job['events'][] = ['level' => 'skip', 'text' => 'No MySQL databases'];
+    } elseif (preg_match('/mysql: Dumping database (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => 'Dumping database ' . $m[1]];
+    } elseif (preg_match('/postgres: psql not installed/', $line)) {
+        $job['events'][] = ['level' => 'skip', 'text' => 'PostgreSQL not installed'];
+    } elseif (preg_match('/dns: Exported (\d+) zones/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => $m[1] . ' DNS zone(s) exported'];
+    } elseif (preg_match('/dns: Exported (\S+) \((\d+) records\)/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => $m[1] . ': ' . $m[2] . ' DNS records'];
+    } elseif (preg_match('/email: Exported domain (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => 'Email domain: ' . $m[1]];
+    } elseif (preg_match('/email: Exported mailbox (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => 'Mailbox: ' . $m[1]];
+    } elseif (preg_match('/email: Skipping maildir/', $line)) {
+        $job['events'][] = ['level' => 'skip', 'text' => 'Mail files handled by Stalwart'];
+    } elseif (preg_match('/ssl: Exported (\d+) certificate/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => $m[1] . ' SSL certificate(s) exported'];
+    } elseif (preg_match('/nginx: Exported (\d+) domain config/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => $m[1] . ' Nginx config(s) exported'];
+    } elseif (preg_match('/php: Exported (\d+) pool/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => $m[1] . ' PHP pool(s) exported'];
+    } elseif (preg_match('/wordpress: Exported (\d+) WordPress/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => $m[1] . ' WordPress site(s) exported'];
+    } elseif (preg_match('/metadata: Exported account metadata/', $line)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Account metadata saved'];
+    } elseif (preg_match('/stalwart: Exported account (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Stalwart mail: ' . $m[1]];
+
+    // Restore events
+    } elseif (preg_match('/restore\/metadata: User (\S+) exists/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => 'User ' . $m[1] . ' already exists'];
+    } elseif (preg_match('/restore\/metadata: Created user (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Created user ' . $m[1]];
+    } elseif (preg_match('/restore\/metadata: Domain (\S+) exists, skipping/', $line, $m)) {
+        $job['events'][] = ['level' => 'skip', 'text' => 'Domain ' . $m[1] . ' exists, skipped'];
+    } elseif (preg_match('/restore\/dns: Restored (\d+) records for (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => $m[1] === '0' ? 'skip' : 'success', 'text' => $m[2] . ': ' . $m[1] . ' DNS records restored'];
+    } elseif (preg_match('/restore\/ssl: (Updated|Created) (\S+) cert/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'SSL ' . strtolower($m[1]) . ': ' . $m[2]];
+    } elseif (preg_match('/restore\/ssl: (\S+) cert exists, skipping/', $line, $m)) {
+        $job['events'][] = ['level' => 'skip', 'text' => 'SSL ' . $m[1] . ' exists, skipped'];
+    } elseif (preg_match('/restore\/nginx: Restored (\S+\.conf)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Nginx config: ' . $m[1]];
+    } elseif (preg_match('/restore\/nginx: (\S+\.conf) exists, skipping/', $line, $m)) {
+        $job['events'][] = ['level' => 'skip', 'text' => 'Nginx ' . $m[1] . ' exists, skipped'];
+    } elseif (preg_match('/restore\/nginx: nginx config test failed/', $line)) {
+        $job['events'][] = ['level' => 'warn', 'text' => 'Nginx config test failed, reload skipped'];
+    } elseif (preg_match('/restore\/php: Restored \S+ → (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'PHP pool: ' . basename($m[1])];
+    } elseif (preg_match('/restore\/php: (\S+\.conf) exists, skipping/', $line, $m)) {
+        $job['events'][] = ['level' => 'skip', 'text' => 'PHP pool ' . $m[1] . ' exists, skipped'];
+    } elseif (preg_match('/restore\/mysql: Imported (\S+) → (\S+)/', $line, $m)) {
+        $label = $m[1] === $m[2] ? $m[1] : $m[1] . ' → ' . $m[2];
+        $job['events'][] = ['level' => 'success', 'text' => 'Database restored: ' . $label];
+    } elseif (preg_match('/restore\/mysql: (\S+) exists, restoring as (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'warn', 'text' => $m[1] . ' exists, saved as ' . $m[2]];
+    } elseif (preg_match('/restore\/mysql: Dropping and recreating (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => 'Overwriting database ' . $m[1]];
+    } elseif (preg_match('/restore\/files: Restored \/home\//', $line)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Home directory files restored'];
+    } elseif (preg_match('/File-level restore: (\d+) path/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => 'Restoring ' . $m[1] . ' selected file path(s)'];
+
+    // Errors
+    } elseif (str_contains($line, '[ERROR]')) {
+        $msg = preg_replace('/^\[.*?\]\s*\[ERROR\]\s*/', '', $line);
+        $job['events'][] = ['level' => 'error', 'text' => $msg];
+    } elseif (str_contains($line, '[WARN]') && ! str_contains($line, 'nginx config test failed')) {
+        $msg = preg_replace('/^\[.*?\]\s*\[WARN\]\s*/', '', $line);
+        $job['events'][] = ['level' => 'warn', 'text' => $msg];
+    } elseif (preg_match('/═══ Backup FAILED for (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'error', 'text' => 'Backup failed for ' . $m[1]];
+    } elseif (preg_match('/═══ Backup complete for (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Backup complete for ' . $m[1]];
+    } elseif (preg_match('/═══ Restore complete for (\S+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Restore complete for ' . $m[1]];
+    }
 }
 
 // ─── Destination Routes (wrap CLI) ───
