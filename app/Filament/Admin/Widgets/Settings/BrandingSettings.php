@@ -128,14 +128,9 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
 
         DnsSetting::clearCache();
 
-        // Re-fill form with stored paths so FileUpload shows the saved files
-        $this->form->fill([
-            'panel_name' => $data['panel_name'],
-            'logoLight' => $this->currentLogo,
-            'logoDark' => $this->currentLogoDark,
-        ]);
-
         Notification::make()->title(__('Branding updated'))->success()->send();
+
+        $this->redirect(request()->header('Referer', '/jabali-admin/server-settings?tab=branding'));
     }
 
     private function extractUploadPath(mixed $value): ?string
