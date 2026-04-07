@@ -44,12 +44,14 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Attributes\Url;
+use Livewire\WithFileUploads;
 
 class ServerSettings extends Page implements HasActions, HasForms
 {
     use InteractsWithActions;
     use InteractsWithAgent;
     use InteractsWithForms;
+    use WithFileUploads;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
 
@@ -64,12 +66,41 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     protected string $view = 'filament.admin.pages.server-settings';
 
-    // Filament form state — all form data lives here via statePath('data')
-    public ?array $data = [];
+    // Form data arrays
+    public ?array $brandingData = [];
 
-    // Non-form state
+    // Branding logo file uploads (Livewire TemporaryUploadedFile)
+    public $logoLightUpload = null;
+
+    public $logoDarkUpload = null;
+
     public ?string $currentLogoDark = null;
 
+    public ?array $hostnameData = [];
+
+    public ?array $dnsData = [];
+
+    public ?array $resolversData = [];
+
+    public ?array $quotaData = [];
+
+    public ?array $fileManagerData = [];
+
+    public ?array $emailData = [];
+
+    public ?array $notificationsData = [];
+
+    public ?array $logsData = [];
+
+    public ?array $phpFpmData = [];
+
+    public ?array $timezoneData = [];
+
+    public ?array $panelPortData = [];
+
+    public ?array $sshData = [];
+
+    // Version info (non-form)
     public bool $isSystemdResolved = false;
 
     public ?string $currentLogo = null;
@@ -153,94 +184,101 @@ class ServerSettings extends Page implements HasActions, HasForms
             $searchDomain = '';
         }
 
-        // Load SSH settings
-        $sshData = ['port' => 22, 'password_auth' => false];
+        // Fill form data
+        $this->brandingData = [
+            'panel_name' => $settings['panel_name'] ?? 'Jabali',
+        ];
+
+        $this->timezoneData = [
+            'timezone' => $settings['server_timezone'] ?? @date_default_timezone_get(),
+        ];
+
+        $this->hostnameData = [
+            'hostname' => $agentHostname,
+        ];
+
+        $this->panelPortData = [
+            'port' => (int) (env('PANEL_PORT', 8443)),
+        ];
+
         try {
             $sshSettings = app(AgentClient::class)->send('ssh.get_settings', []);
-            $sshData = [
+            $this->sshData = [
                 'port' => $sshSettings['port'] ?? 22,
                 'password_auth' => $sshSettings['password_auth'] ?? false,
             ];
         } catch (\Throwable) {
+            $this->sshData = ['port' => 22, 'password_auth' => false];
         }
 
-        // Fill form via Filament's statePath('data')
-        $this->form->fill([
-            'brandingData' => [
-                'panel_name' => $settings['panel_name'] ?? 'Jabali',
-            ],
-            'timezoneData' => [
-                'timezone' => $settings['server_timezone'] ?? @date_default_timezone_get(),
-            ],
-            'hostnameData' => [
-                'hostname' => $agentHostname,
-            ],
-            'panelPortData' => [
-                'port' => (int) (env('PANEL_PORT', 8443)),
-            ],
-            'sshData' => $sshData,
-            'dnsData' => [
-                'ns1' => $settings['ns1'] ?? "ns1.{$hostname}",
-                'ns1_ip' => $settings['ns1_ip'] ?? $serverIp,
-                'ns2' => $settings['ns2'] ?? "ns2.{$hostname}",
-                'ns2_ip' => $settings['ns2_ip'] ?? $serverIp,
-                'default_ip' => $settings['default_ip'] ?? $serverIp,
-                'default_ipv6' => $settings['default_ipv6'] ?? '',
-                'default_ttl' => $settings['default_ttl'] ?? '3600',
-                'admin_email' => $settings['admin_email'] ?? "admin.{$hostname}",
-            ],
-            'resolversData' => [
-                'resolver1' => $resolvers[0],
-                'resolver2' => $resolvers[1],
-                'resolver3' => $resolvers[2],
-                'search_domain' => $searchDomain,
-            ],
-            'quotaData' => [
-                'quotas_enabled' => (bool) ($settings['quotas_enabled'] ?? false),
-                'default_quota_mb' => (int) ($settings['default_quota_mb'] ?? 5120),
-            ],
-            'fileManagerData' => [
-                'max_upload_size_mb' => (int) ($settings['max_upload_size_mb'] ?? 100),
-            ],
-            'emailData' => [
-                'mail_hostname' => $settings['mail_hostname'] ?? "mail.{$hostname}",
-                'mail_default_quota_mb' => (int) ($settings['mail_default_quota_mb'] ?? 1024),
-                'max_mailboxes_per_domain' => (int) ($settings['max_mailboxes_per_domain'] ?? 10),
-                'webmail_url' => $settings['webmail_url'] ?? '/webmail',
-                'webmail_product_name' => $settings['webmail_product_name'] ?? 'Jabali Webmail',
-            ],
-            'notificationsData' => [
-                'admin_email_recipients' => $settings['admin_email_recipients'] ?? '',
-                'notify_ssl_errors' => (bool) ($settings['notify_ssl_errors'] ?? true),
-                'notify_disk_quota' => (bool) ($settings['notify_disk_quota'] ?? true),
-                'notify_system_updates' => (bool) ($settings['notify_system_updates'] ?? false),
-                'notify_service_health' => (bool) ($settings['notify_service_health'] ?? true),
-                'notify_high_load' => (bool) ($settings['notify_high_load'] ?? true),
-                'load_threshold' => (float) ($settings['load_threshold'] ?? 5.0),
-                'load_alert_minutes' => (int) ($settings['load_alert_minutes'] ?? 5),
-            ],
-            'phpFpmData' => [
-                'pm' => $settings['fpm_pm'] ?? 'dynamic',
-                'pm_max_children' => (int) ($settings['fpm_pm_max_children'] ?? 5),
-                'pm_start_servers' => (int) ($settings['fpm_pm_start_servers'] ?? 2),
-                'pm_min_spare_servers' => (int) ($settings['fpm_pm_min_spare_servers'] ?? 1),
-                'pm_max_spare_servers' => (int) ($settings['fpm_pm_max_spare_servers'] ?? 3),
-                'pm_max_requests' => (int) ($settings['fpm_pm_max_requests'] ?? 200),
-                'rlimit_files' => (int) ($settings['fpm_rlimit_files'] ?? 1024),
-                'process_priority' => (int) ($settings['fpm_process_priority'] ?? 0),
-                'request_terminate_timeout' => (int) ($settings['fpm_request_terminate_timeout'] ?? 300),
-                'memory_limit' => $settings['fpm_memory_limit'] ?? '512M',
-            ],
-            'logsData' => [
-                'audit_log_retention_days' => (int) ($settings['audit_log_retention_days'] ?? 90),
-            ],
-        ]);
+        $this->dnsData = [
+            'ns1' => $settings['ns1'] ?? "ns1.{$hostname}",
+            'ns1_ip' => $settings['ns1_ip'] ?? $serverIp,
+            'ns2' => $settings['ns2'] ?? "ns2.{$hostname}",
+            'ns2_ip' => $settings['ns2_ip'] ?? $serverIp,
+            'default_ip' => $settings['default_ip'] ?? $serverIp,
+            'default_ipv6' => $settings['default_ipv6'] ?? '',
+            'default_ttl' => $settings['default_ttl'] ?? '3600',
+            'admin_email' => $settings['admin_email'] ?? "admin.{$hostname}",
+        ];
+
+        $this->resolversData = [
+            'resolver1' => $resolvers[0],
+            'resolver2' => $resolvers[1],
+            'resolver3' => $resolvers[2],
+            'search_domain' => $searchDomain,
+        ];
+
+        $this->quotaData = [
+            'quotas_enabled' => (bool) ($settings['quotas_enabled'] ?? false),
+            'default_quota_mb' => (int) ($settings['default_quota_mb'] ?? 5120),
+        ];
+
+        $this->fileManagerData = [
+            'max_upload_size_mb' => (int) ($settings['max_upload_size_mb'] ?? 100),
+        ];
+
+        $this->emailData = [
+            'mail_hostname' => $settings['mail_hostname'] ?? "mail.{$hostname}",
+            'mail_default_quota_mb' => (int) ($settings['mail_default_quota_mb'] ?? 1024),
+            'max_mailboxes_per_domain' => (int) ($settings['max_mailboxes_per_domain'] ?? 10),
+            'webmail_url' => $settings['webmail_url'] ?? '/webmail',
+            'webmail_product_name' => $settings['webmail_product_name'] ?? 'Jabali Webmail',
+        ];
+
+        $this->notificationsData = [
+            'admin_email_recipients' => $settings['admin_email_recipients'] ?? '',
+            'notify_ssl_errors' => (bool) ($settings['notify_ssl_errors'] ?? true),
+            'notify_disk_quota' => (bool) ($settings['notify_disk_quota'] ?? true),
+            'notify_system_updates' => (bool) ($settings['notify_system_updates'] ?? false),
+            'notify_service_health' => (bool) ($settings['notify_service_health'] ?? true),
+            'notify_high_load' => (bool) ($settings['notify_high_load'] ?? true),
+            'load_threshold' => (float) ($settings['load_threshold'] ?? 5.0),
+            'load_alert_minutes' => (int) ($settings['load_alert_minutes'] ?? 5),
+        ];
+
+        $this->phpFpmData = [
+            'pm' => $settings['fpm_pm'] ?? 'dynamic',
+            'pm_max_children' => (int) ($settings['fpm_pm_max_children'] ?? 5),
+            'pm_start_servers' => (int) ($settings['fpm_pm_start_servers'] ?? 2),
+            'pm_min_spare_servers' => (int) ($settings['fpm_pm_min_spare_servers'] ?? 1),
+            'pm_max_spare_servers' => (int) ($settings['fpm_pm_max_spare_servers'] ?? 3),
+            'pm_max_requests' => (int) ($settings['fpm_pm_max_requests'] ?? 200),
+            'rlimit_files' => (int) ($settings['fpm_rlimit_files'] ?? 1024),
+            'process_priority' => (int) ($settings['fpm_process_priority'] ?? 0),
+            'request_terminate_timeout' => (int) ($settings['fpm_request_terminate_timeout'] ?? 300),
+            'memory_limit' => $settings['fpm_memory_limit'] ?? '512M',
+        ];
+
+        $this->logsData = [
+            'audit_log_retention_days' => (int) ($settings['audit_log_retention_days'] ?? 90),
+        ];
+
     }
 
-    public function form(Schema $schema): Schema
+    public function settingsForm(Schema $schema): Schema
     {
         return $schema
-            ->statePath('data')
             ->schema([
                 Tabs::make(__('Server Settings Sections'))
                     ->contained()
@@ -279,57 +317,16 @@ class ServerSettings extends Page implements HasActions, HasForms
         return [
             Section::make(__('Panel Branding'))
                 ->icon('heroicon-o-paint-brush')
+                ->description(__('Logo uploads are managed below this section.'))
                 ->schema([
                     TextInput::make('brandingData.panel_name')
                         ->label(__('Control Panel Name'))
                         ->placeholder(__('Jabali'))
                         ->helperText(__('Appears in browser title and navigation')),
-                    Placeholder::make('currentLogos')
-                        ->label(__('Logos'))
-                        ->content(fn (): string => collect([
-                            __('Light').': '.($this->currentLogo ? basename($this->currentLogo) : __('none')),
-                            __('Dark').': '.($this->currentLogoDark ? basename($this->currentLogoDark) : __('none')),
-                        ])->join(' | ')),
                     Actions::make([
                         FormAction::make('saveBranding')
                             ->label(__('Save Branding'))
                             ->action('saveBranding'),
-                        FormAction::make('uploadLightLogo')
-                            ->label(__('Upload Light Logo'))
-                            ->icon('heroicon-o-arrow-up-tray')
-                            ->color('gray')
-                            ->form([
-                                FileUpload::make('logo')
-                                    ->label(__('Light Logo Image'))
-                                    ->image()
-                                    ->disk('public')
-                                    ->directory('branding')
-                                    ->visibility('public')
-                                    ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                    ->maxSize(2048)
-                                    ->required(),
-                            ])
-                            ->action(function (array $data): void {
-                                $this->saveLogo($data['logo'], 'custom_logo', 'currentLogo');
-                            }),
-                        FormAction::make('uploadDarkLogo')
-                            ->label(__('Upload Dark Logo'))
-                            ->icon('heroicon-o-arrow-up-tray')
-                            ->color('gray')
-                            ->form([
-                                FileUpload::make('logo')
-                                    ->label(__('Dark Logo Image'))
-                                    ->image()
-                                    ->disk('public')
-                                    ->directory('branding')
-                                    ->visibility('public')
-                                    ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
-                                    ->maxSize(2048)
-                                    ->required(),
-                            ])
-                            ->action(function (array $data): void {
-                                $this->saveLogo($data['logo'], 'custom_logo_dark', 'currentLogoDark');
-                            }),
                         FormAction::make('removeLogo')
                             ->label(__('Remove Logos'))
                             ->icon('heroicon-o-trash')
@@ -532,17 +529,17 @@ class ServerSettings extends Page implements HasActions, HasForms
             return;
         }
 
-        $current = $this->data['resolversData'] ?? [];
-        $this->data['resolversData'] = array_merge($current, [
+        $current = $this->resolversData ?? [];
+        $this->resolversData = array_merge($current, [
             'resolver1' => $resolvers[0] ?? '',
             'resolver2' => $resolvers[1] ?? '',
             'resolver3' => $resolvers[2] ?? '',
         ]);
 
-        $form = $this->getForm('form');
+        $form = $this->getForm('settingsForm');
         if ($form) {
             $state = $form->getState();
-            $state['resolversData'] = $this->data['resolversData'];
+            $state['resolversData'] = $this->resolversData;
             $form->fill($state);
         }
 
@@ -988,7 +985,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveLogSettings(): void
     {
-        $data = $this->data['logsData'];
+        $data = $this->logsData;
 
         DnsSetting::set('audit_log_retention_days', (int) ($data['audit_log_retention_days'] ?? 90));
         DnsSetting::clearCache();
@@ -999,13 +996,13 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function getForms(): array
     {
         return [
-            'form',
+            'settingsForm',
         ];
     }
 
     public function saveBranding(): void
     {
-        $data = $this->data['brandingData'];
+        $data = $this->brandingData;
 
         if (empty(trim($data['panel_name'] ?? ''))) {
             Notification::make()->title(__('Panel name cannot be empty'))->danger()->send();
@@ -1016,26 +1013,49 @@ class ServerSettings extends Page implements HasActions, HasForms
         $service = app(ServerSettingsService::class);
         $service->saveBranding($data['panel_name']);
 
-        DnsSetting::clearCache();
-        Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
+        Notification::make()->title(__('Panel name updated'))->body(__('Refresh to see changes.'))->success()->send();
     }
 
-    public function saveLogo(string $path, string $settingKey, string $property): void
+    public function saveLogoLight(): void
     {
-        if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
-            Storage::disk('public')->delete($this->{$property});
+        $this->saveLivewireUpload($this->logoLightUpload, 'custom_logo', 'currentLogo');
+    }
+
+    public function saveLogoDark(): void
+    {
+        $this->saveLivewireUpload($this->logoDarkUpload, 'custom_logo_dark', 'currentLogoDark');
+    }
+
+    private function saveLivewireUpload($file, string $settingKey, string $property): void
+    {
+        if (! $file) {
+            Notification::make()->title(__('No file selected'))->warning()->send();
+
+            return;
         }
 
-        DnsSetting::set($settingKey, $path);
-        DnsSetting::clearCache();
-        $this->{$property} = $path;
+        try {
+            $path = $file->store('branding', 'public');
 
-        Notification::make()->title(__('Logo uploaded'))->success()->send();
+            if ($this->{$property} && Storage::disk('public')->exists($this->{$property})) {
+                Storage::disk('public')->delete($this->{$property});
+            }
+
+            DnsSetting::set($settingKey, $path);
+            DnsSetting::clearCache();
+            $this->{$property} = $path;
+
+            $settingKey === 'custom_logo' ? $this->logoLightUpload = null : $this->logoDarkUpload = null;
+
+            Notification::make()->title(__('Logo uploaded'))->success()->send();
+        } catch (Exception $e) {
+            Notification::make()->title(__('Failed to upload logo'))->body(SafeError::message($e))->danger()->send();
+        }
     }
 
     public function saveTimezone(): void
     {
-        $timezone = $this->data['timezoneData']['timezone'] ?? '';
+        $timezone = $this->timezoneData['timezone'] ?? '';
 
         if (empty($timezone) || ! in_array($timezone, timezone_identifiers_list())) {
             Notification::make()->title(__('Invalid timezone'))->danger()->send();
@@ -1082,7 +1102,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveHostname(): void
     {
-        $hostname = $this->data['hostnameData']['hostname'] ?? '';
+        $hostname = $this->hostnameData['hostname'] ?? '';
 
         if (empty(trim($hostname))) {
             Notification::make()->title(__('Hostname cannot be empty'))->danger()->send();
@@ -1118,7 +1138,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function savePanelPort(): void
     {
-        $port = (int) ($this->data['panelPortData']['port'] ?? 0);
+        $port = (int) ($this->panelPortData['port'] ?? 0);
 
         if ($port < 1024 || $port > 65535) {
             Notification::make()->title(__('Port must be between 1024 and 65535'))->danger()->send();
@@ -1145,8 +1165,8 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveSshSettings(): void
     {
-        $port = (int) ($this->data['sshData']['port'] ?? 22);
-        $passwordAuth = (bool) ($this->data['sshData']['password_auth'] ?? false);
+        $port = (int) ($this->sshData['port'] ?? 22);
+        $passwordAuth = (bool) ($this->sshData['password_auth'] ?? false);
 
         if ($port < 1 || $port > 65535) {
             Notification::make()->title(__('Port must be between 1 and 65535'))->danger()->send();
@@ -1185,7 +1205,7 @@ class ServerSettings extends Page implements HasActions, HasForms
     public function saveDns(): void
     {
         $service = app(ServerSettingsService::class);
-        $result = $service->saveDns($this->data['dnsData'], $this->data['hostnameData']['hostname'] ?? '');
+        $result = $service->saveDns($this->dnsData, $this->hostnameData['hostname'] ?? '');
 
         if ($result['success']) {
             Notification::make()->title(__('DNS settings saved'))->success()->send();
@@ -1196,7 +1216,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveResolvers(): void
     {
-        $data = $this->data['resolversData'];
+        $data = $this->resolversData;
 
         $nameservers = array_filter([
             $data['resolver1'],
@@ -1234,7 +1254,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveQuotaSettings(): void
     {
-        $data = $this->data['quotaData'];
+        $data = $this->quotaData;
         $wasEnabled = (bool) DnsSetting::get('quotas_enabled', false);
 
         $service = app(ServerSettingsService::class);
@@ -1261,7 +1281,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveFileManagerSettings(): void
     {
-        $data = $this->data['fileManagerData'];
+        $data = $this->fileManagerData;
         $size = max(1, min(500, (int) $data['max_upload_size_mb']));
 
         $service = app(ServerSettingsService::class);
@@ -1281,7 +1301,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveEmailSettings(): void
     {
-        $data = $this->data['emailData'];
+        $data = $this->emailData;
 
         $service = app(ServerSettingsService::class);
         $service->saveEmailSettings($data);
@@ -1291,7 +1311,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function issueMailSsl(): void
     {
-        $mailHostname = $this->data['emailData']['mail_hostname'] ?? '';
+        $mailHostname = $this->emailData['mail_hostname'] ?? '';
         if (empty($mailHostname)) {
             $hostname = gethostname();
             $mailHostname = 'mail.'.preg_replace('/^[^.]+\./', '', $hostname);
@@ -1333,14 +1353,14 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function saveEmailNotificationSettings(): void
     {
-        $data = $this->data['notificationsData'];
+        $data = $this->notificationsData;
         $emails = $this->parseNotificationRecipients($data['admin_email_recipients'] ?? '', false);
         if ($emails === null) {
             return;
         }
 
         $emailsValue = $emails === [] ? '' : implode(', ', $emails);
-        $this->data['notificationsData']['admin_email_recipients'] = $emailsValue;
+        $this->notificationsData['admin_email_recipients'] = $emailsValue;
         DnsSetting::set('admin_email_recipients', $emailsValue);
         DnsSetting::set('notify_ssl_errors', $data['notify_ssl_errors'] ? '1' : '0');
         DnsSetting::set('notify_disk_quota', $data['notify_disk_quota'] ? '1' : '0');
@@ -1364,7 +1384,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function sendTestEmail(): void
     {
-        $recipients = $this->data['notificationsData']['admin_email_recipients'] ?? '';
+        $recipients = $this->notificationsData['admin_email_recipients'] ?? '';
         $recipientList = $this->parseNotificationRecipients($recipients, true);
         if ($recipientList === null) {
             return;
@@ -1459,7 +1479,7 @@ class ServerSettings extends Page implements HasActions, HasForms
     public function saveFpmSettings(): void
     {
         $service = app(ServerSettingsService::class);
-        $service->saveFpmSettings($this->data['phpFpmData']);
+        $service->saveFpmSettings($this->phpFpmData);
 
         Notification::make()
             ->title(__('PHP-FPM settings saved'))
@@ -1470,7 +1490,7 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public function applyFpmToAll(): void
     {
-        $data = $this->data['phpFpmData'];
+        $data = $this->phpFpmData;
 
         try {
             $service = app(ServerSettingsService::class);
