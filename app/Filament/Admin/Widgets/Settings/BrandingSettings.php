@@ -107,8 +107,8 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
         $service = app(ServerSettingsService::class);
         $service->saveBranding($data['panel_name']);
 
-        // FileUpload stores paths automatically via disk/directory config
-        $lightPath = $data['logoLight'] ?? null;
+        // FileUpload returns path string or array — extract the path
+        $lightPath = $this->extractUploadPath($data['logoLight'] ?? null);
         if ($lightPath && $lightPath !== $this->currentLogo) {
             if ($this->currentLogo && Storage::disk('public')->exists($this->currentLogo)) {
                 Storage::disk('public')->delete($this->currentLogo);
@@ -117,7 +117,7 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
             $this->currentLogo = $lightPath;
         }
 
-        $darkPath = $data['logoDark'] ?? null;
+        $darkPath = $this->extractUploadPath($data['logoDark'] ?? null);
         if ($darkPath && $darkPath !== $this->currentLogoDark) {
             if ($this->currentLogoDark && Storage::disk('public')->exists($this->currentLogoDark)) {
                 Storage::disk('public')->delete($this->currentLogoDark);
@@ -128,6 +128,19 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
 
         DnsSetting::clearCache();
         Notification::make()->title(__('Branding updated'))->body(__('Refresh to see changes.'))->success()->send();
+    }
+
+    private function extractUploadPath(mixed $value): ?string
+    {
+        if (is_string($value)) {
+            return $value;
+        }
+        if (is_array($value)) {
+            // FileUpload returns ['filename.jpg'] or ['uuid' => 'path']
+            return collect($value)->flatten()->first();
+        }
+
+        return null;
     }
 
     public function removeLogo(): void
