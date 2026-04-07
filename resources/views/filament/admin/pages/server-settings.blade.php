@@ -1,56 +1,6 @@
 <x-filament-panels::page>
     {{ $this->settingsForm }}
 
-    @if ($activeTab === 'addons')
-        <x-filament::section icon="heroicon-o-puzzle-piece">
-            <x-slot name="heading">{{ __('Installed Addons') }}</x-slot>
-            <x-slot name="description">{{ __('Extend Jabali with official addon tools. Install or remove addons from this page.') }}</x-slot>
-
-            <x-filament::button wire:click="loadAddons" icon="heroicon-o-arrow-path" color="gray" size="sm">
-                {{ __('Refresh') }}
-            </x-filament::button>
-
-            @forelse ($addonsData as $addon)
-                <x-filament::section :heading="$addon['name']" :description="$addon['description']">
-                    @if ($addon['installed'] ?? false)
-                        <x-filament::badge color="success">
-                            {{ ($addon['service_active'] ?? null) === false ? __('Installed (stopped)') : __('Installed') }}
-                            {{ ($addon['version'] ?? null) ? 'v' . $addon['version'] : '' }}
-                        </x-filament::badge>
-
-                        <x-filament::button
-                            wire:click="manageAddon('{{ $addon['id'] }}', 'uninstall')"
-                            wire:confirm="{{ __('This will remove :name from the server. Existing data will not be deleted. Continue?', ['name' => $addon['name']]) }}"
-                            icon="heroicon-o-trash"
-                            color="danger"
-                            size="sm"
-                        >
-                            {{ __('Uninstall') }}
-                        </x-filament::button>
-                    @else
-                        <x-filament::badge color="gray">
-                            {{ __('Not Installed') }}
-                        </x-filament::badge>
-
-                        <x-filament::button
-                            wire:click="manageAddon('{{ $addon['id'] }}', 'install')"
-                            wire:confirm="{{ __('This will download and install :name on the server. Continue?', ['name' => $addon['name']]) }}"
-                            icon="heroicon-o-arrow-down-tray"
-                            color="primary"
-                            size="sm"
-                        >
-                            {{ __('Install') }}
-                        </x-filament::button>
-                    @endif
-                </x-filament::section>
-            @empty
-                <x-filament::section>
-                    {{ __('No addons available.') }}
-                </x-filament::section>
-            @endforelse
-        </x-filament::section>
-    @endif
-
     @if ($activeTab === 'general')
         <x-filament::section icon="heroicon-o-paint-brush">
             <x-slot name="heading">{{ __('Panel Branding') }}</x-slot>

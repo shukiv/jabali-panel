@@ -92,8 +92,6 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     public ?array $logsData = [];
 
-    public array $addonsData = [];
-
     public ?array $phpFpmData = [];
 
     public ?array $timezoneData = [];
@@ -127,7 +125,7 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function normalizeTabName(?string $tab): string
     {
         return match ($tab) {
-            'general', 'dns', 'storage', 'email', 'notifications', 'php-fpm', 'database', 'logs', 'addons' => $tab,
+            'general', 'dns', 'storage', 'email', 'notifications', 'php-fpm', 'database', 'logs' => $tab,
             default => 'general',
         };
     }
@@ -276,7 +274,6 @@ class ServerSettings extends Page implements HasActions, HasForms
             'audit_log_retention_days' => (int) ($settings['audit_log_retention_days'] ?? 90),
         ];
 
-        $this->loadAddons();
     }
 
     public function settingsForm(Schema $schema): Schema
@@ -311,9 +308,6 @@ class ServerSettings extends Page implements HasActions, HasForms
                         'logs' => Tab::make(__('Logs'))
                             ->icon('heroicon-o-document-text')
                             ->schema($this->logsTabContent()),
-                        'addons' => Tab::make(__('Addons'))
-                            ->icon('heroicon-o-puzzle-piece')
-                            ->schema($this->addonsTabContent()),
                     ]),
             ]);
     }
@@ -1940,60 +1934,5 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         return ['applied' => $applied, 'failed' => $failed];
-    }
-
-    // ─── Addons Tab ───────────────────────────────────────
-    // Rendered in Blade (wire:click) because FormAction closures silently fail on this page.
-
-    protected function addonsTabContent(): array
-    {
-        return [
-            Placeholder::make('addons_blade')
-                ->hiddenLabel()
-                ->content(new \Illuminate\Support\HtmlString('<div id="addons-blade-anchor"></div>')),
-        ];
-    }
-
-    public function loadAddons(): void
-    {
-        try {
-            $result = app(AgentClient::class)->call('addon.status', []);
-            $this->addonsData = $result->success ? array_values($result->get('addons', [])) : [];
-        } catch (Exception) {
-            $this->addonsData = [];
-        }
-    }
-
-    public function manageAddon(string $addonId, string $operation): void
-    {
-        $action = $operation === 'install' ? 'addon.install' : 'addon.uninstall';
-        $label = $operation === 'install' ? __('installed') : __('uninstalled');
-
-        try {
-            $result = app(AgentClient::class)->call($action, ['addon' => $addonId]);
-
-            if ($result->success) {
-                Notification::make()
-                    ->title(__(':name :action', ['name' => $addonId, 'action' => $label]))
-                    ->success()
-                    ->send();
-            } else {
-                $error = $result->get('error', __('Unknown error'));
-                $output = $result->get('output');
-                Notification::make()
-                    ->title(__('Operation failed'))
-                    ->body($output ? "{$error}\n{$output}" : $error)
-                    ->danger()
-                    ->send();
-            }
-        } catch (Exception $e) {
-            Notification::make()
-                ->title(__('Operation failed'))
-                ->body(SafeError::message($e))
-                ->danger()
-                ->send();
-        }
-
-        $this->loadAddons();
     }
 }
