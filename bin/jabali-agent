@@ -971,27 +971,22 @@ function addonUninstall(array $params): array
     exec($cmd, $output, $exitCode);
     $outputStr = implode("\n", $output);
 
-    // If the addon doesn't have an uninstall command, remove binary + service directly
+    // If the addon's uninstall command failed, do manual cleanup
     if ($exitCode !== 0) {
         logger("Addon uninstall command failed for {$addon} (exit {$exitCode}), removing manually");
-        $output = [];
-        $service = match ($addon) {
-            'jabali-security' => 'jabali-security',
-            default => null,
-        };
-        if ($service) {
-            exec('systemctl stop '.escapeshellarg($service).' 2>/dev/null');
-            exec('systemctl disable '.escapeshellarg($service).' 2>/dev/null');
-        }
-        unlink($binary);
-        $exitCode = 0;
-        $outputStr = 'Removed manually';
     }
 
-    if ($exitCode !== 0) {
-        logger("Addon uninstall failed for {$addon}: {$outputStr}");
-
-        return ['success' => false, 'error' => "Uninstall failed (exit {$exitCode})", 'output' => $outputStr];
+    // Always ensure service is stopped and binary is removed
+    $service = match ($addon) {
+        'jabali-security' => 'jabali-security',
+        default => null,
+    };
+    if ($service) {
+        exec('systemctl stop '.escapeshellarg($service).' 2>/dev/null');
+        exec('systemctl disable '.escapeshellarg($service).' 2>/dev/null');
+    }
+    if (file_exists($binary)) {
+        unlink($binary);
     }
 
     logger("Addon {$addon} uninstalled successfully");
