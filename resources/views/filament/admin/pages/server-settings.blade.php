@@ -1,6 +1,72 @@
 <x-filament-panels::page>
     {{ $this->settingsForm }}
 
+    @if ($activeTab === 'addons')
+        <x-filament::section icon="heroicon-o-puzzle-piece">
+            <x-slot name="heading">{{ __('Installed Addons') }}</x-slot>
+            <x-slot name="description">{{ __('Extend Jabali with official addon tools. Install or remove addons from this page.') }}</x-slot>
+
+            <div class="mb-4">
+                <x-filament::button wire:click="loadAddons" icon="heroicon-o-arrow-path" color="gray" size="sm">
+                    {{ __('Refresh') }}
+                </x-filament::button>
+            </div>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                @forelse ($addonsData as $addon)
+                    <div class="rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                        <h3 class="text-base font-semibold text-gray-950 dark:text-white">{{ $addon['name'] }}</h3>
+                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ $addon['description'] }}</p>
+
+                        <div class="mt-3">
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ __('Status') }}</span>
+                            <div class="mt-1">
+                                @if ($addon['installed'] ?? false)
+                                    <span class="inline-flex items-center gap-x-1 rounded-md bg-success-50 px-2 py-1 text-xs font-medium text-success-700 ring-1 ring-inset ring-success-600/20 dark:bg-success-400/10 dark:text-success-400 dark:ring-success-400/20">
+                                        {{ ($addon['service_active'] ?? null) === false ? __('Installed (stopped)') : __('Installed') }}
+                                        @if ($addon['version'] ?? null)
+                                            <span class="text-gray-400">v{{ $addon['version'] }}</span>
+                                        @endif
+                                    </span>
+                                @else
+                                    <span class="inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10 dark:bg-gray-400/10 dark:text-gray-400 dark:ring-gray-400/20">
+                                        {{ __('Not Installed') }}
+                                    </span>
+                                @endif
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            @if ($addon['installed'] ?? false)
+                                <x-filament::button
+                                    wire:click="manageAddon('{{ $addon['id'] }}', 'uninstall')"
+                                    wire:confirm="{{ __('This will remove :name from the server. Existing data will not be deleted. Continue?', ['name' => $addon['name']]) }}"
+                                    icon="heroicon-o-trash"
+                                    color="danger"
+                                    size="sm"
+                                >
+                                    {{ __('Uninstall') }}
+                                </x-filament::button>
+                            @else
+                                <x-filament::button
+                                    wire:click="manageAddon('{{ $addon['id'] }}', 'install')"
+                                    wire:confirm="{{ __('This will download and install :name on the server. Continue?', ['name' => $addon['name']]) }}"
+                                    icon="heroicon-o-arrow-down-tray"
+                                    color="primary"
+                                    size="sm"
+                                >
+                                    {{ __('Install') }}
+                                </x-filament::button>
+                            @endif
+                        </div>
+                    </div>
+                @empty
+                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ __('No addons available.') }}</p>
+                @endforelse
+            </div>
+        </x-filament::section>
+    @endif
+
     @if ($activeTab === 'general')
         <x-filament::section icon="heroicon-o-paint-brush">
             <x-slot name="heading">{{ __('Panel Branding') }}</x-slot>

@@ -276,6 +276,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             'audit_log_retention_days' => (int) ($settings['audit_log_retention_days'] ?? 90),
         ];
 
+        $this->loadAddons();
     }
 
     public function settingsForm(Schema $schema): Schema
@@ -1942,24 +1943,14 @@ class ServerSettings extends Page implements HasActions, HasForms
     }
 
     // ─── Addons Tab ───────────────────────────────────────
+    // Rendered in Blade (wire:click) because FormAction closures silently fail on this page.
 
     protected function addonsTabContent(): array
     {
         return [
-            Section::make(__('Installed Addons'))
-                ->description(__('Extend Jabali with official addon tools. Install or remove addons from this page.'))
-                ->icon('heroicon-o-puzzle-piece')
-                ->schema([
-                    Actions::make([
-                        FormAction::make('refreshAddons')
-                            ->label(__('Refresh'))
-                            ->icon('heroicon-o-arrow-path')
-                            ->color('gray')
-                            ->action('loadAddons'),
-                    ]),
-                    Grid::make(['default' => 1, 'md' => 3])
-                        ->schema($this->addonCards()),
-                ]),
+            Placeholder::make('addons_blade')
+                ->hiddenLabel()
+                ->content(new \Illuminate\Support\HtmlString('<div id="addons-blade-anchor"></div>')),
         ];
     }
 
@@ -1967,71 +1958,10 @@ class ServerSettings extends Page implements HasActions, HasForms
     {
         try {
             $result = app(AgentClient::class)->call('addon.status', []);
-            $this->addonsData = $result->success ? $result->get('addons', []) : [];
+            $this->addonsData = $result->success ? array_values($result->get('addons', [])) : [];
         } catch (Exception) {
             $this->addonsData = [];
         }
-    }
-
-    protected function addonCards(): array
-    {
-        if (empty($this->addonsData)) {
-            $this->loadAddons();
-        }
-
-        $cards = [];
-        foreach ($this->addonsData as $addon) {
-            $id = $addon['id'];
-            $installed = $addon['installed'] ?? false;
-            $version = $addon['version'] ?? null;
-            $serviceActive = $addon['service_active'] ?? null;
-
-            $status = $installed
-                ? ($serviceActive === false ? __('Installed (stopped)') : __('Installed'))
-                : __('Not Installed');
-
-            $statusColor = $installed
-                ? ($serviceActive === false ? 'warning' : 'success')
-                : 'gray';
-
-            $cards[] = Section::make($addon['name'])
-                ->description($addon['description'])
-                ->schema([
-                    Placeholder::make("addon_{$id}_status")
-                        ->label(__('Status'))
-                        ->content(new \Illuminate\Support\HtmlString(
-                            '<span class="fi-badge fi-color-'.$statusColor.' inline-flex items-center gap-x-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset">'
-                            .e($status)
-                            .($version ? ' <span class="text-gray-400">v'.$version.'</span>' : '')
-                            .'</span>'
-                        )),
-                    Actions::make(
-                        $installed
-                            ? [
-                                FormAction::make("uninstall_{$id}")
-                                    ->label(__('Uninstall'))
-                                    ->icon('heroicon-o-trash')
-                                    ->color('danger')
-                                    ->requiresConfirmation()
-                                    ->modalHeading(__('Uninstall :name', ['name' => $addon['name']]))
-                                    ->modalDescription(__('This will remove :name from the server. Existing data will not be deleted.', ['name' => $addon['name']]))
-                                    ->action(fn () => $this->manageAddon($id, 'uninstall')),
-                            ]
-                            : [
-                                FormAction::make("install_{$id}")
-                                    ->label(__('Install'))
-                                    ->icon('heroicon-o-arrow-down-tray')
-                                    ->color('primary')
-                                    ->requiresConfirmation()
-                                    ->modalHeading(__('Install :name', ['name' => $addon['name']]))
-                                    ->modalDescription(__('This will download and install :name on the server.', ['name' => $addon['name']]))
-                                    ->action(fn () => $this->manageAddon($id, 'install')),
-                            ]
-                    ),
-                ]);
-        }
-
-        return $cards;
     }
 
     public function manageAddon(string $addonId, string $operation): void
