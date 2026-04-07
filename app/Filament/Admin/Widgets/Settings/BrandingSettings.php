@@ -66,20 +66,7 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                             ->maxSize(2048)
                             ->disk('public')
                             ->directory('branding')
-                            ->visibility('public')
-                            ->afterStateUpdated(function ($state) {
-                                if ($state) {
-                                    $path = is_array($state) ? collect($state)->flatten()->first() : $state;
-                                    if ($path && is_string($path)) {
-                                        if ($this->currentLogo && Storage::disk('public')->exists($this->currentLogo)) {
-                                            Storage::disk('public')->delete($this->currentLogo);
-                                        }
-                                        DnsSetting::set('custom_logo', $path);
-                                        DnsSetting::clearCache();
-                                        $this->currentLogo = $path;
-                                    }
-                                }
-                            }),
+                            ->visibility('public'),
                         FileUpload::make('logoDark')
                             ->label(__('Dark Logo'))
                             ->image()
@@ -88,20 +75,7 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                             ->maxSize(2048)
                             ->disk('public')
                             ->directory('branding')
-                            ->visibility('public')
-                            ->afterStateUpdated(function ($state) {
-                                if ($state) {
-                                    $path = is_array($state) ? collect($state)->flatten()->first() : $state;
-                                    if ($path && is_string($path)) {
-                                        if ($this->currentLogoDark && Storage::disk('public')->exists($this->currentLogoDark)) {
-                                            Storage::disk('public')->delete($this->currentLogoDark);
-                                        }
-                                        DnsSetting::set('custom_logo_dark', $path);
-                                        DnsSetting::clearCache();
-                                        $this->currentLogoDark = $path;
-                                    }
-                                }
-                            }),
+                            ->visibility('public'),
                     ]),
                 Actions::make([
                     Action::make('saveBranding')
@@ -122,18 +96,41 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
 
     public function saveBranding(): void
     {
-        $panelName = $this->data['panel_name'] ?? '';
+        // getState() triggers FileUpload's beforeStateDehydrated → saveUploadedFiles()
+        $data = $this->form->getState();
 
-        if (empty(trim($panelName))) {
+        if (empty(trim($data['panel_name'] ?? ''))) {
             Notification::make()->title(__('Panel name cannot be empty'))->danger()->send();
 
             return;
         }
 
-        app(ServerSettingsService::class)->saveBranding($panelName);
+        app(ServerSettingsService::class)->saveBranding($data['panel_name']);
+
+        // FileUpload returns stored path after getState() processing
+        $lightPath = $data['logoLight'] ?? null;
+        if (is_string($lightPath) && $lightPath !== $this->currentLogo) {
+            if ($this->currentLogo && Storage::disk('public')->exists($this->currentLogo)) {
+                Storage::disk('public')->delete($this->currentLogo);
+            }
+            DnsSetting::set('custom_logo', $lightPath);
+            $this->currentLogo = $lightPath;
+        }
+
+        $darkPath = $data['logoDark'] ?? null;
+        if (is_string($darkPath) && $darkPath !== $this->currentLogoDark) {
+            if ($this->currentLogoDark && Storage::disk('public')->exists($this->currentLogoDark)) {
+                Storage::disk('public')->delete($this->currentLogoDark);
+            }
+            DnsSetting::set('custom_logo_dark', $darkPath);
+            $this->currentLogoDark = $darkPath;
+        }
+
         DnsSetting::clearCache();
 
-        Notification::make()->title(__('Panel name updated'))->body(__('Refresh to see changes.'))->success()->send();
+        Notification::make()->title(__('Branding updated'))->success()->send();
+
+        $this->redirect(request()->header('Referer', '/jabali-admin/server-settings?tab=branding'));
     }
 
     public function removeLogo(): void
