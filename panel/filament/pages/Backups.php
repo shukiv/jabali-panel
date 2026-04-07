@@ -702,19 +702,18 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                 ]),
                         ];
                     })
-                    ->before(function (): void {
-                        $this->restoreFileList = [];
-                    })
                     ->action(function (array $data, array $record): void {
                         // Build components list from selected items
                         $components = [];
                         if ($data['restore_metadata'] ?? true) {
                             $components[] = 'metadata';
                         }
+                        $fileList = [];
                         if ($data['restore_files'] ?? true) {
                             $components[] = 'files';
                         } elseif (! empty($this->restoreFileList)) {
                             $components[] = 'files';
+                            $fileList = $this->restoreFileList;
                         }
                         if (! empty($data['restore_databases']) || ! empty($data['restore_mysql_users'])) {
                             $components[] = 'mysql';
@@ -746,7 +745,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             $components,
                             $data['force'] ?? false,
                             $data['snapshot'] ?? 'latest',
+                            $fileList,
                         );
+                        $this->restoreFileList = [];
                     }),
                 Action::make('download')
                     ->label(__('Download'))
@@ -1007,7 +1008,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         }
     }
 
-    protected function executeWizardRestore(array $accounts, array $components, bool $force, string $snapshot = 'latest'): void
+    protected function executeWizardRestore(array $accounts, array $components, bool $force, string $snapshot = 'latest', array $fileList = []): void
     {
         if (empty($accounts)) {
             Notification::make()->title(__('No accounts selected'))->warning()->send();
@@ -1020,12 +1021,16 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
         foreach ($accounts as $username) {
             try {
-                $result = app(AgentClient::class)->send('jb.restore', [
+                $params = [
                     'username' => $username,
                     'snapshot_id' => $snapshot,
                     'components' => $components,
                     'force' => $force,
-                ]);
+                ];
+                if (! empty($fileList)) {
+                    $params['files'] = $fileList;
+                }
+                $result = app(AgentClient::class)->send('jb.restore', $params);
                 if ($result['success'] ?? false) {
                     $succeeded++;
                     // Show restore summary with skipped items warning

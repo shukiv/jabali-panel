@@ -483,7 +483,7 @@ function jbRestore(array $params): array
     $args = ['restore', $username, '--snapshot=' . $snapshotId];
 
     if (! empty($components)) {
-        $validComponents = ['files', 'mysql', 'postgres', 'email', 'dns', 'ssl', 'nginx', 'php', 'cron', 'wordpress', 'metadata'];
+        $validComponents = ['files', 'mysql', 'postgres', 'email', 'dns', 'ssl', 'nginx', 'php', 'cron', 'wordpress', 'stalwart', 'metadata'];
         $safe = array_intersect($components, $validComponents);
         if (! empty($safe)) {
             $args[] = '--only=' . implode(',', $safe);
@@ -491,6 +491,16 @@ function jbRestore(array $params): array
     }
     if ($force) {
         $args[] = '--force';
+    }
+
+    // Selective file restore — pass individual file/folder paths
+    $files = $params['files'] ?? [];
+    foreach ($files as $file) {
+        if (is_string($file) && $file !== '' && ! str_contains($file, '..') && ! str_contains($file, "\0")) {
+            if (preg_match('#^[a-zA-Z0-9/_\-.\s]+$#', $file)) {
+                $args[] = '--file=' . $file;
+            }
+        }
     }
 
     $r = jbExec($args, 300);
