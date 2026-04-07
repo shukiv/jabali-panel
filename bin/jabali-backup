@@ -294,7 +294,7 @@ cmd_forget() {
     done
     if [[ "$dry_run" -eq 1 ]]; then
         restic_env
-        restic forget --dry-run \
+        restic forget --dry-run "${RESTIC_EXTRA_OPTS[@]}" \
             --keep-last "$CFG_KEEP_LAST" --keep-daily "$CFG_KEEP_DAILY" \
             --keep-weekly "$CFG_KEEP_WEEKLY" --keep-monthly "$CFG_KEEP_MONTHLY"
     else
@@ -768,9 +768,9 @@ cmd_restore() {
 
         # List snapshot contents to detect components
         local contents
-        contents=$(restic ls "$snapshot_id" 2>/dev/null | grep "$staging_base" || true)
+        contents=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null | grep "$staging_base" || true)
         local has_home
-        has_home=$(restic ls "$snapshot_id" 2>/dev/null | grep "^/home/${target_user}/" | head -1 || true)
+        has_home=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null | grep "^/home/${target_user}/" | head -1 || true)
 
         echo "Components found in snapshot:"
         [[ -n "$has_home" ]] && _collector_enabled files "$only" "$exclude" && echo "  files:     /home/${target_user}/"
@@ -1306,7 +1306,7 @@ _dest_synthesize_legacy() {
 
     # Check if initialized
     local initialized="false"
-    if restic_env 2>/dev/null && restic cat config --json 2>/dev/null | jq -e '.id' &>/dev/null; then
+    if restic_env 2>/dev/null && restic cat config "${RESTIC_EXTRA_OPTS[@]}" --json 2>/dev/null | jq -e '.id' &>/dev/null; then
         initialized="true"
     fi
 
