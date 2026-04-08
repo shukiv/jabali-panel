@@ -126,8 +126,14 @@ class ServerMetricsWidget extends Widget
             $mount = $parts[1] ?? '';
             $fstype = $parts[2] ?? '';
 
-            // Only show real block devices (e.g. /dev/sda1, /dev/vda1, /dev/nvme0n1p1)
-            if (! str_starts_with($device, '/dev/')) {
+            // Only show real block devices, skip loop/snap/squashfs/bind mounts
+            if (! str_starts_with($device, '/dev/') || str_starts_with($device, '/dev/loop')) {
+                continue;
+            }
+            if (in_array($fstype, ['squashfs', 'tmpfs', 'devtmpfs', 'overlay'], true)) {
+                continue;
+            }
+            if (str_starts_with($mount, '/snap/') || str_starts_with($mount, '/var/jail/')) {
                 continue;
             }
 
