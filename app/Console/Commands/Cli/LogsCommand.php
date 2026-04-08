@@ -285,6 +285,64 @@ class LogsCommand extends JabaliCommand
                 'machinectl list --no-pager 2>/dev/null',
                 'journalctl -u "systemd-nspawn@*" --since "1 hour ago" --no-pager 2>/dev/null',
             ],
+
+            // Nginx vhosts
+            'Nginx Panel Vhost' => [
+                'head -5 /etc/nginx/sites-available/$(hostname) 2>/dev/null',
+                'grep -E "server_name|fastcgi_pass|root |alias " /etc/nginx/sites-available/$(hostname) 2>/dev/null',
+                'grep phpmyadmin /etc/nginx/sites-available/$(hostname) 2>/dev/null',
+            ],
+            'Nginx Sites Enabled' => [
+                'ls -la /etc/nginx/sites-enabled/ 2>/dev/null',
+            ],
+            'Nginx Test' => [
+                'nginx -t 2>&1',
+            ],
+
+            // PHP-FPM
+            'PHP-FPM Sockets' => [
+                'ls -la /run/php/*.sock /var/run/php/*.sock 2>/dev/null',
+            ],
+            'PHP-FPM Pools' => [
+                'ls /etc/php/*/fpm/pool.d/*.conf 2>/dev/null',
+            ],
+            'PHP Modules' => [
+                'php -m 2>/dev/null | grep -iE "mysql|pdo|curl|mbstring|xml|zip|gd|intl|redis|opcache" | sort',
+            ],
+
+            // phpMyAdmin
+            'phpMyAdmin' => [
+                'ls -la /usr/share/phpmyadmin/jabali-signon.php 2>/dev/null || echo "signon file missing"',
+                'ls -la /etc/phpmyadmin/conf.d/jabali.inc.php 2>/dev/null || echo "jabali config missing"',
+                'dpkg -l phpmyadmin 2>/dev/null | tail -1',
+            ],
+
+            // Disk & Partitions
+            'Disk Usage' => [
+                'df -hT | grep -v tmpfs | grep -v squashfs | grep -v loop',
+            ],
+
+            // Cron
+            'Scheduled Tasks' => [
+                'cd '.escapeshellarg(base_path()).' && php artisan schedule:list --no-interaction 2>/dev/null | head -20',
+            ],
+
+            // Composer & npm
+            'Package Versions' => [
+                'cd '.escapeshellarg(base_path()).' && composer show filament/filament 2>/dev/null | head -3',
+                'cd '.escapeshellarg(base_path()).' && composer show livewire/livewire 2>/dev/null | head -3',
+            ],
+
+            // FrankenPHP config
+            'FrankenPHP Caddyfile' => [
+                'cat /etc/jabali/Caddyfile 2>/dev/null | head -30',
+            ],
+
+            // Agent socket
+            'Agent Socket' => [
+                'ls -la /var/run/jabali-agent.sock 2>/dev/null || echo "agent socket missing"',
+                'systemctl is-active jabali-agent 2>/dev/null',
+            ],
         ];
 
         foreach ($sections as $title => $commands) {
