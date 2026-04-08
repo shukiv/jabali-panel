@@ -5217,7 +5217,7 @@ function domainToggle(array $params): array
     }
 
     if ($enable) {
-        exec('ln -sf /etc/nginx/sites-available/'.escapeshellarg("{$domain}.conf").' /etc/nginx/sites-enabled/'.escapeshellarg("{$domain}.conf").' 2>&1', $output, $returnCode);
+        exec('ln -sf '.escapeshellarg("/etc/nginx/sites-available/{$domain}.conf").' '.escapeshellarg("/etc/nginx/sites-enabled/{$domain}.conf").' 2>&1', $output, $returnCode);
         $action = 'enabled';
     } else {
         exec('rm -f /etc/nginx/sites-enabled/'.escapeshellarg("{$domain}.conf").' 2>&1', $output, $returnCode);
