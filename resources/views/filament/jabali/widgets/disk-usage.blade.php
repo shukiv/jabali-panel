@@ -54,7 +54,7 @@
                             layout: { padding: 0 },
                             scales: {
                                 x: { stacked: true, display: false, max: 100 },
-                                y: { stacked: true, grid: { display: false }, border: { display: false }, afterFit: (scale) => { scale.width = 90; }, ticks: { color: textColor, font: { size: 11, weight: 'bold' } } },
+                                y: { stacked: true, display: false },
                             },
                             plugins: { legend: { display: false }, tooltip: { enabled: false } },
                         },

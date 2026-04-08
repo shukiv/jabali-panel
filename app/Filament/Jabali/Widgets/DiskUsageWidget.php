@@ -95,10 +95,10 @@ class DiskUsageWidget extends Widget
 
         return [
             'disk' => [
-                [__('Disk'), (float) $disk['percent'], $disk['used'].' / '.$disk['quota']],
+                ['', (float) $disk['percent'], __('Disk').' '.$disk['used'].' / '.$disk['quota']],
             ],
             'bandwidth' => [
-                [__('Bandwidth'), (float) $bw['percent'], $bw['used'].' / '.$bw['quota']],
+                ['', (float) $bw['percent'], __('Bandwidth').' '.$bw['used'].' / '.$bw['quota']],
             ],
             'limits' => [
                 'domains' => $limits['domains_used'].' / '.$limits['domains_limit'],
