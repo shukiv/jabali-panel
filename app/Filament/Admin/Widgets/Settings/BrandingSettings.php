@@ -94,33 +94,37 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
     {
         return $schema
             ->components([
-                Section::make(__('Suspended Page'))
-                    ->description(__('HTML shown when a domain is disabled. This page is served with a 503 status code.'))
-                    ->collapsed()
+                Section::make(__('Page Templates'))
+                    ->description(__('Customize the default pages served by the panel.'))
                     ->schema([
-                        Textarea::make('suspendedPageHtml')
-                            ->label(__('Suspended Page HTML'))
-                            ->rows(12)
-                            ->helperText(__('Full HTML document served when a domain is suspended.')),
-                        Actions::make([
-                            Action::make('saveSuspendedPage')
-                                ->label(__('Save Suspended Page'))
-                                ->action('saveSuspendedPage'),
-                        ]),
-                    ]),
-                Section::make(__('Welcome Page Template'))
-                    ->description(__('Default index.html for new domains. Use {{DOMAIN}} as a placeholder for the domain name.'))
-                    ->collapsed()
-                    ->schema([
-                        Textarea::make('welcomePageHtml')
-                            ->label(__('Welcome Page HTML'))
-                            ->rows(12)
-                            ->helperText(__('Use {{DOMAIN}} placeholder — it will be replaced with the actual domain name.')),
-                        Actions::make([
-                            Action::make('saveWelcomePage')
-                                ->label(__('Save Welcome Page'))
-                                ->action('saveWelcomePage'),
-                        ]),
+                        Section::make(__('Suspended Page'))
+                            ->description(__('HTML shown when a domain is disabled. This page is served with a 503 status code.'))
+                            ->collapsed()
+                            ->schema([
+                                Textarea::make('suspendedPageHtml')
+                                    ->label(__('Suspended Page HTML'))
+                                    ->rows(12)
+                                    ->helperText(__('Full HTML document served when a domain is suspended.')),
+                                Actions::make([
+                                    Action::make('saveSuspendedPage')
+                                        ->label(__('Save Suspended Page'))
+                                        ->action('saveSuspendedPage'),
+                                ]),
+                            ]),
+                        Section::make(__('Welcome Page Template'))
+                            ->description(__('Default index.html for new domains. Use {{DOMAIN}} as a placeholder for the domain name.'))
+                            ->collapsed()
+                            ->schema([
+                                Textarea::make('welcomePageHtml')
+                                    ->label(__('Welcome Page HTML'))
+                                    ->rows(12)
+                                    ->helperText(__('Use {{DOMAIN}} placeholder — it will be replaced with the actual domain name.')),
+                                Actions::make([
+                                    Action::make('saveWelcomePage')
+                                        ->label(__('Save Welcome Page'))
+                                        ->action('saveWelcomePage'),
+                                ]),
+                            ]),
                     ]),
             ]);
     }
