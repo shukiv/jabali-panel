@@ -50,8 +50,8 @@
                         data: {
                             labels: items.map(i => i[0]),
                             datasets: [
-                                { data: vals, backgroundColor: vals.map(v => color(v)), barTexts: barTexts, borderWidth: 0, borderRadius: 0, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
-                                { data: rem, backgroundColor: trackColor, borderWidth: 0, borderRadius: 0, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
+                                { data: vals, backgroundColor: vals.map(v => color(v)), barTexts: barTexts, borderWidth: 0, borderRadius: 0, borderSkipped: false, barThickness: 28 },
+                                { data: rem, backgroundColor: trackColor, borderWidth: 0, borderRadius: 0, borderSkipped: false, barThickness: 28 },
                             ],
                         },
                         options: {
