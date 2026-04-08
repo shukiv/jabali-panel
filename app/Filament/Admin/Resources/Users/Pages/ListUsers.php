@@ -11,7 +11,7 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
-use Filament\Tables\Components\EmbeddedTable;
+use Filament\Schemas\Components\EmbeddedTable;
 use Illuminate\Database\Eloquent\Builder;
 
 class ListUsers extends ListRecords
