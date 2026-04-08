@@ -87,6 +87,27 @@ class DiskUsageWidget extends Widget
         ];
     }
 
+    public function getChartData(): array
+    {
+        $disk = $this->getDiskData();
+        $bw = $this->getBandwidthData();
+        $limits = $this->getLimitsData();
+
+        return [
+            'disk' => [
+                [__('Disk'), (float) $disk['percent'], $disk['used'].' / '.$disk['quota']],
+            ],
+            'bandwidth' => [
+                [__('Bandwidth'), (float) $bw['percent'], $bw['used'].' / '.$bw['quota']],
+            ],
+            'limits' => [
+                'domains' => $limits['domains_used'].' / '.$limits['domains_limit'],
+                'databases' => $limits['databases_used'].' / '.$limits['databases_limit'],
+                'mailboxes' => $limits['mailboxes_used'].' / '.$limits['mailboxes_limit'],
+            ],
+        ];
+    }
+
     protected function getColor(float $percent): string
     {
         if ($percent >= 90) {
