@@ -5211,20 +5211,100 @@ function domainToggle(array $params): array
 
     $domain = strtolower(trim($domain));
     $vhostFile = "/etc/nginx/sites-available/{$domain}.conf";
+    $enabledFile = "/etc/nginx/sites-enabled/{$domain}.conf";
 
     if (! file_exists($vhostFile)) {
         return ['success' => false, 'error' => 'Domain configuration not found'];
     }
 
     if ($enable) {
-        exec('ln -sf '.escapeshellarg("/etc/nginx/sites-available/{$domain}.conf").' '.escapeshellarg("/etc/nginx/sites-enabled/{$domain}.conf").' 2>&1', $output, $returnCode);
+        // Restore the real vhost symlink
+        @unlink($enabledFile);
+        symlink($vhostFile, $enabledFile);
         $action = 'enabled';
     } else {
-        exec('rm -f /etc/nginx/sites-enabled/'.escapeshellarg("{$domain}.conf").' 2>&1', $output, $returnCode);
+        // Extract SSL cert paths from existing config
+        $existingConfig = file_get_contents($vhostFile);
+        $sslCert = '/etc/ssl/certs/ssl-cert-snakeoil.pem';
+        $sslKey = '/etc/ssl/private/ssl-cert-snakeoil.key';
+        if (preg_match('/ssl_certificate\s+([^;]+);/', $existingConfig, $m)) {
+            $sslCert = trim($m[1]);
+        }
+        if (preg_match('/ssl_certificate_key\s+([^;]+);/', $existingConfig, $m)) {
+            $sslKey = trim($m[1]);
+        }
+
+        // Extract server_name from existing config
+        $serverNames = "{$domain} www.{$domain}";
+        if (preg_match('/server_name\s+([^;]+);/', $existingConfig, $m)) {
+            $serverNames = trim($m[1]);
+        }
+
+        // Determine suspended page path
+        $suspendedPage = '/etc/jabali/suspended.html';
+        if (! file_exists($suspendedPage)) {
+            $suspendedPage = '/var/www/jabali/stubs/suspended.html';
+        }
+
+        // Write a minimal vhost that serves the suspended page
+        $suspendedDir = dirname($suspendedPage);
+        $suspendedFile = basename($suspendedPage);
+        $suspendedConfig = "# Jabali: domain suspended — do not edit, managed by jabali-agent
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {$serverNames};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/jabali/public;
+        try_files \$uri =404;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name {$serverNames};
+
+    ssl_certificate {$sslCert};
+    ssl_certificate_key {$sslKey};
+
+    error_page 503 /suspended.html;
+
+    location / {
+        return 503;
+    }
+
+    location = /suspended.html {
+        root {$suspendedDir};
+        try_files /{$suspendedFile} =503;
+        internal;
+    }
+}
+";
+        // Remove symlink and write suspended config directly to sites-enabled
+        @unlink($enabledFile);
+        file_put_contents($enabledFile, $suspendedConfig);
         $action = 'disabled';
     }
 
-    exec('nginx -t && systemctl reload nginx 2>&1');
+    // Test and reload nginx
+    exec('nginx -t 2>&1', $testOutput, $testCode);
+    if ($testCode !== 0) {
+        // Rollback: restore symlink
+        @unlink($enabledFile);
+        symlink($vhostFile, $enabledFile);
+        exec('nginx -t 2>&1 && systemctl reload nginx 2>&1');
+
+        return ['success' => false, 'error' => 'Nginx config test failed: '.implode("\n", $testOutput)];
+    }
+
+    exec('systemctl reload nginx 2>&1');
 
     return ['success' => true, 'message' => "Domain {$domain} {$action}"];
 }
