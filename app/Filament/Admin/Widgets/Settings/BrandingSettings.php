@@ -139,12 +139,15 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                     return null;
                 }
 
-                // Use relative URL to avoid CORS issues (APP_URL has IP, user accesses via hostname)
+                // Use request host for URL to avoid CORS (APP_URL has IP, user accesses via hostname)
+                $scheme = request()->getScheme();
+                $host = request()->getHttpHost();
+
                 return [
                     'name' => basename($file),
                     'size' => $storage->size($file),
                     'type' => $storage->mimeType($file),
-                    'url' => '/storage/'.$file,
+                    'url' => "{$scheme}://{$host}/storage/{$file}",
                 ];
             });
     }
