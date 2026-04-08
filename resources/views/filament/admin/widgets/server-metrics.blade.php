@@ -66,8 +66,8 @@
                         data: {
                             labels: items.map(i => i[0]),
                             datasets: [
-                                { data: vals, backgroundColor: vals.map(v => color(v)), barTexts: barTexts, borderWidth: 0, borderRadius: 4, borderSkipped: false, barPercentage: 0.6 },
-                                { data: rem, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', borderWidth: 0, borderRadius: 4, borderSkipped: false, barPercentage: 0.6 },
+                                { data: vals, backgroundColor: vals.map(v => color(v)), barTexts: barTexts, borderWidth: 0, borderRadius: 4, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
+                                { data: rem, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', borderWidth: 0, borderRadius: 4, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
                             ],
                         },
                         options: {
@@ -75,6 +75,7 @@
                             responsive: true,
                             maintainAspectRatio: false,
                             animation: { duration: 300 },
+                            layout: { padding: 0 },
                             scales: {
                                 x: { stacked: true, display: false, max: 100 },
                                 y: { stacked: true, grid: { display: false }, border: { display: false }, afterFit: (scale) => { scale.width = 80; }, ticks: { color: isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)', font: { size: 11, weight: 'bold' } } },
@@ -92,9 +93,9 @@
             x-init="init()"
         >
             <div class="fi-wi-stats-overview-stats-ctn grid gap-2 md:grid-cols-4">
-                <div><canvas id="cpu-chart" height="140"></canvas></div>
-                <div><canvas id="mem-chart" height="140"></canvas></div>
-                <div><canvas id="disk-chart" height="140"></canvas></div>
+                <div><canvas id="cpu-chart" height="100"></canvas></div>
+                <div><canvas id="mem-chart" height="100"></canvas></div>
+                <div><canvas id="disk-chart" height="100"></canvas></div>
                 <div class="flex items-center justify-center gap-6">
                     <div>
                         <x-filament::icon icon="heroicon-o-arrow-up" @class(['inline-block', 'h-4', 'w-4']) style="color: var(--success-500)" />
