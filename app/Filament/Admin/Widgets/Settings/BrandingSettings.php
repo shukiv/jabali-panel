@@ -12,8 +12,9 @@ use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
+use Filament\Forms\Components\CodeEditor;
+use Filament\Forms\Components\CodeEditor\Enums\Language;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Actions;
@@ -101,9 +102,10 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                             ->description(__('HTML shown when a domain is disabled. This page is served with a 503 status code.'))
                             ->collapsed()
                             ->schema([
-                                Textarea::make('suspendedPageHtml')
+                                CodeEditor::make('suspendedPageHtml')
                                     ->label(__('Suspended Page HTML'))
-                                    ->rows(12)
+                                    ->language(Language::Html)
+                                    ->wrap()
                                     ->helperText(__('Full HTML document served when a domain is suspended.')),
                                 Actions::make([
                                     Action::make('saveSuspendedPage')
@@ -115,9 +117,10 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                             ->description(__('Default index.html for new domains. Use {{DOMAIN}} as a placeholder for the domain name.'))
                             ->collapsed()
                             ->schema([
-                                Textarea::make('welcomePageHtml')
+                                CodeEditor::make('welcomePageHtml')
                                     ->label(__('Welcome Page HTML'))
-                                    ->rows(12)
+                                    ->language(Language::Html)
+                                    ->wrap()
                                     ->helperText(__('Use {{DOMAIN}} placeholder — it will be replaced with the actual domain name.')),
                                 Actions::make([
                                     Action::make('saveWelcomePage')
