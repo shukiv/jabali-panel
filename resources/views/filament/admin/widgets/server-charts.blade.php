@@ -1,45 +1,44 @@
-@php
-    $data = $this->getData();
-    $cpu = $data['cpu'] ?? [];
-    $memory = $data['memory'] ?? [];
-    $disk = $data['disk'] ?? [];
-    $network = $data['network'] ?? [];
-@endphp
-
-<x-filament-widgets::widget wire:poll.5s="$refresh">
+<x-filament-widgets::widget>
     <x-filament::section compact>
         <div
+            wire:ignore
             x-data="{
                 charts: {},
-                init() {
-                    this.$nextTick(() => {
-                        this.createCharts();
-                    });
-                },
-                createCharts() {
-                    this.createBar('cpu-chart', @js([
-                        ['CPU ' . ($cpu['usage'] ?? 0) . '%', $cpu['usage'] ?? 0],
-                        ['IO Wait ' . ($cpu['iowait'] ?? 0) . '%', $cpu['iowait'] ?? 0],
+                async refresh() {
+                    const data = await $wire.getData();
+                    const cpu = data.cpu || {};
+                    const memory = data.memory || {};
+                    const disk = data.disk || [];
+                    const network = data.network || {};
+
+                    this.createBar('cpu-chart', [
+                        ['CPU ' + (cpu.usage || 0) + '%', cpu.usage || 0],
+                        ['IO Wait ' + (cpu.iowait || 0) + '%', cpu.iowait || 0],
+                    ]);
+
+                    const memItems = [
+                        ['Memory ' + (memory.usage || 0) + '%', memory.usage || 0, (memory.used_gb || 0) + '/' + (memory.total_gb || 0) + ' GB'],
+                    ];
+                    if (memory.has_swap) {
+                        memItems.push(['Swap ' + (memory.swap_usage || 0) + '%', memory.swap_usage || 0, (memory.swap_used_gb || 0) + '/' + (memory.swap_total_gb || 0) + ' GB']);
+                    }
+                    this.createBar('memory-chart', memItems);
+
+                    this.createBar('disk-chart', disk.map(p => [
+                        (p.mount || '/') + ' ' + (p.usage || 0) + '%',
+                        p.usage || 0,
+                        (p.used_human || '0 B') + '/' + (p.total_human || '0 B'),
                     ]));
 
-                    this.createBar('memory-chart', @js(array_values(array_filter([
-                        ['Memory ' . ($memory['usage'] ?? 0) . '%', $memory['usage'] ?? 0, ($memory['used_gb'] ?? 0) . '/' . ($memory['total_gb'] ?? 0) . ' GB'],
-                        ($memory['has_swap'] ?? false) ? ['Swap ' . ($memory['swap_usage'] ?? 0) . '%', $memory['swap_usage'] ?? 0, ($memory['swap_used_gb'] ?? 0) . '/' . ($memory['swap_total_gb'] ?? 0) . ' GB'] : null,
-                    ]))));
-
-                    this.createBar('disk-chart', @js(array_map(fn ($p) => [
-                        ($p['mount'] ?? '/') . ' ' . ($p['usage'] ?? 0) . '%',
-                        $p['usage'] ?? 0,
-                        ($p['used_human'] ?? '0 B') . '/' . ($p['total_human'] ?? '0 B'),
-                    ], $disk)));
+                    this.$refs.cpuInfo.textContent = (cpu.cores || '?') + ' cores \u00b7 ' + (cpu.model || '').substring(0, 30);
+                    this.$refs.netTxSpeed.textContent = network.tx_speed || '0 B/s';
+                    this.$refs.netTxTotal.textContent = '(' + (network.total_tx_human || '0 B') + ')';
+                    this.$refs.netRxSpeed.textContent = network.rx_speed || '0 B/s';
+                    this.$refs.netRxTotal.textContent = '(' + (network.total_rx_human || '0 B') + ')';
                 },
                 createBar(elId, items) {
                     const el = document.getElementById(elId);
                     if (!el || typeof Chart === 'undefined') return;
-
-                    if (this.charts[elId]) {
-                        this.charts[elId].destroy();
-                    }
 
                     const labels = items.map(i => i[0]);
                     const values = items.map(i => i[1]);
@@ -55,6 +54,18 @@
                     const isDark = document.documentElement.classList.contains('dark');
                     const trackColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
                     const textColor = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)';
+
+                    if (this.charts[elId]) {
+                        const chart = this.charts[elId];
+                        chart.data.labels = labels;
+                        chart.data.datasets[0].data = values;
+                        chart.data.datasets[0].backgroundColor = values.map(v => barColor(v));
+                        chart.data.datasets[1].data = remainder;
+                        chart.data.datasets[1].backgroundColor = trackColor;
+                        chart.options.scales.y.ticks.color = textColor;
+                        chart.update('none');
+                        return;
+                    }
 
                     this.charts[elId] = new Chart(el, {
                         type: 'bar',
@@ -85,19 +96,12 @@
                             maintainAspectRatio: false,
                             animation: { duration: 300 },
                             scales: {
-                                x: {
-                                    stacked: true,
-                                    display: false,
-                                    max: 100,
-                                },
+                                x: { stacked: true, display: false, max: 100 },
                                 y: {
                                     stacked: true,
                                     display: true,
                                     grid: { display: false },
-                                    ticks: {
-                                        color: textColor,
-                                        font: { size: 12, weight: 'bold' },
-                                    },
+                                    ticks: { color: textColor, font: { size: 12, weight: 'bold' } },
                                     border: { display: false },
                                 },
                             },
@@ -107,8 +111,7 @@
                                     callbacks: {
                                         label: (ctx) => {
                                             if (ctx.datasetIndex === 1) return null;
-                                            const idx = ctx.dataIndex;
-                                            return extra[idx] ? extra[idx] : ctx.parsed.x + '%';
+                                            return extra[ctx.dataIndex] || ctx.parsed.x + '%';
                                         },
                                     },
                                 },
@@ -116,14 +119,17 @@
                         },
                     });
                 },
+                init() {
+                    this.refresh();
+                    setInterval(() => this.refresh(), 5000);
+                },
             }"
             x-init="init()"
-            x-effect="createCharts()"
             class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
         >
             <div>
                 <canvas id="cpu-chart" height="80"></canvas>
-                <p class="mt-1 text-center text-xs text-gray-500 dark:text-gray-400">{{ $cpu['cores'] ?? '?' }} {{ __('cores') }} &middot; {{ Str::limit($cpu['model'] ?? '', 30) }}</p>
+                <p x-ref="cpuInfo" class="mt-1 text-center text-xs text-gray-500 dark:text-gray-400"></p>
             </div>
 
             <div>
@@ -138,13 +144,13 @@
                 <p class="text-xs text-gray-500 dark:text-gray-400">{{ __('Network') }} &middot; {{ __('Current (Total)') }}</p>
                 <p class="text-sm font-bold">
                     <span class="text-success-500">&uarr;</span>
-                    {{ $network['tx_speed'] ?? '0 B/s' }}
-                    <span class="text-xs font-normal text-gray-500 dark:text-gray-400">({{ $network['total_tx_human'] ?? '0 B' }})</span>
+                    <span x-ref="netTxSpeed">0 B/s</span>
+                    <span x-ref="netTxTotal" class="text-xs font-normal text-gray-500 dark:text-gray-400">(0 B)</span>
                 </p>
                 <p class="text-sm font-bold">
                     <span class="text-info-500">&darr;</span>
-                    {{ $network['rx_speed'] ?? '0 B/s' }}
-                    <span class="text-xs font-normal text-gray-500 dark:text-gray-400">({{ $network['total_rx_human'] ?? '0 B' }})</span>
+                    <span x-ref="netRxSpeed">0 B/s</span>
+                    <span x-ref="netRxTotal" class="text-xs font-normal text-gray-500 dark:text-gray-400">(0 B)</span>
                 </p>
             </div>
         </div>
