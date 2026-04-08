@@ -116,15 +116,62 @@ class ServerMetricsWidget extends Widget
 
     private function getDiskData(): array
     {
-        $total = @disk_total_space('/') ?: 0;
-        $free = @disk_free_space('/') ?: 0;
-        $used = max(0, $total - $free);
+        $partitions = [];
+        $seen = [];
 
-        return [
-            'usage' => $total > 0 ? round(($used / $total) * 100, 1) : 0,
-            'used_human' => Formatter::bytes($used),
-            'total_human' => Formatter::bytes($total),
-        ];
+        $mounts = @file('/proc/mounts', FILE_IGNORE_NEW_LINES) ?: [];
+        foreach ($mounts as $line) {
+            $parts = preg_split('/\s+/', $line);
+            $device = $parts[0] ?? '';
+            $mount = $parts[1] ?? '';
+            $fstype = $parts[2] ?? '';
+
+            // Skip virtual filesystems
+            if (in_array($fstype, ['proc', 'sysfs', 'devtmpfs', 'devpts', 'cgroup', 'cgroup2', 'securityfs', 'pstore', 'debugfs', 'tracefs', 'fusectl', 'configfs', 'mqueue', 'hugetlbfs', 'binfmt_misc', 'autofs', 'overlay', 'nsfs', 'fuse.lxcfs'], true)) {
+                continue;
+            }
+
+            // Skip snap, docker, and system mounts
+            if (str_starts_with($mount, '/snap/') || str_starts_with($mount, '/sys/') || str_starts_with($mount, '/proc/') || str_starts_with($mount, '/dev/')) {
+                continue;
+            }
+
+            $total = @disk_total_space($mount) ?: 0;
+            if ($total <= 0) {
+                continue;
+            }
+
+            // Skip duplicate devices (same device mounted multiple times)
+            if (isset($seen[$device]) && $device !== 'tmpfs') {
+                continue;
+            }
+            $seen[$device] = true;
+
+            $free = @disk_free_space($mount) ?: 0;
+            $used = max(0, $total - $free);
+
+            $partitions[] = [
+                'mount' => $mount,
+                'usage' => round(($used / $total) * 100, 1),
+                'used_human' => Formatter::bytes($used),
+                'total_human' => Formatter::bytes($total),
+            ];
+        }
+
+        // Ensure at least root partition
+        if (empty($partitions)) {
+            $total = @disk_total_space('/') ?: 0;
+            $free = @disk_free_space('/') ?: 0;
+            $used = max(0, $total - $free);
+            $partitions[] = [
+                'mount' => '/',
+                'usage' => $total > 0 ? round(($used / $total) * 100, 1) : 0,
+                'used_human' => Formatter::bytes($used),
+                'total_human' => Formatter::bytes($total),
+            ];
+        }
+
+        return $partitions;
     }
 
     private function getNetworkData(): array
