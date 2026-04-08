@@ -1659,9 +1659,9 @@ REALIP
         index index.php;
 
         location ~ \.php\$ {
+            include fastcgi_params;
             fastcgi_pass unix:${php_sock};
             fastcgi_param SCRIPT_FILENAME \$request_filename;
-            include fastcgi_params;
             fastcgi_read_timeout 600;
         }
     }
