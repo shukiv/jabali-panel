@@ -106,25 +106,26 @@
             x-init="init()"
         >
             <div class="fi-wi-stats-overview-stats-ctn grid gap-2 md:grid-cols-4">
-                <div class="flex items-center">
-                    <div class="flex flex-col items-center justify-around" style="width: 20px; height: 90px">
-                        <x-filament::icon icon="heroicon-o-cpu-chip" @class(['h-4', 'w-4', 'opacity-50']) />
-                        <x-filament::icon icon="heroicon-o-clock" @class(['h-4', 'w-4', 'opacity-50']) />
+                <div>
+                    <div class="flex items-center gap-1" style="margin-bottom: 2px">
+                        <x-filament::icon icon="heroicon-o-cpu-chip" @class(['h-3.5', 'w-3.5', 'opacity-40']) />
+                        <span style="font-size: 0.65rem; opacity: 0.4; text-transform: uppercase; letter-spacing: 0.05em">{{ __('CPU') }}</span>
                     </div>
-                    <div style="position: relative; height: 90px; flex: 1"><canvas id="cpu-chart"></canvas></div>
+                    <div style="position: relative; height: 80px"><canvas id="cpu-chart"></canvas></div>
                 </div>
-                <div class="flex items-center">
-                    <div class="flex flex-col items-center justify-around" style="width: 20px; height: 90px">
-                        <x-filament::icon icon="heroicon-o-circle-stack" @class(['h-4', 'w-4', 'opacity-50']) />
-                        <x-filament::icon icon="heroicon-o-arrows-up-down" @class(['h-4', 'w-4', 'opacity-50']) />
+                <div>
+                    <div class="flex items-center gap-1" style="margin-bottom: 2px">
+                        <x-filament::icon icon="heroicon-o-circle-stack" @class(['h-3.5', 'w-3.5', 'opacity-40']) />
+                        <span style="font-size: 0.65rem; opacity: 0.4; text-transform: uppercase; letter-spacing: 0.05em">{{ __('Memory') }}</span>
                     </div>
-                    <div style="position: relative; height: 90px; flex: 1"><canvas id="mem-chart"></canvas></div>
+                    <div style="position: relative; height: 80px"><canvas id="mem-chart"></canvas></div>
                 </div>
-                <div class="flex items-center">
-                    <div class="flex flex-col items-center justify-around" style="width: 20px; height: 90px">
-                        <x-filament::icon icon="heroicon-o-server" @class(['h-4', 'w-4', 'opacity-50']) />
+                <div>
+                    <div class="flex items-center gap-1" style="margin-bottom: 2px">
+                        <x-filament::icon icon="heroicon-o-server" @class(['h-3.5', 'w-3.5', 'opacity-40']) />
+                        <span style="font-size: 0.65rem; opacity: 0.4; text-transform: uppercase; letter-spacing: 0.05em">{{ __('Disk') }}</span>
                     </div>
-                    <div style="position: relative; height: 90px; flex: 1"><canvas id="disk-chart"></canvas></div>
+                    <div style="position: relative; height: 80px"><canvas id="disk-chart"></canvas></div>
                 </div>
                 <div class="flex items-center justify-center gap-6">
                     <div>
