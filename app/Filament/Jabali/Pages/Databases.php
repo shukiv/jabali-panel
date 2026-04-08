@@ -720,7 +720,11 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                 'database' => $database,
             ], now()->addMinutes(5));
 
-            return request()->getSchemeAndHttpHost().'/phpmyadmin/jabali-signon.php?token='.$token.'&db='.urlencode($database);
+            // phpMyAdmin is served by nginx on port 443, not FrankenPHP panel port
+            $scheme = request()->getScheme();
+            $host = request()->getHost();
+
+            return "{$scheme}://{$host}/phpmyadmin/jabali-signon.php?token={$token}&db=".urlencode($database);
 
         } catch (Exception $e) {
             return null;
