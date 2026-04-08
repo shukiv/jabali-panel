@@ -7,11 +7,10 @@ namespace App\Filament\Admin\Resources\Users\Pages;
 use App\Filament\Admin\Resources\Users\UserResource;
 use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
-use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
-use Filament\Schemas\Components\EmbeddedTable;
 use Illuminate\Database\Eloquent\Builder;
 
 class ListUsers extends ListRecords
@@ -44,17 +43,18 @@ class ListUsers extends ListRecords
 
     public function content(Schema $schema): Schema
     {
+        $tabs = $this->getCachedTabs();
+
+        foreach ($tabs as $tab) {
+            $tab->schema([EmbeddedTable::make()]);
+        }
+
         return $schema->components([
-            Section::make()
-                ->schema([
-                    Tabs::make()
-                        ->key('resourceTabs')
-                        ->livewireProperty('activeTab')
-                        ->contained(false)
-                        ->tabs($this->getCachedTabs())
-                        ->hidden(empty($this->getCachedTabs())),
-                    EmbeddedTable::make(),
-                ]),
+            Tabs::make()
+                ->key('resourceTabs')
+                ->livewireProperty('activeTab')
+                ->contained()
+                ->tabs($tabs),
         ]);
     }
 }
