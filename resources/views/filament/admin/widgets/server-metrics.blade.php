@@ -6,15 +6,15 @@
                 async refresh() {
                     const m = await $wire.getMetrics();
                     this.renderBar('cpu-chart', [
-                        ['CPU', m.cpu.usage, m.cpu.usage + '%'],
-                        ['IO Wait', m.cpu.iowait, m.cpu.iowait + '%'],
+                        ['', m.cpu.usage, 'CPU ' + m.cpu.usage + '%'],
+                        ['', m.cpu.iowait, 'IO Wait ' + m.cpu.iowait + '%'],
                     ]);
 
-                    const mem = [['Memory', m.memory.usage, m.memory.usage + '%  ' + m.memory.used_gb + '/' + m.memory.total_gb + ' GB']];
-                    if (m.memory.has_swap) mem.push(['Swap', m.memory.swap_usage, m.memory.swap_usage + '%  ' + m.memory.swap_used_gb + '/' + m.memory.swap_total_gb + ' GB']);
+                    const mem = [['', m.memory.usage, 'Memory ' + m.memory.usage + '%  ' + m.memory.used_gb + '/' + m.memory.total_gb + ' GB']];
+                    if (m.memory.has_swap) mem.push(['', m.memory.swap_usage, 'Swap ' + m.memory.swap_usage + '%  ' + m.memory.swap_used_gb + '/' + m.memory.swap_total_gb + ' GB']);
                     this.renderBar('mem-chart', mem);
 
-                    this.renderBar('disk-chart', (Array.isArray(m.disk) ? m.disk : [m.disk]).map(p => ['Disk ' + (p.mount || '/'), p.usage, p.usage + '%  ' + p.used_human + '/' + p.total_human]));
+                    this.renderBar('disk-chart', (Array.isArray(m.disk) ? m.disk : [m.disk]).map(p => ['', p.usage, 'Disk ' + (p.mount || '/') + ' ' + p.usage + '%  ' + p.used_human + '/' + p.total_human]));
 
                     this.$refs.txSpeed.textContent = m.network.tx_speed;
                     this.$refs.txTotal.textContent = m.network.total_tx + ' total';
@@ -62,7 +62,7 @@
                             layout: { padding: 0 },
                             scales: {
                                 x: { stacked: true, display: false, max: 100 },
-                                y: { stacked: true, grid: { display: false }, border: { display: false }, afterFit: (scale) => { scale.width = 80; }, ticks: { color: textColor, font: { size: 11, weight: 'bold' } } },
+                                y: { stacked: true, display: false },
                             },
                             plugins: { legend: { display: false }, tooltip: { enabled: false } },
                         },
