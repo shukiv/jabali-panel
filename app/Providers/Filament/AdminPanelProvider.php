@@ -58,7 +58,7 @@ $this->getRtlScript()
             )
             ->renderHook(
                 PanelsRenderHook::SCRIPTS_AFTER,
-                fn () => view('components.tab-skeleton-script'),
+                fn () => view('components.tab-skeleton-script').view('components.chart-bar-labels-plugin'),
             )
             ->renderHook(
                 PanelsRenderHook::FOOTER,

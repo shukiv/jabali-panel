@@ -27,12 +27,12 @@ class MemoryChartWidget extends ChartWidget
     {
         $mem = $this->getMemoryData();
 
-        $labels = [__('RAM').' '.$mem['usage'].'% ('.$mem['used_gb'].'/'.$mem['total_gb'].' GB)'];
+        $texts = [__('RAM').' '.$mem['usage'].'% ('.$mem['used_gb'].'/'.$mem['total_gb'].' GB)'];
         $values = [$mem['usage']];
         $colors = [$this->barColor($mem['usage'])];
 
         if ($mem['has_swap']) {
-            $labels[] = __('Swap').' '.$mem['swap_usage'].'% ('.$mem['swap_used_gb'].'/'.$mem['swap_total_gb'].' GB)';
+            $texts[] = __('Swap').' '.$mem['swap_usage'].'% ('.$mem['swap_used_gb'].'/'.$mem['swap_total_gb'].' GB)';
             $values[] = $mem['swap_usage'];
             $colors[] = $this->barColor($mem['swap_usage']);
         }
@@ -46,17 +46,18 @@ class MemoryChartWidget extends ChartWidget
                     'backgroundColor' => $colors,
                     'borderWidth' => 0,
                     'borderSkipped' => false,
-                    'barThickness' => 24,
+                    'barThickness' => 28,
+                    'barTexts' => $texts,
                 ],
                 [
                     'data' => $remaining,
                     'backgroundColor' => 'rgba(128,128,128,0.12)',
                     'borderWidth' => 0,
                     'borderSkipped' => false,
-                    'barThickness' => 24,
+                    'barThickness' => 28,
                 ],
             ],
-            'labels' => $labels,
+            'labels' => array_fill(0, count($values), ''),
         ];
     }
 
@@ -68,9 +69,7 @@ class MemoryChartWidget extends ChartWidget
                 'x' => ['stacked' => true, 'display' => false, 'max' => 100],
                 'y' => [
                     'stacked' => true,
-                    'grid' => ['display' => false],
-                    'border' => ['display' => false],
-                    'ticks' => ['font' => ['weight' => 'bold', 'size' => 12]],
+                    'display' => false,
                 ],
             ],
             'plugins' => [

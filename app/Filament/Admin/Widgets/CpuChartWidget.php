@@ -51,20 +51,21 @@ class CpuChartWidget extends ChartWidget
                     'backgroundColor' => [$this->barColor($usage), $this->barColor($iowait)],
                     'borderWidth' => 0,
                     'borderSkipped' => false,
-                    'barThickness' => 24,
+                    'barThickness' => 28,
+                    'barTexts' => [
+                        __('CPU').' '.$usage.'%',
+                        __('IO Wait').' '.$iowait.'%',
+                    ],
                 ],
                 [
                     'data' => [max(0, 100 - $usage), max(0, 100 - $iowait)],
                     'backgroundColor' => 'rgba(128,128,128,0.12)',
                     'borderWidth' => 0,
                     'borderSkipped' => false,
-                    'barThickness' => 24,
+                    'barThickness' => 28,
                 ],
             ],
-            'labels' => [
-                __('CPU').' '.$usage.'%',
-                __('IO Wait').' '.$iowait.'%',
-            ],
+            'labels' => ['', ''],
         ];
     }
 
@@ -76,9 +77,7 @@ class CpuChartWidget extends ChartWidget
                 'x' => ['stacked' => true, 'display' => false, 'max' => 100],
                 'y' => [
                     'stacked' => true,
-                    'grid' => ['display' => false],
-                    'border' => ['display' => false],
-                    'ticks' => ['font' => ['weight' => 'bold', 'size' => 12]],
+                    'display' => false,
                 ],
             ],
             'plugins' => [

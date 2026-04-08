@@ -28,12 +28,12 @@ class DiskChartWidget extends ChartWidget
     {
         $partitions = $this->getDiskPartitions();
 
-        $labels = [];
+        $texts = [];
         $values = [];
         $colors = [];
 
         foreach ($partitions as $p) {
-            $labels[] = __('Disk').' '.$p['mount'].' '.$p['usage'].'% ('.$p['used_human'].'/'.$p['total_human'].')';
+            $texts[] = __('Disk').' '.$p['mount'].' '.$p['usage'].'% ('.$p['used_human'].'/'.$p['total_human'].')';
             $values[] = $p['usage'];
             $colors[] = $this->barColor($p['usage']);
         }
@@ -47,17 +47,18 @@ class DiskChartWidget extends ChartWidget
                     'backgroundColor' => $colors,
                     'borderWidth' => 0,
                     'borderSkipped' => false,
-                    'barThickness' => 24,
+                    'barThickness' => 28,
+                    'barTexts' => $texts,
                 ],
                 [
                     'data' => $remaining,
                     'backgroundColor' => 'rgba(128,128,128,0.12)',
                     'borderWidth' => 0,
                     'borderSkipped' => false,
-                    'barThickness' => 24,
+                    'barThickness' => 28,
                 ],
             ],
-            'labels' => $labels,
+            'labels' => array_fill(0, count($values), ''),
         ];
     }
 
@@ -69,9 +70,7 @@ class DiskChartWidget extends ChartWidget
                 'x' => ['stacked' => true, 'display' => false, 'max' => 100],
                 'y' => [
                     'stacked' => true,
-                    'grid' => ['display' => false],
-                    'border' => ['display' => false],
-                    'ticks' => ['font' => ['weight' => 'bold', 'size' => 12]],
+                    'display' => false,
                 ],
             ],
             'plugins' => [
