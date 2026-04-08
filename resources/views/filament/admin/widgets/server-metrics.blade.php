@@ -93,9 +93,27 @@
             x-init="init()"
         >
             <div class="fi-wi-stats-overview-stats-ctn grid gap-2 md:grid-cols-4">
-                <div><canvas id="cpu-chart" height="100"></canvas></div>
-                <div><canvas id="mem-chart" height="100"></canvas></div>
-                <div><canvas id="disk-chart" height="100"></canvas></div>
+                <div>
+                    <div class="flex items-center gap-1" style="margin-bottom: 4px">
+                        <x-filament::icon icon="heroicon-o-cpu-chip" @class(['h-4', 'w-4', 'opacity-60']) />
+                        <span style="font-size: 0.75rem; opacity: 0.6">{{ __('CPU') }}</span>
+                    </div>
+                    <canvas id="cpu-chart" height="100"></canvas>
+                </div>
+                <div>
+                    <div class="flex items-center gap-1" style="margin-bottom: 4px">
+                        <x-filament::icon icon="heroicon-o-circle-stack" @class(['h-4', 'w-4', 'opacity-60']) />
+                        <span style="font-size: 0.75rem; opacity: 0.6">{{ __('Memory') }}</span>
+                    </div>
+                    <canvas id="mem-chart" height="100"></canvas>
+                </div>
+                <div>
+                    <div class="flex items-center gap-1" style="margin-bottom: 4px">
+                        <x-filament::icon icon="heroicon-o-server" @class(['h-4', 'w-4', 'opacity-60']) />
+                        <span style="font-size: 0.75rem; opacity: 0.6">{{ __('Disk') }}</span>
+                    </div>
+                    <canvas id="disk-chart" height="100"></canvas>
+                </div>
                 <div class="flex items-center justify-center gap-6">
                     <div>
                         <x-filament::icon icon="heroicon-o-arrow-up" @class(['inline-block', 'h-4', 'w-4']) style="color: var(--success-500)" />
