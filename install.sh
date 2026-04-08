@@ -3968,11 +3968,15 @@ upgrade_infra() {
         detect_php_version
     fi
 
-    # Install default suspended page if not customized
+    # Install default page templates if not customized
     mkdir -p /etc/jabali
     if [[ ! -f /etc/jabali/suspended.html ]]; then
         cp "$JABALI_DIR/stubs/suspended.html" /etc/jabali/suspended.html
         info "Installed default suspended page"
+    fi
+    if [[ ! -f /etc/jabali/welcome.html ]]; then
+        cp "$JABALI_DIR/stubs/welcome.html" /etc/jabali/welcome.html
+        info "Installed default welcome page template"
     fi
 
     # Fix FPM pool configs with empty pm= (bug: createFpmPool missed $pmType before v0.9.x)

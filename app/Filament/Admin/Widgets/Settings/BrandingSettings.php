@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets\Settings;
 
 use App\Models\DnsSetting;
+use App\Services\Agent\AgentClient;
 use App\Services\ServerSettingsService;
 use App\Support\SafeError;
 use Exception;
@@ -12,10 +13,12 @@ use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Concerns\InteractsWithSchemas;
 use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Schemas\Schema;
@@ -34,6 +37,10 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
 
     public ?string $currentLogoDark = null;
 
+    public string $suspendedPageHtml = '';
+
+    public string $welcomePageHtml = '';
+
     public function mount(): void
     {
         $settings = DnsSetting::getAll();
@@ -45,6 +52,8 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
             'logoLight' => $this->currentLogo,
             'logoDark' => $this->currentLogoDark,
         ]);
+
+        $this->loadPageTemplates();
     }
 
     public function form(Schema $schema): Schema
@@ -75,6 +84,41 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                         ->action('removeLogo')
                         ->visible(fn (): bool => $this->currentLogo !== null || $this->currentLogoDark !== null),
                 ]),
+            ]);
+    }
+
+    public function pagesForm(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                Section::make(__('Suspended Page'))
+                    ->description(__('HTML shown when a domain is disabled. This page is served with a 503 status code.'))
+                    ->collapsed()
+                    ->schema([
+                        Textarea::make('suspendedPageHtml')
+                            ->label(__('Suspended Page HTML'))
+                            ->rows(12)
+                            ->helperText(__('Full HTML document served when a domain is suspended.')),
+                        Actions::make([
+                            Action::make('saveSuspendedPage')
+                                ->label(__('Save Suspended Page'))
+                                ->action('saveSuspendedPage'),
+                        ]),
+                    ]),
+                Section::make(__('Welcome Page Template'))
+                    ->description(__('Default index.html for new domains. Use {{DOMAIN}} as a placeholder for the domain name.'))
+                    ->collapsed()
+                    ->schema([
+                        Textarea::make('welcomePageHtml')
+                            ->label(__('Welcome Page HTML'))
+                            ->rows(12)
+                            ->helperText(__('Use {{DOMAIN}} placeholder — it will be replaced with the actual domain name.')),
+                        Actions::make([
+                            Action::make('saveWelcomePage')
+                                ->label(__('Save Welcome Page'))
+                                ->action('saveWelcomePage'),
+                        ]),
+                    ]),
             ]);
     }
 
@@ -115,6 +159,79 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
         Notification::make()->title(__('Branding updated'))->success()->send();
 
         $this->redirect(request()->header('Referer', '/jabali-admin/server-settings?tab=branding'));
+    }
+
+    public function saveSuspendedPage(): void
+    {
+        if (empty(trim($this->suspendedPageHtml))) {
+            Notification::make()->title(__('Suspended page HTML cannot be empty'))->danger()->send();
+
+            return;
+        }
+
+        try {
+            $result = app(AgentClient::class)->send('branding.save_suspended_page', [
+                'html' => $this->suspendedPageHtml,
+            ]);
+
+            if ($result['success'] ?? false) {
+                Notification::make()->title(__('Suspended page saved'))->success()->send();
+            } else {
+                Notification::make()->title(__('Failed to save'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
+            }
+        } catch (Exception $e) {
+            Notification::make()->title(__('Failed to save suspended page'))->body(SafeError::message($e))->danger()->send();
+        }
+    }
+
+    public function saveWelcomePage(): void
+    {
+        if (empty(trim($this->welcomePageHtml))) {
+            Notification::make()->title(__('Welcome page HTML cannot be empty'))->danger()->send();
+
+            return;
+        }
+
+        if (! str_contains($this->welcomePageHtml, '{{DOMAIN}}')) {
+            Notification::make()->title(__('Template must contain {{DOMAIN}} placeholder'))->danger()->send();
+
+            return;
+        }
+
+        try {
+            $result = app(AgentClient::class)->send('branding.save_welcome_page', [
+                'html' => $this->welcomePageHtml,
+            ]);
+
+            if ($result['success'] ?? false) {
+                Notification::make()->title(__('Welcome page template saved'))->success()->send();
+            } else {
+                Notification::make()->title(__('Failed to save'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
+            }
+        } catch (Exception $e) {
+            Notification::make()->title(__('Failed to save welcome page'))->body(SafeError::message($e))->danger()->send();
+        }
+    }
+
+    private function loadPageTemplates(): void
+    {
+        try {
+            $result = app(AgentClient::class)->send('branding.get_suspended_page', []);
+            if ($result['success'] ?? false) {
+                $this->suspendedPageHtml = $result['html'] ?? '';
+            }
+        } catch (Exception) {
+            // Agent not available — leave empty
+        }
+
+        try {
+            $result = app(AgentClient::class)->send('branding.get_welcome_page', []);
+            if ($result['success'] ?? false) {
+                $this->welcomePageHtml = $result['html'] ?? '';
+            }
+        } catch (Exception) {
+            // Agent not available — leave empty
+        }
     }
 
     private function logoUploadField(string $name, string $label): FileUpload
