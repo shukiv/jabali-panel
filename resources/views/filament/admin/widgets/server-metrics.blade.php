@@ -86,8 +86,15 @@
                     });
                 },
                 init() {
-                    this.refresh();
-                    setInterval(() => this.refresh(), 3000);
+                    const waitForChart = () => {
+                        if (typeof Chart !== 'undefined') {
+                            this.refresh();
+                            setInterval(() => this.refresh(), 3000);
+                        } else {
+                            setTimeout(waitForChart, 100);
+                        }
+                    };
+                    waitForChart();
                 },
             }"
             x-init="init()"
@@ -98,21 +105,21 @@
                         <x-filament::icon icon="heroicon-o-cpu-chip" @class(['h-4', 'w-4', 'opacity-60']) />
                         <span style="font-size: 0.75rem; opacity: 0.6">{{ __('CPU') }}</span>
                     </div>
-                    <canvas id="cpu-chart" height="100"></canvas>
+                    <div style="position: relative; height: 90px"><canvas id="cpu-chart"></canvas></div>
                 </div>
                 <div>
                     <div class="flex items-center gap-1" style="margin-bottom: 4px">
                         <x-filament::icon icon="heroicon-o-circle-stack" @class(['h-4', 'w-4', 'opacity-60']) />
                         <span style="font-size: 0.75rem; opacity: 0.6">{{ __('Memory') }}</span>
                     </div>
-                    <canvas id="mem-chart" height="100"></canvas>
+                    <div style="position: relative; height: 90px"><canvas id="mem-chart"></canvas></div>
                 </div>
                 <div>
                     <div class="flex items-center gap-1" style="margin-bottom: 4px">
                         <x-filament::icon icon="heroicon-o-server" @class(['h-4', 'w-4', 'opacity-60']) />
                         <span style="font-size: 0.75rem; opacity: 0.6">{{ __('Disk') }}</span>
                     </div>
-                    <canvas id="disk-chart" height="100"></canvas>
+                    <div style="position: relative; height: 90px"><canvas id="disk-chart"></canvas></div>
                 </div>
                 <div class="flex items-center justify-center gap-6">
                     <div>
