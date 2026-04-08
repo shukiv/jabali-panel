@@ -63,8 +63,9 @@ class MemoryChart extends ChartWidget
             'datasets' => [
                 [
                     'label' => 'Used',
-                    'data' => $values,
+                    'data' => array_map(fn ($v) => max($v, 1), $values),
                     'backgroundColor' => $colors,
+                    'borderWidth' => 0,
                     'borderRadius' => 4,
                     'borderSkipped' => false,
                     'barPercentage' => 0.6,
@@ -73,6 +74,7 @@ class MemoryChart extends ChartWidget
                     'label' => 'Free',
                     'data' => $remainder,
                     'backgroundColor' => 'rgba(128,128,128,0.1)',
+                    'borderWidth' => 0,
                     'borderRadius' => 4,
                     'borderSkipped' => false,
                     'barPercentage' => 0.6,

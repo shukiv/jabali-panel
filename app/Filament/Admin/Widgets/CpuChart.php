@@ -54,19 +54,21 @@ class CpuChart extends ChartWidget
             'datasets' => [
                 [
                     'label' => 'Used',
-                    'data' => [$usage, $iowait],
+                    'data' => [max($usage, 1), max($iowait, 1)],
                     'backgroundColor' => [
                         $this->barColor($usage),
                         $this->barColor($iowait),
                     ],
+                    'borderWidth' => 0,
                     'borderRadius' => 4,
                     'borderSkipped' => false,
                     'barPercentage' => 0.6,
                 ],
                 [
                     'label' => 'Free',
-                    'data' => [max(0, 100 - $usage), max(0, 100 - $iowait)],
+                    'data' => [max(0, 100 - max($usage, 1)), max(0, 100 - max($iowait, 1))],
                     'backgroundColor' => 'rgba(128,128,128,0.1)',
+                    'borderWidth' => 0,
                     'borderRadius' => 4,
                     'borderSkipped' => false,
                     'barPercentage' => 0.6,

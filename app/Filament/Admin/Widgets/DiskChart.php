@@ -30,16 +30,18 @@ class DiskChart extends ChartWidget
             'datasets' => [
                 [
                     'label' => 'Used',
-                    'data' => [$usage],
+                    'data' => [max($usage, 1)],
                     'backgroundColor' => [$this->barColor($usage)],
+                    'borderWidth' => 0,
                     'borderRadius' => 4,
                     'borderSkipped' => false,
                     'barPercentage' => 0.6,
                 ],
                 [
                     'label' => 'Free',
-                    'data' => [max(0, 100 - $usage)],
+                    'data' => [max(0, 100 - max($usage, 1))],
                     'backgroundColor' => 'rgba(128,128,128,0.1)',
+                    'borderWidth' => 0,
                     'borderRadius' => 4,
                     'borderSkipped' => false,
                     'barPercentage' => 0.6,
