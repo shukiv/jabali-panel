@@ -1825,7 +1825,7 @@ server {
     listen 443 ssl${NGINX_HTTP2_LISTEN} default_server;
     listen [::]:443 ssl${NGINX_HTTP2_LISTEN} default_server;
 
-    server_name _;
+    server_name ${SERVER_HOSTNAME} _;
 
     ssl_certificate /etc/ssl/jabali/panel.crt;
     ssl_certificate_key /etc/ssl/jabali/panel.key;

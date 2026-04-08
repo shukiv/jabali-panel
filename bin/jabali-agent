@@ -2189,7 +2189,7 @@ server {
     listen 443 ssl{$h2Listen} default_server;
     listen [::]:443 ssl{$h2Listen} default_server;
 {$h2Directive}
-    server_name _;
+    server_name {$hostname} _;
 
     ssl_certificate /etc/ssl/jabali/panel.crt;
     ssl_certificate_key /etc/ssl/jabali/panel.key;
