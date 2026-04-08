@@ -1654,14 +1654,14 @@ REALIP
         return 301 /phpmyadmin/;
     }
 
-    location ^~ /phpmyadmin/ {
-        alias /usr/share/phpmyadmin/;
+    location ^~ /phpmyadmin {
+        root /usr/share;
         index index.php;
 
         location ~ \.php\$ {
             include fastcgi_params;
             fastcgi_pass unix:${php_sock};
-            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
             fastcgi_read_timeout 600;
         }
     }
