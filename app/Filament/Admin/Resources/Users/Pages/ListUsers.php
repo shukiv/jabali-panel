@@ -7,6 +7,7 @@ namespace App\Filament\Admin\Resources\Users\Pages;
 use App\Filament\Admin\Resources\Users\UserResource;
 use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
@@ -29,12 +30,10 @@ class ListUsers extends ListRecords
         return [
             'users' => Tab::make(__('Users'))
                 ->modifyQueryUsing(fn (Builder $query) => $query->where('is_admin', false))
-                ->icon('heroicon-o-users')
-                ->schema([EmbeddedTable::make()]),
+                ->icon('heroicon-o-users'),
             'admins' => Tab::make(__('Administrators'))
                 ->modifyQueryUsing(fn (Builder $query) => $query->where('is_admin', true))
-                ->icon('heroicon-o-shield-check')
-                ->schema([EmbeddedTable::make()]),
+                ->icon('heroicon-o-shield-check'),
         ];
     }
 
@@ -46,11 +45,16 @@ class ListUsers extends ListRecords
     public function content(Schema $schema): Schema
     {
         return $schema->components([
-            Tabs::make()
-                ->key('resourceTabs')
-                ->livewireProperty('activeTab')
-                ->contained()
-                ->tabs($this->getCachedTabs()),
+            Section::make()
+                ->schema([
+                    Tabs::make()
+                        ->key('resourceTabs')
+                        ->livewireProperty('activeTab')
+                        ->contained(false)
+                        ->tabs($this->getCachedTabs())
+                        ->hidden(empty($this->getCachedTabs())),
+                    EmbeddedTable::make(),
+                ]),
         ]);
     }
 }
