@@ -52,12 +52,12 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
         return $schema
             ->statePath('data')
             ->components([
-                TextInput::make('panel_name')
-                    ->label(__('Control Panel Name'))
-                    ->placeholder(__('Jabali'))
-                    ->helperText(__('Appears in browser title and navigation')),
-                Grid::make(2)
+                Grid::make(3)
                     ->schema([
+                        TextInput::make('panel_name')
+                            ->label(__('Control Panel Name'))
+                            ->placeholder(__('Jabali'))
+                            ->helperText(__('Appears in browser title and navigation')),
                         $this->logoUploadField('logoLight', __('Light Logo')),
                         $this->logoUploadField('logoDark', __('Dark Logo')),
                     ]),
