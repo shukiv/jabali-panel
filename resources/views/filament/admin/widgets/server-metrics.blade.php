@@ -66,8 +66,8 @@
                         data: {
                             labels: items.map(i => i[0]),
                             datasets: [
-                                { data: vals, backgroundColor: vals.map(v => color(v)), barTexts: barTexts, borderWidth: 0, borderRadius: 4, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
-                                { data: rem, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', borderWidth: 0, borderRadius: 4, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
+                                { data: vals, backgroundColor: vals.map(v => color(v)), barTexts: barTexts, borderWidth: 0, borderRadius: 0, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
+                                { data: rem, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', borderWidth: 0, borderRadius: 0, borderSkipped: false, barPercentage: 0.9, categoryPercentage: 0.8 },
                             ],
                         },
                         options: {
