@@ -95,7 +95,7 @@
                 <div><canvas id="cpu-chart" height="80"></canvas></div>
                 <div><canvas id="mem-chart" height="80"></canvas></div>
                 <div><canvas id="disk-chart" height="80"></canvas></div>
-                <div class="flex flex-col items-center justify-center gap-3">
+                <div class="flex items-center justify-center gap-6">
                     <div>
                         <x-filament::icon icon="heroicon-o-arrow-up" @class(['inline-block', 'h-4', 'w-4']) style="color: var(--success-500)" />
                         <span x-ref="txSpeed" class="fi-header-heading" style="font-size: 1.125rem">0 B/s</span>
