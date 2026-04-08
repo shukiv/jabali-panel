@@ -3,7 +3,6 @@
         <div
             wire:ignore
             x-data="{
-                charts: {},
                 async refresh() {
                     const data = await $wire.getData();
                     const cpu = data.cpu || {};
@@ -55,19 +54,18 @@
                     const trackColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
                     const textColor = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)';
 
-                    if (this.charts[elId]) {
-                        const chart = this.charts[elId];
-                        chart.data.labels = labels;
-                        chart.data.datasets[0].data = values;
-                        chart.data.datasets[0].backgroundColor = values.map(v => barColor(v));
-                        chart.data.datasets[1].data = remainder;
-                        chart.data.datasets[1].backgroundColor = trackColor;
-                        chart.options.scales.y.ticks.color = textColor;
-                        chart.update('none');
+                    if (el._chart) {
+                        el._chart.data.labels = labels;
+                        el._chart.data.datasets[0].data = values;
+                        el._chart.data.datasets[0].backgroundColor = values.map(v => barColor(v));
+                        el._chart.data.datasets[1].data = remainder;
+                        el._chart.data.datasets[1].backgroundColor = trackColor;
+                        el._chart.options.scales.y.ticks.color = textColor;
+                        el._chart.update('none');
                         return;
                     }
 
-                    this.charts[elId] = new Chart(el, {
+                    el._chart = new Chart(el, {
                         type: 'bar',
                         data: {
                             labels: labels,
