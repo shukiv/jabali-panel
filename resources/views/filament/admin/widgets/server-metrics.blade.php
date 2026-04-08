@@ -14,7 +14,7 @@
                     if (m.memory.has_swap) mem.push(['Swap', m.memory.swap_usage, m.memory.swap_usage + '%  ' + m.memory.swap_used_gb + '/' + m.memory.swap_total_gb + ' GB']);
                     this.renderBar('mem-chart', mem);
 
-                    this.renderBar('disk-chart', (Array.isArray(m.disk) ? m.disk : [m.disk]).map(p => [p.mount || '/', p.usage, p.usage + '%  ' + p.used_human + '/' + p.total_human]));
+                    this.renderBar('disk-chart', (Array.isArray(m.disk) ? m.disk : [m.disk]).map(p => ['Disk ' + (p.mount || '/'), p.usage, p.usage + '%  ' + p.used_human + '/' + p.total_human]));
 
                     this.$refs.txSpeed.textContent = m.network.tx_speed;
                     this.$refs.txTotal.textContent = m.network.total_tx + ' total';
