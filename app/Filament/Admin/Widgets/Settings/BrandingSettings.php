@@ -61,29 +61,32 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
         return $schema
             ->statePath('data')
             ->components([
-                Grid::make(3)
+                Section::make(__('Panel Branding'))
                     ->schema([
-                        TextInput::make('panel_name')
-                            ->label(__('Control Panel Name'))
-                            ->placeholder(__('Jabali'))
-                            ->helperText(__('Appears in browser title and navigation')),
-                        $this->logoUploadField('logoLight', __('Light Logo')),
-                        $this->logoUploadField('logoDark', __('Dark Logo')),
+                        Grid::make(3)
+                            ->schema([
+                                TextInput::make('panel_name')
+                                    ->label(__('Control Panel Name'))
+                                    ->placeholder(__('Jabali'))
+                                    ->helperText(__('Appears in browser title and navigation')),
+                                $this->logoUploadField('logoLight', __('Light Logo')),
+                                $this->logoUploadField('logoDark', __('Dark Logo')),
+                            ]),
+                        Actions::make([
+                            Action::make('saveBranding')
+                                ->label(__('Save Branding'))
+                                ->action('saveBranding'),
+                            Action::make('removeLogo')
+                                ->label(__('Remove Logos'))
+                                ->icon('heroicon-o-trash')
+                                ->color('danger')
+                                ->requiresConfirmation()
+                                ->modalHeading(__('Remove Logos'))
+                                ->modalDescription(__('Are you sure you want to remove the logos?'))
+                                ->action('removeLogo')
+                                ->visible(fn (): bool => $this->currentLogo !== null || $this->currentLogoDark !== null),
+                        ]),
                     ]),
-                Actions::make([
-                    Action::make('saveBranding')
-                        ->label(__('Save Branding'))
-                        ->action('saveBranding'),
-                    Action::make('removeLogo')
-                        ->label(__('Remove Logos'))
-                        ->icon('heroicon-o-trash')
-                        ->color('danger')
-                        ->requiresConfirmation()
-                        ->modalHeading(__('Remove Logos'))
-                        ->modalDescription(__('Are you sure you want to remove the logos?'))
-                        ->action('removeLogo')
-                        ->visible(fn (): bool => $this->currentLogo !== null || $this->currentLogoDark !== null),
-                ]),
             ]);
     }
 
