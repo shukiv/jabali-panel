@@ -5,39 +5,17 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets;
 
 use App\Support\Formatter;
-use Filament\Widgets\StatsOverviewWidget;
-use Filament\Widgets\StatsOverviewWidget\Stat;
+use Filament\Widgets\Widget;
 
-class NetworkStatsWidget extends StatsOverviewWidget
+class NetworkStatsWidget extends Widget
 {
     protected static ?int $sort = 4;
 
     protected int|string|array $columnSpan = 1;
 
-    protected ?string $pollingInterval = '5s';
+    protected string $view = 'filament.admin.widgets.network-stats';
 
-    protected function getColumns(): int|array|null
-    {
-        return 1;
-    }
-
-    protected function getStats(): array
-    {
-        $data = $this->getNetworkData();
-
-        return [
-            Stat::make(__('Upload'), $data['tx_speed'])
-                ->description(__('Total').': '.$data['total_tx'])
-                ->descriptionIcon('heroicon-o-arrow-up')
-                ->color('success'),
-            Stat::make(__('Download'), $data['rx_speed'])
-                ->description(__('Total').': '.$data['total_rx'])
-                ->descriptionIcon('heroicon-o-arrow-down')
-                ->color('info'),
-        ];
-    }
-
-    private function getNetworkData(): array
+    public function getNetworkData(): array
     {
         $totalRx = 0;
         $totalTx = 0;
