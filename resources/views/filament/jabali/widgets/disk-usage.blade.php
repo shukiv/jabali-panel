@@ -1,5 +1,5 @@
 <x-filament-widgets::widget>
-    <x-filament::section>
+    <x-filament::section compact>
         <x-slot name="heading">{{ __('Usage') }}</x-slot>
 
         <div
