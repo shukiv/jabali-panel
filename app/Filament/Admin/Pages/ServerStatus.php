@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Filament\Admin\Pages;
 
+use App\Filament\Admin\Widgets\CpuChartWidget;
+use App\Filament\Admin\Widgets\DiskChartWidget;
+use App\Filament\Admin\Widgets\MemoryChartWidget;
+use App\Filament\Admin\Widgets\NetworkStatsWidget;
 use App\Filament\Admin\Widgets\ServerInfoWidget;
-use App\Filament\Admin\Widgets\ServerMetricsWidget;
 use App\Models\ServerProcess;
 use App\Services\Agent\InteractsWithAgent;
 use BackedEnum;
@@ -105,8 +108,20 @@ class ServerStatus extends Page implements HasTable
     protected function getHeaderWidgets(): array
     {
         return [
-            ServerMetricsWidget::class,
+            CpuChartWidget::class,
+            MemoryChartWidget::class,
+            DiskChartWidget::class,
+            NetworkStatsWidget::class,
             ServerInfoWidget::class,
+        ];
+    }
+
+    public function getHeaderWidgetsColumns(): int|array
+    {
+        return [
+            'default' => 1,
+            'md' => 2,
+            'lg' => 4,
         ];
     }
 

@@ -58,8 +58,7 @@ $this->getRtlScript()
             )
             ->renderHook(
                 PanelsRenderHook::SCRIPTS_AFTER,
-                fn () => view('components.tab-skeleton-script').
-                    \Illuminate\Support\Facades\Vite::useBuildDirectory('build')->withEntryPoints(['resources/js/server-charts.js'])->toHtml(),
+                fn () => view('components.tab-skeleton-script'),
             )
             ->renderHook(
                 PanelsRenderHook::FOOTER,

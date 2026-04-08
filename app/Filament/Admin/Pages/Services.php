@@ -302,32 +302,13 @@ class Services extends Page implements HasActions, HasForms, HasTable
                 ->modalHeading(__('Restart Server'))
                 ->modalDescription(__('This will reboot the entire server. All services will be temporarily unavailable. Are you sure?'))
                 ->modalSubmitActionLabel(__('Restart Now'))
-                ->action(function (): void {
-                    try {
-                        $result = $this->agent()->send('server.reboot', ['delay' => 5]);
-
-                        if ($result['success'] ?? false) {
-                            AuditLog::record('server', 'reboot', 'Server reboot initiated');
-                            Notification::make()
-                                ->title(__('Server restarting'))
-                                ->body(__('The server will reboot in 5 seconds.'))
-                                ->warning()
-                                ->send();
-                        } else {
-                            Notification::make()
-                                ->title(__('Reboot failed'))
-                                ->body($result['error'] ?? __('Unknown error'))
-                                ->danger()
-                                ->send();
-                        }
-                    } catch (Exception $e) {
-                        Notification::make()
-                            ->title(__('Reboot failed'))
-                            ->body(SafeError::message($e))
-                            ->danger()
-                            ->send();
-                    }
-                }),
+                ->action(fn () => $this->agentCall(
+                    action: 'server.reboot',
+                    params: ['delay' => 5],
+                    successTitle: __('Server restarting'),
+                    errorTitle: __('Reboot failed'),
+                    onSuccess: fn () => AuditLog::record('server', 'reboot', 'Server reboot initiated'),
+                )),
         ];
     }
 
