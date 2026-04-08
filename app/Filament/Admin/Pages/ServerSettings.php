@@ -24,6 +24,7 @@ use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -96,6 +97,8 @@ class ServerSettings extends Page implements HasActions, HasForms
     #[Url(as: 'tab')]
     public ?string $activeTab = 'general';
 
+    public string $panelNginxDirectives = '';
+
     public function getTitle(): string|Htmlable
     {
         return __('Server Settings');
@@ -104,7 +107,7 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function normalizeTabName(?string $tab): string
     {
         return match ($tab) {
-            'general', 'branding', 'dns', 'storage', 'email', 'notifications', 'php-fpm', 'database', 'logs' => $tab,
+            'general', 'branding', 'dns', 'storage', 'email', 'notifications', 'php-fpm', 'database', 'nginx', 'logs' => $tab,
             default => 'general',
         };
     }
@@ -247,6 +250,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             'audit_log_retention_days' => (int) ($settings['audit_log_retention_days'] ?? 90),
         ];
 
+        $this->panelNginxDirectives = $settings['panel_nginx_directives'] ?? '';
     }
 
     public function settingsForm(Schema $schema): Schema
@@ -283,6 +287,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                         'database' => Tab::make(__('Databases'))
                             ->icon('heroicon-o-circle-stack')
                             ->schema($this->databaseTabContent()),
+                        'nginx' => Tab::make(__('Nginx'))
+                            ->icon('heroicon-o-server-stack')
+                            ->schema($this->nginxTabContent()),
                         'logs' => Tab::make(__('Logs'))
                             ->icon('heroicon-o-document-text')
                             ->schema($this->logsTabContent()),
@@ -910,6 +917,115 @@ class ServerSettings extends Page implements HasActions, HasForms
                     EmbeddedTable::make(DatabaseTuningTable::class),
                 ]),
         ];
+    }
+
+    protected function nginxTabContent(): array
+    {
+        return [
+            Section::make(__('Panel Custom Directives'))
+                ->description(__('Custom nginx directives injected into the panel server block. Dangerous directives are blocked.'))
+                ->icon('heroicon-o-code-bracket')
+                ->schema([
+                    Textarea::make('panelNginxDirectives')
+                        ->label(__('Custom Nginx Directives'))
+                        ->rows(8)
+                        ->helperText(__('Added inside the HTTPS server block. Example: add_header X-Custom "value";')),
+                    Actions::make([
+                        FormAction::make('saveNginxDirectives')
+                            ->label(__('Save Directives'))
+                            ->action('saveNginxDirectives'),
+                    ]),
+                ]),
+            Section::make(__('Regenerate Vhosts'))
+                ->description(__('Rebuild nginx configurations from current templates. Always backs up before overwriting.'))
+                ->icon('heroicon-o-arrow-path')
+                ->schema([
+                    Actions::make([
+                        FormAction::make('regeneratePanelVhost')
+                            ->label(__('Regenerate Panel Vhost'))
+                            ->color('warning')
+                            ->requiresConfirmation()
+                            ->modalHeading(__('Regenerate Panel Vhost'))
+                            ->modalDescription(__('This will rebuild the panel nginx config and reload nginx. Continue?'))
+                            ->action('regeneratePanelVhost'),
+                        FormAction::make('regenerateDomainVhosts')
+                            ->label(__('Regenerate All Domain Vhosts'))
+                            ->color('warning')
+                            ->requiresConfirmation()
+                            ->modalHeading(__('Regenerate Domain Vhosts'))
+                            ->modalDescription(__('This will rebuild ALL domain nginx configs and reload nginx. SSL certificates will be preserved. Continue?'))
+                            ->action('regenerateDomainVhosts'),
+                    ]),
+                ]),
+        ];
+    }
+
+    public function saveNginxDirectives(): void
+    {
+        $directives = trim($this->panelNginxDirectives);
+
+        if (! empty($directives)) {
+            $validation = \App\Services\NginxDirectiveValidator::validateForAdmin($directives);
+            if (! ($validation['valid'] ?? false)) {
+                Notification::make()->title(__('Invalid directives'))->body($validation['error'] ?? __('Unknown validation error'))->danger()->send();
+
+                return;
+            }
+        }
+
+        DnsSetting::set('panel_nginx_directives', $directives ?: null);
+        DnsSetting::clearCache();
+
+        Notification::make()->title(__('Nginx directives saved'))->success()->send();
+    }
+
+    public function regeneratePanelVhost(): void
+    {
+        try {
+            $customDirectives = DnsSetting::get('panel_nginx_directives') ?? '';
+            $result = app(AgentClient::class)->send('nginx.regenerate_panel_vhost', [
+                'custom_directives' => $customDirectives,
+            ]);
+
+            if ($result['success'] ?? false) {
+                Notification::make()
+                    ->title(__('Panel vhost regenerated'))
+                    ->body(__('Hostname: :host', ['host' => $result['hostname'] ?? '']))
+                    ->success()
+                    ->send();
+            } else {
+                Notification::make()
+                    ->title(__('Regeneration failed'))
+                    ->body($result['error'] ?? __('Unknown error'))
+                    ->danger()
+                    ->send();
+            }
+        } catch (\Exception $e) {
+            Notification::make()->title(__('Agent error'))->body($e->getMessage())->danger()->send();
+        }
+    }
+
+    public function regenerateDomainVhosts(): void
+    {
+        try {
+            $result = app(AgentClient::class)->send('nginx.regenerate_domain_vhosts', []);
+
+            if ($result['success'] ?? false) {
+                $body = __(':count domain(s) regenerated', ['count' => $result['regenerated'] ?? 0]);
+                if (! empty($result['errors'])) {
+                    $body .= "\n".implode("\n", $result['errors']);
+                }
+                Notification::make()->title(__('Domain vhosts regenerated'))->body($body)->success()->send();
+            } else {
+                Notification::make()
+                    ->title(__('Regeneration failed'))
+                    ->body($result['error'] ?? __('Unknown error'))
+                    ->danger()
+                    ->send();
+            }
+        } catch (\Exception $e) {
+            Notification::make()->title(__('Agent error'))->body($e->getMessage())->danger()->send();
+        }
     }
 
     protected function logsTabContent(): array

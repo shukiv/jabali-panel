@@ -3995,6 +3995,11 @@ upgrade_infra() {
     header "Updating Nginx Configuration"
     configure_nginx
 
+    # Regenerate panel vhost with custom directives from database (if agent available)
+    if [[ -S /var/run/jabali-agent.sock ]]; then
+        cd "$JABALI_DIR" && sudo -u www-data php artisan jabali:nginx-regenerate --panel-only 2>&1 || warn "Panel vhost regeneration with custom directives failed"
+    fi
+
     # Add JMAP proxy block to existing domain vhosts if missing
     for vhost in /etc/nginx/sites-available/*.conf; do
         [[ -f "$vhost" ]] || continue
