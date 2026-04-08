@@ -587,6 +587,7 @@ function handleAction(array $request): array
     return match ($action) {
         'ping' => ['success' => true, 'message' => 'pong', 'version' => '1.0.0'],
         'server.restart_agent' => restartAgent($params),
+        'server.reboot' => serverReboot($params),
         'server.git_pull' => gitPull($params),
         'user.create' => createUser($params),
         'user.delete' => deleteUser($params),
@@ -13434,6 +13435,19 @@ function restartAgent(array $params): array
     exec("nohup {$script} > /dev/null 2>&1 &");
 
     return ['success' => true, 'message' => "Agent will restart in {$delay} seconds"];
+}
+
+function serverReboot(array $params): array
+{
+    $delay = (int) ($params['delay'] ?? 5);
+    $delay = max(3, min($delay, 60));
+
+    logger("Server reboot scheduled in {$delay} seconds");
+
+    // Schedule reboot in background so the response is sent first
+    exec("nohup bash -c 'sleep {$delay} && /sbin/reboot' > /dev/null 2>&1 &");
+
+    return ['success' => true, 'message' => "Server will reboot in {$delay} seconds"];
 }
 
 // ============ GIT OPERATIONS ============
