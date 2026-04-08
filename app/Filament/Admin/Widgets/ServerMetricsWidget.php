@@ -126,13 +126,8 @@ class ServerMetricsWidget extends Widget
             $mount = $parts[1] ?? '';
             $fstype = $parts[2] ?? '';
 
-            // Skip virtual filesystems
-            if (in_array($fstype, ['proc', 'sysfs', 'devtmpfs', 'devpts', 'cgroup', 'cgroup2', 'securityfs', 'pstore', 'debugfs', 'tracefs', 'fusectl', 'configfs', 'mqueue', 'hugetlbfs', 'binfmt_misc', 'autofs', 'overlay', 'nsfs', 'fuse.lxcfs'], true)) {
-                continue;
-            }
-
-            // Skip snap, docker, and system mounts
-            if (str_starts_with($mount, '/snap/') || str_starts_with($mount, '/sys/') || str_starts_with($mount, '/proc/') || str_starts_with($mount, '/dev/')) {
+            // Only show real block devices (e.g. /dev/sda1, /dev/vda1, /dev/nvme0n1p1)
+            if (! str_starts_with($device, '/dev/')) {
                 continue;
             }
 
@@ -142,7 +137,7 @@ class ServerMetricsWidget extends Widget
             }
 
             // Skip duplicate devices (same device mounted multiple times)
-            if (isset($seen[$device]) && $device !== 'tmpfs') {
+            if (isset($seen[$device])) {
                 continue;
             }
             $seen[$device] = true;
