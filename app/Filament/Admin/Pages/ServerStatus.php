@@ -4,11 +4,8 @@ declare(strict_types=1);
 
 namespace App\Filament\Admin\Pages;
 
-use App\Filament\Admin\Widgets\CpuChart;
-use App\Filament\Admin\Widgets\DiskChart;
-use App\Filament\Admin\Widgets\MemoryChart;
-use App\Filament\Admin\Widgets\NetworkStatsWidget;
 use App\Filament\Admin\Widgets\ServerInfoWidget;
+use App\Filament\Admin\Widgets\ServerMetricsWidget;
 use App\Models\ServerProcess;
 use App\Services\Agent\InteractsWithAgent;
 use BackedEnum;
@@ -105,18 +102,10 @@ class ServerStatus extends Page implements HasTable
         return sprintf('%dm', $minutes);
     }
 
-    public function getHeaderWidgetsColumns(): int|array
-    {
-        return 4;
-    }
-
     protected function getHeaderWidgets(): array
     {
         return [
-            CpuChart::class,
-            MemoryChart::class,
-            DiskChart::class,
-            NetworkStatsWidget::class,
+            ServerMetricsWidget::class,
             ServerInfoWidget::class,
         ];
     }
