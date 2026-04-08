@@ -5,111 +5,23 @@ declare(strict_types=1);
 namespace App\Filament\Admin\Widgets;
 
 use App\Support\Formatter;
-use Filament\Widgets\ChartWidget;
-use Illuminate\Contracts\Support\Htmlable;
+use Filament\Widgets\Widget;
 
-class ServerMetricsChart extends ChartWidget
+class ServerMetricsChart extends Widget
 {
     protected static ?int $sort = 1;
 
     protected int|string|array $columnSpan = 'full';
 
-    protected ?string $pollingInterval = '5s';
+    protected string $view = 'filament.admin.widgets.server-metrics-chart';
 
-    protected ?string $maxHeight = '220px';
-
-    protected function getType(): string
-    {
-        return 'bar';
-    }
-
-    public function getHeading(): string|Htmlable|null
-    {
-        return null;
-    }
-
-    public function getDescription(): string|Htmlable|null
-    {
-        $net = $this->getNetworkData();
-
-        return '↑ '.$net['tx_speed'].' ('.$net['total_tx'].' total)  —  ↓ '.$net['rx_speed'].' ('.$net['total_rx'].' total)';
-    }
-
-    protected function getData(): array
-    {
-        $cpu = $this->getCpuData();
-        $mem = $this->getMemoryData();
-        $disks = $this->getDiskPartitions();
-
-        $texts = [];
-        $values = [];
-        $colors = [];
-
-        // CPU
-        $texts[] = __('CPU').' '.$cpu['usage'].'%';
-        $values[] = $cpu['usage'];
-        $colors[] = $this->barColor($cpu['usage']);
-
-        $texts[] = __('IO Wait').' '.$cpu['iowait'].'%';
-        $values[] = $cpu['iowait'];
-        $colors[] = $this->barColor($cpu['iowait']);
-
-        // Memory
-        $texts[] = __('RAM').' '.$mem['usage'].'% ('.$mem['used_gb'].'/'.$mem['total_gb'].' GB)';
-        $values[] = $mem['usage'];
-        $colors[] = $this->barColor($mem['usage']);
-
-        if ($mem['has_swap']) {
-            $texts[] = __('Swap').' '.$mem['swap_usage'].'% ('.$mem['swap_used_gb'].'/'.$mem['swap_total_gb'].' GB)';
-            $values[] = $mem['swap_usage'];
-            $colors[] = $this->barColor($mem['swap_usage']);
-        }
-
-        // Disk
-        foreach ($disks as $p) {
-            $texts[] = __('Disk').' '.$p['mount'].' '.$p['usage'].'% ('.$p['used_human'].'/'.$p['total_human'].')';
-            $values[] = $p['usage'];
-            $colors[] = $this->barColor($p['usage']);
-        }
-
-        $remaining = array_map(fn ($v) => max(0, 100 - $v), $values);
-
-        return [
-            'datasets' => [
-                [
-                    'data' => $values,
-                    'backgroundColor' => $colors,
-                    'borderWidth' => 0,
-                    'borderSkipped' => false,
-                    'barThickness' => 28,
-                    'barTexts' => $texts,
-                ],
-                [
-                    'data' => $remaining,
-                    'backgroundColor' => 'rgba(128,128,128,0.12)',
-                    'borderWidth' => 0,
-                    'borderSkipped' => false,
-                    'barThickness' => 28,
-                ],
-            ],
-            'labels' => array_fill(0, count($values), ''),
-        ];
-    }
-
-    protected function getOptions(): array
+    public function getMetrics(): array
     {
         return [
-            'indexAxis' => 'y',
-            'scales' => [
-                'x' => ['stacked' => true, 'display' => false, 'max' => 100],
-                'y' => ['stacked' => true, 'display' => false],
-            ],
-            'plugins' => [
-                'legend' => ['display' => false],
-                'tooltip' => ['enabled' => false],
-            ],
-            'borderWidth' => 0,
-            'maintainAspectRatio' => false,
+            'cpu' => $this->getCpuData(),
+            'memory' => $this->getMemoryData(),
+            'disk' => $this->getDiskPartitions(),
+            'network' => $this->getNetworkData(),
         ];
     }
 
@@ -308,17 +220,5 @@ class ServerMetricsChart extends ChartWidget
             'total_tx' => Formatter::bytes($totalTx),
             'total_rx' => Formatter::bytes($totalRx),
         ];
-    }
-
-    private function barColor(float $value): string
-    {
-        if ($value >= 90) {
-            return 'rgb(239,68,68)';
-        }
-        if ($value >= 50) {
-            return 'rgb(245,158,11)';
-        }
-
-        return 'rgb(34,197,94)';
     }
 }
