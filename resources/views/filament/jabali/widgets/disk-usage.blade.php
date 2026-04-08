@@ -97,7 +97,7 @@
             x-init="init()"
         >
             <div style="position: relative; height: 70px"><canvas id="usage-disk-chart"></canvas></div>
-            <div style="position: relative; height: 70px; margin-top: 8px"><canvas id="usage-bw-chart"></canvas></div>
+            <div style="position: relative; height: 70px"><canvas id="usage-bw-chart"></canvas></div>
             <div class="fi-wi-stats-overview-stats-ctn grid gap-2 md:grid-cols-3" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gray-200)">
                 <div style="text-align: center">
                     <span x-ref="limDomains" style="font-size: 1.1rem; font-weight: 700">0</span>
