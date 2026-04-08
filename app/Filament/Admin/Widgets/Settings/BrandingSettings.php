@@ -111,6 +111,14 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                                     Action::make('saveSuspendedPage')
                                         ->label(__('Save Suspended Page'))
                                         ->action('saveSuspendedPage'),
+                                    Action::make('restoreSuspendedPage')
+                                        ->label(__('Restore Default'))
+                                        ->icon('heroicon-o-arrow-uturn-left')
+                                        ->color('gray')
+                                        ->requiresConfirmation()
+                                        ->modalHeading(__('Restore Default Suspended Page'))
+                                        ->modalDescription(__('This will replace the current content with the default template. Save to apply.'))
+                                        ->action('restoreSuspendedPage'),
                                 ]),
                             ]),
                         Section::make(__('Welcome Page Template'))
@@ -126,6 +134,14 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
                                     Action::make('saveWelcomePage')
                                         ->label(__('Save Welcome Page'))
                                         ->action('saveWelcomePage'),
+                                    Action::make('restoreWelcomePage')
+                                        ->label(__('Restore Default'))
+                                        ->icon('heroicon-o-arrow-uturn-left')
+                                        ->color('gray')
+                                        ->requiresConfirmation()
+                                        ->modalHeading(__('Restore Default Welcome Page'))
+                                        ->modalDescription(__('This will replace the current content with the default template. Save to apply.'))
+                                        ->action('restoreWelcomePage'),
                                 ]),
                             ]),
                     ]),
@@ -220,6 +236,28 @@ class BrandingSettings extends Component implements HasActions, HasSchemas
             }
         } catch (Exception $e) {
             Notification::make()->title(__('Failed to save welcome page'))->body(SafeError::message($e))->danger()->send();
+        }
+    }
+
+    public function restoreSuspendedPage(): void
+    {
+        $stubPath = base_path('stubs/suspended.html');
+        if (file_exists($stubPath)) {
+            $this->suspendedPageHtml = file_get_contents($stubPath);
+            Notification::make()->title(__('Default restored — click Save to apply'))->success()->send();
+        } else {
+            Notification::make()->title(__('Default template not found'))->danger()->send();
+        }
+    }
+
+    public function restoreWelcomePage(): void
+    {
+        $stubPath = base_path('stubs/welcome.html');
+        if (file_exists($stubPath)) {
+            $this->welcomePageHtml = file_get_contents($stubPath);
+            Notification::make()->title(__('Default restored — click Save to apply'))->success()->send();
+        } else {
+            Notification::make()->title(__('Default template not found'))->danger()->send();
         }
     }
 
