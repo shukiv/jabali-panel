@@ -2402,6 +2402,11 @@ function nginxRegeneratePanelVhost(array $params): array
     // Find existing panel vhost file
     $vhostFile = "/etc/nginx/sites-available/{$hostname}";
 
+    // Skip if config hasn't changed
+    if (file_exists($vhostFile) && file_get_contents($vhostFile) === $newConfig) {
+        return ['success' => true, 'hostname' => $hostname, 'backup' => null, 'unchanged' => true];
+    }
+
     // Backup
     $backupPath = backupNginxConfig($vhostFile);
 
@@ -2563,6 +2568,11 @@ function nginxRegenerateDomainVhosts(array $params): array
         );
 
         $vhostFile = "/etc/nginx/sites-available/{$domain}.conf";
+
+        // Skip if config hasn't changed
+        if (file_exists($vhostFile) && file_get_contents($vhostFile) === $vhostContent) {
+            continue;
+        }
 
         // Backup
         backupNginxConfig($vhostFile);

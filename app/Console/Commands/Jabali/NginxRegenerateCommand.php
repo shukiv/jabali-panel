@@ -35,9 +35,13 @@ class NginxRegenerateCommand extends Command
                 ]);
 
                 if ($result['success'] ?? false) {
-                    $this->info("Panel vhost regenerated for {$result['hostname']}");
-                    if (! empty($result['backup'])) {
-                        $this->line("  Backup: {$result['backup']}");
+                    if ($result['unchanged'] ?? false) {
+                        $this->info("Panel vhost unchanged for {$result['hostname']}");
+                    } else {
+                        $this->info("Panel vhost regenerated for {$result['hostname']}");
+                        if (! empty($result['backup'])) {
+                            $this->line("  Backup: {$result['backup']}");
+                        }
                     }
                 } else {
                     $this->error('Panel vhost regeneration failed: '.($result['error'] ?? 'Unknown error'));
