@@ -29,6 +29,7 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
@@ -110,9 +111,13 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         return $table
             ->records(fn () => collect($this->sites)->keyBy('id')->toArray())
             ->columns([
-                ViewColumn::make('screenshot')
+                ImageColumn::make('screenshot')
                     ->label(__('Preview'))
-                    ->view('filament.jabali.columns.wordpress-screenshot'),
+                    ->state(fn (array $record): ?string => $this->getScreenshotUrl($record['id']))
+                    ->height(120)
+                    ->width(200)
+                    ->defaultImageUrl(url('/images/no-preview.svg'))
+                    ->extraImgAttributes(['loading' => 'lazy']),
                 ViewColumn::make('domain')
                     ->label(__('Site'))
                     ->view('filament.jabali.columns.wordpress-site'),
@@ -140,6 +145,10 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                     ->icon('heroicon-o-arrow-right-on-rectangle')
                     ->action(fn (array $record) => $this->autoLogin($record['id'])),
                 ActionGroup::make([
+                    Action::make('screenshot')
+                        ->label(__('Capture Screenshot'))
+                        ->icon('heroicon-o-camera')
+                        ->action(fn (array $record) => $this->captureScreenshot($record['id'])),
                     Action::make('update')
                         ->label(__('Update Now'))
                         ->icon('heroicon-o-arrow-path')
