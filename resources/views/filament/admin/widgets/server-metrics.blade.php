@@ -54,7 +54,7 @@
                             animation: { duration: 300 },
                             scales: {
                                 x: { stacked: true, display: false, max: 100 },
-                                y: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)', font: { size: 11, weight: 'bold' } } },
+                                y: { stacked: true, grid: { display: false }, border: { display: false }, afterFit: (scale) => { scale.width = 200; }, ticks: { color: isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)', font: { size: 11, weight: 'bold' } } },
                             },
                             plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.datasetIndex === 1 ? null : ctx.parsed.x + '%' } } },
                         },
