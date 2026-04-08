@@ -18,14 +18,14 @@
                 },
                 createCharts() {
                     this.createBar('cpu-chart', @js([
-                        ['CPU ' + ($cpu['usage'] ?? 0) + '%', $cpu['usage'] ?? 0],
-                        ['IO Wait ' + ($cpu['iowait'] ?? 0) + '%', $cpu['iowait'] ?? 0],
+                        ['CPU ' . ($cpu['usage'] ?? 0) . '%', $cpu['usage'] ?? 0],
+                        ['IO Wait ' . ($cpu['iowait'] ?? 0) . '%', $cpu['iowait'] ?? 0],
                     ]));
 
-                    this.createBar('memory-chart', @js(array_filter([
+                    this.createBar('memory-chart', @js(array_values(array_filter([
                         ['Memory ' . ($memory['usage'] ?? 0) . '%', $memory['usage'] ?? 0, ($memory['used_gb'] ?? 0) . '/' . ($memory['total_gb'] ?? 0) . ' GB'],
                         ($memory['has_swap'] ?? false) ? ['Swap ' . ($memory['swap_usage'] ?? 0) . '%', $memory['swap_usage'] ?? 0, ($memory['swap_used_gb'] ?? 0) . '/' . ($memory['swap_total_gb'] ?? 0) . ' GB'] : null,
-                    ])));
+                    ]))));
 
                     this.createBar('disk-chart', @js(array_map(fn ($p) => [
                         ($p['mount'] ?? '/') . ' ' . ($p['usage'] ?? 0) . '%',
