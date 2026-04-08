@@ -6,15 +6,15 @@
                 async refresh() {
                     const m = await $wire.getMetrics();
                     this.renderBar('cpu-chart', [
-                        ['\u{1F4BB} CPU', m.cpu.usage, m.cpu.usage + '%'],
-                        ['\u23F3 IO Wait', m.cpu.iowait, m.cpu.iowait + '%'],
+                        ['CPU', m.cpu.usage, m.cpu.usage + '%'],
+                        ['IO Wait', m.cpu.iowait, m.cpu.iowait + '%'],
                     ]);
 
-                    const mem = [['\u{1F4BE} Memory', m.memory.usage, m.memory.usage + '%  ' + m.memory.used_gb + '/' + m.memory.total_gb + ' GB']];
-                    if (m.memory.has_swap) mem.push(['\u21C5 Swap', m.memory.swap_usage, m.memory.swap_usage + '%  ' + m.memory.swap_used_gb + '/' + m.memory.swap_total_gb + ' GB']);
+                    const mem = [['Memory', m.memory.usage, m.memory.usage + '%  ' + m.memory.used_gb + '/' + m.memory.total_gb + ' GB']];
+                    if (m.memory.has_swap) mem.push(['Swap', m.memory.swap_usage, m.memory.swap_usage + '%  ' + m.memory.swap_used_gb + '/' + m.memory.swap_total_gb + ' GB']);
                     this.renderBar('mem-chart', mem);
 
-                    this.renderBar('disk-chart', (Array.isArray(m.disk) ? m.disk : [m.disk]).map(p => ['\u{1F4BF} ' + (p.mount || '/'), p.usage, p.usage + '%  ' + p.used_human + '/' + p.total_human]));
+                    this.renderBar('disk-chart', (Array.isArray(m.disk) ? m.disk : [m.disk]).map(p => [p.mount || '/', p.usage, p.usage + '%  ' + p.used_human + '/' + p.total_human]));
 
                     this.$refs.txSpeed.textContent = m.network.tx_speed;
                     this.$refs.txTotal.textContent = m.network.total_tx + ' total';
@@ -106,9 +106,26 @@
             x-init="init()"
         >
             <div class="fi-wi-stats-overview-stats-ctn grid gap-2 md:grid-cols-4">
-                <div style="position: relative; height: 90px"><canvas id="cpu-chart"></canvas></div>
-                <div style="position: relative; height: 90px"><canvas id="mem-chart"></canvas></div>
-                <div style="position: relative; height: 90px"><canvas id="disk-chart"></canvas></div>
+                <div class="flex items-center">
+                    <div class="flex flex-col items-center justify-around" style="width: 20px; height: 90px">
+                        <x-filament::icon icon="heroicon-o-cpu-chip" @class(['h-4', 'w-4', 'opacity-50']) />
+                        <x-filament::icon icon="heroicon-o-clock" @class(['h-4', 'w-4', 'opacity-50']) />
+                    </div>
+                    <div style="position: relative; height: 90px; flex: 1"><canvas id="cpu-chart"></canvas></div>
+                </div>
+                <div class="flex items-center">
+                    <div class="flex flex-col items-center justify-around" style="width: 20px; height: 90px">
+                        <x-filament::icon icon="heroicon-o-circle-stack" @class(['h-4', 'w-4', 'opacity-50']) />
+                        <x-filament::icon icon="heroicon-o-arrows-up-down" @class(['h-4', 'w-4', 'opacity-50']) />
+                    </div>
+                    <div style="position: relative; height: 90px; flex: 1"><canvas id="mem-chart"></canvas></div>
+                </div>
+                <div class="flex items-center">
+                    <div class="flex flex-col items-center justify-around" style="width: 20px; height: 90px">
+                        <x-filament::icon icon="heroicon-o-server" @class(['h-4', 'w-4', 'opacity-50']) />
+                    </div>
+                    <div style="position: relative; height: 90px; flex: 1"><canvas id="disk-chart"></canvas></div>
+                </div>
                 <div class="flex items-center justify-center gap-6">
                     <div>
                         <x-filament::icon icon="heroicon-o-arrow-up" @class(['inline-block', 'h-4', 'w-4']) style="color: var(--success-500)" />
