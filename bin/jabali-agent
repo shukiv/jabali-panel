@@ -2468,7 +2468,7 @@ function nginxRegenerateDomainVhosts(array $params): array
         return ['success' => false, 'error' => 'Database connection failed: '.$e->getMessage()];
     }
 
-    $sql = 'SELECT d.domain, d.status, d.custom_nginx_directives, d.directory_index, u.username
+    $sql = 'SELECT d.domain, d.is_active, d.custom_nginx_directives, d.directory_index, u.username
             FROM domains d JOIN users u ON d.user_id = u.id';
     $bindParams = [];
 
@@ -2491,10 +2491,10 @@ function nginxRegenerateDomainVhosts(array $params): array
     foreach ($domains as $row) {
         $domain = $row['domain'];
         $username = $row['username'];
-        $status = $row['status'];
+        $isActive = (bool) ($row['is_active'] ?? true);
 
         // Skip disabled domains — they use the suspended vhost
-        if ($status === 'disabled') {
+        if (! $isActive) {
             continue;
         }
 
