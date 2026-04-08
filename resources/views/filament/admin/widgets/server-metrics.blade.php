@@ -48,13 +48,12 @@
                             const texts = chart.data.datasets[0].barTexts || [];
                             ctx.save();
                             ctx.font = 'bold 11px system-ui, sans-serif';
-                            ctx.fillStyle = '#fff';
                             ctx.textBaseline = 'middle';
                             meta.data.forEach((bar, i) => {
                                 const text = texts[i] || '';
                                 if (!text) return;
-                                const x = bar.x > bar.base + 60 ? bar.base + 8 : bar.x + 6;
                                 const textInBar = bar.x > bar.base + 60;
+                                const x = textInBar ? bar.base + 8 : bar.x + 6;
                                 ctx.fillStyle = textInBar ? '#fff' : (isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)');
                                 ctx.fillText(text, x, bar.y);
                             });
@@ -91,21 +90,22 @@
                 },
             }"
             x-init="init()"
-            class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
         >
-            <div><canvas id="cpu-chart" height="80"></canvas></div>
-            <div><canvas id="mem-chart" height="80"></canvas></div>
-            <div><canvas id="disk-chart" height="80"></canvas></div>
-            <div class="flex flex-col items-center justify-center gap-2">
-                <div class="text-center">
-                    <x-filament::icon icon="heroicon-o-arrow-up" class="inline-block h-4 w-4 text-success-500" />
-                    <span x-ref="txSpeed" class="text-lg font-bold">0 B/s</span>
-                    <p x-ref="txTotal" class="text-xs text-success-500">0 B total</p>
-                </div>
-                <div class="text-center">
-                    <x-filament::icon icon="heroicon-o-arrow-down" class="inline-block h-4 w-4 text-info-500" />
-                    <span x-ref="rxSpeed" class="text-lg font-bold">0 B/s</span>
-                    <p x-ref="rxTotal" class="text-xs text-info-500">0 B total</p>
+            <div class="fi-wi-stats-overview-stats-ctn grid gap-6 md:grid-cols-4">
+                <div><canvas id="cpu-chart" height="80"></canvas></div>
+                <div><canvas id="mem-chart" height="80"></canvas></div>
+                <div><canvas id="disk-chart" height="80"></canvas></div>
+                <div class="flex flex-col items-center justify-center gap-3">
+                    <div>
+                        <x-filament::icon icon="heroicon-o-arrow-up" @class(['inline-block', 'h-4', 'w-4']) style="color: var(--success-500)" />
+                        <span x-ref="txSpeed" class="fi-header-heading" style="font-size: 1.125rem">0 B/s</span>
+                        <p x-ref="txTotal" style="font-size: 0.75rem; color: var(--success-500)">0 B total</p>
+                    </div>
+                    <div>
+                        <x-filament::icon icon="heroicon-o-arrow-down" @class(['inline-block', 'h-4', 'w-4']) style="color: var(--info-500)" />
+                        <span x-ref="rxSpeed" class="fi-header-heading" style="font-size: 1.125rem">0 B/s</span>
+                        <p x-ref="rxTotal" style="font-size: 0.75rem; color: var(--info-500)">0 B total</p>
+                    </div>
                 </div>
             </div>
         </div>
