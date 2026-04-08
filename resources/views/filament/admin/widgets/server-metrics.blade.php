@@ -92,9 +92,9 @@
             x-init="init()"
         >
             <div class="fi-wi-stats-overview-stats-ctn grid gap-6 md:grid-cols-4">
-                <div><canvas id="cpu-chart" height="80"></canvas></div>
-                <div><canvas id="mem-chart" height="80"></canvas></div>
-                <div><canvas id="disk-chart" height="80"></canvas></div>
+                <div><canvas id="cpu-chart" height="110"></canvas></div>
+                <div><canvas id="mem-chart" height="110"></canvas></div>
+                <div><canvas id="disk-chart" height="110"></canvas></div>
                 <div class="flex items-center justify-center gap-6">
                     <div>
                         <x-filament::icon icon="heroicon-o-arrow-up" @class(['inline-block', 'h-4', 'w-4']) style="color: var(--success-500)" />
