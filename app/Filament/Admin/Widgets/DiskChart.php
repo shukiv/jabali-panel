@@ -17,7 +17,7 @@ class DiskChart extends ChartWidget
 
     protected ?string $maxHeight = '120px';
 
-    protected ?string $pollingInterval = '5s';
+    protected ?string $pollingInterval = '3s';
 
     protected function getData(): array
     {

@@ -14,7 +14,7 @@ class NetworkStatsWidget extends StatsOverviewWidget
 
     protected int|string|array $columnSpan = 1;
 
-    protected ?string $pollingInterval = '5s';
+    protected ?string $pollingInterval = '3s';
 
     protected function getStats(): array
     {
