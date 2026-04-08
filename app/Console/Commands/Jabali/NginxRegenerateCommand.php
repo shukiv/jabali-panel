@@ -11,7 +11,7 @@ use Illuminate\Console\Command;
 
 class NginxRegenerateCommand extends Command
 {
-    protected $signature = 'jabali:nginx-regenerate
+    protected $signature = 'jabali:nginx:regenerate
         {--panel-only : Only regenerate the panel vhost}
         {--domain= : Regenerate a single domain vhost}';
 
