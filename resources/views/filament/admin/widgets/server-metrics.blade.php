@@ -74,7 +74,7 @@
                                 const texts = chart.data.datasets[0].barTexts || [];
                                 const dark = chart._isDark !== undefined ? chart._isDark : document.documentElement.classList.contains('dark');
                                 ctx.save();
-                                ctx.font = 'bold 11px system-ui, sans-serif';
+                                ctx.font = 'bold 13px system-ui, sans-serif';
                                 ctx.textBaseline = 'middle';
                                 meta.data.forEach((bar, i) => {
                                     const text = texts[i] || '';
