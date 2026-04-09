@@ -28,6 +28,7 @@ class UserDeletionService
         $this->cleanupForwarders($user);
         $this->dropMysqlUser($user);
         $this->cleanupCredentials($user);
+        $this->removeCgroupSlice($user);
     }
 
     private function cleanupForwarders(User $user): void
@@ -82,6 +83,15 @@ class UserDeletionService
             MysqlCredential::where('user_id', $user->id)->delete();
         } catch (\Throwable $e) {
             Log::error('Failed to delete stored MySQL credentials: '.$e->getMessage());
+        }
+    }
+
+    private function removeCgroupSlice(User $user): void
+    {
+        try {
+            $this->agent->cgroupRemove($user->username);
+        } catch (\Throwable $e) {
+            Log::warning("Failed to remove cgroup slice for user {$user->username}: ".$e->getMessage());
         }
     }
 }

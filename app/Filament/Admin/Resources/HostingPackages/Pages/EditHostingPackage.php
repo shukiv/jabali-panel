@@ -15,8 +15,9 @@ class EditHostingPackage extends EditRecord
 
     protected function afterSave(): void
     {
-        // Always sync shell mode for all users that inherit from this package
         $agent = app(AgentClient::class);
+
+        // Sync shell mode for all users that inherit from this package
         $users = $this->record->users()
             ->whereNull('ssh_isolation_mode')
             ->get();
@@ -30,6 +31,28 @@ class EditHostingPackage extends EditRecord
                 } else {
                     $agent->send('ssh.enable_shell', ['username' => $user->username]);
                     $agent->sshSetShellMode($user->username, $mode);
+                }
+            } catch (\Throwable) {
+                // Best-effort
+            }
+        }
+
+        // Sync cgroup limits for all users on this package
+        $this->syncCgroupLimitsForPackageUsers($agent);
+    }
+
+    private function syncCgroupLimitsForPackageUsers(AgentClient $agent): void
+    {
+        $allUsers = $this->record->users()->get();
+
+        foreach ($allUsers as $user) {
+            $limits = $user->getEffectiveResourceLimits();
+
+            try {
+                if (empty($limits)) {
+                    $agent->cgroupRemove($user->username);
+                } else {
+                    $agent->cgroupApply($user->username, $limits);
                 }
             } catch (\Throwable) {
                 // Best-effort
