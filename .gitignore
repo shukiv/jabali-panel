@@ -23,9 +23,16 @@ CLAUDE.md
 
 # Local repository configuration (do not commit)
 config.toml
+config.toml.example
 SECURITY.md
 .git-authorized-remotes
 .git-authorized-committers
+
+# Internal dev files (not for public repo)
+/scripts/deploy.sh
+/plans/
+/docs/project/
+/docs/TODO.md
 
 # Local automation / debug artifacts (do not commit)
 /.playwright-cli/
