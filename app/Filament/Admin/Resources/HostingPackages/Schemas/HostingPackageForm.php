@@ -80,25 +80,27 @@ class HostingPackageForm
                             ->numeric()
                             ->minValue(1)
                             ->maxValue(800)
-                            ->helperText(__('100 = 1 core, 200 = 2 cores')),
+                            ->helperText(__('Recommended: 100 (basic), 200 (pro). 100 = 1 core')),
                         TextInput::make('memory_limit_mb')
                             ->label(__('Memory Limit (MB)'))
                             ->numeric()
                             ->minValue(64)
-                            ->helperText(__('Hard cap on RAM usage')),
+                            ->helperText(__('Recommended: 512 (basic), 1024 (pro), 2048 (business)')),
                         TextInput::make('io_read_mbps')
                             ->label(__('I/O Read (MB/s)'))
                             ->numeric()
-                            ->minValue(1),
+                            ->minValue(1)
+                            ->helperText(__('Recommended: 50 (basic), 100 (pro)')),
                         TextInput::make('io_write_mbps')
                             ->label(__('I/O Write (MB/s)'))
                             ->numeric()
-                            ->minValue(1),
+                            ->minValue(1)
+                            ->helperText(__('Recommended: 25 (basic), 50 (pro)')),
                         TextInput::make('max_processes')
                             ->label(__('Max Processes'))
                             ->numeric()
                             ->minValue(10)
-                            ->helperText(__('Maximum concurrent tasks')),
+                            ->helperText(__('Recommended: 50 (basic), 100 (pro), 200 (business)')),
                     ])
                     ->columns(2)
                     ->collapsible(),
