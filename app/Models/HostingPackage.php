@@ -23,6 +23,11 @@ class HostingPackage extends Model
         'is_active',
         'ssh_shell_enabled',
         'ssh_isolation_mode',
+        'cpu_quota',
+        'memory_limit_mb',
+        'io_read_mbps',
+        'io_write_mbps',
+        'max_processes',
     ];
 
     protected function casts(): array

@@ -28,6 +28,11 @@ class User extends Authenticatable implements FilamentUser
         'hosting_package_id',
         'locale',
         'disk_quota_mb',
+        'cpu_quota',
+        'memory_limit_mb',
+        'io_read_mbps',
+        'io_write_mbps',
+        'max_processes',
         'ssh_isolation_mode',
     ];
 
@@ -103,6 +108,28 @@ class User extends Authenticatable implements FilamentUser
         return $this->ssh_isolation_mode
             ?? $this->hostingPackage?->ssh_isolation_mode
             ?? 'disabled';
+    }
+
+    /**
+     * Get effective resource limits (user override or package default).
+     * Returns only non-null limits.
+     *
+     * @return array{cpu_quota?: int, memory_limit_mb?: int, io_read_mbps?: int, io_write_mbps?: int, max_processes?: int}
+     */
+    public function getEffectiveResourceLimits(): array
+    {
+        $fields = ['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes'];
+        $package = $this->hostingPackage;
+        $limits = [];
+
+        foreach ($fields as $field) {
+            $value = $this->$field ?? $package?->$field;
+            if ($value !== null) {
+                $limits[$field] = (int) $value;
+            }
+        }
+
+        return $limits;
     }
 
     /**

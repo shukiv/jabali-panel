@@ -1107,6 +1107,40 @@ class AgentClient implements AgentClientInterface
     }
 
     /**
+     * Apply cgroup v2 resource limits for a user via systemd slice.
+     *
+     * @param  array{cpu_quota?: int, memory_limit_mb?: int, io_read_mbps?: int, io_write_mbps?: int, max_processes?: int}  $limits
+     */
+    public function cgroupApply(string $username, array $limits): array
+    {
+        return $this->send('cgroup.apply', array_merge(['username' => $username], $limits));
+    }
+
+    /**
+     * Remove cgroup resource limits for a user.
+     */
+    public function cgroupRemove(string $username): array
+    {
+        return $this->send('cgroup.remove', ['username' => $username]);
+    }
+
+    /**
+     * Get current cgroup resource usage for a user.
+     */
+    public function cgroupStatus(string $username): array
+    {
+        return $this->send('cgroup.status', ['username' => $username]);
+    }
+
+    /**
+     * Check if cgroups v2 is available on the server.
+     */
+    public function cgroupCheck(): array
+    {
+        return $this->send('cgroup.check');
+    }
+
+    /**
      * List all IP addresses on the server.
      */
     public function ipList(): array

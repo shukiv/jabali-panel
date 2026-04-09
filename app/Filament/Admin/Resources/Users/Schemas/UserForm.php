@@ -152,6 +152,41 @@ class UserForm
                     ])
                     ->columns(3),
 
+                Section::make(__('Resource Limits'))
+                    ->description(__('Override package defaults. Leave blank to inherit.'))
+                    ->schema([
+                        TextInput::make('cpu_quota')
+                            ->label(__('CPU Quota (%)'))
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(800)
+                            ->placeholder(__('Inherit from package'))
+                            ->helperText(__('100 = 1 core, 200 = 2 cores')),
+                        TextInput::make('memory_limit_mb')
+                            ->label(__('Memory Limit (MB)'))
+                            ->numeric()
+                            ->minValue(64)
+                            ->placeholder(__('Inherit from package')),
+                        TextInput::make('io_read_mbps')
+                            ->label(__('I/O Read (MB/s)'))
+                            ->numeric()
+                            ->minValue(1)
+                            ->placeholder(__('Inherit from package')),
+                        TextInput::make('io_write_mbps')
+                            ->label(__('I/O Write (MB/s)'))
+                            ->numeric()
+                            ->minValue(1)
+                            ->placeholder(__('Inherit from package')),
+                        TextInput::make('max_processes')
+                            ->label(__('Max Processes'))
+                            ->numeric()
+                            ->minValue(10)
+                            ->placeholder(__('Inherit from package')),
+                    ])
+                    ->columns(2)
+                    ->collapsible()
+                    ->collapsed(),
+
                 Section::make(__('System Information'))
                     ->schema([
                         Placeholder::make('home_directory_display')

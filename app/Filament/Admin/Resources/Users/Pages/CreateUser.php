@@ -39,6 +39,13 @@ class CreateUser extends CreateRecord
             $data['disk_quota_mb'] = null;
         }
 
+        // Null out resource limit fields that are empty (keep only explicit overrides)
+        foreach (['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes'] as $field) {
+            if (blank($data[$field] ?? null)) {
+                $data[$field] = null;
+            }
+        }
+
         return $data;
     }
 
@@ -62,6 +69,9 @@ class CreateUser extends CreateRecord
 
                 // Apply disk quota if enabled
                 $this->applyDiskQuota();
+
+                // Apply cgroup resource limits
+                $this->applyCgroupLimits();
 
                 // Enable SSH shell based on effective isolation mode
                 $mode = $this->record->getEffectiveSshIsolationMode();
@@ -89,6 +99,28 @@ class CreateUser extends CreateRecord
                 ->body(__('This user has unlimited quotas.'))
                 ->warning()
                 ->send();
+        }
+    }
+
+    protected function applyCgroupLimits(): void
+    {
+        $limits = $this->record->getEffectiveResourceLimits();
+        if (empty($limits)) {
+            return;
+        }
+
+        try {
+            $agent = app(AgentClient::class);
+            $result = $agent->cgroupApply($this->record->username, $limits);
+
+            if ($result['success'] ?? false) {
+                Notification::make()
+                    ->title(__('Resource limits applied'))
+                    ->success()
+                    ->send();
+            }
+        } catch (\Throwable) {
+            // Best-effort — agent may not support cgroup.apply yet
         }
     }
 

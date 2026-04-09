@@ -21,6 +21,8 @@ class EditUser extends EditRecord
 
     protected ?int $originalQuota = null;
 
+    protected array $originalResourceLimits = [];
+
     protected ?HostingPackage $selectedPackage = null;
 
     protected ?string $plainPassword = null;
@@ -28,6 +30,10 @@ class EditUser extends EditRecord
     protected function mutateFormDataBeforeFill(array $data): array
     {
         $this->originalQuota = $data['disk_quota_mb'] ?? null;
+
+        foreach (['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes'] as $field) {
+            $this->originalResourceLimits[$field] = $data[$field] ?? null;
+        }
 
         return $data;
     }
@@ -49,6 +55,13 @@ class EditUser extends EditRecord
             $data['disk_quota_mb'] = null;
         }
 
+        // Null out resource limit fields that are empty (keep only explicit overrides)
+        foreach (['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes'] as $field) {
+            if (blank($data[$field] ?? null)) {
+                $data[$field] = null;
+            }
+        }
+
         return $data;
     }
 
@@ -56,7 +69,50 @@ class EditUser extends EditRecord
     {
         $this->syncLinuxPassword();
         $this->syncDiskQuota();
+        $this->syncCgroupLimits();
         $this->syncShellMode();
+    }
+
+    protected function syncCgroupLimits(): void
+    {
+        $resourceFields = ['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes'];
+        $changed = false;
+
+        foreach ($resourceFields as $field) {
+            $new = $this->record->$field;
+            $old = $this->originalResourceLimits[$field] ?? null;
+            if ($new !== $old) {
+                $changed = true;
+                break;
+            }
+        }
+
+        if (! $changed) {
+            return;
+        }
+
+        $limits = $this->record->getEffectiveResourceLimits();
+
+        try {
+            $agent = app(AgentClient::class);
+
+            if (empty($limits)) {
+                $result = $agent->cgroupRemove($this->record->username);
+                $title = __('Resource limits removed');
+            } else {
+                $result = $agent->cgroupApply($this->record->username, $limits);
+                $title = __('Resource limits updated');
+            }
+
+            if ($result['success'] ?? false) {
+                Notification::make()
+                    ->title($title)
+                    ->success()
+                    ->send();
+            }
+        } catch (\Throwable) {
+            // Best-effort — agent may not support cgroup yet
+        }
     }
 
     protected function syncShellMode(): void

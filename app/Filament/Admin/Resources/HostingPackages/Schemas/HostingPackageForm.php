@@ -72,6 +72,37 @@ class HostingPackageForm
                     ])
                     ->columns(2),
 
+                Section::make(__('System Resource Limits'))
+                    ->description(__('cgroup v2 limits applied per user. Leave blank for unlimited.'))
+                    ->schema([
+                        TextInput::make('cpu_quota')
+                            ->label(__('CPU Quota (%)'))
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(800)
+                            ->helperText(__('100 = 1 core, 200 = 2 cores')),
+                        TextInput::make('memory_limit_mb')
+                            ->label(__('Memory Limit (MB)'))
+                            ->numeric()
+                            ->minValue(64)
+                            ->helperText(__('Hard cap on RAM usage')),
+                        TextInput::make('io_read_mbps')
+                            ->label(__('I/O Read (MB/s)'))
+                            ->numeric()
+                            ->minValue(1),
+                        TextInput::make('io_write_mbps')
+                            ->label(__('I/O Write (MB/s)'))
+                            ->numeric()
+                            ->minValue(1),
+                        TextInput::make('max_processes')
+                            ->label(__('Max Processes'))
+                            ->numeric()
+                            ->minValue(10)
+                            ->helperText(__('Maximum concurrent tasks')),
+                    ])
+                    ->columns(2)
+                    ->collapsible(),
+
             ]);
     }
 }
