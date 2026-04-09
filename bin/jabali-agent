@@ -8993,16 +8993,24 @@ function wpDelete(array $params): array
             exec('systemctl reload nginx 2>&1');
         }
     } elseif ($deleteFiles && ! empty($site['install_path'])) {
-        $installPath = $site['install_path'];
+        $installPath = rtrim($site['install_path'], '/');
         // Safety check - make sure it's within user's domain folder
         if (strpos($installPath, "{$userHome}/domains/") === 0) {
             // If it's the root of public_html, just delete WP files, not the folder
             if (preg_match('#/public_html$#', $installPath)) {
-                exec('rm -rf '.escapeshellarg($installPath).'/wp-* '.escapeshellarg($installPath).'/license.txt '.escapeshellarg($installPath).'/readme.html '.escapeshellarg($installPath).'/xmlrpc.php '.escapeshellarg($installPath).'/index.php');
+                $safeDir = escapeshellarg($installPath);
+                $cmd = "rm -rf {$safeDir}/wp-* {$safeDir}/license.txt {$safeDir}/readme.html {$safeDir}/xmlrpc.php {$safeDir}/index.php";
+                exec($cmd, $rmOutput, $rmExit);
+                logger("WP file cleanup: exit={$rmExit}, cmd={$cmd}");
             } else {
                 exec('rm -rf '.escapeshellarg($installPath));
+                logger("WP subdirectory removed: {$installPath}");
             }
+        } else {
+            logger("WP file deletion skipped — install_path outside domains: {$installPath}");
         }
+    } else {
+        logger('WP file deletion skipped — deleteFiles='.($deleteFiles ? 'true' : 'false').', install_path='.(string) ($site['install_path'] ?? '(empty)'));
     }
 
     // Remove from list
