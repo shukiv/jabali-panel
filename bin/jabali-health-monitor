@@ -516,6 +516,64 @@ function main(): void
         mkdir($stateDir, 0755, true);
     }
 
+    /**
+     * Move FPM worker PIDs into their user's cgroup slice (if one exists).
+     * Called periodically to catch respawned workers.
+     */
+    function reassignFpmToCgroups(): void
+    {
+        $sliceDir = '/etc/systemd/system';
+        $pattern = $sliceDir . '/jabali-user-*.slice';
+        $slices = glob($pattern);
+        if (empty($slices)) {
+            return;
+        }
+
+        // Get all FPM worker PIDs and their pool names in one call
+        $psLines = [];
+        exec('ps -eo pid,args 2>/dev/null | grep "php-fpm: pool"', $psLines);
+
+        // Index by pool name
+        $pidsByPool = [];
+        foreach ($psLines as $line) {
+            $line = trim($line);
+            if (str_contains($line, 'grep')) {
+                continue;
+            }
+            if (preg_match('/^(\d+)\s+.*pool\s+(\S+)/', $line, $m)) {
+                $pidsByPool[$m[2]][] = (int) $m[1];
+            }
+        }
+
+        if (empty($pidsByPool)) {
+            return;
+        }
+
+        foreach ($slices as $sliceFile) {
+            // Extract username from slice filename: jabali-user-{name}.slice
+            $base = basename($sliceFile, '.slice');
+            $sliceUsername = substr($base, strlen('jabali-user-'));
+            // Convert dashes back to underscores for username lookup
+            $username = str_replace('-', '_', $sliceUsername);
+
+            // Also try the raw name (most usernames don't have underscores)
+            $candidates = array_unique([$sliceUsername, $username]);
+
+            foreach ($candidates as $poolName) {
+                if (!isset($pidsByPool[$poolName])) {
+                    continue;
+                }
+                $cgroupProcs = '/sys/fs/cgroup/jabali.slice/' . $base . '.slice/cgroup.procs';
+                if (!file_exists($cgroupProcs)) {
+                    continue;
+                }
+                foreach ($pidsByPool[$poolName] as $pid) {
+                    @file_put_contents($cgroupProcs, (string) $pid);
+                }
+            }
+        }
+    }
+
     logger("Jabali Health Monitor starting", 'INFO');
 
     // Build service list
@@ -543,6 +601,13 @@ function main(): void
 
         // Check server load
         checkServerLoad($state);
+
+        // Reassign FPM workers to cgroup slices (every 3rd cycle ≈ 90s)
+        $state['cgroup_tick'] = ($state['cgroup_tick'] ?? 0) + 1;
+        if ($state['cgroup_tick'] >= 3) {
+            $state['cgroup_tick'] = 0;
+            reassignFpmToCgroups();
+        }
 
         // Save state
         saveState($state);

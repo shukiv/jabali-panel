@@ -839,6 +839,11 @@ function handleAction(array $request): array
         'quota.set' => quotaSet($params),
         'quota.get' => quotaGet($params),
         'quota.report' => quotaReport($params),
+        // cgroup v2 resource limits
+        'cgroup.check' => cgroupCheck($params),
+        'cgroup.apply' => cgroupApply($params),
+        'cgroup.remove' => cgroupRemove($params),
+        'cgroup.status' => cgroupStatus($params),
         // IP address management
         'ip.list' => ipList($params),
         'ip.add' => ipAdd($params),
@@ -24971,4 +24976,389 @@ function updatesRun(array $params): array
     }
 
     return ['success' => true, 'output' => array_merge($output, $upgradeOutput)];
+}
+
+// ── cgroup v2 resource limits ────────────────────────────────────────────────
+
+/**
+ * Check if cgroups v2 is available on the server.
+ */
+function cgroupCheck(array $params): array
+{
+    // Check for unified cgroup v2 hierarchy
+    $cgroupMount = trim(shell_exec('mount | grep "type cgroup2"') ?? '');
+    if (! empty($cgroupMount)) {
+        // Read available controllers
+        $controllers = trim(shell_exec('cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null') ?? '');
+
+        return [
+            'success' => true,
+            'available' => true,
+            'version' => 'v2',
+            'controllers' => $controllers ? explode(' ', $controllers) : [],
+            'mount' => $cgroupMount,
+        ];
+    }
+
+    // Check for legacy v1
+    $cgroupV1 = trim(shell_exec('mount | grep "type cgroup " 2>/dev/null') ?? '');
+    if (! empty($cgroupV1)) {
+        return [
+            'success' => true,
+            'available' => false,
+            'version' => 'v1',
+            'controllers' => [],
+            'error' => 'cgroups v1 detected. v2 (unified hierarchy) is required. Add systemd.unified_cgroup_hierarchy=1 to kernel parameters and reboot.',
+        ];
+    }
+
+    return [
+        'success' => true,
+        'available' => false,
+        'version' => 'none',
+        'controllers' => [],
+        'error' => 'No cgroup filesystem mounted.',
+    ];
+}
+
+/**
+ * Apply cgroup v2 resource limits for a user via systemd slice.
+ *
+ * Creates /etc/systemd/system/jabali-user-{username}.slice with the specified limits.
+ * FPM workers and nspawn containers for this user will be moved into the slice.
+ */
+function cgroupApply(array $params): array
+{
+    $username = $params['username'] ?? '';
+    $cpuQuota = $params['cpu_quota'] ?? null;
+    $memoryLimitMb = $params['memory_limit_mb'] ?? null;
+    $ioReadMbps = $params['io_read_mbps'] ?? null;
+    $ioWriteMbps = $params['io_write_mbps'] ?? null;
+    $maxProcesses = $params['max_processes'] ?? null;
+
+    if (empty($username)) {
+        return ['success' => false, 'error' => 'Username is required'];
+    }
+
+    if (! validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username format'];
+    }
+
+    // Verify user exists
+    exec('id '.escapeshellarg($username).' 2>/dev/null', $idOutput, $idExit);
+    if ($idExit !== 0) {
+        return ['success' => false, 'error' => 'User does not exist'];
+    }
+
+    // Verify cgroups v2
+    $check = cgroupCheck([]);
+    if (! ($check['available'] ?? false)) {
+        return ['success' => false, 'error' => $check['error'] ?? 'cgroups v2 not available'];
+    }
+
+    // Ensure parent slice exists
+    $parentSlice = '/etc/systemd/system/jabali.slice';
+    if (! file_exists($parentSlice)) {
+        $parentContent = "[Unit]\nDescription=Jabali Panel user resource limits\n";
+        file_put_contents($parentSlice, $parentContent);
+    }
+
+    // Build slice configuration
+    $sliceName = 'jabali-user-'.str_replace('_', '-', $username);
+    $slicePath = '/etc/systemd/system/'.$sliceName.'.slice';
+
+    $lines = [];
+    $lines[] = '[Unit]';
+    $lines[] = 'Description=Jabali resource limits for '.$username;
+    $lines[] = 'PartOf=jabali.slice';
+    $lines[] = '';
+    $lines[] = '[Slice]';
+
+    $applied = [];
+
+    if ($cpuQuota !== null && $cpuQuota > 0) {
+        $lines[] = 'CPUQuota='.(int) $cpuQuota.'%';
+        $applied['cpu_quota'] = (int) $cpuQuota;
+    }
+
+    if ($memoryLimitMb !== null && $memoryLimitMb > 0) {
+        $lines[] = 'MemoryMax='.(int) $memoryLimitMb.'M';
+        // Set soft limit at 90% to trigger reclaim pressure before hard kill
+        $memoryHigh = (int) round($memoryLimitMb * 0.9);
+        $lines[] = 'MemoryHigh='.$memoryHigh.'M';
+        $applied['memory_limit_mb'] = (int) $memoryLimitMb;
+    }
+
+    if (($ioReadMbps !== null && $ioReadMbps > 0) || ($ioWriteMbps !== null && $ioWriteMbps > 0)) {
+        // Find the root block device for I/O limits
+        $rootDev = cgroupFindRootBlockDevice();
+        if ($rootDev !== null) {
+            $devNumber = cgroupGetDeviceNumber($rootDev);
+            if ($devNumber !== null) {
+                $ioParts = [];
+                if ($ioReadMbps !== null && $ioReadMbps > 0) {
+                    $readBytes = (int) $ioReadMbps * 1048576;
+                    $ioParts[] = 'rbps='.$readBytes;
+                    $applied['io_read_mbps'] = (int) $ioReadMbps;
+                }
+                if ($ioWriteMbps !== null && $ioWriteMbps > 0) {
+                    $writeBytes = (int) $ioWriteMbps * 1048576;
+                    $ioParts[] = 'wbps='.$writeBytes;
+                    $applied['io_write_mbps'] = (int) $ioWriteMbps;
+                }
+                $lines[] = 'IOReadBandwidthMax='.$rootDev.' '.(int) ($ioReadMbps ?? 0) * 1048576;
+                $lines[] = 'IOWriteBandwidthMax='.$rootDev.' '.(int) ($ioWriteMbps ?? 0) * 1048576;
+            }
+        }
+    }
+
+    if ($maxProcesses !== null && $maxProcesses > 0) {
+        $lines[] = 'TasksMax='.(int) $maxProcesses;
+        $applied['max_processes'] = (int) $maxProcesses;
+    }
+
+    if (empty($applied)) {
+        return ['success' => false, 'error' => 'No resource limits specified'];
+    }
+
+    $lines[] = '';
+
+    // Write slice file
+    $content = implode("\n", $lines);
+    if (file_put_contents($slicePath, $content) === false) {
+        return ['success' => false, 'error' => 'Failed to write slice file: '.$slicePath];
+    }
+
+    // Reload systemd to pick up the new/updated slice
+    exec('systemctl daemon-reload 2>&1', $reloadOutput, $reloadExit);
+    if ($reloadExit !== 0) {
+        return ['success' => false, 'error' => 'systemctl daemon-reload failed: '.implode("\n", $reloadOutput)];
+    }
+
+    // Start the slice (creates the cgroup)
+    exec('systemctl start '.escapeshellarg($sliceName.'.slice').' 2>&1', $startOutput, $startExit);
+
+    // Move existing FPM workers into the slice
+    $movedPids = cgroupAssignFpmWorkers($username, $sliceName);
+
+    return [
+        'success' => true,
+        'username' => $username,
+        'slice' => $sliceName.'.slice',
+        'path' => $slicePath,
+        'applied' => $applied,
+        'fpm_pids_moved' => $movedPids,
+        'message' => 'Resource limits applied',
+    ];
+}
+
+/**
+ * Remove cgroup resource limits for a user.
+ */
+function cgroupRemove(array $params): array
+{
+    $username = $params['username'] ?? '';
+
+    if (empty($username)) {
+        return ['success' => false, 'error' => 'Username is required'];
+    }
+
+    if (! validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username format'];
+    }
+
+    $sliceName = 'jabali-user-'.str_replace('_', '-', $username);
+    $slicePath = '/etc/systemd/system/'.$sliceName.'.slice';
+
+    if (! file_exists($slicePath)) {
+        return ['success' => true, 'message' => 'No slice file found, nothing to remove'];
+    }
+
+    // Stop the slice (moves processes back to parent cgroup)
+    exec('systemctl stop '.escapeshellarg($sliceName.'.slice').' 2>&1', $stopOutput, $stopExit);
+
+    // Remove the slice file
+    unlink($slicePath);
+
+    // Reload systemd
+    exec('systemctl daemon-reload 2>&1');
+
+    return [
+        'success' => true,
+        'username' => $username,
+        'slice' => $sliceName.'.slice',
+        'message' => 'Resource limits removed',
+    ];
+}
+
+/**
+ * Get current cgroup resource usage vs limits for a user.
+ */
+function cgroupStatus(array $params): array
+{
+    $username = $params['username'] ?? '';
+
+    if (empty($username)) {
+        return ['success' => false, 'error' => 'Username is required'];
+    }
+
+    if (! validateUsername($username)) {
+        return ['success' => false, 'error' => 'Invalid username format'];
+    }
+
+    $sliceName = 'jabali-user-'.str_replace('_', '-', $username);
+    $cgroupPath = '/sys/fs/cgroup/jabali.slice/'.$sliceName.'.slice';
+
+    if (! is_dir($cgroupPath)) {
+        return [
+            'success' => true,
+            'username' => $username,
+            'active' => false,
+            'message' => 'No cgroup slice active for this user',
+        ];
+    }
+
+    $status = [
+        'success' => true,
+        'username' => $username,
+        'active' => true,
+        'slice' => $sliceName.'.slice',
+    ];
+
+    // CPU usage
+    $cpuStat = @file_get_contents($cgroupPath.'/cpu.stat');
+    if ($cpuStat !== false) {
+        $usageUsec = 0;
+        if (preg_match('/usage_usec\s+(\d+)/', $cpuStat, $m)) {
+            $usageUsec = (int) $m[1];
+        }
+        $status['cpu'] = [
+            'usage_usec' => $usageUsec,
+            'usage_seconds' => round($usageUsec / 1_000_000, 2),
+        ];
+    }
+
+    // CPU limit
+    $cpuMax = trim(@file_get_contents($cgroupPath.'/cpu.max') ?: '');
+    if ($cpuMax && $cpuMax !== 'max 100000') {
+        $parts = explode(' ', $cpuMax);
+        if (count($parts) === 2 && $parts[0] !== 'max') {
+            $quotaPercent = round(((int) $parts[0] / (int) $parts[1]) * 100);
+            $status['cpu']['quota_percent'] = $quotaPercent;
+        }
+    }
+
+    // Memory usage and limit
+    $memoryCurrent = trim(@file_get_contents($cgroupPath.'/memory.current') ?: '');
+    $memoryMax = trim(@file_get_contents($cgroupPath.'/memory.max') ?: '');
+    if ($memoryCurrent !== '') {
+        $usedMb = round((int) $memoryCurrent / 1048576, 1);
+        $status['memory'] = ['used_mb' => $usedMb];
+
+        if ($memoryMax !== '' && $memoryMax !== 'max') {
+            $limitMb = round((int) $memoryMax / 1048576, 1);
+            $status['memory']['limit_mb'] = $limitMb;
+            $status['memory']['usage_percent'] = $limitMb > 0 ? round(($usedMb / $limitMb) * 100, 1) : 0;
+        }
+    }
+
+    // Process count
+    $pidsCurrent = trim(@file_get_contents($cgroupPath.'/pids.current') ?: '');
+    $pidsMax = trim(@file_get_contents($cgroupPath.'/pids.max') ?: '');
+    if ($pidsCurrent !== '') {
+        $status['processes'] = ['current' => (int) $pidsCurrent];
+        if ($pidsMax !== '' && $pidsMax !== 'max') {
+            $status['processes']['limit'] = (int) $pidsMax;
+        }
+    }
+
+    // I/O stats
+    $ioStat = @file_get_contents($cgroupPath.'/io.stat');
+    if ($ioStat !== false && trim($ioStat) !== '') {
+        $totalRead = 0;
+        $totalWrite = 0;
+        foreach (explode("\n", trim($ioStat)) as $line) {
+            if (preg_match('/rbytes=(\d+)/', $line, $m)) {
+                $totalRead += (int) $m[1];
+            }
+            if (preg_match('/wbytes=(\d+)/', $line, $m)) {
+                $totalWrite += (int) $m[1];
+            }
+        }
+        $status['io'] = [
+            'read_mb' => round($totalRead / 1048576, 1),
+            'write_mb' => round($totalWrite / 1048576, 1),
+        ];
+    }
+
+    return $status;
+}
+
+/**
+ * Move PHP-FPM worker processes for a user into their cgroup slice.
+ *
+ * Returns the number of PIDs moved.
+ */
+function cgroupAssignFpmWorkers(string $username, string $sliceName): int
+{
+    $cgroupProcs = '/sys/fs/cgroup/jabali.slice/'.$sliceName.'.slice/cgroup.procs';
+    if (! file_exists($cgroupProcs)) {
+        return 0;
+    }
+
+    // Find FPM workers for this user's pool
+    $psOutput = [];
+    exec('ps -eo pid,args 2>/dev/null | grep '.escapeshellarg('php-fpm: pool '.$username), $psOutput);
+
+    $moved = 0;
+    foreach ($psOutput as $line) {
+        $line = trim($line);
+        if (str_contains($line, 'grep')) {
+            continue;
+        }
+        if (preg_match('/^(\d+)\s/', $line, $m)) {
+            $pid = (int) $m[1];
+            if (@file_put_contents($cgroupProcs, (string) $pid) !== false) {
+                $moved++;
+            }
+        }
+    }
+
+    return $moved;
+}
+
+/**
+ * Find the root block device path (e.g. /dev/sda, /dev/vda).
+ */
+function cgroupFindRootBlockDevice(): ?string
+{
+    // Use lsblk to find the device containing /
+    $output = trim(shell_exec('lsblk -ndo NAME,TYPE 2>/dev/null | grep disk | head -1 | awk \'{print $1}\'') ?? '');
+    if (! empty($output)) {
+        return '/dev/'.$output;
+    }
+
+    // Fallback: parse df output
+    $dfOutput = trim(shell_exec('df / 2>/dev/null | tail -1 | awk \'{print $1}\'') ?? '');
+    if (! empty($dfOutput) && str_starts_with($dfOutput, '/dev/')) {
+        // Strip partition number to get base device
+        return preg_replace('/[0-9]+$/', '', $dfOutput);
+    }
+
+    return null;
+}
+
+/**
+ * Get the major:minor device number for a block device.
+ */
+function cgroupGetDeviceNumber(string $device): ?string
+{
+    $stat = trim(shell_exec('stat -c "%t:%T" '.escapeshellarg($device).' 2>/dev/null') ?? '');
+    if (! empty($stat) && str_contains($stat, ':')) {
+        $parts = explode(':', $stat);
+
+        return hexdec($parts[0]).':'.hexdec($parts[1]);
+    }
+
+    return null;
 }
