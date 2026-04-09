@@ -25173,7 +25173,8 @@ function cgroupApply(array $params): array
     }
 
     // Start the slice (creates the cgroup)
-    exec('systemctl start '.escapeshellarg($sliceName.'.slice').' 2>&1', $startOutput, $startExit);
+    // Restart (not just start) to pick up changed limits on active slices
+    exec('systemctl restart '.escapeshellarg($sliceName.'.slice').' 2>&1', $startOutput, $startExit);
 
     // Move existing FPM workers into the slice
     $movedPids = cgroupAssignFpmWorkers($username, $sliceName);
