@@ -1563,7 +1563,7 @@ function getFpmSocketPath(string $username): string
     return "/run/php/php{$phpVersion}-fpm-{$username}.sock";
 }
 
-function generateNginxVhost(string $domain, string $publicHtml, string $logs, string $fpmSocket): string
+function generateNginxVhost(string $domain, string $publicHtml, string $logs, string $fpmSocket, ?int $reqPerSec = null, ?int $maxConns = null): string
 {
     $config = <<<'NGINXCONF'
 server {
@@ -1766,9 +1766,28 @@ NGINX;
     $config = str_replace('STATS_PLACEHOLDER', $stats, $config);
     $config = str_replace('PANEL_PORT_PLACEHOLDER', (string) getPanelPort(), $config);
 
-    // Rate/connection limits — replaced with actual values by nginxRegenerateDomainVhosts()
-    // Default: no limits (placeholder removed)
-    $config = str_replace("    RATE_LIMIT_PLACEHOLDER\n", '', $config);
+    // Inject rate/connection limits or remove placeholder
+    $rateLimitBlock = '';
+    if ($reqPerSec !== null && $reqPerSec > 0) {
+        $zones = [10, 30, 50, 100];
+        $zone = 100;
+        foreach ($zones as $z) {
+            if ($reqPerSec <= $z) {
+                $zone = $z;
+                break;
+            }
+        }
+        $burst = max(5, (int) round($reqPerSec * 0.5));
+        $rateLimitBlock .= "    limit_req zone=jabali_{$zone} burst={$burst} nodelay;\n";
+    }
+    if ($maxConns !== null && $maxConns > 0) {
+        $rateLimitBlock .= "    limit_conn jabali_conn {$maxConns};\n";
+    }
+    if (! empty($rateLimitBlock)) {
+        $config = str_replace("    RATE_LIMIT_PLACEHOLDER\n", "    # Rate limiting\n".$rateLimitBlock, $config);
+    } else {
+        $config = str_replace("    RATE_LIMIT_PLACEHOLDER\n", '', $config);
+    }
 
     // nginx >= 1.25 uses "http2 on;" directive; older uses "listen ... http2"
     $nginxVer = '';
@@ -2538,36 +2557,16 @@ function nginxRegenerateDomainVhosts(array $params): array
         // Preserve SSL paths from existing config
         $sslPaths = determineDomainSslPaths($domain);
 
-        // Generate new vhost
-        $vhostContent = generateNginxVhost($domain, $publicHtml, $logs, $fpmSocket);
-
-        // Inject nginx rate/connection limits (user override > package default)
+        // Resolve nginx rate/connection limits (user override > package default)
         $reqPerSec = $row['user_req_per_sec'] ?? $row['pkg_req_per_sec'] ?? null;
         $maxConns = $row['user_connections'] ?? $row['pkg_connections'] ?? null;
-        $rateLimitBlock = '';
 
-        if ($reqPerSec !== null && (int) $reqPerSec > 0) {
-            $rate = (int) $reqPerSec;
-            // Pick the closest predefined zone (10, 30, 50, 100)
-            $zones = [10, 30, 50, 100];
-            $zone = 100;
-            foreach ($zones as $z) {
-                if ($rate <= $z) {
-                    $zone = $z;
-                    break;
-                }
-            }
-            $burst = max(5, (int) round($rate * 0.5));
-            $rateLimitBlock .= "    limit_req zone=jabali_{$zone} burst={$burst} nodelay;\n";
-        }
-        if ($maxConns !== null && (int) $maxConns > 0) {
-            $rateLimitBlock .= '    limit_conn jabali_conn '.(int) $maxConns.";\n";
-        }
-
-        if (! empty($rateLimitBlock)) {
-            $rateLimitBlock = "    # Rate limiting\n".$rateLimitBlock;
-            $vhostContent = str_replace("    RATE_LIMIT_PLACEHOLDER\n", $rateLimitBlock, $vhostContent);
-        }
+        // Generate new vhost with rate limits baked in
+        $vhostContent = generateNginxVhost(
+            $domain, $publicHtml, $logs, $fpmSocket,
+            $reqPerSec !== null ? (int) $reqPerSec : null,
+            $maxConns !== null ? (int) $maxConns : null
+        );
 
         // Inject custom nginx directives if present
         $customDirectives = trim($row['custom_nginx_directives'] ?? '');
