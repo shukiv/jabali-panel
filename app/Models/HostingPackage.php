@@ -28,6 +28,8 @@ class HostingPackage extends Model
         'io_read_mbps',
         'io_write_mbps',
         'max_processes',
+        'nginx_req_per_sec',
+        'nginx_connections',
     ];
 
     protected function casts(): array

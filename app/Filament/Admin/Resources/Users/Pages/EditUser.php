@@ -56,7 +56,7 @@ class EditUser extends EditRecord
         }
 
         // Null out resource limit fields that are empty (keep only explicit overrides)
-        foreach (['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes'] as $field) {
+        foreach (['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes', 'nginx_req_per_sec', 'nginx_connections'] as $field) {
             if (blank($data[$field] ?? null)) {
                 $data[$field] = null;
             }

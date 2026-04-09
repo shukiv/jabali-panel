@@ -101,6 +101,16 @@ class HostingPackageForm
                             ->numeric()
                             ->minValue(10)
                             ->helperText(__('Typical: 50–200. Includes FPM workers + SSH sessions')),
+                        TextInput::make('nginx_req_per_sec')
+                            ->label(__('Requests / second'))
+                            ->numeric()
+                            ->minValue(1)
+                            ->helperText(__('Typical: 30–100. Per IP, with short burst allowed')),
+                        TextInput::make('nginx_connections')
+                            ->label(__('Max Connections'))
+                            ->numeric()
+                            ->minValue(1)
+                            ->helperText(__('Typical: 50–200. Concurrent connections per IP')),
                     ])
                     ->columns(2)
                     ->collapsible(),

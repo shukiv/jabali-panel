@@ -33,6 +33,8 @@ class User extends Authenticatable implements FilamentUser
         'io_read_mbps',
         'io_write_mbps',
         'max_processes',
+        'nginx_req_per_sec',
+        'nginx_connections',
         'ssh_isolation_mode',
     ];
 
@@ -119,6 +121,27 @@ class User extends Authenticatable implements FilamentUser
     public function getEffectiveResourceLimits(): array
     {
         $fields = ['cpu_quota', 'memory_limit_mb', 'io_read_mbps', 'io_write_mbps', 'max_processes'];
+        $package = $this->hostingPackage;
+        $limits = [];
+
+        foreach ($fields as $field) {
+            $value = $this->$field ?? $package?->$field;
+            if ($value !== null) {
+                $limits[$field] = (int) $value;
+            }
+        }
+
+        return $limits;
+    }
+
+    /**
+     * Get effective nginx rate limits (user override or package default).
+     *
+     * @return array{nginx_req_per_sec?: int, nginx_connections?: int}
+     */
+    public function getEffectiveNginxLimits(): array
+    {
+        $fields = ['nginx_req_per_sec', 'nginx_connections'];
         $package = $this->hostingPackage;
         $limits = [];
 

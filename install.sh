@@ -1543,6 +1543,24 @@ configure_nginx() {
         fi
     fi
 
+    # Write rate/connection limiting zones (idempotent)
+    cat > /etc/nginx/conf.d/jabali-ratelimit.conf << 'RATELIMIT'
+# Per-IP rate limiting zones — used by per-domain limit_req in vhosts
+# Separate tiers allow different rates per hosting package
+# 10m zone ≈ 160,000 IPs tracked
+limit_req_zone $binary_remote_addr zone=jabali_10:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=jabali_30:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=jabali_50:10m rate=50r/s;
+limit_req_zone $binary_remote_addr zone=jabali_100:10m rate=100r/s;
+
+# Per-IP connection limiting zone
+limit_conn_zone $binary_remote_addr zone=jabali_conn:10m;
+
+# Return 429 Too Many Requests instead of 503
+limit_req_status 429;
+limit_conn_status 429;
+RATELIMIT
+
     # Write Cloudflare real IP restoration config (idempotent)
     cat > /etc/nginx/conf.d/jabali-realip.conf << 'REALIP'
 # Cloudflare real IP restoration

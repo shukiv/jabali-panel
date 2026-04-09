@@ -1625,6 +1625,8 @@ server {
         return 301 $scheme://$host/webmail/;
     }
 
+    RATE_LIMIT_PLACEHOLDER
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
@@ -1763,6 +1765,10 @@ NGINX;
     $config = str_replace('LOGS_PLACEHOLDER', $logs, $config);
     $config = str_replace('STATS_PLACEHOLDER', $stats, $config);
     $config = str_replace('PANEL_PORT_PLACEHOLDER', (string) getPanelPort(), $config);
+
+    // Rate/connection limits — replaced with actual values by nginxRegenerateDomainVhosts()
+    // Default: no limits (placeholder removed)
+    $config = str_replace("    RATE_LIMIT_PLACEHOLDER\n", '', $config);
 
     // nginx >= 1.25 uses "http2 on;" directive; older uses "listen ... http2"
     $nginxVer = '';
@@ -2479,8 +2485,12 @@ function nginxRegenerateDomainVhosts(array $params): array
         return ['success' => false, 'error' => 'Database connection failed: '.$e->getMessage()];
     }
 
-    $sql = 'SELECT d.domain, d.is_active, d.custom_nginx_directives, d.directory_index, u.username
-            FROM domains d JOIN users u ON d.user_id = u.id';
+    $sql = 'SELECT d.domain, d.is_active, d.custom_nginx_directives, d.directory_index, u.username,
+                   u.nginx_req_per_sec AS user_req_per_sec, u.nginx_connections AS user_connections,
+                   hp.nginx_req_per_sec AS pkg_req_per_sec, hp.nginx_connections AS pkg_connections
+            FROM domains d
+            JOIN users u ON d.user_id = u.id
+            LEFT JOIN hosting_packages hp ON u.hosting_package_id = hp.id';
     $bindParams = [];
 
     if ($filterDomain) {
@@ -2530,6 +2540,34 @@ function nginxRegenerateDomainVhosts(array $params): array
 
         // Generate new vhost
         $vhostContent = generateNginxVhost($domain, $publicHtml, $logs, $fpmSocket);
+
+        // Inject nginx rate/connection limits (user override > package default)
+        $reqPerSec = $row['user_req_per_sec'] ?? $row['pkg_req_per_sec'] ?? null;
+        $maxConns = $row['user_connections'] ?? $row['pkg_connections'] ?? null;
+        $rateLimitBlock = '';
+
+        if ($reqPerSec !== null && (int) $reqPerSec > 0) {
+            $rate = (int) $reqPerSec;
+            // Pick the closest predefined zone (10, 30, 50, 100)
+            $zones = [10, 30, 50, 100];
+            $zone = 100;
+            foreach ($zones as $z) {
+                if ($rate <= $z) {
+                    $zone = $z;
+                    break;
+                }
+            }
+            $burst = max(5, (int) round($rate * 0.5));
+            $rateLimitBlock .= "    limit_req zone=jabali_{$zone} burst={$burst} nodelay;\n";
+        }
+        if ($maxConns !== null && (int) $maxConns > 0) {
+            $rateLimitBlock .= '    limit_conn jabali_conn '.(int) $maxConns.";\n";
+        }
+
+        if (! empty($rateLimitBlock)) {
+            $rateLimitBlock = "    # Rate limiting\n".$rateLimitBlock;
+            $vhostContent = str_replace("    RATE_LIMIT_PLACEHOLDER\n", $rateLimitBlock, $vhostContent);
+        }
 
         // Inject custom nginx directives if present
         $customDirectives = trim($row['custom_nginx_directives'] ?? '');
