@@ -73,6 +73,13 @@ try_nspawn() {
     uid_num="$(id -u)"
     gid_num="$(id -g)"
 
+    # Move this shell session into the user's cgroup slice (if one exists)
+    local slice_name="jabali-user-${JUSER//_/-}"
+    local cgroup_procs="/sys/fs/cgroup/jabali.slice/${slice_name}.slice/cgroup.procs"
+    if [[ -w "$cgroup_procs" ]]; then
+        echo $$ > "$cgroup_procs" 2>/dev/null || true
+    fi
+
     if [[ -z "$REMOTE_CMD" ]]; then
         if tty -s 2>/dev/null; then
             # Interactive: terminal attached
@@ -109,6 +116,13 @@ try_bwrap() {
 
 # --- standard shell (no isolation) ---
 try_standard() {
+    # Move this shell session into the user's cgroup slice (if one exists)
+    local slice_name="jabali-user-${JUSER//_/-}"
+    local cgroup_procs="/sys/fs/cgroup/jabali.slice/${slice_name}.slice/cgroup.procs"
+    if [[ -w "$cgroup_procs" ]]; then
+        echo $$ > "$cgroup_procs" 2>/dev/null || true
+    fi
+
     if [[ -z "$REMOTE_CMD" ]]; then
         if tty -s 2>/dev/null; then
             # Interactive SSH: user has a terminal

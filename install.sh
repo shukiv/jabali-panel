@@ -3173,6 +3173,18 @@ SERVICE
     systemctl start jabali-agent
 
     log "Jabali Agent service configured"
+
+    # Create parent cgroup slice for per-user resource limits
+    if mount | grep -q 'type cgroup2'; then
+        cat > /etc/systemd/system/jabali.slice << 'SLICE'
+[Unit]
+Description=Jabali Panel user resource limits
+SLICE
+        systemctl daemon-reload
+        log "cgroups v2 parent slice created"
+    else
+        warn "cgroups v2 not detected — per-user resource limits will not be available"
+    fi
 }
 
 setup_queue_service() {
