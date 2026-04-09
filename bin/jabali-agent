@@ -25207,7 +25207,7 @@ function cgroupStatus(array $params): array
     }
 
     $sliceName = 'jabali-user-'.str_replace('_', '-', $username);
-    $cgroupPath = '/sys/fs/cgroup/jabali.slice/'.$sliceName.'.slice';
+    $cgroupPath = '/sys/fs/cgroup/jabali.slice/jabali-user.slice/'.$sliceName.'.slice';
 
     if (! is_dir($cgroupPath)) {
         return [
@@ -25301,7 +25301,7 @@ function cgroupStatus(array $params): array
  */
 function cgroupAssignFpmWorkers(string $username, string $sliceName): int
 {
-    $cgroupProcs = '/sys/fs/cgroup/jabali.slice/'.$sliceName.'.slice/cgroup.procs';
+    $cgroupProcs = '/sys/fs/cgroup/jabali.slice/jabali-user.slice/'.$sliceName.'.slice/cgroup.procs';
     if (! file_exists($cgroupProcs)) {
         return 0;
     }

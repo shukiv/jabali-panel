@@ -563,7 +563,7 @@ function main(): void
                 if (!isset($pidsByPool[$poolName])) {
                     continue;
                 }
-                $cgroupProcs = '/sys/fs/cgroup/jabali.slice/' . $base . '.slice/cgroup.procs';
+                $cgroupProcs = '/sys/fs/cgroup/jabali.slice/jabali-user.slice/' . $base . '.slice/cgroup.procs';
                 if (!file_exists($cgroupProcs)) {
                     continue;
                 }
