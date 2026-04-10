@@ -263,9 +263,10 @@ class DemoSeeder extends Seeder
 
             foreach ($data['forwarders'] as $from => $to) {
                 EmailForwarder::firstOrCreate(
-                    ['email_domain_id' => $emailDomain->id, 'source' => $from],
+                    ['email_domain_id' => $emailDomain->id, 'local_part' => $from],
                     [
-                        'destination' => $to,
+                        'user_id' => $user->id,
+                        'destinations' => $to,
                         'is_active' => true,
                     ]
                 );
