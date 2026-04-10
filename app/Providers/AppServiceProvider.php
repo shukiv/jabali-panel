@@ -53,16 +53,14 @@ class AppServiceProvider extends ServiceProvider
                 return null;
             });
 
-            // Disable all Filament actions that modify data (covers custom pages too)
+            // Hide all Filament actions that modify data (covers custom pages too)
             Action::configureUsing(function (Action $action): void {
                 $name = strtolower($action->getName());
-                $writeActions = ['create', 'save', 'delete', 'edit', 'new', 'install', 'remove', 'update', 'disable', 'enable', 'suspend', 'reboot', 'restart'];
+                $writePatterns = ['create', 'save', 'delete', 'edit', 'new', 'install', 'remove', 'update', 'disable', 'enable', 'suspend', 'reboot', 'restart'];
 
-                foreach ($writeActions as $write) {
-                    if (str_contains($name, $write)) {
-                        $action
-                            ->disabled()
-                            ->tooltip(__('Disabled in demo mode'));
+                foreach ($writePatterns as $pattern) {
+                    if (str_contains($name, $pattern)) {
+                        $action->hidden();
 
                         return;
                     }
