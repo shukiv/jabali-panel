@@ -40,9 +40,9 @@ class DemoMode
             return $next($request);
         }
 
-        // Block login/logout/password changes
-        if ($request->is('*/login', '*/logout', '*/password*', '*/two-factor*')) {
-            abort(403, 'Demo mode — authentication changes are disabled.');
+        // Block logout and password changes (login must be allowed)
+        if ($request->is('*/logout', '*/password*', '*/two-factor*')) {
+            abort(403, 'Demo mode — this action is disabled.');
         }
 
         // Allow Livewire requests (POST) — they handle navigation, table sorting, etc.
