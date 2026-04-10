@@ -16,13 +16,18 @@ use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Concerns\InteractsWithTable;
+use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Table;
 use Illuminate\Contracts\Support\Htmlable;
 
-class UserBackups extends Page implements HasActions, HasForms
+class UserBackups extends Page implements HasActions, HasForms, HasTable
 {
     use BrowsesSnapshots;
     use InteractsWithActions;
     use InteractsWithForms;
+    use InteractsWithTable;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-cloud-arrow-up';
 
@@ -111,6 +116,41 @@ class UserBackups extends Page implements HasActions, HasForms
         } catch (\Throwable $e) {
             $this->snapshots = [];
         }
+        $this->resetTable();
+    }
+
+    public function table(Table $table): Table
+    {
+        $snapshotsByKey = collect($this->snapshots)->mapWithKeys(fn ($s) => [$s['id'] => $s])->all();
+
+        return $table
+            ->records(fn () => $snapshotsByKey)
+            ->columns([
+                TextColumn::make('id')
+                    ->label(__('Snapshot'))
+                    ->badge()
+                    ->color('gray'),
+                TextColumn::make('date')
+                    ->label(__('Date'))
+                    ->formatStateUsing(fn (array $record): string => trim(($record['date'] ?? '') . ' ' . ($record['time'] ?? '')) ?: '—'),
+            ])
+            ->recordActions([
+                Action::make('browse')
+                    ->label(__('Browse'))
+                    ->icon('heroicon-o-folder-open')
+                    ->color('gray')
+                    ->size('sm')
+                    ->action(fn (array $record) => $this->browseSnapshot($record['id'])),
+                Action::make('restore')
+                    ->label(__('Restore'))
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('primary')
+                    ->size('sm')
+                    ->action(fn (array $record) => $this->openRestore($record['id'])),
+            ])
+            ->emptyStateHeading(__('No backups found'))
+            ->emptyStateIcon('heroicon-o-archive-box')
+            ->paginated(false);
     }
 
     public function createBackup(): void
