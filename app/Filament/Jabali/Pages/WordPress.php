@@ -28,9 +28,7 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
-use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
@@ -110,16 +108,10 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
         return $table
             ->records(fn () => collect($this->sites)->keyBy('id')->toArray())
             ->columns([
-                ImageColumn::make('screenshot')
-                    ->label(__('Preview'))
-                    ->state(fn (array $record): ?string => $this->getScreenshotUrl($record['id']))
-                    ->height(120)
-                    ->width(200)
-                    ->defaultImageUrl(url('/images/no-preview.svg'))
-                    ->extraImgAttributes(['loading' => 'lazy']),
-                ViewColumn::make('domain')
-                    ->label(__('Site'))
-                    ->view('filament.jabali.columns.wordpress-site'),
+                TextColumn::make('domain')
+                    ->label(__('Domain'))
+                    ->url(fn (array $record): string => $record['url'] ?? '#', shouldOpenInNewTab: true)
+                    ->description(fn (array $record): string => 'WP '.($record['version'] ?? '')),
                 TextColumn::make('cache_enabled')
                     ->label(__('Cache'))
                     ->badge()
