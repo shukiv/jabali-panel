@@ -636,7 +636,7 @@ function handleAction(array $request): array
         'ssh.delete_key' => sshDeleteKey($params),
         'ssh.enable_shell' => sshEnableShell($params),
         'ssh.disable_shell' => sshDisableShell($params),
-        'ssh.shell_status' => sshGetShellStatus($params),
+        // ssh.shell_status removed — unused
         'ssh.migrate_shell_users' => sshMigrateShellUsers($params),
         'ssh.set_shell_mode' => sshSetShellMode($params),
         'ssh.get_settings' => sshGetSettings($params),
@@ -729,7 +729,7 @@ function handleAction(array $request): array
         'database.set_global' => databaseSetGlobal($params),
         'server.export_config' => serverExportConfig($params),
         'server.import_config' => serverImportConfig($params),
-        'server.get_resolvers' => serverGetResolvers($params),
+        // server.get_resolvers removed — unused
         'server.set_resolvers' => serverSetResolvers($params),
         // Email operations (Stalwart)
         'email.enable_domain' => stalwartEmailEnableDomain($params),
@@ -784,25 +784,7 @@ function handleAction(array $request): array
         'ssl.panel.issue' => sslPanelIssue($params),
         'ssl.list' => sslList($params),
         'ssl.certbot_log' => sslCertbotLog($params),
-        // Backup operations
-        'backup.create' => backupCreate($params),
-        'backup.create_user_snapshot' => backupCreateUserSnapshot($params),
-        'backup.create_server' => backupCreateServer($params),
-        'backup.restore' => backupRestore($params),
-        'backup.list' => backupList($params),
-        'backup.delete' => backupDelete($params),
-        'backup.delete_server' => backupDeleteServer($params),
-        'backup.verify' => backupVerify($params),
-        'backup.get_info' => backupGetInfo($params),
-        'backup.list_remote' => backupListRemote($params),
-        'backup.delete_remote' => backupDeleteRemote($params),
-        'backup.test_destination' => backupTestDestination($params),
-        'backup.get_password' => backupGetPassword($params),
-        'backup.set_password' => backupSetPassword($params),
-        'backup.list_contents' => backupListContents($params),
-        'backup.list_domain_files' => backupListDomainFiles($params),
-        'backup.read_snapshot_file' => backupReadSnapshotFile($params),
-        'backup.export_snapshot' => backupExportSnapshot($params),
+        // Backup operations — removed (rebuilt as standalone jabali-backup tool, see ADR-0004)
         // cPanel migration operations
         'cpanel.analyze_backup' => cpanelAnalyzeBackup($params),
         'cpanel.validate_backup' => cpanelValidateBackup($params),
@@ -865,9 +847,7 @@ function handleAction(array $request): array
         'branding.get_welcome_page' => brandingGetWelcomePage($params),
         'branding.save_welcome_page' => brandingSaveWelcomePage($params),
         // Addon management
-        'addon.status' => addonStatus($params),
-        'addon.install' => addonInstall($params),
-        'addon.uninstall' => addonUninstall($params),
+        // addon.status/install/uninstall removed — unused (addon management via agent.d/ loading)
         default => handleAddonAction($action, $params),
     };
 }
