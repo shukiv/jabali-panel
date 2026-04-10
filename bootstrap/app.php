@@ -44,6 +44,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(\App\Http\Middleware\MailSubdomainRedirect::class);
         $middleware->prepend(\App\Http\Middleware\RequestCorrelationId::class);
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+        if ((bool) env('DEMO_MODE', false)) {
+            $middleware->append(\App\Http\Middleware\DemoMode::class);
+        }
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
