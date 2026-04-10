@@ -439,6 +439,26 @@ jabali wp:import <path> [--user=]
 ```
 Restores WordPress and database from a cPanel backup file.
 
+## Resource Limits (cgroup v2)
+
+### Check cgroup Availability
+```bash
+jabali cgroup check [--json]
+```
+Verifies cgroups v2 is available on the server. Reports version and available controllers.
+
+### Apply Resource Limits
+```bash
+jabali cgroup apply <username> [--all] [--json]
+```
+Creates or updates the systemd slice for a user based on their effective resource limits (user override or hosting package defaults). Use `--all` to apply limits to all users with configured limits.
+
+### Show Resource Usage
+```bash
+jabali cgroup status <username> [--json]
+```
+Displays live resource usage vs limits for a user: CPU time, memory used/limit, process count, and I/O bytes.
+
 ## Agent Management
 
 ### Agent Status

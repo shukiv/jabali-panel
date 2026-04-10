@@ -115,9 +115,22 @@ jabali-agent (PHP binary, bin/jabali-agent)
 - **Per-pool settings**: Max processes, max requests, memory limit, open files limit, process priority, request timeout
 - **Application scope**: Settings apply to new user pools by default, or can be applied to all existing pools via "Apply to All" action
 
+#### Custom Nginx Directives
+
+**Role**: Per-domain nginx configuration injected into vhost server blocks.
+
+**Management**:
+- Users configure directives from the Domains page "Nginx Directives" action
+- Admin validation: only blocks dangerous directives (load_module, lua, perl, js)
+- User validation: allowlist of safe directives (rewrite, return, try_files, add_header, proxy_pass, location, etc.)
+- Agent applies directives to vhost config and runs `nginx -t` before reload
+- Path traversal (`../`) blocked in all directive values
+
+**Implementation**: `NginxDirectiveValidator` service, `ManagesNginxDirectives` Filament concern, `custom_nginx_directives` column on domains table.
+
 #### Backup System
 
-**Status**: Fully removed in this session. Will be rebuilt as standalone tool (jabali-backup) with addon architecture.
+**Status**: Fully removed. Rebuilt as standalone tool (jabali-backup) with agent addon architecture. See ADR-0004.
 
 #### Certbot / Let's Encrypt
 
@@ -213,7 +226,44 @@ jabali-agent (PHP binary, bin/jabali-agent)
 
 **Integration**: `ssh_shell_enabled` toggle on hosting packages, auto-enabled on user creation.
 
-### 7. Job Queue
+### 7. Resource Limiting (cgroup v2)
+
+**Technology**: systemd slices backed by cgroup v2 unified hierarchy.
+
+**Purpose**: Per-user resource caps enforced at the kernel level. Prevents any single user from consuming all server resources.
+
+**Limits**:
+- **CPU** — `CPUQuota` percentage of one core (100 = 1 core, 200 = 2 cores)
+- **Memory** — `MemoryMax` hard cap + `MemoryHigh` soft limit at 90% (triggers reclaim before OOM kill)
+- **I/O** — `IOReadBandwidthMax` / `IOWriteBandwidthMax` in MB/s per block device
+- **Processes** — `TasksMax` caps concurrent tasks (FPM workers + SSH sessions + cron)
+
+**Slice hierarchy**: `/sys/fs/cgroup/jabali.slice/jabali-user.slice/jabali-user-{username}.slice/`
+
+**Configuration**: Set via Hosting Packages (defaults) with per-user overrides. Applied on user create/edit, synced when package changes.
+
+**Enforcement**:
+- PHP-FPM workers moved into user's slice by agent on apply and by health monitor every ~90s (catches respawns)
+- SSH sessions (nspawn and standard) move themselves into the slice on login via `jabali-shell.sh`
+- Kernel throttles CPU, kills processes exceeding memory, rejects fork() past process limit
+
+**CLI**: `jabali cgroup check`, `jabali cgroup apply <user>`, `jabali cgroup status <user>`, `jabali cgroup apply --all`
+
+**Agent handlers**: `cgroup.check`, `cgroup.apply`, `cgroup.remove`, `cgroup.status`
+
+### 8. Nginx Rate Limiting
+
+**Purpose**: Per-user request rate and connection limits at the nginx layer. Protects against traffic floods before requests reach PHP-FPM.
+
+**Implementation**:
+- Tiered `limit_req_zone` definitions in `/etc/nginx/conf.d/jabali-ratelimit.conf` (10, 30, 50, 100 req/s zones)
+- `limit_conn_zone` for concurrent connection limits per IP
+- Directives injected into vhost server blocks during `nginx:regenerate`
+- Burst set to 50% of rate with `nodelay`; returns HTTP 429 when exceeded
+
+**Configuration**: `nginx_req_per_sec` and `nginx_connections` on Hosting Packages and Users (same override pattern as cgroup limits).
+
+### 9. Job Queue
 
 **Technology**: Laravel queue system with database driver (default), or Redis for high-volume.
 
@@ -299,7 +349,9 @@ jabali-agent (PHP binary, bin/jabali-agent)
 4. Agent command dispatched: `createUser(username, password, email, is_admin)`
 5. Agent creates Unix user, home directory, SSH key, database user
 6. Panel stores user record with agent response data
-7. If `ssh_shell_enabled`, container created automatically
+7. If disk quota set, agent applies filesystem quota
+8. If resource limits set (CPU/memory/IO/processes), agent creates systemd cgroup slice
+9. If SSH isolation mode enabled, container or sandbox configured
 
 ### Domain Creation
 
