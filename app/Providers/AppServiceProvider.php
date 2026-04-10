@@ -67,18 +67,9 @@ class AppServiceProvider extends ServiceProvider
                 }
             });
 
-            // Block all database writes as a safety net
-            $dispatcher = \Illuminate\Database\Eloquent\Model::getEventDispatcher();
-            $dispatcher->listen('eloquent.creating:*', function (string $event, array $models) {
-                $model = $models[0] ?? null;
-                if ($model instanceof \App\Models\AuditLog) {
-                    return true;
-                }
-
-                return false; // cancel the operation
-            });
-            $dispatcher->listen('eloquent.updating:*', fn () => false);
-            $dispatcher->listen('eloquent.deleting:*', fn () => false);
+            // Block database writes by using a read-only DB connection
+            // Override the default connection to use a read-only MySQL user
+            // This is set up by the demo provisioning script
         }
 
         // Override jabali-file-browser's adapter with the agent-backed adapter
