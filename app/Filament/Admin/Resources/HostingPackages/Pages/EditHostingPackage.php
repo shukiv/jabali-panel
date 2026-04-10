@@ -13,17 +13,28 @@ class EditHostingPackage extends EditRecord
 {
     protected static string $resource = HostingPackageResource::class;
 
+    protected ?int $oldDiskQuota = null;
+
+    protected function mutateFormDataBeforeSave(array $data): array
+    {
+        $this->oldDiskQuota = $this->record->disk_quota_mb;
+
+        return $data;
+    }
+
     protected function afterSave(): void
     {
         $agent = app(AgentClient::class);
         $allUsers = $this->record->users()->get();
+        $newDiskQuota = $this->record->disk_quota_mb;
 
         foreach ($allUsers as $user) {
-            // Sync disk quota (users without a per-user override inherit from package)
-            if ($user->disk_quota_mb === null || $user->disk_quota_mb === $this->record->getOriginal('disk_quota_mb')) {
-                $user->update(['disk_quota_mb' => $this->record->disk_quota_mb]);
+            // Sync disk quota — update users who inherited the old package value (no per-user override)
+            $userQuota = $user->disk_quota_mb;
+            if ($userQuota === null || $userQuota === $this->oldDiskQuota) {
+                $user->update(['disk_quota_mb' => $newDiskQuota]);
                 try {
-                    $agent->quotaSet($user->username, (int) ($this->record->disk_quota_mb ?? 0));
+                    $agent->quotaSet($user->username, (int) ($newDiskQuota ?? 0));
                 } catch (\Throwable) {
                 }
             }
