@@ -10,8 +10,13 @@ namespace App\Services\Agent;
  * Returns plausible success responses without touching any system resources.
  * Activated when DEMO_MODE=true in .env.
  */
-class DemoAgentClient implements AgentClientInterface
+class DemoAgentClient extends AgentClient
 {
+    public function __construct()
+    {
+        // No socket connection needed in demo mode
+    }
+
     public function send(string $action, array $data = []): array
     {
         // Read-only actions return realistic mock data

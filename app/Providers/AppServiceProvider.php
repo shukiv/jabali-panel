@@ -23,16 +23,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        if (config('app.demo_mode')) {
-            $this->app->singleton(AgentClient::class, fn (): DemoAgentClient => new DemoAgentClient);
-            $this->app->alias(AgentClient::class, AgentClientInterface::class);
-        } else {
-            $this->app->singleton(AgentClient::class, fn (): AgentClient => new AgentClient(
+        $this->app->singleton(AgentClient::class, fn (): AgentClient => config('app.demo_mode')
+            ? new DemoAgentClient
+            : new AgentClient(
                 (string) config('jabali.agent.socket', '/var/run/jabali/agent.sock'),
                 (int) config('jabali.agent.timeout', 30),
-            ));
-            $this->app->alias(AgentClient::class, AgentClientInterface::class);
-        }
+            )
+        );
+        $this->app->alias(AgentClient::class, AgentClientInterface::class);
     }
 
     /**
