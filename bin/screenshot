@@ -10,6 +10,13 @@ if [[ -z "$URL" || -z "$OUTPUT" ]]; then
     exit 1
 fi
 
+# Resolve the domain to localhost so the screenshot always hits this server
+DOMAIN=$(echo "$URL" | sed -E 's|https?://([^/:]+).*|\1|')
+RESOLVER_RULES=""
+if [[ -n "$DOMAIN" ]]; then
+    RESOLVER_RULES="MAP ${DOMAIN} 127.0.0.1"
+fi
+
 # Create temp directory for this run
 TMPDIR="/tmp/chromium-screenshot-$$"
 mkdir -p "$TMPDIR/data" "$TMPDIR/.local/share" "$TMPDIR/.cache" "$TMPDIR/.config"
@@ -61,6 +68,7 @@ fi
     --ignore-certificate-errors \
     --window-size=1280,800 \
     --hide-scrollbars \
+    ${RESOLVER_RULES:+--host-resolver-rules="$RESOLVER_RULES"} \
     --screenshot="$OUTPUT" \
     "$URL" 2>/dev/null
 
