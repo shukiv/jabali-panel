@@ -51,6 +51,7 @@ USAGE:
 COMMANDS:
     run [username]      Run backup (all accounts or single account)
     restore <username>  Restore account from snapshot
+    import <file>       Restore from a backup archive (tar.gz)
     download <username> Download snapshot as compressed archive
     ls <username> [path]  Browse files in a snapshot
     list <what>         List accounts, snapshots, or domains
@@ -81,6 +82,11 @@ RESTORE OPTIONS:
     --force             Overwrite existing data
     --dry-run           Preview restore plan
 
+IMPORT OPTIONS:
+    --only=COLLECTORS   Restore specific components only
+    --force             Overwrite existing data
+    --dry-run           Preview what would be restored
+
 FILE BROWSING:
     jabali-backup ls <username>                            # list all files
     jabali-backup ls <username> domains/                   # list subdirectory
@@ -95,6 +101,8 @@ EXAMPLES:
     jabali-backup restore alice --snapshot=latest
     jabali-backup restore alice --file=domains/example.com/public_html/wp-config.php
     jabali-backup restore alice --file=domains/example.com/ --target=/tmp/
+    jabali-backup import backup.tar.gz            # restore from archive
+    jabali-backup import backup.tar.gz --dry-run   # preview archive contents
     jabali-backup doctor                       # check dependencies
 
 EOF
@@ -775,7 +783,7 @@ cmd_restore() {
         echo "Components found in snapshot:"
         [[ -n "$has_home" ]] && _collector_enabled files "$only" "$exclude" && echo "  files:     /home/${target_user}/"
         echo "$contents" | grep -q "/mysql/" && _collector_enabled mysql "$only" "$exclude" && echo "  mysql:     database dumps"
-        echo "$contents" | grep -q "/postgres/" && _collector_enabled postgres "$only" "$exclude" && echo "  postgres:  database dumps"
+        echo "$contents" | grep -q "/postgres/" && _collector_enabled postgres "$only" "$exclude" && echo "  postgres:  PostgreSQL database dumps"
         echo "$contents" | grep -q "/dns/" && _collector_enabled dns "$only" "$exclude" && echo "  dns:       zone records"
         echo "$contents" | grep -q "/email/" && _collector_enabled email "$only" "$exclude" && echo "  email:     mailboxes, forwarders"
         echo "$contents" | grep -q "/ssl/" && _collector_enabled ssl "$only" "$exclude" && echo "  ssl:       certificates"
@@ -804,6 +812,7 @@ cmd_restore() {
         echo "────────────────────────────────────────"
         [[ -d "${extract_dir}/home/${target_user}" ]] && echo "  home/       $(find "${extract_dir}/home/${target_user}" -type f 2>/dev/null | wc -l) files"
         [[ -d "${staging}/mysql" ]] && echo "  mysql/      $(ls "${staging}/mysql/"*.sql.gz 2>/dev/null | wc -l) database(s)"
+        [[ -d "${staging}/postgres" ]] && echo "  postgres/   $(ls "${staging}/postgres/"*.dump 2>/dev/null | wc -l) database(s)"
         [[ -d "${staging}/dns" ]] && echo "  dns/        $(ls "${staging}/dns/"*.json 2>/dev/null | wc -l) zone(s)"
         [[ -d "${staging}/email" ]] && echo "  email/      $(ls "${staging}/email/mailboxes/"*.json 2>/dev/null | wc -l) mailbox(es)"
         [[ -d "${staging}/ssl" ]] && echo "  ssl/        $(find "${staging}/ssl" -name meta.json 2>/dev/null | wc -l) cert(s)"
@@ -925,7 +934,18 @@ cmd_restore() {
         skipped=$((skipped + 1))
     fi
 
-    # 10. Cron
+    # 10. PostgreSQL
+    if _collector_enabled postgres "$only" "$exclude" && [[ -d "${staging}/postgres" ]]; then
+        if restore_postgres "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 11. Cron
     if _collector_enabled cron "$only" "$exclude" && [[ -d "${staging}/cron" ]]; then
         if restore_cron "$extract_dir" "$target_user" "$uid" "$force"; then
             restored=$((restored + 1))
@@ -936,7 +956,7 @@ cmd_restore() {
         skipped=$((skipped + 1))
     fi
 
-    # 11. Stalwart
+    # 12. Stalwart
     if _collector_enabled stalwart "$only" "$exclude" && [[ -d "${staging}/stalwart" ]]; then
         if restore_stalwart "$extract_dir" "$target_user" "$uid" "$force"; then
             restored=$((restored + 1))
@@ -966,6 +986,237 @@ cmd_restore() {
 
     log_info "═══ Restore complete for $target_user ═══"
     return "$failed"
+}
+
+# ─── Import from Archive ─────────────────────────────
+
+cmd_import() {
+    cfg_load
+
+    local archive="" only="" force=0 dry_run=0
+    for arg in "$@"; do
+        case "$arg" in
+            --only=*)     only="${arg#--only=}" ;;
+            --force)      force=1 ;;
+            --dry-run)    dry_run=1 ;;
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+            *)            archive="$arg" ;;
+        esac
+    done
+
+    if [[ -z "$archive" ]]; then
+        echo "Usage: jabali-backup import <archive.tar.gz> [--only=...] [--force] [--dry-run]"
+        return 1
+    fi
+
+    if [[ ! -f "$archive" ]]; then
+        log_error "Archive not found: $archive"
+        return 1
+    fi
+
+    # Validate it's a gzip/tar file
+    local magic
+    magic=$(file -b --mime-type "$archive" 2>/dev/null)
+    case "$magic" in
+        application/gzip|application/x-gzip|application/x-tar|application/x-compressed-tar) ;;
+        *)
+            log_error "Not a valid tar.gz archive: $archive (detected: $magic)"
+            return 1
+            ;;
+    esac
+
+    local start_time
+    start_time=$(date +%s)
+
+    # Extract to temp directory
+    local extract_dir
+    extract_dir=$(mktemp -d /tmp/jabali-import-XXXXXX)
+    trap "rm -rf '$extract_dir'" EXIT
+
+    log_info "Extracting archive: $archive"
+    if ! tar -xzf "$archive" -C "$extract_dir" 2>/dev/null; then
+        log_error "Failed to extract archive"
+        return 1
+    fi
+
+    # Discover users from top-level directories
+    local -a users=()
+    local entry
+    for entry in "$extract_dir"/*/; do
+        [[ -d "$entry" ]] || continue
+        local dirname
+        dirname=$(basename "$entry")
+        # Skip internal directories
+        [[ "$dirname" == _clean || "$dirname" == tmp ]] && continue
+        users+=("$dirname")
+    done
+
+    if [[ ${#users[@]} -eq 0 ]]; then
+        log_error "No user directories found in archive"
+        return 1
+    fi
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Import from Archive"
+    echo "────────────────────────────────────────"
+    echo "  Archive:   $(basename "$archive")"
+    echo "  Users:     ${users[*]}"
+    echo ""
+
+    # Discover components per user
+    local total_restored=0 total_failed=0
+    for username in "${users[@]}"; do
+        local user_dir="${extract_dir}/${username}"
+        echo "  Account: $username"
+
+        # Detect available components
+        local -a components=()
+        [[ -d "${user_dir}/home" ]] && components+=(files)
+        [[ -d "${user_dir}/mysql" ]] && components+=(mysql)
+        [[ -d "${user_dir}/postgres" ]] && components+=(postgres)
+        [[ -d "${user_dir}/dns" ]] && components+=(dns)
+        [[ -d "${user_dir}/email" ]] && components+=(email)
+        [[ -d "${user_dir}/ssl" ]] && components+=(ssl)
+        [[ -d "${user_dir}/nginx" ]] && components+=(nginx)
+        [[ -d "${user_dir}/php" ]] && components+=(php)
+        [[ -d "${user_dir}/wordpress" ]] && components+=(wordpress)
+        [[ -d "${user_dir}/cron" ]] && components+=(cron)
+        [[ -d "${user_dir}/stalwart" ]] && components+=(stalwart)
+        [[ -d "${user_dir}/metadata" ]] && components+=(metadata)
+
+        echo "    Components: ${components[*]:-none}"
+
+        if [[ "$dry_run" -eq 1 ]]; then
+            for comp in "${components[@]}"; do
+                if [[ -n "$only" ]] && ! _collector_enabled "$comp" "$only" ""; then
+                    echo "    - $comp (skipped by --only filter)"
+                else
+                    echo "    - $comp"
+                fi
+            done
+            echo ""
+            continue
+        fi
+
+        if [[ ${#components[@]} -eq 0 ]]; then
+            log_warn "No components found for $username, skipping"
+            continue
+        fi
+
+        # Restructure archive layout → restic-style extract layout
+        # The archive has: {user}/home/, {user}/mysql/, etc.
+        # Restorers expect: {extract}/home/{user}/ and {extract}/tmp/jabali-backup/{user}/
+        local restore_dir
+        restore_dir=$(mktemp -d /tmp/jabali-import-restore-XXXXXX)
+
+        # Move home directory to expected location
+        if [[ -d "${user_dir}/home" ]]; then
+            mkdir -p "${restore_dir}/home"
+            mv "${user_dir}/home" "${restore_dir}/home/${username}"
+        fi
+
+        # Move config components to staging layout
+        local staging="${restore_dir}/tmp/jabali-backup/${username}"
+        mkdir -p "$staging"
+        for comp_dir in "${user_dir}"/*/; do
+            [[ -d "$comp_dir" ]] || continue
+            local comp_name
+            comp_name=$(basename "$comp_dir")
+            [[ "$comp_name" == "home" ]] && continue
+            mv "$comp_dir" "${staging}/${comp_name}"
+        done
+
+        log_info "═══ Importing account: $username ═══"
+
+        # Resolve user_id — user must exist in the system for most restorers
+        local uid=""
+        if [[ -n "$CFG_DB_PASS" ]]; then
+            uid=$(_db_query "SELECT id FROM users WHERE username='$(mysql_escape "$username")' LIMIT 1" 2>/dev/null) || true
+        fi
+
+        # Try metadata restore first to create user if needed
+        if _collector_enabled metadata "$only" "" && [[ -f "${staging}/metadata/account.json" ]]; then
+            RESTORE_USER_ID=""
+            restore_metadata "$restore_dir" "$username" "$force" 2>/dev/null || true
+            uid="${RESTORE_USER_ID:-$uid}"
+        fi
+
+        if [[ -z "$uid" ]]; then
+            log_warn "User $username not found in system — restoring files only (skipping DB/config restorers)"
+            # Files can still be restored without user_id
+            if _collector_enabled files "$only" "" && [[ -d "${restore_dir}/home/${username}" ]]; then
+                if restore_files "$restore_dir" "$username" "$force"; then
+                    total_restored=$((total_restored + 1))
+                else
+                    total_failed=$((total_failed + 1))
+                fi
+            fi
+            rm -rf "$restore_dir"
+            continue
+        fi
+
+        local restored=0 failed=0
+
+        # Run restorers in standard order
+        _collector_enabled files "$only" "" && [[ -d "${restore_dir}/home/${username}" ]] && {
+            restore_files "$restore_dir" "$username" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled dns "$only" "" && [[ -d "${staging}/dns" ]] && {
+            restore_dns "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled ssl "$only" "" && [[ -d "${staging}/ssl" ]] && {
+            restore_ssl "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled email "$only" "" && [[ -d "${staging}/email" ]] && {
+            restore_email "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled nginx "$only" "" && [[ -d "${staging}/nginx" ]] && {
+            restore_nginx "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled php "$only" "" && [[ -d "${staging}/php" ]] && {
+            restore_php "$restore_dir" "$username" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled mysql "$only" "" && [[ -d "${staging}/mysql" ]] && {
+            restore_mysql "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled postgres "$only" "" && [[ -d "${staging}/postgres" ]] && {
+            restore_postgres "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled cron "$only" "" && [[ -d "${staging}/cron" ]] && {
+            restore_cron "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled stalwart "$only" "" && [[ -d "${staging}/stalwart" ]] && {
+            restore_stalwart "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+
+        total_restored=$((total_restored + restored))
+        total_failed=$((total_failed + failed))
+
+        log_info "═══ Import complete for $username: $restored restored, $failed failed ═══"
+        rm -rf "$restore_dir"
+    done
+
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Import Summary"
+    echo "────────────────────────────────────────"
+    echo "  Users:     ${#users[@]}"
+    echo "  Restored:  $total_restored component(s)"
+    echo "  Failed:    $total_failed"
+    echo "  Duration:  ${duration}s"
+    echo "════════════════════════════════════════"
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Dry run complete. No changes made."
+    fi
+
+    return "$total_failed"
 }
 
 # ─── File-Level Restore ───────────────────────────────
@@ -1158,6 +1409,7 @@ cmd_download() {
                     files)    restore_args+=(--include "/home/${username}/") ;;
                     metadata) restore_args+=(--include "*/metadata/") ;;
                     mysql)    restore_args+=(--include "*/mysql/") ;;
+                    postgres) restore_args+=(--include "*/postgres/") ;;
                     dns)      restore_args+=(--include "*/dns/") ;;
                     email)    restore_args+=(--include "*/email/") ;;
                     ssl)      restore_args+=(--include "*/ssl/") ;;
@@ -2636,6 +2888,7 @@ main() {
     case "$cmd" in
         run)      cmd_run "$@" ;;
         restore)  cmd_restore "$@" ;;
+        import)   cmd_import "$@" ;;
         download) cmd_download "$@" ;;
         ls|browse) cmd_ls "$@" ;;
         list)     cmd_list "$@" ;;

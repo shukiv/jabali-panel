@@ -17,6 +17,7 @@ use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\CheckboxList;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Placeholder;
 use Filament\Schemas\Components\Section;
 use Filament\Forms\Components\Select;
@@ -131,15 +132,16 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 ->form([
                     Select::make('username')
                         ->label(__('Account'))
+                        ->placeholder(__('All Accounts'))
                         ->options(fn () => User::where('is_active', true)->orderBy('username')->pluck('username', 'username'))
-                        ->required()
                         ->searchable(),
                     Grid::make(3)->schema([
                         Toggle::make('include_files')->label(__('Files'))->default(true),
-                        Toggle::make('include_databases')->label(__('Databases'))->default(true),
-                        Toggle::make('include_mailboxes')->label(__('Email'))->default(true),
+                        Toggle::make('include_databases')->label(__('MySQL'))->default(true),
+                        Toggle::make('include_postgres')->label(__('PostgreSQL'))->default(true),
                     ]),
-                    Grid::make(2)->schema([
+                    Grid::make(3)->schema([
+                        Toggle::make('include_mailboxes')->label(__('Email'))->default(true),
                         Toggle::make('include_dns')->label(__('DNS'))->default(true),
                         Toggle::make('include_ssl')->label(__('SSL'))->default(true),
                     ]),
@@ -148,14 +150,71 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     try {
                         $result = app(AgentClient::class)->send('jb.run', $data);
                         if ($result['success'] ?? false) {
+                            $target = ! empty($data['username']) ? $data['username'] : __('all accounts');
                             Notification::make()->title(__('Backup started'))
-                                ->body(__('Running in background for :user', ['user' => $data['username']]))
+                                ->body(__('Running in background for :user', ['user' => $target]))
                                 ->success()->send();
                         } else {
                             Notification::make()->title(__('Backup failed'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
                         }
                     } catch (\Throwable $e) {
                         Notification::make()->title(__('Backup failed'))->body(SafeError::message($e))->danger()->send();
+                    }
+                }),
+            Action::make('importBackup')
+                ->label(__('Import Backup'))
+                ->icon('heroicon-o-arrow-up-tray')
+                ->color('warning')
+                ->form([
+                    FileUpload::make('archive')
+                        ->label(__('Backup Archive'))
+                        ->acceptedFileTypes(['application/gzip', 'application/x-gzip', 'application/x-tar', 'application/x-compressed-tar', 'application/octet-stream'])
+                        ->maxSize(5 * 1024 * 1024) // 5 GB
+                        ->disk('local')
+                        ->directory('jabali-imports')
+                        ->required(),
+                    Toggle::make('force')
+                        ->label(__('Overwrite existing data'))
+                        ->default(false),
+                ])
+                ->action(function (array $data): void {
+                    try {
+                        $storedPath = $data['archive'] ?? '';
+                        if ($storedPath === '') {
+                            Notification::make()->title(__('Import failed'))->body(__('No file uploaded'))->danger()->send();
+                            return;
+                        }
+                        $fullPath = storage_path('app/private/' . $storedPath);
+                        if (! file_exists($fullPath)) {
+                            $fullPath = storage_path('app/' . $storedPath);
+                        }
+
+                        // Preview first
+                        $preview = app(AgentClient::class)->send('jb.upload_preview', ['file' => $fullPath]);
+                        if (! ($preview['success'] ?? false)) {
+                            Notification::make()->title(__('Import failed'))->body($preview['error'] ?? __('Invalid archive'))->danger()->send();
+                            @unlink($fullPath);
+                            return;
+                        }
+
+                        $users = array_column($preview['users'] ?? [], 'username');
+                        $userList = implode(', ', $users) ?: __('none');
+
+                        // Execute import
+                        $result = app(AgentClient::class)->send('jb.upload_restore', [
+                            'file' => $fullPath,
+                            'force' => $data['force'] ?? false,
+                        ]);
+                        if ($result['success'] ?? false) {
+                            Notification::make()->title(__('Import complete'))
+                                ->body(__('Restored accounts: :users', ['users' => $userList]))
+                                ->success()->send();
+                            $this->loadBackupAccounts();
+                        } else {
+                            Notification::make()->title(__('Import failed'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
+                        }
+                    } catch (\Throwable $e) {
+                        Notification::make()->title(__('Import failed'))->body(SafeError::message($e))->danger()->send();
                     }
                 }),
             Action::make('refresh')

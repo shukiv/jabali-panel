@@ -371,14 +371,14 @@ _jabali_backup() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="run restore download ls list init check forget destination schedule config doctor update version"
+    commands="run restore import download ls list init check forget destination schedule config doctor update version"
 
     case "$prev" in
         jabali-backup)
             COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
             return 0
             ;;
-        run|restore)
+        run|restore|import)
             local users
             users=$(ls /home/ 2>/dev/null | tr '\n' ' ')
             COMPREPLY=( $(compgen -W "$users" -- "$cur") )

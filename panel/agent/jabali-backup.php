@@ -54,6 +54,8 @@ return [
     'jb.stalwart_status'   => fn (array $p) => jbStalwartStatus($p),
     'jb.stalwart_test'     => fn (array $p) => jbStalwartTest($p),
     'jb.stalwart_toggle'   => fn (array $p) => jbStalwartToggle($p),
+    'jb.upload_preview'    => fn (array $p) => jbUploadPreview($p),
+    'jb.upload_restore'    => fn (array $p) => jbUploadRestore($p),
 ];
 
 // ─── Helpers ───
@@ -426,6 +428,7 @@ function jbRun(array $params): array
     $componentMap = [
         'include_files' => 'files',
         'include_databases' => 'mysql',
+        'include_postgres' => 'postgres',
         'include_mailboxes' => 'email',
         'include_dns' => 'dns',
         'include_ssl' => 'ssl',
@@ -2101,4 +2104,86 @@ function jbStalwartToggle(array $params): array
     file_put_contents($configFile, $content);
 
     return ['success' => true, 'enabled' => $enable];
+}
+
+// ─── Upload / Import ───
+
+function jbUploadPreview(array $params): array
+{
+    $filePath = $params['file'] ?? '';
+
+    if ($filePath === '' || ! file_exists($filePath)) {
+        return ['success' => false, 'error' => 'Archive file not found'];
+    }
+
+    // Validate MIME type via magic bytes
+    $finfo = new \finfo(FILEINFO_MIME_TYPE);
+    $mime = $finfo->file($filePath);
+    if (! in_array($mime, ['application/gzip', 'application/x-gzip', 'application/x-tar', 'application/x-compressed-tar', 'application/octet-stream'], true)) {
+        return ['success' => false, 'error' => 'Not a valid tar.gz archive (detected: ' . $mime . ')'];
+    }
+
+    $r = jbExec(['import', $filePath, '--dry-run'], 60);
+
+    if ($r['exitCode'] !== 0 && $r['stdout'] === '') {
+        return ['success' => false, 'error' => $r['stderr'] ?: 'Preview failed'];
+    }
+
+    // Parse dry-run output to extract users and components
+    $users = [];
+    $currentUser = null;
+    foreach (explode("\n", $r['stdout']) as $line) {
+        $line = trim($line);
+        if (preg_match('/^Account:\s+(\S+)/', $line, $m)) {
+            $currentUser = $m[1];
+            $users[$currentUser] = ['username' => $currentUser, 'components' => []];
+        } elseif ($currentUser !== null && preg_match('/^-\s+(\S+)/', $line, $m)) {
+            $comp = $m[1];
+            if (! str_contains($comp, '(skipped')) {
+                $users[$currentUser]['components'][] = $comp;
+            }
+        }
+    }
+
+    return ['success' => true, 'users' => array_values($users), 'output' => $r['stdout']];
+}
+
+function jbUploadRestore(array $params): array
+{
+    $filePath = $params['file'] ?? '';
+    $force = $params['force'] ?? false;
+    $only = $params['only'] ?? '';
+
+    if ($filePath === '' || ! file_exists($filePath)) {
+        return ['success' => false, 'error' => 'Archive file not found'];
+    }
+
+    // Validate MIME type
+    $finfo = new \finfo(FILEINFO_MIME_TYPE);
+    $mime = $finfo->file($filePath);
+    if (! in_array($mime, ['application/gzip', 'application/x-gzip', 'application/x-tar', 'application/x-compressed-tar', 'application/octet-stream'], true)) {
+        return ['success' => false, 'error' => 'Not a valid tar.gz archive'];
+    }
+
+    $args = ['import', $filePath];
+    if ($force) {
+        $args[] = '--force';
+    }
+    if ($only !== '') {
+        $safe = jbValidateComponentList($only);
+        if (! empty($safe)) {
+            $args[] = '--only=' . implode(',', $safe);
+        }
+    }
+
+    $r = jbExec($args, 600);
+
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: 'Import failed', 'output' => $r['stdout']];
+    }
+
+    // Clean up the uploaded file
+    @unlink($filePath);
+
+    return ['success' => true, 'output' => $r['stdout']];
 }
