@@ -623,6 +623,20 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                             );
                         }
 
+                        // Capture screenshot of the fresh install
+                        $siteId = $result['site_id'] ?? null;
+                        $siteUrl = $result['url'] ?? '';
+                        if ($siteId && $siteUrl) {
+                            try {
+                                $this->agent()->send('screenshot.capture', [
+                                    'url' => $siteUrl,
+                                    'site_id' => $siteId,
+                                ]);
+                            } catch (\Throwable) {
+                                // Best-effort — don't fail install
+                            }
+                        }
+
                         Notification::make()
                             ->title(__('WordPress Installed!'))
                             ->success()
