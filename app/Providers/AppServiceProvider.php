@@ -66,6 +66,21 @@ class AppServiceProvider extends ServiceProvider
                     }
                 }
             });
+
+            // Block all database writes as a safety net (except sessions/cache)
+            $safeModels = [\Illuminate\Session\DatabaseSessionHandler::class];
+            \Illuminate\Database\Eloquent\Model::creating(function ($model) {
+                if ($model instanceof \App\Models\AuditLog) {
+                    return true; // allow audit log writes
+                }
+                throw new \RuntimeException('Demo mode — creating records is disabled.');
+            });
+            \Illuminate\Database\Eloquent\Model::updating(function () {
+                throw new \RuntimeException('Demo mode — editing records is disabled.');
+            });
+            \Illuminate\Database\Eloquent\Model::deleting(function () {
+                throw new \RuntimeException('Demo mode — deleting records is disabled.');
+            });
         }
 
         // Override jabali-file-browser's adapter with the agent-backed adapter
