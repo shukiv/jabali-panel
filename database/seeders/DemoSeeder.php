@@ -343,14 +343,14 @@ class DemoSeeder extends Seeder
     private function seedAuditLogs(array $users): void
     {
         $events = [
-            ['action' => 'user.login', 'description' => 'User logged in'],
-            ['action' => 'domain.create', 'description' => 'Domain created'],
-            ['action' => 'email.create', 'description' => 'Mailbox created'],
-            ['action' => 'ssl.issued', 'description' => 'SSL certificate issued'],
-            ['action' => 'wordpress.install', 'description' => 'WordPress installed'],
-            ['action' => 'database.create', 'description' => 'Database created'],
-            ['action' => 'dns.update', 'description' => 'DNS record updated'],
-            ['action' => 'service.restart', 'description' => 'Service restarted'],
+            ['action' => 'login', 'category' => 'auth', 'description' => 'User logged in'],
+            ['action' => 'domain_created', 'category' => 'domain', 'description' => 'Domain created'],
+            ['action' => 'mailbox_created', 'category' => 'email', 'description' => 'Mailbox created'],
+            ['action' => 'ssl_issued', 'category' => 'ssl', 'description' => 'SSL certificate issued'],
+            ['action' => 'wordpress_installed', 'category' => 'wordpress', 'description' => 'WordPress installed'],
+            ['action' => 'database_created', 'category' => 'database', 'description' => 'Database created'],
+            ['action' => 'dns_updated', 'category' => 'dns', 'description' => 'DNS record updated'],
+            ['action' => 'service_restarted', 'category' => 'system', 'description' => 'Service restarted'],
         ];
 
         foreach ($users as $user) {
@@ -359,6 +359,7 @@ class DemoSeeder extends Seeder
                 AuditLog::create([
                     'user_id' => $user->id,
                     'action' => $event['action'],
+                    'category' => $event['category'],
                     'description' => $event['description'],
                     'ip_address' => '203.0.113.'.rand(1, 254),
                     'created_at' => now()->subHours(rand(1, 720)),
