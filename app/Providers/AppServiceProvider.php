@@ -67,20 +67,18 @@ class AppServiceProvider extends ServiceProvider
                 }
             });
 
-            // Block all database writes as a safety net (except sessions/cache)
-            $safeModels = [\Illuminate\Session\DatabaseSessionHandler::class];
-            \Illuminate\Database\Eloquent\Model::creating(function ($model) {
+            // Block all database writes as a safety net
+            $dispatcher = \Illuminate\Database\Eloquent\Model::getEventDispatcher();
+            $dispatcher->listen('eloquent.creating:*', function (string $event, array $models) {
+                $model = $models[0] ?? null;
                 if ($model instanceof \App\Models\AuditLog) {
-                    return true; // allow audit log writes
+                    return true;
                 }
-                throw new \RuntimeException('Demo mode — creating records is disabled.');
+
+                return false; // cancel the operation
             });
-            \Illuminate\Database\Eloquent\Model::updating(function () {
-                throw new \RuntimeException('Demo mode — editing records is disabled.');
-            });
-            \Illuminate\Database\Eloquent\Model::deleting(function () {
-                throw new \RuntimeException('Demo mode — deleting records is disabled.');
-            });
+            $dispatcher->listen('eloquent.updating:*', fn () => false);
+            $dispatcher->listen('eloquent.deleting:*', fn () => false);
         }
 
         // Override jabali-file-browser's adapter with the agent-backed adapter
