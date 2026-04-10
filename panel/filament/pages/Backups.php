@@ -12,10 +12,8 @@ use App\Support\SafeError;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
-use Filament\Actions\BulkAction;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
-use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Placeholder;
@@ -913,32 +911,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     // ─── Snapshot Actions ───
 
-    public function deleteSnapshot(string $snapshotId): void
-    {
-        try {
-            $result = app(AgentClient::class)->send('jb.delete', ['snapshot_id' => $snapshotId]);
-            if ($result['success'] ?? false) {
-                Notification::make()->title(__('Snapshot deleted'))->success()->send();
-                $this->loadSnapshots();
-            } else {
-                Notification::make()->title(__('Error'))->body($result['error'] ?? $result['output'] ?? __('Unknown error'))->danger()->send();
-            }
-        } catch (\Throwable $e) {
-            Notification::make()->title(__('Delete failed'))->body(SafeError::message($e))->danger()->send();
-        }
-    }
-
-    public function verifyRepo(): void
-    {
-        try {
-            $result = app(AgentClient::class)->send('jb.check', []);
-            $ok = $result['success'] ?? false;
-            Notification::make()->title($ok ? __('Integrity OK') : __('Check failed'))
-                ->{$ok ? 'success' : 'danger'}()->send();
-        } catch (\Throwable $e) {
-            Notification::make()->title(__('Error'))->body(SafeError::message($e))->danger()->send();
-        }
-    }
 
     // ─── Browser (shared logic in BrowsesSnapshots trait) ───
 

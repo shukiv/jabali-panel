@@ -7,13 +7,6 @@ _db_query() {
         -N -B "$CFG_DB_NAME" -e "$1" 2>/dev/null
 }
 
-# Run a query and output JSON array using jq-less approach
-_db_json() {
-    local query="$1"
-    mysql -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
-        -N -B --raw "$CFG_DB_NAME" -e "$query" 2>/dev/null
-}
-
 discover_accounts() {
     _db_query "SELECT id, username, COALESCE(home_directory, CONCAT('/home/', username)), is_active FROM users WHERE is_active = 1 ORDER BY username"
 }
@@ -75,11 +68,6 @@ discover_cron_jobs() {
 discover_domain_aliases() {
     local user_id="$1"
     _db_query "SELECT da.alias, d.domain FROM domain_aliases da JOIN domains d ON da.domain_id = d.id WHERE d.user_id = $user_id"
-}
-
-discover_domain_redirects() {
-    local user_id="$1"
-    _db_query "SELECT dr.id, d.domain FROM domain_redirects dr JOIN domains d ON dr.domain_id = d.id WHERE d.user_id = $user_id"
 }
 
 discover_mailbox_shares() {
