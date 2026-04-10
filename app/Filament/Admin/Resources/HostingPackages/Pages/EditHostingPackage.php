@@ -16,46 +16,50 @@ class EditHostingPackage extends EditRecord
     protected function afterSave(): void
     {
         $agent = app(AgentClient::class);
-
-        // Sync shell mode for all users that inherit from this package
-        $users = $this->record->users()
-            ->whereNull('ssh_isolation_mode')
-            ->get();
-
-        $mode = $this->record->ssh_isolation_mode;
-
-        foreach ($users as $user) {
-            try {
-                if ($mode === 'disabled') {
-                    $agent->send('ssh.disable_shell', ['username' => $user->username]);
-                } else {
-                    $agent->send('ssh.enable_shell', ['username' => $user->username]);
-                    $agent->sshSetShellMode($user->username, $mode);
-                }
-            } catch (\Throwable) {
-                // Best-effort
-            }
-        }
-
-        // Sync cgroup limits for all users on this package
-        $this->syncCgroupLimitsForPackageUsers($agent);
-    }
-
-    private function syncCgroupLimitsForPackageUsers(AgentClient $agent): void
-    {
         $allUsers = $this->record->users()->get();
 
         foreach ($allUsers as $user) {
-            $limits = $user->getEffectiveResourceLimits();
+            // Sync disk quota (users without a per-user override inherit from package)
+            if ($user->disk_quota_mb === null || $user->disk_quota_mb === $this->record->getOriginal('disk_quota_mb')) {
+                $user->update(['disk_quota_mb' => $this->record->disk_quota_mb]);
+                try {
+                    $agent->quotaSet($user->username, (int) ($this->record->disk_quota_mb ?? 0));
+                } catch (\Throwable) {
+                }
+            }
 
+            // Sync shell mode (users without a per-user override)
+            if ($user->ssh_isolation_mode === null) {
+                try {
+                    $mode = $this->record->ssh_isolation_mode;
+                    if ($mode === 'disabled') {
+                        $agent->send('ssh.disable_shell', ['username' => $user->username]);
+                    } else {
+                        $agent->send('ssh.enable_shell', ['username' => $user->username]);
+                        $agent->sshSetShellMode($user->username, $mode);
+                    }
+                } catch (\Throwable) {
+                }
+            }
+
+            // Sync cgroup resource limits
             try {
+                $limits = $user->getEffectiveResourceLimits();
                 if (empty($limits)) {
                     $agent->cgroupRemove($user->username);
                 } else {
                     $agent->cgroupApply($user->username, $limits);
                 }
             } catch (\Throwable) {
-                // Best-effort
+            }
+        }
+
+        // Regenerate nginx vhosts to pick up rate limit changes
+        $nginxLimitsChanged = $this->record->wasChanged(['nginx_req_per_sec', 'nginx_connections']);
+        if ($nginxLimitsChanged) {
+            try {
+                $agent->send('nginx.regenerate_domain_vhosts');
+            } catch (\Throwable) {
             }
         }
     }
