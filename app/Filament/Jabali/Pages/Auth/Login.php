@@ -23,11 +23,8 @@ class Login extends BaseLogin
 {
     public function getSubheading(): string|HtmlString|null
     {
-        if (config('jabali.demo')) {
-            return new HtmlString(
-                __('Demo credentials').
-                ': <code>demo@jabali-panel.com</code> / <code>demo1234</code>'
-            );
+        if (config('app.demo_mode')) {
+            return new HtmlString(__('Demo mode — explore the panel freely'));
         }
 
         return parent::getSubheading();
@@ -134,7 +131,19 @@ class Login extends BaseLogin
             ->label(__('Email or Username'))
             ->required()
             ->autocomplete()
-            ->autofocus();
+            ->autofocus()
+            ->default(config('app.demo_mode') ? 'sarah@demo.jabali-panel.com' : null);
+    }
+
+    protected function getPasswordFormComponent(): Component
+    {
+        $component = parent::getPasswordFormComponent();
+
+        if (config('app.demo_mode')) {
+            $component->default('demo');
+        }
+
+        return $component;
     }
 
     /**
