@@ -114,7 +114,8 @@ class WordPress extends Page implements HasActions, HasForms, HasTable
                     ->label(__('Preview'))
                     ->state(fn (array $record): ?string => $this->getScreenshotUrl($record['id']))
                     ->height(140)
-                    ->width(220),
+                    ->width(220)
+                    ->defaultImageUrl(url('/images/no-preview.svg')),
                 ViewColumn::make('domain')
                     ->label(__('Site'))
                     ->view('filament.jabali.columns.wordpress-site'),
