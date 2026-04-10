@@ -121,6 +121,35 @@ Schedule::call(function () {
     }
 })->everyFiveMinutes()->name('sso-token-cleanup')->withoutOverlapping();
 
+// WordPress Screenshot Refresh - runs weekly to update site previews
+Schedule::call(function () {
+    $agent = app(\App\Services\Agent\AgentClient::class);
+    $users = \App\Models\User::whereNotNull('username')->get();
+    $captured = 0;
+
+    foreach ($users as $user) {
+        try {
+            $result = $agent->send('wp.list', ['username' => $user->username]);
+            $sites = $result['sites'] ?? [];
+
+            foreach ($sites as $site) {
+                $url = $site['url'] ?? '';
+                $siteId = $site['id'] ?? '';
+                if ($url && $siteId) {
+                    $agent->send('screenshot.capture', ['url' => $url, 'site_id' => $siteId]);
+                    $captured++;
+                }
+            }
+        } catch (\Throwable) {
+            // Skip user on error
+        }
+    }
+
+    if ($captured > 0) {
+        logger()->info("Refreshed {$captured} WordPress screenshots");
+    }
+})->weekly()->sundays()->at('03:00')->name('wp-screenshot-refresh')->withoutOverlapping();
+
 // Domain DNS Health Check - runs every 6 hours to check DNS resolution status
 Schedule::command('jabali:check-domain-dns')
     ->everySixHours()
