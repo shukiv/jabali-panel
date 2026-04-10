@@ -13,6 +13,7 @@ use Filament\Support\Facades\FilamentAsset;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -39,6 +40,17 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Domain::observe(DomainObserver::class);
+
+        // Demo mode: block all write operations via Gate
+        if (config('app.demo_mode')) {
+            Gate::before(function ($user, $ability) {
+                if (in_array($ability, ['create', 'update', 'delete', 'forceDelete', 'restore', 'deleteAny', 'forceDeleteAny', 'restoreAny'])) {
+                    return false;
+                }
+
+                return null;
+            });
+        }
 
         // Override jabali-file-browser's adapter with the agent-backed adapter
         // Must be in boot() to run after the package's register()
