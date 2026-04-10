@@ -132,7 +132,7 @@ class UserBackups extends Page implements HasActions, HasForms, HasTable
                     ->color('gray'),
                 TextColumn::make('date')
                     ->label(__('Date'))
-                    ->formatStateUsing(fn (array $record): string => trim(($record['date'] ?? '') . ' ' . ($record['time'] ?? '')) ?: '—'),
+                    ->formatStateUsing(fn (array $record): string => ($record['time'] ?? $record['date'] ?? '—')),
             ])
             ->recordActions([
                 Action::make('browse')
@@ -141,6 +141,12 @@ class UserBackups extends Page implements HasActions, HasForms, HasTable
                     ->color('gray')
                     ->size('sm')
                     ->action(fn (array $record) => $this->browseSnapshot($record['id'])),
+                Action::make('download')
+                    ->label(__('Download'))
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('gray')
+                    ->size('sm')
+                    ->action(fn (array $record) => $this->downloadSnapshot($record['id'])),
                 Action::make('restore')
                     ->label(__('Restore'))
                     ->icon('heroicon-o-arrow-path')
@@ -187,6 +193,17 @@ class UserBackups extends Page implements HasActions, HasForms, HasTable
     protected function browseUsername(): string
     {
         return $this->username();
+    }
+
+    // ─── Download ───
+
+    public function downloadSnapshot(string $snapshotId): void
+    {
+        $url = url('/backup-download.php?' . http_build_query([
+            'users' => $this->username(),
+            'snapshot' => $snapshotId,
+        ]));
+        $this->js("window.open('{$url}', '_blank')");
     }
 
     // ─── Restore ───

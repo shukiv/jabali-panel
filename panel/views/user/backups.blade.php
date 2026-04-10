@@ -1,4 +1,5 @@
 <x-filament-panels::page>
+    @if($activeTab !== 'snapshots')
     <div class="fi-sc-tabs">
         <x-filament::tabs>
             <x-filament::tabs.item :active="$activeTab === 'snapshots'" wire:click="$set('activeTab', 'snapshots')" icon="heroicon-o-archive-box">{{ __('Snapshots') }}</x-filament::tabs.item>
@@ -9,6 +10,8 @@
             <x-filament::tabs.item :active="$activeTab === 'restore'" wire:click="$set('activeTab', 'restore')" icon="heroicon-o-arrow-path">{{ __('Restore') }}</x-filament::tabs.item>
             @endif
         </x-filament::tabs>
+    </div>
+    @endif
 
         <div wire:loading.remove wire:target="activeTab">
         <x-tab-loading-skeleton>
@@ -93,7 +96,6 @@
             @endif
         </x-tab-loading-skeleton>
         </div>
-    </div>
 
     <x-filament-actions::modals />
 </x-filament-panels::page>
