@@ -9,6 +9,7 @@ use App\Observers\DomainObserver;
 use App\Services\Agent\AgentClient;
 use App\Services\Agent\AgentClientInterface;
 use App\Services\Agent\DemoAgentClient;
+use Filament\Actions\Action;
 use Filament\Support\Facades\FilamentAsset;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -41,14 +42,31 @@ class AppServiceProvider extends ServiceProvider
     {
         Domain::observe(DomainObserver::class);
 
-        // Demo mode: block all write operations via Gate
+        // Demo mode: block all write operations
         if (config('app.demo_mode')) {
+            // Hide create/edit/delete buttons on Filament resources
             Gate::before(function ($user, $ability) {
                 if (in_array($ability, ['create', 'update', 'delete', 'forceDelete', 'restore', 'deleteAny', 'forceDeleteAny', 'restoreAny'])) {
                     return false;
                 }
 
                 return null;
+            });
+
+            // Disable all Filament actions that modify data (covers custom pages too)
+            Action::configureUsing(function (Action $action): void {
+                $name = strtolower($action->getName());
+                $writeActions = ['create', 'save', 'delete', 'edit', 'new', 'install', 'remove', 'update', 'disable', 'enable', 'suspend', 'reboot', 'restart'];
+
+                foreach ($writeActions as $write) {
+                    if (str_contains($name, $write)) {
+                        $action
+                            ->disabled()
+                            ->tooltip(__('Disabled in demo mode'));
+
+                        return;
+                    }
+                }
             });
         }
 
