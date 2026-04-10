@@ -14,20 +14,33 @@
         <x-tab-loading-skeleton>
             @if($activeTab === 'snapshots')
             <x-filament::section :heading="__('Your Backups')" :description="trans_choice(':count snapshot|:count snapshots', count($snapshots), ['count' => count($snapshots)])">
-                @forelse($snapshots as $snap)
-                <x-filament::section compact>
-                    <div class="flex items-center gap-3">
-                        <x-filament::badge color="gray">{{ $snap['id'] ?? '' }}</x-filament::badge>
-                        <span>{{ $snap['date'] ?? $snap['time'] ?? '' }}</span>
-                        <div class="flex items-center gap-2 ml-auto">
-                            <x-filament::button wire:click="browseSnapshot(@json($snap['id']))" size="xs" color="gray" icon="heroicon-o-folder-open">{{ __('Browse') }}</x-filament::button>
-                            <x-filament::button wire:click="openRestore(@json($snap['id']))" size="xs" color="primary" icon="heroicon-o-arrow-path">{{ __('Restore') }}</x-filament::button>
-                        </div>
-                    </div>
-                </x-filament::section>
-                @empty
+                @if(count($snapshots) > 0)
+                <table class="fi-ta-table w-full table-auto divide-y divide-gray-200 dark:divide-white/5">
+                    <thead>
+                        <tr>
+                            <th class="fi-ta-header-cell px-3 py-3.5 text-start text-sm font-semibold text-gray-950 dark:text-white">{{ __('Snapshot') }}</th>
+                            <th class="fi-ta-header-cell px-3 py-3.5 text-start text-sm font-semibold text-gray-950 dark:text-white">{{ __('Date') }}</th>
+                            <th class="fi-ta-header-cell px-3 py-3.5 text-end text-sm font-semibold text-gray-950 dark:text-white"></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 dark:divide-white/5">
+                        @foreach($snapshots as $snap)
+                        <tr class="fi-ta-row">
+                            <td class="fi-ta-cell px-3 py-4 text-sm text-gray-950 dark:text-white"><x-filament::badge color="gray">{{ $snap['id'] ?? '' }}</x-filament::badge></td>
+                            <td class="fi-ta-cell px-3 py-4 text-sm text-gray-500 dark:text-gray-400">{{ $snap['date'] ?? $snap['time'] ?? '' }}</td>
+                            <td class="fi-ta-cell px-3 py-4 text-end">
+                                <div class="flex items-center justify-end gap-2">
+                                    <x-filament::button wire:click="browseSnapshot(@json($snap['id']))" size="xs" color="gray" icon="heroicon-o-folder-open">{{ __('Browse') }}</x-filament::button>
+                                    <x-filament::button wire:click="openRestore(@json($snap['id']))" size="xs" color="primary" icon="heroicon-o-arrow-path">{{ __('Restore') }}</x-filament::button>
+                                </div>
+                            </td>
+                        </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+                @else
                     <p>{{ __('No backups found.') }}</p>
-                @endforelse
+                @endif
             </x-filament::section>
             @endif
 
