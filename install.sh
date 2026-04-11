@@ -1271,15 +1271,37 @@ install_phpmyadmin() {
         warn "phpMyAdmin signon script not found in stubs"
     fi
 
-    # Copy Jabali config to phpMyAdmin conf.d
+    # --- Configuration storage (pmadb) ---
+    # Create database, tables, control user, and user group restrictions
+    local pma_pass
+    pma_pass=$(openssl rand -base64 24 | tr -d '/+=')
+
+    mysql -e "CREATE DATABASE IF NOT EXISTS phpmyadmin"
+    mysql phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql
+
+    mysql -e "CREATE USER IF NOT EXISTS 'pma'@'localhost' IDENTIFIED BY '${pma_pass}'"
+    mysql -e "GRANT SELECT, INSERT, UPDATE, DELETE ON phpmyadmin.* TO 'pma'@'localhost'"
+    mysql -e "FLUSH PRIVILEGES"
+
+    # Seed the 'panel_users' group (hides server-level tabs)
+    if [[ -f "$JABALI_DIR/stubs/phpmyadmin/seed_usergroups.sql" ]]; then
+        mysql phpmyadmin < "$JABALI_DIR/stubs/phpmyadmin/seed_usergroups.sql"
+    fi
+
+    # Save control password for signon script (auto-assigns users to group)
+    echo "PMA_PASS=${pma_pass}" > /etc/phpmyadmin/.pma_control_pass
+    chmod 600 /etc/phpmyadmin/.pma_control_pass
+    chown www-data:www-data /etc/phpmyadmin/.pma_control_pass
+
+    # --- Jabali config ---
     mkdir -p /etc/phpmyadmin/conf.d
     if [[ -f "$JABALI_DIR/stubs/phpmyadmin/config.inc.php" ]]; then
         cp "$JABALI_DIR/stubs/phpmyadmin/config.inc.php" /etc/phpmyadmin/conf.d/jabali.inc.php
 
-        # Generate random blowfish secret
         local blowfish_secret
         blowfish_secret=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
         sed -i "s|%%BLOWFISH_SECRET%%|${blowfish_secret}|g" /etc/phpmyadmin/conf.d/jabali.inc.php
+        sed -i "s|%%PMA_CONTROL_PASS%%|${pma_pass}|g" /etc/phpmyadmin/conf.d/jabali.inc.php
 
         chown root:www-data /etc/phpmyadmin/conf.d/jabali.inc.php
         chmod 640 /etc/phpmyadmin/conf.d/jabali.inc.php
@@ -4002,7 +4024,7 @@ upgrade_infra() {
 
     # Step counter and timing
     local step=0
-    local total_steps=20
+    local total_steps=21
     local infra_start=$SECONDS
 
     step_info() {
@@ -4154,6 +4176,35 @@ with open(sys.argv[1], 'w') as f:
             else
                 warn "Agent not running — shell user migration will run on next update"
             fi
+        fi
+        # Update phpMyAdmin signon script + ensure pmadb exists
+        step_info "Updating phpMyAdmin"
+        if [[ -f "$JABALI_DIR/stubs/phpmyadmin/jabali-signon.php" ]]; then
+            cp "$JABALI_DIR/stubs/phpmyadmin/jabali-signon.php" /usr/share/phpmyadmin/jabali-signon.php
+            chown root:www-data /usr/share/phpmyadmin/jabali-signon.php
+            chmod 644 /usr/share/phpmyadmin/jabali-signon.php
+        fi
+        # Create pmadb + control user if missing (for user group menu restrictions)
+        if ! mysql -e "SELECT 1 FROM phpmyadmin.pma__usergroups LIMIT 1" &>/dev/null; then
+            local pma_pass
+            pma_pass=$(openssl rand -base64 24 | tr -d '/+=')
+            mysql -e "CREATE DATABASE IF NOT EXISTS phpmyadmin"
+            mysql phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql
+            mysql -e "DROP USER IF EXISTS 'pma'@'localhost'"
+            mysql -e "CREATE USER 'pma'@'localhost' IDENTIFIED BY '${pma_pass}'"
+            mysql -e "GRANT SELECT, INSERT, UPDATE, DELETE ON phpmyadmin.* TO 'pma'@'localhost'"
+            mysql -e "FLUSH PRIVILEGES"
+            if [[ -f "$JABALI_DIR/stubs/phpmyadmin/seed_usergroups.sql" ]]; then
+                mysql phpmyadmin < "$JABALI_DIR/stubs/phpmyadmin/seed_usergroups.sql"
+            fi
+            echo "PMA_PASS=${pma_pass}" > /etc/phpmyadmin/.pma_control_pass
+            chmod 600 /etc/phpmyadmin/.pma_control_pass
+            chown www-data:www-data /etc/phpmyadmin/.pma_control_pass
+            # Update config with new password
+            if [[ -f /etc/phpmyadmin/conf.d/jabali.inc.php ]]; then
+                sed -i "s|%%PMA_CONTROL_PASS%%|${pma_pass}|g" /etc/phpmyadmin/conf.d/jabali.inc.php
+            fi
+            info "phpMyAdmin configuration storage initialized"
         fi
     fi
 
