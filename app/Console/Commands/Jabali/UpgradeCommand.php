@@ -278,8 +278,10 @@ class UpgradeCommand extends Command
 
                 return 1;
             }
+            $this->stepsRun[] = 'migrate';
         } else {
-            $this->line('No migration changes detected, skipping.');
+            $this->line('  Skipped (no changes)');
+            $this->stepsSkipped[] = 'migrate';
         }
 
         // Step 7: Clear caches
@@ -287,6 +289,7 @@ class UpgradeCommand extends Command
         try {
             Artisan::call('optimize:clear');
             $this->line(Artisan::output());
+            $this->stepsRun[] = 'cache-clear';
         } catch (Exception $e) {
             $this->warn('Cache clear warning: '.$e->getMessage());
         }
@@ -301,14 +304,23 @@ class UpgradeCommand extends Command
         // Step 10: Update installed addons
         $this->info('[10/11] Updating installed addons...');
         $this->updateAddons();
+        $this->stepsRun[] = 'addons';
 
         // Step 11: Restart services
         $this->info('[11/11] Restarting services...');
         $this->restartServices();
+        $this->stepsRun[] = 'restart';
 
         $newVersion = $this->getCurrentVersion();
+        $elapsed = (int) round(microtime(true) - $upgradeStart);
         $this->newLine();
-        $this->info("Upgrade complete! Version: {$newVersion}");
+        $this->info("Upgrade complete! {$currentVersion} → {$newVersion} ({$elapsed}s)");
+        if (! empty($this->stepsRun)) {
+            $this->line('  Steps run: '.implode(', ', $this->stepsRun));
+        }
+        if (! empty($this->stepsSkipped)) {
+            $this->line('  Steps skipped: '.implode(', ', $this->stepsSkipped));
+        }
 
         return 0;
     }
