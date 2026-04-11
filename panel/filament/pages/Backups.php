@@ -217,6 +217,69 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         Notification::make()->title(__('Import failed'))->body(SafeError::message($e))->danger()->send();
                     }
                 }),
+            ActionGroup::make([
+                Action::make('serverBackup')
+                    ->label(__('Server Backup'))
+                    ->icon('heroicon-o-server-stack')
+                    ->requiresConfirmation()
+                    ->modalHeading(__('Full Server Backup'))
+                    ->modalDescription(__('This will create a disaster recovery backup of the entire server: all databases, configs, services, and user accounts. This may take several minutes.'))
+                    ->form([
+                        Toggle::make('skip_users')
+                            ->label(__('Server configs only (skip user accounts)'))
+                            ->helperText(__('Back up only server-level data without per-user backups'))
+                            ->default(false),
+                    ])
+                    ->action(function (array $data): void {
+                        try {
+                            $result = app(AgentClient::class)->send('jb.server_backup', [
+                                'skip_users' => $data['skip_users'] ?? false,
+                            ]);
+                            if ($result['success'] ?? false) {
+                                Notification::make()->title(__('Server backup started'))->body(__('Running in background. Check the Logs tab for progress.'))->success()->send();
+                            } else {
+                                Notification::make()->title(__('Server backup failed'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
+                            }
+                        } catch (\Throwable $e) {
+                            Notification::make()->title(__('Server backup failed'))->body(SafeError::message($e))->danger()->send();
+                        }
+                    }),
+                Action::make('serverRestore')
+                    ->label(__('Server Restore'))
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading(__('Disaster Recovery — Server Restore'))
+                    ->modalDescription(__('This will restore the entire server from a backup snapshot. All server configs and databases will be overwritten. This is a destructive operation.'))
+                    ->form([
+                        Toggle::make('skip_users')
+                            ->label(__('Server configs only (skip user accounts)'))
+                            ->default(false),
+                        Toggle::make('force')
+                            ->label(__('Force overwrite all existing data'))
+                            ->default(false),
+                    ])
+                    ->action(function (array $data): void {
+                        try {
+                            $result = app(AgentClient::class)->send('jb.server_restore', [
+                                'snapshot' => 'latest',
+                                'skip_users' => $data['skip_users'] ?? false,
+                                'force' => $data['force'] ?? false,
+                            ]);
+                            if ($result['success'] ?? false) {
+                                Notification::make()->title(__('Server restore started'))->body(__('Running in background. Check the Logs tab for progress.'))->success()->send();
+                            } else {
+                                Notification::make()->title(__('Server restore failed'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
+                            }
+                        } catch (\Throwable $e) {
+                            Notification::make()->title(__('Server restore failed'))->body(SafeError::message($e))->danger()->send();
+                        }
+                    }),
+            ])
+                ->label(__('Disaster Recovery'))
+                ->icon('heroicon-o-shield-exclamation')
+                ->color('gray')
+                ->button(),
             Action::make('refresh')
                 ->label(__('Refresh'))
                 ->icon('heroicon-o-arrow-path')
@@ -1193,6 +1256,11 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     {
         return [
             TextInput::make('name')->label(__('Job Name'))->placeholder('Daily backup')->required()->maxLength(60),
+            Toggle::make('server_backup')
+                ->label(__('Server Backup (Disaster Recovery)'))
+                ->helperText(__('Full server backup including all configs, databases, and user accounts for disaster recovery.'))
+                ->default(false)
+                ->live(),
             Select::make('destination')->label(__('Destination'))->options(fn () => collect($this->destinations)->pluck('name', 'id')->all())->required(),
             Select::make('frequency')->label(__('Frequency'))->options([
                 'daily' => __('Daily'),
@@ -1229,9 +1297,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             Select::make('account_mode')->label(__('Accounts'))->options([
                 'all' => __('All accounts'),
                 'specific' => __('Specific accounts'),
-            ])->default('all')->live(),
-            Select::make('accounts')->label(__('Select Accounts'))->multiple()->options(fn () => User::where('is_active', true)->orderBy('username')->pluck('username', 'username')->all())->visible(fn ($get) => $get('account_mode') === 'specific'),
-            Select::make('exclude')->label(__('Exclude Accounts'))->multiple()->options(fn () => User::where('is_active', true)->orderBy('username')->pluck('username', 'username')->all())->helperText(__('Accounts to skip during this job')),
+            ])->default('all')->live()->hidden(fn ($get) => $get('server_backup')),
+            Select::make('accounts')->label(__('Select Accounts'))->multiple()->options(fn () => User::where('is_active', true)->orderBy('username')->pluck('username', 'username')->all())->visible(fn ($get) => $get('account_mode') === 'specific' && ! $get('server_backup')),
+            Select::make('exclude')->label(__('Exclude Accounts'))->multiple()->options(fn () => User::where('is_active', true)->orderBy('username')->pluck('username', 'username')->all())->helperText(__('Accounts to skip during this job'))->hidden(fn ($get) => $get('server_backup')),
             TextInput::make('retention')->label(__('Retention'))->numeric()->default(7)->required()->helperText(__('Number of backups to keep for this job')),
         ];
     }
@@ -1254,7 +1322,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->size('sm'),
                 TextColumn::make('accounts')
                     ->label(__('Accounts'))
-                    ->formatStateUsing(fn (array $record): string => ($record['accounts'] ?? 'all') === 'all' ? __('All') : $record['accounts']),
+                    ->formatStateUsing(fn (array $record): string => ($record['server_backup'] ?? false) ? __('Server + All Users') : (($record['accounts'] ?? 'all') === 'all' ? __('All') : $record['accounts']))
+                    ->icon(fn (array $record): ?string => ($record['server_backup'] ?? false) ? 'heroicon-o-server-stack' : null)
+                    ->iconColor('warning'),
                 TextColumn::make('enabled')
                     ->label(__('Status'))
                     ->badge()
@@ -1300,6 +1370,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
                         return [
                             'name' => $record['name'] ?? '',
+                            'server_backup' => $record['server_backup'] ?? false,
                             'destination' => $record['destination'] ?? '',
                             'frequency' => $frequency,
                             'every_day' => $frequency === 'daily' && $dow === '*',
@@ -1327,7 +1398,15 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         };
                         $accounts = ($data['account_mode'] ?? 'all') === 'all' ? 'all' : implode(',', $data['accounts'] ?? []);
 
-                        $params = ['id' => $record['id'], 'name' => $data['name'], 'destination' => $data['destination'], 'cron' => $cron, 'accounts' => $accounts, 'exclude' => implode(',', $data['exclude'] ?? [])];
+                        $params = [
+                            'id' => $record['id'],
+                            'name' => $data['name'],
+                            'server_backup' => $data['server_backup'] ?? false,
+                            'destination' => $data['destination'],
+                            'cron' => $cron,
+                            'accounts' => $accounts,
+                            'exclude' => implode(',', $data['exclude'] ?? []),
+                        ];
 
                         try {
                             $result = app(AgentClient::class)->send('jb.schedules_update', $params);
@@ -1394,6 +1473,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             'name' => $data['name'], 'destination' => $data['destination'],
                             'cron' => $cron, 'accounts' => $accounts,
                             'exclude' => implode(',', $data['exclude'] ?? []),
+                            'server_backup' => $data['server_backup'] ?? false,
                             $keepKey => (string) $retention,
                             'keep_last' => (string) $retention,
                         ];

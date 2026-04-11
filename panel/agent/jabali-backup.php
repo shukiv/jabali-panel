@@ -56,6 +56,9 @@ return [
     'jb.stalwart_toggle'   => fn (array $p) => jbStalwartToggle($p),
     'jb.upload_preview'    => fn (array $p) => jbUploadPreview($p),
     'jb.upload_restore'    => fn (array $p) => jbUploadRestore($p),
+    'jb.server_backup'     => fn (array $p) => jbServerBackup($p),
+    'jb.server_snapshots'  => fn (array $p) => jbServerSnapshots($p),
+    'jb.server_restore'    => fn (array $p) => jbServerRestore($p),
 ];
 
 // ─── Helpers ───
@@ -1203,6 +1206,89 @@ function jbDownloadStatus(array $params): array
     ];
 }
 
+// ─── Server Backup / Restore Routes ───
+
+function jbServerBackup(array $params): array
+{
+    $args = ['server-backup'];
+    if (! empty($params['skip_users'])) {
+        $args[] = '--skip-users';
+    }
+    $dest = $params['destination'] ?? '';
+    if ($dest !== '' && jbValidateDestinationId($dest)) {
+        $args[] = '--destination=' . $dest;
+    }
+
+    // Run in background — server backup can take a long time
+    $logFile = '/tmp/jabali-server-backup-' . date('YmdHis') . '.log';
+    $cmd = sprintf(
+        'nohup /usr/local/bin/jabali-backup %s > %s 2>&1 &',
+        implode(' ', array_map('escapeshellarg', $args)),
+        escapeshellarg($logFile)
+    );
+    proc_open(['bash', '-c', $cmd], [], $pipes);
+
+    return ['success' => true, 'message' => 'Server backup started', 'log' => $logFile];
+}
+
+function jbServerSnapshots(array $params): array
+{
+    $r = jbExec(['list', 'snapshots', '--type=server', '--json']);
+
+    // The CLI outputs restic's table format, parse it
+    $stdout = trim($r['stdout'] ?? '');
+    if ($r['exitCode'] !== 0) {
+        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+    }
+
+    // Parse restic snapshot table output into structured data
+    $snapshots = [];
+    $lines = explode("\n", $stdout);
+    foreach ($lines as $line) {
+        if (preg_match('/^(\w{8})\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\S+)\s+(.+?)\s{2,}(.+?)\s{2,}(.+)$/', trim($line), $m)) {
+            $snapshots[] = [
+                'id' => $m[1],
+                'time' => $m[2],
+                'host' => $m[3],
+                'tags' => $m[4],
+                'paths' => trim($m[5]),
+                'size' => trim($m[6]),
+            ];
+        }
+    }
+
+    return ['success' => true, 'snapshots' => $snapshots, 'raw' => $stdout];
+}
+
+function jbServerRestore(array $params): array
+{
+    $snapshot = $params['snapshot'] ?? 'latest';
+    if (! preg_match('/^[a-f0-9]+$|^latest$/', $snapshot)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    $args = ['server-restore', '--snapshot=' . $snapshot];
+    if (! empty($params['skip_users'])) {
+        $args[] = '--skip-users';
+    }
+    if (! empty($params['force'])) {
+        $args[] = '--force';
+    }
+
+    // Run in background — server restore can take a very long time
+    $logFile = '/tmp/jabali-server-restore-' . date('YmdHis') . '.log';
+    $cmd = sprintf(
+        'nohup /usr/local/bin/jabali-backup %s > %s 2>&1 &',
+        implode(' ', array_map('escapeshellarg', $args)),
+        escapeshellarg($logFile)
+    );
+    proc_open(['bash', '-c', $cmd], [], $pipes);
+
+    return ['success' => true, 'message' => 'Server restore started', 'log' => $logFile];
+}
+
+// ─── Schedule Routes (wrap CLI) ───
+
 function jbSchedulesList(array $params): array
 {
     $r = jbExec(['schedule', 'list', '--json']);
@@ -1263,6 +1349,11 @@ function jbSchedulesAdd(array $params): array
         }
     }
 
+    // Server backup flag
+    if (! empty($params['server_backup'])) {
+        $args[] = '--server-backup';
+    }
+
     $r = jbExec($args);
 
     return [
@@ -1318,6 +1409,11 @@ function jbSchedulesUpdate(array $params): array
         if ($val !== '' && is_numeric($val)) {
             $args[] = '--' . str_replace('_', '-', $key) . '=' . (int) $val;
         }
+    }
+
+    // Server backup flag
+    if (isset($params['server_backup'])) {
+        $args[] = $params['server_backup'] ? '--server-backup' : '--no-server-backup';
     }
 
     $r = jbExec($args);
