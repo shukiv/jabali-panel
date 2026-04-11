@@ -1174,7 +1174,7 @@ function createUser(array $params): array
     @unlink("$homeDir/.face");
 
     // Create standard directories (NO ACLs for www-data!)
-    $dirs = ['domains', 'logs', 'tmp', 'ssl', 'backups'];
+    $dirs = ['domains', 'logs', 'tmp', 'ssl', 'backups', 'cache/nginx'];
     foreach ($dirs as $dir) {
         $path = "$homeDir/$dir";
         if (! is_dir($path)) {
@@ -8332,20 +8332,20 @@ function wpPageCacheEnable(array $params): array
         @mkdir($cacheZoneDir, 0755, true);
     }
 
-    if (! file_exists($cacheZoneFile)) {
-        if (! is_dir($userCacheDir)) {
-            mkdir($userCacheDir, 0755, true);
-            $userInfo = posix_getpwnam($username);
-            if ($userInfo) {
-                chown($userCacheDir, $userInfo['uid']);
-                chgrp($userCacheDir, $userInfo['gid']);
-                // Also ensure parent cache dir ownership
-                $parentCache = "/home/{$username}/cache";
-                chown($parentCache, $userInfo['uid']);
-                chgrp($parentCache, $userInfo['gid']);
-            }
+    // Ensure cache directory exists (even if zone file was already created)
+    if (! is_dir($userCacheDir)) {
+        mkdir($userCacheDir, 0755, true);
+        $userInfo = posix_getpwnam($username);
+        if ($userInfo) {
+            chown($userCacheDir, $userInfo['uid']);
+            chgrp($userCacheDir, $userInfo['gid']);
+            $parentCache = "/home/{$username}/cache";
+            chown($parentCache, $userInfo['uid']);
+            chgrp($parentCache, $userInfo['gid']);
         }
+    }
 
+    if (! file_exists($cacheZoneFile)) {
         $zoneContent = "fastcgi_cache_path /home/{$username}/cache/nginx levels=1:2 keys_zone=JABALI_{$username}:10m inactive=60m max_size=512m;\n";
         file_put_contents($cacheZoneFile, $zoneContent);
     }
