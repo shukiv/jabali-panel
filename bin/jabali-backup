@@ -50,7 +50,9 @@ USAGE:
 
 COMMANDS:
     run [username]      Run backup (all accounts or single account)
+    server-backup       Full server backup (disaster recovery)
     restore <username>  Restore account from snapshot
+    server-restore      Restore full server from backup
     import <file>       Restore from a backup archive (tar.gz)
     download <username> Download snapshot as compressed archive
     ls <username> [path]  Browse files in a snapshot
@@ -318,13 +320,15 @@ cmd_list() {
     cfg_load
     cfg_validate || exit 1
 
-    local what="${1:-}" user_filter=""
+    local what="${1:-}" user_filter="" type_filter=""
     shift || true
 
-    # Parse --user=xxx
+    # Parse --user=xxx --type=xxx
     for arg in "$@"; do
         if [[ "$arg" =~ ^--user=(.+)$ ]]; then
             user_filter="${BASH_REMATCH[1]}"
+        elif [[ "$arg" =~ ^--type=(.+)$ ]]; then
+            type_filter="${BASH_REMATCH[1]}"
         fi
     done
 
@@ -341,11 +345,14 @@ cmd_list() {
             ;;
         snapshots)
             restic_env
+            local -a tag_args=()
             if [[ -n "$user_filter" ]]; then
-                restic snapshots "${RESTIC_EXTRA_OPTS[@]}" --tag "account:${user_filter}" 2>/dev/null
-            else
-                restic snapshots "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null
+                tag_args+=("--tag" "account:${user_filter}")
             fi
+            if [[ -n "$type_filter" ]]; then
+                tag_args+=("--tag" "type:${type_filter}")
+            fi
+            restic snapshots "${RESTIC_EXTRA_OPTS[@]}" "${tag_args[@]}" 2>/dev/null
             ;;
         domains)
             if [[ -n "$user_filter" ]]; then
@@ -692,6 +699,241 @@ cmd_run() {
     fi
 
     return "$failed"
+}
+
+# ─── Server Backup (Disaster Recovery) ────────────────
+
+cmd_server_backup() {
+    for arg in "$@"; do
+        case "$arg" in
+            --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;;
+        esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local skip_users=0 dry_run=0
+    for arg in "$@"; do
+        case "$arg" in
+            --skip-users) skip_users=1 ;;
+            --dry-run)    dry_run=1 ;;
+            --destination=*) ;; # handled above
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+        esac
+    done
+
+    local start_time
+    start_time=$(date +%s)
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Server Backup Plan (Disaster Recovery)"
+        echo "════════════════════════════════════════"
+        echo ""
+        echo "Server-level components:"
+        echo "  1. jabali database (mysqldump, skip ephemeral tables)"
+        echo "  2. powerdns database (mysqldump)"
+        echo "  3. Panel .env + storage/app/"
+        echo "  4. /etc/jabali/ (configs, secrets, agent addons)"
+        echo "  5. Nginx config (nginx.conf, jabali/, sites-available/)"
+        echo "  6. PHP-FPM config (all versions)"
+        echo "  7. Stalwart mail config"
+        echo "  8. Redis config (ACL passwords)"
+        echo "  9. MariaDB config"
+        echo "  10. Panel SSL cert (/etc/ssl/jabali/)"
+        echo "  11. Let's Encrypt state (/etc/letsencrypt/)"
+        echo "  12. Systemd units (jabali-*, stalwart-mail, bulwark)"
+        echo "  13. Package manifest (dpkg, versions)"
+        echo "  14. Server manifest (server-manifest.json)"
+        echo ""
+        if [[ "$skip_users" -eq 0 ]]; then
+            echo "User accounts: ALL (per-user backup for each account)"
+        else
+            echo "User accounts: SKIPPED (--skip-users)"
+        fi
+        echo ""
+        echo "Dry run complete. No changes made."
+        return 0
+    fi
+
+    log_info "═══ Server backup (disaster recovery) starting ═══"
+
+    # Collect server-level data
+    local staging="${CFG_STAGING_DIR:-/tmp/jabali-backup}/server-$$"
+    mkdir -p "$staging"
+    trap 'rm -rf "${staging:-}" 2>/dev/null' EXIT
+
+    restic_env || exit 1
+
+    collect_server "$staging"
+
+    # Backup server data to restic
+    local -a server_tags=(
+        "--tag" "type:server"
+        "--tag" "date:$(date '+%Y-%m-%d')"
+        "--tag" "hostname:$(hostname)"
+    )
+
+    log_info "Running server-level restic backup"
+    if restic_backup "${server_tags[@]}" "$staging"; then
+        log_info "Server-level backup complete"
+    else
+        log_error "Server-level restic backup failed"
+        return 1
+    fi
+
+    # Run per-user backups (unless --skip-users)
+    if [[ "$skip_users" -eq 0 ]]; then
+        log_info "Starting per-user backups for all accounts"
+        cmd_run
+    else
+        log_info "Skipping per-user backups (--skip-users)"
+    fi
+
+    # Cleanup
+    rm -rf "$staging" 2>/dev/null
+    trap - EXIT
+
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Server Backup Complete"
+    echo "────────────────────────────────────────"
+    echo "  Duration: ${duration}s"
+    echo "  Type:     disaster recovery (server + all users)"
+    echo "════════════════════════════════════════"
+
+    log_info "═══ Server backup complete (${duration}s) ═══"
+}
+
+# ─── Server Restore (Disaster Recovery) ───────────────
+
+cmd_server_restore() {
+    for arg in "$@"; do
+        case "$arg" in
+            --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;;
+        esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local snapshot="latest" target_dir="" force=0 dry_run=0 skip_users=0
+    for arg in "$@"; do
+        case "$arg" in
+            --snapshot=*) snapshot="${arg#--snapshot=}" ;;
+            --target=*)   target_dir="${arg#--target=}" ;;
+            --force)      force=1 ;;
+            --dry-run)    dry_run=1 ;;
+            --skip-users) skip_users=1 ;;
+            --destination=*) ;; # handled above
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+        esac
+    done
+
+    local start_time
+    start_time=$(date +%s)
+
+    # Resolve snapshot
+    restic_env || exit 1
+    local snapshot_id
+    if [[ "$snapshot" == "latest" ]]; then
+        snapshot_id=$(restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | grep -oP '"short_id"\s*:\s*"\K[^"]+' | tail -1)
+        if [[ -z "$snapshot_id" ]]; then
+            log_error "No server backup snapshots found"
+            return 1
+        fi
+        log_info "Resolved latest server snapshot: $snapshot_id"
+    else
+        snapshot_id="$snapshot"
+    fi
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Server Restore Plan"
+        echo "════════════════════════════════════════"
+        echo "  Snapshot:    $snapshot_id"
+        echo "  Mode:        $(if [[ -n "$target_dir" ]]; then echo "extract to $target_dir"; else echo "live restore"; fi)"
+        echo "  Force:       $(if [[ "$force" -eq 1 ]]; then echo "yes"; else echo "no"; fi)"
+        echo "  Skip users:  $(if [[ "$skip_users" -eq 1 ]]; then echo "yes"; else echo "no"; fi)"
+        echo ""
+        echo "Phases:"
+        echo "  1. Base install (.env, /etc/jabali/)"
+        echo "  2. Databases (jabali, powerdns, migrations)"
+        echo "  3. Service configs (nginx, PHP-FPM, Stalwart, Redis, MariaDB, SSL, systemd, Let's Encrypt)"
+        echo "  4. User accounts (all users via per-user restore)"
+        echo "  5. Finalize (daemon-reload, restart services, post-restore checks)"
+        echo ""
+        echo "Dry run complete. No changes made."
+        return 0
+    fi
+
+    log_info "═══ Server restore (disaster recovery) starting ═══"
+
+    # Extract snapshot
+    local extract_dir
+    if [[ -n "$target_dir" ]]; then
+        extract_dir="$target_dir"
+        mkdir -p "$extract_dir"
+    else
+        extract_dir="/tmp/jabali-server-restore-$$"
+        mkdir -p "$extract_dir"
+        trap 'rm -rf "${extract_dir:-}" 2>/dev/null' EXIT
+    fi
+
+    log_info "Extracting server snapshot $snapshot_id"
+    if ! restic_restore "$snapshot_id" "$extract_dir"; then
+        log_error "Failed to extract server snapshot $snapshot_id"
+        return 1
+    fi
+
+    # Find the server dir (may be under staging path)
+    local server_data=""
+    if [[ -d "${extract_dir}/server" ]]; then
+        server_data="${extract_dir}"
+    else
+        # Search under staging paths
+        server_data=$(find "$extract_dir" -maxdepth 4 -name "server-manifest.json" -exec dirname {} \; 2>/dev/null | head -1)
+        [[ -n "$server_data" ]] && server_data=$(dirname "$server_data")
+    fi
+
+    if [[ -z "$server_data" || ! -d "${server_data}/server" ]]; then
+        log_error "No server data found in snapshot"
+        return 1
+    fi
+
+    # If --target mode, just show what was extracted
+    if [[ -n "$target_dir" ]]; then
+        echo ""
+        echo "Extracted to: $target_dir"
+        echo "────────────────────────────────────────"
+        [[ -f "${server_data}/server/server-manifest.json" ]] && cat "${server_data}/server/server-manifest.json"
+        echo ""
+        echo "Files extracted for inspection. No changes applied."
+        return 0
+    fi
+
+    # Run 5-phase restore
+    restore_server "$server_data" "$force" "$skip_users"
+
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Server Restore Complete"
+    echo "────────────────────────────────────────"
+    echo "  Snapshot:  $snapshot_id"
+    echo "  Duration:  ${duration}s"
+    echo "════════════════════════════════════════"
+
+    log_info "═══ Server restore complete (${duration}s) ═══"
 }
 
 # ─── Restore Orchestrator ─────────────────────────────
@@ -2637,23 +2879,31 @@ _sched_write_all() {
 }
 
 _sched_build_cron_cmd() {
-    local dest="$1" accounts="$2" exclude="$3"
-    local cmd="/usr/local/bin/jabali-backup run"
+    local dest="$1" accounts="$2" exclude="$3" is_server_backup="${4:-false}"
+
+    local cmd
+    if [[ "$is_server_backup" == "true" ]]; then
+        cmd="/usr/local/bin/jabali-backup server-backup"
+    else
+        cmd="/usr/local/bin/jabali-backup run"
+    fi
 
     if [[ -n "$dest" ]]; then
         cmd+=" --destination=${dest}"
     fi
 
-    if [[ -n "$accounts" ]] && [[ "$accounts" != "all" ]]; then
-        # Specific accounts: space-separated
-        IFS=',' read -ra acct_arr <<< "$accounts"
-        for a in "${acct_arr[@]}"; do
-            cmd+=" ${a}"
-        done
-    fi
+    # Account filtering only applies to per-user backups
+    if [[ "$is_server_backup" != "true" ]]; then
+        if [[ -n "$accounts" ]] && [[ "$accounts" != "all" ]]; then
+            IFS=',' read -ra acct_arr <<< "$accounts"
+            for a in "${acct_arr[@]}"; do
+                cmd+=" ${a}"
+            done
+        fi
 
-    if [[ -n "$exclude" ]]; then
-        cmd+=" --exclude-accounts=${exclude}"
+        if [[ -n "$exclude" ]]; then
+            cmd+=" --exclude-accounts=${exclude}"
+        fi
     fi
 
     cmd+=" >> /var/log/jabali-backup.log 2>&1"
@@ -2684,13 +2934,14 @@ _sched_sync_crontab() {
         job=$(echo "$data" | jq -r --arg id "$job_id" '.[] | select(.id == $id)')
         [[ -z "$job" ]] && continue
 
-        local dest accounts exclude_acct
+        local dest accounts exclude_acct is_server_backup
         dest=$(echo "$job" | jq -r '.destination // empty')
         accounts=$(echo "$job" | jq -r '.accounts // "all"')
         exclude_acct=$(echo "$job" | jq -r '.exclude // empty')
+        is_server_backup=$(echo "$job" | jq -r '.server_backup // false')
 
         local cron_cmd
-        cron_cmd="$(_sched_build_cron_cmd "$dest" "$accounts" "$exclude_acct")"
+        cron_cmd="$(_sched_build_cron_cmd "$dest" "$accounts" "$exclude_acct" "$is_server_backup")"
 
         full_crontab="${full_crontab}
 ${job_cron} ${cron_cmd} # jabali-backup:${job_id}"
@@ -2773,14 +3024,15 @@ _cmd_sched_list() {
     fi
     echo "$data" | jq -r '.[] | [
         (if .enabled then "✓" else "✗" end),
-        .id, .cron, .destination, .accounts
+        .id, .cron, .destination,
+        (if .server_backup then "[Server]" else .accounts end)
     ] | @tsv' | while IFS=$'\t' read -r enabled id cron dest accounts; do
         printf "  %s %-24s %-16s %-16s %s\n" "$enabled" "$id" "$cron" "$dest" "$accounts"
     done
 }
 
 _cmd_sched_add() {
-    local name="" destination="" cron="" accounts="all" exclude=""
+    local name="" destination="" cron="" accounts="all" exclude="" server_backup="false"
     local keep_last="7" keep_daily="30" keep_weekly="12" keep_monthly="24"
 
     for arg in "$@"; do
@@ -2790,6 +3042,7 @@ _cmd_sched_add() {
             --cron=*)         cron="${arg#*=}" ;;
             --accounts=*)     accounts="${arg#*=}" ;;
             --exclude=*)      exclude="${arg#*=}" ;;
+            --server-backup)  server_backup="true" ;;
             --keep-last=*)    keep_last="${arg#*=}" ;;
             --keep-daily=*)   keep_daily="${arg#*=}" ;;
             --keep-weekly=*)  keep_weekly="${arg#*=}" ;;
@@ -2835,6 +3088,7 @@ _cmd_sched_add() {
         --arg cron "$cron" \
         --arg accounts "$accounts" \
         --arg exclude "$exclude" \
+        --argjson server_backup "$server_backup" \
         --argjson keep_last "$keep_last" \
         --argjson keep_daily "$keep_daily" \
         --argjson keep_weekly "$keep_weekly" \
@@ -2843,6 +3097,7 @@ _cmd_sched_add() {
         '{
             id: $id, name: $name, destination: $destination,
             cron: $cron, accounts: $accounts, exclude: $exclude,
+            server_backup: $server_backup,
             retention: { keep_last: $keep_last, keep_daily: $keep_daily, keep_weekly: $keep_weekly, keep_monthly: $keep_monthly },
             enabled: false, created_at: $created_at
         }')
@@ -2860,7 +3115,7 @@ _cmd_sched_add() {
 }
 
 _cmd_sched_update() {
-    local job_id="" name="" destination="" cron="" accounts="" exclude=""
+    local job_id="" name="" destination="" cron="" accounts="" exclude="" server_backup=""
     local keep_last="" keep_daily="" keep_weekly="" keep_monthly=""
 
     for arg in "$@"; do
@@ -2871,6 +3126,8 @@ _cmd_sched_update() {
             --cron=*)         cron="${arg#*=}" ;;
             --accounts=*)     accounts="${arg#*=}" ;;
             --exclude=*)      exclude="${arg#*=}" ;;
+            --server-backup)  server_backup="true" ;;
+            --no-server-backup) server_backup="false" ;;
             --keep-last=*)    keep_last="${arg#*=}" ;;
             --keep-daily=*)   keep_daily="${arg#*=}" ;;
             --keep-weekly=*)  keep_weekly="${arg#*=}" ;;
@@ -2904,6 +3161,7 @@ _cmd_sched_update() {
     [[ -n "$keep_daily" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$keep_daily" '[.[] | if .id == $id then .retention.keep_daily = $v else . end]')
     [[ -n "$keep_weekly" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$keep_weekly" '[.[] | if .id == $id then .retention.keep_weekly = $v else . end]')
     [[ -n "$keep_monthly" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$keep_monthly" '[.[] | if .id == $id then .retention.keep_monthly = $v else . end]')
+    [[ -n "$server_backup" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$server_backup" '[.[] | if .id == $id then .server_backup = $v else . end]')
 
     _sched_write_all "$updated"
 
@@ -3034,7 +3292,9 @@ main() {
 
     case "$cmd" in
         run)      cmd_run "$@" ;;
+        server-backup)  cmd_server_backup "$@" ;;
         restore)  cmd_restore "$@" ;;
+        server-restore) cmd_server_restore "$@" ;;
         import)   cmd_import "$@" ;;
         download) cmd_download "$@" ;;
         ls|browse) cmd_ls "$@" ;;
