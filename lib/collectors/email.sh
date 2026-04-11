@@ -52,6 +52,12 @@ EOJSON
     local mail_paths=()
     while IFS=$'\t' read -r mb_id local_part domain quota imap pop3 smtp sys_uid sys_gid; do
         [[ -z "$mb_id" ]] && continue
+
+        # Get password hash and encrypted password for restore
+        local pw_hash pw_encrypted
+        pw_hash=$(_db_query "SELECT password_hash FROM mailboxes WHERE id = $mb_id" 2>/dev/null)
+        pw_encrypted=$(_db_query "SELECT password_encrypted FROM mailboxes WHERE id = $mb_id" 2>/dev/null)
+
         cat > "${email_dir}/mailboxes/${local_part}@${domain}.json" <<EOJSON
 {
   "local_part": "${local_part}",
@@ -61,7 +67,9 @@ EOJSON
   "pop3_enabled": ${pop3:-1},
   "smtp_enabled": ${smtp:-1},
   "system_uid": ${sys_uid:-0},
-  "system_gid": ${sys_gid:-0}
+  "system_gid": ${sys_gid:-0},
+  "password_hash": $(if [[ -n "$pw_hash" ]]; then printf '"%s"' "$pw_hash"; else echo 'null'; fi),
+  "password_encrypted": $(if [[ -n "$pw_encrypted" ]] && [[ "$pw_encrypted" != "NULL" ]]; then printf '"%s"' "$pw_encrypted"; else echo 'null'; fi)
 }
 EOJSON
         # Collect mail storage path (skip when stalwart collector handles mail content)

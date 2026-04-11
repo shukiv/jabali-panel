@@ -76,6 +76,17 @@ restore_email() {
             mb_uid=$(grep -oP '"system_uid"\s*:\s*\K[0-9]+' "$mb_json" || echo "0")
             mb_gid=$(grep -oP '"system_gid"\s*:\s*\K[0-9]+' "$mb_json" || echo "0")
 
+            # Get backed up password hash and encrypted password
+            local pw_hash pw_encrypted
+            pw_hash=$(grep -oP '"password_hash"\s*:\s*"\K[^"]+' "$mb_json" || true)
+            pw_encrypted=$(grep -oP '"password_encrypted"\s*:\s*"\K[^"]+' "$mb_json" || true)
+
+            # Use backed up hash, or placeholder if not available
+            local restore_hash="$pw_hash"
+            if [[ -z "$restore_hash" ]] || [[ "$restore_hash" == "null" ]]; then
+                restore_hash='$2y$10$RESET.REQUIRED.000000000000000000000000000000000000000'
+            fi
+
             # Find email_domain_id
             local ed_id
             ed_id=$(_db_query "SELECT ed.id FROM email_domains ed JOIN domains d ON ed.domain_id=d.id WHERE d.domain='$(mysql_escape "$mb_domain")' LIMIT 1")
@@ -86,7 +97,14 @@ restore_email() {
 
             if [[ -n "$existing_mb" ]]; then
                 if [[ "$force" -eq 1 ]]; then
-                    if _db_write "UPDATE mailboxes SET quota_bytes=$mb_quota, imap_enabled=$mb_imap, pop3_enabled=$mb_pop3, smtp_enabled=$mb_smtp, updated_at=NOW() WHERE id=$existing_mb"; then
+                    local pw_update=""
+                    if [[ -n "$pw_hash" ]] && [[ "$pw_hash" != "null" ]]; then
+                        pw_update=", password_hash='$(mysql_escape "$pw_hash")'"
+                    fi
+                    if [[ -n "$pw_encrypted" ]] && [[ "$pw_encrypted" != "null" ]]; then
+                        pw_update="${pw_update}, password_encrypted='$(mysql_escape "$pw_encrypted")'"
+                    fi
+                    if _db_write "UPDATE mailboxes SET quota_bytes=$mb_quota, imap_enabled=$mb_imap, pop3_enabled=$mb_pop3, smtp_enabled=$mb_smtp${pw_update}, updated_at=NOW() WHERE id=$existing_mb"; then
                         log_info "restore/email: Updated mailbox ${local_part}@${mb_domain}"
                     else
                         log_warn "restore/email: Failed to update mailbox ${local_part}@${mb_domain}"
@@ -95,11 +113,17 @@ restore_email() {
                     log_info "restore/email: Mailbox ${local_part}@${mb_domain} exists, skipping"
                 fi
             else
-                # password_hash is NOT NULL — use a placeholder that forces password reset
-                local placeholder_hash
-                placeholder_hash='$2y$10$RESET.REQUIRED.000000000000000000000000000000000000000'
-                if _db_write "INSERT INTO mailboxes (email_domain_id, user_id, local_part, password_hash, quota_bytes, imap_enabled, pop3_enabled, smtp_enabled, system_uid, system_gid, created_at, updated_at) VALUES ($ed_id, $user_id, '$(mysql_escape "$local_part")', '$(mysql_escape "$placeholder_hash")', $mb_quota, $mb_imap, $mb_pop3, $mb_smtp, $mb_uid, $mb_gid, NOW(), NOW())"; then
-                    log_info "restore/email: Created mailbox ${local_part}@${mb_domain} (password must be reset)"
+                local pw_enc_col="" pw_enc_val=""
+                if [[ -n "$pw_encrypted" ]] && [[ "$pw_encrypted" != "null" ]]; then
+                    pw_enc_col=", password_encrypted"
+                    pw_enc_val=", '$(mysql_escape "$pw_encrypted")'"
+                fi
+                if _db_write "INSERT INTO mailboxes (email_domain_id, user_id, local_part, password_hash, quota_bytes, imap_enabled, pop3_enabled, smtp_enabled, system_uid, system_gid, created_at, updated_at${pw_enc_col}) VALUES ($ed_id, $user_id, '$(mysql_escape "$local_part")', '$(mysql_escape "$restore_hash")', $mb_quota, $mb_imap, $mb_pop3, $mb_smtp, $mb_uid, $mb_gid, NOW(), NOW()${pw_enc_val})"; then
+                    if [[ -n "$pw_hash" ]] && [[ "$pw_hash" != "null" ]] && [[ "$pw_hash" != *"RESET.REQUIRED"* ]]; then
+                        log_info "restore/email: Created mailbox ${local_part}@${mb_domain} (password restored)"
+                    else
+                        log_info "restore/email: Created mailbox ${local_part}@${mb_domain} (password must be reset)"
+                    fi
                 else
                     log_warn "restore/email: Failed to create mailbox ${local_part}@${mb_domain}"
                 fi

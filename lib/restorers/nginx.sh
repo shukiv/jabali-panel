@@ -20,6 +20,18 @@ restore_nginx() {
         fi
 
         cp "$conf" "$target"
+
+        # Fix FPM socket path: replace generic php-fpm.sock with user-specific pool socket
+        # Jabali uses per-user pools: /run/php/php{VERSION}-fpm-{USERNAME}.sock
+        local php_ver
+        php_ver=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || echo "8.5")
+        local user_sock="/run/php/php${php_ver}-fpm-${username}.sock"
+        if [[ -S "$user_sock" ]] || [[ -S "/var/run/php/php${php_ver}-fpm-${username}.sock" ]]; then
+            sed -i "s|fastcgi_pass unix:[^;]*php-fpm\.sock;|fastcgi_pass unix:${user_sock};|g" "$target"
+            sed -i "s|fastcgi_pass unix:/var/run/php/php-fpm\.sock;|fastcgi_pass unix:${user_sock};|g" "$target"
+            log_info "restore/nginx: Fixed FPM socket -> $user_sock"
+        fi
+
         # Create symlink in sites-enabled (panel convention: config in sites-available, symlink in sites-enabled)
         ln -sf "$target" "/etc/nginx/sites-enabled/${fname}"
         count=$((count + 1))
