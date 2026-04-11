@@ -1438,7 +1438,16 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 TextColumn::make('destination')
                     ->label(__('Destination'))
                     ->badge()
-                    ->color('gray'),
+                    ->color('gray')
+                    ->formatStateUsing(function (array $record): string {
+                        $destId = $record['destination'] ?? '';
+                        foreach ($this->destinations as $d) {
+                            if (($d['id'] ?? '') === $destId) {
+                                return $d['name'] ?? $destId;
+                            }
+                        }
+                        return $destId;
+                    }),
                 TextColumn::make('cron')
                     ->label(__('Schedule'))
                     ->fontFamily('mono')
