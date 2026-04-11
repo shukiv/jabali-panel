@@ -33,10 +33,15 @@ Route::get('/phpmyadmin-sso', function (\Illuminate\Http\Request $request) {
         abort(404, 'No database credentials found.');
     }
 
+    // Decrypt password — handle both Crypt::encrypt() (serialized) and Crypt::encryptString() (raw)
+    $decrypted = Crypt::decryptString($credential->mysql_password_encrypted);
+    $unserialized = @unserialize($decrypted);
+    $password = $unserialized !== false ? $unserialized : $decrypted;
+
     $token = bin2hex(random_bytes(32));
     Cache::put('phpmyadmin_token_'.$token, [
         'username' => $credential->mysql_username,
-        'password' => Crypt::decryptString($credential->mysql_password_encrypted),
+        'password' => $password,
         'database' => $database,
     ], now()->addMinutes(5));
 
