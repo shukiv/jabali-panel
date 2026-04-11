@@ -343,18 +343,8 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                     ->label(__('phpMyAdmin'))
                     ->icon('heroicon-o-circle-stack')
                     ->color('info')
-                    ->action(function (array $record): void {
-                        $url = $this->getPhpMyAdminUrl($record['name']);
-                        if ($url) {
-                            $this->dispatch('open-phpmyadmin', url: $url);
-                        } else {
-                            Notification::make()
-                                ->title(__('Cannot open phpMyAdmin'))
-                                ->body(__('No database credentials found. Create a user first.'))
-                                ->warning()
-                                ->send();
-                        }
-                    }),
+                    ->url(fn (array $record): string => route('phpmyadmin.redirect', ['database' => $record['name']]))
+                    ->openUrlInNewTab(),
                 Action::make('backup')
                     ->label(__('Backup'))
                     ->icon('heroicon-o-arrow-down-tray')

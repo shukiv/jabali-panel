@@ -2,10 +2,6 @@
     {{-- Download handler --}}
     @script
     <script>
-        $wire.on('open-phpmyadmin', ({ url }) => {
-            window.open(url, '_blank');
-        });
-
         $wire.on('download-backup-file', ({ content, filename }) => {
             const blob = new Blob([Uint8Array.from(atob(content), c => c.charCodeAt(0))]);
             const url = URL.createObjectURL(blob);
