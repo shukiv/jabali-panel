@@ -16,7 +16,7 @@ A web hosting control panel for WordPress and PHP hosting. Laravel 12 + Filament
 - **Databases**: MariaDB (always enabled) + PostgreSQL (optional, enabled/disabled via Server Settings > Databases tab)
 - **PHP-FPM**: Configurable pm type (dynamic, static, ondemand) with conditional start/min/max spare server fields; settings applied to new pools or all existing pools
 - **Backups**: Fully removed; will be rebuilt as standalone tool (jabali-backup)
-- **SSL**: Certbot webroot for domains (includes mail.$domain), panel cert via `ssl.panel.issue` agent command
+- **SSL**: Certbot webroot for domains (includes mail.$domain), panel cert via `ssl.panel.issue` agent command; `jabali:ssl-check` runs every 3h to auto-issue missing certs (including self-signed panel cert replacement) and renew expiring ones
 - **Stats**: GoAccess in daemon mode with real-time WebSocket updates
 - **Bandwidth**: Daily sync from nginx access logs, displayed on Users and Domains pages
 - **File browser**: Live files via agent; full page (`FileBrowser`) and embeddable widget (`FileBrowserWidget` via `@livewire('file-browser-widget', [...])`); supports `$readOnly`, `$selectable`, `$disabledFeatures`; widget accepts `adapterClass` + `adapterConfig` for Livewire re-hydration (adapters need static `fromConfig()`); permission toggles sync via Alpine.js event delegation; Livewire component names use dashes not `::` (v4 namespace separator)

@@ -34,7 +34,7 @@ Issues a new certificate for the control panel itself (FrankenPHP running on por
 
 ### Renew Certificate
 ```bash
-jabali renew <domain>
+jabali ssl:renew <domain>
 ```
 
 Manually renews an existing certificate before expiration. Certbot checks certificate age and skips renewal if not due.
@@ -70,9 +70,19 @@ Displays full certificate information including:
 - Certificate chain
 - Issuer details
 
-## Automatic Renewal
+## Automatic Issuance & Renewal
 
-Certbot runs automatic renewal via systemd timer (`certbot.timer`). The timer runs daily and checks for certificates expiring within 30 days.
+### Scheduled SSL Check (`jabali:ssl-check`)
+Runs every 3 hours via Laravel scheduler. Handles all SSL automation:
+
+1. **Panel certificate** — checks if self-signed or expiring within 30 days, calls `ssl.panel.issue` via the agent to get a real LE cert
+2. **Domain certificates** — issues certs for domains that don't have one (up to 3 retries for failed domains, 6h cooldown between attempts)
+3. **Mail certificates** — issues certs for `mail.$domain` on active email domains (checks DNS points to server first)
+4. **Renewals** — renews LE certs expiring within 30 days (up to 5 retry attempts)
+5. **Expiry alerts** — notifies admin for certs expiring within 7 days
+
+### Certbot Timer
+Certbot also runs daily via systemd timer (`certbot.timer`) as a secondary renewal mechanism. A deploy hook copies renewed panel certs to FrankenPHP and reloads.
 
 Renewal process:
 1. Certbot validates domain ownership via webroot (places token in domain's public directory)

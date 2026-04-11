@@ -873,6 +873,24 @@ class UpgradeCommand extends Command
             }
         }
 
+        // Restart FrankenPHP (clears OPcache so new code is served)
+        if ($this->isRunningAsRoot()) {
+            $panelResult = $this->executeCommand('systemctl restart jabali-panel');
+            if ($panelResult['exitCode'] === 0) {
+                $this->line('  - jabali-panel restarted (OPcache cleared)');
+            } else {
+                $this->warn('  - jabali-panel restart failed');
+            }
+        } else {
+            try {
+                $agent = app(\App\Services\Agent\AgentClient::class);
+                $agent->send('service.restart', ['service' => 'jabali-panel']);
+                $this->line('  - jabali-panel restart requested via agent');
+            } catch (\Throwable) {
+                $this->warn('  - jabali-panel restart skipped (not root)');
+            }
+        }
+
         // Reload nginx and PHP-FPM (requires root or agent)
         if ($this->isRunningAsRoot()) {
             $nginxResult = $this->executeCommand('systemctl reload nginx');
