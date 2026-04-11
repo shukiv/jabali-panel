@@ -93,6 +93,8 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     // Logs
     public array $logJobs = [];
 
+    public string $logFilter = 'all';
+
     // Settings
     public string $doctorOutput = '';
 
@@ -304,6 +306,10 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
         if ($this->activeTab === 'restore_download') {
             return $this->accountsTable($table);
+        }
+
+        if ($this->activeTab === 'logs') {
+            return $this->logsTable($table);
         }
 
         return $this->accountsTable($table);
@@ -1641,6 +1647,77 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         } catch (\Throwable) {
             $this->logJobs = [];
         }
+    }
+
+    protected function logsTable(Table $table): Table
+    {
+        return $table
+            ->header(view('filament.admin.pages.partials.log-tabs'))
+            ->records(fn () => collect($this->logJobs)
+                ->when(
+                    $this->logFilter !== 'all',
+                    fn ($c) => $c->filter(fn ($job) => match ($this->logFilter) {
+                        'backup' => ($job['type'] ?? '') === 'backup',
+                        'restore' => in_array($job['type'] ?? '', ['restore', 'file-restore'], true),
+                        default => true,
+                    })
+                )
+                ->mapWithKeys(fn ($job, $i) => [$job['id'] ?? "job-{$i}" => $job])
+                ->all())
+            ->columns([
+                TextColumn::make('type')
+                    ->label(__('Type'))
+                    ->badge()
+                    ->formatStateUsing(fn (array $record): string => ucfirst($record['type'] ?? 'backup'))
+                    ->icon(fn (array $record): string => match ($record['type'] ?? 'backup') {
+                        'restore' => 'heroicon-o-arrow-path',
+                        'file-restore' => 'heroicon-o-document-arrow-down',
+                        default => 'heroicon-o-cloud-arrow-up',
+                    })
+                    ->color(fn (array $record): string => match ($record['type'] ?? 'backup') {
+                        'restore', 'file-restore' => 'info',
+                        default => 'primary',
+                    }),
+                TextColumn::make('accounts')
+                    ->label(__('Accounts'))
+                    ->formatStateUsing(fn (array $record): string => implode(', ', $record['accounts'] ?? []) ?: '-'),
+                TextColumn::make('status')
+                    ->label(__('Status'))
+                    ->badge()
+                    ->color(fn (array $record): string => match ($record['status'] ?? '') {
+                        'success' => 'success',
+                        'partial' => 'warning',
+                        'failed' => 'danger',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (array $record): string => ucfirst($record['status'] ?? 'running')),
+                TextColumn::make('started_at')
+                    ->label(__('Date'))
+                    ->formatStateUsing(fn (array $record): string => $record['started_at'] ?? ''),
+                TextColumn::make('duration_seconds')
+                    ->label(__('Duration'))
+                    ->formatStateUsing(fn (array $record): string => isset($record['duration_seconds']) ? $record['duration_seconds'] . 's' : '-')
+                    ->alignEnd(),
+            ])
+            ->actions([
+                \Filament\Actions\Action::make('viewLog')
+                    ->label(__('View Log'))
+                    ->icon('heroicon-o-eye')
+                    ->color('gray')
+                    ->modalHeading(fn (array $record): string => ucfirst($record['type'] ?? 'backup') . ' — ' . ($record['started_at'] ?? ''))
+                    ->modalContent(function (array $record): \Illuminate\Contracts\View\View {
+                        return view('filament.admin.pages.partials.log-modal', [
+                            'events' => $record['events'] ?? [],
+                            'log' => $record['log'] ?? [],
+                        ]);
+                    })
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel(__('Close')),
+            ])
+            ->headerActions([])
+            ->emptyStateHeading(__('No jobs found'))
+            ->emptyStateIcon('heroicon-o-document-text')
+            ->paginated(false);
     }
 
 
