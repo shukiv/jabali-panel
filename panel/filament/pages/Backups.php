@@ -308,10 +308,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             return $this->accountsTable($table);
         }
 
-        if ($this->activeTab === 'logs') {
-            return $this->logsTable($table);
-        }
-
         return $this->accountsTable($table);
     }
 
@@ -1649,88 +1645,47 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         }
     }
 
-    protected function logsTable(Table $table): Table
+    /**
+     * Return log jobs filtered by the active logFilter sub-tab.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getFilteredLogJobs(): array
     {
-        return $table
-            ->records(fn (array $filters) => collect($this->logJobs)
-                ->when(
-                    ($filters['type']['value'] ?? null) !== null,
-                    fn ($c) => $c->filter(fn ($job) => $filters['type']['value']
-                        ? ($job['type'] ?? '') === 'backup'
-                        : in_array($job['type'] ?? '', ['restore', 'file-restore'], true)
-                    )
-                )
-                ->mapWithKeys(fn ($job, $i) => [$job['id'] ?? "job-{$i}" => $job])
-                ->all())
-            ->columns([
-                TextColumn::make('type')
-                    ->label(__('Type'))
-                    ->badge()
-                    ->formatStateUsing(fn (array $record): string => ucfirst($record['type'] ?? 'backup'))
-                    ->icon(fn (array $record): string => match ($record['type'] ?? 'backup') {
-                        'restore' => 'heroicon-o-arrow-path',
-                        'file-restore' => 'heroicon-o-document-arrow-down',
-                        default => 'heroicon-o-cloud-arrow-up',
-                    })
-                    ->color(fn (array $record): string => match ($record['type'] ?? 'backup') {
-                        'restore', 'file-restore' => 'info',
-                        default => 'primary',
-                    }),
-                TextColumn::make('accounts')
-                    ->label(__('Accounts'))
-                    ->formatStateUsing(fn (array $record): string => implode(', ', $record['accounts'] ?? []) ?: '-'),
-                TextColumn::make('status')
-                    ->label(__('Status'))
-                    ->badge()
-                    ->color(fn (array $record): string => match ($record['status'] ?? '') {
-                        'success' => 'success',
-                        'partial' => 'warning',
-                        'failed' => 'danger',
-                        default => 'gray',
-                    })
-                    ->formatStateUsing(fn (array $record): string => ucfirst($record['status'] ?? 'running')),
-                TextColumn::make('started_at')
-                    ->label(__('Date'))
-                    ->formatStateUsing(fn (array $record): string => $record['started_at'] ?? ''),
-                TextColumn::make('duration_seconds')
-                    ->label(__('Duration'))
-                    ->formatStateUsing(fn (array $record): string => isset($record['duration_seconds']) ? $record['duration_seconds'] . 's' : '-')
-                    ->alignEnd(),
-            ])
-            ->filters([
-                \Filament\Tables\Filters\TernaryFilter::make('type')
-                    ->label(__('Type'))
-                    ->placeholder(__('All'))
-                    ->trueLabel(__('Backup Logs'))
-                    ->falseLabel(__('Restore Logs')),
-            ], layout: \Filament\Tables\Enums\FiltersLayout::AboveContent)
-            ->actions([
-                \Filament\Actions\Action::make('viewLog')
-                    ->label(__('View Log'))
-                    ->icon('heroicon-o-eye')
-                    ->color('gray')
-                    ->modalHeading(fn (array $record): string => ucfirst($record['type'] ?? 'backup') . ' — ' . ($record['started_at'] ?? ''))
-                    ->modalContent(function (array $record): \Illuminate\Contracts\View\View {
-                        return view('filament.admin.pages.partials.log-modal', [
-                            'events' => $record['events'] ?? [],
-                            'log' => $record['log'] ?? [],
-                        ]);
-                    })
-                    ->modalSubmitAction(false)
-                    ->modalCancelActionLabel(__('Close')),
-            ])
-            ->headerActions([
-                \Filament\Actions\Action::make('refreshLogs')
-                    ->label(__('Refresh'))
-                    ->icon('heroicon-o-arrow-path')
-                    ->color('gray')
-                    ->action(fn () => $this->loadLogs()),
-            ])
-            ->emptyStateHeading(__('No jobs found'))
-            ->emptyStateIcon('heroicon-o-document-text')
-            ->paginated(false);
+        return collect($this->logJobs)
+            ->when($this->logFilter === 'backup', fn ($c) => $c->filter(fn ($job) => ($job['type'] ?? '') === 'backup'))
+            ->when($this->logFilter === 'restore', fn ($c) => $c->filter(fn ($job) => in_array($job['type'] ?? '', ['restore', 'file-restore'], true)))
+            ->values()
+            ->all();
     }
 
+    public function viewLogJob(int $index): void
+    {
+        $jobs = $this->getFilteredLogJobs();
+        $job = $jobs[$index] ?? null;
+
+        if (! $job) {
+            return;
+        }
+
+        $this->mountAction('viewLogDetail', ['job' => $job]);
+    }
+
+    public function viewLogDetailAction(): Action
+    {
+        return Action::make('viewLogDetail')
+            ->modalHeading(fn (array $arguments): string => ucfirst($arguments['job']['type'] ?? 'backup') . ' — ' . ($arguments['job']['started_at'] ?? ''))
+            ->modalContent(function (array $arguments): \Illuminate\Contracts\View\View {
+                $job = $arguments['job'] ?? [];
+
+                return view('filament.admin.pages.partials.log-modal', [
+                    'events' => $job['events'] ?? [],
+                    'log' => $job['log'] ?? [],
+                ]);
+            })
+            ->modalSubmitAction(false)
+            ->modalCancelActionLabel(__('Close'));
+    }
 
     // ─── Settings ───
 

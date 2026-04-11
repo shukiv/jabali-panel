@@ -33,8 +33,9 @@
 
             {{-- LOGS --}}
             @if($activeTab === 'logs')
-                <div wire:key="tab-logs">
-                {{ $this->table }}
+                <div wire:key="tab-logs" class="space-y-4">
+                    @include('filament.admin.pages.partials.log-tabs')
+                    @include('filament.admin.pages.partials.log-table')
                 </div>
             @endif
 
