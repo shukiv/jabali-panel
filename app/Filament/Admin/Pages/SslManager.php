@@ -151,7 +151,6 @@ class SslManager extends Page implements HasTable
             ->emptyStateHeading(__('No SSL certificates found'))
             ->emptyStateDescription(__('Run SSL Check to scan your domains.'))
             ->emptyStateIcon('heroicon-o-shield-exclamation')
-            ->defaultSort('domain.domain')
             ->paginated(false);
     }
 
