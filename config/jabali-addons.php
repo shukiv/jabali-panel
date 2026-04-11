@@ -11,7 +11,7 @@ return [
         'service' => null,
         'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
         'uninstall_command' => 'jabali-backup uninstall',
-        'version_command' => 'jabali-backup --version',
+        'version_command' => 'jabali-backup version',
         'repo' => 'shukiv/jabali-backup',
     ],
 
@@ -23,7 +23,7 @@ return [
         'service' => 'jabali-security',
         'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
         'uninstall_command' => 'jabali-security uninstall --force',
-        'version_command' => 'jabali-security --version',
+        'version_command' => 'jabali-security status',
         'repo' => 'shukiv/jabali-security',
     ],
 ];

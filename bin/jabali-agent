@@ -1082,7 +1082,9 @@ function addonUninstall(array $params): array
     fclose($pipes[2]);
     $exitCode = proc_close($proc);
 
-    if ($exitCode !== 0) {
+    // The uninstall script may restart jabali-agent, causing a non-zero exit
+    // even though uninstall succeeded. Check if the binary is actually gone.
+    if ($exitCode !== 0 && file_exists($addon['binary'])) {
         logger("Addon uninstall failed: {$addonId} (exit {$exitCode})");
 
         return ['success' => false, 'error' => 'Uninstall failed', 'output' => $stderr ?: $stdout];
