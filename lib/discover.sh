@@ -82,6 +82,30 @@ mysql_escape() {
 
 # Run a write (INSERT/UPDATE/DELETE) SQL against Jabali DB
 _db_write() {
-    mysql -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
-        "$CFG_DB_NAME" -e "$1" 2>/dev/null
+    local err
+    err=$(mysql -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
+        "$CFG_DB_NAME" -e "$1" 2>&1) || {
+        log_warn "db_write failed: $err"
+        return 1
+    }
+}
+
+# Run a MySQL command as root (for admin ops: CREATE USER, CREATE DATABASE, GRANT)
+# Uses unix socket auth which works when jabali-backup runs as root.
+_mysql_root() {
+    mysql -u root "$@"
+}
+
+# Run a MySQL admin query as root, return result
+_mysql_root_query() {
+    mysql -u root -N -B -e "$1" 2>/dev/null
+}
+
+# Run a MySQL admin write as root (CREATE USER, GRANT, etc.)
+_mysql_root_write() {
+    local err
+    err=$(mysql -u root -e "$1" 2>&1) || {
+        log_warn "mysql_root_write failed: $err"
+        return 1
+    }
 }

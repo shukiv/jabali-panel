@@ -38,10 +38,9 @@ collect_mysql() {
         return 0
     fi
 
-    # List databases owned by this user
+    # List databases owned by this user (needs root to see all databases)
     local databases
-    databases=$(mysql -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
-        -N -B -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE $like_clauses" 2>/dev/null)
+    databases=$(_mysql_root_query "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE $like_clauses")
 
     # Dump each database
     local db count=0
@@ -52,7 +51,7 @@ collect_mysql() {
             information_schema|performance_schema|mysql|sys|jabali) continue ;;
         esac
         log_info "mysql: Dumping database $db"
-        if mysqldump -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
+        if mysqldump -u root \
             --single-transaction --routines --triggers --events \
             "$db" 2>/dev/null | gzip > "${mysql_dir}/${db}.sql.gz"; then
             count=$((count + 1))
@@ -66,8 +65,7 @@ collect_mysql() {
     [[ -n "$mysql_user" ]] && mysql_users+=("$mysql_user")
     # Also find any MySQL users prefixed with the username
     local extra_users
-    extra_users=$(mysql -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
-        -N -B -e "SELECT DISTINCT User FROM mysql.user WHERE User LIKE '$(mysql_escape "$username")%'" 2>/dev/null)
+    extra_users=$(_mysql_root_query "SELECT DISTINCT User FROM mysql.user WHERE User LIKE '$(mysql_escape "$username")%'")
     while IFS= read -r u; do
         [[ -z "$u" ]] && continue
         mysql_users+=("$u")
@@ -80,12 +78,10 @@ collect_mysql() {
             [[ -n "${grant_seen[$mu]:-}" ]] && continue
             grant_seen[$mu]=1
             local hosts
-            hosts=$(mysql -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
-                -N -B -e "SELECT DISTINCT Host FROM mysql.user WHERE User='$(mysql_escape "$mu")'" 2>/dev/null)
+            hosts=$(_mysql_root_query "SELECT DISTINCT Host FROM mysql.user WHERE User='$(mysql_escape "$mu")'")
             while IFS= read -r host; do
                 [[ -z "$host" ]] && continue
-                mysql -h "$CFG_DB_HOST" -u "$CFG_DB_USER" -p"$CFG_DB_PASS" \
-                    -N -B -e "SHOW GRANTS FOR '$(mysql_escape "$mu")'@'$(mysql_escape "$host")'" 2>/dev/null \
+                _mysql_root_query "SHOW GRANTS FOR '$(mysql_escape "$mu")'@'$(mysql_escape "$host")'" \
                     >> "${mysql_dir}/grants.sql"
                 echo ";" >> "${mysql_dir}/grants.sql"
             done <<< "$hosts"

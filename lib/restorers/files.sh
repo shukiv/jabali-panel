@@ -24,15 +24,53 @@ restore_files() {
     log_info "restore/files: Syncing $source → $target"
     rsync -a --delete "$source/" "$target/"
 
-    # Fix ownership
-    if id "$username" &>/dev/null; then
-        chown -R "${username}:${username}" "$target"
-        log_info "restore/files: Fixed ownership for $target"
-    else
-        log_warn "restore/files: System user $username doesn't exist, ownership not fixed"
-    fi
+    # Fix ownership and web server permissions
+    _fix_home_permissions "$username" "$target"
 
     local file_count
     file_count=$(find "$target" -type f 2>/dev/null | wc -l)
     log_info "restore/files: Restored $file_count files to $target"
+}
+
+# Set correct ownership and permissions for a Jabali hosting account home dir.
+# nginx runs as www-data and needs to traverse into the home dir to serve files.
+_fix_home_permissions() {
+    local username="$1" home="$2"
+
+    if ! id "$username" &>/dev/null; then
+        log_warn "restore/files: System user $username doesn't exist, permissions not fixed"
+        return 0
+    fi
+
+    # 1. Ownership: everything belongs to user:user
+    chown -R "${username}:${username}" "$home"
+
+    # 2. Home dir: 751 — owner full, group r+x, other execute-only (nginx traverse)
+    chmod 751 "$home"
+
+    # 3. Domains tree: nginx needs to read document roots
+    if [[ -d "${home}/domains" ]]; then
+        # Domain dirs and subdirs: 755 so nginx can traverse + read
+        find "${home}/domains" -type d -exec chmod 755 {} +
+        # Files: 644 (owner write, world read) — standard for web content
+        find "${home}/domains" -type f -exec chmod 644 {} +
+    fi
+
+    # 4. Nginx cache dir: needs to be writable by nginx (www-data via FPM pool)
+    if [[ -d "${home}/cache" ]]; then
+        chmod -R o+rX "${home}/cache"
+    fi
+
+    # 5. SSH: strict permissions required by sshd
+    if [[ -d "${home}/.ssh" ]]; then
+        chmod 700 "${home}/.ssh"
+        [[ -f "${home}/.ssh/authorized_keys" ]] && chmod 600 "${home}/.ssh/authorized_keys"
+    fi
+
+    # 6. Private dirs: no world access
+    for dir in backups tmp .composer .npm; do
+        [[ -d "${home}/${dir}" ]] && chmod 750 "${home}/${dir}"
+    done
+
+    log_info "restore/files: Fixed ownership and web server permissions for $home"
 }

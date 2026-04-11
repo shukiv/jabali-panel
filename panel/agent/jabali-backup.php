@@ -1503,19 +1503,29 @@ function jbLogs(array $params): array
             $currentAccount = null;
         }
 
-        // New restore run
-        if (preg_match('/═══ Restoring account: (\S+)/', $line, $m) && $currentJob === null) {
-            $currentJob = [
-                'id' => 'restore-' . ($ts ? str_replace(['-', ' ', ':'], '', $ts) : uniqid()),
-                'type' => 'restore',
-                'started_at' => $ts,
-                'ended_at' => $ts,
-                'accounts' => [],
-                'status' => 'running',
-                'errors' => 0,
-                'events' => [],
-                'log' => [],
-            ];
+        // New restore run — close any previous job first
+        if (preg_match('/═══ Restoring account: (\S+)/', $line, $m)) {
+            // Only start a new restore job if we're not already inside one
+            $isNewRestore = $currentJob === null || $currentJob['type'] !== 'restore';
+            if ($isNewRestore) {
+                if ($currentJob !== null) {
+                    if ($currentJob['status'] === 'running') {
+                        $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
+                    }
+                    $jobs[] = $currentJob;
+                }
+                $currentJob = [
+                    'id' => 'restore-' . ($ts ? str_replace(['-', ' ', ':'], '', $ts) : uniqid()),
+                    'type' => 'restore',
+                    'started_at' => $ts,
+                    'ended_at' => $ts,
+                    'accounts' => [],
+                    'status' => 'running',
+                    'errors' => 0,
+                    'events' => [],
+                    'log' => [],
+                ];
+            }
         }
 
         // File-level restore (standalone, no account wrapper)

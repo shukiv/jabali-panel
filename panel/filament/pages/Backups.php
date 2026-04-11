@@ -706,67 +706,102 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             Step::make(__('Review & Confirm'))
                                 ->icon('heroicon-o-check-circle')
                                 ->schema([
-                                    Placeholder::make('summary')
-                                        ->label(__('Restore Summary'))
-                                        ->content(function (\Filament\Schemas\Components\Utilities\Get $get): \Illuminate\Support\HtmlString {
-                                            $lines = [];
-                                            if ($get('restore_metadata')) {
-                                                $lines[] = '&#x2705; ' . __('Panel Config (user account & domains)');
-                                            }
-                                            $restoreFiles = $get('restore_files');
-                                            if ($restoreFiles || $restoreFiles === null) {
-                                                $lines[] = '&#x2705; ' . __('All home directory files');
-                                            } elseif (! empty($this->restoreFileList)) {
-                                                $lines[] = '&#x2705; ' . __(':count selected file(s): :list', [
-                                                    'count' => count($this->restoreFileList),
-                                                    'list' => implode(', ', array_slice($this->restoreFileList, 0, 5)) . (count($this->restoreFileList) > 5 ? '...' : ''),
-                                                ]);
-                                            }
-                                            $dbs = $get('restore_databases') ?? [];
-                                            if (! empty($dbs)) {
-                                                $lines[] = '&#x2705; ' . __('Databases: :list', ['list' => implode(', ', $dbs)]);
-                                            }
-                                            $mu = $get('restore_mysql_users') ?? [];
-                                            if (! empty($mu)) {
-                                                $lines[] = '&#x2705; ' . __('MySQL users: :list', ['list' => implode(', ', $mu)]);
-                                            }
-                                            $pg = $get('restore_postgres') ?? [];
-                                            if (! empty($pg)) {
-                                                $lines[] = '&#x2705; ' . __('PostgreSQL: :list', ['list' => implode(', ', $pg)]);
-                                            }
-                                            $em = $get('restore_email') ?? [];
-                                            if (! empty($em)) {
-                                                $lines[] = '&#x2705; ' . __('Email: :list', ['list' => implode(', ', $em)]);
-                                            }
-                                            $dns = $get('restore_dns') ?? [];
-                                            if (! empty($dns)) {
-                                                $lines[] = '&#x2705; ' . __('DNS: :list', ['list' => implode(', ', $dns)]);
-                                            }
-                                            $ssl = $get('restore_ssl') ?? [];
-                                            if (! empty($ssl)) {
-                                                $lines[] = '&#x2705; ' . __('SSL: :list', ['list' => implode(', ', $ssl)]);
-                                            }
-                                            $ng = $get('restore_nginx') ?? [];
-                                            if (! empty($ng)) {
-                                                $lines[] = '&#x2705; ' . __('Nginx configs');
-                                            }
-                                            $php = $get('restore_php') ?? [];
-                                            if (! empty($php)) {
-                                                $lines[] = '&#x2705; ' . __('PHP pool configs');
-                                            }
-                                            if ($get('restore_cron')) {
-                                                $lines[] = '&#x2705; ' . __('Cron jobs');
-                                            }
-                                            $stalwart = $get('restore_stalwart') ?? [];
-                                            if (! empty($stalwart)) {
-                                                $lines[] = '&#x2705; ' . __('Stalwart: :list', ['list' => implode(', ', $stalwart)]);
-                                            }
-                                            if (empty($lines)) {
-                                                $lines[] = '&#x26A0;&#xFE0F; ' . __('Nothing selected to restore.');
-                                            }
+                                    Section::make(__('Restore Summary'))
+                                        ->icon('heroicon-o-clipboard-document-check')
+                                        ->schema([
+                                            CheckboxList::make('restore_summary')
+                                                ->label('')
+                                                ->options(function (\Filament\Schemas\Components\Utilities\Get $get): array {
+                                                    $options = [];
 
-                                            return new \Illuminate\Support\HtmlString(implode('<br>', $lines));
-                                        }),
+                                                    if ($get('restore_metadata')) {
+                                                        $options['metadata'] = __('Panel Config (user account & domains)');
+                                                    }
+
+                                                    $restoreFiles = $get('restore_files');
+                                                    if ($restoreFiles || $restoreFiles === null) {
+                                                        $options['files'] = __('All home directory files');
+                                                    } elseif (! empty($this->restoreFileList)) {
+                                                        $list = implode(', ', array_slice($this->restoreFileList, 0, 5))
+                                                            . (count($this->restoreFileList) > 5 ? '...' : '');
+                                                        $options['files_selected'] = __(':count selected file(s): :list', [
+                                                            'count' => count($this->restoreFileList),
+                                                            'list' => $list,
+                                                        ]);
+                                                    }
+
+                                                    $dbs = $get('restore_databases') ?? [];
+                                                    if (! empty($dbs)) {
+                                                        $options['databases'] = __('Databases: :list', ['list' => implode(', ', $dbs)]);
+                                                    }
+
+                                                    $mu = $get('restore_mysql_users') ?? [];
+                                                    if (! empty($mu)) {
+                                                        $options['mysql_users'] = __('MySQL users: :list', ['list' => implode(', ', $mu)]);
+                                                    }
+
+                                                    $pg = $get('restore_postgres') ?? [];
+                                                    if (! empty($pg)) {
+                                                        $options['postgres'] = __('PostgreSQL: :list', ['list' => implode(', ', $pg)]);
+                                                    }
+
+                                                    $em = $get('restore_email') ?? [];
+                                                    if (! empty($em)) {
+                                                        $options['email'] = __('Email: :list', ['list' => implode(', ', $em)]);
+                                                    }
+
+                                                    $dns = $get('restore_dns') ?? [];
+                                                    if (! empty($dns)) {
+                                                        $options['dns'] = __('DNS: :list', ['list' => implode(', ', $dns)]);
+                                                    }
+
+                                                    $ssl = $get('restore_ssl') ?? [];
+                                                    if (! empty($ssl)) {
+                                                        $options['ssl'] = __('SSL: :list', ['list' => implode(', ', $ssl)]);
+                                                    }
+
+                                                    $ng = $get('restore_nginx') ?? [];
+                                                    if (! empty($ng)) {
+                                                        $options['nginx'] = __('Nginx configs');
+                                                    }
+
+                                                    $php = $get('restore_php') ?? [];
+                                                    if (! empty($php)) {
+                                                        $options['php'] = __('PHP pool configs');
+                                                    }
+
+                                                    if ($get('restore_cron')) {
+                                                        $options['cron'] = __('Cron jobs');
+                                                    }
+
+                                                    $stalwart = $get('restore_stalwart') ?? [];
+                                                    if (! empty($stalwart)) {
+                                                        $options['stalwart'] = __('Stalwart: :list', ['list' => implode(', ', $stalwart)]);
+                                                    }
+
+                                                    return $options;
+                                                })
+                                                ->default(function (\Filament\Schemas\Components\Utilities\Get $get): array {
+                                                    // All items are pre-selected (this is a read-only summary)
+                                                    $keys = [];
+                                                    if ($get('restore_metadata')) $keys[] = 'metadata';
+                                                    if ($get('restore_files') || $get('restore_files') === null) $keys[] = 'files';
+                                                    elseif (! empty($this->restoreFileList)) $keys[] = 'files_selected';
+                                                    if (! empty($get('restore_databases'))) $keys[] = 'databases';
+                                                    if (! empty($get('restore_mysql_users'))) $keys[] = 'mysql_users';
+                                                    if (! empty($get('restore_postgres'))) $keys[] = 'postgres';
+                                                    if (! empty($get('restore_email'))) $keys[] = 'email';
+                                                    if (! empty($get('restore_dns'))) $keys[] = 'dns';
+                                                    if (! empty($get('restore_ssl'))) $keys[] = 'ssl';
+                                                    if (! empty($get('restore_nginx'))) $keys[] = 'nginx';
+                                                    if (! empty($get('restore_php'))) $keys[] = 'php';
+                                                    if ($get('restore_cron')) $keys[] = 'cron';
+                                                    if (! empty($get('restore_stalwart'))) $keys[] = 'stalwart';
+                                                    return $keys;
+                                                })
+                                                ->disabled(),
+                                        ])
+                                        ->compact(),
                                     Toggle::make('force')
                                         ->label(__('Overwrite existing data'))
                                         ->helperText(__('Warning: existing data will be replaced')),

@@ -38,9 +38,12 @@ restore_email() {
 
             if [[ -n "$existing_ed" ]]; then
                 if [[ "$force" -eq 1 ]]; then
-                    _db_write "UPDATE email_domains SET catch_all_enabled=$catch_all_en, catch_all_address='$(mysql_escape "$catch_all_addr")', max_mailboxes=$max_mbox, max_quota_bytes=$max_quota, dkim_selector='$(mysql_escape "$dkim_sel")', updated_at=NOW() WHERE id=$existing_ed"
-                    [[ -n "$dkim_enc" ]] && _db_write "UPDATE email_domains SET dkim_private_key='$(mysql_escape "$dkim_enc")' WHERE id=$existing_ed"
-                    log_info "restore/email: Updated email domain $domain_name"
+                    if _db_write "UPDATE email_domains SET catch_all_enabled=$catch_all_en, catch_all_address='$(mysql_escape "$catch_all_addr")', max_mailboxes=$max_mbox, max_quota_bytes=$max_quota, dkim_selector='$(mysql_escape "$dkim_sel")', updated_at=NOW() WHERE id=$existing_ed"; then
+                        [[ -n "$dkim_enc" ]] && _db_write "UPDATE email_domains SET dkim_private_key='$(mysql_escape "$dkim_enc")' WHERE id=$existing_ed"
+                        log_info "restore/email: Updated email domain $domain_name"
+                    else
+                        log_warn "restore/email: Failed to update email domain $domain_name"
+                    fi
                 else
                     log_info "restore/email: Email domain $domain_name exists, skipping"
                 fi
@@ -50,8 +53,11 @@ restore_email() {
                     dkim_col=", dkim_private_key"
                     dkim_val=", '$(mysql_escape "$dkim_enc")'"
                 fi
-                _db_write "INSERT INTO email_domains (domain_id, is_active, dkim_selector, catch_all_enabled, catch_all_address, max_mailboxes, max_quota_bytes, created_at, updated_at${dkim_col}) VALUES ($domain_id, 1, '$(mysql_escape "$dkim_sel")', $catch_all_en, '$(mysql_escape "$catch_all_addr")', $max_mbox, $max_quota, NOW(), NOW()${dkim_val})"
-                log_info "restore/email: Created email domain $domain_name"
+                if _db_write "INSERT INTO email_domains (domain_id, is_active, dkim_selector, catch_all_enabled, catch_all_address, max_mailboxes, max_quota_bytes, created_at, updated_at${dkim_col}) VALUES ($domain_id, 1, '$(mysql_escape "$dkim_sel")', $catch_all_en, '$(mysql_escape "$catch_all_addr")', $max_mbox, $max_quota, NOW(), NOW()${dkim_val})"; then
+                    log_info "restore/email: Created email domain $domain_name"
+                else
+                    log_warn "restore/email: Failed to create email domain $domain_name"
+                fi
             fi
         done
     fi
@@ -80,14 +86,23 @@ restore_email() {
 
             if [[ -n "$existing_mb" ]]; then
                 if [[ "$force" -eq 1 ]]; then
-                    _db_write "UPDATE mailboxes SET quota_bytes=$mb_quota, imap_enabled=$mb_imap, pop3_enabled=$mb_pop3, smtp_enabled=$mb_smtp, updated_at=NOW() WHERE id=$existing_mb"
-                    log_info "restore/email: Updated mailbox ${local_part}@${mb_domain}"
+                    if _db_write "UPDATE mailboxes SET quota_bytes=$mb_quota, imap_enabled=$mb_imap, pop3_enabled=$mb_pop3, smtp_enabled=$mb_smtp, updated_at=NOW() WHERE id=$existing_mb"; then
+                        log_info "restore/email: Updated mailbox ${local_part}@${mb_domain}"
+                    else
+                        log_warn "restore/email: Failed to update mailbox ${local_part}@${mb_domain}"
+                    fi
                 else
                     log_info "restore/email: Mailbox ${local_part}@${mb_domain} exists, skipping"
                 fi
             else
-                _db_write "INSERT INTO mailboxes (email_domain_id, local_part, quota_bytes, imap_enabled, pop3_enabled, smtp_enabled, system_uid, system_gid, created_at, updated_at) VALUES ($ed_id, '$(mysql_escape "$local_part")', $mb_quota, $mb_imap, $mb_pop3, $mb_smtp, $mb_uid, $mb_gid, NOW(), NOW())"
-                log_info "restore/email: Created mailbox ${local_part}@${mb_domain} (password must be reset)"
+                # password_hash is NOT NULL — use a placeholder that forces password reset
+                local placeholder_hash
+                placeholder_hash='$2y$10$RESET.REQUIRED.000000000000000000000000000000000000000'
+                if _db_write "INSERT INTO mailboxes (email_domain_id, user_id, local_part, password_hash, quota_bytes, imap_enabled, pop3_enabled, smtp_enabled, system_uid, system_gid, created_at, updated_at) VALUES ($ed_id, $user_id, '$(mysql_escape "$local_part")', '$(mysql_escape "$placeholder_hash")', $mb_quota, $mb_imap, $mb_pop3, $mb_smtp, $mb_uid, $mb_gid, NOW(), NOW())"; then
+                    log_info "restore/email: Created mailbox ${local_part}@${mb_domain} (password must be reset)"
+                else
+                    log_warn "restore/email: Failed to create mailbox ${local_part}@${mb_domain}"
+                fi
             fi
         done
     fi
