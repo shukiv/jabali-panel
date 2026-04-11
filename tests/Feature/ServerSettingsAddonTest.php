@@ -106,6 +106,27 @@ class ServerSettingsAddonTest extends TestCase
             ->assertNotified('Installation failed');
     }
 
+    public function test_addon_config_has_required_keys(): void
+    {
+        $addons = config('jabali-addons', []);
+        $this->assertNotEmpty($addons, 'No addons configured');
+
+        $requiredKeys = ['name', 'description', 'binary', 'install_url', 'uninstall_command', 'version_command'];
+
+        foreach ($addons as $addonId => $addon) {
+            foreach ($requiredKeys as $key) {
+                $this->assertArrayHasKey($key, $addon, "Addon '{$addonId}' missing '{$key}'");
+                $this->assertNotEmpty($addon[$key], "Addon '{$addonId}' has empty '{$key}'");
+            }
+            // Uninstall command must not reference local paths that may not exist
+            $this->assertStringNotContainsString(
+                '/usr/local/jabali-security/install.sh',
+                $addon['uninstall_command'],
+                "Addon '{$addonId}' uninstall_command references a path that may not exist on server"
+            );
+        }
+    }
+
     public function test_uninstall_addon_handles_agent_exception(): void
     {
         $agent = Mockery::mock(AgentClient::class);

@@ -22,7 +22,7 @@ return [
         'binary' => '/usr/local/bin/jabali-security',
         'service' => 'jabali-security',
         'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
-        'uninstall_command' => 'bash /usr/local/jabali-security/install.sh --uninstall',
+        'uninstall_command' => 'curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh | bash -s -- --uninstall',
         'version_command' => 'jabali-security status',
         'repo' => 'shukiv/jabali-security',
     ],
