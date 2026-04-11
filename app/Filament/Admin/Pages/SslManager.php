@@ -77,7 +77,6 @@ class SslManager extends Page implements HasTable
                     ->with(['domain.user'])
                     ->whereHas('domain')
             )
-            ->defaultGroup('domain.user.username')
             ->groups([
                 Group::make('domain.user.username')
                     ->label(__('User'))
