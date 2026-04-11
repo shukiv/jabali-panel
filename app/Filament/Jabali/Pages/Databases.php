@@ -346,7 +346,7 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                     ->action(function (array $record): void {
                         $url = $this->getPhpMyAdminUrl($record['name']);
                         if ($url) {
-                            $this->redirect($url);
+                            $this->dispatch('open-phpmyadmin', url: $url);
                         } else {
                             Notification::make()
                                 ->title(__('Cannot open phpMyAdmin'))
