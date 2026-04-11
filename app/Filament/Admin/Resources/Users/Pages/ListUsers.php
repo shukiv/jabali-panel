@@ -29,10 +29,12 @@ class ListUsers extends ListRecords
         return [
             'users' => Tab::make(__('Users'))
                 ->modifyQueryUsing(fn (Builder $query) => $query->where('is_admin', false))
-                ->icon('heroicon-o-users'),
+                ->icon('heroicon-o-users')
+                ->badge(\App\Models\User::where('is_admin', false)->count()),
             'admins' => Tab::make(__('Administrators'))
                 ->modifyQueryUsing(fn (Builder $query) => $query->where('is_admin', true))
-                ->icon('heroicon-o-shield-check'),
+                ->icon('heroicon-o-shield-check')
+                ->badge(\App\Models\User::where('is_admin', true)->count()),
         ];
     }
 
