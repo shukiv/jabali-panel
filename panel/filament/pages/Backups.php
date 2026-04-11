@@ -326,6 +326,25 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             }
             $byAccount[$username]['snapshot_count']++;
         }
+        // Add server backups as a special entry
+        try {
+            $serverResult = app(AgentClient::class)->send('jb.server_snapshots', []);
+            $serverSnaps = $serverResult['snapshots'] ?? [];
+            if (! empty($serverSnaps)) {
+                $latest = end($serverSnaps);
+                $byAccount = ['__server__' => [
+                    'username' => '__server__',
+                    'snapshot_count' => count($serverSnaps),
+                    'latest_snapshot_id' => $latest['id'] ?? '',
+                    'latest_date' => substr($latest['time'] ?? '', 0, 10),
+                    'latest_time' => $latest['time'] ?? '',
+                    'backup_size' => $latest['size'] ?? '—',
+                ]] + $byAccount;
+            }
+        } catch (\Throwable) {
+            // Server snapshots unavailable — skip
+        }
+
         $this->backupAccounts = array_values($byAccount);
         $this->resetTable();
     }
@@ -596,7 +615,14 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 TextColumn::make('username')
                     ->label(__('Account'))
                     ->weight('medium')
-                    ->searchable(),
+                    ->searchable()
+                    ->formatStateUsing(fn (array $record): string => ($record['username'] ?? '') === '__server__'
+                        ? __('Server Backup (Disaster Recovery)')
+                        : ($record['username'] ?? ''))
+                    ->icon(fn (array $record): ?string => ($record['username'] ?? '') === '__server__'
+                        ? 'heroicon-o-server-stack'
+                        : null)
+                    ->iconColor('warning'),
                 TextColumn::make('snapshot_count')
                     ->label(__('Snapshots'))
                     ->alignCenter(),
@@ -612,6 +638,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->icon('heroicon-o-arrow-path')
                     ->color('primary')
                     ->size('sm')
+                    ->hidden(fn (array $record): bool => ($record['username'] ?? '') === '__server__')
                     ->modalHeading(fn (array $record): string => __('Restore :user', ['user' => $record['username']]))
                     ->modalWidth('4xl')
                     ->steps(function (array $record): array {
@@ -932,11 +959,41 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         );
                         $this->restoreFileList = [];
                     }),
+                Action::make('serverRestore')
+                    ->label(__('Restore Server'))
+                    ->icon('heroicon-o-shield-exclamation')
+                    ->color('danger')
+                    ->size('sm')
+                    ->visible(fn (array $record): bool => ($record['username'] ?? '') === '__server__')
+                    ->requiresConfirmation()
+                    ->modalHeading(__('Disaster Recovery — Server Restore'))
+                    ->modalDescription(__('This will restore the entire server from the latest server backup. All server configs and databases will be overwritten.'))
+                    ->form([
+                        Toggle::make('skip_users')->label(__('Server configs only (skip user accounts)'))->default(false),
+                        Toggle::make('force')->label(__('Force overwrite all existing data'))->default(false),
+                    ])
+                    ->action(function (array $data): void {
+                        try {
+                            $result = app(AgentClient::class)->send('jb.server_restore', [
+                                'snapshot' => 'latest',
+                                'skip_users' => $data['skip_users'] ?? false,
+                                'force' => $data['force'] ?? false,
+                            ]);
+                            if ($result['success'] ?? false) {
+                                Notification::make()->title(__('Server restore started'))->body(__('Check the Logs tab for progress.'))->success()->send();
+                            } else {
+                                Notification::make()->title(__('Failed'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
+                            }
+                        } catch (\Throwable $e) {
+                            Notification::make()->title(__('Failed'))->body(SafeError::message($e))->danger()->send();
+                        }
+                    }),
                 Action::make('download')
                     ->label(__('Download'))
                     ->icon('heroicon-o-arrow-down-tray')
                     ->color('gray')
                     ->size('sm')
+                    ->hidden(fn (array $record): bool => ($record['username'] ?? '') === '__server__')
                     ->modalHeading(fn (array $record): string => __('Download :user', ['user' => $record['username']]))
                     ->form([
                         Select::make('snapshot')
