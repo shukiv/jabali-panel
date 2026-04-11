@@ -1026,11 +1026,28 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             $data['snapshot'] ?? 'latest',
                         );
                     }),
+                Action::make('serverDownload')
+                    ->label(__('Download'))
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('gray')
+                    ->size('sm')
+                    ->visible(fn (array $record): bool => ($record['username'] ?? '') === '__server__')
+                    ->requiresConfirmation()
+                    ->modalHeading(__('Download Server Backup'))
+                    ->modalDescription(__('Download the latest server backup snapshot as a compressed archive.'))
+                    ->action(function (array $record): void {
+                        $this->executeDownload(
+                            ['__server__'],
+                            [],
+                            $record['latest_snapshot_id'] ?: 'latest',
+                        );
+                    }),
                 Action::make('browse')
                     ->label(__('Browse'))
                     ->icon('heroicon-o-folder-open')
                     ->color('gray')
                     ->size('sm')
+                    ->hidden(fn (array $record): bool => ($record['username'] ?? '') === '__server__')
                     ->url(fn (array $record): string => '/jabali-admin/backups-browse?snapshot=' . ($record['latest_snapshot_id'] ?: 'latest') . '&user=' . $record['username']),
             ])
             ->heading(__('Backup Accounts'))
