@@ -339,12 +339,6 @@ class Databases extends Page implements HasActions, HasForms, HasTable
                     ->sortable(query: fn ($query, $direction) => $query),
             ])
             ->recordActions([
-                Action::make('phpMyAdmin')
-                    ->label(__('phpMyAdmin'))
-                    ->icon('heroicon-o-circle-stack')
-                    ->color('info')
-                    ->url(fn (array $record): string => route('phpmyadmin.redirect', ['database' => $record['name']]))
-                    ->openUrlInNewTab(),
                 Action::make('backup')
                     ->label(__('Backup'))
                     ->icon('heroicon-o-arrow-down-tray')
@@ -724,6 +718,13 @@ class Databases extends Page implements HasActions, HasForms, HasTable
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('phpMyAdmin')
+                ->label(__('phpMyAdmin'))
+                ->icon('heroicon-o-circle-stack')
+                ->color('info')
+                ->visible(fn () => $this->activeTab === 'mysql')
+                ->url(fn (): string => route('phpmyadmin.redirect'))
+                ->openUrlInNewTab(),
             $this->quickSetupAction(),
             $this->createDatabaseAction(),
             $this->createUserAction(),

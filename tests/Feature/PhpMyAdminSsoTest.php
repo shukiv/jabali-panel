@@ -21,26 +21,25 @@ class PhpMyAdminSsoTest extends TestCase
             'mysql_password_encrypted' => Crypt::encryptString('testpass123'),
         ]);
 
+        // Test without database param (opens all databases)
         $response = $this->actingAs($user)
-            ->get(route('phpmyadmin.redirect', ['database' => 'pmatest_wp1']));
+            ->get(route('phpmyadmin.redirect'));
 
         $response->assertRedirect();
         $location = $response->headers->get('Location');
 
         $this->assertNotNull($location);
         $this->assertStringContainsString('/phpmyadmin/jabali-signon.php?token=', $location);
-        $this->assertStringContainsString('db=pmatest_wp1', $location);
 
         // Token must be 64 hex chars
         preg_match('/token=([0-9a-f]{64})/', $location, $matches);
         $this->assertNotEmpty($matches[1] ?? '', 'Token must be 64 hex chars');
 
-        // Token must be stored in cache with correct credentials
+        // Token must be stored in cache with admin credentials
         $cached = Cache::get('phpmyadmin_token_'.$matches[1]);
         $this->assertNotNull($cached);
         $this->assertEquals($user->username.'_admin', $cached['username']);
         $this->assertEquals('testpass123', $cached['password']);
-        $this->assertEquals('pmatest_wp1', $cached['database']);
 
         // Cleanup
         MysqlCredential::where('user_id', $user->id)->delete();
@@ -59,7 +58,7 @@ class PhpMyAdminSsoTest extends TestCase
         $user = User::factory()->create(['username' => 'pmanocred_'.bin2hex(random_bytes(4))]);
 
         $response = $this->actingAs($user)
-            ->get(route('phpmyadmin.redirect', ['database' => 'test_db']));
+            ->get(route('phpmyadmin.redirect'));
 
         $response->assertNotFound();
 
