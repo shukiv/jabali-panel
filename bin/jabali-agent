@@ -847,7 +847,9 @@ function handleAction(array $request): array
         'branding.get_welcome_page' => brandingGetWelcomePage($params),
         'branding.save_welcome_page' => brandingSaveWelcomePage($params),
         // Addon management
-        // addon.status/install/uninstall removed — unused (addon management via agent.d/ loading)
+        'addon.status' => addonStatus($params),
+        'addon.install' => addonInstall($params),
+        'addon.uninstall' => addonUninstall($params),
         default => handleAddonAction($action, $params),
     };
 }
@@ -949,152 +951,145 @@ function brandingSaveWelcomePage(array $params): array
 
 function addonStatus(array $params): array
 {
-    $addons = [
-        'jabali-backup' => [
-            'name' => 'Jabali Backup',
-            'description' => 'Restic-based backup and restore tool',
-            'check' => '/usr/local/bin/jabali-backup',
-            'version_cmd' => 'jabali-backup version 2>/dev/null | head -1',
-            'service' => null,
-        ],
-        'jabali-security' => [
-            'name' => 'Jabali Security',
-            'description' => 'Threat detection and GeoIP blocking',
-            'check' => '/usr/local/bin/jabali-security',
-            'version_cmd' => 'jabali-security version 2>/dev/null | head -1',
-            'service' => 'jabali-security',
-        ],
-    ];
-
-    $filter = $params['addon'] ?? null;
-    $results = [];
-
-    foreach ($addons as $id => $addon) {
-        if ($filter !== null && $id !== $filter) {
-            continue;
-        }
-        $installed = file_exists($addon['check']);
-        $version = null;
-        $serviceActive = null;
-
-        if ($installed && $addon['version_cmd']) {
-            $raw = trim(shell_exec($addon['version_cmd']) ?? '');
-            if (preg_match('/v?(\d+\.\d+\.\d+)/', $raw, $m)) {
-                $version = $m[1];
-            } else {
-                $version = $raw;
-            }
-        }
-        if ($installed && $addon['service']) {
-            exec('systemctl is-active '.escapeshellarg($addon['service']).' 2>/dev/null', $out, $code);
-            $serviceActive = $code === 0;
-        }
-
-        $results[$id] = [
-            'id' => $id,
-            'name' => $addon['name'],
-            'description' => $addon['description'],
-            'installed' => $installed,
-            'version' => $version ?: null,
-            'service_active' => $serviceActive,
-        ];
+    $addonId = $params['addon'] ?? '';
+    if ($addonId === '') {
+        return ['success' => false, 'error' => 'Missing addon parameter'];
     }
 
-    return ['success' => true, 'addons' => $results];
+    $configFile = '/var/www/jabali/config/jabali-addons.php';
+    if (! file_exists($configFile)) {
+        return ['success' => false, 'error' => 'Addon config not found'];
+    }
+
+    $addons = require $configFile;
+    if (! isset($addons[$addonId])) {
+        return ['success' => false, 'error' => 'Unknown addon: '.$addonId];
+    }
+
+    $addon = $addons[$addonId];
+    $installed = file_exists($addon['binary']);
+    $version = null;
+    $serviceStatus = null;
+
+    if ($installed && ! empty($addon['version_command'])) {
+        $cmd = $addon['version_command'];
+        // Only allow known version commands from the config (not user input)
+        $version = trim((string) shell_exec($cmd.' 2>/dev/null'));
+    }
+
+    if ($installed && ! empty($addon['service'])) {
+        $serviceStatus = trim((string) shell_exec('systemctl is-active '.escapeshellarg($addon['service']).' 2>/dev/null'));
+    }
+
+    return [
+        'success' => true,
+        'addon' => $addonId,
+        'installed' => $installed,
+        'version' => $version ?: null,
+        'service_status' => $serviceStatus ?: null,
+    ];
 }
 
 function addonInstall(array $params): array
 {
-    $addon = $params['addon'] ?? '';
-    $urls = [
-        'jabali-backup' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
-        'jabali-security' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
-    ];
-
-    if (! isset($urls[$addon])) {
-        return ['success' => false, 'error' => 'Unknown addon: '.$addon];
+    $addonId = $params['addon'] ?? '';
+    if ($addonId === '') {
+        return ['success' => false, 'error' => 'Missing addon parameter'];
     }
 
-    $url = $urls[$addon];
-    $cmd = sprintf('curl -fsSL %s | bash 2>&1', escapeshellarg($url));
-    logger("Installing addon {$addon}: {$cmd}");
-
-    exec($cmd, $output, $exitCode);
-    $outputStr = implode("\n", $output);
-
-    if ($exitCode !== 0) {
-        logger("Addon install failed for {$addon}: {$outputStr}");
-
-        return ['success' => false, 'error' => "Install failed (exit {$exitCode})", 'output' => $outputStr];
+    $configFile = '/var/www/jabali/config/jabali-addons.php';
+    if (! file_exists($configFile)) {
+        return ['success' => false, 'error' => 'Addon config not found'];
     }
 
-    logger("Addon {$addon} installed successfully");
+    $addons = require $configFile;
+    if (! isset($addons[$addonId])) {
+        return ['success' => false, 'error' => 'Unknown addon: '.$addonId];
+    }
 
-    return ['success' => true, 'message' => "{$addon} installed successfully", 'output' => $outputStr];
+    $addon = $addons[$addonId];
+    if (file_exists($addon['binary'])) {
+        return ['success' => false, 'error' => $addon['name'].' is already installed'];
+    }
+
+    // Install URL comes from config (trusted), not user input
+    $url = $addon['install_url'];
+    $outputLines = [];
+    $exitCode = 0;
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $proc = proc_open(['bash', '-c', 'curl -fsSL '.escapeshellarg($url).' | bash'], $descriptors, $pipes);
+    if (! is_resource($proc)) {
+        return ['success' => false, 'error' => 'Failed to start installer'];
+    }
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($proc);
+
+    if ($exitCode !== 0 || ! file_exists($addon['binary'])) {
+        logger("Addon install failed: {$addonId} (exit {$exitCode})");
+
+        return ['success' => false, 'error' => 'Installation failed', 'output' => $stderr ?: $stdout];
+    }
+
+    logger("Addon installed: {$addonId}");
+
+    return ['success' => true, 'message' => $addon['name'].' installed successfully'];
 }
 
 function addonUninstall(array $params): array
 {
-    $addon = $params['addon'] ?? '';
-    $binaries = [
-        'jabali-backup' => '/usr/local/bin/jabali-backup',
-        'jabali-security' => '/usr/local/bin/jabali-security',
-    ];
-
-    if (! isset($binaries[$addon])) {
-        return ['success' => false, 'error' => 'Unknown addon: '.$addon];
+    $addonId = $params['addon'] ?? '';
+    if ($addonId === '') {
+        return ['success' => false, 'error' => 'Missing addon parameter'];
     }
 
-    $binary = $binaries[$addon];
-    if (! file_exists($binary)) {
-        return ['success' => false, 'error' => "{$addon} is not installed"];
+    $configFile = '/var/www/jabali/config/jabali-addons.php';
+    if (! file_exists($configFile)) {
+        return ['success' => false, 'error' => 'Addon config not found'];
     }
 
-    // Use the addon's own uninstall command, fall back to removing the binary
-    $cmd = sprintf('%s uninstall 2>&1', escapeshellarg($binary));
-    logger("Uninstalling addon {$addon}: {$cmd}");
+    $addons = require $configFile;
+    if (! isset($addons[$addonId])) {
+        return ['success' => false, 'error' => 'Unknown addon: '.$addonId];
+    }
 
-    exec($cmd, $output, $exitCode);
-    $outputStr = implode("\n", $output);
+    $addon = $addons[$addonId];
+    if (! file_exists($addon['binary'])) {
+        return ['success' => false, 'error' => $addon['name'].' is not installed'];
+    }
 
-    // If the addon's uninstall command failed, do manual cleanup
+    if (empty($addon['uninstall_command'])) {
+        return ['success' => false, 'error' => $addon['name'].' does not support uninstall'];
+    }
+
+    // Uninstall command comes from config (trusted), not user input
+    $cmd = $addon['uninstall_command'];
+    $outputLines = [];
+    $exitCode = 0;
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $proc = proc_open(['bash', '-c', $cmd], $descriptors, $pipes);
+    if (! is_resource($proc)) {
+        return ['success' => false, 'error' => 'Failed to start uninstaller'];
+    }
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($proc);
+
     if ($exitCode !== 0) {
-        logger("Addon uninstall command failed for {$addon} (exit {$exitCode}), removing manually");
+        logger("Addon uninstall failed: {$addonId} (exit {$exitCode})");
+
+        return ['success' => false, 'error' => 'Uninstall failed', 'output' => $stderr ?: $stdout];
     }
 
-    // Always ensure service is stopped and binary is removed
-    $service = match ($addon) {
-        'jabali-security' => 'jabali-security',
-        default => null,
-    };
-    if ($service) {
-        exec('systemctl stop '.escapeshellarg($service).' 2>/dev/null');
-        exec('systemctl disable '.escapeshellarg($service).' 2>/dev/null');
-    }
-    if (file_exists($binary)) {
-        unlink($binary);
-    }
+    logger("Addon uninstalled: {$addonId}");
 
-    logger("Addon {$addon} uninstalled successfully");
-
-    return ['success' => true, 'message' => "{$addon} uninstalled successfully", 'output' => $outputStr];
+    return ['success' => true, 'message' => $addon['name'].' uninstalled successfully'];
 }
 
-/**
- * Load and dispatch to addon route files.
- *
- * Addons place a PHP file in /etc/jabali/agent.d/ that returns an associative array
- * mapping action names to callables. Example addon file:
- *
- *   <?php
- *   return [
- *       'backup.list_snapshots' => fn(array $p) => backupListSnapshots($p),
- *       'backup.run' => fn(array $p) => backupRun($p),
- *   ];
- *
- * The addon file can also define its handler functions inline or require them
- * from its own lib directory.
- */
 function handleAddonAction(string $action, array $params): array
 {
     static $addonRoutes = null;

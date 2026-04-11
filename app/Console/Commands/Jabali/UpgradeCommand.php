@@ -830,16 +830,7 @@ class UpgradeCommand extends Command
 
     private function updateAddons(): void
     {
-        $addons = [
-            'jabali-backup' => [
-                'binary' => '/usr/local/bin/jabali-backup',
-                'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
-            ],
-            'jabali-security' => [
-                'binary' => '/usr/local/bin/jabali-security',
-                'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
-            ],
-        ];
+        $addons = config('jabali-addons', []);
 
         $found = false;
         $processes = [];

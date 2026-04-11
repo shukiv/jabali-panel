@@ -44,6 +44,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\HtmlString;
 use Livewire\Attributes\Url;
 
 class ServerSettings extends Page implements HasActions, HasForms
@@ -293,6 +294,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                         'logs' => Tab::make(__('Logs'))
                             ->icon('heroicon-o-document-text')
                             ->schema($this->logsTabContent()),
+                        'addons' => Tab::make(__('Addons'))
+                            ->icon('heroicon-o-puzzle-piece')
+                            ->schema($this->addonsTabContent()),
                     ]),
             ]);
     }
@@ -1875,5 +1879,107 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         return ['applied' => $applied, 'failed' => $failed];
+    }
+
+    // ============ ADDONS TAB ============
+
+    protected function addonsTabContent(): array
+    {
+        $addons = config('jabali-addons', []);
+        $sections = [];
+
+        foreach ($addons as $addonId => $addon) {
+            $installed = file_exists($addon['binary']);
+            $version = null;
+            $serviceStatus = null;
+
+            if ($installed) {
+                try {
+                    $status = $this->agent()->send('addon.status', ['addon' => $addonId]);
+                    $version = $status['version'] ?? null;
+                    $serviceStatus = $status['service_status'] ?? null;
+                } catch (\Throwable) {
+                    // Agent not running — just show installed status
+                }
+            }
+
+            $statusText = $installed
+                ? __('Installed').($version ? " (v{$version})" : '').($serviceStatus === 'active' ? ' — '.__('Running') : '')
+                : __('Not installed');
+
+            $statusColor = $installed ? 'success' : 'gray';
+
+            $sections[] = Section::make($addon['name'])
+                ->icon($addon['icon'] ?? 'heroicon-o-puzzle-piece')
+                ->description($addon['description'])
+                ->schema([
+                    Placeholder::make("addon_{$addonId}_status")
+                        ->label(__('Status'))
+                        ->content(new HtmlString(
+                            '<span class="inline-flex items-center gap-1.5 text-sm font-medium text-'.$statusColor.'-600 dark:text-'.$statusColor.'-400">'
+                            .'<span class="h-2 w-2 rounded-full bg-'.$statusColor.'-500"></span>'
+                            .$statusText
+                            .'</span>'
+                        )),
+                    Actions::make(
+                        $installed
+                            ? [
+                                FormAction::make("uninstall_{$addonId}")
+                                    ->label(__('Uninstall'))
+                                    ->color('danger')
+                                    ->icon('heroicon-o-trash')
+                                    ->requiresConfirmation()
+                                    ->modalHeading(__('Uninstall :name', ['name' => $addon['name']]))
+                                    ->modalDescription(__('Are you sure? This will remove the addon and all its data.'))
+                                    ->action(fn () => $this->uninstallAddon($addonId)),
+                            ]
+                            : [
+                                FormAction::make("install_{$addonId}")
+                                    ->label(__('Install'))
+                                    ->color('primary')
+                                    ->icon('heroicon-o-arrow-down-tray')
+                                    ->requiresConfirmation()
+                                    ->modalHeading(__('Install :name', ['name' => $addon['name']]))
+                                    ->modalDescription(__('This will download and install the addon. It may take a minute.'))
+                                    ->action(fn () => $this->installAddon($addonId)),
+                            ]
+                    ),
+                ]);
+        }
+
+        if (empty($sections)) {
+            $sections[] = Placeholder::make('no_addons')
+                ->content(__('No addons available.'));
+        }
+
+        return $sections;
+    }
+
+    public function installAddon(string $addonId): void
+    {
+        try {
+            $result = $this->agent()->send('addon.install', ['addon' => $addonId]);
+            if ($result['success'] ?? false) {
+                Notification::make()->title($result['message'])->success()->send();
+            } else {
+                Notification::make()->title($result['error'] ?? __('Installation failed'))->danger()->send();
+            }
+        } catch (\Throwable $e) {
+            Notification::make()->title(__('Installation failed: :error', ['error' => $e->getMessage()]))->danger()->send();
+        }
+    }
+
+    public function uninstallAddon(string $addonId): void
+    {
+        try {
+            $result = $this->agent()->send('addon.uninstall', ['addon' => $addonId]);
+            if ($result['success'] ?? false) {
+                Notification::make()->title($result['message'])->success()->send();
+            } else {
+                Notification::make()->title($result['error'] ?? __('Uninstall failed'))->danger()->send();
+            }
+        } catch (\Throwable $e) {
+            Notification::make()->title(__('Uninstall failed: :error', ['error' => $e->getMessage()]))->danger()->send();
+        }
     }
 }
