@@ -117,6 +117,10 @@ if [[ "$CMD" == "uninstall" ]]; then
         "$JABALI_PATH/resources/views/filament/admin/pages/partials/snapshot-browser-embed.blade.php" \
         "$JABALI_PATH/resources/views/filament/admin/pages/partials/restore-file-badges.blade.php" \
         "$JABALI_PATH/resources/views/filament/admin/pages/partials/files-restore-toggle.blade.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/partials/browse-modal.blade.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/partials/log-modal.blade.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/partials/log-tabs.blade.php" \
+        "$JABALI_PATH/resources/views/filament/admin/pages/partials/log-table.blade.php" \
         "$JABALI_PATH/resources/views/filament/jabali/pages/backups.blade.php"
     do
         if [[ -f "$f" ]]; then
@@ -481,9 +485,9 @@ if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
     # Admin Blade views
     mkdir -p "$JABALI_PATH/resources/views/filament/admin/pages/partials"
     cp "$PANEL_DIR/views/backups.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/backups.blade.php"
-    cp "$PANEL_DIR/views/partials/snapshot-browser-embed.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/snapshot-browser-embed.blade.php"
-    cp "$PANEL_DIR/views/partials/restore-file-badges.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/restore-file-badges.blade.php"
-    cp "$PANEL_DIR/views/partials/files-restore-toggle.blade.php" "$JABALI_PATH/resources/views/filament/admin/pages/partials/files-restore-toggle.blade.php"
+    for partial in "$PANEL_DIR"/views/partials/*.blade.php; do
+        [[ -f "$partial" ]] && cp "$partial" "$JABALI_PATH/resources/views/filament/admin/pages/partials/"
+    done
     ok "Admin views -> backups.blade.php + partials"
 
     # User Filament page
@@ -527,8 +531,9 @@ if [[ -f "$JABALI_PATH/artisan" && -d "$PANEL_DIR" ]]; then
     ok "Caches rebuilt"
 
     systemctl restart jabali-agent 2>/dev/null || true
+    systemctl restart jabali-panel 2>/dev/null || true
     systemctl reload php8.5-fpm 2>/dev/null || systemctl reload php8.4-fpm 2>/dev/null || systemctl reload php8.3-fpm 2>/dev/null || true
-    ok "Services reloaded (jabali-agent, php-fpm)"
+    ok "Services restarted (jabali-agent, jabali-panel, php-fpm)"
 else
     if [[ ! -f "$JABALI_PATH/artisan" ]]; then
         section "Panel Addon"
