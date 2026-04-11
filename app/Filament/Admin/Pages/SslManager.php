@@ -7,6 +7,7 @@ namespace App\Filament\Admin\Pages;
 use App\Filament\Admin\Widgets\PanelCertificateWidget;
 use App\Filament\Admin\Widgets\SslStatsOverview;
 use App\Models\Domain;
+use App\Models\SslCertificate;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Services\SslManagementService;
@@ -17,10 +18,17 @@ use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Concerns\InteractsWithTable;
+use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Grouping\Group;
+use Filament\Tables\Table;
 use Illuminate\Support\Facades\Artisan;
 
-class SslManager extends Page
+class SslManager extends Page implements HasTable
 {
+    use InteractsWithTable;
+
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-shield-check';
 
     protected static ?int $navigationSort = 8;
@@ -61,36 +69,90 @@ class SslManager extends Page
         $this->lastUpdated = now()->format('H:i:s');
     }
 
-    public function getUserCertsProperty(): \Illuminate\Support\Collection
+    public function table(Table $table): Table
     {
-        $users = User::with(['domains' => function ($q) {
-            $q->whereHas('sslCertificates')->with('sslCertificates')->orderBy('domain');
-        }])
-            ->whereHas('domains.sslCertificates')
-            ->orderBy('username')
-            ->get();
-
-        // Group each user's domains by root domain (e.g. dev.jabali.site → jabali.site)
-        foreach ($users as $user) {
-            $user->groupedDomains = $user->domains->groupBy(function (Domain $domain) {
-                return $this->getRootDomain($domain->domain);
-            })->sortKeys();
-        }
-
-        return $users;
-    }
-
-    private function getRootDomain(string $domain): string
-    {
-        $parts = explode('.', $domain);
-        $count = count($parts);
-
-        if ($count <= 2) {
-            return $domain;
-        }
-
-        // Return last 2 parts (e.g. jabali.site from dev.jabali.site)
-        return implode('.', array_slice($parts, -2));
+        return $table
+            ->query(
+                SslCertificate::query()
+                    ->with(['domain.user'])
+                    ->whereHas('domain')
+            )
+            ->defaultGroup('domain.user.username')
+            ->groups([
+                Group::make('domain.user.username')
+                    ->label(__('User'))
+                    ->collapsible(),
+            ])
+            ->columns([
+                TextColumn::make('domain.domain')
+                    ->label(__('Hostname'))
+                    ->formatStateUsing(fn (SslCertificate $record): string => $record->service === 'mail'
+                        ? 'mail.'.$record->domain->domain
+                        : $record->domain->domain
+                    )
+                    ->searchable(),
+                TextColumn::make('service')
+                    ->label(__('Service'))
+                    ->badge()
+                    ->formatStateUsing(fn (SslCertificate $record): string => $record->service === 'web' ? __('HTTPS') : __('Mail'))
+                    ->color(fn (SslCertificate $record): string => $record->service === 'web' ? 'info' : 'warning'),
+                TextColumn::make('type')
+                    ->label(__('Type'))
+                    ->badge()
+                    ->color('gray')
+                    ->formatStateUsing(fn (?string $state): string => $state ? ucfirst(str_replace('_', ' ', $state)) : __('None')),
+                TextColumn::make('status')
+                    ->label(__('Status'))
+                    ->badge()
+                    ->color(fn (?string $state): string => match ($state) {
+                        'active' => 'success',
+                        'expired', 'failed' => 'danger',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (?string $state): string => ucfirst($state ?? 'unknown')),
+                TextColumn::make('expires_at')
+                    ->label(__('Expires'))
+                    ->date('M d, Y')
+                    ->description(fn (SslCertificate $record): ?string => $record->expires_at
+                        ? $record->days_until_expiry.'d'
+                        : null
+                    )
+                    ->color(fn (SslCertificate $record): string => match (true) {
+                        $record->days_until_expiry <= 7 => 'danger',
+                        $record->days_until_expiry <= 30 => 'warning',
+                        default => 'gray',
+                    }),
+            ])
+            ->actions([
+                \Filament\Actions\Action::make('renew')
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('primary')
+                    ->iconButton()
+                    ->tooltip(__('Renew'))
+                    ->visible(fn (SslCertificate $record): bool => $record->type === 'lets_encrypt' && $record->status === 'active')
+                    ->action(fn (SslCertificate $record) => $this->renewSslForDomain($record->domain_id, $record->service)),
+                \Filament\Actions\Action::make('issue')
+                    ->icon('heroicon-o-check-circle')
+                    ->color('success')
+                    ->iconButton()
+                    ->tooltip(__('Issue'))
+                    ->visible(fn (SslCertificate $record): bool => in_array($record->type, ['self_signed', 'none', '', null], true) || in_array($record->status, ['pending', 'failed'], true))
+                    ->action(fn (SslCertificate $record) => $record->service === 'mail'
+                        ? $this->issueMailSslForDomain($record->domain_id)
+                        : $this->issueSslForDomain($record->domain_id)
+                    ),
+                \Filament\Actions\Action::make('check')
+                    ->icon('heroicon-o-magnifying-glass')
+                    ->color('gray')
+                    ->iconButton()
+                    ->tooltip(__('Check'))
+                    ->action(fn (SslCertificate $record) => $this->checkSslForDomain($record->domain_id)),
+            ])
+            ->emptyStateHeading(__('No SSL certificates found'))
+            ->emptyStateDescription(__('Run SSL Check to scan your domains.'))
+            ->emptyStateIcon('heroicon-o-shield-exclamation')
+            ->defaultSort('domain.domain')
+            ->paginated(false);
     }
 
     public function issueSslForDomain(int $domainId): void
@@ -228,7 +290,6 @@ class SslManager extends Page
 
     public function renewMailSslForDomain(int $domainId): void
     {
-        // For mail certs, re-issuing is the same as renewing
         $this->issueMailSslForDomain($domainId);
     }
 
@@ -238,7 +299,6 @@ class SslManager extends Page
         $this->autoSslLog = '';
 
         try {
-            // Ensure log directory exists with proper permissions
             $logDir = storage_path('logs/ssl');
             if (! is_dir($logDir)) {
                 @mkdir($logDir, 0775, true);
@@ -348,7 +408,6 @@ class SslManager extends Page
             }
         }
 
-        // Also issue mail certificates for domains that don't have one
         $domainsWithoutMailSsl = Domain::whereDoesntHave('mailSslCertificate')
             ->with('user')
             ->get();

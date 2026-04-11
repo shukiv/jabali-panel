@@ -6,70 +6,47 @@ namespace App\Filament\Admin\Widgets;
 
 use App\Models\Domain;
 use App\Models\SslCertificate;
-use Filament\Widgets\Widget;
+use Filament\Widgets\StatsOverviewWidget;
+use Filament\Widgets\StatsOverviewWidget\Stat;
 
-class SslStatsOverview extends Widget
+class SslStatsOverview extends StatsOverviewWidget
 {
     protected ?string $pollingInterval = '30s';
-
-    protected int|string|array $columnSpan = 'full';
-
-    protected string $view = 'filament.admin.widgets.ssl-stats';
 
     protected function getStats(): array
     {
         $totalDomains = Domain::count();
-        $domainsWithSsl = SslCertificate::where('status', 'active')->where('service', 'web')->count();
-        $mailCerts = SslCertificate::where('status', 'active')->where('service', 'mail')->count();
+        $webSsl = SslCertificate::where('status', 'active')->where('service', 'web')->count();
+        $mailSsl = SslCertificate::where('status', 'active')->where('service', 'mail')->count();
         $expiringSoon = SslCertificate::where('status', 'active')
             ->where('expires_at', '<=', now()->addDays(30))
             ->where('expires_at', '>', now())
             ->count();
         $expired = SslCertificate::where('status', 'expired')
-            ->orWhere(function ($q) {
-                $q->where('expires_at', '<', now());
-            })
+            ->orWhere(fn ($q) => $q->where('expires_at', '<', now()))
             ->count();
         $failed = SslCertificate::where('status', 'failed')->count();
-        $withoutSsl = $totalDomains - $domainsWithSsl;
+        $withoutSsl = $totalDomains - $webSsl;
 
         return [
-            [
-                'value' => $domainsWithSsl,
-                'label' => __('Web SSL'),
-                'icon' => 'heroicon-m-shield-check',
-                'color' => 'success',
-            ],
-            [
-                'value' => $mailCerts,
-                'label' => __('Mail SSL'),
-                'icon' => 'heroicon-m-envelope',
-                'color' => $mailCerts > 0 ? 'success' : 'gray',
-            ],
-            [
-                'value' => $withoutSsl,
-                'label' => __('Without SSL'),
-                'icon' => 'heroicon-m-shield-exclamation',
-                'color' => 'gray',
-            ],
-            [
-                'value' => $expiringSoon,
-                'label' => __('Expiring Soon'),
-                'icon' => 'heroicon-m-clock',
-                'color' => $expiringSoon > 0 ? 'warning' : 'success',
-            ],
-            [
-                'value' => $expired,
-                'label' => __('Expired'),
-                'icon' => 'heroicon-m-x-circle',
-                'color' => $expired > 0 ? 'danger' : 'success',
-            ],
-            [
-                'value' => $failed,
-                'label' => __('Failed'),
-                'icon' => 'heroicon-m-exclamation-triangle',
-                'color' => $failed > 0 ? 'danger' : 'success',
-            ],
+            Stat::make(__('Web SSL'), $webSsl)
+                ->icon('heroicon-m-shield-check')
+                ->color('success'),
+            Stat::make(__('Mail SSL'), $mailSsl)
+                ->icon('heroicon-m-envelope')
+                ->color($mailSsl > 0 ? 'success' : 'gray'),
+            Stat::make(__('Without SSL'), $withoutSsl)
+                ->icon('heroicon-m-shield-exclamation')
+                ->color('gray'),
+            Stat::make(__('Expiring Soon'), $expiringSoon)
+                ->icon('heroicon-m-clock')
+                ->color($expiringSoon > 0 ? 'warning' : 'success'),
+            Stat::make(__('Expired'), $expired)
+                ->icon('heroicon-m-x-circle')
+                ->color($expired > 0 ? 'danger' : 'success'),
+            Stat::make(__('Failed'), $failed)
+                ->icon('heroicon-m-exclamation-triangle')
+                ->color($failed > 0 ? 'danger' : 'success'),
         ];
     }
 }
