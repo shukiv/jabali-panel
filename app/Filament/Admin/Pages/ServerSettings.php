@@ -1983,17 +1983,6 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     private function showAddonSpinner(string $label, int $reloadMs): void
     {
-        $this->js(
-            "let el = document.getElementById('addon-action-area');"
-            ."if(el){let s=document.createElement('div');s.className='inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400';"
-            ."s.textContent=".json_encode($label).";let svg=document.createElementNS('http://www.w3.org/2000/svg','svg');"
-            ."svg.setAttribute('class','h-4 w-4 animate-spin');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');"
-            ."let c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('cx','12');c.setAttribute('cy','12');"
-            ."c.setAttribute('r','10');c.setAttribute('stroke','currentColor');c.setAttribute('stroke-width','4');c.setAttribute('class','opacity-25');"
-            ."let p=document.createElementNS('http://www.w3.org/2000/svg','path');p.setAttribute('fill','currentColor');p.setAttribute('class','opacity-75');"
-            ."p.setAttribute('d','M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z');"
-            ."svg.appendChild(c);svg.appendChild(p);s.prepend(svg);el.replaceChildren(s);}"
-            ."setTimeout(()=>location.reload(),{$reloadMs});"
-        );
+        $this->js("document.getElementById('addon-action-area').textContent = ".json_encode($label)."; setTimeout(function() { window.location.reload(); }, {$reloadMs});");
     }
 }
