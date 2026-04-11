@@ -1279,7 +1279,7 @@ install_phpmyadmin() {
     mysql -e "CREATE DATABASE IF NOT EXISTS phpmyadmin"
     mysql phpmyadmin < /usr/share/phpmyadmin/sql/create_tables.sql
 
-    mysql -e "CREATE USER IF NOT EXISTS 'pma'@'localhost' IDENTIFIED BY '${pma_pass}'"
+    mysql -e "CREATE USER IF NOT EXISTS 'pma'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${pma_pass}')"
     mysql -e "GRANT SELECT, INSERT, UPDATE, DELETE ON phpmyadmin.* TO 'pma'@'localhost'"
     mysql -e "FLUSH PRIVILEGES"
 
