@@ -74,7 +74,9 @@ if (! is_array($data) || empty($data['username']) || empty($data['password'])) {
 
 // Set up phpMyAdmin signon session
 // Session name must match SignonSession in phpMyAdmin config
+// Cookie path must be / so phpMyAdmin can read it from any path
 session_name('jabali_phpmyadmin_signon');
+session_set_cookie_params(['path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'Lax']);
 session_start();
 
 $_SESSION['PMA_single_signon_user'] = $data['username'];
