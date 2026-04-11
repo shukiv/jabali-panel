@@ -22,6 +22,12 @@ class UpgradeCommand extends Command
 
     private string $versionFile;
 
+    private array $changedFiles = [];
+
+    private array $stepsRun = [];
+
+    private array $stepsSkipped = [];
+
     public function __construct()
     {
         parent::__construct();
@@ -78,6 +84,7 @@ class UpgradeCommand extends Command
 
     private function performUpgrade(): int
     {
+        $upgradeStart = microtime(true);
         $this->info('Starting Jabali Panel upgrade...');
         $this->newLine();
 
@@ -170,7 +177,8 @@ class UpgradeCommand extends Command
         }
 
         $newHead = trim($this->executeCommandOrFail('git rev-parse HEAD'));
-        $changedFiles = $this->getChangedFiles($oldHead, $newHead);
+        $this->changedFiles = $this->getChangedFiles($oldHead, $newHead);
+        $changedFiles = $this->changedFiles;
 
         $hasVendor = File::exists($this->basePath.'/vendor/autoload.php');
         $hasManifest = File::exists($this->basePath.'/public/build/manifest.json');
@@ -181,6 +189,7 @@ class UpgradeCommand extends Command
         $shouldRunMigrations = $this->shouldRunMigrations($changedFiles, $this->option('force'));
 
         // Step 5: Install composer dependencies
+        $stepStart = microtime(true);
         $this->info('[4/11] Installing PHP dependencies...');
         if ($shouldRunComposer) {
             try {
@@ -198,11 +207,14 @@ class UpgradeCommand extends Command
 
                 return 1;
             }
+            $this->stepsRun[] = 'composer';
         } else {
-            $this->line('No composer changes detected, skipping.');
+            $this->line('  Skipped (no changes)');
+            $this->stepsSkipped[] = 'composer';
         }
 
         // Step 5b: Install npm dependencies and build assets
+        $stepStart = microtime(true);
         $this->info('[5/11] Building frontend assets...');
         if ($shouldRunNpm) {
             try {
@@ -248,11 +260,14 @@ class UpgradeCommand extends Command
 
                 return 1;
             }
+            $this->stepsRun[] = 'npm-build';
         } else {
-            $this->line('No frontend changes detected, skipping.');
+            $this->line('  Skipped (no changes)');
+            $this->stepsSkipped[] = 'npm-build';
         }
 
         // Step 6: Run migrations
+        $stepStart = microtime(true);
         $this->info('[6/11] Running database migrations...');
         if ($shouldRunMigrations) {
             try {
@@ -815,7 +830,10 @@ class UpgradeCommand extends Command
         ];
 
         $found = false;
+        $processes = [];
+        $addonNames = [];
 
+        // Create and start all addon update processes in parallel
         foreach ($addons as $name => $addon) {
             if (! file_exists($addon['binary'])) {
                 continue;
@@ -825,20 +843,26 @@ class UpgradeCommand extends Command
             $this->line("  - Updating {$name}...");
 
             try {
-                $result = $this->executeCommand(
-                    sprintf('curl -fsSL %s | bash', escapeshellarg($addon['install_url'])),
-                    300
-                );
+                $command = sprintf('curl -fsSL %s | bash', escapeshellarg($addon['install_url']));
+                $process = new Process(['bash', '-c', $command]);
+                $process->setTimeout(300);
+                $process->start();
 
-                if ($result['exitCode'] !== 0) {
-                    $this->warn("  - {$name} update failed: ".($result['output'] ?: 'unknown error'));
-
-                    continue;
-                }
-
-                $this->line("  - {$name} updated");
+                $processes[] = $process;
+                $addonNames[spl_object_id($process)] = $name;
             } catch (Exception $e) {
                 $this->warn("  - {$name} update failed: ".$e->getMessage());
+            }
+        }
+
+        // Wait for all processes to complete
+        foreach ($processes as $process) {
+            $name = $addonNames[spl_object_id($process)];
+            $process->wait();
+            if ($process->isSuccessful()) {
+                $this->line("  - {$name} updated");
+            } else {
+                $this->warn("  - {$name} update failed: ".($process->getErrorOutput() ?: 'unknown error'));
             }
         }
 

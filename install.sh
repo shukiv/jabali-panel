@@ -3993,49 +3993,81 @@ upgrade_infra() {
 
     header "Upgrading Jabali Panel Infrastructure"
 
+    # Step counter and timing
+    local step=0
+    local total_steps=20
+    local infra_start=$SECONDS
+
+    step_info() {
+        ((step++))
+        local percent=$((step * 100 / total_steps))
+        echo -e "${BLUE}[$step/$total_steps]${NC} $1"
+    }
+
+    # Compute SHA256 of install.sh for skip-logic
+    local infra_hash
+    infra_hash=$(sha256sum "$JABALI_DIR/install.sh" | cut -d' ' -f1)
+    local stored_hash=""
+    if [[ -f /etc/jabali/.infra-version ]]; then
+        stored_hash=$(cat /etc/jabali/.infra-version)
+    fi
+
+    # Check if reconfiguration can be skipped (no --force flag and hash matches)
+    local skip_config=0
+    if [[ -n "$stored_hash" && "$infra_hash" == "$stored_hash" && "${JABALI_UPGRADE_FORCE:-}" != "1" ]]; then
+        info "Infrastructure unchanged, skipping reconfiguration"
+        skip_config=1
+    fi
+
     # Detect PHP version
     if [[ -z "${PHP_VERSION:-}" ]]; then
         detect_php_version
     fi
 
-    # Install default page templates if not customized
-    mkdir -p /etc/jabali
-    if [[ ! -f /etc/jabali/suspended.html ]]; then
-        cp "$JABALI_DIR/stubs/suspended.html" /etc/jabali/suspended.html
-        info "Installed default suspended page"
-    fi
-    if [[ ! -f /etc/jabali/welcome.html ]]; then
-        cp "$JABALI_DIR/stubs/welcome.html" /etc/jabali/welcome.html
-        info "Installed default welcome page template"
-    fi
-
-    # Fix FPM pool configs with empty pm= (bug: createFpmPool missed $pmType before v0.9.x)
-    for pool_conf in /etc/php/*/fpm/pool.d/*.conf; do
-        [[ -f "$pool_conf" ]] || continue
-        if grep -qE '^pm\s*=\s*$' "$pool_conf"; then
-            sed -i 's/^pm\s*=\s*$/pm = dynamic/' "$pool_conf"
-            info "Fixed empty pm= in $(basename "$pool_conf")"
+    # If not skipping, run configuration block
+    if [[ $skip_config -eq 0 ]]; then
+        # Install default page templates if not customized
+        step_info "Installing default page templates"
+        mkdir -p /etc/jabali
+        if [[ ! -f /etc/jabali/suspended.html ]]; then
+            cp "$JABALI_DIR/stubs/suspended.html" /etc/jabali/suspended.html
+            info "Installed default suspended page"
         fi
-    done
+        if [[ ! -f /etc/jabali/welcome.html ]]; then
+            cp "$JABALI_DIR/stubs/welcome.html" /etc/jabali/welcome.html
+            info "Installed default welcome page template"
+        fi
 
-    # Re-run safe configuration functions
-    header "Updating PHP Configuration"
-    configure_php
+        # Fix FPM pool configs with empty pm= (bug: createFpmPool missed $pmType before v0.9.x)
+        step_info "Fixing FPM pool configurations"
+        for pool_conf in /etc/php/*/fpm/pool.d/*.conf; do
+            [[ -f "$pool_conf" ]] || continue
+            if grep -qE '^pm\s*=\s*$' "$pool_conf"; then
+                sed -i 's/^pm\s*=\s*$/pm = dynamic/' "$pool_conf"
+                info "Fixed empty pm= in $(basename "$pool_conf")"
+            fi
+        done
 
-    header "Updating Nginx Configuration"
-    configure_nginx
+        # Re-run safe configuration functions
+        step_info "Updating PHP configuration"
+        configure_php
 
-    # Regenerate panel vhost with custom directives from database (if agent available)
-    if [[ -S /var/run/jabali-agent.sock ]]; then
-        cd "$JABALI_DIR" && sudo -u www-data php artisan jabali:nginx:regenerate --panel-only 2>&1 || warn "Panel vhost regeneration with custom directives failed"
-    fi
+        step_info "Updating Nginx configuration"
+        configure_nginx
 
-    # Add JMAP proxy block to existing domain vhosts if missing
-    for vhost in /etc/nginx/sites-available/*.conf; do
-        [[ -f "$vhost" ]] || continue
-        if grep -q 'location.*webmail' "$vhost" && ! grep -q 'location.*\^~.*/jmap/' "$vhost"; then
-            domain_name=$(basename "$vhost" .conf)
-            python3 -c "
+        # Regenerate panel vhost with custom directives from database (if agent available)
+        step_info "Regenerating panel vhost"
+        if [[ -S /var/run/jabali-agent.sock ]]; then
+            cd "$JABALI_DIR" && sudo -u www-data php artisan jabali:nginx:regenerate --panel-only 2>&1 || warn "Panel vhost regeneration with custom directives failed"
+        fi
+
+        # Add JMAP proxy block to existing domain vhosts if missing
+        step_info "Adding JMAP proxy to domain vhosts"
+        for vhost in /etc/nginx/sites-available/*.conf; do
+            [[ -f "$vhost" ]] || continue
+            if grep -q 'location.*webmail' "$vhost" && ! grep -q 'location.*\^~.*/jmap/' "$vhost"; then
+                domain_name=$(basename "$vhost" .conf)
+                python3 -c "
 import sys
 with open(sys.argv[1]) as f:
     content = f.read()
@@ -4062,89 +4094,112 @@ content = content.replace('    location = /webmail', block + '    location = /we
 with open(sys.argv[1], 'w') as f:
     f.write(content)
 " "$vhost"
-            info "Added JMAP proxy to $domain_name"
-        fi
-    done
-    nginx -t 2>/dev/null && nginx -s reload 2>/dev/null || true
-
-    header "Updating FrankenPHP"
-    install_frankenphp
-
-    header "Updating Systemd Services"
-    setup_agent_service
-    setup_frankenphp_config
-    setup_panel_service
-    setup_queue_service
-    setup_scheduler_cron
-    setup_logrotate
-    setup_restic
-    setup_self_healing
-
-    # Fix waf.conf if it uses modsecurity directive without the module loaded
-    local waf_conf="/etc/nginx/jabali/includes/waf.conf"
-    if [[ -f "$waf_conf" ]] && grep -q "^modsecurity" "$waf_conf" && ! nginx -V 2>&1 | grep -q modsecurity; then
-        echo "# Managed by Jabali — jabali-security will configure ModSecurity here" > "$waf_conf"
-        info "Fixed waf.conf (modsecurity module not loaded)"
-    fi
-
-    # Install/update jabali-isolator (nspawn containers for PHP-FPM + shell)
-    install_jabali_isolator
-
-    # Configure SSH + jabali-shell
-    configure_sshd
-    install_jabali_shell
-
-    # Migrate old jail-based shell users to nspawn (one-time)
-    if [[ -d /var/jail ]] && getent group shellusers &>/dev/null; then
-        header "Migrating Shell Users to nspawn"
-        # Agent handles the actual migration — call via socket if running
-        if systemctl is-active --quiet jabali-agent 2>/dev/null; then
-            local response
-            response=$(curl -s --unix-socket /var/run/jabali-agent.sock \
-                -X POST -H "Content-Type: application/json" \
-                -d '{"action":"ssh.migrate_shell_users","params":{}}' \
-                http://localhost/rpc 2>/dev/null) || true
-            if echo "$response" | grep -q '"success":true'; then
-                info "Shell user migration complete"
-            else
-                warn "Shell user migration via agent failed (will retry on next update)"
+                info "Added JMAP proxy to $domain_name"
             fi
-        else
-            warn "Agent not running — shell user migration will run on next update"
+        done
+        nginx -t 2>/dev/null && nginx -s reload 2>/dev/null || true
+
+        step_info "Updating FrankenPHP"
+        install_frankenphp
+
+        step_info "Updating Systemd Services"
+        setup_agent_service
+        setup_frankenphp_config
+        setup_panel_service
+        setup_queue_service
+        setup_scheduler_cron
+        setup_logrotate
+        setup_restic
+        setup_self_healing
+
+        # Fix waf.conf if it uses modsecurity directive without the module loaded
+        step_info "Fixing WAF configuration"
+        local waf_conf="/etc/nginx/jabali/includes/waf.conf"
+        if [[ -f "$waf_conf" ]] && grep -q "^modsecurity" "$waf_conf" && ! nginx -V 2>&1 | grep -q modsecurity; then
+            echo "# Managed by Jabali — jabali-security will configure ModSecurity here" > "$waf_conf"
+            info "Fixed waf.conf (modsecurity module not loaded)"
+        fi
+
+        # Install/update jabali-isolator (nspawn containers for PHP-FPM + shell)
+        step_info "Installing jabali-isolator"
+        install_jabali_isolator
+
+        # Configure SSH + jabali-shell
+        step_info "Configuring SSH and shell"
+        configure_sshd
+        install_jabali_shell
+
+        # Migrate old jail-based shell users to nspawn (one-time)
+        if [[ -d /var/jail ]] && getent group shellusers &>/dev/null; then
+            step_info "Migrating Shell Users to nspawn"
+            # Agent handles the actual migration — call via socket if running
+            if systemctl is-active --quiet jabali-agent 2>/dev/null; then
+                local response
+                response=$(curl -s --unix-socket /var/run/jabali-agent.sock \
+                    -X POST -H "Content-Type: application/json" \
+                    -d '{"action":"ssh.migrate_shell_users","params":{}}' \
+                    http://localhost/rpc 2>/dev/null) || true
+                if echo "$response" | grep -q '"success":true'; then
+                    info "Shell user migration complete"
+                else
+                    warn "Shell user migration via agent failed (will retry on next update)"
+                fi
+            else
+                warn "Agent not running — shell user migration will run on next update"
+            fi
         fi
     fi
+
+    # These always run regardless of skip (external components, can change independently)
+    # Launch all addon/component updates in parallel as background jobs
+
+    local pids=()
 
     # Update Stalwart Mail Server (binary from GitHub releases)
     if [[ -x /usr/local/bin/stalwart ]]; then
-        header "Updating Stalwart Mail Server"
-        upgrade_stalwart
+        step_info "Updating Stalwart Mail Server"
+        upgrade_stalwart &
+        pids+=($!)
     fi
 
     # Update Bulwark Webmail (Next.js app from GitHub)
     if [[ -d /opt/bulwark/.git ]]; then
-        header "Updating Bulwark Webmail"
-        upgrade_bulwark
+        step_info "Updating Bulwark Webmail"
+        upgrade_bulwark &
+        pids+=($!)
     fi
 
     # Update WP-CLI
     if command -v wp &>/dev/null; then
-        wp cli update --yes 2>/dev/null || true
+        step_info "Updating WP-CLI"
+        wp cli update --yes 2>/dev/null || true &
+        pids+=($!)
     fi
 
     # Update Composer
     if command -v composer &>/dev/null; then
-        composer self-update --quiet 2>/dev/null || true
+        step_info "Updating Composer"
+        composer self-update --quiet 2>/dev/null || true &
+        pids+=($!)
     fi
 
     # Install or update jabali-security
     if command -v jabali-security &>/dev/null; then
-        header "Updating Jabali Security"
-        jabali-security update || warn "jabali-security update failed (non-fatal)"
+        step_info "Updating Jabali Security"
+        jabali-security update || warn "jabali-security update failed (non-fatal)" &
+        pids+=($!)
     else
-        install_jabali_security
+        install_jabali_security &
+        pids+=($!)
+    fi
+
+    # Wait for all background addon/component updates to complete
+    if [[ ${#pids[@]} -gt 0 ]]; then
+        wait "${pids[@]}" 2>/dev/null || true
     fi
 
     # Patch existing vhosts: add Bulwark static file serving if missing
+    step_info "Patching static file serving"
     if [[ -d /opt/bulwark/.next/static ]]; then
         for vhost in /etc/nginx/sites-available/*; do
             [[ -f "$vhost" ]] || continue
@@ -4163,7 +4218,7 @@ with open(sys.argv[1], 'w') as f:
     fi
 
     # Restart services to pick up changes
-    header "Restarting Services"
+    step_info "Restarting Services"
     if [[ "${JABALI_SKIP_AGENT_RESTART:-}" != "1" ]]; then
         systemctl restart jabali-agent 2>/dev/null || true
     else
@@ -4175,9 +4230,18 @@ with open(sys.argv[1], 'w') as f:
     systemctl reload nginx 2>/dev/null || true
 
     # Fix .git ownership so both root CLI and www-data panel can use it
+    step_info "Fixing git ownership"
     chown -R www-data:www-data "$JABALI_DIR/.git" 2>/dev/null || true
 
-    log "Infrastructure upgrade complete"
+    # Write new hash if reconfiguration ran or hash changed
+    step_info "Writing version hash"
+    if [[ $skip_config -eq 0 ]] || [[ "$infra_hash" != "$stored_hash" ]]; then
+        mkdir -p /etc/jabali
+        echo "$infra_hash" > /etc/jabali/.infra-version
+    fi
+
+    local elapsed=$((SECONDS - infra_start))
+    log "Infrastructure upgrade complete in ${elapsed}s"
 }
 
 reinstall() {
