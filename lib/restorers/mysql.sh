@@ -29,10 +29,11 @@ restore_mysql() {
             fi
 
             # Try to recreate from CREATE USER statement (preserves original auth hash)
+            # MariaDB SHOW CREATE USER uses backtick quoting: CREATE USER `user`@`host`
             local created_from_backup=0
             if [[ -f "$create_users_file" ]]; then
                 local create_stmt
-                create_stmt=$(grep -i "CREATE USER.*'$(mysql_escape "$mysql_user")'" "$create_users_file" | head -1)
+                create_stmt=$(grep -i "CREATE USER.*['\`]$(mysql_escape "$mysql_user")['\`]" "$create_users_file" | head -1)
                 if [[ -n "$create_stmt" ]]; then
                     if _mysql_root_write "$create_stmt" 2>/dev/null; then
                         created_from_backup=1

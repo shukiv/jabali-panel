@@ -1181,9 +1181,9 @@ cmd_restore() {
         skipped=$((skipped + 1))
     fi
 
-    # 7. Nginx
-    if _collector_enabled nginx "$only" "$exclude" && [[ -d "${staging}/nginx" ]]; then
-        if restore_nginx "$extract_dir" "$target_user" "$uid" "$force"; then
+    # 7. PHP-FPM pool (before nginx — socket must exist for nginx reload)
+    if _collector_enabled php "$only" "$exclude" && [[ -d "${staging}/php" ]]; then
+        if restore_php "$extract_dir" "$target_user" "$force"; then
             restored=$((restored + 1))
         else
             failed=$((failed + 1))
@@ -1192,9 +1192,9 @@ cmd_restore() {
         skipped=$((skipped + 1))
     fi
 
-    # 8. PHP
-    if _collector_enabled php "$only" "$exclude" && [[ -d "${staging}/php" ]]; then
-        if restore_php "$extract_dir" "$target_user" "$force"; then
+    # 8. Nginx (after PHP-FPM so the user pool socket exists)
+    if _collector_enabled nginx "$only" "$exclude" && [[ -d "${staging}/nginx" ]]; then
+        if restore_nginx "$extract_dir" "$target_user" "$uid" "$force"; then
             restored=$((restored + 1))
         else
             failed=$((failed + 1))
@@ -1533,11 +1533,11 @@ cmd_import() {
         _collector_enabled email "$only" "" && [[ -d "${staging}/email" ]] && {
             restore_email "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
         }
-        _collector_enabled nginx "$only" "" && [[ -d "${staging}/nginx" ]] && {
-            restore_nginx "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
-        }
         _collector_enabled php "$only" "" && [[ -d "${staging}/php" ]] && {
             restore_php "$restore_dir" "$username" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled nginx "$only" "" && [[ -d "${staging}/nginx" ]] && {
+            restore_nginx "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
         }
         _collector_enabled mysql "$only" "" && [[ -d "${staging}/mysql" ]] && {
             restore_mysql "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))

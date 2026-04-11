@@ -31,9 +31,9 @@ restore_nginx() {
         local php_ver
         php_ver=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || echo "8.5")
         local user_sock="/run/php/php${php_ver}-fpm-${username}.sock"
-        if [[ -S "$user_sock" ]] || [[ -S "/var/run/php/php${php_ver}-fpm-${username}.sock" ]]; then
-            sed -i "s|fastcgi_pass unix:[^;]*php-fpm\.sock;|fastcgi_pass unix:${user_sock};|g" "$target"
-            sed -i "s|fastcgi_pass unix:/var/run/php/php-fpm\.sock;|fastcgi_pass unix:${user_sock};|g" "$target"
+        # Replace any generic or mismatched FPM socket with the user-specific one
+        if grep -q 'fastcgi_pass unix:' "$target" 2>/dev/null; then
+            sed -i "s|fastcgi_pass unix:[^;]*;|fastcgi_pass unix:${user_sock};|g" "$target"
             log_info "restore/nginx: Fixed FPM socket -> $user_sock"
         fi
 
