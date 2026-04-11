@@ -1015,12 +1015,13 @@ function addonInstall(array $params): array
         return ['success' => false, 'error' => $addon['name'].' is already installed'];
     }
 
-    // Run install via systemd-run — the script may restart jabali-agent, and
-    // systemd kills all processes in the agent's cgroup on restart. A transient
-    // unit runs in its own cgroup and survives the agent restart.
+    // Write a temp script and run via systemd-run to escape the agent's cgroup.
     $url = $addon['install_url'];
     $logFile = '/tmp/jabali-addon-install-'.$addonId.'.log';
-    exec("systemd-run --no-block --unit=jabali-addon-install-".escapeshellarg($addonId)." bash -c 'sleep 1 && curl -fsSL ".escapeshellarg($url)." | bash > ".escapeshellarg($logFile)." 2>&1' 2>/dev/null");
+    $script = '/tmp/jabali-addon-install-'.$addonId.'.sh';
+    file_put_contents($script, "#!/bin/bash\nsleep 1\ncurl -fsSL ".escapeshellarg($url)." | bash > ".escapeshellarg($logFile)." 2>&1\n");
+    chmod($script, 0755);
+    exec("systemd-run --no-block --unit=jabali-addon-install-{$addonId} {$script} 2>/dev/null");
 
     logger("Addon install started in background: {$addonId}");
 
@@ -1053,12 +1054,15 @@ function addonUninstall(array $params): array
         return ['success' => false, 'error' => $addon['name'].' does not support uninstall'];
     }
 
-    // Run uninstall via systemd-run — the script restarts jabali-agent, and
-    // systemd kills all processes in the agent's cgroup on restart. A transient
-    // unit runs in its own cgroup and survives the agent restart.
+    // Write a temp script and run via systemd-run to escape the agent's cgroup.
+    // The uninstall script may restart jabali-agent, killing all processes in
+    // the cgroup. A transient systemd unit survives that restart.
     $cmd = $addon['uninstall_command'];
     $logFile = '/tmp/jabali-addon-uninstall-'.$addonId.'.log';
-    exec("systemd-run --no-block --unit=jabali-addon-uninstall-".escapeshellarg($addonId)." bash -c 'sleep 1 && {$cmd} > ".escapeshellarg($logFile)." 2>&1' 2>/dev/null");
+    $script = '/tmp/jabali-addon-uninstall-'.$addonId.'.sh';
+    file_put_contents($script, "#!/bin/bash\nsleep 1\n{$cmd} > ".escapeshellarg($logFile)." 2>&1\n");
+    chmod($script, 0755);
+    exec("systemd-run --no-block --unit=jabali-addon-uninstall-{$addonId} {$script} 2>/dev/null");
 
     logger("Addon uninstall started in background: {$addonId}");
 
