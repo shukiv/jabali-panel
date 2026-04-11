@@ -160,6 +160,48 @@ function jbValidateDestinationId(string $id): bool
 }
 
 /**
+ * Resolve the /server/ root path inside a server snapshot.
+ * Server snapshots store data at /tmp/jabali-backup/server-XXXXX/server/
+ * This function reads the snapshot metadata to find the backup root path,
+ * then appends /server/ to it.
+ */
+function jbResolveServerRoot(string $snapshotId, ?array $env): ?string
+{
+    if ($env === null) {
+        return null;
+    }
+
+    // Use restic snapshots --json to get the paths array for this snapshot
+    $cmd = ['restic', 'snapshots', $snapshotId, '--json'];
+    foreach ($env['args'] as $arg) {
+        $cmd[] = $arg;
+    }
+    $envMap = ! empty($env['env']) ? array_merge(getenv(), $env['env']) : null;
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $envMap);
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+
+    $snapshots = @json_decode(trim($stdout), true);
+    if (! is_array($snapshots) || empty($snapshots)) {
+        return null;
+    }
+
+    // Get the first (only) snapshot's paths
+    $paths = $snapshots[0]['paths'] ?? [];
+    if (empty($paths)) {
+        return null;
+    }
+
+    // The server data is at {backup_root}/server/
+    // e.g. /tmp/jabali-backup/server-159513 → /tmp/jabali-backup/server-159513/server
+    $rootPath = rtrim($paths[0], '/') . '/server';
+
+    return $rootPath;
+}
+
+/**
  * Load restic env/args for the default destination.
  * Reads destinations.json, falls back to config.conf.
  * Returns ['env' => [...], 'args' => [...]] or null on failure.
@@ -570,8 +612,9 @@ function jbBrowse(array $params): array
     $username = $params['username'] ?? '';
     $path = $params['path'] ?? '';
     $snapshotId = $params['snapshot_id'] ?? 'latest';
+    $isServer = ($username === '__server__');
 
-    if (! jbValidateUsername($username)) {
+    if (! $isServer && ! jbValidateUsername($username)) {
         return ['success' => false, 'error' => 'Invalid username'];
     }
     if ($snapshotId !== 'latest' && ! jbValidateSnapshotId($snapshotId)) {
@@ -586,7 +629,11 @@ function jbBrowse(array $params): array
     // Resolve snapshot ID if "latest"
     $resolvedId = $snapshotId;
     if ($snapshotId === 'latest') {
-        $listResult = jbExec(['list', 'snapshots', '--user=' . $username]);
+        if ($isServer) {
+            $listResult = jbExec(['list', 'snapshots', '--type=server']);
+        } else {
+            $listResult = jbExec(['list', 'snapshots', '--user=' . $username]);
+        }
         if (preg_match_all('/^([a-f0-9]{8})\s/m', $listResult['stdout'], $matches)) {
             $resolvedId = end($matches[1]);
         } else {
@@ -595,9 +642,22 @@ function jbBrowse(array $params): array
     }
 
     // Build full path for restic ls
-    $fullPath = '/home/' . $username;
-    if ($path !== '') {
-        $fullPath .= '/' . ltrim($path, '/');
+    if ($isServer) {
+        // Server snapshots store data at /tmp/jabali-backup/server-XXXXX/server/
+        // Discover the actual /server/ root by listing the snapshot top level
+        $serverRoot = jbResolveServerRoot($resolvedId, jbLoadResticEnv());
+        if ($serverRoot === null) {
+            return ['success' => false, 'error' => 'Cannot resolve server snapshot root'];
+        }
+        $fullPath = $serverRoot;
+        if ($path !== '') {
+            $fullPath = rtrim($serverRoot, '/') . '/' . ltrim($path, '/');
+        }
+    } else {
+        $fullPath = '/home/' . $username;
+        if ($path !== '') {
+            $fullPath .= '/' . ltrim($path, '/');
+        }
     }
 
     // Load destination config — use default destination from destinations.json
@@ -932,46 +992,18 @@ function jbDelete(array $params): array
         return ['success' => false, 'error' => 'Invalid snapshot ID'];
     }
 
-    // Use restic forget directly via jabali-backup's restic env
-    // jabali-backup forget doesn't support per-snapshot deletion yet,
-    // so we call restic directly with the configured password file
-    $passwordFile = '/etc/jabali-backup/restic-password';
-    if (! file_exists($passwordFile)) {
-        return ['success' => false, 'error' => 'Restic password file not found'];
+    $env = jbLoadResticEnv();
+    if ($env === null) {
+        return ['success' => false, 'error' => 'Backup not configured'];
     }
 
-    // Read repo path from config
-    $configFile = '/etc/jabali-backup/config.conf';
-    $repoPath = '';
-    if (file_exists($configFile)) {
-        $inSection = false;
-        foreach (file($configFile) as $line) {
-            $line = trim($line);
-            if ($line === '[repository]') {
-                $inSection = true;
-
-                continue;
-            }
-            if (str_starts_with($line, '[')) {
-                $inSection = false;
-            }
-            if ($inSection && str_starts_with($line, 'path=')) {
-                $repoPath = substr($line, 5);
-            }
-        }
+    $cmd = ['restic', 'forget', $snapshotId, '--prune'];
+    foreach ($env['args'] as $arg) {
+        $cmd[] = $arg;
     }
 
-    if ($repoPath === '') {
-        return ['success' => false, 'error' => 'Repository path not configured'];
-    }
-
-    $cmd = [
-        'restic', 'forget', $snapshotId, '--prune',
-        '--repo', $repoPath,
-        '--password-file', $passwordFile,
-    ];
-
-    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $envMap = ! empty($env['env']) ? array_merge(getenv(), $env['env']) : null;
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $envMap);
     $stdout = stream_get_contents($pipes[1]);
     $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
@@ -1298,13 +1330,31 @@ function jbServerDownloadPipe(array $params): array
     // Resolve 'latest' to actual server snapshot ID
     if ($snapshotId === 'latest') {
         $r = jbExec(['list', 'snapshots', '--type=server']);
-        // Parse the last snapshot ID from output
         if (preg_match_all('/^([a-f0-9]{8})\s/m', $r['stdout'] ?? '', $matches)) {
             $snapshotId = end($matches[1]);
         }
         if (! $snapshotId || $snapshotId === 'latest') {
             return ['success' => false, 'error' => 'No server snapshots found'];
         }
+    }
+
+    // Collect the latest per-user snapshot IDs to include in the archive
+    $userSnapshotIds = [];
+    $r = jbExec(['list', 'snapshots']);
+    if (preg_match_all('/^([a-f0-9]{8})\s+(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s+\S+\s+(.*?)\s{2,}/m', $r['stdout'] ?? '', $matches, PREG_SET_ORDER)) {
+        $byUser = [];
+        foreach ($matches as $m) {
+            $id = $m[1];
+            $time = $m[2];
+            $tags = $m[3];
+            if (preg_match('/account:([^,\s]+)/', $tags, $tm)) {
+                $user = $tm[1];
+                if (! isset($byUser[$user]) || $time > $byUser[$user]['time']) {
+                    $byUser[$user] = ['id' => $id, 'time' => $time];
+                }
+            }
+        }
+        $userSnapshotIds = array_map(fn ($u) => $u['id'], $byUser);
     }
 
     // Create named pipe
@@ -1314,23 +1364,50 @@ function jbServerDownloadPipe(array $params): array
     $pipePath = $pipeDir . '/' . $pipeName;
     posix_mkfifo($pipePath, 0600);
 
-    // Spawn CLI download in background — streams snapshot to stdout → pipe
-    // For server snapshots, we use restic dump directly since there's no username
-    $cmd = sprintf(
-        'nohup bash -c %s > /dev/null 2>&1 &',
-        escapeshellarg(
-            'source /usr/local/lib/jabali-backup/config.sh && ' .
-            'source /usr/local/lib/jabali-backup/restic.sh && ' .
-            'cfg_load && restic_env && ' .
-            'restic dump ' . escapeshellarg($snapshotId) . ' / ' .
-            '${RESTIC_EXTRA_OPTS[@]} 2>/dev/null | gzip > ' . escapeshellarg($pipePath) . ' ; ' .
-            'rm -f ' . escapeshellarg($pipePath)
-        )
-    );
+    // Build restore + tar script: restore server snapshot + all user snapshots
+    // into a temp dir, then tar.gz the result into the pipe
+    $tmpDir = '/tmp/jabali-server-export-' . bin2hex(random_bytes(4));
+    $snapshotIdEsc = escapeshellarg($snapshotId);
+    $pipePathEsc = escapeshellarg($pipePath);
+    $tmpDirEsc = escapeshellarg($tmpDir);
+
+    $restoreCmds = "mkdir -p {$tmpDirEsc}\n";
+    $restoreCmds .= "jabali-backup restore-raw --snapshot={$snapshotIdEsc} --target={$tmpDirEsc}/server 2>/dev/null\n";
+    foreach ($userSnapshotIds as $user => $uid) {
+        $uidEsc = escapeshellarg($uid);
+        $userEsc = escapeshellarg($user);
+        $restoreCmds .= "jabali-backup restore-raw --snapshot={$uidEsc} --target={$tmpDirEsc}/users/{$userEsc} 2>/dev/null\n";
+    }
+    $restoreCmds .= "tar czf - -C {$tmpDirEsc} . > {$pipePathEsc}\n";
+    $restoreCmds .= "rm -rf {$tmpDirEsc} {$pipePathEsc}\n";
+
+    // Use restic restore directly instead of jabali-backup restore-raw (which may not exist)
+    $env = jbLoadResticEnv();
+    if ($env === null) {
+        @unlink($pipePath);
+        return ['success' => false, 'error' => 'Backup not configured'];
+    }
+
+    $resticArgs = implode(' ', array_map('escapeshellarg', $env['args']));
+    $envExports = '';
+    foreach ($env['env'] as $k => $v) {
+        $envExports .= 'export ' . escapeshellarg($k) . '=' . escapeshellarg($v) . '; ';
+    }
+
+    $script = "set -e\n{$envExports}\nmkdir -p {$tmpDirEsc}\n";
+    $script .= "restic restore {$snapshotIdEsc} --target {$tmpDirEsc}/server {$resticArgs} 2>/dev/null\n";
+    foreach ($userSnapshotIds as $user => $uid) {
+        $uidEsc = escapeshellarg($uid);
+        $userEsc = escapeshellarg($user);
+        $script .= "restic restore {$uidEsc} --target {$tmpDirEsc}/users/{$userEsc} {$resticArgs} 2>/dev/null\n";
+    }
+    $script .= "tar czf - -C {$tmpDirEsc} . > {$pipePathEsc}\n";
+    $script .= "rm -rf {$tmpDirEsc} {$pipePathEsc}\n";
+
+    $cmd = sprintf('nohup bash -c %s > /dev/null 2>&1 &', escapeshellarg($script));
     proc_open(['bash', '-c', $cmd], [], $pipes);
 
-    // Small delay to let pipe writer start
-    usleep(100000);
+    usleep(200000);
 
     return ['success' => true, 'pipe' => $pipePath];
 }

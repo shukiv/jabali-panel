@@ -38,7 +38,7 @@ class SnapshotBrowser extends FileBrowser
         if (empty($this->snapshotId) || empty($this->snapshotUsername)) {
             abort(404);
         }
-        if (! preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $this->snapshotUsername)) {
+        if ($this->snapshotUsername !== '__server__' && ! preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $this->snapshotUsername)) {
             abort(404);
         }
         if ($this->snapshotId !== 'latest' && ! preg_match('/^[a-f0-9]{6,64}$/', $this->snapshotId)) {

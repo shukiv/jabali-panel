@@ -1047,8 +1047,33 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->icon('heroicon-o-folder-open')
                     ->color('gray')
                     ->size('sm')
-                    ->hidden(fn (array $record): bool => ($record['username'] ?? '') === '__server__')
-                    ->url(fn (array $record): string => '/jabali-admin/backups-browse?snapshot=' . ($record['latest_snapshot_id'] ?: 'latest') . '&user=' . $record['username']),
+                    ->url(fn (array $record): string => '/jabali-admin/backups-browse?snapshot=' . ($record['latest_snapshot_id'] ?: 'latest') . '&user=' . ($record['username'] ?? '')),
+                Action::make('deleteSnapshot')
+                    ->label(__('Delete'))
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->size('sm')
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (array $record): string => __('Delete snapshot for :user', ['user' => ($record['username'] ?? '') === '__server__' ? __('Server') : ($record['username'] ?? '')]))
+                    ->modalDescription(__('This will permanently remove the latest snapshot from the backup repository. This action cannot be undone.'))
+                    ->action(function (array $record): void {
+                        $snapshotId = $record['latest_snapshot_id'] ?? '';
+                        if ($snapshotId === '' || $snapshotId === 'latest') {
+                            Notification::make()->title(__('No snapshot to delete'))->warning()->send();
+                            return;
+                        }
+                        try {
+                            $result = app(AgentClient::class)->send('jb.delete', ['snapshot_id' => $snapshotId]);
+                            if ($result['success'] ?? false) {
+                                Notification::make()->title(__('Snapshot deleted'))->success()->send();
+                                $this->loadBackupAccounts();
+                            } else {
+                                Notification::make()->title(__('Delete failed'))->body($result['error'] ?? __('Unknown error'))->danger()->send();
+                            }
+                        } catch (\Throwable $e) {
+                            Notification::make()->title(__('Delete failed'))->body(SafeError::message($e))->danger()->send();
+                        }
+                    }),
             ])
             ->heading(__('Backup Accounts'))
             ->description(trans_choice(':count account|:count accounts', count($this->backupAccounts), ['count' => count($this->backupAccounts)]))
@@ -1115,7 +1140,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     public function browseSnapshot(string $snapshotId, string $username): void
     {
-        if (! preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $username)) {
+        if ($username !== '__server__' && ! preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $username)) {
             Notification::make()->title(__('Invalid username'))->danger()->send();
 
             return;
@@ -1859,7 +1884,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     {
         return $table
             ->records(fn () => collect($this->logJobs)
-                ->when($this->logFilter === 'backup', fn ($c) => $c->filter(fn ($job) => ($job['type'] ?? '') === 'backup'))
+                ->when($this->logFilter === 'backup', fn ($c) => $c->filter(fn ($job) => in_array($job['type'] ?? '', ['backup', 'server-backup'], true)))
                 ->when($this->logFilter === 'restore', fn ($c) => $c->filter(fn ($job) => in_array($job['type'] ?? '', ['restore', 'file-restore'], true)))
                 ->mapWithKeys(fn ($job, $i) => [$job['id'] ?? "job-{$i}" => $job])
                 ->all())
@@ -1905,8 +1930,8 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->formatStateUsing(fn (array $record): string => isset($record['duration_seconds']) ? $record['duration_seconds'] . 's' : '-')
                     ->alignEnd(),
             ])
-            ->actions([
-                \Filament\Actions\Action::make('viewLog')
+            ->recordActions([
+                Action::make('viewLog')
                     ->label(__('View Log'))
                     ->icon('heroicon-o-eye')
                     ->color('gray')
@@ -1920,8 +1945,8 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel(__('Close')),
             ])
-            ->headerActions([
-                \Filament\Actions\Action::make('refreshLogs')
+            ->toolbarActions([
+                Action::make('refreshLogs')
                     ->label(__('Refresh'))
                     ->icon('heroicon-o-arrow-path')
                     ->color('gray')
