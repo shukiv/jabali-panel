@@ -2411,7 +2411,15 @@ function nginxRegeneratePanelVhost(array $params): array
     $newConfig = generatePanelVhost($hostname, $panelPort, $phpSocket, $customDirectives);
 
     // Find existing panel vhost file
-    $vhostFile = "/etc/nginx/sites-available/{$hostname}";
+    $vhostFile = "/etc/nginx/sites-available/{$hostname}.conf";
+
+    // Migrate legacy extensionless vhost to .conf
+    $legacyFile = "/etc/nginx/sites-available/{$hostname}";
+    if (! file_exists($vhostFile) && file_exists($legacyFile)) {
+        rename($legacyFile, $vhostFile);
+        @unlink("/etc/nginx/sites-enabled/{$hostname}");
+        logger("Migrated panel vhost: {$legacyFile} → {$vhostFile}");
+    }
 
     // Skip if config hasn't changed
     if (file_exists($vhostFile) && file_get_contents($vhostFile) === $newConfig) {
@@ -2427,7 +2435,7 @@ function nginxRegeneratePanelVhost(array $params): array
     }
 
     // Ensure symlink
-    $enabledLink = "/etc/nginx/sites-enabled/{$hostname}";
+    $enabledLink = "/etc/nginx/sites-enabled/{$hostname}.conf";
     if (! file_exists($enabledLink)) {
         symlink($vhostFile, $enabledLink);
     }
@@ -15677,11 +15685,8 @@ function sslCheck(array $params): array
         'certificate' => null,
     ];
 
-    // Check nginx config for SSL (try with and without .conf extension)
+    // Check nginx config for SSL
     $nginxConf = "/etc/nginx/sites-available/{$domain}.conf";
-    if (! file_exists($nginxConf)) {
-        $nginxConf = "/etc/nginx/sites-available/$domain";
-    }
     if (! file_exists($nginxConf)) {
         return ['success' => true, 'ssl' => $result];
     }

@@ -1769,8 +1769,8 @@ WEBMAIL_EOF
         [[ -f "$old_vhost" ]] || continue
         local vhost_name
         vhost_name="$(basename "$old_vhost")"
-        # Skip user domain configs (they have .conf extension) and the current hostname
-        if [[ "$vhost_name" == "${SERVER_HOSTNAME}" ]] || [[ "$vhost_name" == "default" ]]; then
+        # Skip user domain configs and the current hostname
+        if [[ "$vhost_name" == "${SERVER_HOSTNAME}" ]] || [[ "$vhost_name" == "${SERVER_HOSTNAME}.conf" ]] || [[ "$vhost_name" == "default" ]]; then
             continue
         fi
         # Only remove if it has default_server (panel vhost marker)
@@ -1781,8 +1781,15 @@ WEBMAIL_EOF
         fi
     done
 
+    # Migrate legacy extensionless panel vhost to .conf
+    if [[ -f "/etc/nginx/sites-available/${SERVER_HOSTNAME}" ]] && [[ ! -f "/etc/nginx/sites-available/${SERVER_HOSTNAME}.conf" ]]; then
+        mv "/etc/nginx/sites-available/${SERVER_HOSTNAME}" "/etc/nginx/sites-available/${SERVER_HOSTNAME}.conf"
+        rm -f "/etc/nginx/sites-enabled/${SERVER_HOSTNAME}"
+        info "Migrated panel vhost to .conf extension"
+    fi
+
     # Create Jabali site config with HTTP redirect and HTTPS for phpMyAdmin/webmail
-    cat > /etc/nginx/sites-available/${SERVER_HOSTNAME} << NGINX
+    cat > /etc/nginx/sites-available/${SERVER_HOSTNAME}.conf << NGINX
 # HTTP — redirect to HTTPS, ACME challenge proxy, health check
 server {
     listen 80 default_server;
@@ -1868,7 +1875,7 @@ ${webmail_block}
 }
 NGINX
 
-    ln -sf /etc/nginx/sites-available/${SERVER_HOSTNAME} /etc/nginx/sites-enabled/
+    ln -sf /etc/nginx/sites-available/${SERVER_HOSTNAME}.conf /etc/nginx/sites-enabled/
 
     # Create nginx pre-start script to ensure log directories exist
     # This prevents nginx from failing if a user deletes their logs directory
