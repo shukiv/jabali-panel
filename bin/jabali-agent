@@ -3646,6 +3646,10 @@ function mysqlCreateMasterUser(array $params): array
         return ['success' => false, 'error' => 'Failed to grant privileges: '.$conn->error];
     }
 
+    // Explicitly strip global privileges (safety net — blocks SHOW VARIABLES, PROCESS LIST, etc.)
+    $conn->query("REVOKE ALL PRIVILEGES, GRANT OPTION FROM '{$escapedMasterUser}'@'localhost'");
+    $conn->query("GRANT ALL PRIVILEGES ON `{$pattern}%`.* TO '{$escapedMasterUser}'@'localhost'");
+
     $conn->query('FLUSH PRIVILEGES');
     $conn->close();
 
@@ -5152,7 +5156,15 @@ function mysqlGrantPrivileges(array $params): array
     }
 
     $privString = implode(', ', $privList);
-    $dbTarget = $database === '*' ? '*.*' : "`$database`.*";
+
+    // Never allow global grants — always scope to a specific database
+    if ($database === '*' || $database === '') {
+        $conn->close();
+
+        return ['success' => false, 'error' => 'Global grants not allowed — specify a database'];
+    }
+
+    $dbTarget = "`$database`.*";
 
     if (! $conn->query("GRANT $privString ON $dbTarget TO '$dbUser'@'$host'")) {
         $error = $conn->error;
