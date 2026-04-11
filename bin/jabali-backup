@@ -65,6 +65,7 @@ COMMANDS:
     config              Validate configuration
     doctor              Check dependencies
     update              Update jabali-backup to latest version
+    uninstall           Remove jabali-backup CLI + panel addon
     version             Show version
 
 GLOBAL OPTIONS:
@@ -165,6 +166,28 @@ cmd_update() {
     fi
 
     exec "$repo/install.sh" update
+}
+
+cmd_uninstall() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "Uninstall requires root. Run: sudo jabali-backup uninstall" >&2
+        exit 1
+    fi
+
+    local repo=""
+    if [[ -f /opt/jabali-backup/install.sh ]]; then
+        repo="/opt/jabali-backup"
+    elif [[ -f "${SCRIPT_DIR}/../install.sh" ]]; then
+        repo="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    fi
+
+    if [[ -z "$repo" ]]; then
+        echo "Source repo not found. Run uninstall manually:" >&2
+        echo "  cd /opt/jabali-backup && sudo ./install.sh uninstall" >&2
+        exit 1
+    fi
+
+    exec "$repo/install.sh" uninstall
 }
 
 cmd_doctor() {
@@ -3334,8 +3357,9 @@ main() {
         schedule) cmd_schedule "$@" ;;
         config)   cmd_config "$@" ;;
         doctor)   cmd_doctor ;;
-        update)   cmd_update ;;
-        version)  cmd_version ;;
+        update)    cmd_update ;;
+        uninstall) cmd_uninstall ;;
+        version)   cmd_version ;;
         -h|--help|help|"")
                   usage ;;
         *)        echo "Unknown command: $cmd"; usage; exit 1 ;;
