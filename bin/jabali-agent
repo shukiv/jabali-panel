@@ -1015,11 +1015,12 @@ function addonInstall(array $params): array
         return ['success' => false, 'error' => $addon['name'].' is already installed'];
     }
 
-    // Run install in background — the script may restart jabali-agent which
-    // would kill this process before we can respond.
+    // Run install via systemd-run — the script may restart jabali-agent, and
+    // systemd kills all processes in the agent's cgroup on restart. A transient
+    // unit runs in its own cgroup and survives the agent restart.
     $url = $addon['install_url'];
     $logFile = '/tmp/jabali-addon-install-'.$addonId.'.log';
-    exec("setsid bash -c 'sleep 1 && curl -fsSL ".escapeshellarg($url)." | bash' > ".escapeshellarg($logFile)." 2>&1 &");
+    exec("systemd-run --no-block --unit=jabali-addon-install-".escapeshellarg($addonId)." bash -c 'sleep 1 && curl -fsSL ".escapeshellarg($url)." | bash > ".escapeshellarg($logFile)." 2>&1' 2>/dev/null");
 
     logger("Addon install started in background: {$addonId}");
 
@@ -1052,12 +1053,12 @@ function addonUninstall(array $params): array
         return ['success' => false, 'error' => $addon['name'].' does not support uninstall'];
     }
 
-    // Run uninstall in background — the script restarts jabali-agent which
-    // would kill this process before we can respond. Fire-and-forget with a
-    // small delay so the RPC response reaches the panel first.
+    // Run uninstall via systemd-run — the script restarts jabali-agent, and
+    // systemd kills all processes in the agent's cgroup on restart. A transient
+    // unit runs in its own cgroup and survives the agent restart.
     $cmd = $addon['uninstall_command'];
     $logFile = '/tmp/jabali-addon-uninstall-'.$addonId.'.log';
-    exec("setsid bash -c 'sleep 1 && {$cmd}' > ".escapeshellarg($logFile)." 2>&1 &");
+    exec("systemd-run --no-block --unit=jabali-addon-uninstall-".escapeshellarg($addonId)." bash -c 'sleep 1 && {$cmd} > ".escapeshellarg($logFile)." 2>&1' 2>/dev/null");
 
     logger("Addon uninstall started in background: {$addonId}");
 
