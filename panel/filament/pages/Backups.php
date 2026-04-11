@@ -1500,22 +1500,27 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     public function runScheduleNow(array $record): void
     {
+        $isServerBackup = $record['server_backup'] ?? false;
+
         $params = [];
         if (! empty($record['destination'])) {
             $params['destination'] = $record['destination'];
         }
 
-        $accounts = $record['accounts'] ?? 'all';
-        if ($accounts !== 'all') {
-            $params['accounts'] = $accounts;
-        }
+        if (! $isServerBackup) {
+            $accounts = $record['accounts'] ?? 'all';
+            if ($accounts !== 'all') {
+                $params['accounts'] = $accounts;
+            }
 
-        if (! empty($record['exclude'])) {
-            $params['exclude_accounts'] = $record['exclude'];
+            if (! empty($record['exclude'])) {
+                $params['exclude_accounts'] = $record['exclude'];
+            }
         }
 
         try {
-            $result = app(AgentClient::class)->send('jb.run', $params);
+            $route = $isServerBackup ? 'jb.server_backup' : 'jb.run';
+            $result = app(AgentClient::class)->send($route, $params);
             if ($result['success'] ?? false) {
                 Notification::make()->title(__('Backup started'))->body($result['message'] ?? '')->success()->send();
             } else {
