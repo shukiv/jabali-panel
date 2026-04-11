@@ -1946,7 +1946,9 @@ class ServerSettings extends Page implements HasActions, HasForms
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
             } else {
-                Notification::make()->title($result['error'] ?? __('Installation failed'))->danger()->send();
+                $error = $result['error'] ?? __('Installation failed');
+                $output = $result['output'] ?? '';
+                Notification::make()->title($error)->body($output ? substr($output, 0, 200) : null)->danger()->send();
             }
         } catch (\Throwable $e) {
             Notification::make()->title(__('Installation failed: :error', ['error' => $e->getMessage()]))->danger()->send();
@@ -1960,7 +1962,9 @@ class ServerSettings extends Page implements HasActions, HasForms
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
             } else {
-                Notification::make()->title($result['error'] ?? __('Uninstall failed'))->danger()->send();
+                $error = $result['error'] ?? __('Uninstall failed');
+                $output = $result['output'] ?? '';
+                Notification::make()->title($error)->body($output ? substr($output, 0, 200) : null)->danger()->send();
             }
         } catch (\Throwable $e) {
             Notification::make()->title(__('Uninstall failed: :error', ['error' => $e->getMessage()]))->danger()->send();

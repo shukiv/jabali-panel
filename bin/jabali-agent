@@ -974,7 +974,10 @@ function addonStatus(array $params): array
     if ($installed && ! empty($addon['version_command'])) {
         $cmd = $addon['version_command'];
         // Only allow known version commands from the config (not user input)
-        $version = trim((string) shell_exec($cmd.' 2>/dev/null'));
+        $raw = trim((string) shell_exec($cmd.' 2>/dev/null'));
+        // Extract just the version number (first line, strip label prefixes)
+        $firstLine = strtok($raw, "\n") ?: '';
+        $version = preg_replace('/^.*?(\d+\.\d+[\w.\-]*).*$/', '$1', $firstLine) ?: $firstLine;
     }
 
     if ($installed && ! empty($addon['service'])) {
