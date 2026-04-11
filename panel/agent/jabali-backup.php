@@ -722,6 +722,7 @@ function jbSnapshotInventory(array $params): array
         'metadata' => ['exists' => false],
         'files' => ['exists' => false, 'top_dirs' => []],
         'mysql' => ['exists' => false, 'databases' => [], 'users' => []],
+        'postgres' => ['exists' => false, 'databases' => []],
         'dns' => ['exists' => false, 'zones' => []],
         'email' => ['exists' => false, 'domains' => [], 'mailboxes' => []],
         'nginx' => ['exists' => false, 'configs' => []],
@@ -759,6 +760,12 @@ function jbSnapshotInventory(array $params): array
                         $inventory['mysql']['databases'][] = basename($subpath, '.sql.gz');
                     } elseif ($subpath === 'users.txt') {
                         $inventory['mysql']['has_users'] = true;
+                    }
+                    break;
+                case 'postgres':
+                    $inventory['postgres']['exists'] = true;
+                    if (str_ends_with($subpath, '.dump')) {
+                        $inventory['postgres']['databases'][] = basename($subpath, '.dump');
                     }
                     break;
                 case 'dns':
@@ -860,13 +867,13 @@ function jbSnapshotInventory(array $params): array
     $inventory['ssl']['domains'] = $sslDomains;
 
     // Deduplicate arrays
-    foreach (['mysql' => 'databases', 'dns' => 'zones', 'email' => 'domains', 'wordpress' => 'sites', 'stalwart' => 'accounts'] as $comp => $key) {
+    foreach (['mysql' => 'databases', 'postgres' => 'databases', 'dns' => 'zones', 'email' => 'domains', 'wordpress' => 'sites', 'stalwart' => 'accounts'] as $comp => $key) {
         $inventory[$comp][$key] = array_values(array_unique($inventory[$comp][$key]));
     }
 
     // Dump account.json for domain list
     $dumpCmd = array_merge(
-        ['restic', 'dump', $snapshotId, '--tag', 'account:' . $username],
+        ['restic', 'dump', $snapshotId],
         $env['args'],
         ["/tmp/jabali-backup/{$username}/metadata/account.json"],
     );
@@ -885,7 +892,7 @@ function jbSnapshotInventory(array $params): array
     // Dump mysql/users.txt for MySQL user list
     if ($inventory['mysql']['has_users'] ?? false) {
         $usersCmd = array_merge(
-            ['restic', 'dump', $snapshotId, '--tag', 'account:' . $username],
+            ['restic', 'dump', $snapshotId],
             $env['args'],
             ["/tmp/jabali-backup/{$username}/mysql/users.txt"],
         );

@@ -487,13 +487,15 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         return [
             'metadata' => __('Panel Config'),
             'files' => __('Home Dir Files'),
-            'mysql' => __('Databases'),
+            'mysql' => __('MySQL'),
+            'postgres' => __('PostgreSQL'),
             'email' => __('Email Accounts'),
-            'dns' => __('Domains'),
+            'dns' => __('DNS Zones'),
             'cron' => __('Cron Jobs'),
             'ssl' => __('SSL Certificates'),
             'nginx' => __('Nginx Config'),
             'php' => __('PHP Config'),
+            'stalwart' => __('Stalwart Mail'),
         ];
     }
 
@@ -616,6 +618,13 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             $tabs[] = Tab::make(__('Databases'))->icon('heroicon-o-circle-stack')->badge(count($dbs) + count($mysqlUsers))->schema($dbSchema);
                         }
 
+                        if ($inv['postgres']['exists'] ?? false) {
+                            $pgDbs = collect($inv['postgres']['databases'] ?? [])->mapWithKeys(fn ($d) => [$d => $d])->all();
+                            $tabs[] = Tab::make(__('PostgreSQL'))->icon('heroicon-o-circle-stack')->badge(count($pgDbs))->schema([
+                                CheckboxList::make('restore_postgres')->label(__('PostgreSQL databases to restore'))->options($pgDbs)->default(array_keys($pgDbs)),
+                            ]);
+                        }
+
                         if ($inv['email']['exists'] ?? false) {
                             $emailDomains = collect($inv['email']['domains'] ?? [])->mapWithKeys(fn ($d) => [$d => $d])->all();
                             $tabs[] = Tab::make(__('Email'))->icon('heroicon-o-envelope')->badge(count($emailDomains))->schema([
@@ -721,6 +730,10 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                             if (! empty($mu)) {
                                                 $lines[] = '&#x2705; ' . __('MySQL users: :list', ['list' => implode(', ', $mu)]);
                                             }
+                                            $pg = $get('restore_postgres') ?? [];
+                                            if (! empty($pg)) {
+                                                $lines[] = '&#x2705; ' . __('PostgreSQL: :list', ['list' => implode(', ', $pg)]);
+                                            }
                                             $em = $get('restore_email') ?? [];
                                             if (! empty($em)) {
                                                 $lines[] = '&#x2705; ' . __('Email: :list', ['list' => implode(', ', $em)]);
@@ -775,6 +788,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         }
                         if (! empty($data['restore_databases']) || ! empty($data['restore_mysql_users'])) {
                             $components[] = 'mysql';
+                        }
+                        if (! empty($data['restore_postgres'])) {
+                            $components[] = 'postgres';
                         }
                         if (! empty($data['restore_email'])) {
                             $components[] = 'email';
