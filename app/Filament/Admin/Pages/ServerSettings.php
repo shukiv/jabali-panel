@@ -1921,29 +1921,13 @@ class ServerSettings extends Page implements HasActions, HasForms
                             .$statusText
                             .'</span>'
                         )),
-                    Actions::make(
-                        $installed
-                            ? [
-                                FormAction::make("uninstall_{$addonId}")
-                                    ->label(__('Uninstall'))
-                                    ->color('danger')
-                                    ->icon('heroicon-o-trash')
-                                    ->requiresConfirmation()
-                                    ->modalHeading(__('Uninstall :name', ['name' => $addon['name']]))
-                                    ->modalDescription(__('Are you sure? This will remove the addon and all its data.'))
-                                    ->action(fn () => $this->uninstallAddon($addonId)),
-                            ]
-                            : [
-                                FormAction::make("install_{$addonId}")
-                                    ->label(__('Install'))
-                                    ->color('primary')
-                                    ->icon('heroicon-o-arrow-down-tray')
-                                    ->requiresConfirmation()
-                                    ->modalHeading(__('Install :name', ['name' => $addon['name']]))
-                                    ->modalDescription(__('This will download and install the addon. It may take a minute.'))
-                                    ->action(fn () => $this->installAddon($addonId)),
-                            ]
-                    ),
+                    Placeholder::make("addon_{$addonId}_actions")
+                        ->label('')
+                        ->content(new HtmlString(
+                            $installed
+                                ? '<button type="button" wire:click="uninstallAddon(\''.$addonId.'\')" wire:confirm="'.__('Are you sure? This will remove the addon and all its data.').'" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400">'.__('Uninstall').'</button>'
+                                : '<button type="button" wire:click="installAddon(\''.$addonId.'\')" wire:confirm="'.__('This will download and install the addon. It may take a minute.').'" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400">'.__('Install').'</button>'
+                        )),
                 ]);
         }
 
