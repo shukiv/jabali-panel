@@ -85,7 +85,7 @@ class UpgradeCommand extends Command
         $this->line("Current version: <info>{$currentVersion}</info>");
 
         // Step 1: Check git status
-        $this->info('[1/10] Checking repository status...');
+        $this->info('[1/11] Checking repository status...');
         try {
             $this->configureGitSafeDirectory();
             $this->ensureGitRepository();
@@ -112,7 +112,7 @@ class UpgradeCommand extends Command
         }
 
         // Step 2: Fetch updates
-        $this->info('[2/10] Fetching updates from repository...');
+        $this->info('[2/11] Fetching updates from repository...');
         try {
             $updateSource = $this->fetchUpdates();
         } catch (Exception $e) {
@@ -131,7 +131,7 @@ class UpgradeCommand extends Command
 
         // Step 4: Pull changes
         $oldHead = trim($this->executeCommandOrFail('git rev-parse HEAD'));
-        $this->info('[3/10] Pulling latest changes...');
+        $this->info('[3/11] Pulling latest changes...');
         try {
             if (! $this->isRunningAsRoot()) {
                 // Running as www-data (from web UI) — use agent to pull as root
@@ -181,7 +181,7 @@ class UpgradeCommand extends Command
         $shouldRunMigrations = $this->shouldRunMigrations($changedFiles, $this->option('force'));
 
         // Step 5: Install composer dependencies
-        $this->info('[4/10] Installing PHP dependencies...');
+        $this->info('[4/11] Installing PHP dependencies...');
         if ($shouldRunComposer) {
             try {
                 $this->ensureCommandAvailable('composer');
@@ -203,7 +203,7 @@ class UpgradeCommand extends Command
         }
 
         // Step 5b: Install npm dependencies and build assets
-        $this->info('[5/10] Building frontend assets...');
+        $this->info('[5/11] Building frontend assets...');
         if ($shouldRunNpm) {
             try {
                 $this->ensureCommandAvailable('npm');
@@ -253,7 +253,7 @@ class UpgradeCommand extends Command
         }
 
         // Step 6: Run migrations
-        $this->info('[6/10] Running database migrations...');
+        $this->info('[6/11] Running database migrations...');
         if ($shouldRunMigrations) {
             try {
                 Artisan::call('migrate', ['--force' => true]);
@@ -268,7 +268,7 @@ class UpgradeCommand extends Command
         }
 
         // Step 7: Clear caches
-        $this->info('[7/10] Clearing caches...');
+        $this->info('[7/11] Clearing caches...');
         try {
             Artisan::call('optimize:clear');
             $this->line(Artisan::output());
@@ -277,14 +277,18 @@ class UpgradeCommand extends Command
         }
 
         // Step 8: Setup Redis ACL if not configured
-        $this->info('[8/10] Checking Redis ACL configuration...');
+        $this->info('[8/11] Checking Redis ACL configuration...');
         $this->setupRedisAcl();
 
         // Step 9: Migrate nginx page cache to per-user directories
         $this->migrateNginxPageCache();
 
-        // Step 10: Restart services
-        $this->info('[10/10] Restarting services...');
+        // Step 10: Update installed addons
+        $this->info('[10/11] Updating installed addons...');
+        $this->updateAddons();
+
+        // Step 11: Restart services
+        $this->info('[11/11] Restarting services...');
         $this->restartServices();
 
         $newVersion = $this->getCurrentVersion();
@@ -758,7 +762,7 @@ class UpgradeCommand extends Command
             return;
         }
 
-        $this->info('[9/10] Migrating nginx page cache to per-user directories...');
+        $this->info('[9/11] Migrating nginx page cache to per-user directories...');
 
         $agent = app(\App\Services\Agent\AgentClient::class);
 
@@ -795,6 +799,52 @@ class UpgradeCommand extends Command
         }
 
         $this->line('  Nginx page cache migrated to per-user directories.');
+    }
+
+    private function updateAddons(): void
+    {
+        $addons = [
+            'jabali-backup' => [
+                'binary' => '/usr/local/bin/jabali-backup',
+                'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh',
+            ],
+            'jabali-security' => [
+                'binary' => '/usr/local/bin/jabali-security',
+                'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-security/main/install.sh',
+            ],
+        ];
+
+        $found = false;
+
+        foreach ($addons as $name => $addon) {
+            if (! file_exists($addon['binary'])) {
+                continue;
+            }
+
+            $found = true;
+            $this->line("  - Updating {$name}...");
+
+            try {
+                $result = $this->executeCommand(
+                    sprintf('curl -fsSL %s | bash', escapeshellarg($addon['install_url'])),
+                    300
+                );
+
+                if ($result['exitCode'] !== 0) {
+                    $this->warn("  - {$name} update failed: ".($result['output'] ?: 'unknown error'));
+
+                    continue;
+                }
+
+                $this->line("  - {$name} updated");
+            } catch (Exception $e) {
+                $this->warn("  - {$name} update failed: ".$e->getMessage());
+            }
+        }
+
+        if (! $found) {
+            $this->line('No addons installed, skipping.');
+        }
     }
 
     protected function restartServices(): void
