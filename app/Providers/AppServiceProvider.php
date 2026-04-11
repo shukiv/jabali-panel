@@ -61,6 +61,7 @@ class AppServiceProvider extends ServiceProvider
                 foreach ($writePatterns as $pattern) {
                     if (str_contains($name, $pattern)) {
                         $action->hidden();
+                        $action->disabled();
 
                         return;
                     }

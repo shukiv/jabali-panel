@@ -44,22 +44,25 @@ class DemoMode
             return $next($request);
         }
 
-        // Block logout and password changes
-        if ($request->is('*/logout', '*/password*', '*/two-factor*')) {
+        // Block logout, password changes, and impersonation
+        if ($request->is('*/logout', '*/password*', '*/two-factor*', 'impersonate/*')) {
             abort(403, 'Demo mode — this action is disabled.');
         }
 
         // For Livewire requests, check if it's a write operation
         if ($this->isLivewireRequest($request) && $this->isWriteOperation($request)) {
-            // Send a Filament notification and return the Livewire response
             Notification::make()
                 ->title(__('Demo Mode'))
                 ->body(__('Create, edit, and delete operations are disabled in the demo.'))
                 ->warning()
                 ->send();
 
-            // Let it through — the Gate::before() will deny the actual operation
-            // and Filament will show an authorization error
+            abort(403, 'Demo mode — this action is disabled.');
+        }
+
+        // Block all non-GET, non-Livewire requests (covers API, form POSTs, etc.)
+        if (! $request->isMethod('GET') && ! $this->isLivewireRequest($request)) {
+            abort(403, 'Demo mode — this action is disabled.');
         }
 
         return $next($request);
