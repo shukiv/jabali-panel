@@ -692,7 +692,7 @@ function jbSnapshotInventory(array $params): array
 
     // Resolve snapshot ID
     if ($snapshotId === 'latest') {
-        $cmd = array_merge(['restic', 'snapshots', '--json', '--quiet', '--tag', 'account:' . $username], $env['args']);
+        $cmd = array_merge(['restic', 'snapshots', '--json', '--tag', 'account:' . $username], $env['args']);
         $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, $procEnv);
         $json = stream_get_contents($pipes[1]);
         fclose($pipes[1]);
@@ -705,8 +705,8 @@ function jbSnapshotInventory(array $params): array
         $snapshotId = end($snaps)['short_id'] ?? '';
     }
 
-    // List all files in snapshot
-    $cmd = array_merge(['restic', 'ls', '--quiet', $snapshotId, '--tag', 'account:' . $username], $env['args']);
+    // List all files in snapshot — stderr to /dev/null to prevent pipe deadlock
+    $cmd = array_merge(['restic', 'ls', $snapshotId, '--tag', 'account:' . $username], $env['args']);
     $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, $procEnv);
     $listing = stream_get_contents($pipes[1]);
     fclose($pipes[1]);
