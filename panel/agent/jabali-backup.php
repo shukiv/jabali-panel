@@ -1364,52 +1364,49 @@ function jbServerDownloadPipe(array $params): array
     $pipePath = $pipeDir . '/' . $pipeName;
     posix_mkfifo($pipePath, 0600);
 
-    // Build restore + tar script: restore server snapshot + all user snapshots
-    // into a temp dir, then tar.gz the result into the pipe
-    $tmpDir = '/tmp/jabali-server-export-' . bin2hex(random_bytes(4));
-    $snapshotIdEsc = escapeshellarg($snapshotId);
-    $pipePathEsc = escapeshellarg($pipePath);
-    $tmpDirEsc = escapeshellarg($tmpDir);
-
-    $restoreCmds = "mkdir -p {$tmpDirEsc}\n";
-    $restoreCmds .= "jabali-backup restore-raw --snapshot={$snapshotIdEsc} --target={$tmpDirEsc}/server 2>/dev/null\n";
-    foreach ($userSnapshotIds as $user => $uid) {
-        $uidEsc = escapeshellarg($uid);
-        $userEsc = escapeshellarg($user);
-        $restoreCmds .= "jabali-backup restore-raw --snapshot={$uidEsc} --target={$tmpDirEsc}/users/{$userEsc} 2>/dev/null\n";
-    }
-    $restoreCmds .= "tar czf - -C {$tmpDirEsc} . > {$pipePathEsc}\n";
-    $restoreCmds .= "rm -rf {$tmpDirEsc} {$pipePathEsc}\n";
-
-    // Use restic restore directly instead of jabali-backup restore-raw (which may not exist)
     $env = jbLoadResticEnv();
     if ($env === null) {
         @unlink($pipePath);
         return ['success' => false, 'error' => 'Backup not configured'];
     }
 
+    // Build archive as a temp file (not via pipe) to avoid blocking PHP workers.
+    // The background script restores all snapshots, creates a tar.gz, then
+    // writes a .done sentinel. PHP polls for the sentinel before streaming.
+    @unlink($pipePath); // Don't need the pipe for server downloads
+
+    $tmpDir = '/tmp/jabali-server-export-' . bin2hex(random_bytes(4));
+    $tmpArchive = $tmpDir . '.tar.gz';
+    $doneSentinel = $tmpArchive . '.done';
+    $snapshotIdEsc = escapeshellarg($snapshotId);
+    $tmpDirEsc = escapeshellarg($tmpDir);
+    $tmpArchiveEsc = escapeshellarg($tmpArchive);
+    $doneEsc = escapeshellarg($doneSentinel);
+
     $resticArgs = implode(' ', array_map('escapeshellarg', $env['args']));
     $envExports = '';
     foreach ($env['env'] as $k => $v) {
-        $envExports .= 'export ' . escapeshellarg($k) . '=' . escapeshellarg($v) . '; ';
+        $envExports .= 'export ' . escapeshellarg($k) . '=' . escapeshellarg($v) . "\n";
     }
 
-    $script = "set -e\n{$envExports}\nmkdir -p {$tmpDirEsc}\n";
-    $script .= "restic restore {$snapshotIdEsc} --target {$tmpDirEsc}/server {$resticArgs} 2>/dev/null\n";
+    $script = "#!/bin/bash\n";
+    $script .= "{$envExports}\n";
+    $script .= "restic unlock {$resticArgs} 2>/dev/null || true\n";
+    $script .= "mkdir -p {$tmpDirEsc}/server {$tmpDirEsc}/users\n";
+    $script .= "restic restore {$snapshotIdEsc} --target {$tmpDirEsc}/server {$resticArgs} 2>/dev/null || true\n";
     foreach ($userSnapshotIds as $user => $uid) {
         $uidEsc = escapeshellarg($uid);
         $userEsc = escapeshellarg($user);
-        $script .= "restic restore {$uidEsc} --target {$tmpDirEsc}/users/{$userEsc} {$resticArgs} 2>/dev/null\n";
+        $script .= "restic restore {$uidEsc} --target {$tmpDirEsc}/users/{$userEsc} {$resticArgs} 2>/dev/null || true\n";
     }
-    $script .= "tar czf - -C {$tmpDirEsc} . > {$pipePathEsc}\n";
-    $script .= "rm -rf {$tmpDirEsc} {$pipePathEsc}\n";
+    $script .= "tar czf {$tmpArchiveEsc} -C {$tmpDirEsc} . 2>/dev/null\n";
+    $script .= "rm -rf {$tmpDirEsc}\n";
+    $script .= "touch {$doneEsc}\n";
 
     $cmd = sprintf('nohup bash -c %s > /dev/null 2>&1 &', escapeshellarg($script));
     proc_open(['bash', '-c', $cmd], [], $pipes);
 
-    usleep(200000);
-
-    return ['success' => true, 'pipe' => $pipePath];
+    return ['success' => true, 'archive' => $tmpArchive, 'done' => $doneSentinel];
 }
 
 // ─── Schedule Routes (wrap CLI) ───

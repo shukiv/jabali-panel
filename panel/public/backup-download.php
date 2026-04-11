@@ -81,12 +81,6 @@ if (! ($result['success'] ?? false)) {
     die($result['error'] ?? 'Export failed');
 }
 
-$pipePath = $result['pipe'] ?? '';
-if (empty($pipePath) || ! file_exists($pipePath)) {
-    http_response_code(500);
-    die('Pipe not created');
-}
-
 // Disable output buffering
 while (ob_get_level()) {
     ob_end_clean();
@@ -96,12 +90,64 @@ while (ob_get_level()) {
 $filename = $isServerDownload
     ? 'server-backup-' . date('Y-m-d') . '.tar.gz'
     : implode('-', $userList) . '-backup-' . date('Y-m-d') . '.tar.gz';
+
+// Server downloads use a temp archive file (not a pipe) to avoid blocking workers.
+// Per-user downloads still use the named pipe for instant streaming.
+if ($isServerDownload) {
+    $archivePath = $result['archive'] ?? '';
+    $doneSentinel = $result['done'] ?? '';
+
+    if (empty($archivePath) || empty($doneSentinel)) {
+        http_response_code(500);
+        die('Export failed');
+    }
+
+    // Poll for completion (background script creates .done when archive is ready)
+    $maxWait = 900; // 15 minutes
+    $waited = 0;
+    while ($waited < $maxWait) {
+        if (file_exists($doneSentinel)) {
+            break;
+        }
+        sleep(3);
+        $waited += 3;
+    }
+
+    if (! file_exists($doneSentinel)) {
+        http_response_code(504);
+        die('Export timed out');
+    }
+
+    @unlink($doneSentinel);
+
+    if (! file_exists($archivePath)) {
+        http_response_code(500);
+        die('Archive not found');
+    }
+
+    header('Content-Type: application/gzip');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . filesize($archivePath));
+    header('Cache-Control: no-cache, no-store');
+    header('X-Accel-Buffering: no');
+
+    readfile($archivePath);
+    @unlink($archivePath);
+    exit;
+}
+
+// Per-user download: stream from named pipe
+$pipePath = $result['pipe'] ?? '';
+if (empty($pipePath) || ! file_exists($pipePath)) {
+    http_response_code(500);
+    die('Pipe not created');
+}
+
 header('Content-Type: application/gzip');
 header('Content-Disposition: attachment; filename="' . $filename . '"');
 header('Cache-Control: no-cache, no-store');
 header('X-Accel-Buffering: no');
 
-// Stream from the named pipe
 $fp = fopen($pipePath, 'rb');
 if (! $fp) {
     http_response_code(500);
