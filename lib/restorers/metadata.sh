@@ -35,10 +35,35 @@ restore_metadata() {
 
         # Create Linux system user
         if ! id "$username" &>/dev/null; then
-            useradd -m -d "/home/${username}" -s /usr/sbin/nologin "$username" 2>&1 || {
+            # Try to restore original UID/GID if available in system_user.json
+            local sys_user_json="${staging}/system_user.json"
+            local useradd_opts=(-m -d "/home/${username}" -s /usr/sbin/nologin)
+            if [[ -f "$sys_user_json" ]]; then
+                local orig_uid orig_gid orig_shell
+                orig_uid=$(grep -oP '"uid"\s*:\s*\K[0-9]+' "$sys_user_json" 2>/dev/null || true)
+                orig_gid=$(grep -oP '"gid"\s*:\s*\K[0-9]+' "$sys_user_json" 2>/dev/null || true)
+                orig_shell=$(grep -oP '"shell"\s*:\s*"\K[^"]+' "$sys_user_json" 2>/dev/null || true)
+                # Use original UID/GID if not already taken
+                if [[ -n "$orig_uid" ]] && ! getent passwd "$orig_uid" &>/dev/null; then
+                    useradd_opts+=(-u "$orig_uid")
+                fi
+                if [[ -n "$orig_shell" ]]; then
+                    useradd_opts=("${useradd_opts[@]/-s \/usr\/sbin\/nologin/}")
+                    useradd_opts+=(-s "$orig_shell")
+                fi
+            fi
+            useradd "${useradd_opts[@]}" "$username" 2>&1 || {
                 log_error "restore/metadata: Failed to create system user $username"
                 return 1
             }
+            # SFTP chroot: home dir must be owned by root:{user} 0750
+            chown "root:${username}" "/home/${username}"
+            chmod 0750 "/home/${username}"
+            # Add to sftpusers group for SFTP access
+            if getent group sftpusers &>/dev/null; then
+                usermod -aG sftpusers "$username" 2>/dev/null || true
+            fi
+            log_info "restore/metadata: Created system user $username (root:${username} 0750, sftpusers)"
         fi
 
         # Create DB record with all required fields

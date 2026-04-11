@@ -87,6 +87,85 @@ collect_metadata() {
         mysql_cred_json="$(printf '{"mysql_username":"%s"}' "$mysql_cred")"
     fi
 
+    # Domain redirects
+    local redirects_json="[]"
+    local redirect_data
+    redirect_data=$(_db_query "SELECT dr.id, d.domain, dr.source_path, dr.target_url, dr.redirect_type, dr.is_active FROM domain_redirects dr JOIN domains d ON dr.domain_id=d.id WHERE d.user_id = $user_id" 2>/dev/null)
+    if [[ -n "$redirect_data" ]]; then
+        redirects_json="["
+        local first=1
+        while IFS=$'\t' read -r rid rdomain rsrc rtgt rtype ractive; do
+            [[ -z "$rid" ]] && continue
+            [[ "$first" -eq 0 ]] && redirects_json+=","
+            first=0
+            redirects_json+="$(printf '{"id":%s,"domain":"%s","source_path":"%s","target_url":"%s","redirect_type":%s,"is_active":%s}' \
+                "$rid" "$rdomain" "${rsrc//\"/\\\"}" "${rtgt//\"/\\\"}" "${rtype:-301}" "${ractive:-1}")"
+        done <<< "$redirect_data"
+        redirects_json+="]"
+    fi
+
+    # User settings
+    local settings_json="[]"
+    local settings_data
+    settings_data=$(_db_query "SELECT \`key\`, value FROM user_settings WHERE user_id = $user_id" 2>/dev/null)
+    if [[ -n "$settings_data" ]]; then
+        settings_json="["
+        local first=1
+        while IFS=$'\t' read -r skey sval; do
+            [[ -z "$skey" ]] && continue
+            [[ "$first" -eq 0 ]] && settings_json+=","
+            first=0
+            settings_json+="$(printf '{"key":"%s","value":"%s"}' "${skey//\"/\\\"}" "${sval//\"/\\\"}")"
+        done <<< "$settings_data"
+        settings_json+="]"
+    fi
+
+    # IMAP sync tasks
+    local imap_json="[]"
+    local imap_data
+    imap_data=$(_db_query "SELECT id, source_host, source_port, source_username, source_encryption, destination_mailbox_id, is_active, status FROM imap_sync_tasks WHERE user_id = $user_id" 2>/dev/null)
+    if [[ -n "$imap_data" ]]; then
+        imap_json="["
+        local first=1
+        while IFS=$'\t' read -r iid ihost iport iuser ienc idest iactive istatus; do
+            [[ -z "$iid" ]] && continue
+            [[ "$first" -eq 0 ]] && imap_json+=","
+            first=0
+            imap_json+="$(printf '{"id":%s,"source_host":"%s","source_port":%s,"source_username":"%s","source_encryption":"%s","destination_mailbox_id":%s,"is_active":%s,"status":"%s"}' \
+                "$iid" "${ihost//\"/\\\"}" "${iport:-993}" "${iuser//\"/\\\"}" "${ienc:-ssl}" "${idest:-0}" "${iactive:-0}" "${istatus:-pending}")"
+        done <<< "$imap_data"
+        imap_json+="]"
+    fi
+
+    # Cloudflare zones
+    local cf_json="[]"
+    local cf_data
+    cf_data=$(_db_query "SELECT id, domain_id, zone_id FROM cloudflare_zones WHERE user_id = $user_id" 2>/dev/null)
+    if [[ -n "$cf_data" ]]; then
+        cf_json="["
+        local first=1
+        while IFS=$'\t' read -r cfid cfdid cfzid; do
+            [[ -z "$cfid" ]] && continue
+            [[ "$first" -eq 0 ]] && cf_json+=","
+            first=0
+            cf_json+="$(printf '{"id":%s,"domain_id":%s,"zone_id":"%s"}' "$cfid" "$cfdid" "$cfzid")"
+        done <<< "$cf_data"
+        cf_json+="]"
+    fi
+
+    # System user info (UID, GID, shell, groups)
+    local sys_uid="" sys_gid="" sys_shell="" sys_groups=""
+    if id "$username" &>/dev/null; then
+        sys_uid=$(id -u "$username" 2>/dev/null)
+        sys_gid=$(id -g "$username" 2>/dev/null)
+        sys_shell=$(getent passwd "$username" 2>/dev/null | cut -d: -f7)
+        sys_groups=$(id -Gn "$username" 2>/dev/null | tr ' ' ',')
+        # Write system_user.json separately (used by restorer for UID/GID preservation)
+        cat > "${meta_dir}/system_user.json" <<EOSYS
+{"uid":${sys_uid},"gid":${sys_gid},"shell":"${sys_shell}","groups":"${sys_groups}"}
+EOSYS
+    fi
+
     # Write account.json
     cat > "${meta_dir}/account.json" <<EOJSON
 {
@@ -113,8 +192,12 @@ collect_metadata() {
   "mysql_credentials": ${mysql_cred_json},
   "domains": ${domains_json},
   "domain_aliases": ${aliases_json},
+  "domain_redirects": ${redirects_json},
   "git_deployments": ${git_json},
-  "webhooks": ${webhooks_json}
+  "webhooks": ${webhooks_json},
+  "cloudflare_zones": ${cf_json},
+  "user_settings": ${settings_json},
+  "imap_sync_tasks": ${imap_json}
 }
 EOJSON
 

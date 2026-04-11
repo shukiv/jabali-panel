@@ -1652,15 +1652,13 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     protected function logsTable(Table $table): Table
     {
         return $table
-            ->header(view('filament.admin.pages.partials.log-tabs'))
-            ->records(fn () => collect($this->logJobs)
+            ->records(fn (array $filters) => collect($this->logJobs)
                 ->when(
-                    $this->logFilter !== 'all',
-                    fn ($c) => $c->filter(fn ($job) => match ($this->logFilter) {
-                        'backup' => ($job['type'] ?? '') === 'backup',
-                        'restore' => in_array($job['type'] ?? '', ['restore', 'file-restore'], true),
-                        default => true,
-                    })
+                    ($filters['type']['value'] ?? null) !== null,
+                    fn ($c) => $c->filter(fn ($job) => $filters['type']['value']
+                        ? ($job['type'] ?? '') === 'backup'
+                        : in_array($job['type'] ?? '', ['restore', 'file-restore'], true)
+                    )
                 )
                 ->mapWithKeys(fn ($job, $i) => [$job['id'] ?? "job-{$i}" => $job])
                 ->all())
@@ -1699,6 +1697,13 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->formatStateUsing(fn (array $record): string => isset($record['duration_seconds']) ? $record['duration_seconds'] . 's' : '-')
                     ->alignEnd(),
             ])
+            ->filters([
+                \Filament\Tables\Filters\TernaryFilter::make('type')
+                    ->label(__('Type'))
+                    ->placeholder(__('All'))
+                    ->trueLabel(__('Backup Logs'))
+                    ->falseLabel(__('Restore Logs')),
+            ], layout: \Filament\Tables\Enums\FiltersLayout::AboveContent)
             ->actions([
                 \Filament\Actions\Action::make('viewLog')
                     ->label(__('View Log'))
@@ -1714,7 +1719,13 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel(__('Close')),
             ])
-            ->headerActions([])
+            ->headerActions([
+                \Filament\Actions\Action::make('refreshLogs')
+                    ->label(__('Refresh'))
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('gray')
+                    ->action(fn () => $this->loadLogs()),
+            ])
             ->emptyStateHeading(__('No jobs found'))
             ->emptyStateIcon('heroicon-o-document-text')
             ->paginated(false);

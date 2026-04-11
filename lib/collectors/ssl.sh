@@ -53,6 +53,18 @@ collect_ssl() {
 }
 EOJSON
 
+        # Also copy actual PEM files from /etc/letsencrypt/live/ (resolve symlinks)
+        local le_dir="/etc/letsencrypt/live/${domain}"
+        if [[ -d "$le_dir" ]]; then
+            local le_out="${cert_dir}/letsencrypt"
+            mkdir -p "$le_out"
+            for pem in privkey.pem cert.pem chain.pem fullchain.pem; do
+                [[ -f "${le_dir}/${pem}" ]] && cp -L "${le_dir}/${pem}" "${le_out}/${pem}" 2>/dev/null
+            done
+            chmod 600 "${le_out}/privkey.pem" 2>/dev/null || true
+            log_info "ssl: Copied Let's Encrypt PEM files for ${domain}"
+        fi
+
         count=$((count + 1))
         log_info "ssl: Exported ${domain}/${service} cert (expires: ${expires})"
     done <<< "$certs"

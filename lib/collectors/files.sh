@@ -27,5 +27,8 @@ files_excludes() {
 /home/*/*/*/vendor
 /home/*/.npm
 /home/*/.composer/cache
+/home/*/*/logs
+/home/*/*.log
+/home/*/*/*/*.log
 EOF
 }

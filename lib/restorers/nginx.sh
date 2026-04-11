@@ -51,6 +51,23 @@ restore_nginx() {
         fi
     done
 
+    # Restore cache zone config
+    for cache_conf in "${staging}"/*.cache-zone.conf; do
+        [[ ! -f "$cache_conf" ]] && continue
+        local cache_dir="/etc/nginx/jabali/cache-zones"
+        mkdir -p "$cache_dir" 2>/dev/null
+        local cache_target="${cache_dir}/$(basename "$cache_conf" .cache-zone.conf).conf"
+        if [[ -f "$cache_target" ]] && [[ "$force" -eq 0 ]]; then
+            log_info "restore/nginx: Cache zone $(basename "$cache_target") exists, skipping"
+        else
+            cp "$cache_conf" "$cache_target"
+            need_reload=1
+            log_info "restore/nginx: Restored cache zone $(basename "$cache_target")"
+        fi
+        # Ensure cache directory exists
+        mkdir -p "/home/${username}/cache/nginx" 2>/dev/null || true
+    done
+
     if [[ "$need_reload" -eq 1 ]]; then
         if nginx -t 2>/dev/null; then
             nginx -s reload 2>/dev/null && log_info "restore/nginx: Reloaded nginx"

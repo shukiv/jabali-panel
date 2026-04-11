@@ -51,5 +51,16 @@ EOJSON
         fi
     done <<< "$domains"
 
+    # Nginx cache zone config (/etc/nginx/jabali/cache-zones/{user}.conf)
+    local username
+    username=$(_db_query "SELECT username FROM users WHERE id = $user_id" 2>/dev/null)
+    if [[ -n "$username" ]]; then
+        local cache_zone="/etc/nginx/jabali/cache-zones/${username}.conf"
+        if [[ -f "$cache_zone" ]]; then
+            cp "$cache_zone" "${nginx_dir}/${username}.cache-zone.conf"
+            log_info "nginx: Exported cache zone for $username"
+        fi
+    fi
+
     log_info "nginx: Exported $count domain configs"
 }

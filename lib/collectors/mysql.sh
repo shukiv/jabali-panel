@@ -73,6 +73,7 @@ collect_mysql() {
 
     if [[ ${#mysql_users[@]} -gt 0 ]]; then
         : > "${mysql_dir}/grants.sql"
+        : > "${mysql_dir}/create_users.sql"
         local -A grant_seen=()
         for mu in "${mysql_users[@]}"; do
             [[ -n "${grant_seen[$mu]:-}" ]] && continue
@@ -81,12 +82,17 @@ collect_mysql() {
             hosts=$(_mysql_root_query "SELECT DISTINCT Host FROM mysql.user WHERE User='$(mysql_escape "$mu")'")
             while IFS= read -r host; do
                 [[ -z "$host" ]] && continue
+                # SHOW CREATE USER for proper user recreation
+                _mysql_root_query "SHOW CREATE USER '$(mysql_escape "$mu")'@'$(mysql_escape "$host")'" \
+                    >> "${mysql_dir}/create_users.sql" 2>/dev/null || true
+                echo ";" >> "${mysql_dir}/create_users.sql"
+                # SHOW GRANTS for privilege recreation
                 _mysql_root_query "SHOW GRANTS FOR '$(mysql_escape "$mu")'@'$(mysql_escape "$host")'" \
                     >> "${mysql_dir}/grants.sql"
                 echo ";" >> "${mysql_dir}/grants.sql"
             done <<< "$hosts"
         done
-        log_info "mysql: Exported grants for ${mysql_users[*]}"
+        log_info "mysql: Exported users and grants for ${mysql_users[*]}"
 
         # Save MySQL user list for restore
         printf '%s\n' "${mysql_users[@]}" | sort -u > "${mysql_dir}/users.txt"

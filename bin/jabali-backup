@@ -69,7 +69,7 @@ GLOBAL OPTIONS:
     --destination=NAME  Use a specific backup destination (default: the one marked default)
 
 RUN OPTIONS:
-    --only=COLLECTORS   Comma-separated list: files,mysql,postgres,dns,email,ssl,nginx,php,wordpress,cron,stalwart,metadata
+    --only=COLLECTORS   Comma-separated list: files,mysql,postgres,dns,email,ssl,nginx,php,wordpress,cron,stalwart,redis,metadata
     --exclude=COLL      Skip specific collectors
     --dry-run           Show what would be backed up
     --parallel=N        Backup N accounts concurrently (default: 1)
@@ -616,9 +616,16 @@ cmd_run() {
             collect_stalwart "$user_id" "$staging" || log_warn "stalwart collector failed for $username"
         fi
 
+        if _collector_enabled redis "$only" "$exclude"; then
+            collect_redis "$user_id" "$staging" "$username" || log_warn "redis collector failed for $username"
+        fi
+
         if _collector_enabled metadata "$only" "$exclude"; then
             collect_metadata "$user_id" "$username" "$staging" || log_warn "metadata collector failed for $username"
         fi
+
+        # Generate manifest.json
+        _generate_manifest "$staging" "$username" "$user_id"
 
         # Add staging dir if it has content
         if [[ -n "$(ls -A "$staging" 2>/dev/null)" ]]; then
@@ -970,10 +977,24 @@ cmd_restore() {
         skipped=$((skipped + 1))
     fi
 
+    # 13. Redis
+    if _collector_enabled redis "$only" "$exclude" && [[ -d "${staging}/redis" ]]; then
+        if restore_redis "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
     # Summary
     local end_time duration
     end_time=$(date +%s)
     duration=$((end_time - start_time))
+
+    # Post-restore validation
+    _post_restore_checks "$target_user" "$uid"
 
     echo ""
     echo "════════════════════════════════════════"
@@ -989,6 +1010,74 @@ cmd_restore() {
 
     log_info "═══ Restore complete for $target_user ═══"
     return "$failed"
+}
+
+_post_restore_checks() {
+    local username="$1" user_id="$2"
+    local checks_passed=0 checks_failed=0
+
+    log_info "restore/verify: Running post-restore checks for $username"
+
+    # 1. Nginx config test
+    if nginx -t 2>/dev/null; then
+        log_info "restore/verify: nginx -t passed"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "restore/verify: nginx -t failed"
+        checks_failed=$((checks_failed + 1))
+    fi
+
+    # 2. PHP-FPM running
+    if systemctl is-active php*-fpm &>/dev/null; then
+        log_info "restore/verify: PHP-FPM is running"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "restore/verify: PHP-FPM is not running"
+        checks_failed=$((checks_failed + 1))
+    fi
+
+    # 3. MySQL databases accessible
+    local db_count
+    db_count=$(_mysql_root_query "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '$(mysql_escape "$username")%'" 2>/dev/null)
+    if [[ "${db_count:-0}" -gt 0 ]]; then
+        log_info "restore/verify: $db_count MySQL database(s) accessible"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_info "restore/verify: No MySQL databases found (may be expected)"
+    fi
+
+    # 4. System user exists
+    if id "$username" &>/dev/null; then
+        log_info "restore/verify: System user $username exists"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "restore/verify: System user $username not found"
+        checks_failed=$((checks_failed + 1))
+    fi
+
+    # 5. Home directory exists and has correct ownership
+    local home="/home/${username}"
+    if [[ -d "$home" ]]; then
+        local owner
+        owner=$(stat -c '%U:%G' "$home" 2>/dev/null)
+        if [[ "$owner" == "root:${username}" ]]; then
+            log_info "restore/verify: Home dir ownership correct (root:${username})"
+            checks_passed=$((checks_passed + 1))
+        else
+            log_warn "restore/verify: Home dir ownership is $owner (expected root:${username})"
+            checks_failed=$((checks_failed + 1))
+        fi
+    fi
+
+    # 6. Crontab accessible
+    if crontab -u "$username" -l &>/dev/null; then
+        local cron_lines
+        cron_lines=$(crontab -u "$username" -l 2>/dev/null | grep -cv '^#\|^$' || echo "0")
+        log_info "restore/verify: Crontab has $cron_lines active entries"
+        checks_passed=$((checks_passed + 1))
+    fi
+
+    log_info "restore/verify: $checks_passed check(s) passed, $checks_failed failed"
 }
 
 # ─── Import from Archive ─────────────────────────────
@@ -1321,6 +1410,61 @@ _restore_files_granular() {
 }
 
 # ─── Helpers ──────────────────────────────────────────
+
+_generate_manifest() {
+    local staging="$1" username="$2" user_id="$3"
+
+    local domains_list databases_list mailboxes_list dns_zones_list ssl_list cron_count has_redis
+
+    # Domains
+    domains_list=$(ls -1 "${staging}/nginx/"*.conf 2>/dev/null | grep -v '\.cache-zone\.conf$\|\.hotlink\.json$' | sed 's/.*\///;s/\.conf$//' | paste -sd',' || echo "")
+    # Databases
+    databases_list=$(ls -1 "${staging}/mysql/"*.sql.gz 2>/dev/null | sed 's/.*\///;s/\.sql\.gz$//' | paste -sd',' || echo "")
+    # Mailboxes
+    mailboxes_list=$(ls -1 "${staging}/email/mailboxes/"*.json 2>/dev/null | sed 's/.*\///;s/\.json$//' | paste -sd',' || echo "")
+    # DNS zones
+    dns_zones_list=$(ls -1 "${staging}/dns/"*.json 2>/dev/null | sed 's/.*\///;s/\.json$//' | paste -sd',' || echo "")
+    # SSL certs
+    ssl_list=$(find "${staging}/ssl" -name meta.json 2>/dev/null | while read -r f; do dirname "$f" | xargs basename; done | paste -sd',' || echo "")
+    # Cron jobs
+    cron_count=$(grep -c '"id"' "${staging}/cron/jobs.json" 2>/dev/null || echo "0")
+    # Redis
+    has_redis="false"
+    [[ -d "${staging}/redis" && -f "${staging}/redis/acl_rule.txt" ]] && has_redis="true"
+
+    # Format arrays as JSON
+    _csv_to_json_array() { echo "$1" | tr ',' '\n' | sed '/^$/d' | sed 's/.*/"&"/' | paste -sd',' | sed 's/^/[/;s/$/]/'; }
+    local d_json m_json mb_json dns_json ssl_json
+    d_json=$(_csv_to_json_array "$domains_list")
+    m_json=$(_csv_to_json_array "$databases_list")
+    mb_json=$(_csv_to_json_array "$mailboxes_list")
+    dns_json=$(_csv_to_json_array "$dns_zones_list")
+    ssl_json=$(_csv_to_json_array "$ssl_list")
+    [[ "$d_json" == "[]" ]] && d_json="[]"
+    [[ "$m_json" == "[]" ]] && m_json="[]"
+    [[ "$mb_json" == "[]" ]] && mb_json="[]"
+    [[ "$dns_json" == "[]" ]] && dns_json="[]"
+    [[ "$ssl_json" == "[]" ]] && ssl_json="[]"
+
+    cat > "${staging}/manifest.json" <<EOMANIFEST
+{
+  "version": "${JABALI_BACKUP_VERSION:-dev}",
+  "created_at": "$(date -Iseconds)",
+  "username": "${username}",
+  "user_id": ${user_id},
+  "server_hostname": "$(hostname)",
+  "domains": ${d_json},
+  "databases": ${m_json},
+  "mailboxes": ${mb_json},
+  "dns_zones": ${dns_json},
+  "ssl_certificates": ${ssl_json},
+  "cron_jobs": ${cron_count},
+  "has_redis": ${has_redis},
+  "panel_db_tables": ["users","domains","email_domains","mailboxes","email_forwarders","dns_records","ssl_certificates","cron_jobs","mysql_credentials","domain_aliases","domain_redirects","domain_hotlink_settings","git_deployments","cloudflare_zones","user_settings","imap_sync_tasks","autoresponders","mailbox_shares"],
+  "excludes": ["cache/","tmp/","logs/","node_modules/","vendor/",".cache/","*.log"]
+}
+EOMANIFEST
+}
 
 _collector_enabled() {
     local name="$1" only="$2" exclude="$3"
