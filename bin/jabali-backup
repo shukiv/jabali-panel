@@ -136,6 +136,11 @@ cmd_update() {
         exit 1
     fi
 
+    echo ""
+    echo "Updating Jabali Backup"
+    echo "────────────────────────────────────────"
+    echo ""
+
     # Check for updates before running the full upgrade
     if [[ -d "${repo}/.git" ]]; then
         echo "Checking for updates..."
