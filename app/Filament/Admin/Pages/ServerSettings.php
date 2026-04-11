@@ -1924,17 +1924,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                     Placeholder::make("addon_{$addonId}_actions")
                         ->label('')
                         ->content(new HtmlString(
-                            '<div id="addon-action-area">'
-                            .($installed
-                                ? '<button type="button" wire:click="uninstallAddon(\''.$addonId.'\')" wire:confirm="'.__('Are you sure? This will remove the addon and all its data.').'" wire:loading.attr="disabled" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400 disabled:opacity-50 disabled:cursor-wait">'
-                                    .'<svg wire:loading wire:target="uninstallAddon(\''.$addonId.'\')" class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>'
-                                    .__('Uninstall')
-                                .'</button>'
-                                : '<button type="button" wire:click="installAddon(\''.$addonId.'\')" wire:confirm="'.__('This will download and install the addon. It may take a minute.').'" wire:loading.attr="disabled" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400 disabled:opacity-50 disabled:cursor-wait">'
-                                    .'<svg wire:loading wire:target="installAddon(\''.$addonId.'\')" class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>'
-                                    .__('Install')
-                                .'</button>')
-                            .'</div>'
+                            $installed
+                                ? '<div x-data="{ busy: false }"><button type="button" x-show="!busy" wire:click="uninstallAddon(\''.$addonId.'\')" x-on:click="busy = true; setTimeout(() => window.location.reload(), 15000)" wire:confirm="'.__('Are you sure? This will remove the addon and all its data.').'" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400">'.__('Uninstall').'</button><span x-show="busy" x-cloak class="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"><svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>'.__('Uninstalling...').'</span></div>'
+                                : '<div x-data="{ busy: false }"><button type="button" x-show="!busy" wire:click="installAddon(\''.$addonId.'\')" x-on:click="busy = true; setTimeout(() => window.location.reload(), 30000)" wire:confirm="'.__('This will download and install the addon. It may take a minute.').'" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400">'.__('Install').'</button><span x-show="busy" x-cloak class="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"><svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>'.__('Installing...').'</span></div>'
                         )),
                 ]);
         }
@@ -1953,7 +1945,6 @@ class ServerSettings extends Page implements HasActions, HasForms
             $result = $this->agent()->send('addon.install', ['addon' => $addonId]);
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
-                $this->showAddonSpinner(__('Installing...'), 30000);
             } else {
                 $error = $result['error'] ?? __('Installation failed');
                 $output = $result['output'] ?? '';
@@ -1970,7 +1961,6 @@ class ServerSettings extends Page implements HasActions, HasForms
             $result = $this->agent()->send('addon.uninstall', ['addon' => $addonId]);
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
-                $this->showAddonSpinner(__('Uninstalling...'), 15000);
             } else {
                 $error = $result['error'] ?? __('Uninstall failed');
                 $output = $result['output'] ?? '';
@@ -1981,8 +1971,4 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
     }
 
-    private function showAddonSpinner(string $label, int $reloadMs): void
-    {
-        $this->js("document.getElementById('addon-action-area').textContent = ".json_encode($label)."; setTimeout(function() { window.location.reload(); }, {$reloadMs});");
-    }
 }
