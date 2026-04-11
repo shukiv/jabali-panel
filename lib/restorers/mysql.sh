@@ -67,7 +67,7 @@ restore_mysql() {
                     -e "DROP DATABASE \`$(mysql_escape "$db_name")\`" 2>/dev/null
             else
                 target_db="${db_name}_restored"
-                log_info "restore/mysql: $db_name exists, restoring as $target_db"
+                log_warn "restore/mysql: skipping overwrite of $db_name (exists) — restored as ${target_db} instead. Use --force to overwrite."
             fi
         fi
 

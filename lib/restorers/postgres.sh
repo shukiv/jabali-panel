@@ -44,7 +44,7 @@ restore_postgres() {
                 sudo -u postgres dropdb "$db_name" 2>/dev/null || true
             else
                 target_db="${db_name}_restored"
-                log_info "restore/postgres: $db_name exists, restoring as $target_db"
+                log_warn "restore/postgres: skipping overwrite of $db_name (exists) — restored as ${target_db} instead. Use --force to overwrite."
             fi
         fi
 
