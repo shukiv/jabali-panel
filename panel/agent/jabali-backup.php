@@ -56,9 +56,10 @@ return [
     'jb.stalwart_toggle'   => fn (array $p) => jbStalwartToggle($p),
     'jb.upload_preview'    => fn (array $p) => jbUploadPreview($p),
     'jb.upload_restore'    => fn (array $p) => jbUploadRestore($p),
-    'jb.server_backup'     => fn (array $p) => jbServerBackup($p),
-    'jb.server_snapshots'  => fn (array $p) => jbServerSnapshots($p),
-    'jb.server_restore'    => fn (array $p) => jbServerRestore($p),
+    'jb.server_backup'        => fn (array $p) => jbServerBackup($p),
+    'jb.server_snapshots'     => fn (array $p) => jbServerSnapshots($p),
+    'jb.server_restore'       => fn (array $p) => jbServerRestore($p),
+    'jb.server_download_pipe' => fn (array $p) => jbServerDownloadPipe($p),
 ];
 
 // ─── Helpers ───
@@ -1285,6 +1286,53 @@ function jbServerRestore(array $params): array
     proc_open(['bash', '-c', $cmd], [], $pipes);
 
     return ['success' => true, 'message' => 'Server restore started', 'log' => $logFile];
+}
+
+function jbServerDownloadPipe(array $params): array
+{
+    $snapshotId = $params['snapshot_id'] ?? 'latest';
+    if (! preg_match('/^[a-f0-9]+$|^latest$/', $snapshotId)) {
+        return ['success' => false, 'error' => 'Invalid snapshot ID'];
+    }
+
+    // Resolve 'latest' to actual server snapshot ID
+    if ($snapshotId === 'latest') {
+        $r = jbExec(['list', 'snapshots', '--type=server']);
+        // Parse the last snapshot ID from output
+        if (preg_match_all('/^([a-f0-9]{8})\s/m', $r['stdout'] ?? '', $matches)) {
+            $snapshotId = end($matches[1]);
+        }
+        if (! $snapshotId || $snapshotId === 'latest') {
+            return ['success' => false, 'error' => 'No server snapshots found'];
+        }
+    }
+
+    // Create named pipe
+    $pipeDir = '/tmp/jabali-exports';
+    @mkdir($pipeDir, 0700, true);
+    $pipeName = 'pipe-' . bin2hex(random_bytes(8));
+    $pipePath = $pipeDir . '/' . $pipeName;
+    posix_mkfifo($pipePath, 0600);
+
+    // Spawn CLI download in background — streams snapshot to stdout → pipe
+    // For server snapshots, we use restic dump directly since there's no username
+    $cmd = sprintf(
+        'nohup bash -c %s > /dev/null 2>&1 &',
+        escapeshellarg(
+            'source /usr/local/lib/jabali-backup/config.sh && ' .
+            'source /usr/local/lib/jabali-backup/restic.sh && ' .
+            'cfg_load && restic_env && ' .
+            'restic dump ' . escapeshellarg($snapshotId) . ' / ' .
+            '${RESTIC_EXTRA_OPTS[@]} 2>/dev/null | gzip > ' . escapeshellarg($pipePath) . ' ; ' .
+            'rm -f ' . escapeshellarg($pipePath)
+        )
+    );
+    proc_open(['bash', '-c', $cmd], [], $pipes);
+
+    // Small delay to let pipe writer start
+    usleep(100000);
+
+    return ['success' => true, 'pipe' => $pipePath];
 }
 
 // ─── Schedule Routes (wrap CLI) ───

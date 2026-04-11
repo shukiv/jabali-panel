@@ -34,18 +34,26 @@ if (! $user || ! $user->is_admin) {
 $users = $_GET['users'] ?? $_GET['username'] ?? '';
 $snapshotId = $_GET['snapshot'] ?? 'latest';
 
-// Validate each username
-$userList = array_filter(array_map('trim', explode(',', $users)));
-foreach ($userList as $u) {
-    if (! preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $u)) {
-        http_response_code(400);
-        die('Invalid username: ' . htmlspecialchars($u));
+// Detect server backup download
+$isServerDownload = ($users === '__server__');
+
+if (! $isServerDownload) {
+    // Validate each username
+    $userList = array_filter(array_map('trim', explode(',', $users)));
+    foreach ($userList as $u) {
+        if (! preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $u)) {
+            http_response_code(400);
+            die('Invalid username: ' . htmlspecialchars($u));
+        }
     }
+    if (empty($userList)) {
+        http_response_code(400);
+        die('No username specified');
+    }
+} else {
+    $userList = [];
 }
-if (empty($userList)) {
-    http_response_code(400);
-    die('No username specified');
-}
+
 if (! preg_match('/^[a-f0-9]+$|^latest$/', $snapshotId)) {
     http_response_code(400);
     die('Invalid snapshot ID');
@@ -53,10 +61,16 @@ if (! preg_match('/^[a-f0-9]+$|^latest$/', $snapshotId)) {
 
 // Call agent to create the named pipe and start streaming
 try {
-    $result = app(\App\Services\Agent\AgentClient::class)->send('jb.download_pipe', [
-        'users' => implode(',', $userList),
-        'snapshot_id' => $snapshotId,
-    ]);
+    if ($isServerDownload) {
+        $result = app(\App\Services\Agent\AgentClient::class)->send('jb.server_download_pipe', [
+            'snapshot_id' => $snapshotId,
+        ]);
+    } else {
+        $result = app(\App\Services\Agent\AgentClient::class)->send('jb.download_pipe', [
+            'users' => implode(',', $userList),
+            'snapshot_id' => $snapshotId,
+        ]);
+    }
 } catch (\Throwable $e) {
     http_response_code(500);
     die('Agent error');
@@ -79,7 +93,9 @@ while (ob_get_level()) {
 }
 
 // Send headers
-$filename = implode('-', $userList) . '-backup-' . date('Y-m-d') . '.tar.gz';
+$filename = $isServerDownload
+    ? 'server-backup-' . date('Y-m-d') . '.tar.gz'
+    : implode('-', $userList) . '-backup-' . date('Y-m-d') . '.tar.gz';
 header('Content-Type: application/gzip');
 header('Content-Disposition: attachment; filename="' . $filename . '"');
 header('Cache-Control: no-cache, no-store');
