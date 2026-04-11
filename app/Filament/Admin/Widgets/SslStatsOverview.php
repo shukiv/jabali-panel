@@ -13,6 +13,11 @@ class SslStatsOverview extends StatsOverviewWidget
 {
     protected ?string $pollingInterval = '30s';
 
+    protected function getColumns(): int
+    {
+        return 6;
+    }
+
     protected function getStats(): array
     {
         $totalDomains = Domain::count();
