@@ -692,11 +692,10 @@ function jbSnapshotInventory(array $params): array
 
     // Resolve snapshot ID
     if ($snapshotId === 'latest') {
-        $cmd = array_merge(['restic', 'snapshots', '--json', '--tag', 'account:' . $username], $env['args']);
-        $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+        $cmd = array_merge(['restic', 'snapshots', '--json', '--quiet', '--tag', 'account:' . $username], $env['args']);
+        $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, $procEnv);
         $json = stream_get_contents($pipes[1]);
         fclose($pipes[1]);
-        fclose($pipes[2]);
         proc_close($proc);
         $snaps = json_decode($json ?: '[]', true);
         if (empty($snaps)) {
@@ -707,11 +706,10 @@ function jbSnapshotInventory(array $params): array
     }
 
     // List all files in snapshot
-    $cmd = array_merge(['restic', 'ls', $snapshotId, '--tag', 'account:' . $username], $env['args']);
-    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+    $cmd = array_merge(['restic', 'ls', '--quiet', $snapshotId, '--tag', 'account:' . $username], $env['args']);
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, $procEnv);
     $listing = stream_get_contents($pipes[1]);
     fclose($pipes[1]);
-    fclose($pipes[2]);
     proc_close($proc);
     $lines = array_filter(explode("\n", $listing ?: ''));
 
@@ -872,15 +870,16 @@ function jbSnapshotInventory(array $params): array
     }
 
     // Dump account.json for domain list
+    // Use --quiet and discard stderr to prevent pipe deadlock when restic
+    // writes progress to stderr before outputting file content on stdout.
     $dumpCmd = array_merge(
-        ['restic', 'dump', $snapshotId],
+        ['restic', 'dump', '--quiet', $snapshotId],
         $env['args'],
         ["/tmp/jabali-backup/{$username}/metadata/account.json"],
     );
-    $proc = proc_open($dumpCmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+    $proc = proc_open($dumpCmd, [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, $procEnv);
     $accountJson = stream_get_contents($pipes[1]);
     fclose($pipes[1]);
-    fclose($pipes[2]);
     proc_close($proc);
     $account = json_decode($accountJson ?: '{}', true);
 
@@ -889,17 +888,27 @@ function jbSnapshotInventory(array $params): array
         $inventory['metadata']['domains'] = array_column($account['domains'] ?? [], 'domain');
     }
 
+    // Fallback: if dump failed but DNS/nginx inventory found domains, use those
+    if (empty($inventory['metadata']['domains'])) {
+        $fallbackDomains = $inventory['dns']['zones'] ?? [];
+        if (empty($fallbackDomains)) {
+            $fallbackDomains = $inventory['nginx']['configs'] ?? [];
+        }
+        if (! empty($fallbackDomains)) {
+            $inventory['metadata']['domains'] = $fallbackDomains;
+        }
+    }
+
     // Dump mysql/users.txt for MySQL user list
     if ($inventory['mysql']['has_users'] ?? false) {
         $usersCmd = array_merge(
-            ['restic', 'dump', $snapshotId],
+            ['restic', 'dump', '--quiet', $snapshotId],
             $env['args'],
             ["/tmp/jabali-backup/{$username}/mysql/users.txt"],
         );
-        $proc = proc_open($usersCmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $procEnv);
+        $proc = proc_open($usersCmd, [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, $procEnv);
         $usersTxt = stream_get_contents($pipes[1]);
         fclose($pipes[1]);
-        fclose($pipes[2]);
         proc_close($proc);
         $inventory['mysql']['users'] = array_values(array_filter(array_map('trim', explode("\n", $usersTxt ?: ''))));
     }
