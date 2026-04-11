@@ -51,6 +51,11 @@ _fix_home_permissions() {
     chown "root:${username}" "$home"
     chmod 0750 "$home"
 
+    # 2b. Home dir ACL: nginx (www-data) needs execute to traverse into domains/
+    if command -v setfacl &>/dev/null; then
+        setfacl -m u:www-data:x "$home" 2>/dev/null || true
+    fi
+
     # 3. Domains tree: nginx (www-data) needs read access via ACL
     if [[ -d "${home}/domains" ]]; then
         # Directories: 750 (owner rwx, group r-x) — group = user
