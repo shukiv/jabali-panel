@@ -3810,13 +3810,16 @@ export const config = {
 };
 PROXY_TS
 
-    # 4. Fix client-side fetch calls to include basePath
+    # 4. Fix client-side fetch calls to include basePath (single quotes, double quotes, and backtick templates)
     find hooks/ lib/ stores/ components/ -name '*.ts' -o -name '*.tsx' 2>/dev/null | \
         xargs grep -l "fetch('/api/" 2>/dev/null | \
         xargs -r sed -i "s|fetch('/api/|fetch('/webmail/api/|g"
-    find components/ -name '*.tsx' 2>/dev/null | \
+    find hooks/ lib/ stores/ components/ -name '*.ts' -o -name '*.tsx' 2>/dev/null | \
         xargs grep -l 'fetch("/api/' 2>/dev/null | \
         xargs -r sed -i 's|fetch("/api/|fetch("/webmail/api/|g'
+    find hooks/ lib/ stores/ components/ -name '*.ts' -o -name '*.tsx' 2>/dev/null | \
+        xargs grep -l 'fetch(`/api/' 2>/dev/null | \
+        xargs -r sed -i 's|fetch(`/api/|fetch(`/webmail/api/|g'
 
     # 5. SSO API route — reads token file, POSTs to session endpoint internally,
     #    then redirects to /webmail/en with full session established.
@@ -3857,11 +3860,12 @@ export async function GET(request: NextRequest) {
     // Use baseUrl as serverUrl — the browser must be able to reach it for JMAP
     // (nginx proxies /jmap/* to Stalwart, so the external URL works)
     const jmapServerUrl = baseUrl || '';
+    // Don't forward browser cookies — stale session cookies from a previous
+    // SSO login cause the session endpoint to reject or conflict.
     const sessionRes = await fetch(`http://127.0.0.1:${process.env.PORT || 3000}/webmail/api/auth/session`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': request.headers.get('cookie') || '',
       },
       body: JSON.stringify({
         serverUrl: jmapServerUrl,
@@ -3876,7 +3880,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Forward the Set-Cookie headers from the session response
-    const redirect = NextResponse.redirect(`${baseUrl}/webmail/en`);
+    const redirect = NextResponse.redirect(`${baseUrl}/webmail/api/auth/sso/complete`);
     const setCookies = sessionRes.headers.getSetCookie();
     for (const cookie of setCookies) {
       redirect.headers.append('Set-Cookie', cookie);
@@ -3890,6 +3894,27 @@ export async function GET(request: NextRequest) {
   }
 }
 SSO_ROUTE
+
+    # 5b. SSO complete route — clears stale localStorage before loading inbox.
+    #     Without this, the zustand auth-store persists old account data between
+    #     SSO sessions, causing alternating "session expired" on every other click.
+    mkdir -p app/api/auth/sso/complete
+    cat > app/api/auth/sso/complete/route.ts <<'SSO_COMPLETE'
+import { NextRequest, NextResponse } from "next/server";
+
+export async function GET(request: NextRequest) {
+  const html = `<!DOCTYPE html>
+<html><head><title>Signing in...</title></head>
+<body><script>
+try { localStorage.removeItem("auth-storage"); } catch(e) {}
+try { localStorage.removeItem("account-storage"); } catch(e) {}
+window.location.replace("/webmail/en");
+</script></body></html>`;
+  return new NextResponse(html, {
+    headers: { "Content-Type": "text/html" },
+  });
+}
+SSO_COMPLETE
 
     # 6. Auth-store patch: when checkAuth() finds zero accounts in the client-side
     # store, try to restore from an existing session cookie (set by SSO).
