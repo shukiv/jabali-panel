@@ -1019,7 +1019,7 @@ function addonInstall(array $params): array
     // would kill this process before we can respond.
     $url = $addon['install_url'];
     $logFile = '/tmp/jabali-addon-install-'.$addonId.'.log';
-    exec("nohup bash -c 'sleep 1 && curl -fsSL ".escapeshellarg($url)." | bash' > ".escapeshellarg($logFile)." 2>&1 &");
+    exec("setsid bash -c 'sleep 1 && curl -fsSL ".escapeshellarg($url)." | bash' > ".escapeshellarg($logFile)." 2>&1 &");
 
     logger("Addon install started in background: {$addonId}");
 
@@ -1057,7 +1057,7 @@ function addonUninstall(array $params): array
     // small delay so the RPC response reaches the panel first.
     $cmd = $addon['uninstall_command'];
     $logFile = '/tmp/jabali-addon-uninstall-'.$addonId.'.log';
-    exec("nohup bash -c 'sleep 1 && {$cmd}' > ".escapeshellarg($logFile)." 2>&1 &");
+    exec("setsid bash -c 'sleep 1 && {$cmd}' > ".escapeshellarg($logFile)." 2>&1 &");
 
     logger("Addon uninstall started in background: {$addonId}");
 

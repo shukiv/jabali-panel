@@ -1945,6 +1945,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             $result = $this->agent()->send('addon.install', ['addon' => $addonId]);
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
+                $this->js('setTimeout(() => location.reload(), 15000)');
             } else {
                 $error = $result['error'] ?? __('Installation failed');
                 $output = $result['output'] ?? '';
@@ -1961,6 +1962,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             $result = $this->agent()->send('addon.uninstall', ['addon' => $addonId]);
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
+                $this->js('setTimeout(() => location.reload(), 10000)');
             } else {
                 $error = $result['error'] ?? __('Uninstall failed');
                 $output = $result['output'] ?? '';
