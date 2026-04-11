@@ -25,6 +25,10 @@ class SafeError
             return $e->getMessage();
         }
 
+        if (config('app.debug')) {
+            return get_class($e).': '.$e->getMessage().' in '.$e->getFile().':'.$e->getLine();
+        }
+
         return $fallback ?: __('An unexpected error occurred. Please try again.');
     }
 }

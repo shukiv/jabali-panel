@@ -497,9 +497,15 @@ class Domains extends Page implements HasActions, HasForms, HasTable
                             ->success()
                             ->send();
                     } else {
-                        throw new Exception($result['error'] ?? 'Unknown error');
+                        throw new \RuntimeException($result['error'] ?? 'Unknown error');
                     }
-                } catch (Exception $e) {
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::error('[domain-create] '.$e->getMessage(), [
+                        'exception' => get_class($e),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ]);
+
                     Notification::make()
                         ->title(__('Error creating domain'))
                         ->body(SafeError::message($e))
