@@ -1047,7 +1047,14 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->icon('heroicon-o-folder-open')
                     ->color('gray')
                     ->size('sm')
-                    ->url(fn (array $record): string => '/jabali-admin/backups-browse?snapshot=' . ($record['latest_snapshot_id'] ?: 'latest') . '&user=' . ($record['username'] ?? '')),
+                    ->action(function (array $record): void {
+                        $this->browseSnapshotId = $record['latest_snapshot_id'] ?: 'latest';
+                        $this->browseUser = $record['username'] ?? '';
+                        $this->browsePath = '';
+                        $this->selectedFiles = [];
+                        $this->loadBrowseItems();
+                        $this->mountAction('snapshotBrowserModal');
+                    }),
                 Action::make('deleteSnapshot')
                     ->label(__('Delete'))
                     ->icon('heroicon-o-trash')
@@ -1133,8 +1140,25 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             ]);
     }
 
-    // ─── Snapshot Actions ───
+    // ─── Snapshot Browser Modal ───
 
+    public function snapshotBrowserModalAction(): Action
+    {
+        return Action::make('snapshotBrowserModal')
+            ->modalHeading(fn (): string => __('Browse Snapshot — :user', [
+                'user' => $this->browseUser === '__server__' ? __('Server') : $this->browseUser,
+            ]))
+            ->modalWidth('5xl')
+            ->modalContent(fn (): \Illuminate\Contracts\View\View => view('filament.admin.pages.partials.browse-modal', [
+                'items' => $this->browseItems,
+                'breadcrumbs' => $this->getFileBreadcrumbs(),
+                'browsePath' => $this->browsePath,
+                'selectedFiles' => $this->selectedFiles,
+                'browseUser' => $this->browseUser,
+            ]))
+            ->modalSubmitAction(false)
+            ->modalCancelActionLabel(__('Close'));
+    }
 
     // ─── Browser (shared logic in BrowsesSnapshots trait) ───
 
