@@ -136,6 +136,29 @@ cmd_update() {
         exit 1
     fi
 
+    # Check for updates before running the full upgrade
+    if [[ -d "${repo}/.git" ]]; then
+        echo "Checking for updates..."
+        git -C "$repo" fetch origin 2>/dev/null || {
+            echo "Failed to check for updates (network error?)" >&2
+            exit 1
+        }
+
+        local local_head remote_head
+        local_head=$(git -C "$repo" rev-parse HEAD 2>/dev/null)
+        remote_head=$(git -C "$repo" rev-parse origin/main 2>/dev/null || git -C "$repo" rev-parse origin/master 2>/dev/null)
+
+        if [[ -n "$local_head" && "$local_head" == "$remote_head" ]]; then
+            echo "Already up to date (v${JABALI_BACKUP_VERSION})"
+            exit 0
+        fi
+
+        local behind
+        behind=$(git -C "$repo" rev-list --count HEAD..origin/main 2>/dev/null || git -C "$repo" rev-list --count HEAD..origin/master 2>/dev/null || echo "?")
+        echo "Update available: ${behind} new commit(s)"
+        echo ""
+    fi
+
     exec "$repo/install.sh" update
 }
 
