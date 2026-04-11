@@ -35,21 +35,24 @@ sudo ./install.sh
 ### Update
 
 ```bash
+sudo jabali-backup update
+```
+
+Checks for new commits on GitHub. If updates are available, pulls latest and runs
+the full upgrade. If already up to date, exits immediately.
+
+Alternatively, from a fresh install or remote pipe:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh | sudo bash -s -- update
 ```
 
-Or from a local clone:
-
-```bash
-sudo ./install.sh update
-```
-
-Pulls latest from git, updates CLI + panel addon, preserves config and secrets.
+Preserves config and secrets.
 
 ### Uninstall
 
 ```bash
-sudo ./install.sh uninstall
+sudo jabali-backup uninstall
 ```
 
 Removes CLI, panel addon, systemd timer, and bash completions.
@@ -131,6 +134,16 @@ jabali-backup run --parallel=4             # 4 accounts concurrently
 jabali-backup run --destination=offsite    # use a specific destination
 ```
 
+### `jabali-backup server-backup`
+
+Full server backup for disaster recovery. Backs up all server-level configs, databases, and systemd units, then runs per-user backups for all accounts.
+
+```bash
+jabali-backup server-backup                # full server + all users
+jabali-backup server-backup --skip-users   # server configs only
+jabali-backup server-backup --dry-run      # preview what would be backed up
+```
+
 ### `jabali-backup restore <username>`
 
 Restore an account from a snapshot.
@@ -143,6 +156,17 @@ jabali-backup restore alice --file=domains/example.com/wp-config.php  # single f
 jabali-backup restore alice --target=/tmp/restore/   # inspect before applying
 jabali-backup restore alice --dry-run
 jabali-backup restore alice --force                   # overwrite existing data
+```
+
+### `jabali-backup server-restore`
+
+Restore entire server from a disaster recovery backup.
+
+```bash
+jabali-backup server-restore                # full server restore
+jabali-backup server-restore --skip-users   # server configs only
+jabali-backup server-restore --force        # overwrite all existing data
+jabali-backup server-restore --snapshot=ID  # specific server snapshot
 ```
 
 ### `jabali-backup download <username> [...]`
@@ -176,6 +200,7 @@ List accounts or snapshots.
 jabali-backup list accounts
 jabali-backup list snapshots
 jabali-backup list snapshots --user=alice
+jabali-backup list snapshots --type=server
 jabali-backup list domains --user=alice
 ```
 
@@ -233,6 +258,14 @@ jabali-backup config show                  # print active config (secrets masked
 
 Check that all dependencies are installed and configured.
 
+### `jabali-backup update`
+
+Check for updates and upgrade to the latest version. Checks GitHub for new commits before running the full upgrade.
+
+### `jabali-backup uninstall`
+
+Remove jabali-backup CLI and panel addon. Preserves config and secrets at `/etc/jabali-backup/`.
+
 ### `jabali-backup version`
 
 Show version.
@@ -271,6 +304,7 @@ Each account backup includes:
 | User settings | Account preferences | JSON |
 | Bandwidth history | Per-domain usage stats | JSON |
 | Hosting package | Package name, limits, features | JSON |
+| Redis ACLs | Per-user ACL rules and credentials | Text files |
 | Stalwart accounts | JMAP emails, mailboxes, Sieve scripts, identities, vacation responses | JSON (via `stalwart-cli`) |
 
 ## Supported Backends
@@ -292,7 +326,9 @@ Each account backup includes:
 
 Available collectors for `--only` and `--exclude` flags:
 
-`files`, `mysql`, `postgres`, `dns`, `email`, `ssl`, `nginx`, `php`, `wordpress`, `cron`, `stalwart`, `metadata`
+`files`, `mysql`, `postgres`, `dns`, `email`, `ssl`, `nginx`, `php`, `wordpress`, `cron`, `stalwart`, `redis`, `metadata`
+
+Server backup also includes a `server` collector (databases, configs, systemd units, SSL, Let's Encrypt state, package manifest).
 <!-- AUTO-GENERATED:collectors-end -->
 
 ## Configuration

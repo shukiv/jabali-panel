@@ -9,26 +9,33 @@ jabali-backup/
   lib/
     collectors/               Backup: gather data from live system
       files.sh                /home/{user}/ directory
-      mysql.sh                MySQL databases + grants
+      mysql.sh                MySQL databases + grants + CREATE USER
       postgres.sh             PostgreSQL databases + roles
       dns.sh                  PowerDNS zone export
-      email.sh                Stalwart mail: mailboxes, forwards, DKIM
+      email.sh                Mailboxes, forwards, DKIM, password hashes
       ssl.sh                  SSL certificates + private keys
       cron.sh                 Cron jobs (DB + system)
       php.sh                  PHP-FPM pool config
       wordpress.sh            WP-CLI exports
-      nginx.sh                Nginx vhosts + hotlink rules
+      nginx.sh                Nginx vhosts + hotlink rules + cache zones
+      redis.sh                Redis ACL user credentials
+      stalwart.sh             Stalwart JMAP export (emails, Sieve, identities)
       metadata.sh             Account metadata from Jabali DB
+      server.sh               Full server: databases, configs, systemd, SSL, packages
     restorers/                Restore: import data back to live system
       metadata.sh             User, domains, aliases (runs first for FK deps)
+      files.sh                Home directory via rsync, fixes ownership + ACLs
       dns.sh                  DNS records back to Jabali DB
       ssl.sh                  SSL certs back to DB (re-encrypts private keys)
       email.sh                Email domains, mailboxes, forwarders, autoresponders
-      nginx.sh                Vhost configs to sites-enabled, reloads nginx
       php.sh                  FPM pool configs to pool.d, reloads php-fpm
-      mysql.sh                Database dumps back to MySQL, replays grants
+      nginx.sh                Vhost configs, fixes FPM socket path, reloads nginx
+      mysql.sh                Database dumps, CREATE USER from backup, password sync
+      postgres.sh             PostgreSQL restore via pg_restore
       cron.sh                 Cron jobs to DB + system crontab
-      files.sh                Home directory via rsync, fixes ownership
+      redis.sh                Redis ACL SETUSER + ACL SAVE
+      stalwart.sh             Stalwart JMAP import via CLI or REST
+      server.sh               5-phase disaster recovery restore
     restic.sh                 Restic wrapper (multi-backend)
     discover.sh               Account discovery + DB helpers
     config.sh                 INI config parser
@@ -112,15 +119,18 @@ foreign keys created by earlier ones:
 | Order | Restorer | Creates | Needed by | Notes |
 |-------|----------|---------|-----------|-------|
 | 1 | metadata (phase 1) | user, DB record | everything | Sets RESTORE_USER_CREATED flag |
-| 2 | dns | dns_records | - | Can run in parallel |
-| 3 | ssl | ssl_certificates | - | Can run in parallel |
-| 4 | email | email_domains, mailboxes | - | Can run in parallel |
-| 5 | nginx | vhost configs | - | Can run in parallel |
-| 6 | php | FPM pool configs | - | Can run in parallel |
-| 7 | mysql | databases, grants, users | - | Creates/recreates MySQL users |
-| 8 | cron | cron_jobs | - | Can run in parallel |
-| 9 | files | /home/{user}/ | - | Checks RESTORE_USER_CREATED to skip empty dir check |
-| 10 | metadata (phase 2) | domains | - | Runs after files, creates domains if needed |
+| 2 | metadata (phase 2) | domains | dns, ssl, email, nginx | Creates domain records + directory structure |
+| 3 | files | /home/{user}/ | nginx, php | Syncs via rsync, fixes ACLs (www-data:x on home) |
+| 4 | dns | dns_records | - | Merge mode or force-replace |
+| 5 | ssl | ssl_certificates | - | Re-encrypts private keys |
+| 6 | email | email_domains, mailboxes | - | Restores password hashes when available |
+| 7 | php | FPM pool configs | nginx | Restores pool, reloads php-fpm (socket must exist before nginx) |
+| 8 | nginx | vhost configs | - | Fixes FPM socket path, reloads nginx |
+| 9 | mysql | databases, grants, users | - | Uses CREATE USER from backup, syncs credential passwords |
+| 10 | postgres | databases, roles | - | pg_restore in custom format |
+| 11 | cron | cron_jobs | - | DB entries + system crontab |
+| 12 | redis | ACL user rules | - | ACL SETUSER + ACL SAVE |
+| 13 | stalwart | JMAP accounts | - | stalwart-cli import or REST API |
 
 **Key Change: RESTORE_USER_CREATED Flag**
 
@@ -208,13 +218,21 @@ Staging/temp directories are cleaned up via `trap EXIT` on any exit signal.
 
 Every restic snapshot is tagged for filtering:
 
-- `account:{username}` -- which account
-- `type:full` -- backup type
-- `date:{YYYY-MM-DD}` -- backup date
+**Per-user snapshots:**
+- `account:{username}` — which account
+- `type:full` — backup type
+- `date:{YYYY-MM-DD}` — backup date
+- `run:{run-id}` — links snapshots from the same backup run
 
-Example query:
+**Server snapshots (disaster recovery):**
+- `type:server` — server-level backup
+- `date:{YYYY-MM-DD}` — backup date
+- `hostname:{hostname}` — server hostname
+
+Example queries:
 ```bash
 restic snapshots --tag account:alice --tag date:2026-04-05
+restic snapshots --tag type:server   # list server backups only
 ```
 
 ## Panel Architecture
@@ -244,38 +262,51 @@ This ensures:
 
 ## Download Streaming Architecture
 
-Download operations use named pipes (FIFOs) to stream backups directly to the browser
+### Per-user downloads (named pipe)
+
+Per-user downloads use named pipes (FIFOs) to stream backups directly to the browser
 with zero temporary file disk usage:
 
 ```
 Browser
-   ↓ GET /backup-download.php?username=alice&snapshot=latest
-Filament Panel (public/backup-download.php)
+   ↓ GET /backup-download.php?users=alice&snapshot=latest
+backup-download.php
    ↓ Agent RPC: jb.download_pipe
-Agent Addon (panel/agent/jabali-backup.php:jbDownloadPipe)
-   ↓ Creates: /tmp/jabali-exports/pipe-[random]
-   ↓ Spawns in background: jabali-backup download alice --output=-
-CLI (bin/jabali-backup download)
-   ↓ Calls restic restore, pipes tar.gz to stdout
-Stdout → Named Pipe
+Agent: jbDownloadPipe
+   ↓ Creates FIFO: /tmp/jabali-exports/pipe-[random]
+   ↓ Spawns background: jabali-backup download alice --output=-
+CLI streams tar.gz → Named Pipe → PHP reads 64KB chunks → Browser
    ↓
-Panel reads from pipe, streams to browser
-   ↓
-Cleanup: Named pipe removed after download complete
+Cleanup: pipe removed after download
 ```
 
-**Key Points:**
+### Server backup downloads (temp archive)
 
-- `--output=-` flag tells CLI to stream to stdout (kept clean of log messages via stderr redirect)
-- Named pipe blocks until data is read, preventing the CLI from running ahead
-- Agent spawns the CLI in fully detached background (nohup + & + /dev/null)
-- Panel endpoint reads from the pipe with 64KB chunks and flushes to browser
-- Pipe is auto-removed by the CLI after writing completes
+Server downloads combine the server snapshot with all per-user snapshots into one
+archive. Because this requires restoring multiple snapshots (which can take minutes),
+a different approach is used to avoid blocking FrankenPHP workers:
 
-This avoids:
-- Temporary files on disk (no space used during streaming)
-- Memory buffering of entire archive (streaming 64KB chunks)
-- Timeout issues (streaming starts immediately, no wait for full backup)
+```
+Browser
+   ↓ GET /backup-download.php?users=__server__&snapshot=ID
+backup-download.php
+   ↓ Agent RPC: jb.server_download_pipe
+Agent: jbServerDownloadPipe
+   ↓ Returns: { archive: "/tmp/jabali-server-export-XXX.tar.gz", done: "...tar.gz.done" }
+   ↓ Spawns background script:
+   │   1. restic restore server snapshot → tmpdir/server/
+   │   2. restic restore each user snapshot → tmpdir/users/{user}/
+   │   3. tar czf archive.tar.gz -C tmpdir .
+   │   4. touch archive.tar.gz.done
+backup-download.php polls for .done file (up to 15 min)
+   ↓ .done appears
+readfile(archive.tar.gz) → Browser
+   ↓
+Cleanup: archive + .done removed
+```
+
+This avoids FrankenPHP worker starvation from blocking `fopen()` on FIFOs
+while restic is still restoring data.
 
 ## Security Model
 
