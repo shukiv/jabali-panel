@@ -85,6 +85,18 @@ $_SESSION['PMA_single_signon_HMAC_secret'] = random_bytes(32);
 
 session_write_close();
 
+// Auto-assign user to 'panel_users' group (restricts server-level menu items)
+try {
+    $passLine = file_get_contents('/etc/phpmyadmin/.pma_control_pass') ?: '';
+    $pmaPass = trim(str_replace('PMA_PASS=', '', $passLine));
+    $pdo = new PDO('mysql:host=localhost;dbname=phpmyadmin', 'pma', $pmaPass);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $stmt = $pdo->prepare('INSERT IGNORE INTO pma__users (username, usergroup) VALUES (?, ?)');
+    $stmt->execute([$data['username'], 'panel_users']);
+} catch (Throwable $e) {
+    // Non-fatal: SSO still works, just without menu restrictions
+}
+
 // Use database from API response, fall back to query param
 $database = $data['database'] ?? $db;
 
