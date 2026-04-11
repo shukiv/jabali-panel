@@ -1015,30 +1015,15 @@ function addonInstall(array $params): array
         return ['success' => false, 'error' => $addon['name'].' is already installed'];
     }
 
-    // Install URL comes from config (trusted), not user input
+    // Run install in background — the script may restart jabali-agent which
+    // would kill this process before we can respond.
     $url = $addon['install_url'];
-    $outputLines = [];
-    $exitCode = 0;
-    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $proc = proc_open(['bash', '-c', 'curl -fsSL '.escapeshellarg($url).' | bash'], $descriptors, $pipes);
-    if (! is_resource($proc)) {
-        return ['success' => false, 'error' => 'Failed to start installer'];
-    }
-    $stdout = stream_get_contents($pipes[1]);
-    $stderr = stream_get_contents($pipes[2]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-    $exitCode = proc_close($proc);
+    $logFile = '/tmp/jabali-addon-install-'.$addonId.'.log';
+    exec("(sleep 1 && curl -fsSL ".escapeshellarg($url)." | bash > ".escapeshellarg($logFile)." 2>&1) &");
 
-    if ($exitCode !== 0 || ! file_exists($addon['binary'])) {
-        logger("Addon install failed: {$addonId} (exit {$exitCode})");
+    logger("Addon install started in background: {$addonId}");
 
-        return ['success' => false, 'error' => 'Installation failed', 'output' => $stderr ?: $stdout];
-    }
-
-    logger("Addon installed: {$addonId}");
-
-    return ['success' => true, 'message' => $addon['name'].' installed successfully'];
+    return ['success' => true, 'message' => $addon['name'].' installation started. The page will update shortly.'];
 }
 
 function addonUninstall(array $params): array
@@ -1067,32 +1052,16 @@ function addonUninstall(array $params): array
         return ['success' => false, 'error' => $addon['name'].' does not support uninstall'];
     }
 
-    // Uninstall command comes from config (trusted), not user input
+    // Run uninstall in background — the script restarts jabali-agent which
+    // would kill this process before we can respond. Fire-and-forget with a
+    // small delay so the RPC response reaches the panel first.
     $cmd = $addon['uninstall_command'];
-    $outputLines = [];
-    $exitCode = 0;
-    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $proc = proc_open(['bash', '-c', $cmd], $descriptors, $pipes);
-    if (! is_resource($proc)) {
-        return ['success' => false, 'error' => 'Failed to start uninstaller'];
-    }
-    $stdout = stream_get_contents($pipes[1]);
-    $stderr = stream_get_contents($pipes[2]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-    $exitCode = proc_close($proc);
+    $logFile = '/tmp/jabali-addon-uninstall-'.$addonId.'.log';
+    exec("(sleep 1 && {$cmd} > ".escapeshellarg($logFile)." 2>&1) &");
 
-    // The uninstall script may restart jabali-agent, causing a non-zero exit
-    // even though uninstall succeeded. Check if the binary is actually gone.
-    if ($exitCode !== 0 && file_exists($addon['binary'])) {
-        logger("Addon uninstall failed: {$addonId} (exit {$exitCode})");
+    logger("Addon uninstall started in background: {$addonId}");
 
-        return ['success' => false, 'error' => 'Uninstall failed', 'output' => $stderr ?: $stdout];
-    }
-
-    logger("Addon uninstalled: {$addonId}");
-
-    return ['success' => true, 'message' => $addon['name'].' uninstalled successfully'];
+    return ['success' => true, 'message' => $addon['name'].' uninstall started. The page will update shortly.'];
 }
 
 function handleAddonAction(string $action, array $params): array
