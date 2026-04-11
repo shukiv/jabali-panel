@@ -1850,13 +1850,20 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                 TextColumn::make('type')
                     ->label(__('Type'))
                     ->badge()
-                    ->formatStateUsing(fn (array $record): string => ucfirst($record['type'] ?? 'backup'))
+                    ->formatStateUsing(fn (array $record): string => match ($record['type'] ?? 'backup') {
+                        'server-backup' => __('Server Backup'),
+                        'restore' => __('Restore'),
+                        'file-restore' => __('File Restore'),
+                        default => __('Backup'),
+                    })
                     ->icon(fn (array $record): string => match ($record['type'] ?? 'backup') {
+                        'server-backup' => 'heroicon-o-server-stack',
                         'restore' => 'heroicon-o-arrow-path',
                         'file-restore' => 'heroicon-o-document-arrow-down',
                         default => 'heroicon-o-cloud-arrow-up',
                     })
                     ->color(fn (array $record): string => match ($record['type'] ?? 'backup') {
+                        'server-backup' => 'warning',
                         'restore', 'file-restore' => 'info',
                         default => 'primary',
                     }),

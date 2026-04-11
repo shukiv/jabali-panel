@@ -1580,14 +1580,17 @@ function jbLogs(array $params): array
             $ts = $m[1];
         }
 
-        // New backup run
-        if (preg_match('/Backup run: (run-\S+)/', $line, $m)) {
+        // New server backup (disaster recovery)
+        if (preg_match('/Server backup \(disaster recovery\) starting/', $line)) {
             if ($currentJob !== null) {
+                if ($currentJob['status'] === 'running') {
+                    $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
+                }
                 $jobs[] = $currentJob;
             }
             $currentJob = [
-                'id' => $m[1],
-                'type' => 'backup',
+                'id' => 'server-' . ($ts ? str_replace(['-', ' ', ':'], '', $ts) : uniqid()),
+                'type' => 'server-backup',
                 'started_at' => $ts,
                 'ended_at' => $ts,
                 'accounts' => [],
@@ -1597,6 +1600,30 @@ function jbLogs(array $params): array
                 'log' => [],
             ];
             $currentAccount = null;
+        }
+
+        // New backup run
+        if (preg_match('/Backup run: (run-\S+)/', $line, $m)) {
+            // If inside a server-backup, this is a sub-run — don't create a new job
+            if ($currentJob !== null && $currentJob['type'] === 'server-backup') {
+                // Let it continue in the server-backup job
+            } else {
+                if ($currentJob !== null) {
+                    $jobs[] = $currentJob;
+                }
+                $currentJob = [
+                    'id' => $m[1],
+                    'type' => 'backup',
+                    'started_at' => $ts,
+                    'ended_at' => $ts,
+                    'accounts' => [],
+                    'status' => 'running',
+                    'errors' => 0,
+                    'events' => [],
+                    'log' => [],
+                ];
+                $currentAccount = null;
+            }
         }
 
         // New restore run — close any previous job first
@@ -1683,6 +1710,9 @@ function jbLogs(array $params): array
             $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
         }
         if (preg_match('/═══ (Backup|Restore) complete for/', $line)) {
+            $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
+        }
+        if (preg_match('/═══ Server backup complete/', $line)) {
             $currentJob['status'] = $currentJob['errors'] > 0 ? 'partial' : 'success';
         }
         if (preg_match('/Backup FAILED|Fatal|Aborted/', $line)) {
@@ -1806,6 +1836,22 @@ function jbLogTranslateEvent(array &$job, string $line): void
         $job['events'][] = ['level' => 'success', 'text' => 'Backup complete for ' . $m[1]];
     } elseif (preg_match('/═══ Restore complete for (\S+)/', $line, $m)) {
         $job['events'][] = ['level' => 'success', 'text' => 'Restore complete for ' . $m[1]];
+    } elseif (preg_match('/═══ Server backup complete/', $line)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Server backup complete'];
+
+    // Server collector events
+    } elseif (preg_match('/server: Dumped (jabali|powerdns) database/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Database: ' . $m[1]];
+    } elseif (preg_match('/server: Backed up (.+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'success', 'text' => $m[1]];
+    } elseif (preg_match('/server: Exported (.+)/', $line, $m)) {
+        $job['events'][] = ['level' => 'info', 'text' => $m[1]];
+    } elseif (preg_match('/server: Generated server manifest/', $line)) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Server manifest generated'];
+    } elseif (str_contains($line, 'Server-level backup complete')) {
+        $job['events'][] = ['level' => 'success', 'text' => 'Server config snapshot saved'];
+    } elseif (str_contains($line, 'Starting per-user backups')) {
+        $job['events'][] = ['level' => 'heading', 'text' => 'Per-user backups'];
     }
 }
 
