@@ -1020,7 +1020,7 @@ function addonInstall(array $params): array
     $logFile = '/tmp/jabali-addon-install-'.$addonId.'.log';
     $script = '/tmp/jabali-addon-install-'.$addonId.'.sh';
     $unit = 'jabali-addon-install-'.$addonId;
-    file_put_contents($script, "#!/bin/bash\nsleep 1\ncurl -fsSL ".escapeshellarg($url)." | bash > ".escapeshellarg($logFile)." 2>&1\n");
+    file_put_contents($script, "#!/bin/bash\nsleep 1\ncurl -fsSL ".escapeshellarg($url)." | bash > ".escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && php artisan optimize:clear > /dev/null 2>&1\n");
     chmod($script, 0755);
     exec("systemctl reset-failed {$unit} 2>/dev/null; systemd-run --no-block --unit={$unit} {$script} 2>/dev/null");
 
@@ -1062,7 +1062,7 @@ function addonUninstall(array $params): array
     $logFile = '/tmp/jabali-addon-uninstall-'.$addonId.'.log';
     $script = '/tmp/jabali-addon-uninstall-'.$addonId.'.sh';
     $unit = 'jabali-addon-uninstall-'.$addonId;
-    file_put_contents($script, "#!/bin/bash\nsleep 1\n{$cmd} > ".escapeshellarg($logFile)." 2>&1\n");
+    file_put_contents($script, "#!/bin/bash\nsleep 1\n{$cmd} > ".escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && php artisan optimize:clear > /dev/null 2>&1\n");
     chmod($script, 0755);
     exec("systemctl reset-failed {$unit} 2>/dev/null; systemd-run --no-block --unit={$unit} {$script} 2>/dev/null");
 
