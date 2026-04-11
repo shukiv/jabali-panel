@@ -93,15 +93,18 @@ restore_metadata_domains() {
             log_info "restore/metadata: Creating domain $dname"
 
             # Create domain record in DB
-            _db_write "INSERT INTO domains (user_id, domain, document_root, is_active, ssl_enabled, created_at, updated_at) VALUES ($uid, '$(mysql_escape "$dname")', '/home/$(mysql_escape "$username")/domains/$(mysql_escape "$dname")/public_html', 1, 1, NOW(), NOW())"
+            _db_write "INSERT INTO domains (user_id, domain, document_root, is_active, ssl_enabled, created_at, updated_at) VALUES ($uid, '$(mysql_escape "$dname")', '/home/$(mysql_escape "$username")/domains/$(mysql_escape "$dname")/public_html', 1, 1, NOW(), NOW())" || {
+                log_warn "restore/metadata: Failed to create domain $dname in DB"
+                continue
+            }
 
             # Create directory structure
             local doc_root="/home/${username}/domains/${dname}/public_html"
-            mkdir -p "$doc_root"
-            mkdir -p "/home/${username}/domains/${dname}/logs"
-            mkdir -p "/home/${username}/cache/nginx"
-            chown -R "${username}:${username}" "/home/${username}/domains/${dname}"
-            chown -R "${username}:${username}" "/home/${username}/cache" 2>/dev/null
+            mkdir -p "$doc_root" 2>/dev/null || true
+            mkdir -p "/home/${username}/domains/${dname}/logs" 2>/dev/null || true
+            mkdir -p "/home/${username}/cache/nginx" 2>/dev/null || true
+            chown -R "${username}:${username}" "/home/${username}/domains/${dname}" 2>/dev/null || true
+            chown -R "${username}:${username}" "/home/${username}/cache" 2>/dev/null || true
         fi
     done <<< "$domains_raw"
 }

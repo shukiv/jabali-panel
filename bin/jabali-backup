@@ -801,7 +801,10 @@ cmd_restore() {
 
     # Extract snapshot to temp dir
     log_info "Extracting snapshot $snapshot_id to $extract_dir"
-    restic_restore "$snapshot_id" "$extract_dir"
+    if ! restic_restore "$snapshot_id" "$extract_dir"; then
+        log_error "Failed to extract snapshot $snapshot_id"
+        return 1
+    fi
 
     local staging="${extract_dir}/tmp/jabali-backup/${target_user}"
 
@@ -854,7 +857,7 @@ cmd_restore() {
 
     # 2. Create domains (via jabali CLI — sets up directory structure)
     if _collector_enabled metadata "$only" "$exclude" && type -t restore_metadata_domains &>/dev/null; then
-        restore_metadata_domains "$target_user"
+        restore_metadata_domains "$target_user" || log_warn "restore/metadata: Some domains could not be created"
     fi
 
     # 3. Files (before configs — populates home dir with backed-up content)
