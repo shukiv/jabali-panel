@@ -145,7 +145,7 @@ section "Contract: the production install.sh calls a matching update block"
 # Guard-rail: if someone later re-introduces `git pull --ff-only` the
 # regression we just fixed is back. Fail the suite instead of silently
 # allowing it.
-if grep -nE 'git[[:space:]]+(-C[[:space:]]+"?\$SCRIPT_DIR"?[[:space:]]+)?pull[[:space:]]+--ff-only' "$PROJECT_DIR/install.sh" >/dev/null; then
+if grep -nE '^[[:space:]]*git[[:space:]]+(-C[[:space:]]+"?\$SCRIPT_DIR"?[[:space:]]+)?pull[[:space:]]+--ff-only' "$PROJECT_DIR/install.sh" >/dev/null; then
     fail_t "install.sh still uses 'git pull --ff-only' — dirty checkouts will abort the installer"
 else
     pass "install.sh does not rely on 'git pull --ff-only'"

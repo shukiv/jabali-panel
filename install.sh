@@ -204,7 +204,19 @@ if [[ "$IS_UPDATE" == true ]]; then
     info "Installed version: v${INSTALLED_VERSION}"
 
     if [[ -d "$SCRIPT_DIR/.git" ]]; then
-        git -C "$SCRIPT_DIR" pull --ff-only || fail "git pull failed. Resolve conflicts and re-run."
+        # Force-reconcile with upstream. `git pull --ff-only` aborts on any
+        # dirty file in SCRIPT_DIR — and the installer itself has a history
+        # of leaving stray modifications behind (package install scripts
+        # that rewrite tracked files, interrupted runs, etc). Operators
+        # should never have hand-edited source in this directory, so the
+        # safe answer is "whatever origin says, that's the truth".
+        git -C "$SCRIPT_DIR" fetch --quiet origin || fail "git fetch failed. Check network + remote."
+        _jb_branch="$(git -C "$SCRIPT_DIR" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)"
+        _jb_branch="${_jb_branch:-main}"
+        git -C "$SCRIPT_DIR" reset --hard --quiet "origin/${_jb_branch}" \
+            || fail "git reset failed. Delete $SCRIPT_DIR and re-install."
+        git -C "$SCRIPT_DIR" clean -fdx --quiet
+        unset _jb_branch
         JABALI_BACKUP_VERSION=$(grep -oP 'JABALI_BACKUP_VERSION="\K[^"]+' "$SCRIPT_DIR/bin/jabali-backup" || echo "$JABALI_BACKUP_VERSION")
         ok "Source updated to v${JABALI_BACKUP_VERSION}"
     else
