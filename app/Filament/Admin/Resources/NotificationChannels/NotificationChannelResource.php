@@ -20,6 +20,15 @@ class NotificationChannelResource extends Resource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
 
+    // Channel CRUD lives inside Server Settings > Notifications via the
+    // embedded NotificationChannelsTableWidget. Hide the resource from the
+    // sidebar so there's one canonical home for notification management,
+    // but keep the CRUD routes available for any bookmarked deep links.
+    public static function shouldRegisterNavigation(): bool
+    {
+        return false;
+    }
+
     public static function form(Schema $schema): Schema
     {
         return NotificationChannelForm::configure($schema);

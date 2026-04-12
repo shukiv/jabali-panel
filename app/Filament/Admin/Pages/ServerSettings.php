@@ -681,13 +681,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                 ->description(__('Destinations for notifications. Add email recipients, Telegram bots, ntfy topics, or browser push.'))
                 ->icon('heroicon-o-queue-list')
                 ->schema([
-                    \Filament\Schemas\Components\View::make('filament.admin.pages.partials.notification-channels-list'),
-                    Actions::make([
-                        FormAction::make('manageChannels')
-                            ->label(__('Manage channels'))
-                            ->icon('heroicon-o-cog-6-tooth')
-                            ->url(fn () => route('filament.admin.resources.notification-channels.index')),
-                    ]),
+                    \Filament\Schemas\Components\Livewire::make(
+                        \App\Filament\Admin\Widgets\Settings\NotificationChannelsTableWidget::class,
+                    ),
                 ]),
             Section::make(__('Severity Routing'))
                 ->description(__('Route Info, Warning, and Critical events to one or more channels.'))
