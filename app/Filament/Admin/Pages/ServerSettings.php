@@ -2124,17 +2124,37 @@ class ServerSettings extends Page implements HasActions, HasForms
                                 // Poll for the file-exists state to flip, but give up
                                 // after 10 minutes with a surfaced error rather than
                                 // silently reloading.
+                                //
+                                // Installers can restart php-fpm/nginx and briefly
+                                // drop sessions — tolerate a handful of consecutive
+                                // errors, then bail out so we don't spam the console
+                                // for 10 minutes when auth has genuinely expired.
                                 const target = op === 'install';
                                 const deadline = Date.now() + 600000;
+                                let consecErrors = 0;
+                                const MAX_ERRORS = 3;
                                 while (Date.now() < deadline) {
                                     await new Promise(r => setTimeout(r, 5000));
-                                    let actual = ! target;
                                     try {
-                                        actual = await this.$wire.isAddonInstalled(addonId);
-                                    } catch (e) { /* agent restart — keep polling */ }
-                                    if (actual === target) {
-                                        window.location.reload();
-                                        return;
+                                        const actual = await this.$wire.isAddonInstalled(addonId);
+                                        consecErrors = 0;
+                                        if (actual === target) {
+                                            window.location.reload();
+                                            return;
+                                        }
+                                    } catch (e) {
+                                        consecErrors += 1;
+                                        const status = e && typeof e === 'object' ? e.status : null;
+                                        // 401/419 = session expired: no point retrying,
+                                        // the user has to sign back in.
+                                        if (status === 401 || status === 419 || consecErrors >= MAX_ERRORS) {
+                                            this.busy = false;
+                                            // Reload — if the install finished the page
+                                            // will show the new state; if auth expired
+                                            // it lands on the login screen.
+                                            window.location.reload();
+                                            return;
+                                        }
                                     }
                                 }
                                 this.busy = false;
