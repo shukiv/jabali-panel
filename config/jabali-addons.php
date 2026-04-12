@@ -26,4 +26,16 @@ return [
         'version_command' => 'jabali-security status',
         'repo' => 'shukiv/jabali-security',
     ],
+
+    'jabali-terminal' => [
+        'name' => 'Terminal',
+        'description' => 'Browser-based root shell with mandatory 2FA, HMAC-sealed audit transcripts, and session timeout controls.',
+        'icon' => 'heroicon-o-command-line',
+        'binary' => '/usr/local/bin/jabali-terminal',
+        'service' => 'jabali-terminal',
+        'install_url' => 'https://raw.githubusercontent.com/shukiv/jabali-terminal/main/install.sh',
+        'uninstall_command' => 'curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-terminal/main/install.sh | bash -s -- --uninstall',
+        'version_command' => 'jabali-terminal version',
+        'repo' => 'shukiv/jabali-terminal',
+    ],
 ];

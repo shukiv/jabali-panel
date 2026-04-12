@@ -82,6 +82,9 @@ $this->getRtlScript()
                 class_exists(\App\JabaliSecurity\JabaliSecurityPlugin::class)
                     ? \App\JabaliSecurity\JabaliSecurityPlugin::make()
                     : null,
+                class_exists(\App\JabaliTerminal\JabaliTerminalPlugin::class)
+                    ? \App\JabaliTerminal\JabaliTerminalPlugin::make()
+                    : null,
             ]))
             ->middleware([
                 EncryptCookies::class,
