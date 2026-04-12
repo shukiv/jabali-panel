@@ -263,6 +263,17 @@ function handleUpdate(array $options): void
         echo C_GREEN.'✓ Migrations complete'.C_RESET."\n";
     }
 
+    // Step 5b: Seed unified notification channels (idempotent — skips if any
+    // channels already exist). Ensures every upgrade lands with a working
+    // default routing so the new v2 pipeline can be enabled at any time.
+    step('Seeding notification channels...');
+    $seedResult = runShell('cd '.escapeshellarg($jabaliDir).' && sudo -u '.escapeshellarg($wwwUser).' php artisan jabali:notifications:migrate 2>&1');
+    if ($seedResult === false) {
+        echo C_YELLOW.'⚠ Notification seed warning — check manually: php artisan jabali:notifications:migrate'.C_RESET."\n";
+    } else {
+        echo C_GREEN.'✓ Notification channels seeded'.C_RESET."\n";
+    }
+
     // Step 6: Clear and rebuild caches
     step('Rebuilding caches...');
     $artisan = 'cd '.escapeshellarg($jabaliDir).' && sudo -u '.escapeshellarg($wwwUser).' php artisan';
