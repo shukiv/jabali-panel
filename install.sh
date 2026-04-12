@@ -234,6 +234,12 @@ check_or_queue jq           jq
 check_or_queue tar          tar
 check_or_queue gzip         gzip
 
+# PostgreSQL client is only needed if postgres server is detected or psql is missing
+if command -v pg_isready &>/dev/null || systemctl list-unit-files 2>/dev/null | grep -q '^postgresql'; then
+    check_or_queue psql         postgresql-client
+    check_or_queue pg_dump      postgresql-client
+fi
+
 if [[ ${#DEPS_TO_INSTALL[@]} -gt 0 ]]; then
     echo ""
     info "Installing missing: ${DEPS_TO_INSTALL[*]}"
