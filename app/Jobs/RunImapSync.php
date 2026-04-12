@@ -35,6 +35,30 @@ class RunImapSync implements ShouldQueue
             return;
         }
 
+        // Agent v2 path (ADR-0007): dispatch a BackgroundTask.
+        if (config('jabali.agent_v2.imap_sync_enabled')) {
+            $dispatcher = app(\App\Services\BackgroundTasks\BackgroundTaskDispatcher::class);
+            $bgTask = $dispatcher->dispatch(
+                type: \App\Enums\BackgroundTaskType::ImapSync,
+                argv: [
+                    '/usr/bin/php',
+                    base_path('artisan'),
+                    'jabali:tasks:run-imap-sync',
+                    '--sync-task-id='.$task->id,
+                ],
+                payload: ['sync_task_id' => $task->id, 'batch_id' => $task->batch_id],
+                dedupeKey: 'imap-sync:'.$task->id,
+                targetType: ImapSyncTask::class,
+                targetId: (string) $task->id,
+                limits: ['cpu' => 50, 'memory' => '512M', 'io' => 100],
+            );
+            if ($bgTask === null) {
+                Log::info("RunImapSync: dedupe — sync already running for task {$task->id}");
+            }
+
+            return;
+        }
+
         $task->update([
             'status' => 'running',
             'started_at' => now(),

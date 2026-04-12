@@ -42,6 +42,46 @@ class RunCpanelRestore implements ShouldQueue
     public function handle(AgentClient $agent, MigrationDnsSyncService $dnsSyncService, MigrationEmailProvisionService $emailProvisionService): void
     {
         $this->ensureLogPath();
+
+        // Agent v2 path (ADR-0007): dispatch a BackgroundTask. Constructor
+        // args are stashed in cache keyed by the job id so the dashboard's
+        // payload column doesn't show backup paths (they can contain a user
+        // home directory which is less sensitive but we treat them carefully
+        // anyway).
+        if (config('jabali.agent_v2.cpanel_restore_enabled')) {
+            $cacheKey = 'bg-task:cpanel-restore:'.$this->jobId;
+            Cache::put($cacheKey, [
+                'job_id' => $this->jobId,
+                'log_path' => $this->logPath,
+                'backup_path' => $this->backupPath,
+                'username' => $this->username,
+                'restore_files' => $this->restoreFiles,
+                'restore_databases' => $this->restoreDatabases,
+                'restore_emails' => $this->restoreEmails,
+                'restore_ssl' => $this->restoreSsl,
+                'discovered_data' => $this->discoveredData,
+            ], now()->addHours(3));
+
+            $dispatcher = app(\App\Services\BackgroundTasks\BackgroundTaskDispatcher::class);
+            $task = $dispatcher->dispatch(
+                type: \App\Enums\BackgroundTaskType::CpanelRestore,
+                argv: [
+                    '/usr/bin/php',
+                    base_path('artisan'),
+                    'jabali:tasks:run-cpanel-restore',
+                    '--cache-key='.$cacheKey,
+                ],
+                payload: ['job_id' => $this->jobId, 'username' => $this->username],
+                dedupeKey: 'cpanel-restore:'.$this->jobId,
+                limits: ['cpu' => 75, 'memory' => '2G', 'io' => 100],
+            );
+            if ($task === null) {
+                Log::info("RunCpanelRestore: dedupe — restore already running for {$this->jobId}");
+            }
+
+            return;
+        }
+
         $this->appendLog(__('Restore started for user: :user', ['user' => $this->username]), 'pending');
         Cache::put($this->getCacheKey(), ['status' => 'running'], now()->addHours(2));
 

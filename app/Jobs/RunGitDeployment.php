@@ -40,6 +40,33 @@ class RunGitDeployment implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        // Agent v2 path (ADR-0007): dispatch a BackgroundTask. The existing
+        // deploy orchestration runs inside the spawned binary via
+        // jabali:tasks:run-git-deploy, emitting JSONL progress to the
+        // unified dashboard.
+        if (config('jabali.agent_v2.git_deploy_enabled')) {
+            $dispatcher = app(\App\Services\BackgroundTasks\BackgroundTaskDispatcher::class);
+            $task = $dispatcher->dispatch(
+                type: \App\Enums\BackgroundTaskType::GitDeploy,
+                argv: [
+                    '/usr/bin/php',
+                    base_path('artisan'),
+                    'jabali:tasks:run-git-deploy',
+                    '--deployment-id='.$deployment->id,
+                ],
+                payload: ['deployment_id' => $deployment->id],
+                dedupeKey: 'git-deploy:'.$deployment->id,
+                targetType: GitDeployment::class,
+                targetId: (string) $deployment->id,
+                limits: ['cpu' => 50, 'memory' => '512M', 'io' => 100],
+            );
+            if ($task === null) {
+                Log::info("RunGitDeployment: dedupe — deploy already running for {$deployment->id}");
+            }
+
+            return;
+        }
+
         $deployment->update([
             'last_status' => 'running',
             'last_error' => null,

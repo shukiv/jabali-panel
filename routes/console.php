@@ -157,6 +157,14 @@ Schedule::command('jabali:check-domain-dns')
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/domain-dns-check.log'));
 
+// Background task reconciliation (ADR-0007) - runs every minute.
+// Agent-originated event POSTs are the fast path; this is the safety net
+// that catches dropped events, orphaned rows, and agent restarts.
+Schedule::command('jabali:tasks:reconcile')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->name('background-tasks-reconcile');
+
 // Impersonation Token Cleanup - runs daily to remove expired/used tokens
 Schedule::call(function () {
     \App\Models\ImpersonationToken::where(function ($q) {
