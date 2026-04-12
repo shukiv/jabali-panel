@@ -122,8 +122,15 @@ class ServerSettings extends Page implements HasActions, HasForms
 
     protected function normalizeTabName(?string $tab): string
     {
+        // 'logs' is retained as a legacy alias — it now routes to the
+        // General tab, which absorbed the Log Retention section after the
+        // Logs tab was removed.
+        if ($tab === 'logs') {
+            return 'general';
+        }
+
         return match ($tab) {
-            'general', 'branding', 'dns', 'storage', 'email', 'notifications', 'php-fpm', 'database', 'nginx', 'logs', 'addons' => $tab,
+            'general', 'branding', 'dns', 'storage', 'email', 'notifications', 'php-fpm', 'database', 'nginx', 'addons' => $tab,
             default => 'general',
         };
     }
@@ -311,9 +318,6 @@ class ServerSettings extends Page implements HasActions, HasForms
                         'nginx' => Tab::make(__('Nginx'))
                             ->icon('heroicon-o-server-stack')
                             ->schema($this->nginxTabContent()),
-                        'logs' => Tab::make(__('Logs'))
-                            ->icon('heroicon-o-document-text')
-                            ->schema($this->logsTabContent()),
                     ]),
             ]);
     }
@@ -403,6 +407,26 @@ class ServerSettings extends Page implements HasActions, HasForms
                             ->modalHeading(__('Update SSH Settings'))
                             ->modalDescription(__('This will update sshd configuration and restart the SSH service. Existing connections will not be affected.'))
                             ->color('warning'),
+                    ]),
+                ]),
+            Section::make(__('Log Retention'))
+                ->description(__('Configure how long log entries are kept before being cleaned up.'))
+                ->icon('heroicon-o-clock')
+                ->schema([
+                    Grid::make(['default' => 1, 'md' => 2])
+                        ->schema([
+                            TextInput::make('logsData.audit_log_retention_days')
+                                ->label(__('Audit Log Retention'))
+                                ->numeric()
+                                ->minValue(7)
+                                ->maxValue(365)
+                                ->suffix(__('days'))
+                                ->helperText(__('Audit log records older than this will be pruned automatically')),
+                        ]),
+                    Actions::make([
+                        FormAction::make('saveLogSettings')
+                            ->label(__('Save'))
+                            ->action('saveLogSettings'),
                     ]),
                 ]),
         ];
@@ -1084,32 +1108,6 @@ class ServerSettings extends Page implements HasActions, HasForms
         } catch (\Exception $e) {
             Notification::make()->title(__('Agent error'))->body($e->getMessage())->danger()->send();
         }
-    }
-
-    protected function logsTabContent(): array
-    {
-        return [
-            Section::make(__('Log Retention'))
-                ->description(__('Configure how long log entries are kept before being cleaned up.'))
-                ->icon('heroicon-o-clock')
-                ->schema([
-                    Grid::make(['default' => 1, 'md' => 2])
-                        ->schema([
-                            TextInput::make('logsData.audit_log_retention_days')
-                                ->label(__('Audit Log Retention'))
-                                ->numeric()
-                                ->minValue(7)
-                                ->maxValue(365)
-                                ->suffix(__('days'))
-                                ->helperText(__('Audit log records older than this will be pruned automatically')),
-                        ]),
-                    Actions::make([
-                        FormAction::make('saveLogSettings')
-                            ->label(__('Save'))
-                            ->action('saveLogSettings'),
-                    ]),
-                ]),
-        ];
     }
 
     public function saveLogSettings(): void
