@@ -2046,10 +2046,19 @@ class ServerSettings extends Page implements HasActions, HasForms
                 .$statusText
                 .'</span>';
 
-            $actionsHtml = '<div x-data="{ busy: false, pollUntil(target) { const start = Date.now(); const iv = setInterval(async () => { if (Date.now() - start > 600000) { clearInterval(iv); window.location.reload(); return; } try { const installed = await $wire.isAddonInstalled(\''.$addonId.'\'); if (installed === target) { clearInterval(iv); window.location.reload(); } } catch (e) { /* agent may be restarting — keep polling */ } }, 5000); } }">'
+            // `$wire.installAddon()` / `$wire.uninstallAddon()` are Livewire
+            // methods that return a promise resolving when the server-side
+            // agent.install/uninstall call has completed (or thrown). We
+            // await them and then reconcile the UI with a single state
+            // check — no polling loop. A polling loop would never stop on
+            // a failed install because file_exists(binary) stays false
+            // forever, which is exactly the "stuck spinner" bug.
+            $installConfirm = __('This will download and install the addon. It may take several minutes.');
+            $uninstallConfirm = __('Are you sure? This will remove the addon and all its data.');
+            $actionsHtml = '<div x-data="{ busy: false, async run(op) { const confirmMsg = op === \'install\' ? \''.addslashes($installConfirm).'\' : \''.addslashes($uninstallConfirm).'\'; if (!confirm(confirmMsg)) return; busy = true; try { await (op === \'install\' ? $wire.installAddon(\''.$addonId.'\') : $wire.uninstallAddon(\''.$addonId.'\')); } catch (e) {} const want = op === \'install\'; let installed = false; try { installed = await $wire.isAddonInstalled(\''.$addonId.'\'); } catch (e) {} if (installed === want) { window.location.reload(); } else { busy = false; } } }">'
                 .($installed
-                    ? '<button type="button" x-show="!busy" x-on:click="if(!confirm(\''.__('Are you sure? This will remove the addon and all its data.').'\')) return; busy = true; $wire.uninstallAddon(\''.$addonId.'\'); pollUntil(false)" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400">'.__('Uninstall').'</button>'
-                    : '<button type="button" x-show="!busy" x-on:click="if(!confirm(\''.__('This will download and install the addon. It may take several minutes.').'\')) return; busy = true; $wire.installAddon(\''.$addonId.'\'); pollUntil(true)" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400">'.__('Install').'</button>')
+                    ? '<button type="button" x-show="!busy" x-on:click="run(\'uninstall\')" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400">'.__('Uninstall').'</button>'
+                    : '<button type="button" x-show="!busy" x-on:click="run(\'install\')" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400">'.__('Install').'</button>')
                 .'<span x-show="busy" x-cloak class="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"><svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>'
                 .($installed ? __('Uninstalling...') : __('Installing... (may take a few minutes)'))
                 .'</span></div>';
