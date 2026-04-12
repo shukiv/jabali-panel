@@ -1965,6 +1965,7 @@ class ServerSettings extends Page implements HasActions, HasForms
     {
         $addons = config('jabali-addons', []);
         $binary = $addons[$addonId]['binary'] ?? null;
+
         return $binary !== null && file_exists($binary);
     }
 
@@ -1983,5 +1984,4 @@ class ServerSettings extends Page implements HasActions, HasForms
             Notification::make()->title(__('Uninstall failed: :error', ['error' => $e->getMessage()]))->danger()->send();
         }
     }
-
 }
