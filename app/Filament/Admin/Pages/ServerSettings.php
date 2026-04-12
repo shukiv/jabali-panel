@@ -2133,25 +2133,44 @@ class ServerSettings extends Page implements HasActions, HasForms
                                 const deadline = Date.now() + 600000;
                                 let consecErrors = 0;
                                 const MAX_ERRORS = 3;
+                                // Plain fetch instead of $wire — Livewire logs
+                                // rejected promises to the console regardless
+                                // of try/catch, so a noisy installer that
+                                // bounces php-fpm would flood DevTools. A
+                                // simple JSON endpoint gives us total control
+                                // over error handling.
+                                const statusUrl = '/jabali-admin/addons/' + encodeURIComponent(addonId) + '/status';
                                 while (Date.now() < deadline) {
                                     await new Promise(r => setTimeout(r, 5000));
                                     try {
-                                        const actual = await this.$wire.isAddonInstalled(addonId);
+                                        const resp = await fetch(statusUrl, {
+                                            credentials: 'same-origin',
+                                            headers: { 'Accept': 'application/json' },
+                                        });
+                                        if (resp.status === 401 || resp.status === 419) {
+                                            this.busy = false;
+                                            window.location.reload();
+                                            return;
+                                        }
+                                        if (! resp.ok) {
+                                            consecErrors += 1;
+                                            if (consecErrors >= MAX_ERRORS) {
+                                                this.busy = false;
+                                                window.location.reload();
+                                                return;
+                                            }
+                                            continue;
+                                        }
+                                        const body = await resp.json();
                                         consecErrors = 0;
-                                        if (actual === target) {
+                                        if (body.installed === target) {
                                             window.location.reload();
                                             return;
                                         }
                                     } catch (e) {
                                         consecErrors += 1;
-                                        const status = e && typeof e === 'object' ? e.status : null;
-                                        // 401/419 = session expired: no point retrying,
-                                        // the user has to sign back in.
-                                        if (status === 401 || status === 419 || consecErrors >= MAX_ERRORS) {
+                                        if (consecErrors >= MAX_ERRORS) {
                                             this.busy = false;
-                                            // Reload — if the install finished the page
-                                            // will show the new state; if auth expired
-                                            // it lands on the login screen.
                                             window.location.reload();
                                             return;
                                         }

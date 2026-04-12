@@ -120,6 +120,23 @@ Route::redirect('/jabali-admin/system-updates', '/jabali-admin/server-updates');
 // Preserve any bookmarks pointing at the old standalone page.
 Route::redirect('/jabali-admin/notification-settings', '/jabali-admin/server-settings?tab=notifications');
 
+// Lightweight "is addon installed" JSON endpoint used by the Addons tab's
+// polling UI. Goes through plain Laravel auth:admin rather than Livewire
+// so the poll loop stays silent when the installer briefly bounces
+// php-fpm (Livewire rehydration fails loudly — plain HTTP just returns
+// 401 which our fetch() catches without console noise).
+Route::get('/jabali-admin/addons/{id}/status', function (string $id) {
+    $addons = config('jabali-addons', []);
+    $binary = $addons[$id]['binary'] ?? null;
+
+    return response()->json([
+        'installed' => $binary !== null && file_exists($binary),
+    ]);
+})
+    ->where('id', '[a-z0-9_-]+')
+    ->middleware(['web', 'auth:admin'])
+    ->name('admin.addons.status');
+
 /*
 |--------------------------------------------------------------------------
 | Two-Factor Authentication Challenge
