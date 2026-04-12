@@ -1912,6 +1912,7 @@ class ServerSettings extends Page implements HasActions, HasForms
             $sections[] = Section::make($addon['name'])
                 ->icon($addon['icon'] ?? 'heroicon-o-puzzle-piece')
                 ->description($addon['description'])
+                ->columnSpan(1)
                 ->schema([
                     Placeholder::make("addon_{$addonId}_status")
                         ->label(__('Status'))
@@ -1938,11 +1939,15 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         if (empty($sections)) {
-            $sections[] = Placeholder::make('no_addons')
-                ->content(__('No addons available.'));
+            return [
+                Placeholder::make('no_addons')
+                    ->content(__('No addons available.')),
+            ];
         }
 
-        return $sections;
+        return [
+            Grid::make(2)->schema($sections),
+        ];
     }
 
     public function installAddon(string $addonId): void
