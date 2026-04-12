@@ -1115,17 +1115,49 @@ PHPINI
         log "Generated self-signed SSL certificate for panel"
     fi
 
+    # Size FrankenPHP's thread pool against AVAILABLE MEMORY, not just CPU.
+    # The panel is a low-traffic control app — the bottleneck on small VPS
+    # is RAM, not concurrency. Each FrankenPHP thread holds a live PHP
+    # interpreter that preloads a bundle of Laravel/Filament classes, so
+    # going from 4 threads to 2 on a 4 GB box reclaims ~150-250 MB without
+    # any practical throughput impact for a single operator.
     local cpus
     cpus=$(nproc 2>/dev/null || echo 2)
-    local num_threads=$(( cpus * 2 ))
-    [ "$num_threads" -lt 2 ] && num_threads=2
-    [ "$num_threads" -gt 8 ] && num_threads=8
+    local mem_mb
+    mem_mb=$(awk '/MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
+    mem_mb=${mem_mb:-2048}
+
+    local num_threads max_threads
+    if [ "$mem_mb" -lt 1536 ]; then
+        # <1.5 GB — very tight. Keep it to one always-warm thread,
+        # burst to 2 under concurrent load.
+        num_threads=1
+        max_threads=2
+    elif [ "$mem_mb" -lt 3072 ]; then
+        # 1.5-3 GB — the typical small-VPS sweet spot.
+        num_threads=2
+        max_threads=4
+    elif [ "$mem_mb" -lt 6144 ]; then
+        # 3-6 GB — modest box, one thread per vCPU is fine.
+        num_threads=$cpus
+        [ "$num_threads" -lt 2 ] && num_threads=2
+        [ "$num_threads" -gt 4 ] && num_threads=4
+        max_threads=$(( num_threads * 2 ))
+    else
+        # >6 GB — use the original CPU-based heuristic, capped.
+        num_threads=$(( cpus * 2 ))
+        [ "$num_threads" -lt 2 ] && num_threads=2
+        [ "$num_threads" -gt 8 ] && num_threads=8
+        max_threads=$(( num_threads * 3 ))
+    fi
+
+    info "FrankenPHP tuning: num_threads=${num_threads} max_threads=${max_threads} (mem=${mem_mb}M cpus=${cpus})"
 
     cat > /etc/jabali/Caddyfile <<CADDYEOF
 {
 	frankenphp {
 		num_threads ${num_threads}
-		max_threads $(( num_threads * 3 ))
+		max_threads ${max_threads}
 	}
 	order php_server before file_server
 
