@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Opcodes\LogViewer\Facades\LogViewer;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -124,6 +125,15 @@ class AppServiceProvider extends ServiceProvider
         $versionFile = base_path('VERSION');
         $appVersion = File::exists($versionFile) ? trim(File::get($versionFile)) : null;
         FilamentAsset::appVersion($appVersion ?: null);
+
+        // opcodesio/log-viewer is mounted under /jabali-admin/log-viewer.
+        // Gate it behind the admin guard — never public, never the user guard.
+        // This callback runs on every Log Viewer HTTP request (pages + API).
+        LogViewer::auth(function (Request $request): bool {
+            $user = $request->user('admin') ?? $request->user();
+
+            return $user !== null && (bool) ($user->is_admin ?? false);
+        });
 
         // Note: AuthEventListener is auto-discovered by Laravel 11+
         // Do not manually subscribe - it causes duplicate audit log entries
