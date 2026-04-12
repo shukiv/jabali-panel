@@ -1020,9 +1020,17 @@ function addonInstall(array $params): array
     $logFile = '/tmp/jabali-addon-install-'.$addonId.'.log';
     $script = '/tmp/jabali-addon-install-'.$addonId.'.sh';
     $unit = 'jabali-addon-install-'.$addonId;
-    // Same www-data pattern as the uninstall path — lets composer update
-    // the classmap in place and keeps errors in the log file.
-    file_put_contents($script, "#!/bin/bash\nsleep 1\ncurl -fsSL ".escapeshellarg($url).' | bash > '.escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && sudo -u www-data composer dump-autoload --optimize >> ".escapeshellarg($logFile)." 2>&1 && sudo -u www-data php artisan optimize:clear >> ".escapeshellarg($logFile)." 2>&1\nsystemctl restart jabali-panel > /dev/null 2>&1\n");
+    // Same cache-nuking dance as the uninstall path — see the comment
+    // there. An install also adds new classes, so Filament's cached route
+    // file must be regenerated or the newly-installed pages won't be
+    // reachable.
+    file_put_contents($script, "#!/bin/bash\nsleep 1\ncurl -fsSL ".escapeshellarg($url).' | bash > '.escapeshellarg($logFile)." 2>&1\n".
+        "find /var/www/jabali/bootstrap/cache -mindepth 1 -maxdepth 2 -name '*.php' -delete >> ".escapeshellarg($logFile)." 2>&1\n".
+        "rm -rf /var/www/jabali/bootstrap/cache/filament/* >> ".escapeshellarg($logFile)." 2>&1\n".
+        "rm -rf /var/www/jabali/storage/framework/views/* >> ".escapeshellarg($logFile)." 2>&1\n".
+        "cd /var/www/jabali && sudo -u www-data composer dump-autoload --optimize >> ".escapeshellarg($logFile)." 2>&1\n".
+        "sudo -u www-data php artisan optimize:clear >> ".escapeshellarg($logFile)." 2>&1\n".
+        "systemctl restart jabali-panel > /dev/null 2>&1\n");
     chmod($script, 0755);
     exec("systemctl reset-failed {$unit} 2>/dev/null; systemd-run --no-block --unit={$unit} {$script} 2>/dev/null");
 
@@ -1064,11 +1072,24 @@ function addonUninstall(array $params): array
     $logFile = '/tmp/jabali-addon-uninstall-'.$addonId.'.log';
     $script = '/tmp/jabali-addon-uninstall-'.$addonId.'.sh';
     $unit = 'jabali-addon-uninstall-'.$addonId;
-    // composer dump-autoload must run as www-data (owner of vendor/) or the
-    // fresh classmap can't be written back; without that, stale entries for
-    // the now-deleted addon classes survive and break the panel on the next
-    // request that tries to autoload them.
-    file_put_contents($script, "#!/bin/bash\nsleep 1\n{$cmd} >> ".escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && sudo -u www-data composer dump-autoload --optimize >> ".escapeshellarg($logFile)." 2>&1 && sudo -u www-data php artisan optimize:clear >> ".escapeshellarg($logFile)." 2>&1\nsystemctl restart jabali-panel > /dev/null 2>&1\n");
+    // After the uninstaller deletes the addon's PHP files we have to both:
+    //   (a) refresh composer's classmap so class_exists() doesn't still
+    //       resolve to a now-deleted file
+    //   (b) nuke bootstrap/cache/* — Filament caches routes with class
+    //       names baked in, so a stale cache referencing the deleted
+    //       addon class will 500 the panel on every request until it's
+    //       cleared.
+    // We rm the cache files directly (not via `php artisan`) because
+    // artisan needs to boot Laravel, which itself boots Filament, which
+    // reads the stale cache and fatals before optimize:clear can run.
+    // Chicken-and-egg catch-22 that cost the user several panel outages.
+    file_put_contents($script, "#!/bin/bash\nsleep 1\n{$cmd} >> ".escapeshellarg($logFile)." 2>&1\n".
+        "find /var/www/jabali/bootstrap/cache -mindepth 1 -maxdepth 2 -name '*.php' -delete >> ".escapeshellarg($logFile)." 2>&1\n".
+        "rm -rf /var/www/jabali/bootstrap/cache/filament/* >> ".escapeshellarg($logFile)." 2>&1\n".
+        "rm -rf /var/www/jabali/storage/framework/views/* >> ".escapeshellarg($logFile)." 2>&1\n".
+        "cd /var/www/jabali && sudo -u www-data composer dump-autoload --optimize >> ".escapeshellarg($logFile)." 2>&1\n".
+        "sudo -u www-data php artisan optimize:clear >> ".escapeshellarg($logFile)." 2>&1\n".
+        "systemctl restart jabali-panel > /dev/null 2>&1\n");
     chmod($script, 0755);
     exec("systemctl reset-failed {$unit} 2>/dev/null; systemd-run --no-block --unit={$unit} {$script} 2>/dev/null");
 
