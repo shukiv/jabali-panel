@@ -1020,7 +1020,7 @@ function addonInstall(array $params): array
     $logFile = '/tmp/jabali-addon-install-'.$addonId.'.log';
     $script = '/tmp/jabali-addon-install-'.$addonId.'.sh';
     $unit = 'jabali-addon-install-'.$addonId;
-    file_put_contents($script, "#!/bin/bash\nsleep 1\ncurl -fsSL ".escapeshellarg($url)." | bash > ".escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && composer dump-autoload --optimize -q 2>/dev/null && php artisan optimize:clear > /dev/null 2>&1\n");
+    file_put_contents($script, "#!/bin/bash\nsleep 1\ncurl -fsSL ".escapeshellarg($url).' | bash > '.escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && composer dump-autoload --optimize -q 2>/dev/null && php artisan optimize:clear > /dev/null 2>&1\nsystemctl restart jabali-panel > /dev/null 2>&1\n");
     chmod($script, 0755);
     exec("systemctl reset-failed {$unit} 2>/dev/null; systemd-run --no-block --unit={$unit} {$script} 2>/dev/null");
 
@@ -1062,7 +1062,7 @@ function addonUninstall(array $params): array
     $logFile = '/tmp/jabali-addon-uninstall-'.$addonId.'.log';
     $script = '/tmp/jabali-addon-uninstall-'.$addonId.'.sh';
     $unit = 'jabali-addon-uninstall-'.$addonId;
-    file_put_contents($script, "#!/bin/bash\nsleep 1\n{$cmd} > ".escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && composer dump-autoload --optimize -q 2>/dev/null && php artisan optimize:clear > /dev/null 2>&1\n");
+    file_put_contents($script, "#!/bin/bash\nsleep 1\n{$cmd} > ".escapeshellarg($logFile)." 2>&1\ncd /var/www/jabali && composer dump-autoload --optimize -q 2>/dev/null && php artisan optimize:clear > /dev/null 2>&1\nsystemctl restart jabali-panel > /dev/null 2>&1\n");
     chmod($script, 0755);
     exec("systemctl reset-failed {$unit} 2>/dev/null; systemd-run --no-block --unit={$unit} {$script} 2>/dev/null");
 
@@ -1391,7 +1391,7 @@ function deleteUser(array $params): array
     if (trim((string) shell_exec('which jabali-isolate 2>/dev/null'))) {
         $isoOut = [];
         $isoExit = 0;
-        exec('jabali-isolate destroy ' . escapeshellarg($username) . ' 2>&1', $isoOut, $isoExit);
+        exec('jabali-isolate destroy '.escapeshellarg($username).' 2>&1', $isoOut, $isoExit);
         if ($isoExit === 0) {
             logger("Destroyed nspawn container for $username");
             $steps[] = 'nspawn container removed';
@@ -1494,7 +1494,7 @@ function setUserPassword(array $params): array
 
     return $exitCode === 0
         ? ['success' => true, 'message' => 'Password updated']
-        : ['success' => false, 'error' => 'Failed to set password: ' . trim($stderr)];
+        : ['success' => false, 'error' => 'Failed to set password: '.trim($stderr)];
 }
 
 function userExists(array $params): array
@@ -2080,9 +2080,9 @@ function detectPhpFpmSocket(): string
 
     $possible = [
         "/var/run/php/php{$phpVersion}-fpm.sock",
-        "/var/run/php/php-fpm.sock",
+        '/var/run/php/php-fpm.sock',
         "/run/php/php{$phpVersion}-fpm.sock",
-        "/run/php/php-fpm.sock",
+        '/run/php/php-fpm.sock',
     ];
 
     foreach ($possible as $sock) {
@@ -2505,6 +2505,7 @@ function nginxRegenerateDomainVhosts(array $params): array
         $userInfo = posix_getpwnam($username);
         if (! $userInfo) {
             $errors[] = "{$domain}: user {$username} not found";
+
             continue;
         }
 
@@ -2515,6 +2516,7 @@ function nginxRegenerateDomainVhosts(array $params): array
 
         if (! is_dir($publicHtml)) {
             $errors[] = "{$domain}: public_html not found at {$publicHtml}";
+
             continue;
         }
 
@@ -2587,6 +2589,7 @@ function nginxRegenerateDomainVhosts(array $params): array
         // Write
         if (file_put_contents($vhostFile, $vhostContent) === false) {
             $errors[] = "{$domain}: failed to write config";
+
             continue;
         }
 
@@ -3990,7 +3993,7 @@ function ensureJabaliNginxIncludeFiles(): void
 
     // Ensure waf.conf exists so nginx includes don't fail.
     // Content is managed by jabali-security; this is just a safety stub.
-    $wafInclude = JABALI_NGINX_INCLUDES . '/waf.conf';
+    $wafInclude = JABALI_NGINX_INCLUDES.'/waf.conf';
     if (! file_exists($wafInclude)) {
         file_put_contents($wafInclude, "# Managed by jabali-security\n");
     }
@@ -5992,9 +5995,9 @@ function domainTestCustomDirectives(array $params): array
         $insertPos = strrpos($vhost, '}');
         if ($insertPos !== false) {
             $vhost = substr($vhost, 0, $insertPos)
-                . "\n    # Custom directives (managed by panel)\n"
-                . "    {$includeDirective}\n"
-                . substr($vhost, $insertPos);
+                ."\n    # Custom directives (managed by panel)\n"
+                ."    {$includeDirective}\n"
+                .substr($vhost, $insertPos);
             file_put_contents($vhostFile, $vhost);
             $addedInclude = true;
         }
@@ -6074,9 +6077,9 @@ function domainApplyCustomDirectives(array $params): array
         $insertPos = strrpos($vhost, '}');
         if ($insertPos !== false) {
             $vhost = substr($vhost, 0, $insertPos)
-                . "\n    # Custom directives (managed by panel)\n"
-                . "    {$includeDirective}\n"
-                . substr($vhost, $insertPos);
+                ."\n    # Custom directives (managed by panel)\n"
+                ."    {$includeDirective}\n"
+                .substr($vhost, $insertPos);
             file_put_contents($vhostFile, $vhost);
         }
     }
@@ -8639,7 +8642,7 @@ function wpPageCacheDisable(array $params): array
     // Restore default no-cache headers for dynamic content in PHP block
     $defaultCacheHeaders = "\n        # Default cache headers for dynamic content\n"
         ."        add_header Cache-Control \"no-cache, no-store, must-revalidate\" always;\n"
-        ."        add_header Pragma \"no-cache\" always;";
+        .'        add_header Pragma "no-cache" always;';
     $config = preg_replace_callback(
         '/(location\s+~\s+\\\\.php\$\s*\{[^}]*?include\s+fastcgi_params;)/s',
         function ($matches) use ($defaultCacheHeaders) {
@@ -8698,7 +8701,7 @@ function wpPageCacheDisable(array $params): array
         // Clear the user's cache directory
         $userCacheDir = "/home/{$cacheUser}/cache/nginx";
         if (is_dir($userCacheDir)) {
-            exec('rm -rf ' . escapeshellarg($userCacheDir) . '/*');
+            exec('rm -rf '.escapeshellarg($userCacheDir).'/*');
         }
 
         // Remove cache zone config if no other domains use it
@@ -8770,7 +8773,7 @@ function wpPageCachePurge(array $params): array
 
     if (empty($pathsToCheck)) {
         // Purge all cache for this domain — instant rm -rf of per-user dir
-        exec('rm -rf ' . escapeshellarg($cacheDir) . '/*');
+        exec('rm -rf '.escapeshellarg($cacheDir).'/*');
         $purged = 1;
         logger("Purged all cache for domain: {$domain} (user: {$cacheUsername})");
     } else {
@@ -12631,14 +12634,14 @@ function phpInstall(array $params): array
     exec('apt-get update -qq 2>/dev/null');
     $available = [];
     foreach ($packages as $pkg) {
-        exec("apt-cache show ".escapeshellarg($pkg)." 2>/dev/null", $cacheOutput, $cacheCode);
+        exec('apt-cache show '.escapeshellarg($pkg).' 2>/dev/null', $cacheOutput, $cacheCode);
         if ($cacheCode === 0) {
             $available[] = $pkg;
         }
         $cacheOutput = [];
     }
 
-    exec("DEBIAN_FRONTEND=noninteractive apt-get install -y ".implode(' ', array_map('escapeshellarg', $available))." 2>&1", $output, $exitCode);
+    exec('DEBIAN_FRONTEND=noninteractive apt-get install -y '.implode(' ', array_map('escapeshellarg', $available)).' 2>&1', $output, $exitCode);
 
     if ($exitCode !== 0) {
         return ['success' => false, 'error' => 'Failed to install PHP: '.implode("\n", $output)];
@@ -13177,8 +13180,8 @@ function sshEnableShell(array $params): array
     }
 
     // Move from sftpusers to shellusers
-    exec('usermod -aG shellusers ' . escapeshellarg($username));
-    exec('gpasswd -d ' . escapeshellarg($username) . ' sftpusers 2>/dev/null');
+    exec('usermod -aG shellusers '.escapeshellarg($username));
+    exec('gpasswd -d '.escapeshellarg($username).' sftpusers 2>/dev/null');
 
     // Shell users don't use ChrootDirectory — make home dir writable by user
     chown($homeDir, $username);
@@ -13186,26 +13189,26 @@ function sshEnableShell(array $params): array
     chmod($homeDir, 0755);
 
     // Set login shell to jabali-shell (acts as login shell, not ForceCommand)
-    exec('usermod -s /usr/local/bin/jabali-shell ' . escapeshellarg($username));
+    exec('usermod -s /usr/local/bin/jabali-shell '.escapeshellarg($username));
 
     // Ensure nspawn container exists and is running
     $containerRunning = false;
-    exec("machinectl show " . escapeshellarg($container) . " --property=State 2>/dev/null", $stateOut);
+    exec('machinectl show '.escapeshellarg($container).' --property=State 2>/dev/null', $stateOut);
     if (! empty($stateOut[0]) && trim($stateOut[0]) === 'State=running') {
         $containerRunning = true;
     } else {
         if (trim((string) shell_exec('which jabali-isolate 2>/dev/null'))) {
             // Create container if it doesn't exist
             if (! is_dir("/var/lib/machines/$container")) {
-                exec('jabali-isolate create ' . escapeshellarg($username) . ' 2>&1', $createOut, $createExit);
+                exec('jabali-isolate create '.escapeshellarg($username).' 2>&1', $createOut, $createExit);
             }
             // Start it
-            exec('jabali-isolate start ' . escapeshellarg($username) . ' 2>&1', $isoOut, $isoExit);
+            exec('jabali-isolate start '.escapeshellarg($username).' 2>&1', $isoOut, $isoExit);
             $containerRunning = ($isoExit === 0);
         }
     }
 
-    logger("Enabled shell access for user $username (container: $container, running: " . ($containerRunning ? 'yes' : 'no') . ')');
+    logger("Enabled shell access for user $username (container: $container, running: ".($containerRunning ? 'yes' : 'no').')');
 
     return [
         'success' => true,
@@ -13232,15 +13235,15 @@ function sshDisableShell(array $params): array
     $homeDir = $userInfo['dir'];
 
     // Move from shellusers to sftpusers
-    exec('gpasswd -d ' . escapeshellarg($username) . ' shellusers 2>/dev/null');
-    exec('usermod -aG sftpusers ' . escapeshellarg($username));
+    exec('gpasswd -d '.escapeshellarg($username).' shellusers 2>/dev/null');
+    exec('usermod -aG sftpusers '.escapeshellarg($username));
 
     // Set shell to nologin (SFTP-only)
-    exec('usermod -s /usr/sbin/nologin ' . escapeshellarg($username));
+    exec('usermod -s /usr/sbin/nologin '.escapeshellarg($username));
 
     // Stop nspawn container if running
     if (trim((string) shell_exec('which jabali-isolate 2>/dev/null'))) {
-        exec('jabali-isolate stop ' . escapeshellarg($username) . ' 2>&1', $isoOut, $isoExit);
+        exec('jabali-isolate stop '.escapeshellarg($username).' 2>&1', $isoOut, $isoExit);
         if ($isoExit === 0) {
             logger("Stopped nspawn container for $username");
         }
@@ -13254,11 +13257,11 @@ function sshDisableShell(array $params): array
     // Clean up any legacy jail artifacts
     $jailHome = "/var/jail/home/$username";
     if (function_exists('is_mounted') && is_mounted($jailHome)) {
-        exec('umount ' . escapeshellarg($jailHome) . ' 2>/dev/null');
+        exec('umount '.escapeshellarg($jailHome).' 2>/dev/null');
         // Remove from fstab
         if (file_exists('/etc/fstab')) {
             $fstab = file_get_contents('/etc/fstab');
-            $fstab = preg_replace('/.*' . preg_quote($jailHome, '/') . '.*\n/', '', $fstab);
+            $fstab = preg_replace('/.*'.preg_quote($jailHome, '/').'.*\n/', '', $fstab);
             file_put_contents('/etc/fstab', $fstab);
         }
     }
@@ -13332,7 +13335,7 @@ function sshMigrateShellUsers(array $params): array
 
         // Unmount any old jail bind mounts
         if (is_mounted($jailHome)) {
-            exec('umount ' . escapeshellarg($jailHome) . ' 2>/dev/null', $umOut, $umExit);
+            exec('umount '.escapeshellarg($jailHome).' 2>/dev/null', $umOut, $umExit);
             if ($umExit === 0) {
                 $userSteps[] = 'unmounted jail bind mount';
             }
@@ -13341,7 +13344,7 @@ function sshMigrateShellUsers(array $params): array
         // Remove fstab entries for this user's jail
         if (file_exists('/etc/fstab')) {
             $fstab = file_get_contents('/etc/fstab');
-            $newFstab = preg_replace('/.*' . preg_quote($jailHome, '/') . '.*\n/', '', $fstab);
+            $newFstab = preg_replace('/.*'.preg_quote($jailHome, '/').'.*\n/', '', $fstab);
             if ($newFstab !== $fstab) {
                 file_put_contents('/etc/fstab', $newFstab);
                 $userSteps[] = 'removed fstab entries';
@@ -13368,7 +13371,7 @@ function sshMigrateShellUsers(array $params): array
 
         // Set shell to jabali-shell if still pointing to old shell
         if ($shell !== '/usr/local/bin/jabali-shell') {
-            exec('usermod -s /usr/local/bin/jabali-shell ' . escapeshellarg($username));
+            exec('usermod -s /usr/local/bin/jabali-shell '.escapeshellarg($username));
             $userSteps[] = "shell changed from $shell to jabali-shell";
         }
 
@@ -13376,17 +13379,17 @@ function sshMigrateShellUsers(array $params): array
         foreach (['/var/jail/etc/passwd', '/var/jail/etc/group'] as $jailFile) {
             if (file_exists($jailFile)) {
                 $content = file_get_contents($jailFile);
-                $newContent = preg_replace('/^' . preg_quote($username, '/') . ':.*\n/m', '', $content);
+                $newContent = preg_replace('/^'.preg_quote($username, '/').':.*\n/m', '', $content);
                 if ($newContent !== $content) {
                     file_put_contents($jailFile, $newContent);
-                    $userSteps[] = 'cleaned ' . basename($jailFile);
+                    $userSteps[] = 'cleaned '.basename($jailFile);
                 }
             }
         }
 
         if (! empty($userSteps)) {
             $migrated[$username] = $userSteps;
-            logger("Migrated shell user $username to nspawn: " . implode(', ', $userSteps));
+            logger("Migrated shell user $username to nspawn: ".implode(', ', $userSteps));
         }
     }
 
@@ -13607,7 +13610,7 @@ function setPanelPort(array $params): array
         return ['success' => false, 'error' => '.env file not found'];
     }
 
-    $oldPort = trim((string) shell_exec("grep -oP '(?<=^PANEL_PORT=)\d+' " . escapeshellarg($envFile) . " 2>/dev/null")) ?: '8443';
+    $oldPort = trim((string) shell_exec("grep -oP '(?<=^PANEL_PORT=)\d+' ".escapeshellarg($envFile).' 2>/dev/null')) ?: '8443';
 
     // Update .env
     $env = file_get_contents($envFile);
@@ -13646,9 +13649,9 @@ function setPanelPort(array $params): array
     }
 
     // Update firewall
-    exec('ufw allow ' . escapeshellarg((string) $port) . '/tcp 2>/dev/null');
+    exec('ufw allow '.escapeshellarg((string) $port).'/tcp 2>/dev/null');
     if ($oldPort !== (string) $port) {
-        exec('ufw delete allow ' . escapeshellarg($oldPort) . '/tcp 2>/dev/null');
+        exec('ufw delete allow '.escapeshellarg($oldPort).'/tcp 2>/dev/null');
     }
 
     // Restart FrankenPHP panel service
@@ -13876,7 +13879,7 @@ function serverUpgradeInfra(array $params): array
     $exitCode = 0;
     // JABALI_SKIP_AGENT_RESTART prevents install.sh from restarting the agent
     // (since WE are the agent — restarting would kill this process mid-response)
-    exec('JABALI_SKIP_AGENT_RESTART=1 bash ' . escapeshellarg($installScript) . ' upgrade 2>&1', $output, $exitCode);
+    exec('JABALI_SKIP_AGENT_RESTART=1 bash '.escapeshellarg($installScript).' upgrade 2>&1', $output, $exitCode);
 
     return [
         'success' => $exitCode === 0,
@@ -15644,7 +15647,6 @@ function importStart(array $params): array
     return ['success' => true, 'message' => 'Import process started'];
 }
 
-
 // ============ SSL CERTIFICATE MANAGEMENT ============
 
 /**
@@ -16010,7 +16012,7 @@ function sslPanelIssue(array $params): array
     }
 
     if (empty($hostname) || $hostname === 'localhost' || filter_var($hostname, FILTER_VALIDATE_IP)) {
-        return ['success' => false, 'error' => "Cannot issue certificate for IP address or localhost. Set PANEL_HOSTNAME in .env to a valid domain name (e.g. mx.jabali-panel.com)"];
+        return ['success' => false, 'error' => 'Cannot issue certificate for IP address or localhost. Set PANEL_HOSTNAME in .env to a valid domain name (e.g. mx.jabali-panel.com)'];
     }
 
     $email = $params['email'] ?? "admin@{$hostname}";
@@ -16983,7 +16985,6 @@ function importUserPanelData(string $username, array $data): array
     }
 }
 
-
 // ============================================================================
 // BACKUP SYSTEM — Restic-based backup and restore
 // ============================================================================
@@ -16992,7 +16993,7 @@ function importUserPanelData(string $username, array $data): array
  * Execute a restic command with proper environment for repo and auth.
  * All user inputs are escaped via escapeshellarg() for safety.
  *
- * @param array $destination Optional destination config for SFTP/S3 auth
+ * @param  array  $destination  Optional destination config for SFTP/S3 auth
  */
 function resticCmd(string $subcommand, string $repo = '', array $destination = []): array
 {
@@ -17015,7 +17016,7 @@ function resticCmd(string $subcommand, string $repo = '', array $destination = [
             return ['output' => 'Invalid SFTP username or host', 'lines' => [], 'exitCode' => 1];
         }
         $sftpCmd = "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o RequestTTY=no -p {$port} {$user}@{$host} -s sftp";
-        $sftpOption = '-o sftp.command=' . escapeshellarg($sftpCmd);
+        $sftpOption = '-o sftp.command='.escapeshellarg($sftpCmd);
     }
 
     // S3 credentials
@@ -17053,7 +17054,7 @@ function resticCmd(string $subcommand, string $repo = '', array $destination = [
         $url = $destination['url'] ?? '';
         $user = $destination['username'];
         $pass = $destination['password'] ?? '';
-        $repo = preg_replace('#^(https?://)#', '$1' . rawurlencode($user) . ':' . rawurlencode($pass) . '@', $url);
+        $repo = preg_replace('#^(https?://)#', '$1'.rawurlencode($user).':'.rawurlencode($pass).'@', $url);
         $repo = "rest:{$repo}";
         $envVars['RESTIC_REPOSITORY'] = $repo;
     }
@@ -17061,7 +17062,7 @@ function resticCmd(string $subcommand, string $repo = '', array $destination = [
     // Build env string — keys are hardcoded constants (safe), values are escaped
     $envStr = '';
     foreach ($envVars as $k => $v) {
-        $envStr .= $k . '=' . escapeshellarg($v) . ' ';
+        $envStr .= $k.'='.escapeshellarg($v).' ';
     }
 
     $cmd = "{$envStr}restic {$sftpOption} {$subcommand} 2>&1";
@@ -17111,6 +17112,7 @@ function resticEnsureRepo(string $repo = '', array $destination = []): bool
     }
 
     $init = resticCmd('init', $repo, $destination);
+
     return $init['exitCode'] === 0;
 }
 
@@ -17118,14 +17120,14 @@ function resticEnsureRepo(string $repo = '', array $destination = []): bool
 
 function backupCreate(array $params): array
 {
-    $username       = $params['username'] ?? '';
-    $includeFiles   = $params['include_files'] ?? true;
-    $includeDbs     = $params['include_databases'] ?? true;
-    $includeMail    = $params['include_mailboxes'] ?? true;
-    $includeDns     = $params['include_dns'] ?? true;
-    $includeSsl     = $params['include_ssl'] ?? true;
-    $destination    = $params['destination'] ?? [];
-    $repo           = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $username = $params['username'] ?? '';
+    $includeFiles = $params['include_files'] ?? true;
+    $includeDbs = $params['include_databases'] ?? true;
+    $includeMail = $params['include_mailboxes'] ?? true;
+    $includeDns = $params['include_dns'] ?? true;
+    $includeSsl = $params['include_ssl'] ?? true;
+    $destination = $params['destination'] ?? [];
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
     if (! validateUsername($username)) {
         return ['success' => false, 'error' => 'Invalid username'];
@@ -17165,7 +17167,7 @@ function backupCreate(array $params): array
             $paths[] = "{$homeDir}/domains";
             $manifest['domains'] = array_values(array_filter(
                 scandir("{$homeDir}/domains"),
-                fn($d) => $d !== '.' && $d !== '..' && is_dir("{$homeDir}/domains/{$d}")
+                fn ($d) => $d !== '.' && $d !== '..' && is_dir("{$homeDir}/domains/{$d}")
             ));
         }
 
@@ -17181,13 +17183,13 @@ function backupCreate(array $params): array
 
         // 3. Mailboxes
         if ($includeMail) {
-            $mailDir = "/var/mail/vhosts";
+            $mailDir = '/var/mail/vhosts';
             if (is_dir($mailDir)) {
                 foreach ($manifest['domains'] as $domain) {
                     $mailPath = "{$mailDir}/{$domain}";
                     if (is_dir($mailPath)) {
                         $paths[] = $mailPath;
-                        $users = array_filter(scandir($mailPath), fn($d) => $d !== '.' && $d !== '..');
+                        $users = array_filter(scandir($mailPath), fn ($d) => $d !== '.' && $d !== '..');
                         foreach ($users as $mbox) {
                             $manifest['mailboxes'][] = "{$mbox}@{$domain}";
                         }
@@ -17236,16 +17238,16 @@ function backupCreate(array $params): array
 
         // Run restic backup — all paths escaped individually
         $pathArgs = implode(' ', array_map('escapeshellarg', $paths));
-        $excludes = '--exclude-caches --exclude=' . escapeshellarg('*.log')
-            . ' --exclude=' . escapeshellarg('node_modules')
-            . ' --exclude=' . escapeshellarg('vendor')
-            . ' --exclude=' . escapeshellarg('.cache');
-        $tags = '--tag ' . escapeshellarg("user:{$username}") . ' --tag ' . escapeshellarg('type:user');
+        $excludes = '--exclude-caches --exclude='.escapeshellarg('*.log')
+            .' --exclude='.escapeshellarg('node_modules')
+            .' --exclude='.escapeshellarg('vendor')
+            .' --exclude='.escapeshellarg('.cache');
+        $tags = '--tag '.escapeshellarg("user:{$username}").' --tag '.escapeshellarg('type:user');
 
         $result = resticCmd("backup {$pathArgs} {$excludes} {$tags} --json", $repo, $destination);
 
         if ($result['exitCode'] !== 0) {
-            return ['success' => false, 'error' => 'Restic backup failed: ' . $result['output']];
+            return ['success' => false, 'error' => 'Restic backup failed: '.$result['output']];
         }
 
         // Parse snapshot ID from JSON output
@@ -17271,12 +17273,13 @@ function backupCreate(array $params): array
         ];
     } finally {
         // Cleanup staging
-        exec('rm -rf ' . escapeshellarg($stageDir));
+        exec('rm -rf '.escapeshellarg($stageDir));
     }
 }
 
 /**
  * Dump all databases owned by a user to a directory.
+ *
  * @return list<string> Database names dumped
  */
 function dumpUserDatabases(string $username, string $outputDir): array
@@ -17286,7 +17289,7 @@ function dumpUserDatabases(string $username, string $outputDir): array
         return [];
     }
 
-    $prefix = $username . '_';
+    $prefix = $username.'_';
     $escaped = $mysqli->real_escape_string($prefix);
     $dbResult = $mysqli->query("SHOW DATABASES LIKE '{$escaped}%'");
     $databases = [];
@@ -17299,11 +17302,11 @@ function dumpUserDatabases(string $username, string $outputDir): array
         $dbName = $row[0];
         $sqlFile = "{$outputDir}/{$dbName}.sql.gz";
 
-        $cmd = 'mysqldump --host=' . escapeshellarg($mysqlHost)
-            . ' --user=' . escapeshellarg($mysqlUser)
-            . ' --password=' . escapeshellarg($mysqlPass)
-            . ' --single-transaction --quick ' . escapeshellarg($dbName)
-            . ' | gzip > ' . escapeshellarg($sqlFile) . ' 2>/dev/null';
+        $cmd = 'mysqldump --host='.escapeshellarg($mysqlHost)
+            .' --user='.escapeshellarg($mysqlUser)
+            .' --password='.escapeshellarg($mysqlPass)
+            .' --single-transaction --quick '.escapeshellarg($dbName)
+            .' | gzip > '.escapeshellarg($sqlFile).' 2>/dev/null';
         $out = [];
         $ret = 0;
         exec($cmd, $out, $ret);
@@ -17314,12 +17317,12 @@ function dumpUserDatabases(string $username, string $outputDir): array
     }
 
     // Dump MySQL users
-    $safePrefix = $mysqli->real_escape_string($username) . '\\_';
+    $safePrefix = $mysqli->real_escape_string($username).'\\_';
     $userQuery = $mysqli->query("SELECT User, Host FROM mysql.user WHERE User LIKE '{$safePrefix}%'");
     if ($userQuery && $userQuery->num_rows > 0) {
         $usersSql = "-- MySQL Users for {$username}\n";
         while ($userRow = $userQuery->fetch_assoc()) {
-            $uid = "'" . $mysqli->real_escape_string($userRow['User']) . "'@'" . $mysqli->real_escape_string($userRow['Host']) . "'";
+            $uid = "'".$mysqli->real_escape_string($userRow['User'])."'@'".$mysqli->real_escape_string($userRow['Host'])."'";
             $create = $mysqli->query("SHOW CREATE USER {$uid}");
             if ($create && $cr = $create->fetch_row()) {
                 $usersSql .= "DROP USER IF EXISTS {$uid};\n{$cr[0]};\n";
@@ -17335,6 +17338,7 @@ function dumpUserDatabases(string $username, string $outputDir): array
     }
 
     $mysqli->close();
+
     return $databases;
 }
 
@@ -17346,14 +17350,14 @@ function dumpUserDatabases(string $username, string $outputDir): array
  */
 function backupCreateUserSnapshot(array $params): array
 {
-    $username    = $params['username'] ?? '';
+    $username = $params['username'] ?? '';
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
     $includeFiles = $params['include_files'] ?? true;
-    $includeDbs   = $params['include_databases'] ?? true;
-    $includeMail  = $params['include_mailboxes'] ?? true;
-    $includeDns   = $params['include_dns'] ?? true;
-    $includeSsl   = $params['include_ssl'] ?? true;
+    $includeDbs = $params['include_databases'] ?? true;
+    $includeMail = $params['include_mailboxes'] ?? true;
+    $includeDns = $params['include_dns'] ?? true;
+    $includeSsl = $params['include_ssl'] ?? true;
 
     if (empty($username) || ! validateUsername($username)) {
         return ['success' => false, 'error' => 'Invalid username'];
@@ -17376,7 +17380,7 @@ function backupCreateUserSnapshot(array $params): array
     // Domain files
     if ($includeFiles && is_dir("{$homeDir}/domains")) {
         $paths[] = "{$homeDir}/domains";
-        $domains = array_values(array_filter(scandir("{$homeDir}/domains"), fn($d) => $d !== '.' && $d !== '..' && is_dir("{$homeDir}/domains/{$d}")));
+        $domains = array_values(array_filter(scandir("{$homeDir}/domains"), fn ($d) => $d !== '.' && $d !== '..' && is_dir("{$homeDir}/domains/{$d}")));
     }
 
     // Databases
@@ -17396,7 +17400,7 @@ function backupCreateUserSnapshot(array $params): array
             $mailPath = "/var/mail/vhosts/{$domain}";
             if (is_dir($mailPath)) {
                 $paths[] = $mailPath;
-                $mboxUsers = array_filter(scandir($mailPath), fn($d) => $d !== '.' && $d !== '..');
+                $mboxUsers = array_filter(scandir($mailPath), fn ($d) => $d !== '.' && $d !== '..');
                 foreach ($mboxUsers as $m) {
                     $mailboxes[] = "{$m}@{$domain}";
                 }
@@ -17420,7 +17424,7 @@ function backupCreateUserSnapshot(array $params): array
         @mkdir($dnsDir, 0700, true);
         foreach ($domains as $domain) {
             $zo = [];
-            exec('pdnsutil list-zone ' . escapeshellarg($domain) . ' 2>/dev/null', $zo, $ret);
+            exec('pdnsutil list-zone '.escapeshellarg($domain).' 2>/dev/null', $zo, $ret);
             if ($ret === 0 && ! empty($zo)) {
                 file_put_contents("{$dnsDir}/{$domain}.zone", implode("\n", $zo));
                 $paths[] = "{$dnsDir}/{$domain}.zone";
@@ -17438,24 +17442,24 @@ function backupCreateUserSnapshot(array $params): array
     $paths[] = "{$manifestDir}/manifest.json";
 
     if (empty($paths)) {
-        return ['success' => false, 'error' => 'Nothing to backup for user ' . $username];
+        return ['success' => false, 'error' => 'Nothing to backup for user '.$username];
     }
 
     // Restic backup — single user, tagged
     $pathArgs = implode(' ', array_map('escapeshellarg', array_unique($paths)));
-    $excludes = '--exclude-caches --exclude=' . escapeshellarg('*.log')
-        . ' --exclude=' . escapeshellarg('node_modules')
-        . ' --exclude=' . escapeshellarg('vendor')
-        . ' --exclude=' . escapeshellarg('.cache');
-    $tags = '--tag ' . escapeshellarg("user:{$username}") . ' --tag ' . escapeshellarg('type:account');
+    $excludes = '--exclude-caches --exclude='.escapeshellarg('*.log')
+        .' --exclude='.escapeshellarg('node_modules')
+        .' --exclude='.escapeshellarg('vendor')
+        .' --exclude='.escapeshellarg('.cache');
+    $tags = '--tag '.escapeshellarg("user:{$username}").' --tag '.escapeshellarg('type:account');
 
     $result = resticCmd("backup {$pathArgs} {$excludes} {$tags} --json", $repo, $destination);
 
     // Cleanup staging
-    exec('rm -rf ' . escapeshellarg("{$homeDir}/.jabali-backup"));
+    exec('rm -rf '.escapeshellarg("{$homeDir}/.jabali-backup"));
 
     if ($result['exitCode'] !== 0) {
-        return ['success' => false, 'error' => 'Restic backup failed: ' . $result['output']];
+        return ['success' => false, 'error' => 'Restic backup failed: '.$result['output']];
     }
 
     $snapshotId = null;
@@ -17485,18 +17489,18 @@ function backupCreateUserSnapshot(array $params): array
 
 function backupCreateServer(array $params): array
 {
-    $users       = $params['users'] ?? null;
+    $users = $params['users'] ?? null;
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
     $includeFiles = $params['include_files'] ?? true;
-    $includeDbs   = $params['include_databases'] ?? true;
-    $includeMail  = $params['include_mailboxes'] ?? true;
-    $includeDns   = $params['include_dns'] ?? true;
-    $includeSsl   = $params['include_ssl'] ?? true;
+    $includeDbs = $params['include_databases'] ?? true;
+    $includeMail = $params['include_mailboxes'] ?? true;
+    $includeDns = $params['include_dns'] ?? true;
+    $includeSsl = $params['include_ssl'] ?? true;
 
     // Get user list
     if ($users === null || empty($users)) {
-        $userDirs = array_filter(scandir('/home'), fn($d) => $d !== '.' && $d !== '..' && is_dir("/home/{$d}") && $d !== 'lost+found');
+        $userDirs = array_filter(scandir('/home'), fn ($d) => $d !== '.' && $d !== '..' && is_dir("/home/{$d}") && $d !== 'lost+found');
         $users = array_values($userDirs);
     }
 
@@ -17530,7 +17534,7 @@ function backupCreateServer(array $params): array
         $userDomains = [];
         if ($includeFiles && is_dir("{$homeDir}/domains")) {
             $allPaths[] = "{$homeDir}/domains";
-            $userDomains = array_values(array_filter(scandir("{$homeDir}/domains"), fn($d) => $d !== '.' && $d !== '..' && is_dir("{$homeDir}/domains/{$d}")));
+            $userDomains = array_values(array_filter(scandir("{$homeDir}/domains"), fn ($d) => $d !== '.' && $d !== '..' && is_dir("{$homeDir}/domains/{$d}")));
             $allDomains = array_merge($allDomains, $userDomains);
         }
 
@@ -17551,7 +17555,7 @@ function backupCreateServer(array $params): array
                 $mailPath = "/var/mail/vhosts/{$domain}";
                 if (is_dir($mailPath)) {
                     $allPaths[] = $mailPath;
-                    $mboxUsers = array_filter(scandir($mailPath), fn($d) => $d !== '.' && $d !== '..');
+                    $mboxUsers = array_filter(scandir($mailPath), fn ($d) => $d !== '.' && $d !== '..');
                     foreach ($mboxUsers as $m) {
                         $allMailboxes[] = "{$m}@{$domain}";
                     }
@@ -17575,7 +17579,7 @@ function backupCreateServer(array $params): array
             @mkdir($dnsDir, 0700, true);
             foreach ($userDomains as $domain) {
                 $zo = [];
-                exec('pdnsutil list-zone ' . escapeshellarg($domain) . ' 2>/dev/null', $zo, $ret);
+                exec('pdnsutil list-zone '.escapeshellarg($domain).' 2>/dev/null', $zo, $ret);
                 if ($ret === 0 && ! empty($zo)) {
                     file_put_contents("{$dnsDir}/{$domain}.zone", implode("\n", $zo));
                     $allPaths[] = "{$dnsDir}/{$domain}.zone";
@@ -17600,24 +17604,24 @@ function backupCreateServer(array $params): array
 
     // ONE restic backup for all users
     $pathArgs = implode(' ', array_map('escapeshellarg', array_unique($allPaths)));
-    $excludes = '--exclude-caches --exclude=' . escapeshellarg('*.log')
-        . ' --exclude=' . escapeshellarg('node_modules')
-        . ' --exclude=' . escapeshellarg('vendor')
-        . ' --exclude=' . escapeshellarg('.cache');
-    $tags = '--tag ' . escapeshellarg('type:server');
+    $excludes = '--exclude-caches --exclude='.escapeshellarg('*.log')
+        .' --exclude='.escapeshellarg('node_modules')
+        .' --exclude='.escapeshellarg('vendor')
+        .' --exclude='.escapeshellarg('.cache');
+    $tags = '--tag '.escapeshellarg('type:server');
     foreach ($backedUpUsers as $u) {
-        $tags .= ' --tag ' . escapeshellarg("user:{$u}");
+        $tags .= ' --tag '.escapeshellarg("user:{$u}");
     }
 
     $result = resticCmd("backup {$pathArgs} {$excludes} {$tags} --json", $repo, $destination);
 
     // Cleanup staging dirs
     foreach ($backedUpUsers as $u) {
-        exec('rm -rf ' . escapeshellarg("/home/{$u}/.jabali-backup"));
+        exec('rm -rf '.escapeshellarg("/home/{$u}/.jabali-backup"));
     }
 
     if ($result['exitCode'] !== 0) {
-        return ['success' => false, 'error' => 'Restic backup failed: ' . $result['output']];
+        return ['success' => false, 'error' => 'Restic backup failed: '.$result['output']];
     }
 
     $snapshotId = null;
@@ -17644,17 +17648,17 @@ function backupCreateServer(array $params): array
 
 function backupRestore(array $params): array
 {
-    $snapshotId  = $params['snapshot_id'] ?? '';
-    $username    = $params['username'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? '';
+    $username = $params['username'] ?? '';
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
     $restoreFiles = $params['restore_files'] ?? true;
-    $restoreDbs   = $params['restore_databases'] ?? true;
-    $restoreMail  = $params['restore_mailboxes'] ?? true;
-    $selectedDomains   = $params['selected_domains'] ?? null;   // null = all
+    $restoreDbs = $params['restore_databases'] ?? true;
+    $restoreMail = $params['restore_mailboxes'] ?? true;
+    $selectedDomains = $params['selected_domains'] ?? null;   // null = all
     $selectedDatabases = $params['selected_databases'] ?? null;  // null = all
     $selectedMailboxes = $params['selected_mailboxes'] ?? null;  // null = all
-    $selectedDbUsers   = $params['selected_db_users'] ?? null;   // null = all, [] = none
+    $selectedDbUsers = $params['selected_db_users'] ?? null;   // null = all, [] = none
 
     if (empty($snapshotId)) {
         return ['success' => false, 'error' => 'snapshot_id is required'];
@@ -17668,17 +17672,17 @@ function backupRestore(array $params): array
         return ['success' => false, 'error' => 'Invalid snapshot ID format'];
     }
 
-    $restoreDir = '/tmp/jabali_restore_' . bin2hex(random_bytes(16));
+    $restoreDir = '/tmp/jabali_restore_'.bin2hex(random_bytes(16));
     mkdir($restoreDir, 0700, true);
 
     try {
         $result = resticCmd(
-            'restore ' . escapeshellarg($snapshotId) . ' --target ' . escapeshellarg($restoreDir),
+            'restore '.escapeshellarg($snapshotId).' --target '.escapeshellarg($restoreDir),
             $repo, $destination
         );
 
         if ($result['exitCode'] !== 0) {
-            return ['success' => false, 'error' => 'Restic restore failed: ' . $result['output']];
+            return ['success' => false, 'error' => 'Restic restore failed: '.$result['output']];
         }
 
         $restored = ['files' => 0, 'databases' => 0, 'mailboxes' => 0];
@@ -17688,7 +17692,7 @@ function backupRestore(array $params): array
 
         // Restore domain files (optionally filtered by selected_domains)
         if ($restoreFiles && is_dir("{$restoredHome}/domains")) {
-            $domainDirs = array_filter(scandir("{$restoredHome}/domains"), fn($d) => $d !== '.' && $d !== '..' && is_dir("{$restoredHome}/domains/{$d}"));
+            $domainDirs = array_filter(scandir("{$restoredHome}/domains"), fn ($d) => $d !== '.' && $d !== '..' && is_dir("{$restoredHome}/domains/{$d}"));
 
             foreach ($domainDirs as $domain) {
                 if ($selectedDomains !== null && ! in_array($domain, $selectedDomains)) {
@@ -17699,7 +17703,7 @@ function backupRestore(array $params): array
                 mkdir($dst, 0755, true);
                 $out = [];
                 $ret = 0;
-                exec('rsync -a ' . escapeshellarg($src) . ' ' . escapeshellarg($dst) . ' 2>&1', $out, $ret);
+                exec('rsync -a '.escapeshellarg($src).' '.escapeshellarg($dst).' 2>&1', $out, $ret);
                 if ($ret === 0) {
                     $restored['files']++;
                     $log[] = ['message' => "Restored domain: {$domain}", 'status' => 'success'];
@@ -17723,22 +17727,23 @@ function backupRestore(array $params): array
                     $dbName = basename($dumpFile, '.sql.gz');
                     if (! preg_match('/^[a-zA-Z0-9_]+$/', $dbName)) {
                         logger("Skipping invalid database name from backup: {$dbName}", 'WARN');
+
                         continue;
                     }
                     if ($selectedDatabases !== null && ! in_array($dbName, $selectedDatabases)) {
                         continue;
                     }
-                    exec('mysql --host=' . escapeshellarg($mysqlHost)
-                        . ' --user=' . escapeshellarg($mysqlUser)
-                        . ' --password=' . escapeshellarg($mysqlPass)
-                        . ' -e ' . escapeshellarg("CREATE DATABASE IF NOT EXISTS `{$dbName}`")
-                        . ' 2>/dev/null');
+                    exec('mysql --host='.escapeshellarg($mysqlHost)
+                        .' --user='.escapeshellarg($mysqlUser)
+                        .' --password='.escapeshellarg($mysqlPass)
+                        .' -e '.escapeshellarg("CREATE DATABASE IF NOT EXISTS `{$dbName}`")
+                        .' 2>/dev/null');
 
-                    $importCmd = 'gunzip -c ' . escapeshellarg($dumpFile)
-                        . ' | mysql --host=' . escapeshellarg($mysqlHost)
-                        . ' --user=' . escapeshellarg($mysqlUser)
-                        . ' --password=' . escapeshellarg($mysqlPass)
-                        . ' ' . escapeshellarg($dbName) . ' 2>/dev/null';
+                    $importCmd = 'gunzip -c '.escapeshellarg($dumpFile)
+                        .' | mysql --host='.escapeshellarg($mysqlHost)
+                        .' --user='.escapeshellarg($mysqlUser)
+                        .' --password='.escapeshellarg($mysqlPass)
+                        .' '.escapeshellarg($dbName).' 2>/dev/null';
                     $out = [];
                     $ret = 0;
                     exec($importCmd, $out, $ret);
@@ -17774,12 +17779,12 @@ function backupRestore(array $params): array
 
                         if (trim($sanitizedSql) !== '') {
                             $tmpFile = tempnam(sys_get_temp_dir(), 'jabali_users_');
-                            file_put_contents($tmpFile, $sanitizedSql . "\nFLUSH PRIVILEGES;\n");
+                            file_put_contents($tmpFile, $sanitizedSql."\nFLUSH PRIVILEGES;\n");
 
-                            $userImportCmd = 'mysql --host=' . escapeshellarg($mysqlHost)
-                                . ' --user=' . escapeshellarg($mysqlUser)
-                                . ' --password=' . escapeshellarg($mysqlPass)
-                                . ' < ' . escapeshellarg($tmpFile) . ' 2>/dev/null';
+                            $userImportCmd = 'mysql --host='.escapeshellarg($mysqlHost)
+                                .' --user='.escapeshellarg($mysqlUser)
+                                .' --password='.escapeshellarg($mysqlPass)
+                                .' < '.escapeshellarg($tmpFile).' 2>/dev/null';
                             $out = [];
                             $ret = 0;
                             exec($userImportCmd, $out, $ret);
@@ -17803,7 +17808,7 @@ function backupRestore(array $params): array
                 $domain = basename($domainMailDir);
                 if ($selectedMailboxes !== null) {
                     // selected_mailboxes contains "user@domain" — check if any match this domain
-                    $domainMatch = array_filter($selectedMailboxes, fn($m) => str_ends_with($m, "@{$domain}"));
+                    $domainMatch = array_filter($selectedMailboxes, fn ($m) => str_ends_with($m, "@{$domain}"));
                     if (empty($domainMatch)) {
                         continue;
                     }
@@ -17811,8 +17816,8 @@ function backupRestore(array $params): array
                 $targetDir = "/var/mail/vhosts/{$domain}";
                 if (is_dir($domainMailDir)) {
                     mkdir($targetDir, 0755, true);
-                    exec('rsync -a ' . escapeshellarg("{$domainMailDir}/") . ' ' . escapeshellarg("{$targetDir}/") . ' 2>&1');
-                    exec('chown -R vmail:vmail ' . escapeshellarg($targetDir));
+                    exec('rsync -a '.escapeshellarg("{$domainMailDir}/").' '.escapeshellarg("{$targetDir}/").' 2>&1');
+                    exec('chown -R vmail:vmail '.escapeshellarg($targetDir));
                     $restored['mailboxes']++;
                     $log[] = ['message' => "Restored mailboxes for {$domain}", 'status' => 'success'];
                 }
@@ -17821,7 +17826,7 @@ function backupRestore(array $params): array
 
         // Fix ownership
         if (is_dir($homeDir)) {
-            exec('chown -R ' . escapeshellarg($username) . ':' . escapeshellarg($username) . ' ' . escapeshellarg($homeDir));
+            exec('chown -R '.escapeshellarg($username).':'.escapeshellarg($username).' '.escapeshellarg($homeDir));
         }
 
         return [
@@ -17833,7 +17838,7 @@ function backupRestore(array $params): array
             'log' => $log,
         ];
     } finally {
-        exec('rm -rf ' . escapeshellarg($restoreDir));
+        exec('rm -rf '.escapeshellarg($restoreDir));
     }
 }
 
@@ -17842,10 +17847,10 @@ function backupRestore(array $params): array
  */
 function backupRestorePaths(array $params): array
 {
-    $snapshotId   = $params['snapshot_id'] ?? '';
-    $username     = $params['username'] ?? '';
-    $destination  = $params['destination'] ?? [];
-    $repo         = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $snapshotId = $params['snapshot_id'] ?? '';
+    $username = $params['username'] ?? '';
+    $destination = $params['destination'] ?? [];
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
     $includePaths = $params['include_paths'] ?? [];
 
     if (empty($snapshotId) || empty($includePaths)) {
@@ -17860,19 +17865,19 @@ function backupRestorePaths(array $params): array
         return ['success' => false, 'error' => 'Invalid snapshot ID format'];
     }
 
-    $restoreDir = '/tmp/jabali_restore_' . bin2hex(random_bytes(16));
+    $restoreDir = '/tmp/jabali_restore_'.bin2hex(random_bytes(16));
     mkdir($restoreDir, 0700, true);
 
     try {
-        $includeArgs = implode(' ', array_map(fn ($p) => '--include ' . escapeshellarg($p), $includePaths));
+        $includeArgs = implode(' ', array_map(fn ($p) => '--include '.escapeshellarg($p), $includePaths));
 
         $result = resticCmd(
-            'restore ' . escapeshellarg($snapshotId) . ' --target ' . escapeshellarg($restoreDir) . ' ' . $includeArgs,
+            'restore '.escapeshellarg($snapshotId).' --target '.escapeshellarg($restoreDir).' '.$includeArgs,
             $repo, $destination
         );
 
         if ($result['exitCode'] !== 0) {
-            return ['success' => false, 'error' => 'Restic restore failed: ' . $result['output']];
+            return ['success' => false, 'error' => 'Restic restore failed: '.$result['output']];
         }
 
         // Move restored files to their original locations
@@ -17882,8 +17887,8 @@ function backupRestorePaths(array $params): array
         if (is_dir($restoredHome)) {
             $out = [];
             $ret = 0;
-            exec('rsync -a ' . escapeshellarg("{$restoredHome}/") . ' ' . escapeshellarg("{$homeDir}/") . ' 2>&1', $out, $ret);
-            exec('chown -R ' . escapeshellarg($username) . ':' . escapeshellarg($username) . ' ' . escapeshellarg($homeDir));
+            exec('rsync -a '.escapeshellarg("{$restoredHome}/").' '.escapeshellarg("{$homeDir}/").' 2>&1', $out, $ret);
+            exec('chown -R '.escapeshellarg($username).':'.escapeshellarg($username).' '.escapeshellarg($homeDir));
         }
 
         return [
@@ -17892,7 +17897,7 @@ function backupRestorePaths(array $params): array
             'count' => count($includePaths),
         ];
     } finally {
-        exec('rm -rf ' . escapeshellarg($restoreDir));
+        exec('rm -rf '.escapeshellarg($restoreDir));
     }
 }
 
@@ -17900,22 +17905,22 @@ function backupRestorePaths(array $params): array
 
 function backupList(array $params): array
 {
-    $username    = $params['username'] ?? '';
+    $username = $params['username'] ?? '';
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
-    $tagFilter = ! empty($username) ? '--tag ' . escapeshellarg("user:{$username}") : '';
+    $tagFilter = ! empty($username) ? '--tag '.escapeshellarg("user:{$username}") : '';
     $result = resticCmd("snapshots --json {$tagFilter}", $repo, $destination);
 
     if ($result['exitCode'] !== 0) {
-        return ['success' => false, 'error' => 'Failed to list snapshots: ' . $result['output']];
+        return ['success' => false, 'error' => 'Failed to list snapshots: '.$result['output']];
     }
 
     $snapshots = @json_decode($result['output'], true) ?: [];
 
     return [
         'success' => true,
-        'snapshots' => array_map(fn($s) => [
+        'snapshots' => array_map(fn ($s) => [
             'id' => $s['short_id'] ?? substr($s['id'] ?? '', 0, 8),
             'full_id' => $s['id'] ?? '',
             'time' => $s['time'] ?? '',
@@ -17927,15 +17932,15 @@ function backupList(array $params): array
 
 function backupListContents(array $params): array
 {
-    $snapshotId  = $params['snapshot_id'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? '';
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
     if (empty($snapshotId)) {
         return ['success' => false, 'error' => 'snapshot_id is required'];
     }
 
-    $result = resticCmd('ls ' . escapeshellarg($snapshotId) . ' --json', $repo, $destination);
+    $result = resticCmd('ls '.escapeshellarg($snapshotId).' --json', $repo, $destination);
 
     if ($result['exitCode'] !== 0) {
         return ['success' => false, 'error' => 'Failed to list snapshot contents'];
@@ -17954,11 +17959,11 @@ function backupListContents(array $params): array
 
 function backupListDomainFiles(array $params): array
 {
-    $snapshotId  = $params['snapshot_id'] ?? '';
-    $path        = $params['path'] ?? '';
-    $username    = $params['username'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? '';
+    $path = $params['path'] ?? '';
+    $username = $params['username'] ?? '';
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
     if (empty($snapshotId)) {
         return ['success' => false, 'error' => 'snapshot_id is required'];
@@ -17966,7 +17971,7 @@ function backupListDomainFiles(array $params): array
 
     // If path starts with /, use as-is (admin absolute browse). Otherwise prepend user home.
     $fullPath = str_starts_with($path, '/') ? $path : "/home/{$username}/{$path}";
-    $result = resticCmd('ls ' . escapeshellarg($snapshotId) . ' ' . escapeshellarg($fullPath) . ' --json', $repo, $destination);
+    $result = resticCmd('ls '.escapeshellarg($snapshotId).' '.escapeshellarg($fullPath).' --json', $repo, $destination);
 
     $items = [];
     foreach ($result['lines'] as $line) {
@@ -17988,15 +17993,15 @@ function backupListDomainFiles(array $params): array
 
 function backupGetInfo(array $params): array
 {
-    $snapshotId  = $params['snapshot_id'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? '';
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
     if (empty($snapshotId)) {
         return ['success' => false, 'error' => 'snapshot_id is required'];
     }
 
-    $result = resticCmd('snapshots ' . escapeshellarg($snapshotId) . ' --json', $repo, $destination);
+    $result = resticCmd('snapshots '.escapeshellarg($snapshotId).' --json', $repo, $destination);
 
     if ($result['exitCode'] !== 0) {
         return ['success' => false, 'error' => 'Snapshot not found'];
@@ -18031,15 +18036,15 @@ function backupGetInfo(array $params): array
 
 function backupDelete(array $params): array
 {
-    $snapshotId  = $params['snapshot_id'] ?? '';
+    $snapshotId = $params['snapshot_id'] ?? '';
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
     if (empty($snapshotId)) {
         return ['success' => false, 'error' => 'snapshot_id is required'];
     }
 
-    $result = resticCmd('forget ' . escapeshellarg($snapshotId) . ' --prune', $repo, $destination);
+    $result = resticCmd('forget '.escapeshellarg($snapshotId).' --prune', $repo, $destination);
 
     return [
         'success' => $result['exitCode'] === 0,
@@ -18054,9 +18059,9 @@ function backupDeleteServer(array $params): array
 
 function backupForget(array $params): array
 {
-    $keepLast    = max(1, (int) ($params['keep_last'] ?? 7));
+    $keepLast = max(1, (int) ($params['keep_last'] ?? 7));
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
     $result = resticCmd("forget --keep-last {$keepLast} --prune", $repo, $destination);
 
@@ -18071,7 +18076,7 @@ function backupForget(array $params): array
 function backupVerify(array $params): array
 {
     $destination = $params['destination'] ?? [];
-    $repo        = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
+    $repo = ! empty($destination) ? resticRepoUrl($destination) : ($params['repo'] ?? '');
 
     $result = resticCmd('check', $repo, $destination);
 
@@ -18133,6 +18138,7 @@ function backupTestDestination(array $params): array
         if (resticEnsureRepo($path, [])) {
             return ['success' => true, 'message' => 'Local repository ready'];
         }
+
         return ['success' => false, 'error' => 'Failed to initialize local repository'];
     }
 
@@ -18189,7 +18195,7 @@ function backupReadSnapshotFile(array $params): array
     }
 
     $result = resticCmd(
-        'dump ' . escapeshellarg($snapshotId) . ' ' . escapeshellarg($filePath),
+        'dump '.escapeshellarg($snapshotId).' '.escapeshellarg($filePath),
         $repo,
         $destination
     );
@@ -18226,19 +18232,19 @@ function backupExportSnapshot(array $params): array
     $passwordFile = '/etc/jabali/restic-password';
 
     $envParts = [
-        'RESTIC_REPOSITORY=' . escapeshellarg($repo),
-        'RESTIC_PASSWORD_FILE=' . escapeshellarg($passwordFile),
+        'RESTIC_REPOSITORY='.escapeshellarg($repo),
+        'RESTIC_PASSWORD_FILE='.escapeshellarg($passwordFile),
     ];
 
     $sftpOption = '';
     if (str_starts_with($repo, 'sftp:') && ! empty($destination['password'])) {
-        $envParts[] = 'SSHPASS=' . escapeshellarg($destination['password']);
+        $envParts[] = 'SSHPASS='.escapeshellarg($destination['password']);
         $port = (int) ($destination['port'] ?? 22);
         $host = $destination['host'] ?? '';
         $user = $destination['username'] ?? '';
         if (preg_match('/^[a-zA-Z0-9._-]+$/', $user) && preg_match('/^[a-zA-Z0-9._:-]+$/', $host)) {
             $sftpCmd = "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o RequestTTY=no -p {$port} {$user}@{$host} -s sftp";
-            $sftpOption = '-o sftp.command=' . escapeshellarg($sftpCmd);
+            $sftpOption = '-o sftp.command='.escapeshellarg($sftpCmd);
         }
     }
 
@@ -18249,20 +18255,20 @@ function backupExportSnapshot(array $params): array
     if (! is_dir($pipeDir)) {
         mkdir($pipeDir, 0700, true);
     }
-    $pipePath = $pipeDir . '/pipe-' . bin2hex(random_bytes(8));
+    $pipePath = $pipeDir.'/pipe-'.bin2hex(random_bytes(8));
     posix_mkfifo($pipePath, 0600);
     // Allow www-data to read it
     chmod($pipePath, 0644);
 
     // Error file — controller checks this if stream is empty
-    $errFile = $pipePath . '.err';
+    $errFile = $pipePath.'.err';
 
     // Start restic dump in background, writing through gzip to the pipe
     // Redirect stdout/stderr and use nohup to fully detach from agent process
-    $bgCmd = "nohup bash -c '($env restic $sftpOption dump " . escapeshellarg($snapshotId)
-        . " / --archive tar 2>" . escapeshellarg($errFile)
-        . " | gzip > " . escapeshellarg($pipePath)
-        . "; rm -f " . escapeshellarg($pipePath) . ")' > /dev/null 2>&1 &";
+    $bgCmd = "nohup bash -c '($env restic $sftpOption dump ".escapeshellarg($snapshotId)
+        .' / --archive tar 2>'.escapeshellarg($errFile)
+        .' | gzip > '.escapeshellarg($pipePath)
+        .'; rm -f '.escapeshellarg($pipePath).")' > /dev/null 2>&1 &";
     exec($bgCmd);
 
     return [
@@ -18274,16 +18280,46 @@ function backupExportSnapshot(array $params): array
 
 // ── Aliases for panel compatibility ─────────────────────────────────────────
 
-function backupListSnapshots(array $params): array { return backupList($params); }
-function backupListSnapshotTree(array $params): array { return backupListContents($params); }
-function backupListSnapshotDir(array $params): array { return backupListDomainFiles($params); }
-function backupUploadRemote(array $params): array { return ['success' => false, 'error' => 'Deprecated: Restic handles remote natively']; }
-function backupServerIncrementalDirect(array $params): array { return ['success' => false, 'error' => 'Deprecated: Restic handles incrementals natively']; }
-function syncViaRsyncIncremental(string $p, array $d): array { return ['success' => false, 'error' => 'Deprecated']; }
-function backupDownloadRemote(array $params): array { return ['success' => false, 'error' => 'Deprecated: Use restic restore']; }
-function backupListRemote(array $params): array { return backupList($params); }
-function backupDeleteRemote(array $params): array { return backupDelete($params); }
-function backupDownloadUserArchive(array $params): array { return ['success' => false, 'error' => 'Deprecated: Use restic restore']; }
+function backupListSnapshots(array $params): array
+{
+    return backupList($params);
+}
+function backupListSnapshotTree(array $params): array
+{
+    return backupListContents($params);
+}
+function backupListSnapshotDir(array $params): array
+{
+    return backupListDomainFiles($params);
+}
+function backupUploadRemote(array $params): array
+{
+    return ['success' => false, 'error' => 'Deprecated: Restic handles remote natively'];
+}
+function backupServerIncrementalDirect(array $params): array
+{
+    return ['success' => false, 'error' => 'Deprecated: Restic handles incrementals natively'];
+}
+function syncViaRsyncIncremental(string $p, array $d): array
+{
+    return ['success' => false, 'error' => 'Deprecated'];
+}
+function backupDownloadRemote(array $params): array
+{
+    return ['success' => false, 'error' => 'Deprecated: Use restic restore'];
+}
+function backupListRemote(array $params): array
+{
+    return backupList($params);
+}
+function backupDeleteRemote(array $params): array
+{
+    return backupDelete($params);
+}
+function backupDownloadUserArchive(array $params): array
+{
+    return ['success' => false, 'error' => 'Deprecated: Use restic restore'];
+}
 
 /**
  * Test SFTP connection.
@@ -19458,146 +19494,146 @@ function systemKillProcess(array $params): array
         ];
     }
 
-function systemFixGitPermissions(array $params): array
-{
-    $path = $params['path'] ?? '/var/www/jabali';
-    $gitDir = rtrim($path, '/') . '/.git';
+    function systemFixGitPermissions(array $params): array
+    {
+        $path = $params['path'] ?? '/var/www/jabali';
+        $gitDir = rtrim($path, '/').'/.git';
 
-    if (! is_dir($gitDir)) {
-        return ['success' => false, 'error' => '.git directory not found'];
+        if (! is_dir($gitDir)) {
+            return ['success' => false, 'error' => '.git directory not found'];
+        }
+
+        // Only allow /var/www/jabali
+        $realPath = realpath($gitDir);
+        if ($realPath === false || ! str_starts_with($realPath, '/var/www/jabali/')) {
+            return ['success' => false, 'error' => 'Invalid path'];
+        }
+
+        exec('chown -R www-data:www-data '.escapeshellarg($realPath).' 2>&1', $output, $code);
+
+        return $code === 0
+            ? ['success' => true, 'message' => '.git permissions fixed']
+            : ['success' => false, 'error' => implode("\n", $output)];
     }
 
-    // Only allow /var/www/jabali
-    $realPath = realpath($gitDir);
-    if ($realPath === false || ! str_starts_with($realPath, '/var/www/jabali/')) {
-        return ['success' => false, 'error' => 'Invalid path'];
+    function systemEnsureDir(array $params): array
+    {
+        $path = $params['path'] ?? '';
+        $owner = $params['owner'] ?? 'www-data';
+        $mode = $params['mode'] ?? '0755';
+
+        // Only allow paths under /var/lib/jabali or /var/www/jabali
+        if (! str_starts_with($path, '/var/lib/jabali') && ! str_starts_with($path, '/var/www/jabali')) {
+            return ['success' => false, 'error' => 'Path not allowed'];
+        }
+
+        if (! is_dir($path)) {
+            mkdir($path, octdec($mode), true);
+            chown($path, $owner);
+            chgrp($path, $owner);
+        }
+
+        return ['success' => is_dir($path)];
     }
 
-    exec('chown -R www-data:www-data ' . escapeshellarg($realPath) . ' 2>&1', $output, $code);
+    /**
+     * Write a configuration file to an allowed system path.
+     * Restricted to /etc/nginx/, /etc/jabali/, /etc/stalwart-mail/, /etc/systemd/system/,
+     * and /home/{user}/ (for per-user credential files).
+     */
+    function systemWriteConfig(array $params): array
+    {
+        $path = $params['path'] ?? '';
+        $content = $params['content'] ?? '';
+        $owner = $params['owner'] ?? 'root';
+        $group = $params['group'] ?? 'root';
+        $mode = $params['mode'] ?? '0644';
+        $mkdir = $params['mkdir'] ?? false;
 
-    return $code === 0
-        ? ['success' => true, 'message' => '.git permissions fixed']
-        : ['success' => false, 'error' => implode("\n", $output)];
-}
+        $allowedPrefixes = [
+            '/etc/nginx/',
+            '/etc/jabali/',
+            '/etc/stalwart-mail/',
+            '/etc/systemd/system/',
+            '/home/',
+            '/var/lib/stalwart-mail/',
+            '/var/log/stalwart-mail/',
+        ];
 
-function systemEnsureDir(array $params): array
-{
-    $path = $params['path'] ?? '';
-    $owner = $params['owner'] ?? 'www-data';
-    $mode = $params['mode'] ?? '0755';
+        $allowed = false;
+        foreach ($allowedPrefixes as $prefix) {
+            if (str_starts_with($path, $prefix)) {
+                $allowed = true;
+                break;
+            }
+        }
 
-    // Only allow paths under /var/lib/jabali or /var/www/jabali
-    if (! str_starts_with($path, '/var/lib/jabali') && ! str_starts_with($path, '/var/www/jabali')) {
-        return ['success' => false, 'error' => 'Path not allowed'];
-    }
+        if (! $allowed) {
+            return ['success' => false, 'error' => 'Path not allowed: '.$path];
+        }
 
-    if (! is_dir($path)) {
-        mkdir($path, octdec($mode), true);
+        // Prevent path traversal
+        if (str_contains($path, '..')) {
+            return ['success' => false, 'error' => 'Path traversal not allowed'];
+        }
+
+        // Create parent directory if requested
+        $parentDir = dirname($path);
+        if ($mkdir && ! is_dir($parentDir)) {
+            mkdir($parentDir, 0755, true);
+            chown($parentDir, $owner);
+            chgrp($parentDir, $group);
+        }
+
+        if (! is_dir($parentDir)) {
+            return ['success' => false, 'error' => 'Parent directory does not exist: '.$parentDir];
+        }
+
+        if (@file_put_contents($path, $content) === false) {
+            return ['success' => false, 'error' => 'Failed to write file: '.$path];
+        }
+
+        chmod($path, octdec($mode));
         chown($path, $owner);
-        chgrp($path, $owner);
+        chgrp($path, $group);
+
+        logger("Config file written: {$path} (owner={$owner}:{$group} mode={$mode})");
+
+        return ['success' => true, 'path' => $path];
     }
 
-    return ['success' => is_dir($path)];
-}
+    /**
+     * Run systemctl commands (start, stop, restart, reload, enable, disable, daemon-reload).
+     * Action and service name are validated against allowlists — no shell injection risk.
+     */
+    function systemSystemctl(array $params): array
+    {
+        $action = $params['action'] ?? '';
+        $service = $params['service'] ?? '';
 
-/**
- * Write a configuration file to an allowed system path.
- * Restricted to /etc/nginx/, /etc/jabali/, /etc/stalwart-mail/, /etc/systemd/system/,
- * and /home/{user}/ (for per-user credential files).
- */
-function systemWriteConfig(array $params): array
-{
-    $path = $params['path'] ?? '';
-    $content = $params['content'] ?? '';
-    $owner = $params['owner'] ?? 'root';
-    $group = $params['group'] ?? 'root';
-    $mode = $params['mode'] ?? '0644';
-    $mkdir = $params['mkdir'] ?? false;
-
-    $allowedPrefixes = [
-        '/etc/nginx/',
-        '/etc/jabali/',
-        '/etc/stalwart-mail/',
-        '/etc/systemd/system/',
-        '/home/',
-        '/var/lib/stalwart-mail/',
-        '/var/log/stalwart-mail/',
-    ];
-
-    $allowed = false;
-    foreach ($allowedPrefixes as $prefix) {
-        if (str_starts_with($path, $prefix)) {
-            $allowed = true;
-            break;
+        $allowedActions = ['start', 'stop', 'restart', 'reload', 'enable', 'disable', 'daemon-reload'];
+        if (! in_array($action, $allowedActions, true)) {
+            return ['success' => false, 'error' => 'Invalid action: '.$action];
         }
-    }
 
-    if (! $allowed) {
-        return ['success' => false, 'error' => 'Path not allowed: '.$path];
-    }
-
-    // Prevent path traversal
-    if (str_contains($path, '..')) {
-        return ['success' => false, 'error' => 'Path traversal not allowed'];
-    }
-
-    // Create parent directory if requested
-    $parentDir = dirname($path);
-    if ($mkdir && ! is_dir($parentDir)) {
-        mkdir($parentDir, 0755, true);
-        chown($parentDir, $owner);
-        chgrp($parentDir, $group);
-    }
-
-    if (! is_dir($parentDir)) {
-        return ['success' => false, 'error' => 'Parent directory does not exist: '.$parentDir];
-    }
-
-    if (@file_put_contents($path, $content) === false) {
-        return ['success' => false, 'error' => 'Failed to write file: '.$path];
-    }
-
-    chmod($path, octdec($mode));
-    chown($path, $owner);
-    chgrp($path, $group);
-
-    logger("Config file written: {$path} (owner={$owner}:{$group} mode={$mode})");
-
-    return ['success' => true, 'path' => $path];
-}
-
-/**
- * Run systemctl commands (start, stop, restart, reload, enable, disable, daemon-reload).
- * Action and service name are validated against allowlists — no shell injection risk.
- */
-function systemSystemctl(array $params): array
-{
-    $action = $params['action'] ?? '';
-    $service = $params['service'] ?? '';
-
-    $allowedActions = ['start', 'stop', 'restart', 'reload', 'enable', 'disable', 'daemon-reload'];
-    if (! in_array($action, $allowedActions, true)) {
-        return ['success' => false, 'error' => 'Invalid action: '.$action];
-    }
-
-    if ($action === 'daemon-reload') {
-        exec('systemctl daemon-reload 2>&1', $output, $exitCode);
-    } else {
-        if (empty($service) || ! preg_match('/^[a-zA-Z0-9@._-]+$/', $service)) {
-            return ['success' => false, 'error' => 'Invalid service name'];
+        if ($action === 'daemon-reload') {
+            exec('systemctl daemon-reload 2>&1', $output, $exitCode);
+        } else {
+            if (empty($service) || ! preg_match('/^[a-zA-Z0-9@._-]+$/', $service)) {
+                return ['success' => false, 'error' => 'Invalid service name'];
+            }
+            exec('systemctl '.escapeshellarg($action).' '.escapeshellarg($service).' 2>&1', $output, $exitCode);
         }
-        exec('systemctl '.escapeshellarg($action).' '.escapeshellarg($service).' 2>&1', $output, $exitCode);
+
+        $result = implode("\n", $output);
+        logger("systemctl {$action} {$service}: exit={$exitCode}");
+
+        return [
+            'success' => $exitCode === 0,
+            'output' => $result,
+            'error' => $exitCode !== 0 ? $result : null,
+        ];
     }
-
-    $result = implode("\n", $output);
-    logger("systemctl {$action} {$service}: exit={$exitCode}");
-
-    return [
-        'success' => $exitCode === 0,
-        'output' => $result,
-        'error' => $exitCode !== 0 ? $result : null,
-    ];
-}
 
     $error = posix_strerror(posix_get_last_error());
     logger("Failed to kill process PID=$pid signal=$signal error=$error", 'ERROR');
@@ -24234,7 +24270,6 @@ function gitDeploy(array $params): array
     ];
 }
 
-
 function usageBandwidthTotal(array $params): array
 {
     $username = $params['username'] ?? '';
@@ -24282,7 +24317,7 @@ function usageDomainBandwidth(array $params): array
         return ['success' => true, 'bytes_out' => 0, 'requests' => 0];
     }
 
-    $cmd = "awk '{if (\$10 ~ /^[0-9]+$/) {sum+=\$10; n++}} END {print sum \" \" n}' " . escapeshellarg($logFile);
+    $cmd = "awk '{if (\$10 ~ /^[0-9]+$/) {sum+=\$10; n++}} END {print sum \" \" n}' ".escapeshellarg($logFile);
     $out = [];
     exec($cmd, $out, $code);
 
@@ -24478,7 +24513,7 @@ function postgresInstall(array $params): array
     exec('apt-get install -y postgresql postgresql-client 2>&1', $installOut, $installCode);
 
     if ($installCode !== 0) {
-        return ['success' => false, 'error' => 'Installation failed: ' . implode("\n", array_slice($installOut, -5))];
+        return ['success' => false, 'error' => 'Installation failed: '.implode("\n", array_slice($installOut, -5))];
     }
 
     // Enable and start
@@ -24489,7 +24524,7 @@ function postgresInstall(array $params): array
     exec('systemctl is-active postgresql 2>&1', $statusOut);
     $isActive = trim($statusOut[0] ?? '') === 'active';
 
-    logger('PostgreSQL installed and ' . ($isActive ? 'started' : 'failed to start'));
+    logger('PostgreSQL installed and '.($isActive ? 'started' : 'failed to start'));
 
     return [
         'success' => true,
@@ -24516,7 +24551,7 @@ function postgresUninstall(array $params): array
 
     exec('apt-get autoremove -y 2>&1');
 
-    logger('PostgreSQL uninstalled' . ($removeDatabases ? ' (data removed)' : ' (data preserved)'));
+    logger('PostgreSQL uninstalled'.($removeDatabases ? ' (data removed)' : ' (data preserved)'));
 
     return ['success' => true, 'message' => 'PostgreSQL removed', 'data_removed' => $removeDatabases];
 }
@@ -24705,7 +24740,6 @@ function postgresGrantPrivileges(array $params): array
     return ['success' => true];
 }
 
-
 function postgresRevokePrivileges(array $params): array
 {
     $username = $params['username'] ?? '';
@@ -24877,15 +24911,16 @@ function postgresExportDatabase(array $params): array
     }
 
     $cmd = 'sudo -u postgres pg_dump --no-owner --no-acl '
-        . escapeshellarg($database)
-        . ' 2>&1 | gzip > '
-        . escapeshellarg($outputPath);
+        .escapeshellarg($database)
+        .' 2>&1 | gzip > '
+        .escapeshellarg($outputPath);
 
     exec($cmd, $out, $code);
 
     if (! file_exists($outputPath) || filesize($outputPath) < 20) {
         @unlink($outputPath);
-        return ['success' => false, 'error' => 'Export failed: ' . implode("\n", $out)];
+
+        return ['success' => false, 'error' => 'Export failed: '.implode("\n", $out)];
     }
 
     chown($outputPath, $username);
@@ -24920,20 +24955,19 @@ function postgresImportDatabase(array $params): array
     $isGzip = str_ends_with($inputPath, '.gz') || str_ends_with($inputPath, '.sql.gz');
 
     if ($isGzip) {
-        $cmd = 'gunzip -c ' . escapeshellarg($inputPath) . ' | sudo -u postgres psql ' . escapeshellarg($database) . ' 2>&1';
+        $cmd = 'gunzip -c '.escapeshellarg($inputPath).' | sudo -u postgres psql '.escapeshellarg($database).' 2>&1';
     } else {
-        $cmd = 'sudo -u postgres psql ' . escapeshellarg($database) . ' < ' . escapeshellarg($inputPath) . ' 2>&1';
+        $cmd = 'sudo -u postgres psql '.escapeshellarg($database).' < '.escapeshellarg($inputPath).' 2>&1';
     }
 
     exec($cmd, $out, $code);
 
     if ($code !== 0) {
-        return ['success' => false, 'error' => 'Import failed: ' . implode("\n", array_slice($out, -5))];
+        return ['success' => false, 'error' => 'Import failed: '.implode("\n", array_slice($out, -5))];
     }
 
     return ['success' => true, 'output' => implode("\n", array_slice($out, -5))];
 }
-
 
 function updatesList(array $params): array
 {
