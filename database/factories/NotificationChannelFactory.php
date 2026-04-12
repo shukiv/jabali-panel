@@ -43,9 +43,10 @@ class NotificationChannelFactory extends Factory
 
     public function ntfy(string $url = 'https://ntfy.sh/jabali-test'): self
     {
+        // No explicit priority — the driver derives it from severity.
         return $this->state(fn () => [
             'type' => 'ntfy',
-            'config' => ['url' => $url, 'priority' => 'default'],
+            'config' => ['url' => $url],
         ]);
     }
 

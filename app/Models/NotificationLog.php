@@ -16,6 +16,7 @@ class NotificationLog extends Model
         'recipients',
         'status',
         'error',
+        'channel',
     ];
 
     protected function casts(): array
@@ -36,7 +37,8 @@ class NotificationLog extends Model
         array $recipients,
         string $status = 'sent',
         ?array $context = null,
-        ?string $error = null
+        ?string $error = null,
+        ?string $channel = null,
     ): self {
         return self::create([
             'type' => $type,
@@ -46,6 +48,7 @@ class NotificationLog extends Model
             'status' => $status,
             'context' => $context,
             'error' => $error,
+            'channel' => $channel,
         ]);
     }
 

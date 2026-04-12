@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\DnsSetting;
 use App\Models\NotificationLog;
+use App\Services\Notifications\NotificationDispatcher;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -19,6 +20,15 @@ class AdminNotificationService
             self::logNotification($type, $subject, $message, [], 'skipped', $context, 'Notification type disabled');
 
             return false;
+        }
+
+        // v2 pipeline — opt-in via config flag (default false). When on, delegate
+        // to the channel dispatcher; legacy callers see the same bool contract.
+        if (config('notifications.v2_enabled')) {
+            /** @var NotificationDispatcher $dispatcher */
+            $dispatcher = app(NotificationDispatcher::class);
+
+            return $dispatcher->dispatch($type, $subject, $message, $context);
         }
 
         $recipients = DnsSetting::get('admin_email_recipients', '');
