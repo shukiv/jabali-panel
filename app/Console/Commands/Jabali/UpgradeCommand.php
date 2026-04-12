@@ -301,6 +301,15 @@ class UpgradeCommand extends Command
         // Step 9: Migrate nginx page cache to per-user directories
         $this->migrateNginxPageCache();
 
+        // Step 9b: Seed unified notifications (idempotent — skips if channels
+        // already exist). Safe to run on every upgrade.
+        try {
+            Artisan::call('jabali:notifications:migrate');
+            $this->line(Artisan::output());
+        } catch (Exception $e) {
+            $this->warn('Notifications migration warning: '.$e->getMessage());
+        }
+
         // Step 10: Update installed addons
         $this->info('[10/11] Updating installed addons...');
         $this->updateAddons();

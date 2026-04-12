@@ -132,6 +132,20 @@ Route::get('/jabali-admin/two-factor-challenge', \App\Filament\Admin\Pages\Auth\
 
 /*
 |--------------------------------------------------------------------------
+| Notifications — Web Push subscriptions (Phase 5)
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['web', 'auth:admin'])
+    ->prefix('jabali-admin/push-subscriptions')
+    ->name('admin.push_subscriptions.')
+    ->group(function () {
+        Route::post('/', [\App\Http\Controllers\Admin\PushSubscriptionController::class, 'store'])->name('store');
+        Route::delete('/', [\App\Http\Controllers\Admin\PushSubscriptionController::class, 'destroy'])->name('destroy');
+        Route::get('/vapid-public-key', [\App\Http\Controllers\Admin\PushSubscriptionController::class, 'vapidPublicKey'])->name('vapid');
+    });
+
+/*
+|--------------------------------------------------------------------------
 | Email Auto-Configuration Routes
 |--------------------------------------------------------------------------
 |
