@@ -3511,6 +3511,16 @@ HOOK
         fi
     fi
 
+    # Seed the panel_certificates DB row from whatever cert now lives at
+    # /etc/ssl/jabali/panel.crt (LE-issued, reused-existing, or self-signed).
+    # Without this the SSL Manager widget shows "No Certificate" until the
+    # scheduled jabali:ssl-check eventually runs — which for a fresh install
+    # is a confusing "is SSL broken?" moment for operators. artisan is
+    # idempotent here so it's safe to call unconditionally.
+    if [[ -d /var/www/jabali ]]; then
+        (cd /var/www/jabali && sudo -u www-data php artisan jabali:panel-cert-sync 2>&1 | head -5) || true
+    fi
+
     log "SSL setup complete"
 }
 
