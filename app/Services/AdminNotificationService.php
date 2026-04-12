@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\DnsSetting;
+use App\Models\NotificationChannel;
 use App\Models\NotificationLog;
+use App\Services\Notifications\LegacyEmailChannelSync;
 use App\Services\Notifications\NotificationDispatcher;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -22,9 +24,17 @@ class AdminNotificationService
             return false;
         }
 
-        // v2 pipeline — opt-in via config flag (default false). When on, delegate
-        // to the channel dispatcher; legacy callers see the same bool contract.
-        if (config('notifications.v2_enabled')) {
+        // v2 pipeline is the ONLY path. If an explicit v2_enabled=false is
+        // set (dev/debug escape hatch), we fall through to legacy email
+        // delivery — but by default the dispatcher handles everything.
+        if (config('notifications.v2_enabled', true)) {
+            // Auto-mirror legacy admin_email_recipients into the well-known
+            // default_email channel so 298 callers light up without any
+            // manual UI setup on a fresh install.
+            if (! NotificationChannel::query()->exists()) {
+                app(LegacyEmailChannelSync::class)->sync();
+            }
+
             /** @var NotificationDispatcher $dispatcher */
             $dispatcher = app(NotificationDispatcher::class);
 

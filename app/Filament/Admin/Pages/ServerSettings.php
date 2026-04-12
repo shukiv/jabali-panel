@@ -9,9 +9,12 @@ use App\Filament\Admin\Widgets\Settings\DnssecTable;
 use App\Filament\Admin\Widgets\Settings\NotificationLogTable;
 use App\Models\DnsSetting;
 use App\Models\HostingPackage;
+use App\Models\NotificationChannel;
+use App\Models\NotificationTypeChannel;
 use App\Models\User;
 use App\Services\Agent\AgentClient;
 use App\Services\Agent\InteractsWithAgent;
+use App\Services\Notifications\LegacyEmailChannelSync;
 use App\Services\ServerSettingsService;
 use App\Support\SafeError;
 use App\Support\ServerFacts;
@@ -81,6 +84,18 @@ class ServerSettings extends Page implements HasActions, HasForms
     public ?array $emailData = [];
 
     public ?array $notificationsData = [];
+
+    /**
+     * Severity routing matrix — ['info' => [channelId, ...], 'warning' => [...], 'critical' => [...]]
+     * Bound to multi-select components inside the Notifications tab.
+     *
+     * @var array<string, array<int, int>>
+     */
+    public array $severityRouting = [
+        'info' => [],
+        'warning' => [],
+        'critical' => [],
+    ];
 
     public ?array $logsData = [];
 
@@ -233,6 +248,8 @@ class ServerSettings extends Page implements HasActions, HasForms
             'load_threshold' => (float) ($settings['load_threshold'] ?? 5.0),
             'load_alert_minutes' => (int) ($settings['load_alert_minutes'] ?? 5),
         ];
+
+        $this->loadSeverityRouting();
 
         $this->phpFpmData = [
             'pm' => $settings['fpm_pm'] ?? 'dynamic',
@@ -660,7 +677,48 @@ class ServerSettings extends Page implements HasActions, HasForms
     protected function notificationsTabContent(): array
     {
         return [
+            Section::make(__('Channels'))
+                ->description(__('Destinations for notifications. Add email recipients, Telegram bots, ntfy topics, or browser push.'))
+                ->icon('heroicon-o-queue-list')
+                ->schema([
+                    \Filament\Schemas\Components\View::make('filament.admin.pages.partials.notification-channels-list'),
+                    Actions::make([
+                        FormAction::make('manageChannels')
+                            ->label(__('Manage channels'))
+                            ->icon('heroicon-o-cog-6-tooth')
+                            ->url(fn () => route('filament.admin.resources.notification-channels.index')),
+                    ]),
+                ]),
+            Section::make(__('Severity Routing'))
+                ->description(__('Route Info, Warning, and Critical events to one or more channels.'))
+                ->icon('heroicon-o-arrow-path-rounded-square')
+                ->schema([
+                    Select::make('severityRouting.info')
+                        ->label(__('Info'))
+                        ->helperText(__('Info — routine events'))
+                        ->multiple()
+                        ->options(fn () => $this->channelOptions())
+                        ->native(false),
+                    Select::make('severityRouting.warning')
+                        ->label(__('Warning'))
+                        ->helperText(__('Warning — needs attention'))
+                        ->multiple()
+                        ->options(fn () => $this->channelOptions())
+                        ->native(false),
+                    Select::make('severityRouting.critical')
+                        ->label(__('Critical'))
+                        ->helperText(__('Critical — act now'))
+                        ->multiple()
+                        ->options(fn () => $this->channelOptions())
+                        ->native(false),
+                    Actions::make([
+                        FormAction::make('saveSeverityRouting')
+                            ->label(__('Save routing'))
+                            ->action('saveSeverityRouting'),
+                    ]),
+                ]),
             Section::make(__('Admin Recipients'))
+                ->description(__('Legacy email recipients — automatically mirrored to the "default_email" channel so existing alerts keep working.'))
                 ->icon('heroicon-o-user-group')
                 ->schema([
                     TextInput::make('notificationsData.admin_email_recipients')
@@ -1372,6 +1430,12 @@ class ServerSettings extends Page implements HasActions, HasForms
         DnsSetting::set('load_alert_minutes', (string) max(1, min(60, (int) ($data['load_alert_minutes'] ?? 5))));
         DnsSetting::clearCache();
 
+        // Mirror recipients into the v2 default_email channel + severity
+        // routes so legacy AdminNotificationService callers continue to
+        // deliver through the unified dispatcher.
+        app(LegacyEmailChannelSync::class)->sync($emails);
+        $this->loadSeverityRouting();
+
         // Sync email recipients to Jabali Security daemon
         try {
             $securityClient = new \App\JabaliSecurity\JabaliSecurityClient;
@@ -1381,6 +1445,78 @@ class ServerSettings extends Page implements HasActions, HasForms
         }
 
         Notification::make()->title(__('Notification settings saved'))->success()->send();
+    }
+
+    /**
+     * Save the severity routing matrix (info/warning/critical × channels).
+     * Reconciles rows in notification_type_channels so the table reflects
+     * exactly what the operator selected.
+     */
+    public function saveSeverityRouting(): void
+    {
+        foreach (NotificationTypeChannel::SEVERITIES as $severity) {
+            $wanted = array_values(array_unique(array_map('intval', $this->severityRouting[$severity] ?? [])));
+
+            $existing = NotificationTypeChannel::query()
+                ->where('severity', $severity)
+                ->pluck('channel_id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            foreach (array_diff($wanted, $existing) as $channelId) {
+                NotificationTypeChannel::query()->firstOrCreate(
+                    ['severity' => $severity, 'channel_id' => $channelId],
+                    ['priority' => 0],
+                );
+            }
+
+            $toRemove = array_diff($existing, $wanted);
+            if ($toRemove !== []) {
+                NotificationTypeChannel::query()
+                    ->where('severity', $severity)
+                    ->whereIn('channel_id', $toRemove)
+                    ->delete();
+            }
+        }
+
+        Notification::make()->title(__('Notification routing saved'))->success()->send();
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    protected function loadSeverityRouting(): void
+    {
+        foreach (NotificationTypeChannel::SEVERITIES as $severity) {
+            $this->severityRouting[$severity] = NotificationTypeChannel::query()
+                ->where('severity', $severity)
+                ->pluck('channel_id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function channelOptions(): array
+    {
+        return NotificationChannel::query()
+            ->orderBy('type')
+            ->orderBy('name')
+            ->get()
+            ->mapWithKeys(fn (NotificationChannel $c) => [
+                $c->id => sprintf('%s (%s)%s', $c->name, $c->type, $c->enabled ? '' : ' [disabled]'),
+            ])
+            ->all();
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, NotificationChannel>
+     */
+    public function getChannels(): \Illuminate\Support\Collection
+    {
+        return NotificationChannel::query()->orderBy('type')->orderBy('name')->get();
     }
 
     public function sendTestEmail(): void

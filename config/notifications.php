@@ -15,7 +15,7 @@ return [
     |
     */
 
-    'v2_enabled' => (bool) env('NOTIFICATIONS_V2_ENABLED', false),
+    'v2_enabled' => (bool) env('NOTIFICATIONS_V2_ENABLED', true),
 
     /*
     |--------------------------------------------------------------------------

@@ -116,6 +116,10 @@ Route::get('/register', function () {
 // Backward-compatible alias: the "System Updates" page lives at /jabali-admin/server-updates.
 Route::redirect('/jabali-admin/system-updates', '/jabali-admin/server-updates');
 
+// Unified Notifications (issue #102) now lives inside Server Settings.
+// Preserve any bookmarks pointing at the old standalone page.
+Route::redirect('/jabali-admin/notification-settings', '/jabali-admin/server-settings?tab=notifications');
+
 /*
 |--------------------------------------------------------------------------
 | Two-Factor Authentication Challenge

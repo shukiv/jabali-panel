@@ -44,7 +44,8 @@ class NotificationsTabIntegrationTest extends TestCase
             ->create(['name' => 'primary-ops-inbox']);
 
         Livewire::actingAs($this->admin, 'admin')
-            ->test(ServerSettings::class, ['tab' => 'notifications'])
+            ->test(ServerSettings::class)
+            ->set('activeTab', 'notifications')
             ->assertSee('primary-ops-inbox')
             ->assertSee('Channels');
     }
@@ -54,7 +55,8 @@ class NotificationsTabIntegrationTest extends TestCase
         NotificationChannel::factory()->email()->create(['name' => 'ops-inbox']);
 
         Livewire::actingAs($this->admin, 'admin')
-            ->test(ServerSettings::class, ['tab' => 'notifications'])
+            ->test(ServerSettings::class)
+            ->set('activeTab', 'notifications')
             ->assertSee('Info')
             ->assertSee('Warning')
             ->assertSee('Critical');
@@ -65,7 +67,8 @@ class NotificationsTabIntegrationTest extends TestCase
         $ch = NotificationChannel::factory()->email()->create();
 
         Livewire::actingAs($this->admin, 'admin')
-            ->test(ServerSettings::class, ['tab' => 'notifications'])
+            ->test(ServerSettings::class)
+            ->set('activeTab', 'notifications')
             ->set('severityRouting.info', [$ch->id])
             ->set('severityRouting.warning', [$ch->id])
             ->set('severityRouting.critical', [$ch->id])
@@ -120,7 +123,8 @@ class NotificationsTabIntegrationTest extends TestCase
     public function test_saving_admin_email_recipients_syncs_default_email_channel(): void
     {
         Livewire::actingAs($this->admin, 'admin')
-            ->test(ServerSettings::class, ['tab' => 'notifications'])
+            ->test(ServerSettings::class)
+            ->set('activeTab', 'notifications')
             ->set('notificationsData.admin_email_recipients', 'alerts@example.com, ops@example.com')
             ->call('saveEmailNotificationSettings');
 
