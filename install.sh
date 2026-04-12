@@ -1072,12 +1072,41 @@ setup_frankenphp_config() {
     mkdir -p /var/lib/jabali/caddy
     chown www-data:www-data /var/lib/jabali/caddy
 
-    # FrankenPHP php.ini — match the system PHP settings
-    cat > /etc/frankenphp/php.ini <<'PHPINI'
+    # Size opcache and preload against RAM too. On a small VPS the 128 MB
+    # shared opcache + preload ate as much memory as an entire worker
+    # process — and preloading Illuminate/Support wholesale compiles
+    # thousands of files (many of them dev-only Testing\Fakes) whose
+    # benefit is marginal for a single-operator panel.
+    local mem_mb_for_php
+    mem_mb_for_php=$(awk '/MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
+    mem_mb_for_php=${mem_mb_for_php:-2048}
+
+    local php_memory_limit opcache_mem opcache_files opcache_preload
+    if [ "$mem_mb_for_php" -lt 3072 ]; then
+        # Tight boxes: no preload, half-size opcache, tighter per-request cap.
+        php_memory_limit="256M"
+        opcache_mem=64
+        opcache_files=10000
+        opcache_preload=""
+    elif [ "$mem_mb_for_php" -lt 6144 ]; then
+        # Comfortable small/medium VPS: preload on, modest opcache.
+        php_memory_limit="384M"
+        opcache_mem=96
+        opcache_files=15000
+        opcache_preload="opcache.preload=/var/www/jabali/bootstrap/preload.php"
+    else
+        # Plenty of RAM — keep the original generous sizing.
+        php_memory_limit="512M"
+        opcache_mem=128
+        opcache_files=20000
+        opcache_preload="opcache.preload=/var/www/jabali/bootstrap/preload.php"
+    fi
+
+    cat > /etc/frankenphp/php.ini <<PHPINI
 [PHP]
 max_execution_time = 600
 max_input_time = 600
-memory_limit = 512M
+memory_limit = ${php_memory_limit}
 post_max_size = 512M
 upload_max_filesize = 512M
 max_file_uploads = 50
@@ -1085,18 +1114,20 @@ date.timezone = UTC
 
 [opcache]
 opcache.enable=1
-opcache.memory_consumption=128
-opcache.interned_strings_buffer=16
-opcache.max_accelerated_files=20000
+opcache.memory_consumption=${opcache_mem}
+opcache.interned_strings_buffer=8
+opcache.max_accelerated_files=${opcache_files}
 opcache.validate_timestamps=0
 opcache.save_comments=1
-opcache.preload=/var/www/jabali/bootstrap/preload.php
-opcache.preload_user=www-data
+${opcache_preload}
+${opcache_preload:+opcache.preload_user=www-data}
 
 [realpath_cache]
 realpath_cache_size=4096K
 realpath_cache_ttl=600
 PHPINI
+
+    info "PHP tuning: memory_limit=${php_memory_limit} opcache.memory=${opcache_mem}M files=${opcache_files} preload=${opcache_preload:+on}"
 
     local panel_hostname="${SERVER_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}"
     local acme_email="${ADMIN_EMAIL:-admin@${panel_hostname}}"
@@ -1128,23 +1159,20 @@ PHPINI
     mem_mb=${mem_mb:-2048}
 
     local num_threads max_threads
-    if [ "$mem_mb" -lt 1536 ]; then
-        # <1.5 GB — very tight. Keep it to one always-warm thread,
-        # burst to 2 under concurrent load.
+    if [ "$mem_mb" -lt 3072 ]; then
+        # <3 GB — keep a single warm thread, burst to 2 under concurrent
+        # load. A control panel serves one operator at a time; extra warm
+        # threads just hold duplicate Laravel heaps with no benefit.
         num_threads=1
         max_threads=2
-    elif [ "$mem_mb" -lt 3072 ]; then
-        # 1.5-3 GB — the typical small-VPS sweet spot.
+    elif [ "$mem_mb" -lt 6144 ]; then
+        # 3-6 GB — two warm threads is the sweet spot: room for a slow
+        # request not to block a second browser tab, without paying for
+        # a third Laravel copy.
         num_threads=2
         max_threads=4
-    elif [ "$mem_mb" -lt 6144 ]; then
-        # 3-6 GB — modest box, one thread per vCPU is fine.
-        num_threads=$cpus
-        [ "$num_threads" -lt 2 ] && num_threads=2
-        [ "$num_threads" -gt 4 ] && num_threads=4
-        max_threads=$(( num_threads * 2 ))
     else
-        # >6 GB — use the original CPU-based heuristic, capped.
+        # >6 GB — original CPU-based heuristic, capped.
         num_threads=$(( cpus * 2 ))
         [ "$num_threads" -lt 2 ] && num_threads=2
         [ "$num_threads" -gt 8 ] && num_threads=8
@@ -3269,33 +3297,56 @@ SLICE
 setup_queue_service() {
     header "Setting Up Jabali Queue Worker"
 
+    # Run the queue as a periodic oneshot instead of an always-on daemon.
+    # The always-on daemon held a full Laravel app in RAM (~190 MB on a
+    # 4 GB VPS) just to poll Redis every 3 seconds — completely wasted on
+    # a control panel that queues a handful of jobs per hour at peak.
+    # A oneshot fires every 60s, drains whatever is waiting, and exits —
+    # latency cost is at most 60s for non-UI jobs, and the idle RAM is
+    # zero.
     cat > /etc/systemd/system/jabali-queue.service << 'SERVICE'
 [Unit]
-Description=Jabali Queue Worker
+Description=Jabali Queue Worker (drain + exit)
 After=network.target jabali-agent.service
 Wants=jabali-agent.service
 
 [Service]
-Type=simple
+Type=oneshot
 User=www-data
 Group=www-data
 WorkingDirectory=/var/www/jabali
-ExecStart=/usr/bin/php /var/www/jabali/artisan queue:work --sleep=3 --tries=1 --timeout=3600
-Restart=always
-RestartSec=5
+# --stop-when-empty: exit as soon as the queue drains, don't block on
+#   the next push. --max-time caps the single invocation so a jammed
+#   handler can't keep the process resident.
+ExecStart=/usr/bin/php /var/www/jabali/artisan queue:work --stop-when-empty --max-time=55 --sleep=1 --tries=1 --timeout=50
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=jabali-queue
-
-[Install]
-WantedBy=multi-user.target
 SERVICE
 
-    systemctl daemon-reload
-    systemctl enable jabali-queue
-    systemctl start jabali-queue
+    cat > /etc/systemd/system/jabali-queue.timer << 'TIMER'
+[Unit]
+Description=Run Jabali Queue Worker every minute
+Requires=jabali-queue.service
 
-    log "Jabali Queue Worker service configured"
+[Timer]
+# Drain the queue every minute. AccuracySec=5s keeps systemd from
+# coalescing all the 1-minute timers onto the same second.
+OnBootSec=30
+OnUnitActiveSec=60
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target
+TIMER
+
+    systemctl daemon-reload
+    # Replace any existing always-on daemon.
+    systemctl stop jabali-queue.service 2>/dev/null || true
+    systemctl disable jabali-queue.service 2>/dev/null || true
+    systemctl enable --now jabali-queue.timer
+
+    log "Jabali Queue Worker configured as 60s timer (stop-when-empty)"
 }
 
 # Setup Laravel scheduler cron job
