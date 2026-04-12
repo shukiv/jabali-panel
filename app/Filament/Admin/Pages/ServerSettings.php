@@ -287,6 +287,9 @@ class ServerSettings extends Page implements HasActions, HasForms
                             ->schema([
                                 \Filament\Schemas\Components\Livewire::make(\App\Filament\Admin\Widgets\Settings\BrandingSettings::class),
                             ]),
+                        'addons' => Tab::make(__('Addons'))
+                            ->icon('heroicon-o-puzzle-piece')
+                            ->schema($this->addonsTabContent()),
                         'dns' => Tab::make(__('DNS'))
                             ->icon('heroicon-o-globe-alt')
                             ->schema($this->dnsTabContent()),
@@ -311,9 +314,6 @@ class ServerSettings extends Page implements HasActions, HasForms
                         'logs' => Tab::make(__('Logs'))
                             ->icon('heroicon-o-document-text')
                             ->schema($this->logsTabContent()),
-                        'addons' => Tab::make(__('Addons'))
-                            ->icon('heroicon-o-puzzle-piece')
-                            ->schema($this->addonsTabContent()),
                     ]),
             ]);
     }
