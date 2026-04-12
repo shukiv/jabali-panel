@@ -2046,19 +2046,24 @@ class ServerSettings extends Page implements HasActions, HasForms
                 .$statusText
                 .'</span>';
 
-            // `$wire.installAddon()` / `$wire.uninstallAddon()` are Livewire
-            // methods that return a promise resolving when the server-side
-            // agent.install/uninstall call has completed (or thrown). We
-            // await them and then reconcile the UI with a single state
-            // check — no polling loop. A polling loop would never stop on
-            // a failed install because file_exists(binary) stays false
-            // forever, which is exactly the "stuck spinner" bug.
+            // The agent's addon.install is non-blocking: it kicks off the
+            // install script and returns `{success: true}` immediately, so
+            // we have to poll for the binary to appear. On `{success: false}`
+            // we stop right away — no point polling for a binary the
+            // installer told us it won't create.
+            //
+            // Previous bug: a fixed polling loop kept spinning on failure
+            // (binary never appears → never equals target → 10-minute
+            // timeout before the reload). Now we only poll after a success
+            // response, and on poll timeout we show an error toast + reset
+            // busy rather than blind-reload.
             $installConfirm = __('This will download and install the addon. It may take several minutes.');
             $uninstallConfirm = __('Are you sure? This will remove the addon and all its data.');
-            $actionsHtml = '<div x-data="{ busy: false, async run(op) { const confirmMsg = op === \'install\' ? \''.addslashes($installConfirm).'\' : \''.addslashes($uninstallConfirm).'\'; if (!confirm(confirmMsg)) return; busy = true; try { await (op === \'install\' ? $wire.installAddon(\''.$addonId.'\') : $wire.uninstallAddon(\''.$addonId.'\')); } catch (e) {} const want = op === \'install\'; let installed = false; try { installed = await $wire.isAddonInstalled(\''.$addonId.'\'); } catch (e) {} if (installed === want) { window.location.reload(); } else { busy = false; } } }">'
+            $timeoutMsg = __('Addon operation timed out — check the server logs.');
+            $actionsHtml = '<div x-data="addonRow(\''.$addonId.'\', '.($installed ? 'true' : 'false').', \''.addslashes($installConfirm).'\', \''.addslashes($uninstallConfirm).'\', \''.addslashes($timeoutMsg).'\')">'
                 .($installed
-                    ? '<button type="button" x-show="!busy" x-on:click="run(\'uninstall\')" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400">'.__('Uninstall').'</button>'
-                    : '<button type="button" x-show="!busy" x-on:click="run(\'install\')" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400">'.__('Install').'</button>')
+                    ? '<button type="button" x-show="!busy" x-on:click="run()" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400">'.__('Uninstall').'</button>'
+                    : '<button type="button" x-show="!busy" x-on:click="run()" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400">'.__('Install').'</button>')
                 .'<span x-show="busy" x-cloak class="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"><svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>'
                 .($installed ? __('Uninstalling...') : __('Installing... (may take a few minutes)'))
                 .'</span></div>';
@@ -2086,24 +2091,90 @@ class ServerSettings extends Page implements HasActions, HasForms
             ];
         }
 
+        // Alpine component shared by every addon row. Inlined once per tab
+        // render (not per row) to keep the HTML blob in each row small and
+        // so the logic lives in one readable block instead of a giant
+        // backslash-escaped single-line expression.
+        $alpineScript = <<<'JS'
+            <script>
+                if (typeof window.addonRow === 'undefined') {
+                    window.addonRow = function (addonId, installed, installConfirm, uninstallConfirm, timeoutMsg) {
+                        return {
+                            busy: false,
+                            async run() {
+                                const op = installed ? 'uninstall' : 'install';
+                                const msg = op === 'install' ? installConfirm : uninstallConfirm;
+                                if (! confirm(msg)) return;
+                                this.busy = true;
+                                let result;
+                                try {
+                                    result = op === 'install'
+                                        ? await this.$wire.installAddon(addonId)
+                                        : await this.$wire.uninstallAddon(addonId);
+                                } catch (e) {
+                                    this.busy = false;
+                                    return;
+                                }
+                                // Agent reported immediate failure → stop now, keep button.
+                                if (! result || ! result.success) {
+                                    this.busy = false;
+                                    return;
+                                }
+                                // Agent kicked off a background install/uninstall.
+                                // Poll for the file-exists state to flip, but give up
+                                // after 10 minutes with a surfaced error rather than
+                                // silently reloading.
+                                const target = op === 'install';
+                                const deadline = Date.now() + 600000;
+                                while (Date.now() < deadline) {
+                                    await new Promise(r => setTimeout(r, 5000));
+                                    let actual = ! target;
+                                    try {
+                                        actual = await this.$wire.isAddonInstalled(addonId);
+                                    } catch (e) { /* agent restart — keep polling */ }
+                                    if (actual === target) {
+                                        window.location.reload();
+                                        return;
+                                    }
+                                }
+                                this.busy = false;
+                                alert(timeoutMsg);
+                            },
+                        };
+                    };
+                }
+            </script>
+        JS;
+
         return [
             Grid::make(2)->schema($sections),
+            Placeholder::make('addon_row_script')
+                ->label('')
+                ->content(new HtmlString($alpineScript)),
         ];
     }
 
-    public function installAddon(string $addonId): void
+    /**
+     * @return array{success: bool}
+     */
+    public function installAddon(string $addonId): array
     {
         try {
             $result = $this->agent()->send('addon.install', ['addon' => $addonId]);
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
-            } else {
-                $error = $result['error'] ?? __('Installation failed');
-                $output = $result['output'] ?? '';
-                Notification::make()->title($error)->body($output ? substr($output, 0, 200) : null)->danger()->send();
+
+                return ['success' => true];
             }
+            $error = $result['error'] ?? __('Installation failed');
+            $output = $result['output'] ?? '';
+            Notification::make()->title($error)->body($output ? substr($output, 0, 200) : null)->danger()->send();
+
+            return ['success' => false];
         } catch (\Throwable $e) {
             Notification::make()->title(__('Installation failed: :error', ['error' => $e->getMessage()]))->danger()->send();
+
+            return ['success' => false];
         }
     }
 
@@ -2115,19 +2186,27 @@ class ServerSettings extends Page implements HasActions, HasForms
         return $binary !== null && file_exists($binary);
     }
 
-    public function uninstallAddon(string $addonId): void
+    /**
+     * @return array{success: bool}
+     */
+    public function uninstallAddon(string $addonId): array
     {
         try {
             $result = $this->agent()->send('addon.uninstall', ['addon' => $addonId]);
             if ($result['success'] ?? false) {
                 Notification::make()->title($result['message'])->success()->send();
-            } else {
-                $error = $result['error'] ?? __('Uninstall failed');
-                $output = $result['output'] ?? '';
-                Notification::make()->title($error)->body($output ? substr($output, 0, 200) : null)->danger()->send();
+
+                return ['success' => true];
             }
+            $error = $result['error'] ?? __('Uninstall failed');
+            $output = $result['output'] ?? '';
+            Notification::make()->title($error)->body($output ? substr($output, 0, 200) : null)->danger()->send();
+
+            return ['success' => false];
         } catch (\Throwable $e) {
             Notification::make()->title(__('Uninstall failed: :error', ['error' => $e->getMessage()]))->danger()->send();
+
+            return ['success' => false];
         }
     }
 }
