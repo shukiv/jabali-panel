@@ -2399,12 +2399,16 @@ create_webmaster_mailbox() {
 
     local webmaster_password=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9!@#$%' | head -c 16)
 
-    # Extract root domain for email (e.g., panel.example.com -> example.com)
-    local dot_count=$(echo "$SERVER_HOSTNAME" | tr -cd '.' | wc -c)
+    # Use the full hostname as the mail domain. Previously we shaved it down
+    # to the last two labels (panel.example.com -> example.com) on the theory
+    # that "you want mail at the root", but in shared hosting that silently
+    # hijacks the customer-facing domain: admin ends up owning example.com
+    # and no other user can claim it without admin deleting it first
+    # (see issue #103). Using the exact operator-supplied hostname means
+    # admin only ever owns what the operator explicitly named as the
+    # server's hostname — typically a subdomain like panel.example.com that
+    # nobody else would register anyway.
     local email_domain="$SERVER_HOSTNAME"
-    if [[ $dot_count -gt 1 ]]; then
-        email_domain=$(echo "$SERVER_HOSTNAME" | awk -F. '{print $(NF-1)"."$NF}')
-    fi
 
     cd "$JABALI_DIR"
     php artisan tinker --execute="
