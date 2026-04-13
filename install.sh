@@ -4450,6 +4450,18 @@ with open(sys.argv[1], 'w') as f:
         pids+=($!)
     fi
 
+    if [[ ! -d "$JABALI_DIR/app/JabaliBackup" ]]; then
+        step_info "Installing Jabali Backup"
+        install_jabali_backup &
+        pids+=($!)
+    fi
+
+    if [[ ! -d "$JABALI_DIR/app/JabaliTerminal" ]]; then
+        step_info "Installing Jabali Terminal"
+        install_jabali_terminal &
+        pids+=($!)
+    fi
+
     # Wait for all background addon/component updates to complete
     if [[ ${#pids[@]} -gt 0 ]]; then
         wait "${pids[@]}" 2>/dev/null || true
@@ -5273,11 +5285,20 @@ install_jabali_isolator() {
         return
     }
 
-    # Create CLI symlink
-    local venv_bin="$JABALI_ISOLATOR_DIR/.venv/bin/jabali-isolate"
-    if [[ -f "$venv_bin" ]]; then
-        ln -sf "$venv_bin" /usr/local/bin/jabali-isolate
-        info "Installed jabali-isolate CLI to /usr/local/bin/jabali-isolate"
+    # Create CLI symlinks. The pyproject entry was renamed from
+    # jabali-isolate to jabali-isolator; keep the old name as a back-compat
+    # symlink so systemd units / scripts that still call jabali-isolate
+    # don't break mid-upgrade (plans/monorepo-merge.md).
+    local venv_bin_new="$JABALI_ISOLATOR_DIR/.venv/bin/jabali-isolator"
+    local venv_bin_old="$JABALI_ISOLATOR_DIR/.venv/bin/jabali-isolate"
+    if [[ -f "$venv_bin_new" ]]; then
+        ln -sf "$venv_bin_new" /usr/local/bin/jabali-isolator
+        ln -sf "$venv_bin_new" /usr/local/bin/jabali-isolate
+        info "Installed jabali-isolator CLI (and jabali-isolate back-compat symlink)"
+    elif [[ -f "$venv_bin_old" ]]; then
+        ln -sf "$venv_bin_old" /usr/local/bin/jabali-isolate
+        ln -sf "$venv_bin_old" /usr/local/bin/jabali-isolator
+        info "Installed jabali-isolate CLI (legacy venv name)"
     fi
 
     # Install idle container checker (stops containers with no active SSH sessions)
@@ -5309,6 +5330,56 @@ IDLE_TMR
     systemctl enable --now jabali-container-idle-check.timer 2>/dev/null || true
 
     info "Jabali Isolator installed"
+}
+
+install_jabali_backup() {
+    header "Installing Jabali Backup"
+
+    # Monorepo: backup/install-panel.sh copies Filament pages + agent route
+    # into the live panel directory. backup/install.sh does the full
+    # binary+systemd install. Both live in $JABALI_DIR/backup/ now.
+    local local_subdir="$JABALI_DIR/backup"
+    if [[ ! -d "$local_subdir" ]]; then
+        warn "backup/ subdir missing — jabali-backup not installed"
+        return
+    fi
+
+    if [[ -x "$local_subdir/install.sh" ]]; then
+        info "Running $local_subdir/install.sh install"
+        if bash "$local_subdir/install.sh" install 2>&1; then
+            log "Jabali Backup installed"
+        else
+            warn "jabali-backup install failed (non-fatal)"
+        fi
+    fi
+
+    if [[ -x "$local_subdir/install-panel.sh" ]]; then
+        info "Installing backup panel integration"
+        if JABALI_PATH="$JABALI_DIR" bash "$local_subdir/install-panel.sh" 2>&1; then
+            log "Jabali Backup panel integrated"
+        else
+            warn "backup panel integration failed (non-fatal)"
+        fi
+    fi
+}
+
+install_jabali_terminal() {
+    header "Installing Jabali Terminal (browser root shell)"
+
+    local local_subdir="$JABALI_DIR/terminal"
+    if [[ ! -d "$local_subdir" ]]; then
+        warn "terminal/ subdir missing — jabali-terminal not installed"
+        return
+    fi
+
+    if [[ -x "$local_subdir/install.sh" ]]; then
+        info "Running $local_subdir/install.sh"
+        if bash "$local_subdir/install.sh" 2>&1; then
+            log "Jabali Terminal installed"
+        else
+            warn "jabali-terminal install failed (non-fatal)"
+        fi
+    fi
 }
 
 # Main installation
@@ -5414,6 +5485,12 @@ main() {
 
     # Install jabali-security daemon
     install_jabali_security
+
+    # Install jabali-backup (panel + CLI)
+    install_jabali_backup
+
+    # Install jabali-terminal (browser root shell)
+    install_jabali_terminal
 
     # Install jabali-isolator (PHP-FPM nspawn containers)
     install_jabali_isolator
