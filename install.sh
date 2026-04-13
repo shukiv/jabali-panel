@@ -1259,7 +1259,12 @@ CADDYEOF
     if [ -n "${addon_blocks}" ]; then
         local tmp_caddyfile
         tmp_caddyfile="$(mktemp)"
-        awk -v blocks="${addon_blocks}" '
+        # Pass blocks via ENVIRON (NOT `-v`): awk's `-v var=value` interprets
+        # backslash escapes in `value` (\n → LF, \\ → \, etc.), silently
+        # mangling any addon block that contains literal backslashes. ENVIRON
+        # delivers the string verbatim.
+        JABALI_ADDON_BLOCKS="${addon_blocks}" awk '
+            BEGIN { blocks = ENVIRON["JABALI_ADDON_BLOCKS"] }
             # Buffer lines; when we hit the penultimate line (closing `}` of the
             # server block), emit the saved blocks before it.
             { lines[NR] = $0 }
