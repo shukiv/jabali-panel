@@ -136,13 +136,20 @@ jabali-backup run --destination=offsite    # use a specific destination
 
 ### `jabali-backup server-backup`
 
-Full server backup for disaster recovery. Backs up all server-level configs, databases, and systemd units, then runs per-user backups for all accounts.
+Full server backup for **disaster recovery**. Captures everything needed to
+rebuild the box on a fresh Ubuntu install — databases, service configs,
+Stalwart DKIM keys, Let's Encrypt state, every user account — per the
+authoritative spec at `jabali/docs/backup-server-spec.md`.
 
 ```bash
-jabali-backup server-backup                # full server + all users
-jabali-backup server-backup --skip-users   # server configs only
-jabali-backup server-backup --dry-run      # preview what would be backed up
+jabali-backup server-backup                       # full server + all users
+jabali-backup server-backup --skip-users          # server configs only (fast)
+jabali-backup server-backup --skip-stalwart-data  # skip /var/lib/stalwart-mail RocksDB (faster, but loses DKIM keys)
+jabali-backup server-backup --dry-run             # preview what would be backed up
 ```
+
+Snapshots are tagged `type:server,date:YYYY-MM-DD,hostname:<host>` so they
+stay separate from per-user snapshots.
 
 ### `jabali-backup restore <username>`
 
@@ -160,14 +167,32 @@ jabali-backup restore alice --force                   # overwrite existing data
 
 ### `jabali-backup server-restore`
 
-Restore entire server from a disaster recovery backup.
+Restore entire server from a disaster-recovery backup (5-phase restore: base
+install → databases → service configs → users → finalize).
 
 ```bash
-jabali-backup server-restore                # full server restore
+jabali-backup server-restore                # full server restore (latest DR snapshot)
 jabali-backup server-restore --skip-users   # server configs only
 jabali-backup server-restore --force        # overwrite all existing data
 jabali-backup server-restore --snapshot=ID  # specific server snapshot
 ```
+
+See [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md) for the full runbook.
+
+### `jabali-backup server-download`
+
+Download a disaster-recovery snapshot as a single tar.gz — for off-site archival
+or rehydrating onto a different host.
+
+```bash
+jabali-backup server-download                         # full (server + all users)
+jabali-backup server-download --configs-only          # server layer only (fast, small)
+jabali-backup server-download --output=/tmp/dr.tgz    # explicit path
+jabali-backup server-download --snapshot=abc123de     # specific snapshot
+```
+
+The panel's "Download Server Backup" button produces a byte-identical
+archive via the same shared helper (`lib/server-download.sh`).
 
 ### `jabali-backup download <username> [...]`
 
@@ -182,14 +207,16 @@ jabali-backup download alice --output=/tmp/backup.tar.gz # save to path
 jabali-backup download alice --output=-                  # stream to stdout
 ```
 
-### `jabali-backup ls <username> [path]`
+### `jabali-backup ls <username|server> [path]`
 
 Browse files in a snapshot without restoring.
 
 ```bash
-jabali-backup ls alice                                   # list all files
+jabali-backup ls alice                                   # list alice's home
 jabali-backup ls alice domains/example.com/public_html   # list subdirectory
 jabali-backup ls alice --snapshot=abc123de               # specific snapshot
+jabali-backup ls server                                  # browse latest DR snapshot
+jabali-backup ls server config/jabali                    # /etc/jabali contents in DR snapshot
 ```
 
 ### `jabali-backup list`
@@ -201,6 +228,8 @@ jabali-backup list accounts
 jabali-backup list snapshots
 jabali-backup list snapshots --user=alice
 jabali-backup list snapshots --type=server
+jabali-backup list server-snapshots           # just disaster-recovery snapshots
+jabali-backup list server-snapshots --json
 jabali-backup list domains --user=alice
 ```
 

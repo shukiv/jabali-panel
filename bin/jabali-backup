@@ -406,6 +406,24 @@ cmd_list() {
             fi
             restic snapshots "${RESTIC_EXTRA_OPTS[@]}" "${tag_args[@]}" 2>/dev/null
             ;;
+        server-snapshots)
+            restic_env
+            local json_mode=0
+            for arg in "$@"; do [[ "$arg" == "--json" ]] && json_mode=1; done
+            if [[ "$json_mode" -eq 1 ]]; then
+                restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null
+            else
+                echo "Disaster Recovery Snapshots (tag type:server)"
+                echo "─────────────────────────────────────────────────────────────"
+                printf "%-10s %-20s %-20s %-10s\n" "ID" "Date" "Hostname" "Size"
+                echo "─────────────────────────────────────────────────────────────"
+                restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                    | jq -r '.[] | [.short_id, (.time | sub("\\..*$";"") | sub("T";" ")), .hostname, ((.tags // [])[] | select(startswith("date:")))] | @tsv' 2>/dev/null \
+                    | while IFS=$'\t' read -r id ts host date_tag; do
+                        printf "%-10s %-20s %-20s %-10s\n" "$id" "$ts" "$host" "${date_tag#date:}"
+                    done
+            fi
+            ;;
         domains)
             if [[ -n "$user_filter" ]]; then
                 local account
@@ -425,7 +443,7 @@ cmd_list() {
             fi
             ;;
         *)
-            echo "Usage: jabali-backup list <accounts|snapshots|domains> [--user=username]"
+            echo "Usage: jabali-backup list <accounts|snapshots|domains|server-snapshots> [--user=username] [--type=full|server] [--json]"
             ;;
     esac
 }
@@ -456,38 +474,76 @@ cmd_ls() {
     done
 
     if [[ -z "$target_user" ]]; then
-        echo "Usage: jabali-backup ls <username> [path] [--snapshot=ID]"
+        echo "Usage: jabali-backup ls <username|server> [path] [--snapshot=ID]"
         echo ""
         echo "Browse files in a backup snapshot."
         echo ""
         echo "Examples:"
         echo "  jabali-backup ls alice                          # list home directory"
         echo "  jabali-backup ls alice domains/                 # list domains dir"
-        echo "  jabali-backup ls alice domains/example.com/     # list specific domain"
+        echo "  jabali-backup ls server                         # list disaster-recovery snapshot root"
+        echo "  jabali-backup ls server config/jabali           # list /etc/jabali contents in snapshot"
         echo "  jabali-backup ls alice --snapshot=abc123        # specific snapshot"
         return 1
+    fi
+
+    # Accept 'server' (ergonomic) or '__server__' (panel-internal) as aliases
+    local is_server=0
+    if [[ "$target_user" == "server" || "$target_user" == "__server__" ]]; then
+        is_server=1
     fi
 
     # Resolve snapshot
     restic_env || exit 1
     local snapshot_id
     if [[ "$snapshot" == "latest" ]]; then
-        snapshot_id=$(restic snapshots --json --tag "account:${target_user}" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
-            | grep -oP '"short_id"\s*:\s*"\K[^"]+' | tail -1)
-        if [[ -z "$snapshot_id" ]]; then
-            log_error "No snapshots found for account: $target_user"
-            return 1
+        if [[ "$is_server" -eq 1 ]]; then
+            snapshot_id=$(restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | jq -r '.[-1].short_id // empty' 2>/dev/null)
+            if [[ -z "$snapshot_id" ]]; then
+                log_error "No server (type:server) snapshots found"
+                return 1
+            fi
+        else
+            snapshot_id=$(restic snapshots --json --tag "account:${target_user}" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | grep -oP '"short_id"\s*:\s*"\K[^"]+' | tail -1)
+            if [[ -z "$snapshot_id" ]]; then
+                log_error "No snapshots found for account: $target_user"
+                return 1
+            fi
         fi
     else
         snapshot_id="$snapshot"
     fi
 
     # Build the full path to list
-    local full_path="/home/${target_user}"
-    if [[ -n "$browse_path" ]]; then
-        # Strip leading slash if user provided one
-        browse_path="${browse_path#/}"
-        full_path="/home/${target_user}/${browse_path}"
+    local full_path
+    if [[ "$is_server" -eq 1 ]]; then
+        # Server snapshots live under the staging root (/tmp/jabali-backup/server-<pid>/server/…).
+        # Resolve the actual top-level path by asking restic what's in the snapshot root.
+        local server_root
+        server_root=$(restic ls "$snapshot_id" / "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | grep -oE '^/[^/]+/[^/]+/server($|/)' | head -1 | sed 's|/$||')
+        if [[ -z "$server_root" ]]; then
+            # Fallback: first directory that contains server-manifest.json
+            server_root=$(restic ls "$snapshot_id" / "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | grep -E '/server-manifest\.json$' | head -1 | sed 's|/server-manifest\.json$||')
+        fi
+        if [[ -z "$server_root" ]]; then
+            log_error "Could not resolve server root in snapshot $snapshot_id"
+            return 1
+        fi
+        full_path="$server_root"
+        if [[ -n "$browse_path" ]]; then
+            browse_path="${browse_path#/}"
+            full_path="${server_root}/${browse_path}"
+        fi
+    else
+        full_path="/home/${target_user}"
+        if [[ -n "$browse_path" ]]; then
+            browse_path="${browse_path#/}"
+            full_path="/home/${target_user}/${browse_path}"
+        fi
     fi
 
     echo "Snapshot: $snapshot_id"
@@ -495,11 +551,16 @@ cmd_ls() {
     echo "────────────────────────────────────────"
 
     # Use restic ls with the path filter
+    local strip_prefix
+    if [[ "$is_server" -eq 1 ]]; then
+        strip_prefix="${full_path}/"
+    else
+        strip_prefix="/home/${target_user}/"
+    fi
     restic_ls "$snapshot_id" "$full_path" 2>/dev/null | while IFS= read -r line; do
-        # Strip the /home/{user}/ prefix for cleaner output
-        local relative="${line#/home/${target_user}/}"
-        # Skip the root entry itself
-        [[ "$relative" == "/home/${target_user}" ]] && continue
+        local relative="${line#$strip_prefix}"
+        [[ "$relative" == "$line" ]] && relative="$line" # no-op fallback
+        [[ "$line" == "$full_path" ]] && continue
         echo "$relative"
     done
 }
@@ -864,6 +925,10 @@ cmd_server_backup() {
     echo "────────────────────────────────────────"
     echo "  Duration: ${duration}s"
     echo "  Type:     disaster recovery (server + all users)"
+    echo ""
+    echo "  Browse:   jabali-backup ls server"
+    echo "  List:     jabali-backup list server-snapshots"
+    echo "  Restore:  jabali-backup server-restore --snapshot=latest"
     echo "════════════════════════════════════════"
 
     log_info "═══ Server backup complete (${duration}s) ═══"

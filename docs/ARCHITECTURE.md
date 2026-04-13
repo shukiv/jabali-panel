@@ -214,6 +214,42 @@ variable, and are called by collectors/restorers as needed.
 Each account backup is independent. One failure does not block other accounts.
 Staging/temp directories are cleaned up via `trap EXIT` on any exit signal.
 
+## Server Backup Layout (Disaster Recovery)
+
+`jabali-backup server-backup` maps 1-to-1 to the panel team's authoritative
+spec at `jabali/docs/backup-server-spec.md`. Each of the 20 spec categories
+has a collector and restorer hook:
+
+| # | Spec category | Collector | Restorer |
+|---|---------------|-----------|----------|
+| 1  | Panel DB `jabali` (mysqldump, skip ephemeral tables) | `_collect_server_databases` | `_restore_server_phase2` |
+| 2  | PowerDNS DB + DNSSEC state | `_collect_server_databases` | `_restore_server_phase2` |
+| 3  | Panel app (git info + dirty patch, or tarball fallback) | `_collect_server_panel` | `_restore_server_phase1` |
+| 4  | Panel `.env` (0600) | `_collect_server_panel` | `_restore_server_phase1` |
+| 5  | `/etc/jabali/` (configs, secrets, agent addons, templates) | `_collect_server_jabali_config` | `_restore_server_phase1` |
+| 6  | Nginx (`nginx.conf`, `jabali/`, vhosts, enabled symlinks) | `_collect_server_nginx` | `_restore_server_phase3` |
+| 7  | PHP-FPM (per version: `php-fpm.conf`, `php.ini`, pools) | `_collect_server_php` | `_restore_server_phase3` |
+| 8  | FrankenPHP / Caddyfile (via #5) | `_collect_server_jabali_config` | `_restore_server_phase1` |
+| 9  | Panel SSL (`/etc/ssl/jabali/`) | `_collect_server_ssl` | `_restore_server_phase3` |
+| 10 | Stalwart config + **data** (`/var/lib/stalwart-mail/` RocksDB + DKIM) | `_collect_server_stalwart` | `_restore_server_phase3` |
+| 11 | Redis config (ACL passwords preserved inline) | `_collect_server_redis` | `_restore_server_phase3` |
+| 12 | MariaDB `/etc/mysql/` (including `debian.cnf`) | `_collect_server_mysql_config` | `_restore_server_phase3` |
+| 13 | Systemd units (`jabali-*`, slice, stalwart, bulwark) | `_collect_server_systemd` | `_restore_server_phase3` |
+| 14 | Restic password (via #5) | `_collect_server_jabali_config` | `_restore_server_phase1` |
+| 15 | Agent addons (via #5) | `_collect_server_jabali_config` | `_restore_server_phase5` |
+| 16 | Custom templates (via #5) | `_collect_server_jabali_config` | `_restore_server_phase1` |
+| 17 | Let's Encrypt (`accounts/` + `archive/` + `renewal/`) | `_collect_server_letsencrypt` | `_restore_server_phase3` |
+| 18 | Bulwark (metadata-only; reinstall via `install.sh`) | `_collect_server_bulwark` | `_restore_server_phase5` |
+| 19 | All user accounts (per-user backup each) | `cmd_run` | `_restore_server_phase4` |
+| 20 | Package manifest (`dpkg`, `apt-mark`, versions) | `_collect_server_packages` | read-only metadata |
+
+Stalwart data capture stops the service for the duration of the rsync
+(typically <10 s on idle boxes) because RocksDB is not safe to hot-copy; a
+30×0.5 s active-wait on restart fails the collector loudly (exit 2) if the
+service doesn't come back. Bulwark and the panel-app git/tarball split are
+described further in [ADR-0005+](adr/) and in
+[`plans/server-backup-completion.md`](../plans/server-backup-completion.md).
+
 ## Tagging Strategy
 
 Every restic snapshot is tagged for filtering:
