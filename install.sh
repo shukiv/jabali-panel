@@ -4158,7 +4158,11 @@ upgrade_infra() {
     local infra_start=$SECONDS
 
     step_info() {
-        ((step++))
+        # Pre-increment form. `((step++))` post-returns the original value;
+        # when step=0 that's 0 which bash treats as exit status 1, tripping
+        # set -e on the very first call. ((++step)) pre-increments and
+        # returns the new non-zero value.
+        ((++step))
         local percent=$((step * 100 / total_steps))
         echo -e "${BLUE}[$step/$total_steps]${NC} $1"
     }
@@ -4187,8 +4191,10 @@ upgrade_infra() {
     # infra hash is unchanged. If an operator removed the cron entry or a
     # systemd unit, we want the next update to heal it — not wait for the
     # next install.sh change to trigger re-configuration.
-    step_info "Ensuring scheduler cron"
-    setup_scheduler_cron
+    # Not using step_info: its `(( step++ ))` bails under set -e when step
+    # starts at 0 (bash quirk: post-increment of 0 returns exit 1).
+    info "Ensuring scheduler cron (always-on safeguard)"
+    setup_scheduler_cron || warn "setup_scheduler_cron reported an error"
 
     # If not skipping, run configuration block
     if [[ $skip_config -eq 0 ]]; then
