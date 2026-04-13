@@ -26,8 +26,21 @@ final class JobDispatcher
         private readonly SystemdRunnerInterface $runner,
         private readonly string $logDir = '/var/lib/jabali/jobs',
     ) {
+        $panelGroup = getenv('JABALI_PANEL_GROUP') ?: 'www-data';
+
         if (! is_dir($this->logDir)) {
-            @mkdir($this->logDir, 0700, recursive: true);
+            // 0750 so the panel group can enter + list; 0640 on individual
+            // files already restricts per-file read. Without group-execute
+            // on the directory, TaskEventRelay can't stat() the log files.
+            @mkdir($this->logDir, 0750, recursive: true);
+            @chgrp($this->logDir, $panelGroup);
+        } else {
+            // Migrate existing 0700 dirs from earlier installs.
+            $perms = fileperms($this->logDir) & 0777;
+            if (($perms & 0050) === 0) {
+                @chmod($this->logDir, 0750);
+                @chgrp($this->logDir, $panelGroup);
+            }
         }
     }
 
