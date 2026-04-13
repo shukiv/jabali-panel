@@ -3633,13 +3633,15 @@ HOOK
 setup_self_healing() {
     header "Setting Up Self-Healing Services"
 
-    # List of critical services to harden with restart policies
+    # List of critical services to harden with restart policies.
+    # NOTE: jabali-queue is intentionally excluded — it's Type=oneshot
+    # (runs via a systemd timer, drains the queue, and exits). systemd
+    # refuses to load a oneshot unit that has Restart=always.
     local services=(
         "jabali-panel"
         "nginx"
         "mariadb"
         "jabali-agent"
-        "jabali-queue"
     )
 
     # Add PHP-FPM (detect version)
