@@ -69,6 +69,19 @@ class User extends Authenticatable implements FilamentUser
     }
 
     /**
+     * Check if the user has admin privileges.
+     *
+     * @api Consumed by sibling addon panels (jabali-security,
+     *      jabali-terminal) that are deployed into this app at install
+     *      time and call $user->isAdmin() from their canAccess()
+     *      guards. Do not remove even if no caller exists in this repo.
+     */
+    public function isAdmin(): bool
+    {
+        return (bool) $this->is_admin;
+    }
+
+    /**
      * Determine if the user can access the Filament panel.
      */
     public function canAccessPanel(\Filament\Panel $panel): bool
