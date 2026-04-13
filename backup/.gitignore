@@ -1,0 +1,6 @@
+/vendor/
+/auth.json
+/.mcp.json
+.env
+*.log
+/.codebase-memory/

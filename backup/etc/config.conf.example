@@ -1,0 +1,53 @@
+# jabali-backup configuration
+# Copy to /etc/jabali-backup/config.conf and edit
+
+[jabali]
+db_host=localhost
+db_name=jabali
+db_user=root
+db_password_file=/etc/jabali-backup/db-password
+app_key_file=/etc/jabali-backup/app-key
+jabali_path=/var/www/jabali
+
+[restic]
+password_file=/etc/jabali-backup/restic-password
+cache_dir=/var/cache/jabali-backup/restic
+
+[repository]
+# Backend type: sftp | s3 | b2 | gcs | azure | rest | local | rclone
+type=local
+path=/var/backups/jabali
+
+[retention]
+keep_last=7
+keep_daily=30
+keep_weekly=12
+keep_monthly=24
+
+[staging]
+dir=/tmp/jabali-backup
+cleanup=true
+
+[notifications]
+on_failure=true
+on_success=false
+email_to=
+webhook_url=
+
+[stalwart]
+# Enable Stalwart JMAP account backup (exports emails, mailboxes, Sieve scripts,
+# identities, vacation responses via stalwart-cli or REST API)
+enabled=false
+# Stalwart server URL (used by stalwart-cli and REST API fallback)
+url=http://localhost:8080
+# Path to file containing the Stalwart admin API token
+admin_token_file=/etc/jabali-backup/stalwart-token
+
+[paths]
+stalwart_data=/var/lib/stalwart-mail/data
+php_fpm_pools=/etc/php/*/fpm/pool.d
+nginx_sites=/etc/nginx/sites-enabled
+
+[logging]
+file=/var/log/jabali-backup.log
+level=info

@@ -1,0 +1,22 @@
+{
+    "name": "jabali/jabali-backup",
+    "description": "Backup tool for Jabali hosting panel",
+    "type": "project",
+    "repositories": {
+        "filament": {
+            "type": "composer",
+            "url": "https://packages.filamentphp.com/composer"
+        }
+    },
+    "require-dev": {
+        "filament/blueprint": "^2.1",
+        "phpstan/phpstan": "*",
+        "phpstan/extension-installer": "*",
+        "shipmonk/dead-code-detector": "*"
+    },
+    "config": {
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
+    }
+}

@@ -1,0 +1,3631 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+JABALI_BACKUP_VERSION="0.1.0"
+
+# Resolve lib directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -d "${SCRIPT_DIR}/../lib/collectors" ]]; then
+    LIB_DIR="${SCRIPT_DIR}/../lib"
+else
+    LIB_DIR="/usr/local/lib/jabali-backup"
+fi
+export LIB_DIR
+
+# Source libraries
+# shellcheck source=../lib/logging.sh
+source "${LIB_DIR}/logging.sh"
+# shellcheck source=../lib/config.sh
+source "${LIB_DIR}/config.sh"
+# shellcheck source=../lib/discover.sh
+source "${LIB_DIR}/discover.sh"
+# shellcheck source=../lib/restic.sh
+source "${LIB_DIR}/restic.sh"
+# shellcheck source=../lib/notify.sh
+source "${LIB_DIR}/notify.sh"
+
+# Source collectors
+for collector in "${LIB_DIR}"/collectors/*.sh; do
+    # shellcheck source=/dev/null
+    source "$collector"
+done
+
+# Source restorers
+if [[ -d "${LIB_DIR}/restorers" ]]; then
+    for restorer in "${LIB_DIR}"/restorers/*.sh; do
+        # shellcheck source=/dev/null
+        [[ -f "$restorer" ]] && source "$restorer"
+    done
+fi
+
+# ─── Usage ────────────────────────────────────────────
+
+usage() {
+    cat <<EOF
+jabali-backup v${JABALI_BACKUP_VERSION}
+Per-account backup tool for Jabali hosting panel (powered by restic)
+
+USAGE:
+    jabali-backup <command> [options]
+
+COMMANDS:
+    run [username]      Run backup (all accounts or single account)
+    server-backup       Full server backup (disaster recovery)
+    restore <username>  Restore account from snapshot
+    server-restore      Restore full server from backup
+    server-download     Download full server snapshot as tar.gz
+    import <file>       Restore from a backup archive (tar.gz)
+    download <username> Download snapshot as compressed archive
+    ls <username> [path]  Browse files in a snapshot
+    list <what>         List accounts, snapshots, or domains
+    init                Initialize restic repository
+    check               Verify repository integrity
+    forget              Apply retention policy
+    destination         Manage backup destinations
+    schedule            Manage backup schedule
+    config              Validate configuration
+    doctor              Check dependencies
+    update              Update jabali-backup to latest version
+    uninstall           Remove jabali-backup CLI + panel addon
+    version             Show version
+
+GLOBAL OPTIONS:
+    --destination=NAME  Use a specific backup destination (default: the one marked default)
+
+RUN OPTIONS:
+    --only=COLLECTORS   Comma-separated list: files,mysql,postgres,dns,email,ssl,nginx,php,wordpress,cron,stalwart,redis,metadata
+    --exclude=COLL      Skip specific collectors
+    --dry-run           Show what would be backed up
+    --parallel=N        Backup N accounts concurrently (default: 1)
+
+RESTORE OPTIONS:
+    --snapshot=ID       Snapshot ID or 'latest' (default: latest)
+    --only=COLLECTORS   Restore specific components only
+    --file=PATH         Restore a single file or directory (relative to /home/{user}/)
+    --target=DIR        Restore to alternate directory
+    --force             Overwrite existing data
+    --dry-run           Preview restore plan
+
+IMPORT OPTIONS:
+    --only=COLLECTORS   Restore specific components only
+    --force             Overwrite existing data
+    --dry-run           Preview what would be restored
+
+FILE BROWSING:
+    jabali-backup ls <username>                            # list all files
+    jabali-backup ls <username> domains/                   # list subdirectory
+    jabali-backup ls <username> --snapshot=abc123          # specific snapshot
+
+EXAMPLES:
+    jabali-backup run                          # backup all accounts
+    jabali-backup run alice                    # backup single account
+    jabali-backup run --only=files,mysql       # files and MySQL only
+    jabali-backup list accounts                # list all accounts
+    jabali-backup list snapshots --user=alice  # list snapshots
+    jabali-backup restore alice --snapshot=latest
+    jabali-backup restore alice --file=domains/example.com/public_html/wp-config.php
+    jabali-backup restore alice --file=domains/example.com/ --target=/tmp/
+    jabali-backup import backup.tar.gz            # restore from archive
+    jabali-backup import backup.tar.gz --dry-run   # preview archive contents
+    jabali-backup doctor                       # check dependencies
+
+EOF
+}
+
+# ─── Commands ─────────────────────────────────────────
+
+cmd_version() {
+    echo "jabali-backup v${JABALI_BACKUP_VERSION}"
+}
+
+cmd_update() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "Update requires root. Run: sudo jabali-backup update" >&2
+        exit 1
+    fi
+
+    # Find the source repo (install.sh lives there)
+    local repo=""
+    if [[ -f /opt/jabali-backup/install.sh ]]; then
+        repo="/opt/jabali-backup"
+    elif [[ -f "${SCRIPT_DIR}/../install.sh" ]]; then
+        repo="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    fi
+
+    if [[ -z "$repo" ]]; then
+        echo "Source repo not found. Re-install with:" >&2
+        echo "  curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-backup/main/install.sh | sudo bash" >&2
+        exit 1
+    fi
+
+    echo ""
+    echo "Updating Jabali Backup"
+    echo "────────────────────────────────────────"
+    echo ""
+
+    # Check for updates before running the full upgrade
+    if [[ -d "${repo}/.git" ]]; then
+        echo "Checking for updates..."
+        git -C "$repo" fetch origin 2>/dev/null || {
+            echo "Failed to check for updates (network error?)" >&2
+            exit 1
+        }
+
+        local local_head remote_head
+        local_head=$(git -C "$repo" rev-parse HEAD 2>/dev/null)
+        remote_head=$(git -C "$repo" rev-parse origin/main 2>/dev/null || git -C "$repo" rev-parse origin/master 2>/dev/null)
+
+        if [[ -n "$local_head" && "$local_head" == "$remote_head" ]]; then
+            echo "Already up to date (v${JABALI_BACKUP_VERSION})"
+            exit 0
+        fi
+
+        local behind
+        behind=$(git -C "$repo" rev-list --count HEAD..origin/main 2>/dev/null || git -C "$repo" rev-list --count HEAD..origin/master 2>/dev/null || echo "?")
+        echo "Update available: ${behind} new commit(s)"
+        echo ""
+    fi
+
+    exec "$repo/install.sh" update
+}
+
+cmd_uninstall() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "Uninstall requires root. Run: sudo jabali-backup uninstall" >&2
+        exit 1
+    fi
+
+    local repo=""
+    if [[ -f /opt/jabali-backup/install.sh ]]; then
+        repo="/opt/jabali-backup"
+    elif [[ -f "${SCRIPT_DIR}/../install.sh" ]]; then
+        repo="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    fi
+
+    if [[ -z "$repo" ]]; then
+        echo "Source repo not found. Run uninstall manually:" >&2
+        echo "  cd /opt/jabali-backup && sudo ./install.sh uninstall" >&2
+        exit 1
+    fi
+
+    exec "$repo/install.sh" uninstall
+}
+
+cmd_doctor() {
+    echo "jabali-backup v${JABALI_BACKUP_VERSION} — dependency check"
+    echo "────────────────────────────────────────"
+    local ok=0
+
+    _check() {
+        local name="$1" cmd="$2"
+        if command -v "$cmd" &>/dev/null; then
+            printf "  %-20s ✓ %s\n" "$name" "$(command -v "$cmd")"
+        else
+            printf "  %-20s ✗ not found\n" "$name"
+            ok=1
+        fi
+    }
+
+    _check "restic" "restic"
+    _check "mysql" "mysql"
+    _check "mysqldump" "mysqldump"
+    _check "php" "php"
+    _check "gzip" "gzip"
+    _check "curl" "curl"
+
+    # Optional
+    echo ""
+    echo "Optional:"
+    _check_opt() {
+        local name="$1" cmd="$2"
+        if command -v "$cmd" &>/dev/null; then
+            printf "  %-20s ✓ %s\n" "$name" "$(command -v "$cmd")"
+        else
+            printf "  %-20s - not installed (optional)\n" "$name"
+        fi
+    }
+    _check_opt "psql" "psql"
+    _check_opt "pg_dump" "pg_dump"
+    _check_opt "wp-cli" "wp"
+    _check_opt "rclone" "rclone"
+    _check_opt "jq (destinations)" "jq"
+    _check_opt "stalwart-cli" "stalwart-cli"
+    _check_opt "mail" "mail"
+
+    # Config
+    echo ""
+    echo "Configuration:"
+    if [[ -f "$JABALI_BACKUP_CONFIG" ]]; then
+        printf "  %-20s ✓ %s\n" "config file" "$JABALI_BACKUP_CONFIG"
+    else
+        printf "  %-20s ✗ not found at %s\n" "config file" "$JABALI_BACKUP_CONFIG"
+        ok=1
+    fi
+
+    # Destinations
+    local dest_file="${JABALI_BACKUP_CONFIG%/*}/destinations.json"
+    if [[ -f "$dest_file" ]] && command -v jq &>/dev/null; then
+        echo ""
+        echo "Destinations:"
+        local dest_count
+        dest_count=$(jq 'length' "$dest_file" 2>/dev/null || echo 0)
+        printf "  %-20s ✓ %s destination(s)\n" "destinations.json" "$dest_count"
+        jq -r '.[] | "  \(.id)\t\(.type)\t\(if .initialized then "ready" else "not init" end)"' "$dest_file" 2>/dev/null | \
+            while IFS=$'\t' read -r id type status; do
+                printf "    %-22s %-8s %s\n" "$id" "$type" "$status"
+            done
+    fi
+
+    # Panel DB connectivity — the most common failure mode (empty or stale
+    # [jabali] section in config.conf after a panel install/reinstall).
+    cfg_load 2>/dev/null
+    echo ""
+    echo "Panel DB:"
+    if _db_query "SELECT 1" >/dev/null 2>&1; then
+        local n
+        n=$(_db_query "SELECT COUNT(*) FROM users WHERE is_active=1" 2>/dev/null || echo "?")
+        printf "  %-20s ✓ connected (%s active users)\n" "$CFG_DB_USER@$CFG_DB_HOST" "$n"
+    else
+        printf "  %-20s ✗ connection failed\n" "$CFG_DB_USER@$CFG_DB_HOST"
+        echo "  → Run: sudo jabali-backup config bootstrap"
+        echo "    (re-reads DB creds + APP_KEY from ${CFG_JABALI_PATH:-/var/www/jabali}/.env)"
+        ok=1
+    fi
+
+    # Stalwart
+    if [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
+        echo ""
+        echo "Stalwart:"
+        printf "  %-20s ✓ %s\n" "enabled" "$CFG_STALWART_URL"
+        if [[ -n "$CFG_STALWART_ADMIN_TOKEN" ]]; then
+            printf "  %-20s ✓ loaded\n" "admin token"
+        else
+            printf "  %-20s ✗ missing or empty\n" "admin token"
+            ok=1
+        fi
+    fi
+
+    echo "────────────────────────────────────────"
+    if [[ "$ok" -eq 0 ]]; then
+        echo "All required dependencies satisfied."
+    else
+        echo "Some required dependencies are missing."
+    fi
+    return $ok
+}
+
+cmd_config() {
+    local subcmd="${1:-test}"
+    cfg_load
+
+    case "$subcmd" in
+        test)
+            echo "Testing configuration..."
+            if cfg_validate; then
+                echo "  Config:     ✓ valid"
+            else
+                echo "  Config:     ✗ invalid"
+                return 1
+            fi
+            # Test DB connection
+            if _db_query "SELECT 1" >/dev/null 2>&1; then
+                local user_count
+                user_count=$(_db_query "SELECT COUNT(*) FROM users")
+                echo "  Database:   ✓ connected ($user_count users)"
+            else
+                echo "  Database:   ✗ connection failed"
+                return 1
+            fi
+            # Test restic repo
+            if restic_env 2>/dev/null; then
+                echo "  Repository: $RESTIC_REPOSITORY"
+            fi
+            echo "  APP_KEY:    $(if [[ -n "$CFG_APP_KEY" ]]; then echo "✓ loaded"; else echo "✗ not available"; fi)"
+            # Test Stalwart connection
+            if [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
+                if [[ -z "$CFG_STALWART_ADMIN_TOKEN" ]]; then
+                    echo "  Stalwart:   ✗ admin token not configured"
+                elif curl -sfS -H "Authorization: Bearer ${CFG_STALWART_ADMIN_TOKEN}" \
+                    -H 'Accept: application/json' \
+                    "${CFG_STALWART_URL%/}/api/principal?limit=1" >/dev/null 2>&1; then
+                    echo "  Stalwart:   ✓ connected (${CFG_STALWART_URL})"
+                else
+                    echo "  Stalwart:   ✗ connection failed (${CFG_STALWART_URL})"
+                fi
+            fi
+            ;;
+        show)
+            echo "Active configuration ($JABALI_BACKUP_CONFIG):"
+            echo "────────────────────────────────────────"
+            echo "  db_host:    $CFG_DB_HOST"
+            echo "  db_name:    $CFG_DB_NAME"
+            echo "  db_user:    $CFG_DB_USER"
+            echo "  db_pass:    ****"
+            echo "  repo_type:  $CFG_REPO_TYPE"
+            echo "  repo_path:  $CFG_REPO_PATH"
+            echo "  staging:    $CFG_STAGING_DIR"
+            echo "  log_file:   $CFG_LOG_FILE"
+            echo "  log_level:  $CFG_LOG_LEVEL"
+            ;;
+        bootstrap)
+            # Regenerate the [jabali] section + db-password + app-key files
+            # from the live Jabali panel .env. Used by the installer on upgrade
+            # (when it detects an empty [jabali] section) and by operators after
+            # a panel credential rotation or DB user rename.
+            local force=0
+            shift || true
+            for arg in "$@"; do
+                case "$arg" in --force) force=1 ;; esac
+            done
+            _cmd_config_bootstrap "$force"
+            ;;
+        *)
+            echo "Usage: jabali-backup config <test|show|bootstrap> [--force]" >&2
+            return 1
+            ;;
+    esac
+}
+
+_cmd_config_bootstrap() {
+    local force="${1:-0}"
+    local jabali_path="${CFG_JABALI_PATH:-/var/www/jabali}"
+    local env_file="${jabali_path}/.env"
+    local conf_file="${JABALI_BACKUP_CONFIG:-/etc/jabali-backup/config.conf}"
+    local etc_dir="${conf_file%/*}"
+
+    if [[ ! -f "$env_file" ]]; then
+        log_error "config bootstrap: $env_file not found — is Jabali installed at $jabali_path?"
+        return 1
+    fi
+
+    local db_host db_name db_user db_pass app_key
+    db_host=$(grep -oP '^DB_HOST=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    db_name=$(grep -oP '^DB_DATABASE=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    db_user=$(grep -oP '^DB_USERNAME=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    db_pass=$(grep -oP '^DB_PASSWORD=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    app_key=$(grep -oP '^APP_KEY=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+
+    if [[ -z "$db_user" || -z "$db_pass" ]]; then
+        log_error "config bootstrap: DB_USERNAME / DB_PASSWORD missing from $env_file"
+        return 1
+    fi
+
+    # Write secret files
+    umask 077
+    printf '%s' "$db_pass" > "${etc_dir}/db-password"
+    chmod 600 "${etc_dir}/db-password"
+    if [[ -n "$app_key" ]]; then
+        printf '%s' "$app_key" > "${etc_dir}/app-key"
+        chmod 600 "${etc_dir}/app-key"
+    fi
+
+    # Rewrite the [jabali] block in-place without touching other sections
+    local new_block
+    new_block=$(cat <<EOB
+[jabali]
+db_host=${db_host:-127.0.0.1}
+db_name=${db_name}
+db_user=${db_user}
+db_password_file=${etc_dir}/db-password
+app_key_file=${etc_dir}/app-key
+jabali_path=${jabali_path}
+EOB
+)
+
+    # Detect existing [jabali] section contents
+    local have_section=0
+    if grep -q '^\[jabali\]' "$conf_file" 2>/dev/null; then
+        have_section=1
+    fi
+
+    # Preserve the rest of the file by splitting on section headers
+    local tmp="${conf_file}.tmp.$$"
+    awk -v block="$new_block" '
+        BEGIN { in_j=0; replaced=0 }
+        /^\[jabali\][[:space:]]*$/ {
+            print block
+            in_j=1; replaced=1
+            next
+        }
+        /^\[[a-z_]+\][[:space:]]*$/ && in_j {
+            in_j=0
+            print ""
+            print
+            next
+        }
+        { if (!in_j) print }
+        END { if (!replaced) { print ""; print block } }
+    ' "$conf_file" > "$tmp"
+
+    chmod 640 "$tmp"
+    mv "$tmp" "$conf_file"
+
+    if [[ "$have_section" -eq 1 ]]; then
+        echo "✓ Updated [jabali] section in $conf_file (from $env_file)"
+    else
+        echo "✓ Appended [jabali] section to $conf_file (from $env_file)"
+    fi
+
+    # Verify the credentials work
+    cfg_load
+    if _db_query "SELECT 1" >/dev/null 2>&1; then
+        local n
+        n=$(_db_query "SELECT COUNT(*) FROM users WHERE is_active=1")
+        echo "✓ DB connection OK ($n active users)"
+    else
+        echo "✗ DB connection still fails — check $env_file credentials" >&2
+        return 1
+    fi
+}
+
+cmd_init() {
+    cfg_load
+    cfg_validate || exit 1
+    restic_init
+}
+
+cmd_check() {
+    cfg_load
+    cfg_validate || exit 1
+    restic_check
+}
+
+cmd_forget() {
+    cfg_load
+    cfg_validate || exit 1
+    local dry_run=0
+    for arg in "$@"; do
+        [[ "$arg" == "--dry-run" ]] && dry_run=1
+    done
+    if [[ "$dry_run" -eq 1 ]]; then
+        restic_env
+        restic forget --dry-run "${RESTIC_EXTRA_OPTS[@]}" \
+            --keep-last "$CFG_KEEP_LAST" --keep-daily "$CFG_KEEP_DAILY" \
+            --keep-weekly "$CFG_KEEP_WEEKLY" --keep-monthly "$CFG_KEEP_MONTHLY"
+    else
+        restic_forget
+    fi
+}
+
+cmd_list() {
+    for arg in "$@"; do
+        case "$arg" in --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;; esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local what="${1:-}" user_filter="" type_filter=""
+    shift || true
+
+    # Parse --user=xxx --type=xxx
+    for arg in "$@"; do
+        if [[ "$arg" =~ ^--user=(.+)$ ]]; then
+            user_filter="${BASH_REMATCH[1]}"
+        elif [[ "$arg" =~ ^--type=(.+)$ ]]; then
+            type_filter="${BASH_REMATCH[1]}"
+        fi
+    done
+
+    case "$what" in
+        accounts)
+            echo "Jabali Accounts"
+            echo "────────────────────────────────────────"
+            printf "%-6s %-20s %-30s %-8s\n" "ID" "Username" "Home" "Active"
+            echo "────────────────────────────────────────"
+            discover_all_accounts | while IFS=$'\t' read -r uid uname home active; do
+                printf "%-6s %-20s %-30s %-8s\n" "$uid" "$uname" "$home" \
+                    "$(if [[ "$active" == "1" ]]; then echo "yes"; else echo "no"; fi)"
+            done
+            ;;
+        snapshots)
+            restic_env
+            local -a tag_args=()
+            if [[ -n "$user_filter" ]]; then
+                tag_args+=("--tag" "account:${user_filter}")
+            fi
+            if [[ -n "$type_filter" ]]; then
+                tag_args+=("--tag" "type:${type_filter}")
+            fi
+            restic snapshots "${RESTIC_EXTRA_OPTS[@]}" "${tag_args[@]}" 2>/dev/null
+            ;;
+        server-snapshots)
+            restic_env
+            local json_mode=0
+            for arg in "$@"; do [[ "$arg" == "--json" ]] && json_mode=1; done
+            if [[ "$json_mode" -eq 1 ]]; then
+                restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null
+            else
+                echo "Disaster Recovery Snapshots (tag type:server)"
+                echo "─────────────────────────────────────────────────────────────"
+                printf "%-10s %-20s %-20s %-10s\n" "ID" "Date" "Hostname" "Size"
+                echo "─────────────────────────────────────────────────────────────"
+                restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                    | jq -r '.[] | [.short_id, (.time | sub("\\..*$";"") | sub("T";" ")), .hostname, ((.tags // [])[] | select(startswith("date:")))] | @tsv' 2>/dev/null \
+                    | while IFS=$'\t' read -r id ts host date_tag; do
+                        printf "%-10s %-20s %-20s %-10s\n" "$id" "$ts" "$host" "${date_tag#date:}"
+                    done
+            fi
+            ;;
+        domains)
+            if [[ -n "$user_filter" ]]; then
+                local account
+                account=$(discover_single_account "$user_filter")
+                local uid
+                uid=$(echo "$account" | cut -f1)
+                if [[ -n "$uid" ]]; then
+                    printf "%-6s %-30s %-8s\n" "ID" "Domain" "SSL"
+                    echo "────────────────────────────────────────"
+                    discover_domains "$uid" | while IFS=$'\t' read -r did dname _ ssl_en _; do
+                        printf "%-6s %-30s %-8s\n" "$did" "$dname" \
+                            "$(if [[ "$ssl_en" == "1" ]]; then echo "yes"; else echo "no"; fi)"
+                    done
+                fi
+            else
+                echo "Usage: jabali-backup list domains --user=<username>"
+            fi
+            ;;
+        *)
+            echo "Usage: jabali-backup list <accounts|snapshots|domains|server-snapshots> [--user=username] [--type=full|server] [--json]"
+            ;;
+    esac
+}
+
+# ─── File Browser ─────────────────────────────────────
+
+cmd_ls() {
+    for arg in "$@"; do
+        case "$arg" in --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;; esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local target_user="" browse_path="" snapshot="latest"
+    for arg in "$@"; do
+        case "$arg" in
+            --snapshot=*) snapshot="${arg#--snapshot=}" ;;
+            --destination=*) ;; # already handled
+            *)
+                if [[ -z "$target_user" ]]; then
+                    target_user="$arg"
+                else
+                    browse_path="$arg"
+                fi
+                ;;
+        esac
+    done
+
+    if [[ -z "$target_user" ]]; then
+        echo "Usage: jabali-backup ls <username|server> [path] [--snapshot=ID]"
+        echo ""
+        echo "Browse files in a backup snapshot."
+        echo ""
+        echo "Examples:"
+        echo "  jabali-backup ls alice                          # list home directory"
+        echo "  jabali-backup ls alice domains/                 # list domains dir"
+        echo "  jabali-backup ls server                         # list disaster-recovery snapshot root"
+        echo "  jabali-backup ls server config/jabali           # list /etc/jabali contents in snapshot"
+        echo "  jabali-backup ls alice --snapshot=abc123        # specific snapshot"
+        return 1
+    fi
+
+    # Accept 'server' (ergonomic) or '__server__' (panel-internal) as aliases
+    local is_server=0
+    if [[ "$target_user" == "server" || "$target_user" == "__server__" ]]; then
+        is_server=1
+    fi
+
+    # Resolve snapshot
+    restic_env || exit 1
+    local snapshot_id
+    if [[ "$snapshot" == "latest" ]]; then
+        if [[ "$is_server" -eq 1 ]]; then
+            snapshot_id=$(restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | jq -r '.[-1].short_id // empty' 2>/dev/null)
+            if [[ -z "$snapshot_id" ]]; then
+                log_error "No server (type:server) snapshots found"
+                return 1
+            fi
+        else
+            snapshot_id=$(restic snapshots --json --tag "account:${target_user}" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | grep -oP '"short_id"\s*:\s*"\K[^"]+' | tail -1)
+            if [[ -z "$snapshot_id" ]]; then
+                log_error "No snapshots found for account: $target_user"
+                return 1
+            fi
+        fi
+    else
+        snapshot_id="$snapshot"
+    fi
+
+    # Build the full path to list
+    local full_path
+    if [[ "$is_server" -eq 1 ]]; then
+        # Server snapshots live under the staging root (e.g.
+        # /tmp/jabali-backup/server-<pid>/server/…). Resolve the actual
+        # server_root by asking restic for the full tree (no path filter,
+        # since `restic ls <id> /` only returns top-level children).
+        local server_root
+        server_root=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | grep -E '/server-manifest\.json$' | head -1 | sed 's|/server-manifest\.json$||')
+        if [[ -z "$server_root" ]]; then
+            server_root=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | grep -oE '^[^/]*/tmp/[^/]+/server-[^/]+/server$' | head -1)
+        fi
+        if [[ -z "$server_root" ]]; then
+            log_error "Could not resolve server root in snapshot $snapshot_id"
+            return 1
+        fi
+        full_path="$server_root"
+        if [[ -n "$browse_path" ]]; then
+            browse_path="${browse_path#/}"
+            full_path="${server_root}/${browse_path}"
+        fi
+    else
+        full_path="/home/${target_user}"
+        if [[ -n "$browse_path" ]]; then
+            browse_path="${browse_path#/}"
+            full_path="/home/${target_user}/${browse_path}"
+        fi
+    fi
+
+    echo "Snapshot: $snapshot_id"
+    echo "Path:     $full_path"
+    echo "────────────────────────────────────────"
+
+    # Use restic ls with the path filter
+    local strip_prefix
+    if [[ "$is_server" -eq 1 ]]; then
+        strip_prefix="${full_path}/"
+    else
+        strip_prefix="/home/${target_user}/"
+    fi
+    restic_ls "$snapshot_id" "$full_path" 2>/dev/null | while IFS= read -r line; do
+        local relative="${line#$strip_prefix}"
+        [[ "$relative" == "$line" ]] && relative="$line" # no-op fallback
+        [[ "$line" == "$full_path" ]] && continue
+        echo "$relative"
+    done
+}
+
+# ─── Backup Orchestrator ─────────────────────────────
+
+cmd_run() {
+    # Pre-parse --destination before cfg_load so it picks up the right repo
+    for arg in "$@"; do
+        case "$arg" in
+            --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;;
+        esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local -a target_users=()
+    local only="" exclude="" exclude_accounts="" dry_run=0
+    for arg in "$@"; do
+        case "$arg" in
+            --only=*)             only="${arg#--only=}" ;;
+            --exclude=*)          exclude="${arg#--exclude=}" ;;
+            --exclude-accounts=*) exclude_accounts="${arg#--exclude-accounts=}" ;;
+            --destination=*)      ;; # already handled above
+            --dry-run)            dry_run=1 ;;
+            --parallel=*)         ;; # TODO: implement
+            -*)                   log_error "Unknown option: $arg"; return 1 ;;
+            *)                    target_users+=("$arg") ;;
+        esac
+    done
+
+    local start_time
+    start_time=$(date +%s)
+
+    # Discover accounts
+    local accounts
+    if [[ ${#target_users[@]} -gt 0 ]]; then
+        accounts=""
+        for tu in "${target_users[@]}"; do
+            local single
+            single=$(discover_single_account "$tu")
+            if [[ -z "$single" ]]; then
+                log_error "Account not found: $tu"
+                continue
+            fi
+            accounts="${accounts}${accounts:+$'\n'}${single}"
+        done
+        if [[ -z "$accounts" ]]; then
+            log_error "No valid accounts found"
+            return 1
+        fi
+    else
+        accounts=$(discover_accounts)
+    fi
+
+    # Apply account exclusions
+    if [[ -n "$exclude_accounts" ]]; then
+        local filtered=""
+        while IFS=$'\t' read -r _uid _uname _home _active; do
+            local skip=0
+            IFS=',' read -ra excl_arr <<< "$exclude_accounts"
+            for excl in "${excl_arr[@]}"; do
+                [[ "$_uname" == "$excl" ]] && skip=1 && break
+            done
+            [[ "$skip" -eq 0 ]] && filtered="${filtered}${filtered:+$'\n'}${_uid}	${_uname}	${_home}	${_active}"
+        done <<< "$accounts"
+        accounts="$filtered"
+    fi
+
+    # Generate a unique run ID for this backup job
+    local run_id
+    run_id="run-$(date '+%Y%m%d-%H%M%S')-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    log_info "Backup run: $run_id"
+
+    local total=0 success=0 failed=0 errors=""
+
+    while IFS=$'\t' read -r user_id username home_dir is_active; do
+        [[ -z "$user_id" ]] && continue
+        total=$((total + 1))
+
+        log_info "═══ Backing up account: $username (id=$user_id) ═══"
+
+        if [[ "$dry_run" -eq 1 ]]; then
+            echo ""
+            echo "Account: $username (id=$user_id)"
+            echo "  Home:     $home_dir"
+            _should_run() { _collector_enabled "$1" "$only" "$exclude"; }
+            _should_run files     && echo "  files:    $home_dir"
+            _should_run mysql     && echo "  mysql:    $(discover_mysql_credentials "$user_id" | head -1)"
+            _should_run postgres  && echo "  postgres: (check at runtime)"
+            _should_run dns       && echo "  dns:      $(discover_domains "$user_id" | wc -l) domains"
+            _should_run email     && echo "  email:    $(discover_mailboxes "$user_id" | wc -l) mailboxes"
+            _should_run ssl       && echo "  ssl:      $(discover_ssl_certs "$user_id" | wc -l) certificates"
+            _should_run nginx     && echo "  nginx:    $(discover_domains "$user_id" | wc -l) vhosts"
+            _should_run php       && echo "  php:      pool config"
+            _should_run wordpress && echo "  wordpress: (scan at runtime)"
+            _should_run cron      && echo "  cron:     $(discover_cron_jobs "$user_id" | wc -l) jobs"
+            if _should_run stalwart && [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
+                local _mb_count
+                _mb_count=$(discover_mailboxes "$user_id" | wc -l)
+                echo "  stalwart: $_mb_count account(s) (JMAP export — replaces maildir)"
+            fi
+            _should_run metadata  && echo "  metadata: account record"
+            continue
+        fi
+
+        # Create staging directory
+        local staging="${CFG_STAGING_DIR}/${username}"
+        mkdir -p "$staging"
+        chmod 700 "$staging"
+
+        # Cleanup trap for this account
+        trap 'rm -rf "${staging:-}" 2>/dev/null' EXIT
+
+        # Collect backup paths (home dir + mail storage go direct to restic)
+        local -a backup_paths=()
+        local -a restic_tags=(
+            "--tag" "account:${username}"
+            "--tag" "type:full"
+            "--tag" "date:$(date '+%Y-%m-%d')"
+            "--tag" "run:${run_id}"
+        )
+
+        # Run collectors
+        if _collector_enabled files "$only" "$exclude"; then
+            local fpath
+            fpath=$(collect_files "$username" "$home_dir" "$staging")
+            [[ -n "$fpath" ]] && backup_paths+=("$fpath")
+        fi
+
+        if _collector_enabled mysql "$only" "$exclude"; then
+            collect_mysql "$user_id" "$staging" "$username" || log_warn "mysql collector failed for $username"
+        fi
+
+        if _collector_enabled postgres "$only" "$exclude"; then
+            collect_postgres "$username" "$staging" || log_warn "postgres collector failed for $username"
+        fi
+
+        if _collector_enabled dns "$only" "$exclude"; then
+            collect_dns "$user_id" "$staging" || log_warn "dns collector failed for $username"
+        fi
+
+        if _collector_enabled email "$only" "$exclude"; then
+            local mail_paths
+            mail_paths=$(collect_email "$user_id" "$staging")
+            while IFS= read -r mp; do
+                [[ -n "$mp" ]] && [[ -d "$mp" ]] && backup_paths+=("$mp")
+            done <<< "$mail_paths"
+        fi
+
+        if _collector_enabled ssl "$only" "$exclude"; then
+            collect_ssl "$user_id" "$staging" || log_warn "ssl collector failed for $username"
+        fi
+
+        if _collector_enabled nginx "$only" "$exclude"; then
+            collect_nginx "$user_id" "$staging" || log_warn "nginx collector failed for $username"
+        fi
+
+        if _collector_enabled php "$only" "$exclude"; then
+            collect_php "$username" "$staging" || log_warn "php collector failed for $username"
+        fi
+
+        if _collector_enabled wordpress "$only" "$exclude"; then
+            collect_wordpress "$username" "$home_dir" "$staging" || log_warn "wordpress collector failed for $username"
+        fi
+
+        if _collector_enabled cron "$only" "$exclude"; then
+            collect_cron "$user_id" "$username" "$staging" || log_warn "cron collector failed for $username"
+        fi
+
+        if _collector_enabled stalwart "$only" "$exclude"; then
+            collect_stalwart "$user_id" "$staging" || log_warn "stalwart collector failed for $username"
+        fi
+
+        if _collector_enabled redis "$only" "$exclude"; then
+            collect_redis "$user_id" "$staging" "$username" || log_warn "redis collector failed for $username"
+        fi
+
+        if _collector_enabled metadata "$only" "$exclude"; then
+            collect_metadata "$user_id" "$username" "$staging" || log_warn "metadata collector failed for $username"
+        fi
+
+        # Generate manifest.json
+        _generate_manifest "$staging" "$username" "$user_id"
+
+        # Add staging dir if it has content
+        if [[ -n "$(ls -A "$staging" 2>/dev/null)" ]]; then
+            backup_paths+=("$staging")
+        fi
+
+        # Run restic backup
+        if [[ ${#backup_paths[@]} -gt 0 ]]; then
+            local -a exclude_args=()
+            while IFS= read -r pattern; do
+                [[ -n "$pattern" ]] && exclude_args+=("--exclude" "$pattern")
+            done < <(files_excludes)
+
+            if restic_backup "${restic_tags[@]}" "${exclude_args[@]}" "${backup_paths[@]}"; then
+                success=$((success + 1))
+                log_info "═══ Backup complete for $username ═══"
+            else
+                failed=$((failed + 1))
+                errors+="  - ${username}: restic backup failed\n"
+                log_error "═══ Backup FAILED for $username ═══"
+            fi
+        else
+            log_warn "No data to backup for $username"
+        fi
+
+        # Cleanup staging
+        if [[ "$CFG_STAGING_CLEANUP" == "true" ]]; then
+            rm -rf "$staging"
+        fi
+
+    done <<< "$accounts"
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Dry run complete. $total account(s) would be backed up."
+        return 0
+    fi
+
+    # Post-backup: retention
+    if [[ "$success" -gt 0 ]]; then
+        restic_forget || log_warn "Retention policy application failed"
+    fi
+
+    # Summary
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Backup Summary"
+    echo "────────────────────────────────────────"
+    echo "  Total:    $total accounts"
+    echo "  Success:  $success"
+    echo "  Failed:   $failed"
+    echo "  Duration: ${duration}s"
+    echo "════════════════════════════════════════"
+
+    # Notify
+    if [[ "$failed" -gt 0 ]]; then
+        notify_result "failure" "$(printf "$errors")" "$duration" "$total"
+    else
+        notify_result "success" "All $success accounts backed up successfully" "$duration" "$total"
+    fi
+
+    return "$failed"
+}
+
+# ─── Server Backup (Disaster Recovery) ────────────────
+
+cmd_server_backup() {
+    for arg in "$@"; do
+        case "$arg" in
+            --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;;
+        esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local skip_users=0 dry_run=0 skip_stalwart_data=0
+    for arg in "$@"; do
+        case "$arg" in
+            --skip-users)          skip_users=1 ;;
+            --dry-run)             dry_run=1 ;;
+            --skip-stalwart-data)  skip_stalwart_data=1 ;;
+            --destination=*) ;; # handled above
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+        esac
+    done
+
+    if [[ "$skip_stalwart_data" -eq 1 ]]; then
+        export CFG_SERVER_BACKUP_STALWART_DATA=false
+    else
+        export CFG_SERVER_BACKUP_STALWART_DATA=true
+    fi
+
+    local start_time
+    start_time=$(date +%s)
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Server Backup Plan (Disaster Recovery)"
+        echo "════════════════════════════════════════"
+        echo ""
+        echo "Server-level components:"
+        echo "  1. jabali database (mysqldump, skip ephemeral tables)"
+        echo "  2. powerdns database (mysqldump)"
+        echo "  3. Panel .env + storage/app/"
+        echo "  4. /etc/jabali/ (configs, secrets, agent addons)"
+        echo "  5. Nginx config (nginx.conf, jabali/, sites-available/)"
+        echo "  6. PHP-FPM config (all versions)"
+        echo "  7. Stalwart mail config + data (DKIM keys, RocksDB)$(if [[ "$skip_stalwart_data" -eq 1 ]]; then echo " [config only — --skip-stalwart-data]"; fi)"
+        echo "  8. Redis config (ACL passwords)"
+        echo "  9. MariaDB config"
+        echo "  10. Panel SSL cert (/etc/ssl/jabali/)"
+        echo "  11. Let's Encrypt state (/etc/letsencrypt/)"
+        echo "  12. Systemd units (jabali-*, stalwart-mail, bulwark)"
+        echo "  13. Package manifest (dpkg, versions)"
+        echo "  14. Server manifest (server-manifest.json)"
+        echo ""
+        if [[ "$skip_users" -eq 0 ]]; then
+            echo "User accounts: ALL (per-user backup for each account)"
+        else
+            echo "User accounts: SKIPPED (--skip-users)"
+        fi
+        echo ""
+        echo "Dry run complete. No changes made."
+        return 0
+    fi
+
+    log_info "═══ Server backup (disaster recovery) starting ═══"
+
+    # Collect server-level data
+    local staging="${CFG_STAGING_DIR:-/tmp/jabali-backup}/server-$$"
+    mkdir -p "$staging"
+    trap 'rm -rf "${staging:-}" 2>/dev/null' EXIT
+
+    restic_env || exit 1
+
+    collect_server "$staging"
+
+    # Backup server data to restic
+    local -a server_tags=(
+        "--tag" "type:server"
+        "--tag" "date:$(date '+%Y-%m-%d')"
+        "--tag" "hostname:$(hostname)"
+    )
+
+    log_info "Running server-level restic backup"
+    if restic_backup "${server_tags[@]}" "$staging"; then
+        log_info "Server-level backup complete"
+    else
+        log_error "Server-level restic backup failed"
+        return 1
+    fi
+
+    # Run per-user backups (unless --skip-users)
+    if [[ "$skip_users" -eq 0 ]]; then
+        log_info "Starting per-user backups for all accounts"
+        cmd_run
+    else
+        log_info "Skipping per-user backups (--skip-users)"
+    fi
+
+    # Cleanup
+    rm -rf "$staging" 2>/dev/null
+    trap - EXIT
+
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Server Backup Complete"
+    echo "────────────────────────────────────────"
+    echo "  Duration: ${duration}s"
+    echo "  Type:     disaster recovery (server + all users)"
+    echo ""
+    echo "  Browse:   jabali-backup ls server"
+    echo "  List:     jabali-backup list server-snapshots"
+    echo "  Restore:  jabali-backup server-restore --snapshot=latest"
+    echo "════════════════════════════════════════"
+
+    log_info "═══ Server backup complete (${duration}s) ═══"
+}
+
+# ─── Server Restore (Disaster Recovery) ───────────────
+
+cmd_server_restore() {
+    for arg in "$@"; do
+        case "$arg" in
+            --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;;
+        esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local snapshot="latest" target_dir="" force=0 dry_run=0 skip_users=0
+    for arg in "$@"; do
+        case "$arg" in
+            --snapshot=*) snapshot="${arg#--snapshot=}" ;;
+            --target=*)   target_dir="${arg#--target=}" ;;
+            --force)      force=1 ;;
+            --dry-run)    dry_run=1 ;;
+            --skip-users) skip_users=1 ;;
+            --destination=*) ;; # handled above
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+        esac
+    done
+
+    local start_time
+    start_time=$(date +%s)
+
+    # Resolve snapshot
+    restic_env || exit 1
+    local snapshot_id
+    if [[ "$snapshot" == "latest" ]]; then
+        snapshot_id=$(restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | grep -oP '"short_id"\s*:\s*"\K[^"]+' | tail -1)
+        if [[ -z "$snapshot_id" ]]; then
+            log_error "No server backup snapshots found"
+            return 1
+        fi
+        log_info "Resolved latest server snapshot: $snapshot_id"
+    else
+        snapshot_id="$snapshot"
+    fi
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Server Restore Plan"
+        echo "════════════════════════════════════════"
+        echo "  Snapshot:    $snapshot_id"
+        echo "  Mode:        $(if [[ -n "$target_dir" ]]; then echo "extract to $target_dir"; else echo "live restore"; fi)"
+        echo "  Force:       $(if [[ "$force" -eq 1 ]]; then echo "yes"; else echo "no"; fi)"
+        echo "  Skip users:  $(if [[ "$skip_users" -eq 1 ]]; then echo "yes"; else echo "no"; fi)"
+        echo ""
+        echo "Phases:"
+        echo "  1. Base install (.env, /etc/jabali/)"
+        echo "  2. Databases (jabali, powerdns, migrations)"
+        echo "  3. Service configs (nginx, PHP-FPM, Stalwart, Redis, MariaDB, SSL, systemd, Let's Encrypt)"
+        echo "  4. User accounts (all users via per-user restore)"
+        echo "  5. Finalize (daemon-reload, restart services, post-restore checks)"
+        echo ""
+        echo "Dry run complete. No changes made."
+        return 0
+    fi
+
+    log_info "═══ Server restore (disaster recovery) starting ═══"
+
+    # Extract snapshot
+    local extract_dir
+    if [[ -n "$target_dir" ]]; then
+        extract_dir="$target_dir"
+        mkdir -p "$extract_dir"
+    else
+        extract_dir="/tmp/jabali-server-restore-$$"
+        mkdir -p "$extract_dir"
+        trap 'rm -rf "${extract_dir:-}" 2>/dev/null' EXIT
+    fi
+
+    log_info "Extracting server snapshot $snapshot_id"
+    if ! restic_restore "$snapshot_id" "$extract_dir"; then
+        log_error "Failed to extract server snapshot $snapshot_id"
+        return 1
+    fi
+
+    # Find the server dir (may be under staging path)
+    local server_data=""
+    if [[ -d "${extract_dir}/server" ]]; then
+        server_data="${extract_dir}"
+    else
+        # Search under staging paths
+        server_data=$(find "$extract_dir" -maxdepth 4 -name "server-manifest.json" -exec dirname {} \; 2>/dev/null | head -1)
+        [[ -n "$server_data" ]] && server_data=$(dirname "$server_data")
+    fi
+
+    if [[ -z "$server_data" || ! -d "${server_data}/server" ]]; then
+        log_error "No server data found in snapshot"
+        return 1
+    fi
+
+    # If --target mode, just show what was extracted
+    if [[ -n "$target_dir" ]]; then
+        echo ""
+        echo "Extracted to: $target_dir"
+        echo "────────────────────────────────────────"
+        [[ -f "${server_data}/server/server-manifest.json" ]] && cat "${server_data}/server/server-manifest.json"
+        echo ""
+        echo "Files extracted for inspection. No changes applied."
+        return 0
+    fi
+
+    # Run 5-phase restore
+    restore_server "$server_data" "$force" "$skip_users"
+
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Server Restore Complete"
+    echo "────────────────────────────────────────"
+    echo "  Snapshot:  $snapshot_id"
+    echo "  Duration:  ${duration}s"
+    echo "════════════════════════════════════════"
+
+    log_info "═══ Server restore complete (${duration}s) ═══"
+}
+
+# ─── Server Download (Disaster Recovery archive) ──────
+
+cmd_server_download() {
+    for arg in "$@"; do
+        case "$arg" in --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;; esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local snapshot="latest" output="" configs_only=""
+    for arg in "$@"; do
+        case "$arg" in
+            --snapshot=*)    snapshot="${arg#--snapshot=}" ;;
+            --output=*)      output="${arg#--output=}" ;;
+            --configs-only)  configs_only="--configs-only" ;;
+            --destination=*) ;; # handled above
+            -*) log_error "Unknown option: $arg"; return 1 ;;
+            *)  log_error "Unexpected positional argument: $arg"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$output" ]]; then
+        local ts
+        ts=$(date +%Y%m%d-%H%M%S)
+        output="/tmp/jabali-server-${ts}.tar.gz"
+    fi
+
+    restic_env || exit 1
+
+    # Resolve 'latest' to a real server snapshot id
+    if [[ "$snapshot" == "latest" ]]; then
+        snapshot=$(restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | jq -r '.[-1].short_id // empty' 2>/dev/null)
+        if [[ -z "$snapshot" ]]; then
+            log_error "No server snapshots found (tag type:server)"
+            return 1
+        fi
+        log_info "Resolved latest server snapshot: $snapshot"
+    fi
+
+    # shellcheck source=../lib/server-download.sh
+    source "${LIB_DIR}/server-download.sh"
+
+    log_info "Building server download archive → $output"
+    if build_server_download_archive "$snapshot" "$output" "$configs_only"; then
+        local size
+        size=$(du -h "$output" 2>/dev/null | awk '{print $1}')
+        echo ""
+        echo "════════════════════════════════════════"
+        echo "Server Download Complete"
+        echo "────────────────────────────────────────"
+        echo "  Snapshot: $snapshot"
+        echo "  Output:   $output"
+        echo "  Size:     ${size:-unknown}"
+        echo "  Mode:     $(if [[ -n "$configs_only" ]]; then echo "configs only"; else echo "full (server + all users)"; fi)"
+        echo "════════════════════════════════════════"
+        return 0
+    else
+        log_error "Server download failed"
+        return 1
+    fi
+}
+
+# ─── Restore Orchestrator ─────────────────────────────
+
+cmd_restore() {
+    # Pre-parse --destination before cfg_load so it picks up the right repo
+    for arg in "$@"; do
+        case "$arg" in
+            --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;;
+        esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local target_user="" snapshot="latest" only="" exclude="" target_dir="" force=0 dry_run=0
+    local -a restore_files=()
+    for arg in "$@"; do
+        case "$arg" in
+            --snapshot=*) snapshot="${arg#--snapshot=}" ;;
+            --only=*)     only="${arg#--only=}" ;;
+            --exclude=*)  exclude="${arg#--exclude=}" ;;
+            --target=*)   target_dir="${arg#--target=}" ;;
+            --file=*)     restore_files+=("${arg#--file=}") ;;
+            --force)      force=1 ;;
+            --dry-run)    dry_run=1 ;;
+            --destination=*) ;; # already handled above
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+            *)            target_user="$arg" ;;
+        esac
+    done
+
+    if [[ -z "$target_user" ]]; then
+        echo "Usage: jabali-backup restore <username> [--snapshot=latest] [--only=...] [--force] [--dry-run] [--target=DIR]"
+        echo "       jabali-backup restore <username> --file=<path> [--target=DIR] [--force]"
+        return 1
+    fi
+
+    local start_time
+    start_time=$(date +%s)
+
+    # Resolve snapshot ID
+    restic_env || exit 1
+    local snapshot_id
+    if [[ "$snapshot" == "latest" ]]; then
+        snapshot_id=$(restic snapshots --json --tag "account:${target_user}" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | grep -oP '"short_id"\s*:\s*"\K[^"]+' | tail -1)
+        if [[ -z "$snapshot_id" ]]; then
+            log_error "No snapshots found for account: $target_user"
+            return 1
+        fi
+        log_info "Resolved latest snapshot for $target_user: $snapshot_id"
+    else
+        snapshot_id="$snapshot"
+    fi
+
+    # ─── File-level restore (--file=) ───
+    if [[ ${#restore_files[@]} -gt 0 ]]; then
+        _restore_files_granular "$target_user" "$snapshot_id" "$target_dir" "$force" "$dry_run" "${restore_files[@]}"
+        return $?
+    fi
+
+    # ─── Full component restore ───
+
+    # Extract snapshot
+    local extract_dir
+    if [[ -n "$target_dir" ]]; then
+        extract_dir="$target_dir"
+        mkdir -p "$extract_dir"
+    else
+        extract_dir="/tmp/jabali-restore-${target_user}-$$"
+        mkdir -p "$extract_dir"
+        trap 'rm -rf "${extract_dir:-}" 2>/dev/null' EXIT
+    fi
+
+    # Detect what components exist in the snapshot
+    local staging_base="/tmp/jabali-backup/${target_user}"
+    local -a available_components=()
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Restore Plan"
+        echo "────────────────────────────────────────"
+        echo "  Account:   $target_user"
+        echo "  Snapshot:  $snapshot_id"
+        echo "  Mode:      $(if [[ -n "$target_dir" ]]; then echo "extract to $target_dir"; else echo "live restore"; fi)"
+        echo "  Force:     $(if [[ "$force" -eq 1 ]]; then echo "yes"; else echo "no"; fi)"
+        echo ""
+
+        # List snapshot contents to detect components
+        local contents
+        contents=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null | grep "$staging_base" || true)
+        local has_home
+        has_home=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null | grep "^/home/${target_user}/" | head -1 || true)
+
+        echo "Components found in snapshot:"
+        [[ -n "$has_home" ]] && _collector_enabled files "$only" "$exclude" && echo "  files:     /home/${target_user}/"
+        echo "$contents" | grep -q "/mysql/" && _collector_enabled mysql "$only" "$exclude" && echo "  mysql:     database dumps"
+        echo "$contents" | grep -q "/postgres/" && _collector_enabled postgres "$only" "$exclude" && echo "  postgres:  PostgreSQL database dumps"
+        echo "$contents" | grep -q "/dns/" && _collector_enabled dns "$only" "$exclude" && echo "  dns:       zone records"
+        echo "$contents" | grep -q "/email/" && _collector_enabled email "$only" "$exclude" && echo "  email:     mailboxes, forwarders"
+        echo "$contents" | grep -q "/ssl/" && _collector_enabled ssl "$only" "$exclude" && echo "  ssl:       certificates"
+        echo "$contents" | grep -q "/nginx/" && _collector_enabled nginx "$only" "$exclude" && echo "  nginx:     vhost configs"
+        echo "$contents" | grep -q "/php/" && _collector_enabled php "$only" "$exclude" && echo "  php:       FPM pool config"
+        echo "$contents" | grep -q "/wordpress/" && _collector_enabled wordpress "$only" "$exclude" && echo "  wordpress: site data (via files)"
+        echo "$contents" | grep -q "/cron/" && _collector_enabled cron "$only" "$exclude" && echo "  cron:      jobs"
+        echo "$contents" | grep -q "/metadata/" && _collector_enabled metadata "$only" "$exclude" && echo "  metadata:  account record"
+        echo ""
+        echo "Dry run complete. No changes made."
+        return 0
+    fi
+
+    log_info "═══ Restoring account: $target_user (snapshot=$snapshot_id) ═══"
+
+    # Extract snapshot to temp dir
+    log_info "Extracting snapshot $snapshot_id to $extract_dir"
+    if ! restic_restore "$snapshot_id" "$extract_dir"; then
+        log_error "Failed to extract snapshot $snapshot_id"
+        return 1
+    fi
+
+    local staging="${extract_dir}/tmp/jabali-backup/${target_user}"
+
+    # If --target mode, just show what was extracted
+    if [[ -n "$target_dir" ]]; then
+        echo ""
+        echo "Extracted to: $target_dir"
+        echo "────────────────────────────────────────"
+        [[ -d "${extract_dir}/home/${target_user}" ]] && echo "  home/       $(find "${extract_dir}/home/${target_user}" -type f 2>/dev/null | wc -l) files"
+        [[ -d "${staging}/mysql" ]] && echo "  mysql/      $(ls "${staging}/mysql/"*.sql.gz 2>/dev/null | wc -l) database(s)"
+        [[ -d "${staging}/postgres" ]] && echo "  postgres/   $(ls "${staging}/postgres/"*.dump 2>/dev/null | wc -l) database(s)"
+        [[ -d "${staging}/dns" ]] && echo "  dns/        $(ls "${staging}/dns/"*.json 2>/dev/null | wc -l) zone(s)"
+        [[ -d "${staging}/email" ]] && echo "  email/      $(ls "${staging}/email/mailboxes/"*.json 2>/dev/null | wc -l) mailbox(es)"
+        [[ -d "${staging}/ssl" ]] && echo "  ssl/        $(find "${staging}/ssl" -name meta.json 2>/dev/null | wc -l) cert(s)"
+        [[ -d "${staging}/nginx" ]] && echo "  nginx/      $(ls "${staging}/nginx/"*.conf 2>/dev/null | wc -l) vhost(s)"
+        [[ -d "${staging}/php" ]] && echo "  php/        $(ls "${staging}/php/"*.conf 2>/dev/null | wc -l) pool(s)"
+        [[ -d "${staging}/wordpress" ]] && echo "  wordpress/  $(ls -d "${staging}/wordpress/"*/ 2>/dev/null | wc -l) site(s)"
+        [[ -d "${staging}/cron" ]] && echo "  cron/       $(if [[ -f "${staging}/cron/jobs.json" ]]; then echo "jobs"; else echo "empty"; fi)"
+        [[ -f "${staging}/metadata/account.json" ]] && echo "  metadata/   account.json"
+        echo ""
+        echo "Files extracted for inspection. No changes applied to live system."
+        return 0
+    fi
+
+    # ─── Run restorers in dependency order ───
+    # Order: 1) Create user → 2) Create domains → 3) Restore files → 4) Configs
+    # This ensures directory structures exist before files are copied,
+    # and configs reference existing users/domains.
+
+    local restored=0 skipped=0 failed=0
+
+    # 1. Create user (via jabali CLI)
+    if _collector_enabled metadata "$only" "$exclude" && [[ -f "${staging}/metadata/account.json" ]]; then
+        RESTORE_USER_ID=""
+        if restore_metadata "$extract_dir" "$target_user" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        RESTORE_USER_ID=$(_db_query "SELECT id FROM users WHERE username='$(mysql_escape "$target_user")' LIMIT 1")
+        skipped=$((skipped + 1))
+    fi
+
+    local uid="${RESTORE_USER_ID:-}"
+    if [[ -z "$uid" ]]; then
+        log_error "Cannot resolve user_id for $target_user — restore metadata first or ensure user exists"
+        return 1
+    fi
+
+    # 2. Create domains (via jabali CLI — sets up directory structure)
+    if _collector_enabled metadata "$only" "$exclude" && type -t restore_metadata_domains &>/dev/null; then
+        restore_metadata_domains "$target_user" || log_warn "restore/metadata: Some domains could not be created"
+    fi
+
+    # 3. Files (before configs — populates home dir with backed-up content)
+    if _collector_enabled files "$only" "$exclude" && [[ -d "${extract_dir}/home/${target_user}" ]]; then
+        if restore_files "$extract_dir" "$target_user" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 4. DNS
+    if _collector_enabled dns "$only" "$exclude" && [[ -d "${staging}/dns" ]]; then
+        if restore_dns "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 5. SSL
+    if _collector_enabled ssl "$only" "$exclude" && [[ -d "${staging}/ssl" ]]; then
+        if restore_ssl "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 6. Email
+    if _collector_enabled email "$only" "$exclude" && [[ -d "${staging}/email" ]]; then
+        if restore_email "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 7. PHP-FPM pool (before nginx — socket must exist for nginx reload)
+    if _collector_enabled php "$only" "$exclude" && [[ -d "${staging}/php" ]]; then
+        if restore_php "$extract_dir" "$target_user" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 8. Nginx (after PHP-FPM so the user pool socket exists)
+    if _collector_enabled nginx "$only" "$exclude" && [[ -d "${staging}/nginx" ]]; then
+        if restore_nginx "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 9. MySQL
+    if _collector_enabled mysql "$only" "$exclude" && [[ -d "${staging}/mysql" ]]; then
+        if restore_mysql "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 10. PostgreSQL
+    if _collector_enabled postgres "$only" "$exclude" && [[ -d "${staging}/postgres" ]]; then
+        if restore_postgres "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 11. Cron
+    if _collector_enabled cron "$only" "$exclude" && [[ -d "${staging}/cron" ]]; then
+        if restore_cron "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 12. Stalwart
+    if _collector_enabled stalwart "$only" "$exclude" && [[ -d "${staging}/stalwart" ]]; then
+        if restore_stalwart "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # 13. Redis
+    if _collector_enabled redis "$only" "$exclude" && [[ -d "${staging}/redis" ]]; then
+        if restore_redis "$extract_dir" "$target_user" "$uid" "$force"; then
+            restored=$((restored + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    else
+        skipped=$((skipped + 1))
+    fi
+
+    # Summary
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    # Post-restore validation
+    _post_restore_checks "$target_user" "$uid"
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Restore Summary"
+    echo "────────────────────────────────────────"
+    echo "  Account:   $target_user"
+    echo "  Snapshot:  $snapshot_id"
+    echo "  Restored:  $restored component(s)"
+    echo "  Skipped:   $skipped"
+    echo "  Failed:    $failed"
+    echo "  Duration:  ${duration}s"
+    echo "════════════════════════════════════════"
+
+    log_info "═══ Restore complete for $target_user ═══"
+    return "$failed"
+}
+
+_post_restore_checks() {
+    local username="$1" user_id="$2"
+    local checks_passed=0 checks_failed=0
+
+    log_info "restore/verify: Running post-restore checks for $username"
+
+    # 1. Nginx config test
+    if nginx -t 2>/dev/null; then
+        log_info "restore/verify: nginx -t passed"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "restore/verify: nginx -t failed"
+        checks_failed=$((checks_failed + 1))
+    fi
+
+    # 2. PHP-FPM running
+    if systemctl is-active php*-fpm &>/dev/null; then
+        log_info "restore/verify: PHP-FPM is running"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "restore/verify: PHP-FPM is not running"
+        checks_failed=$((checks_failed + 1))
+    fi
+
+    # 3. MySQL databases accessible
+    local db_count
+    db_count=$(_mysql_root_query "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '$(mysql_escape "$username")%'" 2>/dev/null)
+    if [[ "${db_count:-0}" -gt 0 ]]; then
+        log_info "restore/verify: $db_count MySQL database(s) accessible"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_info "restore/verify: No MySQL databases found (may be expected)"
+    fi
+
+    # 4. System user exists
+    if id "$username" &>/dev/null; then
+        log_info "restore/verify: System user $username exists"
+        checks_passed=$((checks_passed + 1))
+    else
+        log_warn "restore/verify: System user $username not found"
+        checks_failed=$((checks_failed + 1))
+    fi
+
+    # 5. Home directory exists and has correct ownership
+    local home="/home/${username}"
+    if [[ -d "$home" ]]; then
+        local owner
+        owner=$(stat -c '%U:%G' "$home" 2>/dev/null)
+        if [[ "$owner" == "root:${username}" ]]; then
+            log_info "restore/verify: Home dir ownership correct (root:${username})"
+            checks_passed=$((checks_passed + 1))
+        else
+            log_warn "restore/verify: Home dir ownership is $owner (expected root:${username})"
+            checks_failed=$((checks_failed + 1))
+        fi
+    fi
+
+    # 6. Crontab accessible
+    if crontab -u "$username" -l &>/dev/null; then
+        local cron_lines
+        cron_lines=$(crontab -u "$username" -l 2>/dev/null | grep -cv '^#\|^$' || echo "0")
+        log_info "restore/verify: Crontab has $cron_lines active entries"
+        checks_passed=$((checks_passed + 1))
+    fi
+
+    log_info "restore/verify: $checks_passed check(s) passed, $checks_failed failed"
+}
+
+# ─── Import from Archive ─────────────────────────────
+
+cmd_import() {
+    cfg_load
+
+    local archive="" only="" force=0 dry_run=0
+    for arg in "$@"; do
+        case "$arg" in
+            --only=*)     only="${arg#--only=}" ;;
+            --force)      force=1 ;;
+            --dry-run)    dry_run=1 ;;
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+            *)            archive="$arg" ;;
+        esac
+    done
+
+    if [[ -z "$archive" ]]; then
+        echo "Usage: jabali-backup import <archive.tar.gz> [--only=...] [--force] [--dry-run]"
+        return 1
+    fi
+
+    if [[ ! -f "$archive" ]]; then
+        log_error "Archive not found: $archive"
+        return 1
+    fi
+
+    # Validate it's a gzip/tar file
+    local magic
+    magic=$(file -b --mime-type "$archive" 2>/dev/null)
+    case "$magic" in
+        application/gzip|application/x-gzip|application/x-tar|application/x-compressed-tar) ;;
+        *)
+            log_error "Not a valid tar.gz archive: $archive (detected: $magic)"
+            return 1
+            ;;
+    esac
+
+    local start_time
+    start_time=$(date +%s)
+
+    # Extract to temp directory
+    local extract_dir
+    extract_dir=$(mktemp -d /tmp/jabali-import-XXXXXX)
+    trap "rm -rf '$extract_dir'" EXIT
+
+    log_info "Extracting archive: $archive"
+    if ! tar -xzf "$archive" -C "$extract_dir" 2>/dev/null; then
+        log_error "Failed to extract archive"
+        return 1
+    fi
+
+    # Discover users from top-level directories
+    local -a users=()
+    local entry
+    for entry in "$extract_dir"/*/; do
+        [[ -d "$entry" ]] || continue
+        local dirname
+        dirname=$(basename "$entry")
+        # Skip internal directories
+        [[ "$dirname" == _clean || "$dirname" == tmp ]] && continue
+        users+=("$dirname")
+    done
+
+    if [[ ${#users[@]} -eq 0 ]]; then
+        log_error "No user directories found in archive"
+        return 1
+    fi
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Import from Archive"
+    echo "────────────────────────────────────────"
+    echo "  Archive:   $(basename "$archive")"
+    echo "  Users:     ${users[*]}"
+    echo ""
+
+    # Discover components per user
+    local total_restored=0 total_failed=0
+    for username in "${users[@]}"; do
+        local user_dir="${extract_dir}/${username}"
+        echo "  Account: $username"
+
+        # Detect available components
+        local -a components=()
+        [[ -d "${user_dir}/home" ]] && components+=(files)
+        [[ -d "${user_dir}/mysql" ]] && components+=(mysql)
+        [[ -d "${user_dir}/postgres" ]] && components+=(postgres)
+        [[ -d "${user_dir}/dns" ]] && components+=(dns)
+        [[ -d "${user_dir}/email" ]] && components+=(email)
+        [[ -d "${user_dir}/ssl" ]] && components+=(ssl)
+        [[ -d "${user_dir}/nginx" ]] && components+=(nginx)
+        [[ -d "${user_dir}/php" ]] && components+=(php)
+        [[ -d "${user_dir}/wordpress" ]] && components+=(wordpress)
+        [[ -d "${user_dir}/cron" ]] && components+=(cron)
+        [[ -d "${user_dir}/stalwart" ]] && components+=(stalwart)
+        [[ -d "${user_dir}/metadata" ]] && components+=(metadata)
+
+        echo "    Components: ${components[*]:-none}"
+
+        if [[ "$dry_run" -eq 1 ]]; then
+            for comp in "${components[@]}"; do
+                if [[ -n "$only" ]] && ! _collector_enabled "$comp" "$only" ""; then
+                    echo "    - $comp (skipped by --only filter)"
+                else
+                    echo "    - $comp"
+                fi
+            done
+            echo ""
+            continue
+        fi
+
+        if [[ ${#components[@]} -eq 0 ]]; then
+            log_warn "No components found for $username, skipping"
+            continue
+        fi
+
+        # Restructure archive layout → restic-style extract layout
+        # The archive has: {user}/home/, {user}/mysql/, etc.
+        # Restorers expect: {extract}/home/{user}/ and {extract}/tmp/jabali-backup/{user}/
+        local restore_dir
+        restore_dir=$(mktemp -d /tmp/jabali-import-restore-XXXXXX)
+
+        # Move home directory to expected location
+        if [[ -d "${user_dir}/home" ]]; then
+            mkdir -p "${restore_dir}/home"
+            mv "${user_dir}/home" "${restore_dir}/home/${username}"
+        fi
+
+        # Move config components to staging layout
+        local staging="${restore_dir}/tmp/jabali-backup/${username}"
+        mkdir -p "$staging"
+        for comp_dir in "${user_dir}"/*/; do
+            [[ -d "$comp_dir" ]] || continue
+            local comp_name
+            comp_name=$(basename "$comp_dir")
+            [[ "$comp_name" == "home" ]] && continue
+            mv "$comp_dir" "${staging}/${comp_name}"
+        done
+
+        log_info "═══ Importing account: $username ═══"
+
+        # Resolve user_id — user must exist in the system for most restorers
+        local uid=""
+        if [[ -n "$CFG_DB_PASS" ]]; then
+            uid=$(_db_query "SELECT id FROM users WHERE username='$(mysql_escape "$username")' LIMIT 1" 2>/dev/null) || true
+        fi
+
+        # Try metadata restore first to create user if needed
+        if _collector_enabled metadata "$only" "" && [[ -f "${staging}/metadata/account.json" ]]; then
+            RESTORE_USER_ID=""
+            restore_metadata "$restore_dir" "$username" "$force" 2>/dev/null || true
+            uid="${RESTORE_USER_ID:-$uid}"
+        fi
+
+        if [[ -z "$uid" ]]; then
+            log_warn "User $username not found in system — restoring files only (skipping DB/config restorers)"
+            # Files can still be restored without user_id
+            if _collector_enabled files "$only" "" && [[ -d "${restore_dir}/home/${username}" ]]; then
+                if restore_files "$restore_dir" "$username" "$force"; then
+                    total_restored=$((total_restored + 1))
+                else
+                    total_failed=$((total_failed + 1))
+                fi
+            fi
+            rm -rf "$restore_dir"
+            continue
+        fi
+
+        local restored=0 failed=0
+
+        # Run restorers in standard order
+        _collector_enabled files "$only" "" && [[ -d "${restore_dir}/home/${username}" ]] && {
+            restore_files "$restore_dir" "$username" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled dns "$only" "" && [[ -d "${staging}/dns" ]] && {
+            restore_dns "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled ssl "$only" "" && [[ -d "${staging}/ssl" ]] && {
+            restore_ssl "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled email "$only" "" && [[ -d "${staging}/email" ]] && {
+            restore_email "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled php "$only" "" && [[ -d "${staging}/php" ]] && {
+            restore_php "$restore_dir" "$username" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled nginx "$only" "" && [[ -d "${staging}/nginx" ]] && {
+            restore_nginx "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled mysql "$only" "" && [[ -d "${staging}/mysql" ]] && {
+            restore_mysql "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled postgres "$only" "" && [[ -d "${staging}/postgres" ]] && {
+            restore_postgres "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled cron "$only" "" && [[ -d "${staging}/cron" ]] && {
+            restore_cron "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+        _collector_enabled stalwart "$only" "" && [[ -d "${staging}/stalwart" ]] && {
+            restore_stalwart "$restore_dir" "$username" "$uid" "$force" && restored=$((restored + 1)) || failed=$((failed + 1))
+        }
+
+        total_restored=$((total_restored + restored))
+        total_failed=$((total_failed + failed))
+
+        log_info "═══ Import complete for $username: $restored restored, $failed failed ═══"
+        rm -rf "$restore_dir"
+    done
+
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "Import Summary"
+    echo "────────────────────────────────────────"
+    echo "  Users:     ${#users[@]}"
+    echo "  Restored:  $total_restored component(s)"
+    echo "  Failed:    $total_failed"
+    echo "  Duration:  ${duration}s"
+    echo "════════════════════════════════════════"
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "Dry run complete. No changes made."
+    fi
+
+    return "$total_failed"
+}
+
+# ─── File-Level Restore ───────────────────────────────
+
+_restore_files_granular() {
+    local username="$1" snapshot_id="$2" target_dir="$3" force="$4" dry_run="$5"
+    shift 5
+    local -a files=("$@")
+
+    # Build --include patterns for restic
+    local -a include_args=()
+    for f in "${files[@]}"; do
+        # Strip leading slash, normalize
+        f="${f#/}"
+        # If path doesn't start with /home/, prepend the user's home
+        local full_path
+        if [[ "$f" == home/* ]]; then
+            full_path="/${f}"
+        else
+            full_path="/home/${username}/${f}"
+        fi
+        include_args+=("--include" "$full_path")
+    done
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo ""
+        echo "File-Level Restore Plan"
+        echo "────────────────────────────────────────"
+        echo "  Account:   $username"
+        echo "  Snapshot:  $snapshot_id"
+        echo "  Target:    $(if [[ -n "$target_dir" ]]; then echo "$target_dir"; else echo "/home/${username}/ (live)"; fi)"
+        echo ""
+        echo "Files to restore:"
+        for f in "${files[@]}"; do
+            f="${f#/}"
+            local fp="/home/${username}/${f}"
+            [[ "$f" == home/* ]] && fp="/${f}"
+            # Check if file exists in snapshot
+            local found
+            found=$(restic_ls "$snapshot_id" "$fp" 2>/dev/null | head -5)
+            if [[ -n "$found" ]]; then
+                local count
+                count=$(echo "$found" | wc -l)
+                if [[ "$count" -gt 1 ]]; then
+                    echo "  $fp ($count files/dirs)"
+                else
+                    echo "  $fp"
+                fi
+            else
+                echo "  $fp (NOT FOUND in snapshot)"
+            fi
+        done
+        echo ""
+        echo "Dry run complete. No changes made."
+        return 0
+    fi
+
+    # Determine restore target
+    local restore_target
+    if [[ -n "$target_dir" ]]; then
+        restore_target="$target_dir"
+        mkdir -p "$restore_target"
+    else
+        restore_target="/"
+    fi
+
+    log_info "File-level restore: ${#files[@]} path(s) from snapshot $snapshot_id"
+
+    # Use restic restore with --include for each file
+    local output
+    output=$(restic_restore "$snapshot_id" "$restore_target" "${include_args[@]}")
+    local rc=$?
+
+    # Show what was restored
+    local restored_count
+    restored_count=$(echo "$output" | grep -oP 'Restored \K[0-9]+' || echo "0")
+
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "File Restore Summary"
+    echo "────────────────────────────────────────"
+    echo "  Account:   $username"
+    echo "  Snapshot:  $snapshot_id"
+    echo "  Target:    $restore_target"
+    echo "  Files:     ${restored_count} restored"
+    for f in "${files[@]}"; do
+        f="${f#/}"
+        local fp="/home/${username}/${f}"
+        [[ "$f" == home/* ]] && fp="/${f}"
+        if [[ "$restore_target" == "/" ]]; then
+            echo "  -> $fp"
+        else
+            echo "  -> ${restore_target}${fp}"
+        fi
+    done
+    echo "════════════════════════════════════════"
+
+    return $rc
+}
+
+# ─── Helpers ──────────────────────────────────────────
+
+_generate_manifest() {
+    local staging="$1" username="$2" user_id="$3"
+
+    local domains_list databases_list mailboxes_list dns_zones_list ssl_list cron_count has_redis
+
+    # Domains
+    domains_list=$(ls -1 "${staging}/nginx/"*.conf 2>/dev/null | grep -v '\.cache-zone\.conf$\|\.hotlink\.json$' | sed 's/.*\///;s/\.conf$//' | paste -sd',' || echo "")
+    # Databases
+    databases_list=$(ls -1 "${staging}/mysql/"*.sql.gz 2>/dev/null | sed 's/.*\///;s/\.sql\.gz$//' | paste -sd',' || echo "")
+    # Mailboxes
+    mailboxes_list=$(ls -1 "${staging}/email/mailboxes/"*.json 2>/dev/null | sed 's/.*\///;s/\.json$//' | paste -sd',' || echo "")
+    # DNS zones
+    dns_zones_list=$(ls -1 "${staging}/dns/"*.json 2>/dev/null | sed 's/.*\///;s/\.json$//' | paste -sd',' || echo "")
+    # SSL certs
+    ssl_list=$(find "${staging}/ssl" -name meta.json 2>/dev/null | while read -r f; do dirname "$f" | xargs basename; done | paste -sd',' || echo "")
+    # Cron jobs
+    cron_count=$(grep -c '"id"' "${staging}/cron/jobs.json" 2>/dev/null || echo "0")
+    # Redis
+    has_redis="false"
+    [[ -d "${staging}/redis" && -f "${staging}/redis/acl_rule.txt" ]] && has_redis="true"
+
+    # Format arrays as JSON
+    _csv_to_json_array() { echo "$1" | tr ',' '\n' | sed '/^$/d' | sed 's/.*/"&"/' | paste -sd',' | sed 's/^/[/;s/$/]/'; }
+    local d_json m_json mb_json dns_json ssl_json
+    d_json=$(_csv_to_json_array "$domains_list")
+    m_json=$(_csv_to_json_array "$databases_list")
+    mb_json=$(_csv_to_json_array "$mailboxes_list")
+    dns_json=$(_csv_to_json_array "$dns_zones_list")
+    ssl_json=$(_csv_to_json_array "$ssl_list")
+    [[ "$d_json" == "[]" ]] && d_json="[]"
+    [[ "$m_json" == "[]" ]] && m_json="[]"
+    [[ "$mb_json" == "[]" ]] && mb_json="[]"
+    [[ "$dns_json" == "[]" ]] && dns_json="[]"
+    [[ "$ssl_json" == "[]" ]] && ssl_json="[]"
+
+    cat > "${staging}/manifest.json" <<EOMANIFEST
+{
+  "version": "${JABALI_BACKUP_VERSION:-dev}",
+  "created_at": "$(date -Iseconds)",
+  "username": "${username}",
+  "user_id": ${user_id},
+  "server_hostname": "$(hostname)",
+  "domains": ${d_json},
+  "databases": ${m_json},
+  "mailboxes": ${mb_json},
+  "dns_zones": ${dns_json},
+  "ssl_certificates": ${ssl_json},
+  "cron_jobs": ${cron_count},
+  "has_redis": ${has_redis},
+  "panel_db_tables": ["users","domains","email_domains","mailboxes","email_forwarders","dns_records","ssl_certificates","cron_jobs","mysql_credentials","domain_aliases","domain_redirects","domain_hotlink_settings","git_deployments","cloudflare_zones","user_settings","imap_sync_tasks","autoresponders","mailbox_shares"],
+  "excludes": ["cache/","tmp/","logs/","node_modules/","vendor/",".cache/","*.log"]
+}
+EOMANIFEST
+}
+
+_collector_enabled() {
+    local name="$1" only="$2" exclude="$3"
+    # If --only is set, check if name is in the list
+    if [[ -n "$only" ]]; then
+        [[ ",$only," == *",$name,"* ]] && return 0 || return 1
+    fi
+    # If --exclude is set, check if name is NOT in the list
+    if [[ -n "$exclude" ]]; then
+        [[ ",$exclude," == *",$name,"* ]] && return 1 || return 0
+    fi
+    return 0
+}
+
+# ─── Download ────────────────────────────────────────
+
+cmd_download() {
+    for arg in "$@"; do
+        case "$arg" in --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;; esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local -a target_users=()
+    local snapshot="latest" only="" output=""
+
+    for arg in "$@"; do
+        case "$arg" in
+            --snapshot=*) snapshot="${arg#--snapshot=}" ;;
+            --only=*)     only="${arg#--only=}" ;;
+            --output=*)   output="${arg#--output=}" ;;
+            --destination=*) ;; # already handled
+            -*)           log_error "Unknown option: $arg"; return 1 ;;
+            *)            target_users+=("$arg") ;;
+        esac
+    done
+
+    if [[ ${#target_users[@]} -eq 0 ]]; then
+        echo "Usage: jabali-backup download <username> [username2 ...] [--snapshot=latest] [--only=...] [--output=PATH]"
+        return 1
+    fi
+
+    restic_env || exit 1
+
+    # Default output path
+    if [[ -z "$output" ]]; then
+        local ts
+        ts=$(date +%Y%m%d-%H%M%S)
+        local names
+        names=$(IFS=-; echo "${target_users[*]}")
+        output="/tmp/jabali-backup-${names}-${ts}.tar.gz"
+    fi
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/jabali-download-XXXXXX)
+    trap "rm -rf '$tmp_dir'" EXIT
+
+    local extracted=0
+
+    for username in "${target_users[@]}"; do
+        log_info "Extracting backup for: $username"
+
+        # Resolve snapshot
+        local snap_id
+        if [[ "$snapshot" == "latest" ]]; then
+            snap_id=$(restic snapshots --json --tag "account:${username}" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | jq -r 'sort_by(.time) | last | .short_id // empty')
+        else
+            snap_id="$snapshot"
+        fi
+
+        if [[ -z "$snap_id" ]]; then
+            log_error "No snapshot found for $username"
+            continue
+        fi
+
+        local user_dir="${tmp_dir}/${username}"
+        mkdir -p "$user_dir"
+
+        # Build restic restore args
+        local -a restore_args=("$snap_id" --target "$user_dir" "${RESTIC_EXTRA_OPTS[@]}")
+
+        # Apply --only filter as include paths
+        if [[ -n "$only" ]]; then
+            IFS=',' read -ra comp_arr <<< "$only"
+            for comp in "${comp_arr[@]}"; do
+                case "$comp" in
+                    files)    restore_args+=(--include "/home/${username}/") ;;
+                    metadata) restore_args+=(--include "*/metadata/") ;;
+                    mysql)    restore_args+=(--include "*/mysql/") ;;
+                    postgres) restore_args+=(--include "*/postgres/") ;;
+                    dns)      restore_args+=(--include "*/dns/") ;;
+                    email)    restore_args+=(--include "*/email/") ;;
+                    ssl)      restore_args+=(--include "*/ssl/") ;;
+                    nginx)    restore_args+=(--include "*/nginx/") ;;
+                    php)      restore_args+=(--include "*/php/") ;;
+                    cron)     restore_args+=(--include "*/cron/") ;;
+                esac
+            done
+        fi
+
+        log_info "Restoring snapshot $snap_id to $user_dir"
+        restic restore "${restore_args[@]}" >&2 || {
+            log_error "Failed to extract snapshot for $username"
+            continue
+        }
+
+        # Flatten restic's full-path structure into a clean layout:
+        #   shuki/home/...   (home directory files)
+        #   shuki/dns/...    (config components)
+        #   shuki/mysql/...  etc.
+        local clean_dir="${tmp_dir}/_clean/${username}"
+        mkdir -p "$clean_dir"
+
+        # Move home directory files
+        if [[ -d "${user_dir}/home/${username}" ]]; then
+            mv "${user_dir}/home/${username}" "${clean_dir}/home"
+        fi
+
+        # Move staging config directories (dns, email, metadata, mysql, etc.)
+        if [[ -d "${user_dir}/tmp/jabali-backup/${username}" ]]; then
+            for component_dir in "${user_dir}/tmp/jabali-backup/${username}/"*/; do
+                [[ -d "$component_dir" ]] || continue
+                local component_name
+                component_name=$(basename "$component_dir")
+                mv "$component_dir" "${clean_dir}/${component_name}"
+            done
+        fi
+
+        extracted=$((extracted + 1))
+    done
+
+    if [[ "$extracted" -eq 0 ]]; then
+        echo "Error: no data extracted" >&2
+        return 1
+    fi
+
+    if [[ "$output" == "-" ]]; then
+        # Stream to stdout (for named pipe usage)
+        (cd "${tmp_dir}/_clean" && tar -czf - -- *) 2>/dev/null
+    else
+        log_info "Creating archive: $output"
+        (cd "${tmp_dir}/_clean" && tar -czf "$output" -- *) 2>&1
+
+        local size
+        size=$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null || echo 0)
+
+        echo "Archive created: $output"
+        echo "  Accounts: ${target_users[*]}"
+        echo "  Size:     $(numfmt --to=iec "$size" 2>/dev/null || echo "${size} bytes")"
+        echo "  Path:     $output"
+    fi
+}
+
+# ─── Destination Management ──────────────────────────
+
+DESTINATIONS_FILE="${JABALI_BACKUP_CONFIG%/*}/destinations.json"
+DEST_CREDS_DIR="${JABALI_BACKUP_CONFIG%/*}"
+
+_dest_read_all() {
+    if [[ ! -f "$DESTINATIONS_FILE" ]]; then
+        echo "[]"
+        return
+    fi
+    cat "$DESTINATIONS_FILE"
+}
+
+_dest_write_all() {
+    local data="$1"
+    local tmp="${DESTINATIONS_FILE}.tmp"
+    echo "$data" > "$tmp"
+    chmod 0600 "$tmp"
+    mv "$tmp" "$DESTINATIONS_FILE"
+}
+
+_dest_gen_id() {
+    local name="$1"
+    # Slug from name: lowercase, replace spaces/specials with dashes
+    echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//'
+}
+
+_dest_build_repo_uri() {
+    local type="$1"
+    shift
+    # Read named params from remaining args
+    local host="" port="" user="" path="" bucket="" endpoint="" remote=""
+    for arg in "$@"; do
+        case "$arg" in
+            --host=*)     host="${arg#*=}" ;;
+            --port=*)     port="${arg#*=}" ;;
+            --user=*)     user="${arg#*=}" ;;
+            --path=*)     path="${arg#*=}" ;;
+            --bucket=*)   bucket="${arg#*=}" ;;
+            --endpoint=*) endpoint="${arg#*=}" ;;
+            --remote=*)   remote="${arg#*=}" ;;
+        esac
+    done
+
+    case "$type" in
+        local)  echo "$path" ;;
+        sftp)   echo "sftp:${user}@${host}:${path}" ;;
+        s3)     echo "s3:${endpoint}/${bucket}" ;;
+        b2)     echo "b2:${bucket}:${path}" ;;
+        gcs)    echo "gs:${bucket}:/${path}" ;;
+        azure)  echo "azure:${bucket}:/${path}" ;;
+        rest)   echo "rest:${path}" ;;
+        rclone|gdrive) echo "rclone:${remote}:${path}" ;;
+        *)      echo "$path" ;;
+    esac
+}
+
+_dest_write_credential() {
+    local dest_id="$1" key_name="$2" value="$3"
+    local cred_file="${DEST_CREDS_DIR}/dest-${dest_id}-${key_name}"
+    local tmp="${cred_file}.tmp"
+    printf '%s' "$value" > "$tmp"
+    chmod 0600 "$tmp"
+    mv "$tmp" "$cred_file"
+    echo "$cred_file"
+}
+
+_dest_delete_credentials() {
+    local dest_id="$1"
+    local cred_pattern="${DEST_CREDS_DIR}/dest-${dest_id}-*"
+    # shellcheck disable=SC2086
+    for f in $cred_pattern; do
+        [[ -f "$f" ]] && rm -f "$f"
+    done
+}
+
+_dest_synthesize_legacy() {
+    # Build a single destination entry from config.conf [repository]
+    cfg_load
+    local repo_type="$CFG_REPO_TYPE"
+    local repo_path="$CFG_REPO_PATH"
+    [[ -z "$repo_path" ]] && return
+
+    # Check if initialized
+    local initialized="false"
+    if restic_env 2>/dev/null && restic cat config "${RESTIC_EXTRA_OPTS[@]}" --json 2>/dev/null | jq -e '.id' &>/dev/null; then
+        initialized="true"
+    fi
+
+    jq -n \
+        --arg id "legacy" \
+        --arg name "Default (config.conf)" \
+        --arg type "$repo_type" \
+        --arg path "$repo_path" \
+        --argjson is_default true \
+        --argjson initialized "$initialized" \
+        --arg keep_last "$CFG_KEEP_LAST" \
+        --arg keep_daily "$CFG_KEEP_DAILY" \
+        --arg keep_weekly "$CFG_KEEP_WEEKLY" \
+        --arg keep_monthly "$CFG_KEEP_MONTHLY" \
+        '[{
+            id: $id, name: $name, type: $type, path: $path,
+            is_default: $is_default, initialized: $initialized,
+            credentials: {},
+            retention: {
+                keep_last: ($keep_last | tonumber),
+                keep_daily: ($keep_daily | tonumber),
+                keep_weekly: ($keep_weekly | tonumber),
+                keep_monthly: ($keep_monthly | tonumber)
+            },
+            created_at: "legacy"
+        }]'
+}
+
+cmd_destination() {
+    local subcmd="${1:-list}"
+    shift || true
+
+    if ! command -v jq &>/dev/null; then
+        echo "Error: jq is required for destination management. Install it with: apt install jq" >&2
+        return 1
+    fi
+
+    case "$subcmd" in
+        list)
+            _cmd_dest_list "$@"
+            ;;
+        add)
+            _cmd_dest_add "$@"
+            ;;
+        update|edit)
+            _cmd_dest_update "$@"
+            ;;
+        remove|delete)
+            _cmd_dest_remove "$@"
+            ;;
+        test)
+            _cmd_dest_test "$@"
+            ;;
+        reinit)
+            _cmd_dest_reinit "$@"
+            ;;
+        init)
+            _cmd_dest_init "$@"
+            ;;
+        set-default)
+            _cmd_dest_set_default "$@"
+            ;;
+        show)
+            _cmd_dest_show "$@"
+            ;;
+        *)
+            cat <<DEOF
+Usage: jabali-backup destination <subcommand> [options]
+
+SUBCOMMANDS:
+    list                        List all destinations
+    add --name=NAME --type=TYPE [options]
+                                Add a new destination
+    update --id=ID [options]    Update an existing destination
+    remove --id=ID              Remove a destination
+    test --id=ID                Test destination connectivity
+    init --id=ID                Initialize restic repository
+    set-default --id=ID         Set a destination as default
+    show --id=ID                Show destination details (JSON)
+
+ADD OPTIONS:
+    --name=NAME                 Display name (required)
+    --type=TYPE                 Backend type (required): local, sftp, s3, b2, gcs, azure, rest, rclone, gdrive
+    --path=PATH                 Path or URL (required for local, sftp, rest)
+    --host=HOST                 Hostname (sftp)
+    --port=PORT                 Port (sftp, default: 22)
+    --user=USER                 Username (sftp)
+    --bucket=BUCKET             Bucket name (s3, b2, gcs, azure)
+    --endpoint=ENDPOINT         Endpoint URL (s3, default: s3.amazonaws.com)
+    --region=REGION             Region (s3)
+    --remote=REMOTE             Rclone remote name (rclone, gdrive)
+    --access-key=KEY            Access key (s3)
+    --secret-key=KEY            Secret key (s3)
+    --account-id=ID             Account ID (b2)
+    --account-key=KEY           Account key (b2, azure)
+    --account-name=NAME         Account name (azure)
+    --restic-password=PASS      Restic repository password (auto-generated if omitted)
+    --keep-last=N               Retention: keep last N (default: 7)
+    --keep-daily=N              Retention: keep daily N (default: 30)
+    --keep-weekly=N             Retention: keep weekly N (default: 12)
+    --keep-monthly=N            Retention: keep monthly N (default: 24)
+
+EXAMPLES:
+    jabali-backup destination add --name="Local Backup" --type=local --path=/var/backups/jabali
+    jabali-backup destination add --name="S3 Prod" --type=s3 --bucket=my-backups --endpoint=s3.amazonaws.com --access-key=AK... --secret-key=SK...
+    jabali-backup destination add --name="Remote SFTP" --type=sftp --host=backup.example.com --user=backup --path=/data/jabali
+    jabali-backup destination test --id=local-backup
+    jabali-backup destination set-default --id=s3-prod
+DEOF
+            ;;
+    esac
+}
+
+_cmd_dest_list() {
+    local format="table"
+    local json_flag=""
+    for arg in "$@"; do
+        [[ "$arg" == "--json" ]] && format="json"
+    done
+
+    local data
+    data="$(_dest_read_all)"
+
+    # If no destinations file exists at all, synthesize from legacy config
+    if [[ ! -f "$DESTINATIONS_FILE" ]]; then
+        data="$(_dest_synthesize_legacy)"
+    fi
+
+    if [[ "$format" == "json" ]]; then
+        echo "$data"
+        return
+    fi
+
+    local count
+    count=$(echo "$data" | jq 'length')
+    echo "Destinations ($count):"
+    echo "────────────────────────────────────────"
+    echo "$data" | jq -r '.[] | [
+        (if .is_default then "* " else "  " end) + .id,
+        .type,
+        .path,
+        (if .initialized then "ready" else "not init" end)
+    ] | @tsv' | while IFS=$'\t' read -r id type path status; do
+        printf "  %-24s %-8s %-40s %s\n" "$id" "$type" "$path" "$status"
+    done
+    echo ""
+    echo "  * = default destination"
+}
+
+_cmd_dest_add() {
+    local name="" type="" path="" host="" port="22" user="" bucket="" endpoint="s3.amazonaws.com"
+    local region="" remote="" access_key="" secret_key="" account_id="" account_key="" account_name=""
+    local ssh_key="" ssh_password="" no_encryption=""
+    local restic_password="" keep_last="7" keep_daily="30" keep_weekly="12" keep_monthly="24"
+
+    for arg in "$@"; do
+        case "$arg" in
+            --name=*)           name="${arg#*=}" ;;
+            --type=*)           type="${arg#*=}" ;;
+            --path=*)           path="${arg#*=}" ;;
+            --host=*)           host="${arg#*=}" ;;
+            --port=*)           port="${arg#*=}" ;;
+            --user=*)           user="${arg#*=}" ;;
+            --bucket=*)         bucket="${arg#*=}" ;;
+            --endpoint=*)       endpoint="${arg#*=}" ;;
+            --region=*)         region="${arg#*=}" ;;
+            --remote=*)         remote="${arg#*=}" ;;
+            --access-key=*)     access_key="${arg#*=}" ;;
+            --secret-key=*)     secret_key="${arg#*=}" ;;
+            --account-id=*)     account_id="${arg#*=}" ;;
+            --account-key=*)    account_key="${arg#*=}" ;;
+            --account-name=*)   account_name="${arg#*=}" ;;
+            --ssh-key=*)        ssh_key="${arg#*=}" ;;
+            --ssh-password=*)   ssh_password="${arg#*=}" ;;
+            --no-encryption)    no_encryption="1" ;;
+            --restic-password=*) restic_password="${arg#*=}" ;;
+            --keep-last=*)      keep_last="${arg#*=}" ;;
+            --keep-daily=*)     keep_daily="${arg#*=}" ;;
+            --keep-weekly=*)    keep_weekly="${arg#*=}" ;;
+            --keep-monthly=*)   keep_monthly="${arg#*=}" ;;
+        esac
+    done
+
+    # Validate required fields
+    if [[ -z "$name" ]]; then
+        echo "Error: --name is required" >&2; return 1
+    fi
+    if [[ -z "$type" ]]; then
+        echo "Error: --type is required" >&2; return 1
+    fi
+
+    local valid_types="local sftp s3 b2 gcs azure rest rclone gdrive"
+    if ! echo "$valid_types" | grep -qw "$type"; then
+        echo "Error: invalid type '$type'. Valid: $valid_types" >&2; return 1
+    fi
+
+    local dest_id
+    dest_id="$(_dest_gen_id "$name")"
+
+    # Check for duplicate ID
+    local existing
+    existing="$(_dest_read_all)"
+    if echo "$existing" | jq -e --arg id "$dest_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: destination '$dest_id' already exists" >&2; return 1
+    fi
+
+    # Build restic repo URI
+    local repo_uri
+    repo_uri="$(_dest_build_repo_uri "$type" --host="$host" --port="$port" --user="$user" \
+        --path="$path" --bucket="$bucket" --endpoint="$endpoint" --remote="$remote")"
+
+    if [[ -z "$repo_uri" ]]; then
+        echo "Error: could not build repository URI from provided options" >&2; return 1
+    fi
+
+    # Write credentials to files
+    local creds="{}"
+    case "$type" in
+        sftp)
+            if [[ -n "$ssh_key" ]]; then
+                # Validate the key file exists
+                if [[ ! -f "$ssh_key" ]]; then
+                    echo "Error: SSH key file not found: $ssh_key" >&2; return 1
+                fi
+                creds=$(echo "$creds" | jq --arg f "$ssh_key" '. + {ssh_key_file: $f}')
+            fi
+            if [[ -n "$ssh_password" ]]; then
+                local pwd_file
+                pwd_file="$(_dest_write_credential "$dest_id" "ssh-password" "$ssh_password")"
+                creds=$(echo "$creds" | jq --arg f "$pwd_file" '. + {ssh_password_file: $f}')
+            fi
+            ;;
+        s3)
+            if [[ -n "$access_key" ]]; then
+                local key_file
+                key_file="$(_dest_write_credential "$dest_id" "access-key" "$access_key")"
+                creds=$(echo "$creds" | jq --arg f "$key_file" '. + {access_key_id_file: $f}')
+            fi
+            if [[ -n "$secret_key" ]]; then
+                local secret_file
+                secret_file="$(_dest_write_credential "$dest_id" "secret-key" "$secret_key")"
+                creds=$(echo "$creds" | jq --arg f "$secret_file" '. + {secret_access_key_file: $f}')
+            fi
+            if [[ -n "$region" ]]; then
+                creds=$(echo "$creds" | jq --arg r "$region" '. + {region: $r}')
+            fi
+            ;;
+        b2)
+            if [[ -n "$account_id" ]]; then
+                local id_file
+                id_file="$(_dest_write_credential "$dest_id" "account-id" "$account_id")"
+                creds=$(echo "$creds" | jq --arg f "$id_file" '. + {account_id_file: $f}')
+            fi
+            if [[ -n "$account_key" ]]; then
+                local key_file
+                key_file="$(_dest_write_credential "$dest_id" "account-key" "$account_key")"
+                creds=$(echo "$creds" | jq --arg f "$key_file" '. + {account_key_file: $f}')
+            fi
+            ;;
+        azure)
+            if [[ -n "$account_name" ]]; then
+                creds=$(echo "$creds" | jq --arg n "$account_name" '. + {account_name: $n}')
+            fi
+            if [[ -n "$account_key" ]]; then
+                local key_file
+                key_file="$(_dest_write_credential "$dest_id" "account-key" "$account_key")"
+                creds=$(echo "$creds" | jq --arg f "$key_file" '. + {account_key_file: $f}')
+            fi
+            ;;
+    esac
+
+    # Restic password / encryption
+    local encrypted=true
+    if [[ -n "$no_encryption" ]]; then
+        encrypted=false
+        # Write an empty password file — restic needs --insecure-no-password
+        local pwd_file
+        pwd_file="$(_dest_write_credential "$dest_id" "restic-password" "")"
+        creds=$(echo "$creds" | jq --arg f "$pwd_file" '. + {restic_password_file: $f, insecure_no_password: true}')
+    else
+        if [[ -z "$restic_password" ]]; then
+            restic_password=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+        fi
+        local pwd_file
+        pwd_file="$(_dest_write_credential "$dest_id" "restic-password" "$restic_password")"
+        creds=$(echo "$creds" | jq --arg f "$pwd_file" '. + {restic_password_file: $f}')
+    fi
+
+    # Determine if this should be default (first destination = default)
+    local is_default=false
+    if [[ "$existing" == "[]" ]] || [[ -z "$existing" ]]; then
+        is_default=true
+        existing="[]"
+    fi
+
+    # Build destination entry
+    local created_at
+    created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    local entry
+    entry=$(jq -n \
+        --arg id "$dest_id" \
+        --arg name "$name" \
+        --arg type "$type" \
+        --arg path "$repo_uri" \
+        --argjson is_default "$is_default" \
+        --argjson creds "$creds" \
+        --argjson keep_last "$keep_last" \
+        --argjson keep_daily "$keep_daily" \
+        --argjson keep_weekly "$keep_weekly" \
+        --argjson keep_monthly "$keep_monthly" \
+        --arg created_at "$created_at" \
+        '{
+            id: $id, name: $name, type: $type, path: $path,
+            is_default: $is_default, initialized: false,
+            credentials: $creds,
+            retention: {
+                keep_last: $keep_last,
+                keep_daily: $keep_daily,
+                keep_weekly: $keep_weekly,
+                keep_monthly: $keep_monthly
+            },
+            created_at: $created_at
+        }')
+
+    # Append to existing
+    local updated
+    updated=$(echo "$existing" | jq --argjson entry "$entry" '. + [$entry]')
+    _dest_write_all "$updated"
+
+    echo "Added destination: $name ($dest_id)"
+    echo "  Type:    $type"
+    echo "  Path:    $repo_uri"
+    echo "  Default: $is_default"
+    echo ""
+    echo "Next: jabali-backup destination init --id=$dest_id"
+}
+
+_cmd_dest_update() {
+    local dest_id=""
+    local name="" type="" path="" host="" port="" user="" bucket="" endpoint=""
+    local region="" remote="" access_key="" secret_key="" account_id="" account_key="" account_name=""
+    local ssh_key="" ssh_password=""
+
+    for arg in "$@"; do
+        case "$arg" in
+            --id=*)             dest_id="${arg#*=}" ;;
+            --name=*)           name="${arg#*=}" ;;
+            --type=*)           type="${arg#*=}" ;;
+            --path=*)           path="${arg#*=}" ;;
+            --host=*)           host="${arg#*=}" ;;
+            --port=*)           port="${arg#*=}" ;;
+            --user=*)           user="${arg#*=}" ;;
+            --bucket=*)         bucket="${arg#*=}" ;;
+            --endpoint=*)       endpoint="${arg#*=}" ;;
+            --region=*)         region="${arg#*=}" ;;
+            --remote=*)         remote="${arg#*=}" ;;
+            --access-key=*)     access_key="${arg#*=}" ;;
+            --secret-key=*)     secret_key="${arg#*=}" ;;
+            --account-id=*)     account_id="${arg#*=}" ;;
+            --account-key=*)    account_key="${arg#*=}" ;;
+            --account-name=*)   account_name="${arg#*=}" ;;
+            --ssh-key=*)        ssh_key="${arg#*=}" ;;
+            --ssh-password=*)   ssh_password="${arg#*=}" ;;
+        esac
+    done
+
+    if [[ -z "$dest_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data
+    data="$(_dest_read_all)"
+
+    local dest
+    dest=$(echo "$data" | jq -r --arg id "$dest_id" '.[] | select(.id == $id)')
+    if [[ -z "$dest" ]]; then
+        echo "Error: destination '$dest_id' not found" >&2; return 1
+    fi
+
+    # Read current values as defaults
+    local cur_type cur_name
+    cur_type=$(echo "$dest" | jq -r '.type')
+    cur_name=$(echo "$dest" | jq -r '.name')
+
+    [[ -z "$name" ]] && name="$cur_name"
+    [[ -z "$type" ]] && type="$cur_type"
+
+    # Determine repo URI
+    local repo_uri
+    repo_uri=$(echo "$dest" | jq -r '.path')
+
+    # Only rebuild from fields if individual connection params (host/user/bucket etc.) are given
+    if [[ -n "$host" || -n "$user" || -n "$bucket" || -n "$endpoint" || -n "$remote" ]] || [[ "$type" != "$cur_type" ]]; then
+        # Extract just the remote path portion from the existing full URI
+        local remote_path="$path"
+        if [[ -z "$remote_path" ]]; then
+            # Parse remote path from existing URI based on type
+            case "$type" in
+                sftp)
+                    # sftp:user@host:/remote/path -> /remote/path
+                    remote_path=$(echo "$repo_uri" | sed 's|^sftp:[^:]*:||')
+                    ;;
+                s3)
+                    remote_path=$(echo "$repo_uri" | sed 's|^s3:[^/]*/||')
+                    ;;
+                *)
+                    remote_path="$repo_uri"
+                    ;;
+            esac
+        fi
+        local built
+        built="$(_dest_build_repo_uri "$type" \
+            --host="${host:-}" --port="${port:-22}" --user="${user:-}" \
+            --path="${remote_path}" --bucket="${bucket:-}" \
+            --endpoint="${endpoint:-s3.amazonaws.com}" --remote="${remote:-}")"
+        [[ -n "$built" ]] && repo_uri="$built"
+    elif [[ -n "$path" ]]; then
+        # Direct path override — use as-is
+        repo_uri="$path"
+    fi
+
+    # Update credentials if provided
+    local creds
+    creds=$(echo "$dest" | jq -r '.credentials')
+
+    if [[ -n "$access_key" ]]; then
+        local key_file
+        key_file="$(_dest_write_credential "$dest_id" "access-key" "$access_key")"
+        creds=$(echo "$creds" | jq --arg f "$key_file" '.access_key_id_file = $f')
+    fi
+    if [[ -n "$secret_key" ]]; then
+        local secret_file
+        secret_file="$(_dest_write_credential "$dest_id" "secret-key" "$secret_key")"
+        creds=$(echo "$creds" | jq --arg f "$secret_file" '.secret_access_key_file = $f')
+    fi
+    if [[ -n "$account_id" ]]; then
+        local id_file
+        id_file="$(_dest_write_credential "$dest_id" "account-id" "$account_id")"
+        creds=$(echo "$creds" | jq --arg f "$id_file" '.account_id_file = $f')
+    fi
+    if [[ -n "$account_key" ]]; then
+        local key_file
+        key_file="$(_dest_write_credential "$dest_id" "account-key" "$account_key")"
+        creds=$(echo "$creds" | jq --arg f "$key_file" '.account_key_file = $f')
+    fi
+    if [[ -n "$account_name" ]]; then
+        creds=$(echo "$creds" | jq --arg n "$account_name" '.account_name = $n')
+    fi
+    if [[ -n "$ssh_key" ]]; then
+        if [[ ! -f "$ssh_key" ]]; then
+            echo "Error: SSH key file not found: $ssh_key" >&2; return 1
+        fi
+        creds=$(echo "$creds" | jq --arg f "$ssh_key" '.ssh_key_file = $f')
+    fi
+    if [[ -n "$ssh_password" ]]; then
+        local pwd_file
+        pwd_file="$(_dest_write_credential "$dest_id" "ssh-password" "$ssh_password")"
+        creds=$(echo "$creds" | jq --arg f "$pwd_file" '.ssh_password_file = $f')
+    fi
+
+    # Apply updates
+    local updated
+    updated=$(echo "$data" | jq --arg id "$dest_id" --arg name "$name" --arg type "$type" \
+        --arg path "$repo_uri" --argjson creds "$creds" \
+        '[.[] | if .id == $id then .name = $name | .type = $type | .path = $path | .credentials = $creds else . end]')
+
+    _dest_write_all "$updated"
+    echo "Updated destination: $name ($dest_id)"
+    echo "  Type: $type"
+    echo "  Path: $repo_uri"
+}
+
+_cmd_dest_remove() {
+    local dest_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && dest_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$dest_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    if [[ "$dest_id" == "legacy" ]]; then
+        # Legacy is synthesized from config.conf — write an empty destinations.json to suppress it
+        _dest_write_all "[]"
+        echo "Removed destination: legacy (config.conf destination hidden)"
+        return 0
+    fi
+
+    local data
+    data="$(_dest_read_all)"
+
+    if ! echo "$data" | jq -e --arg id "$dest_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: destination '$dest_id' not found" >&2; return 1
+    fi
+
+    # Remove credential files
+    _dest_delete_credentials "$dest_id"
+
+    # Remove from array
+    local updated
+    updated=$(echo "$data" | jq --arg id "$dest_id" '[.[] | select(.id != $id)]')
+
+    # If the removed one was default, make the first remaining one default (if any)
+    local remaining
+    remaining=$(echo "$updated" | jq 'length')
+    if [[ "$remaining" -gt 0 ]]; then
+        local has_default
+        has_default=$(echo "$updated" | jq '[.[] | select(.is_default)] | length')
+        if [[ "$has_default" -eq 0 ]]; then
+            updated=$(echo "$updated" | jq '.[0].is_default = true')
+        fi
+    fi
+
+    _dest_write_all "$updated"
+    echo "Removed destination: $dest_id"
+}
+
+_cmd_dest_test() {
+    local dest_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && dest_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$dest_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data dest
+    data="$(_dest_read_all)"
+
+    # Synthesize legacy if needed
+    if [[ "$data" == "[]" ]] && [[ "$dest_id" == "legacy" ]]; then
+        data="$(_dest_synthesize_legacy)"
+    fi
+
+    dest=$(echo "$data" | jq -r --arg id "$dest_id" '.[] | select(.id == $id)')
+    if [[ -z "$dest" ]]; then
+        echo "Error: destination '$dest_id' not found" >&2; return 1
+    fi
+
+    local repo_path pwd_file insecure
+    repo_path=$(echo "$dest" | jq -r '.path')
+    pwd_file=$(echo "$dest" | jq -r '.credentials.restic_password_file // empty')
+    insecure=$(echo "$dest" | jq -r '.credentials.insecure_no_password // false')
+
+    # For legacy, use global password file
+    if [[ -z "$pwd_file" ]] && [[ "$dest_id" == "legacy" ]]; then
+        cfg_load
+        pwd_file="$CFG_RESTIC_PASSWORD_FILE"
+    fi
+
+    # Build password args
+    local -a pwd_args=()
+    if [[ "$insecure" == "true" ]]; then
+        pwd_args=(--insecure-no-password)
+    elif [[ -n "$pwd_file" ]] && [[ -f "$pwd_file" ]]; then
+        pwd_args=(--password-file "$pwd_file")
+    else
+        echo "Error: restic password file not found" >&2; return 1
+    fi
+
+    # Set up environment for non-local backends
+    _dest_export_env "$dest"
+
+    echo "Testing destination: $dest_id ($repo_path)"
+
+    # Test if repo exists and is accessible
+    local test_output test_rc
+    test_output=$(restic cat config --repo "$repo_path" "${pwd_args[@]}" "${RESTIC_EXTRA_OPTS[@]}" --json 2>&1) && test_rc=0 || test_rc=$?
+    if [[ "$test_rc" -eq 0 ]]; then
+        echo "  Status: ✓ connected and initialized"
+
+        # Mark as initialized in destinations.json if not already
+        if [[ -f "$DESTINATIONS_FILE" ]]; then
+            local updated
+            updated=$(jq --arg id "$dest_id" '[.[] | if .id == $id then .initialized = true else . end]' "$DESTINATIONS_FILE")
+            _dest_write_all "$updated"
+        fi
+        return 0
+    fi
+
+    # Check if it's a "repo not found" → auto-init
+    if echo "$test_output" | grep -q "repository does not exist\|unable to open config file"; then
+        echo "  Connection: ✓ reachable"
+        echo "  Repository: not initialized — initializing now..."
+        if restic init --repo "$repo_path" "${pwd_args[@]}" "${RESTIC_EXTRA_OPTS[@]}" 2>&1; then
+            echo "  Status: ✓ initialized successfully"
+            if [[ -f "$DESTINATIONS_FILE" ]]; then
+                local updated
+                updated=$(jq --arg id "$dest_id" '[.[] | if .id == $id then .initialized = true else . end]' "$DESTINATIONS_FILE")
+                _dest_write_all "$updated"
+            fi
+            return 0
+        else
+            echo "  Status: ✗ initialization failed"
+            return 1
+        fi
+    fi
+
+    # Check if it's a password mismatch (repo exists but wrong key)
+    if echo "$test_output" | grep -q "wrong password\|no key found"; then
+        echo "  Connection: ✓ reachable"
+        echo "  Status: ✗ wrong encryption key"
+        echo "  The repository exists but the encryption key doesn't match."
+        echo "  Either update the encryption key in Edit, or delete the remote repository to start fresh."
+        local current_key
+        current_key=$(cat "$pwd_file" 2>/dev/null)
+        echo "  Current key: ${current_key:0:4}...${current_key: -4} ($(echo -n "$current_key" | wc -c) chars)"
+        return 1
+    fi
+
+    # Check if repo already exists (init conflict)
+    if echo "$test_output" | grep -q "config file already exists"; then
+        echo "  Connection: ✓ reachable"
+        echo "  Status: ✗ repository exists but encryption key doesn't match"
+        echo "  Update the encryption key or wipe the remote repository."
+        return 1
+    fi
+
+    # Actual connection failure
+    if echo "$test_output" | grep -q "Permission denied\|Host key verification\|Connection refused\|No route to host\|Connection timed out"; then
+        echo "  Status: ✗ SSH connection failed"
+        # Extract the meaningful error line
+        local ssh_err
+        ssh_err=$(echo "$test_output" | grep -m1 "Permission denied\|Host key verification\|Connection refused\|No route\|timed out")
+        echo "  Detail: $ssh_err"
+        return 1
+    fi
+
+    echo "  Status: ✗ failed"
+    echo "  Detail: $(echo "$test_output" | grep -v '^\s*$' | tail -1)"
+    return 1
+}
+
+_cmd_dest_reinit() {
+    local dest_id="" confirm=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && dest_id="${BASH_REMATCH[1]}"
+        [[ "$arg" == "--yes" ]] && confirm="yes"
+    done
+
+    if [[ -z "$dest_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data dest
+    data="$(_dest_read_all)"
+    dest=$(echo "$data" | jq -r --arg id "$dest_id" '.[] | select(.id == $id)')
+    if [[ -z "$dest" ]]; then
+        echo "Error: destination '$dest_id' not found" >&2; return 1
+    fi
+
+    local repo_path pwd_file
+    repo_path=$(echo "$dest" | jq -r '.path')
+    pwd_file=$(echo "$dest" | jq -r '.credentials.restic_password_file // empty')
+
+    if [[ -z "$pwd_file" ]] || [[ ! -f "$pwd_file" ]]; then
+        echo "Error: restic password file not found" >&2; return 1
+    fi
+
+    if [[ "$confirm" != "yes" ]]; then
+        echo "WARNING: This will destroy the existing repository and all its backups."
+        echo "  Destination: $dest_id ($repo_path)"
+        echo "  A new empty repository will be created with a new encryption key."
+        echo "  Previous backups will become permanently inaccessible."
+        echo ""
+        echo "Run with --yes to confirm: jabali-backup destination reinit --id=$dest_id --yes"
+        return 1
+    fi
+
+    _dest_export_env "$dest"
+
+    echo "Re-initializing: $dest_id ($repo_path)"
+
+    # Generate a new restic password
+    local new_password
+    new_password=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+    local tmp="${pwd_file}.tmp"
+    printf '%s' "$new_password" > "$tmp"
+    chmod 0600 "$tmp"
+    mv "$tmp" "$pwd_file"
+    echo "  New encryption key generated."
+
+    # Remove old repo contents and init fresh
+    # For local repos, clear the directory
+    # For remote repos (sftp, s3, etc.), restic init will fail if config exists
+    # So we try to remove the config first using restic
+    restic cat config --repo "$repo_path" --password-file "$pwd_file" "${RESTIC_EXTRA_OPTS[@]}" --json &>/dev/null 2>&1
+    # If that fails (wrong key), we just try init anyway — the old key won't work
+
+    if restic init --repo "$repo_path" --password-file "$pwd_file" "${RESTIC_EXTRA_OPTS[@]}" 2>&1; then
+        echo "  Status: ✓ re-initialized successfully"
+        local updated
+        updated=$(jq --arg id "$dest_id" '[.[] | if .id == $id then .initialized = true else . end]' "$DESTINATIONS_FILE")
+        _dest_write_all "$updated"
+        return 0
+    fi
+
+    # Init failed — repo probably still has old data. Need to clear it first.
+    echo "  Repository not empty. Clearing remote data..."
+
+    local type
+    type=$(echo "$dest" | jq -r '.type')
+    case "$type" in
+        local)
+            local local_path="${repo_path}"
+            if [[ -d "$local_path" ]]; then
+                find "$local_path" -mindepth 1 -delete 2>/dev/null
+            fi
+            ;;
+        sftp)
+            # Extract user@host and remote path from sftp:user@host:/path
+            local sftp_userhost sftp_remote
+            sftp_userhost=$(echo "$repo_path" | sed 's|^sftp:||; s|:.*||')
+            sftp_remote=$(echo "$repo_path" | sed 's|^sftp:[^:]*:||')
+
+            # Build SSH command matching the one used for restic
+            local ssh_key_file ssh_pwd_file_ssh
+            ssh_key_file=$(echo "$dest" | jq -r '.credentials.ssh_key_file // empty')
+            ssh_pwd_file_ssh=$(echo "$dest" | jq -r '.credentials.ssh_password_file // empty')
+
+            local ssh_cmd="ssh -o StrictHostKeyChecking=accept-new"
+            if [[ -n "$ssh_key_file" ]] && [[ -f "$ssh_key_file" ]]; then
+                ssh_cmd="ssh -i ${ssh_key_file} -o StrictHostKeyChecking=accept-new"
+            elif [[ -n "$ssh_pwd_file_ssh" ]] && [[ -f "$ssh_pwd_file_ssh" ]]; then
+                export SSHPASS="$(cat "$ssh_pwd_file_ssh")"
+                ssh_cmd="sshpass -e ssh -o StrictHostKeyChecking=accept-new"
+            fi
+
+            $ssh_cmd "$sftp_userhost" "rm -rf ${sftp_remote}/* ${sftp_remote}/.* 2>/dev/null; mkdir -p ${sftp_remote}" 2>/dev/null
+            ;;
+        *)
+            echo "  Error: automatic clearing not supported for type '$type'. Please clear the remote repository manually and retry." >&2
+            return 1
+            ;;
+    esac
+
+    # Try init again
+    if restic init --repo "$repo_path" --password-file "$pwd_file" "${RESTIC_EXTRA_OPTS[@]}" 2>&1; then
+        echo "  Status: ✓ re-initialized successfully"
+        local updated
+        updated=$(jq --arg id "$dest_id" '[.[] | if .id == $id then .initialized = true else . end]' "$DESTINATIONS_FILE")
+        _dest_write_all "$updated"
+        return 0
+    else
+        echo "  Status: ✗ re-initialization failed" >&2
+        return 1
+    fi
+}
+
+_dest_export_env() {
+    local dest="$1"
+    local type repo_path
+    type=$(echo "$dest" | jq -r '.type')
+    repo_path=$(echo "$dest" | jq -r '.path')
+
+    # Extract user@host from sftp URI
+    local sftp_userhost=""
+    if [[ "$type" == "sftp" ]]; then
+        sftp_userhost=$(echo "$repo_path" | sed 's|^sftp:||; s|:.*||')
+    fi
+
+    RESTIC_EXTRA_OPTS=()
+
+    # Handle unencrypted repos
+    local insecure
+    insecure=$(echo "$dest" | jq -r '.credentials.insecure_no_password // false')
+    if [[ "$insecure" == "true" ]]; then
+        RESTIC_EXTRA_OPTS+=(--insecure-no-password)
+    fi
+
+    case "$type" in
+        sftp)
+            local ssh_key_file ssh_pwd_file
+            ssh_key_file=$(echo "$dest" | jq -r '.credentials.ssh_key_file // empty')
+            ssh_pwd_file=$(echo "$dest" | jq -r '.credentials.ssh_password_file // empty')
+            if [[ -n "$ssh_key_file" ]] && [[ -f "$ssh_key_file" ]]; then
+                RESTIC_EXTRA_OPTS+=(-o "sftp.command=ssh -i ${ssh_key_file} -o StrictHostKeyChecking=accept-new ${sftp_userhost} -s sftp")
+            elif [[ -n "$ssh_pwd_file" ]] && [[ -f "$ssh_pwd_file" ]]; then
+                export SSHPASS="$(cat "$ssh_pwd_file")"
+                RESTIC_EXTRA_OPTS+=(-o "sftp.command=sshpass -e ssh -o StrictHostKeyChecking=accept-new ${sftp_userhost} -s sftp")
+            fi
+            ;;
+        s3)
+            local key_file secret_file
+            key_file=$(echo "$dest" | jq -r '.credentials.access_key_id_file // empty')
+            secret_file=$(echo "$dest" | jq -r '.credentials.secret_access_key_file // empty')
+            [[ -f "$key_file" ]] && export AWS_ACCESS_KEY_ID="$(cat "$key_file")"
+            [[ -f "$secret_file" ]] && export AWS_SECRET_ACCESS_KEY="$(cat "$secret_file")"
+            ;;
+        b2)
+            local id_file key_file
+            id_file=$(echo "$dest" | jq -r '.credentials.account_id_file // empty')
+            key_file=$(echo "$dest" | jq -r '.credentials.account_key_file // empty')
+            [[ -f "$id_file" ]] && export B2_ACCOUNT_ID="$(cat "$id_file")"
+            [[ -f "$key_file" ]] && export B2_ACCOUNT_KEY="$(cat "$key_file")"
+            ;;
+        azure)
+            local name key_file
+            name=$(echo "$dest" | jq -r '.credentials.account_name // empty')
+            key_file=$(echo "$dest" | jq -r '.credentials.account_key_file // empty')
+            [[ -n "$name" ]] && export AZURE_ACCOUNT_NAME="$name"
+            [[ -f "$key_file" ]] && export AZURE_ACCOUNT_KEY="$(cat "$key_file")"
+            ;;
+        gcs)
+            local cred_file
+            cred_file=$(echo "$dest" | jq -r '.credentials.application_credentials_file // empty')
+            [[ -f "$cred_file" ]] && export GOOGLE_APPLICATION_CREDENTIALS="$cred_file"
+            ;;
+    esac
+}
+
+_cmd_dest_init() {
+    local dest_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && dest_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$dest_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    if [[ "$dest_id" == "legacy" ]]; then
+        # Use the existing init path for legacy
+        cfg_load
+        cmd_init
+        return
+    fi
+
+    local data dest
+    data="$(_dest_read_all)"
+    dest=$(echo "$data" | jq -r --arg id "$dest_id" '.[] | select(.id == $id)')
+    if [[ -z "$dest" ]]; then
+        echo "Error: destination '$dest_id' not found" >&2; return 1
+    fi
+
+    local repo_path pwd_file
+    repo_path=$(echo "$dest" | jq -r '.path')
+    pwd_file=$(echo "$dest" | jq -r '.credentials.restic_password_file // empty')
+
+    if [[ -z "$pwd_file" ]] || [[ ! -f "$pwd_file" ]]; then
+        echo "Error: restic password file not found" >&2; return 1
+    fi
+
+    _dest_export_env "$dest"
+
+    echo "Initializing repository for: $dest_id ($repo_path)"
+    if restic init --repo "$repo_path" --password-file "$pwd_file" "${RESTIC_EXTRA_OPTS[@]}" 2>&1; then
+        # Mark as initialized in destinations.json
+        local updated
+        updated=$(echo "$data" | jq --arg id "$dest_id" '[.[] | if .id == $id then .initialized = true else . end]')
+        _dest_write_all "$updated"
+        echo "Repository initialized successfully."
+    else
+        echo "Error: restic init failed" >&2
+        return 1
+    fi
+}
+
+_cmd_dest_set_default() {
+    local dest_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && dest_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$dest_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data
+    data="$(_dest_read_all)"
+
+    if ! echo "$data" | jq -e --arg id "$dest_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: destination '$dest_id' not found" >&2; return 1
+    fi
+
+    local updated
+    updated=$(echo "$data" | jq --arg id "$dest_id" '[.[] | .is_default = (.id == $id)]')
+    _dest_write_all "$updated"
+    echo "Default destination set to: $dest_id"
+}
+
+_cmd_dest_show() {
+    local dest_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && dest_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$dest_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data dest
+    data="$(_dest_read_all)"
+
+    if [[ "$data" == "[]" ]] && [[ "$dest_id" == "legacy" ]]; then
+        data="$(_dest_synthesize_legacy)"
+    fi
+
+    dest=$(echo "$data" | jq --arg id "$dest_id" '.[] | select(.id == $id)')
+    if [[ -z "$dest" ]]; then
+        echo "Error: destination '$dest_id' not found" >&2; return 1
+    fi
+
+    # Redact credential file contents but keep paths
+    echo "$dest" | jq '.'
+}
+
+# ─── Schedule Management ─────────────────────────────
+
+SCHEDULES_FILE="${JABALI_BACKUP_CONFIG%/*}/schedules.json"
+
+_sched_read_all() {
+    if [[ ! -f "$SCHEDULES_FILE" ]]; then
+        echo "[]"
+        return
+    fi
+    cat "$SCHEDULES_FILE"
+}
+
+_sched_write_all() {
+    local data="$1"
+    local tmp="${SCHEDULES_FILE}.tmp"
+    echo "$data" > "$tmp"
+    chmod 0600 "$tmp"
+    mv "$tmp" "$SCHEDULES_FILE"
+}
+
+_sched_build_cron_cmd() {
+    local dest="$1" accounts="$2" exclude="$3" is_server_backup="${4:-false}"
+
+    local cmd
+    if [[ "$is_server_backup" == "true" ]]; then
+        cmd="/usr/local/bin/jabali-backup server-backup"
+    else
+        cmd="/usr/local/bin/jabali-backup run"
+    fi
+
+    if [[ -n "$dest" ]]; then
+        cmd+=" --destination=${dest}"
+    fi
+
+    # Account filtering only applies to per-user backups
+    if [[ "$is_server_backup" != "true" ]]; then
+        if [[ -n "$accounts" ]] && [[ "$accounts" != "all" ]]; then
+            IFS=',' read -ra acct_arr <<< "$accounts"
+            for a in "${acct_arr[@]}"; do
+                cmd+=" ${a}"
+            done
+        fi
+
+        if [[ -n "$exclude" ]]; then
+            cmd+=" --exclude-accounts=${exclude}"
+        fi
+    fi
+
+    cmd+=" >> /var/log/jabali-backup.log 2>&1"
+    echo "$cmd"
+}
+
+_sched_sync_crontab() {
+    local data
+    data="$(_sched_read_all)"
+
+    # Remove all jabali-backup schedule entries
+    local existing_crontab
+    existing_crontab=$(crontab -l 2>/dev/null | grep -v "# jabali-backup:" || true)
+
+    # Add enabled jobs
+    local new_entries=""
+    new_entries=$(echo "$data" | jq -r '.[] | select(.enabled) | "\(.cron) \(.id)"' 2>/dev/null)
+
+    local full_crontab="$existing_crontab"
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local job_cron job_id
+        # Format: "cron_expr job_id" — extract cron (first 5 fields) and id (rest)
+        job_id="${line##* }"
+        job_cron="${line% *}"
+
+        local job
+        job=$(echo "$data" | jq -r --arg id "$job_id" '.[] | select(.id == $id)')
+        [[ -z "$job" ]] && continue
+
+        local dest accounts exclude_acct is_server_backup
+        dest=$(echo "$job" | jq -r '.destination // empty')
+        accounts=$(echo "$job" | jq -r '.accounts // "all"')
+        exclude_acct=$(echo "$job" | jq -r '.exclude // empty')
+        is_server_backup=$(echo "$job" | jq -r '.server_backup // false')
+
+        local cron_cmd
+        cron_cmd="$(_sched_build_cron_cmd "$dest" "$accounts" "$exclude_acct" "$is_server_backup")"
+
+        full_crontab="${full_crontab}
+${job_cron} ${cron_cmd} # jabali-backup:${job_id}"
+    done <<< "$new_entries"
+
+    echo "$full_crontab" | crontab -
+}
+
+cmd_schedule() {
+    local subcmd="${1:-list}"
+    shift || true
+
+    case "$subcmd" in
+        list)     _cmd_sched_list "$@" ;;
+        add)      _cmd_sched_add "$@" ;;
+        update)   _cmd_sched_update "$@" ;;
+        remove)   _cmd_sched_remove "$@" ;;
+        enable)   _cmd_sched_enable "$@" ;;
+        disable)  _cmd_sched_disable "$@" ;;
+        sync)     _sched_sync_crontab; echo "Crontab synced." ;;
+        show)     _cmd_sched_show "$@" ;;
+        # Legacy aliases
+        install)
+            # Quick single-job: schedule install --cron="0 2 * * *"
+            local cron_expr="0 2 * * *"
+            for arg in "$@"; do
+                [[ "$arg" =~ ^--cron=(.+)$ ]] && cron_expr="${BASH_REMATCH[1]}"
+            done
+            _cmd_sched_add --name="Default Schedule" --cron="$cron_expr" --accounts=all
+            local job_id
+            job_id="$(_dest_gen_id "Default Schedule")"
+            _cmd_sched_enable --id="$job_id"
+            ;;
+        *)
+            cat <<SEOF
+Usage: jabali-backup schedule <subcommand> [options]
+
+SUBCOMMANDS:
+    list [--json]                   List all schedule jobs
+    add --name=NAME --destination=ID --cron=EXPR [--accounts=all|user1,user2] [--exclude=user3,user4]
+    update --id=ID [--name=...] [--cron=...] [--accounts=...] [--exclude=...] [--destination=...]
+    remove --id=ID                  Remove a schedule job
+    enable --id=ID                  Enable (add to crontab)
+    disable --id=ID                 Disable (remove from crontab)
+    sync                            Rebuild crontab from enabled jobs
+    show --id=ID                    Show job details (JSON)
+
+EXAMPLES:
+    jabali-backup schedule add --name="Daily All" --destination=rasp --cron="0 2 * * *"
+    jabali-backup schedule add --name="Weekly Alice" --destination=rasp --cron="0 3 * * 0" --accounts=alice,bob
+    jabali-backup schedule enable --id=daily-all
+    jabali-backup schedule list
+SEOF
+            ;;
+    esac
+}
+
+_cmd_sched_list() {
+    local format="table"
+    for arg in "$@"; do
+        [[ "$arg" == "--json" ]] && format="json"
+    done
+
+    local data
+    data="$(_sched_read_all)"
+
+    if [[ "$format" == "json" ]]; then
+        echo "$data"
+        return
+    fi
+
+    local count
+    count=$(echo "$data" | jq 'length')
+    echo "Schedule Jobs ($count):"
+    echo "────────────────────────────────────────"
+    if [[ "$count" -eq 0 ]]; then
+        echo "  No schedule jobs configured."
+        echo "  Add one with: jabali-backup schedule add --name=... --destination=... --cron=..."
+        return
+    fi
+    echo "$data" | jq -r '.[] | [
+        (if .enabled then "✓" else "✗" end),
+        .id, .cron, .destination,
+        (if .server_backup then "[Server]" else .accounts end)
+    ] | @tsv' | while IFS=$'\t' read -r enabled id cron dest accounts; do
+        printf "  %s %-24s %-16s %-16s %s\n" "$enabled" "$id" "$cron" "$dest" "$accounts"
+    done
+}
+
+_cmd_sched_add() {
+    local name="" destination="" cron="" accounts="all" exclude="" server_backup="false"
+    local keep_last="7" keep_daily="30" keep_weekly="12" keep_monthly="24"
+
+    for arg in "$@"; do
+        case "$arg" in
+            --name=*)         name="${arg#*=}" ;;
+            --destination=*)  destination="${arg#*=}" ;;
+            --cron=*)         cron="${arg#*=}" ;;
+            --accounts=*)     accounts="${arg#*=}" ;;
+            --exclude=*)      exclude="${arg#*=}" ;;
+            --server-backup)  server_backup="true" ;;
+            --keep-last=*)    keep_last="${arg#*=}" ;;
+            --keep-daily=*)   keep_daily="${arg#*=}" ;;
+            --keep-weekly=*)  keep_weekly="${arg#*=}" ;;
+            --keep-monthly=*) keep_monthly="${arg#*=}" ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        echo "Error: --name is required" >&2; return 1
+    fi
+    if [[ -z "$cron" ]]; then
+        echo "Error: --cron is required" >&2; return 1
+    fi
+
+    # Validate destination exists if specified
+    if [[ -n "$destination" ]]; then
+        local dests
+        dests=$(_dest_read_all)
+        if [[ "$dests" != "[]" ]] && ! echo "$dests" | jq -e --arg id "$destination" '.[] | select(.id == $id)' &>/dev/null; then
+            echo "Error: destination '$destination' not found" >&2; return 1
+        fi
+    fi
+
+    local job_id
+    job_id="$(_dest_gen_id "$name")"
+
+    local data
+    data="$(_sched_read_all)"
+
+    # Check duplicate
+    if echo "$data" | jq -e --arg id "$job_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: schedule job '$job_id' already exists" >&2; return 1
+    fi
+
+    local created_at
+    created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    local entry
+    entry=$(jq -n \
+        --arg id "$job_id" \
+        --arg name "$name" \
+        --arg destination "$destination" \
+        --arg cron "$cron" \
+        --arg accounts "$accounts" \
+        --arg exclude "$exclude" \
+        --argjson server_backup "$server_backup" \
+        --argjson keep_last "$keep_last" \
+        --argjson keep_daily "$keep_daily" \
+        --argjson keep_weekly "$keep_weekly" \
+        --argjson keep_monthly "$keep_monthly" \
+        --arg created_at "$created_at" \
+        '{
+            id: $id, name: $name, destination: $destination,
+            cron: $cron, accounts: $accounts, exclude: $exclude,
+            server_backup: $server_backup,
+            retention: { keep_last: $keep_last, keep_daily: $keep_daily, keep_weekly: $keep_weekly, keep_monthly: $keep_monthly },
+            enabled: false, created_at: $created_at
+        }')
+
+    local updated
+    updated=$(echo "$data" | jq --argjson entry "$entry" '. + [$entry]')
+    _sched_write_all "$updated"
+
+    echo "Added schedule: $name ($job_id)"
+    echo "  Cron:        $cron"
+    echo "  Destination: ${destination:-default}"
+    echo "  Accounts:    $accounts"
+    [[ -n "$exclude" ]] && echo "  Exclude:     $exclude"
+    echo "  Status:      disabled (run: jabali-backup schedule enable --id=$job_id)"
+}
+
+_cmd_sched_update() {
+    local job_id="" name="" destination="" cron="" accounts="" exclude="" server_backup=""
+    local keep_last="" keep_daily="" keep_weekly="" keep_monthly=""
+
+    for arg in "$@"; do
+        case "$arg" in
+            --id=*)           job_id="${arg#*=}" ;;
+            --name=*)         name="${arg#*=}" ;;
+            --destination=*)  destination="${arg#*=}" ;;
+            --cron=*)         cron="${arg#*=}" ;;
+            --accounts=*)     accounts="${arg#*=}" ;;
+            --exclude=*)      exclude="${arg#*=}" ;;
+            --server-backup)  server_backup="true" ;;
+            --no-server-backup) server_backup="false" ;;
+            --keep-last=*)    keep_last="${arg#*=}" ;;
+            --keep-daily=*)   keep_daily="${arg#*=}" ;;
+            --keep-weekly=*)  keep_weekly="${arg#*=}" ;;
+            --keep-monthly=*) keep_monthly="${arg#*=}" ;;
+        esac
+    done
+
+    if [[ -z "$job_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data
+    data="$(_sched_read_all)"
+
+    if ! echo "$data" | jq -e --arg id "$job_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: schedule job '$job_id' not found" >&2; return 1
+    fi
+
+    local updated="$data"
+    [[ -n "$name" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --arg v "$name" '[.[] | if .id == $id then .name = $v else . end]')
+    [[ -n "$destination" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --arg v "$destination" '[.[] | if .id == $id then .destination = $v else . end]')
+    [[ -n "$cron" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --arg v "$cron" '[.[] | if .id == $id then .cron = $v else . end]')
+    [[ -n "$accounts" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --arg v "$accounts" '[.[] | if .id == $id then .accounts = $v else . end]')
+    # Allow setting exclude to empty string
+    for arg in "$@"; do
+        if [[ "$arg" =~ ^--exclude= ]]; then
+            updated=$(echo "$updated" | jq --arg id "$job_id" --arg v "$exclude" '[.[] | if .id == $id then .exclude = $v else . end]')
+        fi
+    done
+    [[ -n "$keep_last" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$keep_last" '[.[] | if .id == $id then .retention.keep_last = $v else . end]')
+    [[ -n "$keep_daily" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$keep_daily" '[.[] | if .id == $id then .retention.keep_daily = $v else . end]')
+    [[ -n "$keep_weekly" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$keep_weekly" '[.[] | if .id == $id then .retention.keep_weekly = $v else . end]')
+    [[ -n "$keep_monthly" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$keep_monthly" '[.[] | if .id == $id then .retention.keep_monthly = $v else . end]')
+    [[ -n "$server_backup" ]] && updated=$(echo "$updated" | jq --arg id "$job_id" --argjson v "$server_backup" '[.[] | if .id == $id then .server_backup = $v else . end]')
+
+    _sched_write_all "$updated"
+
+    # Re-sync crontab if job is enabled
+    local is_enabled
+    is_enabled=$(echo "$updated" | jq -r --arg id "$job_id" '.[] | select(.id == $id) | .enabled')
+    [[ "$is_enabled" == "true" ]] && _sched_sync_crontab
+
+    echo "Updated schedule: $job_id"
+}
+
+_cmd_sched_remove() {
+    local job_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && job_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$job_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data
+    data="$(_sched_read_all)"
+
+    if ! echo "$data" | jq -e --arg id "$job_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: schedule job '$job_id' not found" >&2; return 1
+    fi
+
+    local updated
+    updated=$(echo "$data" | jq --arg id "$job_id" '[.[] | select(.id != $id)]')
+    _sched_write_all "$updated"
+    _sched_sync_crontab
+
+    echo "Removed schedule: $job_id"
+}
+
+_cmd_sched_enable() {
+    local job_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && job_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$job_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data
+    data="$(_sched_read_all)"
+
+    if ! echo "$data" | jq -e --arg id "$job_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: schedule job '$job_id' not found" >&2; return 1
+    fi
+
+    local updated
+    updated=$(echo "$data" | jq --arg id "$job_id" '[.[] | if .id == $id then .enabled = true else . end]')
+    _sched_write_all "$updated"
+    _sched_sync_crontab
+
+    echo "Enabled schedule: $job_id"
+}
+
+_cmd_sched_disable() {
+    local job_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && job_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$job_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data
+    data="$(_sched_read_all)"
+
+    if ! echo "$data" | jq -e --arg id "$job_id" '.[] | select(.id == $id)' &>/dev/null; then
+        echo "Error: schedule job '$job_id' not found" >&2; return 1
+    fi
+
+    local updated
+    updated=$(echo "$data" | jq --arg id "$job_id" '[.[] | if .id == $id then .enabled = false else . end]')
+    _sched_write_all "$updated"
+    _sched_sync_crontab
+
+    echo "Disabled schedule: $job_id"
+}
+
+_cmd_sched_show() {
+    local job_id=""
+    for arg in "$@"; do
+        [[ "$arg" =~ ^--id=(.+)$ ]] && job_id="${BASH_REMATCH[1]}"
+    done
+
+    if [[ -z "$job_id" ]]; then
+        echo "Error: --id is required" >&2; return 1
+    fi
+
+    local data
+    data="$(_sched_read_all)"
+
+    local job
+    job=$(echo "$data" | jq --arg id "$job_id" '.[] | select(.id == $id)')
+    if [[ -z "$job" ]]; then
+        echo "Error: schedule job '$job_id' not found" >&2; return 1
+    fi
+
+    echo "$job" | jq '.'
+}
+
+# ─── Main ─────────────────────────────────────────────
+
+main() {
+    # Parse global --destination= flag ONLY before the command name
+    # (so schedule add --destination=X passes through to the subcommand)
+    local -a args=()
+    local found_cmd=0
+    for arg in "$@"; do
+        if [[ "$found_cmd" -eq 0 ]] && [[ "$arg" =~ ^--destination=(.+)$ ]]; then
+            export JABALI_DESTINATION="${BASH_REMATCH[1]}"
+        else
+            [[ "$found_cmd" -eq 0 ]] && [[ ! "$arg" =~ ^- ]] && found_cmd=1
+            args+=("$arg")
+        fi
+    done
+    set -- "${args[@]}"
+
+    local cmd="${1:-}"
+    shift || true
+
+    case "$cmd" in
+        run)      cmd_run "$@" ;;
+        server-backup)  cmd_server_backup "$@" ;;
+        server-download) cmd_server_download "$@" ;;
+        restore)  cmd_restore "$@" ;;
+        server-restore) cmd_server_restore "$@" ;;
+        import)   cmd_import "$@" ;;
+        download) cmd_download "$@" ;;
+        ls|browse) cmd_ls "$@" ;;
+        list)     cmd_list "$@" ;;
+        init)     cmd_init "$@" ;;
+        check)    cmd_check "$@" ;;
+        forget)   cmd_forget "$@" ;;
+        destination|dest) cmd_destination "$@" ;;
+        schedule) cmd_schedule "$@" ;;
+        config)   cmd_config "$@" ;;
+        doctor)   cmd_doctor ;;
+        update)    cmd_update ;;
+        uninstall) cmd_uninstall ;;
+        version)   cmd_version ;;
+        -h|--help|help|"")
+                  usage ;;
+        *)        echo "Unknown command: $cmd"; usage; exit 1 ;;
+    esac
+}
+
+main "$@"
