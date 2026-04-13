@@ -18,12 +18,17 @@ Route::get('/auth-check', function (Request $request) {
         return response('', 200);
     }
 
-    // Check signed stats token (cross-domain access from panel)
-    $originalUri = $request->header('X-Original-URI', '');
+    // Check signed stats token (cross-domain access from panel).
+    // Tokens are minted in Logs.php as bin2hex(random_bytes(16)) → 32 lowercase
+    // hex chars. Reject anything that isn't *exactly* that shape BEFORE touching
+    // the cache — an attacker-supplied `_stats_token[]=x` would otherwise arrive
+    // as an array here, PHP would coerce it to the literal string 'Array' when
+    // concatenating the cache key, and every probe would silently log a warning.
+    $originalUri = (string) $request->header('X-Original-URI', '');
     parse_str(parse_url($originalUri, PHP_URL_QUERY) ?? '', $query);
     $token = $query['_stats_token'] ?? '';
 
-    if ($token !== '' && Cache::get('stats_token:'.$token)) {
+    if (is_string($token) && preg_match('/^[0-9a-f]{32}$/', $token) && Cache::get('stats_token:'.$token)) {
         return response('', 200);
     }
 
