@@ -70,11 +70,18 @@ Route::get('/auto-login', function (\Illuminate\Http\Request $request) {
         abort(403, 'User not found');
     }
 
-    $guard = $user->is_admin ? 'admin' : 'web';
+    // Resolve target panel first: the token's `panel` field (minted by
+    // LoginTokenCommand / Dashboard token actions) drives BOTH the guard
+    // and the redirect. A non-admin asking for the admin panel is rejected
+    // — the token carries a claim, never an elevation.
+    $panel = $data['panel'] ?? ($user->is_admin ? 'admin' : 'user');
+    if ($panel === 'admin' && ! $user->is_admin) {
+        abort(403, 'Not authorized for admin panel');
+    }
+
+    $guard = $panel === 'admin' ? 'admin' : 'web';
     \Illuminate\Support\Facades\Auth::guard($guard)->login($user);
     session()->regenerate();
-
-    $panel = $data['panel'] ?? ($user->is_admin ? 'admin' : 'user');
 
     return redirect($panel === 'admin' ? '/jabali-admin/' : '/jabali-panel/');
 });

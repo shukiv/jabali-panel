@@ -72,15 +72,19 @@ Route::post('/internal/page-cache', function (Request $request) use ($allowInter
         return response()->json(['error' => 'Forbidden'], 403);
     }
 
+    // Force scalar types: callers are supposed to send strings, but a buggy
+    // client sending `domain[]=x.com` would previously reach preg_match / strlen
+    // with an array and throw TypeError (PHP 8.4 strictness). Reject early with
+    // the same status the value-level checks would return.
     $domain = $request->input('domain');
     $enabled = $request->boolean('enabled');
     $secret = $request->input('secret');
 
-    if (empty($domain) || ! preg_match('/^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i', $domain)) {
+    if (! is_string($domain) || $domain === '' || ! preg_match('/^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i', $domain)) {
         return response()->json(['error' => 'Invalid domain'], 400);
     }
 
-    if (empty($secret) || strlen($secret) < 16) {
+    if (! is_string($secret) || strlen($secret) < 16) {
         return response()->json(['error' => 'Invalid secret'], 401);
     }
 
@@ -139,12 +143,14 @@ Route::post('/internal/page-cache-purge', function (Request $request) use ($allo
         return response()->json(['error' => 'Forbidden'], 403);
     }
 
+    // See /internal/page-cache for the rationale on is_string() guards:
+    // array-shaped inputs would otherwise reach preg_match / strlen and 500.
     $domain = $request->input('domain');
     $paths = $request->input('paths', []);
     $purgeAll = $request->boolean('purge_all');
     $secret = $request->input('secret');
 
-    if (empty($domain) || ! preg_match('/^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i', $domain)) {
+    if (! is_string($domain) || $domain === '' || ! preg_match('/^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i', $domain)) {
         return response()->json(['error' => 'Invalid domain'], 400);
     }
 
@@ -155,7 +161,7 @@ Route::post('/internal/page-cache-purge', function (Request $request) use ($allo
     $paths = array_filter($paths, fn ($p) => is_string($p) && preg_match('#^/[a-zA-Z0-9/_.\-]*$#', $p));
     $paths = array_values($paths);
 
-    if (empty($secret) || strlen($secret) < 16) {
+    if (! is_string($secret) || strlen($secret) < 16) {
         return response()->json(['error' => 'Invalid secret'], 401);
     }
 
