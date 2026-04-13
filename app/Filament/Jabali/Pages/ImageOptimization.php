@@ -150,6 +150,20 @@ class ImageOptimization extends Page implements HasActions, HasForms
                     $message .= ' · '.__('JPG').': '.($optimized['jpg'] ?? 0).', '.__('PNG').': '.($optimized['png'] ?? 0).', '.__('WebP').': '.($optimized['webp'] ?? 0);
                 }
 
+                // Agent returns a `warning` when one of jpegoptim/optipng/cwebp
+                // is missing but matching files exist. Treat the whole run as
+                // a warning (not plain success) so the operator notices —
+                // silent zeros are what made this bug hard to spot originally.
+                if (! empty($result['warning'])) {
+                    Notification::make()
+                        ->title($message)
+                        ->body($result['warning'])
+                        ->warning()
+                        ->send();
+
+                    return;
+                }
+
                 Notification::make()->title($message)->success()->send();
 
                 return;

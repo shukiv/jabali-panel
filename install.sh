@@ -549,6 +549,11 @@ install_packages() {
         # Log analysis
         goaccess
 
+        # Image optimization (used by Image Optimization page)
+        jpegoptim
+        optipng
+        webp
+
     )
 
     # Add Mail Server packages if enabled

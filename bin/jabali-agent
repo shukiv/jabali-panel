@@ -24496,31 +24496,102 @@ function imageOptimize(array $params): array
         'webp' => 0,
     ];
 
-    if (toolExists('jpegoptim')) {
-        $cmd = 'find '.escapeshellarg($path)." -type f \\( -iname '*.jpg' -o -iname '*.jpeg' \\) -print0 | xargs -0 -r jpegoptim --strip-all --max={$quality} 2>&1";
-        exec($cmd, $out, $code);
-        if ($code === 0) {
-            $optimized['jpg'] = count($out) > 0 ? count($out) : 0;
+    // Build the list of candidate files once per extension set. This gives us
+    // accurate counts (the previous version counted lines of tool stdout, which
+    // was zero when no tool printed anything and wildly off when they did —
+    // jpegoptim emits multiple lines per file, optipng emits different format,
+    // cwebp yet another). findFiles also lets us skip running the tool when
+    // there's nothing to do.
+    $findFiles = static function (string $root, array $extensions): array {
+        $iexprs = [];
+        foreach ($extensions as $ext) {
+            $iexprs[] = "-iname '*.".$ext."'";
+        }
+        $predicate = '\\( '.implode(' -o ', $iexprs).' \\)';
+        $cmd = 'find '.escapeshellarg($root).' -type f '.$predicate." -print0 2>/dev/null";
+        $stdout = [];
+        exec($cmd, $stdout, $code);
+        if ($code !== 0) {
+            return [];
+        }
+        $joined = implode("\n", $stdout);
+        $files = array_filter(explode("\0", $joined), static fn (string $f): bool => $f !== '');
+
+        return array_values($files);
+    };
+
+    $missingTools = [];
+
+    // ── JPEG ────────────────────────────────────────────────────────────────
+    $jpgFiles = $findFiles($path, ['jpg', 'jpeg']);
+    if (count($jpgFiles) > 0) {
+        if (! toolExists('jpegoptim')) {
+            $missingTools[] = 'jpegoptim';
+        } else {
+            $cmd = 'printf %s\\\\0 '
+                .implode(' ', array_map('escapeshellarg', $jpgFiles))
+                ." | xargs -0 -r jpegoptim --strip-all --max={$quality} 2>/dev/null";
+            $jpgOut = [];
+            $jpgCode = 0;
+            exec($cmd, $jpgOut, $jpgCode);
+            if ($jpgCode === 0) {
+                $optimized['jpg'] = count($jpgFiles);
+            }
         }
     }
 
-    if (toolExists('optipng')) {
-        $cmd = 'find '.escapeshellarg($path)." -type f -iname '*.png' -print0 | xargs -0 -r optipng -o2 2>&1";
-        exec($cmd, $out, $code);
-        if ($code === 0) {
-            $optimized['png'] = count($out) > 0 ? count($out) : 0;
+    // ── PNG ─────────────────────────────────────────────────────────────────
+    $pngFiles = $findFiles($path, ['png']);
+    if (count($pngFiles) > 0) {
+        if (! toolExists('optipng')) {
+            $missingTools[] = 'optipng';
+        } else {
+            $cmd = 'printf %s\\\\0 '
+                .implode(' ', array_map('escapeshellarg', $pngFiles))
+                .' | xargs -0 -r optipng -o2 2>/dev/null';
+            $pngOut = [];
+            $pngCode = 0;
+            exec($cmd, $pngOut, $pngCode);
+            // optipng exits 0 on success, 1 when the file was already
+            // optimal (not an error). Accept either.
+            if ($pngCode === 0 || $pngCode === 1) {
+                $optimized['png'] = count($pngFiles);
+            }
         }
     }
 
-    if ($convertWebp && toolExists('cwebp')) {
-        $cmd = 'find '.escapeshellarg($path)." -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \\) -print0 | xargs -0 -r -I{} cwebp -q {$quality} {} -o {}.webp 2>&1";
-        exec($cmd, $out, $code);
-        if ($code === 0) {
-            $optimized['webp'] = count($out) > 0 ? count($out) : 0;
+    // ── WebP (only when explicitly asked) ───────────────────────────────────
+    if ($convertWebp) {
+        $webpFiles = $findFiles($path, ['jpg', 'jpeg', 'png']);
+        if (count($webpFiles) > 0) {
+            if (! toolExists('cwebp')) {
+                $missingTools[] = 'cwebp';
+            } else {
+                $converted = 0;
+                foreach ($webpFiles as $src) {
+                    $dst = $src.'.webp';
+                    $cmd = 'cwebp -q '.(int) $quality.' '.escapeshellarg($src).' -o '.escapeshellarg($dst).' 2>/dev/null';
+                    exec($cmd, $_ = [], $code);
+                    if ($code === 0 && is_file($dst)) {
+                        $converted++;
+                    }
+                }
+                $optimized['webp'] = $converted;
+            }
         }
     }
 
-    return ['success' => true, 'optimized' => $optimized];
+    $result = ['success' => true, 'optimized' => $optimized];
+
+    if (! empty($missingTools)) {
+        // Don't silently pretend success — the operator needs to know which
+        // tools are missing so they can apt-get install them. Keep success
+        // true so Laravel still reports counts for tools that did run, but
+        // surface the gap via a `warning` field Laravel can display.
+        $result['warning'] = 'Skipped some formats: missing tool(s) '.implode(', ', array_values(array_unique($missingTools)));
+    }
+
+    return $result;
 }
 
 function postgresInstall(array $params): array
