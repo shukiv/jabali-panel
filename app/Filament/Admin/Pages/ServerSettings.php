@@ -2058,7 +2058,25 @@ class ServerSettings extends Page implements HasActions, HasForms
             $installConfirm = __('This will download and install the addon. It may take several minutes.');
             $uninstallConfirm = __('Are you sure? This will remove the addon and all its data.');
             $timeoutMsg = __('Addon operation timed out — check the server logs.');
-            $actionsHtml = '<div x-data="addonRow(\''.$addonId.'\', '.($installed ? 'true' : 'false').', \''.addslashes($installConfirm).'\', \''.addslashes($uninstallConfirm).'\', \''.addslashes($timeoutMsg).'\')">'
+
+            // Inline Alpine state instead of referencing a global factory
+            // function. A previous version defined window.addonRow in an inline
+            // <script> rendered with the tab content — but when Livewire
+            // morphs the DOM during a tab swap, inline <script> tags added
+            // via the morph do NOT execute, so the factory was undefined and
+            // every row logged "addonRow is not defined" until a full page
+            // refresh brought the script back in the initial HTML. Inlining
+            // removes the timing dependency entirely; the state and run()
+            // method live right on the element that uses them.
+            $alpineData = $this->addonRowAlpineData(
+                $addonId,
+                $installed,
+                $installConfirm,
+                $uninstallConfirm,
+                $timeoutMsg,
+            );
+
+            $actionsHtml = '<div x-data="'.$alpineData.'">'
                 .($installed
                     ? '<button type="button" x-show="!busy" x-on:click="run()" class="inline-flex items-center gap-1.5 rounded-lg bg-danger-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-danger-500 dark:bg-danger-500 dark:hover:bg-danger-400">'.__('Uninstall').'</button>'
                     : '<button type="button" x-show="!busy" x-on:click="run()" class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400">'.__('Install').'</button>')
@@ -2089,114 +2107,117 @@ class ServerSettings extends Page implements HasActions, HasForms
             ];
         }
 
-        // Alpine component shared by every addon row. Inlined once per tab
-        // render (not per row) to keep the HTML blob in each row small and
-        // so the logic lives in one readable block instead of a giant
-        // backslash-escaped single-line expression.
-        $alpineScript = <<<'JS'
-            <script>
-                if (typeof window.addonRow === 'undefined') {
-                    window.addonRow = function (addonId, installed, installConfirm, uninstallConfirm, timeoutMsg) {
-                        return {
-                            busy: false,
-                            async run() {
-                                const op = installed ? 'uninstall' : 'install';
-                                const msg = op === 'install' ? installConfirm : uninstallConfirm;
-                                if (! confirm(msg)) return;
-                                this.busy = true;
-                                let result;
-                                try {
-                                    result = op === 'install'
-                                        ? await this.$wire.installAddon(addonId)
-                                        : await this.$wire.uninstallAddon(addonId);
-                                } catch (e) {
-                                    this.busy = false;
-                                    return;
-                                }
-                                // Agent reported immediate failure → stop now, keep button.
-                                if (! result || ! result.success) {
-                                    this.busy = false;
-                                    return;
-                                }
-                                // Agent kicked off a background install/uninstall.
-                                // Poll for the file-exists state to flip, but give up
-                                // after 10 minutes with a surfaced error rather than
-                                // silently reloading.
-                                //
-                                // Installers can restart php-fpm/nginx and briefly
-                                // drop sessions — tolerate a handful of consecutive
-                                // errors, then bail out so we don't spam the console
-                                // for 10 minutes when auth has genuinely expired.
-                                const target = op === 'install';
-                                const deadline = Date.now() + 600000;
-                                let consecErrors = 0;
-                                const MAX_ERRORS = 3;
-                                // Plain fetch instead of $wire — Livewire logs
-                                // rejected promises to the console regardless
-                                // of try/catch, so a noisy installer that
-                                // bounces php-fpm would flood DevTools. A
-                                // simple JSON endpoint gives us total control
-                                // over error handling.
-                                const statusUrl = '/jabali-admin/addons/' + encodeURIComponent(addonId) + '/status';
-                                while (Date.now() < deadline) {
-                                    await new Promise(r => setTimeout(r, 5000));
-                                    try {
-                                        const resp = await fetch(statusUrl, {
-                                            credentials: 'same-origin',
-                                            headers: { 'Accept': 'application/json' },
-                                        });
-                                        if (resp.status === 401 || resp.status === 419) {
-                                            this.busy = false;
-                                            window.location.reload();
-                                            return;
-                                        }
-                                        if (! resp.ok) {
-                                            consecErrors += 1;
-                                            if (consecErrors >= MAX_ERRORS) {
-                                                this.busy = false;
-                                                window.location.reload();
-                                                return;
-                                            }
-                                            continue;
-                                        }
-                                        const body = await resp.json();
-                                        consecErrors = 0;
-                                        if (body.installed === target) {
-                                            window.location.reload();
-                                            return;
-                                        }
-                                    } catch (e) {
-                                        consecErrors += 1;
-                                        if (consecErrors >= MAX_ERRORS) {
-                                            this.busy = false;
-                                            window.location.reload();
-                                            return;
-                                        }
-                                    }
-                                }
-                                this.busy = false;
-                                alert(timeoutMsg);
-                            },
-                        };
-                    };
-                }
-            </script>
-        JS;
-
-        // Order matters: the <script> that defines window.addonRow must land
-        // in the DOM BEFORE any x-data="addonRow(...)" div. When Livewire
-        // injects this tab's content after a tab-click (as opposed to a full
-        // page refresh), Alpine processes x-data directives as soon as the
-        // nodes are mounted. If the factory script hasn't executed yet,
-        // Alpine silently fails to mount the row — which hid the
-        // Install/Uninstall buttons on first navigation to the Addons tab
-        // until the user force-refreshed.
         return [
-            Placeholder::make('addon_row_script')
-                ->label('')
-                ->content(new HtmlString($alpineScript)),
             Grid::make(2)->schema($sections),
         ];
+    }
+
+    /**
+     * Build the Alpine x-data expression for an addon row inline. Done per-row
+     * to dodge the Livewire-tab-swap inline-<script> execution problem (see
+     * addonsTabContent for the full context). All interpolated values are
+     * JSON-encoded so quotes and non-ASCII translations can't break out of
+     * the attribute.
+     */
+    protected function addonRowAlpineData(
+        string $addonId,
+        bool $installed,
+        string $installConfirm,
+        string $uninstallConfirm,
+        string $timeoutMsg,
+    ): string {
+        $args = [
+            'addonId' => $addonId,
+            'installed' => $installed,
+            'installConfirm' => $installConfirm,
+            'uninstallConfirm' => $uninstallConfirm,
+            'timeoutMsg' => $timeoutMsg,
+        ];
+
+        // JSON_HEX_APOS + JSON_HEX_QUOT keep both quote families safe when the
+        // string is embedded inside an HTML attribute delimited by either.
+        $argsJson = json_encode($args, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+
+        // Literal object with busy/run() inline. The run() method reads its
+        // closure-captured config from the const at the top so we don't have
+        // to thread five parameters through every call site.
+        $js = <<<JS
+        (() => {
+            const cfg = {$argsJson};
+            return {
+                busy: false,
+                async run() {
+                    const op = cfg.installed ? 'uninstall' : 'install';
+                    const msg = op === 'install' ? cfg.installConfirm : cfg.uninstallConfirm;
+                    if (! confirm(msg)) return;
+                    this.busy = true;
+                    let result;
+                    try {
+                        result = op === 'install'
+                            ? await this.\$wire.installAddon(cfg.addonId)
+                            : await this.\$wire.uninstallAddon(cfg.addonId);
+                    } catch (e) {
+                        this.busy = false;
+                        return;
+                    }
+                    if (! result || ! result.success) {
+                        this.busy = false;
+                        return;
+                    }
+                    const target = op === 'install';
+                    const deadline = Date.now() + 600000;
+                    let consecErrors = 0;
+                    const MAX_ERRORS = 3;
+                    const statusUrl = '/jabali-admin/addons/' + encodeURIComponent(cfg.addonId) + '/status';
+                    while (Date.now() < deadline) {
+                        await new Promise(r => setTimeout(r, 5000));
+                        try {
+                            const resp = await fetch(statusUrl, {
+                                credentials: 'same-origin',
+                                headers: { 'Accept': 'application/json' },
+                            });
+                            if (resp.status === 401 || resp.status === 419) {
+                                this.busy = false;
+                                window.location.reload();
+                                return;
+                            }
+                            if (! resp.ok) {
+                                consecErrors += 1;
+                                if (consecErrors >= MAX_ERRORS) {
+                                    this.busy = false;
+                                    window.location.reload();
+                                    return;
+                                }
+                                continue;
+                            }
+                            const body = await resp.json();
+                            consecErrors = 0;
+                            if (body.installed === target) {
+                                window.location.reload();
+                                return;
+                            }
+                        } catch (e) {
+                            consecErrors += 1;
+                            if (consecErrors >= MAX_ERRORS) {
+                                this.busy = false;
+                                window.location.reload();
+                                return;
+                            }
+                        }
+                    }
+                    this.busy = false;
+                    alert(cfg.timeoutMsg);
+                },
+            };
+        })()
+        JS;
+
+        // Collapse to a single line so the HTML attribute stays well-formed.
+        // htmlspecialchars encodes the double-quotes to &quot; for embedding
+        // inside x-data="…".
+        $oneLine = preg_replace('/\s+/', ' ', $js);
+
+        return htmlspecialchars($oneLine, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     }
 
     /**
