@@ -43,6 +43,38 @@ _restore_server_phase1() {
 
     local jabali_path="${CFG_JABALI_PATH:-/var/www/jabali}"
 
+    # Look up the FPM pool user rather than hardcoding www-data
+    local fpm_user="www-data"
+    if [[ -d /etc/php ]]; then
+        local looked_up
+        looked_up=$(grep -h '^user = ' /etc/php/*/fpm/pool.d/www.conf 2>/dev/null | awk '{print $3}' | head -1)
+        [[ -n "$looked_up" ]] && fpm_user="$looked_up"
+    fi
+
+    # Restore panel source if we captured a tarball snapshot (no-git path)
+    local restore_mode="git"
+    [[ -f "${server_dir}/panel/restore-mode.txt" ]] && restore_mode=$(<"${server_dir}/panel/restore-mode.txt")
+
+    if [[ "$restore_mode" == "tarball" && -d "${server_dir}/panel/source" ]]; then
+        log_info "restore/server: panel restore mode: tarball"
+        if [[ -d "${jabali_path}" && "$force" -eq 0 ]]; then
+            log_info "restore/server: ${jabali_path} exists, skipping source restore (use --force)"
+        else
+            mkdir -p "${jabali_path}"
+            rsync -a "${server_dir}/panel/source/" "${jabali_path}/"
+            for f in composer.json composer.lock package.json package-lock.json; do
+                [[ -f "${server_dir}/panel/${f}" ]] && cp "${server_dir}/panel/${f}" "${jabali_path}/${f}"
+            done
+            chown -R "${fpm_user}:${fpm_user}" "${jabali_path}"
+            log_info "restore/server: Extracted panel source tree. Operator must run: composer install --no-dev && npm ci && npm run build && php artisan migrate --force && php artisan storage:link"
+        fi
+    else
+        log_info "restore/server: panel restore mode: git (use remote + commit from git-info.json)"
+        if [[ -s "${server_dir}/panel/git-dirty.patch" ]]; then
+            log_warn "restore/server: original tree had uncommitted changes — see panel/git-dirty.patch inside the snapshot and re-apply manually after clone"
+        fi
+    fi
+
     # Restore .env
     if [[ -f "${server_dir}/panel/env" ]]; then
         if [[ -f "${jabali_path}/.env" ]] && [[ "$force" -eq 0 ]]; then
@@ -50,7 +82,7 @@ _restore_server_phase1() {
         else
             cp "${server_dir}/panel/env" "${jabali_path}/.env"
             chmod 600 "${jabali_path}/.env"
-            chown www-data:www-data "${jabali_path}/.env"
+            chown "${fpm_user}:${fpm_user}" "${jabali_path}/.env"
             log_info "restore/server: Restored .env"
         fi
     fi
@@ -59,7 +91,7 @@ _restore_server_phase1() {
     if [[ -d "${server_dir}/panel/storage/app" ]]; then
         mkdir -p "${jabali_path}/storage/app"
         rsync -a "${server_dir}/panel/storage/app/" "${jabali_path}/storage/app/"
-        chown -R www-data:www-data "${jabali_path}/storage/app"
+        chown -R "${fpm_user}:${fpm_user}" "${jabali_path}/storage/app"
         log_info "restore/server: Restored panel storage"
     fi
 
@@ -156,11 +188,37 @@ _restore_server_phase3() {
         log_info "restore/server: PHP-FPM config restored"
     fi
 
-    # Stalwart mail
+    # Stalwart mail — config first, then data (DKIM + RocksDB)
     if [[ -d "${server_dir}/config/stalwart" ]]; then
         mkdir -p /etc/stalwart-mail
         rsync -a "${server_dir}/config/stalwart/" /etc/stalwart-mail/
         log_info "restore/server: Stalwart config restored"
+    fi
+
+    if [[ -d "${server_dir}/data/stalwart" ]]; then
+        local was_active=0
+        if systemctl is-active --quiet stalwart-mail 2>/dev/null; then
+            was_active=1
+            systemctl stop stalwart-mail 2>/dev/null || true
+        fi
+        mkdir -p /var/lib/stalwart-mail
+        rsync -a --numeric-ids --delete "${server_dir}/data/stalwart/" /var/lib/stalwart-mail/
+        if id stalwart-mail &>/dev/null; then
+            chown -R stalwart-mail:stalwart-mail /var/lib/stalwart-mail
+        fi
+        log_info "restore/server: Stalwart data (DKIM + mail) restored"
+
+        if [[ "$was_active" -eq 1 ]]; then
+            systemctl start stalwart-mail 2>/dev/null || log_error "restore/server: stalwart-mail failed to start after data restore"
+            local i
+            for i in {1..30}; do
+                systemctl is-active --quiet stalwart-mail && break
+                sleep 0.5
+            done
+            systemctl is-active --quiet stalwart-mail \
+                && log_info "restore/server: stalwart-mail active after data restore" \
+                || log_error "restore/server: CRITICAL — stalwart-mail did not come back after data restore"
+        fi
     fi
 
     # Redis
@@ -249,6 +307,17 @@ _restore_server_phase5() {
         mkdir -p /etc/jabali/agent.d
         rsync -a "${server_dir}/config/jabali/agent.d/" /etc/jabali/agent.d/
         log_info "restore/server: Restored agent addons"
+    fi
+
+    # Bulwark: metadata-only snapshot → instruct operator to reinstall
+    if [[ -f "${server_dir}/metadata/bulwark.json" ]]; then
+        if [[ ! -d /opt/bulwark ]]; then
+            log_warn "restore/server: Bulwark is not installed on target. Run: sudo /opt/jabali-backup/install.sh --reinstall-bulwark"
+        else
+            log_info "restore/server: Bulwark already present (metadata snapshot only — no file restore performed)"
+        fi
+    elif [[ -d /opt/bulwark ]] || command -v bulwark &>/dev/null; then
+        log_warn "restore/server: Legacy snapshot (no bulwark metadata); verify /opt/bulwark manually"
     fi
 
     # Reload systemd

@@ -21,6 +21,7 @@ collect_server() {
     _collect_server_letsencrypt "$server_dir"
     _collect_server_systemd "$server_dir"
     _collect_server_packages "$server_dir"
+    _collect_server_bulwark "$server_dir"
     _generate_server_manifest "$server_dir"
 
     log_info "server: Full server collection complete"
@@ -98,16 +99,38 @@ _collect_server_panel() {
         log_info "server: Backed up panel storage/app"
     fi
 
-    # Git info for clone-based restore
+    # Git info for clone-based restore, plus dirty-tree capture so uncommitted
+    # work isn't silently lost on a git-clone-style restore.
     if [[ -d "${jabali_path}/.git" ]]; then
         local remote commit
         remote=$(git -C "$jabali_path" remote get-url origin 2>/dev/null || echo "unknown")
         commit=$(git -C "$jabali_path" rev-parse HEAD 2>/dev/null || echo "unknown")
         printf '{"remote":"%s","commit":"%s"}\n' "$remote" "$commit" > "${panel_dir}/git-info.json"
+
+        git -C "$jabali_path" status --porcelain > "${panel_dir}/git-dirty.txt" 2>/dev/null || true
+        git -C "$jabali_path" diff > "${panel_dir}/git-dirty.patch" 2>/dev/null || true
+        if [[ -s "${panel_dir}/git-dirty.txt" ]]; then
+            log_warn "server: panel tree has uncommitted changes — captured as git-dirty.patch"
+        fi
+        echo "git" > "${panel_dir}/restore-mode.txt"
+    else
+        # No .git — snapshot the source tree so restore can rehydrate without
+        # a remote clone. Excludes follow spec §3 "What NOT to back up".
+        echo "tarball" > "${panel_dir}/restore-mode.txt"
+        mkdir -p "${panel_dir}/source"
+        tar -C "$jabali_path" -cf - \
+            --exclude='./vendor' \
+            --exclude='./node_modules' \
+            --exclude='./storage/framework/cache' \
+            --exclude='./storage/framework/views' \
+            --exclude='./bootstrap/cache' \
+            --exclude='./.git' \
+            . 2>/dev/null | tar -C "${panel_dir}/source" -xf - 2>/dev/null
+        log_info "server: Captured panel source tree (no .git — tarball restore)"
     fi
 
     # Composer files for dependency restore
-    for f in composer.json composer.lock; do
+    for f in composer.json composer.lock package.json package-lock.json; do
         [[ -f "${jabali_path}/${f}" ]] && cp "${jabali_path}/${f}" "${panel_dir}/${f}"
     done
 }
@@ -189,11 +212,59 @@ _collect_server_php() {
 _collect_server_stalwart() {
     local server_dir="$1"
 
+    # 10a. /etc/stalwart-mail — config (always safe to hot-copy)
     if [[ -d /etc/stalwart-mail ]]; then
         local dest="${server_dir}/config/stalwart"
         mkdir -p "$dest"
         cp -a /etc/stalwart-mail/. "$dest/"
         log_info "server: Backed up Stalwart config"
+    fi
+
+    # 10b. /var/lib/stalwart-mail — RocksDB (DKIM private keys + mail data)
+    # Losing this means DKIM signatures break for every domain until keys are
+    # regenerated and DNS is re-published. Stop the service before rsync to
+    # avoid hot-copying an inconsistent RocksDB state.
+    if [[ "${CFG_SERVER_BACKUP_STALWART_DATA:-true}" != "true" ]]; then
+        log_info "server: Skipping Stalwart data (--skip-stalwart-data)"
+        return 0
+    fi
+
+    if [[ ! -d /var/lib/stalwart-mail ]]; then
+        return 0
+    fi
+
+    local data_dest="${server_dir}/data/stalwart"
+    mkdir -p "$data_dest"
+
+    local was_active=0
+    if systemctl is-active --quiet stalwart-mail 2>/dev/null; then
+        was_active=1
+        log_info "server: Stopping stalwart-mail briefly to snapshot RocksDB"
+        systemctl stop stalwart-mail 2>/dev/null || log_warn "server: stop stalwart-mail returned non-zero"
+    fi
+
+    if command -v rsync &>/dev/null; then
+        rsync -a --numeric-ids /var/lib/stalwart-mail/ "$data_dest/" 2>/dev/null \
+            && log_info "server: Backed up Stalwart data (DKIM + mail)" \
+            || log_warn "server: rsync of /var/lib/stalwart-mail failed"
+    else
+        cp -a /var/lib/stalwart-mail/. "$data_dest/" 2>/dev/null \
+            && log_info "server: Backed up Stalwart data (cp fallback)" \
+            || log_warn "server: cp of /var/lib/stalwart-mail failed"
+    fi
+
+    if [[ "$was_active" -eq 1 ]]; then
+        systemctl start stalwart-mail 2>/dev/null || log_error "server: stalwart-mail failed to start"
+        local i
+        for i in {1..30}; do
+            systemctl is-active --quiet stalwart-mail && break
+            sleep 0.5
+        done
+        if ! systemctl is-active --quiet stalwart-mail; then
+            log_error "server: CRITICAL — stalwart-mail did not come back active after data capture"
+            return 2
+        fi
+        log_info "server: stalwart-mail restarted and active"
     fi
 }
 
@@ -302,6 +373,45 @@ _collect_server_packages() {
 
 # ── Server manifest ──
 
+# ── 18. Bulwark webmail (metadata only; reinstall on restore) ──
+# Spec §18: preferred restore is reinstall via install.sh, not file copy. We
+# record just enough metadata (version, port, upstream SHA) to let the operator
+# recreate the install deterministically.
+_collect_server_bulwark() {
+    local server_dir="$1"
+    local meta_dir="${server_dir}/metadata"
+    mkdir -p "$meta_dir"
+
+    if [[ ! -d /opt/bulwark ]]; then
+        return 0
+    fi
+
+    local pkg_version="" upstream_sha="" port=""
+
+    if [[ -f /opt/bulwark/package.json ]] && command -v jq &>/dev/null; then
+        pkg_version=$(jq -r '.version // ""' /opt/bulwark/package.json 2>/dev/null)
+    fi
+
+    if [[ -d /opt/bulwark/.git ]]; then
+        upstream_sha=$(git -C /opt/bulwark rev-parse HEAD 2>/dev/null || echo "")
+    fi
+
+    if [[ -f /etc/systemd/system/bulwark.service ]]; then
+        port=$(grep -oP 'PORT=\K\d+' /etc/systemd/system/bulwark.service 2>/dev/null || echo "")
+    fi
+
+    cat > "${meta_dir}/bulwark.json" <<EOB
+{
+  "installed": true,
+  "package_version": "${pkg_version}",
+  "upstream_sha": "${upstream_sha}",
+  "port": "${port}",
+  "restore_hint": "reinstall via: sudo /opt/jabali-backup/install.sh --reinstall-bulwark"
+}
+EOB
+    log_info "server: Recorded Bulwark metadata (reinstall on restore)"
+}
+
 _generate_server_manifest() {
     local server_dir="$1"
 
@@ -359,11 +469,12 @@ _generate_server_manifest() {
     "frankenphp_config": $(if [[ -f /etc/jabali/Caddyfile ]]; then echo "true"; else echo "false"; fi),
     "panel_ssl": $(if [[ -d /etc/ssl/jabali ]]; then echo "true"; else echo "false"; fi),
     "stalwart_config": $(if [[ -d /etc/stalwart-mail ]]; then echo "true"; else echo "false"; fi),
+    "stalwart_data": $(if [[ -d "${server_dir}/data/stalwart" ]]; then echo "true"; else echo "false"; fi),
     "redis_config": $(if [[ -f /etc/redis/redis.conf ]]; then echo "true"; else echo "false"; fi),
     "mariadb_config": $(if [[ -d /etc/mysql/mariadb.conf.d ]]; then echo "true"; else echo "false"; fi),
     "systemd_units": true,
     "letsencrypt": $(if [[ -d /etc/letsencrypt ]]; then echo "true"; else echo "false"; fi),
-    "bulwark": $(if [[ -d /opt/bulwark ]]; then echo "true"; else echo "false"; fi),
+    "bulwark": $(if [[ -f "${server_dir}/metadata/bulwark.json" ]]; then echo '"metadata-only"'; elif [[ -d /opt/bulwark ]]; then echo '"inline"'; else echo '"missing"'; fi),
     "agent_addons": ${agent_addons},
     "restic_password": $(if [[ -f /etc/jabali/restic-password ]]; then echo "true"; else echo "false"; fi)
   }

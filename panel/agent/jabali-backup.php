@@ -1247,6 +1247,9 @@ function jbServerBackup(array $params): array
     if (! empty($params['skip_users'])) {
         $args[] = '--skip-users';
     }
+    if (! empty($params['skip_stalwart_data'])) {
+        $args[] = '--skip-stalwart-data';
+    }
     $dest = $params['destination'] ?? '';
     if ($dest !== '' && jbValidateDestinationId($dest)) {
         $args[] = '--destination=' . $dest;
@@ -1389,18 +1392,15 @@ function jbServerDownloadPipe(array $params): array
         $envExports .= 'export ' . escapeshellarg($k) . '=' . escapeshellarg($v) . "\n";
     }
 
+    // Delegate to the shared helper (lib/server-download.sh) so the panel
+    // and the `jabali-backup server-download` CLI produce identical archives.
+    // The helper sources restic config from env, restores server + all users,
+    // and writes the tarball in place.
     $script = "#!/bin/bash\n";
     $script .= "{$envExports}\n";
-    $script .= "restic unlock {$resticArgs} 2>/dev/null || true\n";
-    $script .= "mkdir -p {$tmpDirEsc}/server {$tmpDirEsc}/users\n";
-    $script .= "restic restore {$snapshotIdEsc} --target {$tmpDirEsc}/server {$resticArgs} 2>/dev/null || true\n";
-    foreach ($userSnapshotIds as $user => $uid) {
-        $uidEsc = escapeshellarg($uid);
-        $userEsc = escapeshellarg($user);
-        $script .= "restic restore {$uidEsc} --target {$tmpDirEsc}/users/{$userEsc} {$resticArgs} 2>/dev/null || true\n";
-    }
-    $script .= "tar czf {$tmpArchiveEsc} -C {$tmpDirEsc} . 2>/dev/null\n";
-    $script .= "rm -rf {$tmpDirEsc}\n";
+    $script .= "set +e\n";
+    $script .= "source /usr/local/lib/jabali-backup/server-download.sh || source /opt/jabali-backup/lib/server-download.sh\n";
+    $script .= "build_server_download_archive {$snapshotIdEsc} {$tmpArchiveEsc}\n";
     $script .= "touch {$doneEsc}\n";
 
     $cmd = sprintf('nohup bash -c %s > /dev/null 2>&1 &', escapeshellarg($script));

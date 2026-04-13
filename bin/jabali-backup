@@ -53,6 +53,7 @@ COMMANDS:
     server-backup       Full server backup (disaster recovery)
     restore <username>  Restore account from snapshot
     server-restore      Restore full server from backup
+    server-download     Download full server snapshot as tar.gz
     import <file>       Restore from a backup archive (tar.gz)
     download <username> Download snapshot as compressed archive
     ls <username> [path]  Browse files in a snapshot
@@ -764,15 +765,22 @@ cmd_server_backup() {
     cfg_load
     cfg_validate || exit 1
 
-    local skip_users=0 dry_run=0
+    local skip_users=0 dry_run=0 skip_stalwart_data=0
     for arg in "$@"; do
         case "$arg" in
-            --skip-users) skip_users=1 ;;
-            --dry-run)    dry_run=1 ;;
+            --skip-users)          skip_users=1 ;;
+            --dry-run)             dry_run=1 ;;
+            --skip-stalwart-data)  skip_stalwart_data=1 ;;
             --destination=*) ;; # handled above
             -*)           log_error "Unknown option: $arg"; return 1 ;;
         esac
     done
+
+    if [[ "$skip_stalwart_data" -eq 1 ]]; then
+        export CFG_SERVER_BACKUP_STALWART_DATA=false
+    else
+        export CFG_SERVER_BACKUP_STALWART_DATA=true
+    fi
 
     local start_time
     start_time=$(date +%s)
@@ -789,7 +797,7 @@ cmd_server_backup() {
         echo "  4. /etc/jabali/ (configs, secrets, agent addons)"
         echo "  5. Nginx config (nginx.conf, jabali/, sites-available/)"
         echo "  6. PHP-FPM config (all versions)"
-        echo "  7. Stalwart mail config"
+        echo "  7. Stalwart mail config + data (DKIM keys, RocksDB)$(if [[ "$skip_stalwart_data" -eq 1 ]]; then echo " [config only — --skip-stalwart-data]"; fi)"
         echo "  8. Redis config (ACL passwords)"
         echo "  9. MariaDB config"
         echo "  10. Panel SSL cert (/etc/ssl/jabali/)"
@@ -985,6 +993,70 @@ cmd_server_restore() {
     echo "════════════════════════════════════════"
 
     log_info "═══ Server restore complete (${duration}s) ═══"
+}
+
+# ─── Server Download (Disaster Recovery archive) ──────
+
+cmd_server_download() {
+    for arg in "$@"; do
+        case "$arg" in --destination=*) export JABALI_DESTINATION="${arg#--destination=}" ;; esac
+    done
+
+    cfg_load
+    cfg_validate || exit 1
+
+    local snapshot="latest" output="" configs_only=""
+    for arg in "$@"; do
+        case "$arg" in
+            --snapshot=*)    snapshot="${arg#--snapshot=}" ;;
+            --output=*)      output="${arg#--output=}" ;;
+            --configs-only)  configs_only="--configs-only" ;;
+            --destination=*) ;; # handled above
+            -*) log_error "Unknown option: $arg"; return 1 ;;
+            *)  log_error "Unexpected positional argument: $arg"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$output" ]]; then
+        local ts
+        ts=$(date +%Y%m%d-%H%M%S)
+        output="/tmp/jabali-server-${ts}.tar.gz"
+    fi
+
+    restic_env || exit 1
+
+    # Resolve 'latest' to a real server snapshot id
+    if [[ "$snapshot" == "latest" ]]; then
+        snapshot=$(restic snapshots --json --tag "type:server" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | jq -r '.[-1].short_id // empty' 2>/dev/null)
+        if [[ -z "$snapshot" ]]; then
+            log_error "No server snapshots found (tag type:server)"
+            return 1
+        fi
+        log_info "Resolved latest server snapshot: $snapshot"
+    fi
+
+    # shellcheck source=../lib/server-download.sh
+    source "${LIB_DIR}/server-download.sh"
+
+    log_info "Building server download archive → $output"
+    if build_server_download_archive "$snapshot" "$output" "$configs_only"; then
+        local size
+        size=$(du -h "$output" 2>/dev/null | awk '{print $1}')
+        echo ""
+        echo "════════════════════════════════════════"
+        echo "Server Download Complete"
+        echo "────────────────────────────────────────"
+        echo "  Snapshot: $snapshot"
+        echo "  Output:   $output"
+        echo "  Size:     ${size:-unknown}"
+        echo "  Mode:     $(if [[ -n "$configs_only" ]]; then echo "configs only"; else echo "full (server + all users)"; fi)"
+        echo "════════════════════════════════════════"
+        return 0
+    else
+        log_error "Server download failed"
+        return 1
+    fi
 }
 
 # ─── Restore Orchestrator ─────────────────────────────
@@ -3344,6 +3416,7 @@ main() {
     case "$cmd" in
         run)      cmd_run "$@" ;;
         server-backup)  cmd_server_backup "$@" ;;
+        server-download) cmd_server_download "$@" ;;
         restore)  cmd_restore "$@" ;;
         server-restore) cmd_server_restore "$@" ;;
         import)   cmd_import "$@" ;;

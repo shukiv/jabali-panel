@@ -229,11 +229,16 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                             ->label(__('Server configs only (skip user accounts)'))
                             ->helperText(__('Back up only server-level data without per-user backups'))
                             ->default(false),
+                        Toggle::make('skip_stalwart_data')
+                            ->label(__('Skip Stalwart mail data'))
+                            ->helperText(__('Skip /var/lib/stalwart-mail snapshot (faster, but DKIM keys and mail data will not be restorable).'))
+                            ->default(false),
                     ])
                     ->action(function (array $data): void {
                         try {
                             $result = app(AgentClient::class)->send('jb.server_backup', [
                                 'skip_users' => $data['skip_users'] ?? false,
+                                'skip_stalwart_data' => $data['skip_stalwart_data'] ?? false,
                             ]);
                             if ($result['success'] ?? false) {
                                 Notification::make()->title(__('Server backup started'))->body(__('Running in background. Check the Logs tab for progress.'))->success()->send();
