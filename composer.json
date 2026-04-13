@@ -9,6 +9,14 @@
         }
     },
     "require-dev": {
-        "filament/blueprint": "^2.1"
+        "filament/blueprint": "^2.1",
+        "phpstan/phpstan": "*",
+        "phpstan/extension-installer": "*",
+        "shipmonk/dead-code-detector": "*"
+    },
+    "config": {
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
     }
 }

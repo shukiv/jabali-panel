@@ -11,7 +11,7 @@ use App\FileBrowser\Adapters\PermissionManager;
 use App\Services\Agent\AgentClient;
 use RuntimeException;
 
-class ResticSnapshotAdapter implements FileBrowserAdapter, FileOperations
+final class ResticSnapshotAdapter implements FileBrowserAdapter, FileOperations
 {
     public function __construct(
         private AgentClient $agent,
@@ -21,7 +21,7 @@ class ResticSnapshotAdapter implements FileBrowserAdapter, FileOperations
 
     public static function fromConfig(array $config): static
     {
-        return new static(
+        return new self(
             app(AgentClient::class),
             $config['snapshot_id'],
             $config['username'],
