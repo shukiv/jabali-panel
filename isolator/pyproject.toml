@@ -30,4 +30,7 @@ select = ["E", "F", "W", "I", "S"]
 dev = [
     "pytest>=9.0.2,<10",
     "pytest-asyncio>=1.3.0,<2",
+    # Keep in sync with security/ and terminal/daemon/ — same ruff major so
+    # CI doesn't enforce different rule sets per subdir.
+    "ruff>=0.6,<0.9",
 ]

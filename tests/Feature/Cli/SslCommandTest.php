@@ -9,10 +9,13 @@ use App\Console\Commands\Cli\SslListCommand;
 use App\Console\Commands\Cli\SslRenewCommand;
 use App\Console\Commands\Cli\SslStatusCommand;
 use App\Services\Agent\AgentClientInterface;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class SslCommandTest extends TestCase
 {
+    use RefreshDatabase;
+
     protected function setUp(): void
     {
         parent::setUp();

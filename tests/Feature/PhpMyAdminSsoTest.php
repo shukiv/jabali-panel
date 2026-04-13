@@ -6,12 +6,15 @@ namespace Tests\Feature;
 
 use App\Models\MysqlCredential;
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Tests\TestCase;
 
 class PhpMyAdminSsoTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_phpmyadmin_redirect_route_generates_token_and_redirects(): void
     {
         $user = User::factory()->create(['username' => 'pmatest_'.bin2hex(random_bytes(4))]);

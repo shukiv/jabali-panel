@@ -8,6 +8,9 @@
 // and breaks the panel boot. file_exists() is a pure syscall with no
 // autoload side-effects.
 $addonProviders = [];
+if (file_exists(__DIR__.'/../app/Backup/BackupServiceProvider.php')) {
+    $addonProviders[] = \App\Backup\BackupServiceProvider::class;
+}
 if (file_exists(__DIR__.'/../app/JabaliTerminal/JabaliTerminalServiceProvider.php')) {
     $addonProviders[] = \App\JabaliTerminal\JabaliTerminalServiceProvider::class;
 }

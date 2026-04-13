@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -23,6 +24,8 @@ use Tests\TestCase;
  */
 class AutoLoginTest extends TestCase
 {
+    use RefreshDatabase;
+
     /** @var array<int, int> */
     private array $createdUserIds = [];
 

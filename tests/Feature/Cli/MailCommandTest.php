@@ -10,10 +10,13 @@ use App\Console\Commands\Cli\MailListCommand;
 use App\Console\Commands\Cli\MailPasswordCommand;
 use App\Console\Commands\Cli\MailQuotaCommand;
 use App\Services\Agent\AgentClientInterface;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class MailCommandTest extends TestCase
 {
+    use RefreshDatabase;
+
     protected function setUp(): void
     {
         parent::setUp();
