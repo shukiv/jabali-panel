@@ -1,0 +1,23 @@
+parameters:
+    level: 0
+    paths:
+        - app
+        - tests
+    excludePaths:
+        - app/Filament/*/Pages/GeneratedClasses/*
+    shipmonkDeadCode:
+        usageExcluders:
+            tests:
+                enabled: true
+    ignoreErrors:
+        # Optional runtime integrations — guarded by try/catch or class_exists().
+        # These classes live in separate addons/packages that are not always
+        # installed: jabali-security (separate daemon + Filament plugin) and
+        # minishlink/web-push (not in composer.json; loaded only when the
+        # web_push notification channel is actually enabled).
+        -
+            message: '#^Instantiated class App\\JabaliSecurity\\JabaliSecurityClient not found\.$#'
+            path: app/Filament/Admin/Pages/ServerSettings.php
+        -
+            message: '#^Call to static method create\(\) on an unknown class Minishlink\\WebPush\\Subscription\.$#'
+            path: app/Notifications/Channels/WebPushDriver.php

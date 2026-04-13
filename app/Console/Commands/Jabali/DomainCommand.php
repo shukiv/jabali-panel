@@ -21,7 +21,7 @@ class DomainCommand extends Command
             'create' => $this->createDomain(),
             'show' => $this->showDomain(),
             'delete' => $this->deleteDomain(),
-            default => $this->error('Unknown action. Use: list, create, show, delete') ?? 1,
+            default => tap(1, fn () => $this->error('Unknown action. Use: list, create, show, delete')),
         };
     }
 

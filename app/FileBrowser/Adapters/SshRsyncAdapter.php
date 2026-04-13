@@ -9,7 +9,7 @@ use App\FileBrowser\ValueObjects\FilePermission;
 use Illuminate\Support\Facades\Process;
 use RuntimeException;
 
-class SshRsyncAdapter implements Archiver, FileBrowserAdapter, FileOperations, PermissionManager
+final class SshRsyncAdapter implements Archiver, FileBrowserAdapter, FileOperations, PermissionManager
 {
     protected string $host;
 
@@ -29,7 +29,7 @@ class SshRsyncAdapter implements Archiver, FileBrowserAdapter, FileOperations, P
 
     public static function fromConfig(array $config): static
     {
-        return new static($config);
+        return new self($config);
     }
 
     public function __construct(array $config)

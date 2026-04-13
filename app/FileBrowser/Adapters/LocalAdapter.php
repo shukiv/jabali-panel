@@ -7,7 +7,7 @@ namespace App\FileBrowser\Adapters;
 use App\FileBrowser\Support\PathSanitizer;
 use RuntimeException;
 
-class LocalAdapter implements Archiver, FileBrowserAdapter, FileOperations, PermissionManager
+final class LocalAdapter implements Archiver, FileBrowserAdapter, FileOperations, PermissionManager
 {
     protected string $rootPath;
 
@@ -16,7 +16,7 @@ class LocalAdapter implements Archiver, FileBrowserAdapter, FileOperations, Perm
     /** @param array{root: string} $config */
     public static function fromConfig(array $config): static
     {
-        return new static($config['root']);
+        return new self($config['root']);
     }
 
     /** @return array{root: string} */

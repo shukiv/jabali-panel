@@ -10,7 +10,7 @@ use App\FileBrowser\Adapters\FileOperations;
 use App\FileBrowser\Adapters\PermissionManager;
 use App\Services\Agent\AgentClient;
 
-class AgentAdapter implements FileBrowserAdapter
+final class AgentAdapter implements FileBrowserAdapter
 {
     private AgentFileOperations $fileOps;
 
@@ -30,7 +30,7 @@ class AgentAdapter implements FileBrowserAdapter
     /** @param array{username: string} $config */
     public static function fromConfig(array $config): static
     {
-        return new static(app(AgentClient::class), $config['username']);
+        return new self(app(AgentClient::class), $config['username']);
     }
 
     /** @return array{username: string} */

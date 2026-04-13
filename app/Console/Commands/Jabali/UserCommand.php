@@ -24,7 +24,7 @@ class UserCommand extends Command
             'update' => $this->updateUser(),
             'delete' => $this->deleteUser(),
             'password' => $this->changePassword(),
-            default => $this->error('Unknown action. Use: list, create, show, update, delete, password') ?? 1,
+            default => tap(1, fn () => $this->error('Unknown action. Use: list, create, show, update, delete, password')),
         };
     }
 

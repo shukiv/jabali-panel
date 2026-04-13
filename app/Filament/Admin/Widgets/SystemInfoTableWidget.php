@@ -13,6 +13,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\DB;
 use Livewire\Component;
 
 class SystemInfoTableWidget extends Component implements HasActions, HasSchemas, HasTable
@@ -143,7 +144,7 @@ class SystemInfoTableWidget extends Component implements HasActions, HasSchemas,
     {
         // Try SQL query first
         try {
-            $version = \DB::select('SELECT VERSION() as version')[0]->version ?? '';
+            $version = DB::select('SELECT VERSION() as version')[0]->version ?? '';
             if (preg_match('/^(\d+\.\d+\.\d+)/', $version, $matches)) {
                 $dbType = str_contains(strtolower($version), 'mariadb') ? 'MariaDB' : 'MySQL';
 

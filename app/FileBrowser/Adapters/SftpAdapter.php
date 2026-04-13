@@ -7,7 +7,7 @@ namespace App\FileBrowser\Adapters;
 use App\FileBrowser\Support\PathSanitizer;
 use RuntimeException;
 
-class SftpAdapter implements FileBrowserAdapter, FileOperations
+final class SftpAdapter implements FileBrowserAdapter, FileOperations
 {
     protected object $filesystem;
 
@@ -15,7 +15,7 @@ class SftpAdapter implements FileBrowserAdapter, FileOperations
 
     public static function fromConfig(array $config): static
     {
-        return new static($config);
+        return new self($config);
     }
 
     public function __construct(array $config)
