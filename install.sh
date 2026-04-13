@@ -4440,32 +4440,33 @@ with open(sys.argv[1], 'w') as f:
         pids+=($!)
     fi
 
-    # jabali-security is now part of this repo (see plans/monorepo-merge.md)
-    # and gets updated by the main `git pull` in step 1. No separate update
-    # needed here. The initial installation still runs during first install
-    # via the dedicated install function below.
-    if [[ ! -d /etc/jabali-security ]]; then
-        step_info "Installing Jabali Security"
-        install_jabali_security &
-        pids+=($!)
-    fi
-
-    if [[ ! -d "$JABALI_DIR/app/JabaliBackup" ]]; then
-        step_info "Installing Jabali Backup"
-        install_jabali_backup &
-        pids+=($!)
-    fi
-
-    if [[ ! -d "$JABALI_DIR/app/JabaliTerminal" ]]; then
-        step_info "Installing Jabali Terminal"
-        install_jabali_terminal &
-        pids+=($!)
-    fi
-
-    # Wait for all background addon/component updates to complete
+    # Wait for external-component updates (stalwart, bulwark, wp-cli,
+    # composer) before running addon installers. Addon installers each call
+    # `composer dump-autoload` on the shared panel tree — running them in
+    # parallel with themselves OR with bulwark's build races on the
+    # autoload classmap + shared npm node_modules. Terminal lost that race
+    # on the first run at 2026-04-13 and the now-removed existence guard
+    # then prevented retry on every subsequent `jabali update`, which is
+    # how the test server ended up with Backup visible but no Terminal.
     if [[ ${#pids[@]} -gt 0 ]]; then
         wait "${pids[@]}" 2>/dev/null || true
+        pids=()
     fi
+
+    # Addon installers run serially. They're idempotent — each one
+    # short-circuits internally when the daemon/service/binary is already
+    # present and the source hasn't changed, so the only cost on an
+    # already-installed system is a sub-second existence check per addon.
+    # We DON'T gate on `app/JabaliTerminal` / `/etc/jabali-security`
+    # existence here: those guards silently hide failed first-installs.
+    step_info "Installing Jabali Security"
+    install_jabali_security || warn "jabali-security install failed (non-fatal) — retry with: bash $JABALI_DIR/security/install.sh"
+
+    step_info "Installing Jabali Backup"
+    install_jabali_backup || warn "jabali-backup install failed (non-fatal) — retry with: bash $JABALI_DIR/backup/install.sh install"
+
+    step_info "Installing Jabali Terminal"
+    install_jabali_terminal || warn "jabali-terminal install failed (non-fatal) — retry with: bash $JABALI_DIR/terminal/install.sh"
 
     # Patch existing vhosts: add Bulwark static file serving if missing
     step_info "Patching static file serving"
