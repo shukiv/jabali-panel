@@ -4183,6 +4183,13 @@ upgrade_infra() {
         detect_php_version
     fi
 
+    # Always run fast, idempotent state-ensuring functions even when the
+    # infra hash is unchanged. If an operator removed the cron entry or a
+    # systemd unit, we want the next update to heal it — not wait for the
+    # next install.sh change to trigger re-configuration.
+    step_info "Ensuring scheduler cron"
+    setup_scheduler_cron
+
     # If not skipping, run configuration block
     if [[ $skip_config -eq 0 ]]; then
         # Install default page templates if not customized

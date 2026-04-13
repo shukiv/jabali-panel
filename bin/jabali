@@ -294,7 +294,12 @@ function handleUpdate(array $options): void
     $installScript = $jabaliDir.'/install.sh';
     if (file_exists($installScript)) {
         $infraExitCode = 0;
-        passthru('bash '.escapeshellarg($installScript).' upgrade', $infraExitCode);
+        // Propagate --force so install.sh's infra-hash skip logic also
+        // re-runs setup_* functions. Otherwise a missing cron entry /
+        // removed systemd unit / etc. won't be healed on an unchanged
+        // install.sh.
+        $forceEnv = isset($options['force']) ? 'JABALI_UPGRADE_FORCE=1 ' : '';
+        passthru($forceEnv.'bash '.escapeshellarg($installScript).' upgrade', $infraExitCode);
         if ($infraExitCode !== 0) {
             echo C_YELLOW.'⚠ Infrastructure upgrade had issues — check output above'.C_RESET."\n";
         } else {
