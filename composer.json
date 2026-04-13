@@ -27,7 +27,9 @@
         "laravel/sail": "^1.41",
         "mockery/mockery": "^1.6",
         "nunomaduro/collision": "^8.6",
-        "phpunit/phpunit": "^11.5.3"
+        "phpstan/extension-installer": "^1.4",
+        "phpunit/phpunit": "^11.5.3",
+        "shipmonk/dead-code-detector": "^1.0"
     },
     "autoload": {
         "psr-4": {
@@ -89,7 +91,8 @@
         "sort-packages": true,
         "allow-plugins": {
             "pestphp/pest-plugin": true,
-            "php-http/discovery": true
+            "php-http/discovery": true,
+            "phpstan/extension-installer": true
         }
     },
     "minimum-stability": "stable",

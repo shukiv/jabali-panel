@@ -54,3 +54,6 @@ frankenphp-worker.php
 # Claude Flow session data
 .claude-flow/
 .swarm/
+
+# shipmonk dead-code-detector output (regenerates per phpstan run)
+dead.json
