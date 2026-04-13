@@ -46,7 +46,7 @@ final class MethodRegistry
             // Agent v2 job control (ADR-0007)
             'job.start' => [
                 'required' => ['type', 'argv'],
-                'optional' => ['limits', 'payload', 'dedupe_key'],
+                'optional' => ['id', 'limits', 'payload', 'dedupe_key'],
             ],
             'job.status' => [
                 'required' => ['id'],

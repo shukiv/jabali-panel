@@ -13540,7 +13540,8 @@ function jobStart(array $params): array
     }
 
     try {
-        $result = jobDispatcher()->start($type, array_values(array_map('strval', $argv)), $limits, $payload);
+        $callerId = isset($params['id']) && is_string($params['id']) ? $params['id'] : null;
+        $result = jobDispatcher()->start($type, array_values(array_map('strval', $argv)), $limits, $payload, $callerId);
 
         return ['success' => true] + $result;
     } catch (\Throwable $e) {

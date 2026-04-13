@@ -65,6 +65,9 @@ final class BackgroundTaskDispatcher
 
         try {
             $response = $this->agent->send('job.start', [
+                // Use the panel's task id as the agent/systemd id too — one
+                // identity across all three stores (panel DB, agent DB, systemd).
+                'id' => $task->id,
                 'type' => $type->value,
                 'argv' => array_values($argv),
                 'limits' => $limits,

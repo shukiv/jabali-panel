@@ -165,6 +165,13 @@ Schedule::command('jabali:tasks:reconcile')
     ->withoutOverlapping()
     ->name('background-tasks-reconcile');
 
+// Tail the JSONL progress logs and apply new events. Runs every 10s for
+// near-real-time dashboard updates (until Reverb broadcasting is wired).
+Schedule::command('jabali:tasks:relay')
+    ->everyTenSeconds()
+    ->withoutOverlapping()
+    ->name('background-tasks-relay');
+
 // Impersonation Token Cleanup - runs daily to remove expired/used tokens
 Schedule::call(function () {
     \App\Models\ImpersonationToken::where(function ($q) {

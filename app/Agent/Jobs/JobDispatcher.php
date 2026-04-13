@@ -37,7 +37,7 @@ final class JobDispatcher
      * @param  array<string, mixed>  $payload
      * @return array{id: string, unit: string, pid: int, log_path: string, started_at: string}
      */
-    public function start(string $type, array $argv, array $limits, array $payload): array
+    public function start(string $type, array $argv, array $limits, array $payload, ?string $id = null): array
     {
         if (count($argv) === 0) {
             throw new InvalidArgumentException('argv must not be empty');
@@ -46,7 +46,10 @@ final class JobDispatcher
             throw new InvalidArgumentException('argv[0] must be an absolute path');
         }
 
-        $id = $this->uuid();
+        // Use the caller-supplied id when present so the panel's
+        // background_tasks.id and the agent's record share one identity.
+        // Required for the reconciler to match rows across stores.
+        $id ??= $this->uuid();
         $unit = 'jabali-job-'.$id;
         $logPath = rtrim($this->logDir, '/')."/{$id}.log";
 
