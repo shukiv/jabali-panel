@@ -3297,6 +3297,16 @@ SLICE
 setup_queue_service() {
     header "Setting Up Jabali Queue Worker"
 
+    # Pre-clean: earlier releases installed a Restart=always drop-in for
+    # the self-healing of the always-on queue daemon. With the new
+    # Type=oneshot service, that drop-in makes systemd refuse to load the
+    # unit ("Service has Restart= set to either always or on-success,
+    # which isn't allowed for Type=oneshot services. Refusing.").
+    # Remove any legacy drop-ins before (re)writing the unit.
+    if [[ -d /etc/systemd/system/jabali-queue.service.d ]]; then
+        rm -rf /etc/systemd/system/jabali-queue.service.d
+    fi
+
     # Run the queue as a periodic oneshot instead of an always-on daemon.
     # The always-on daemon held a full Laravel app in RAM (~190 MB on a
     # 4 GB VPS) just to poll Redis every 3 seconds — completely wasted on
