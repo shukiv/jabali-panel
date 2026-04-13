@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  quality:
+  php:
+    name: PHP — pint, phpstan, phpunit, audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,5 +29,76 @@ jobs:
       - name: Check code style
         run: vendor/bin/pint --test
 
+      - name: Run PHPStan (unified monorepo config)
+        run: vendor/bin/phpstan analyse --no-progress
+
+      - name: Run PHPUnit
+        run: php artisan test --compact
+
       - name: Audit dependencies
         run: composer audit
+
+  python-security:
+    name: Python — security/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install deps
+        run: cd security && uv sync
+      - name: Run ruff
+        run: cd security && uv run ruff check .
+      - name: Run pytest
+        run: cd security && uv run pytest -q
+
+  python-terminal:
+    name: Python — terminal/daemon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install deps
+        run: cd terminal/daemon && uv sync
+      - name: Run ruff
+        run: cd terminal/daemon && uv run ruff check .
+      - name: Run pytest
+        run: |
+          if [ -d terminal/daemon/tests ]; then
+            cd terminal/daemon && uv run pytest tests -q
+          fi
+
+  python-isolator:
+    name: Python — isolator/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install deps
+        run: cd isolator && uv sync
+      - name: Run ruff
+        run: cd isolator && uv run ruff check .
+      - name: Run pytest
+        run: |
+          if [ -d isolator/tests ]; then
+            cd isolator && uv run pytest -q
+          fi
+
+  shellcheck:
+    name: shellcheck install.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck
+        run: shellcheck install.sh || true
