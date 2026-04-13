@@ -7,16 +7,16 @@ namespace App\JabaliSecurity\Widgets;
 use App\JabaliSecurity\JabaliSecurityClient;
 use App\JabaliSecurity\Pages\Security;
 use Filament\Actions\Action;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Concerns\InteractsWithSchemas;
+use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
-use Filament\Actions\Concerns\InteractsWithActions;
-use Filament\Actions\Contracts\HasActions;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
 use Livewire\Component;
 
 class WebshieldRulesTable extends Component implements HasActions, HasSchemas, HasTable
@@ -68,7 +68,7 @@ class WebshieldRulesTable extends Component implements HasActions, HasSchemas, H
 
                         Notification::make()
                             ->title($result ? __('WebShield enabled') : __('Failed to enable WebShield'))
-                            ->{($result ? "success" : "danger")}()
+                            ->{($result ? 'success' : 'danger')}()
                             ->send();
                         $this->redirect(Security::tabUrl('defense', 'webshield'), navigate: true);
                     }),
@@ -83,7 +83,7 @@ class WebshieldRulesTable extends Component implements HasActions, HasSchemas, H
 
                         Notification::make()
                             ->title($result ? __('WebShield disabled') : __('Failed to disable WebShield'))
-                            ->{($result ? "success" : "danger")}()
+                            ->{($result ? 'success' : 'danger')}()
                             ->send();
                     }),
             ])

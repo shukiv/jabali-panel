@@ -199,7 +199,7 @@ class UserBackups extends Page implements HasActions, HasForms, HasTable
 
     public function downloadSnapshot(string $snapshotId): void
     {
-        $url = url('/backup-download.php?' . http_build_query([
+        $url = url('/backup-download.php?'.http_build_query([
             'users' => $this->username(),
             'snapshot' => $snapshotId,
         ]));

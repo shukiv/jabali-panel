@@ -17,8 +17,8 @@ declare(strict_types=1);
 set_time_limit(0);
 
 // Bootstrap Laravel
-require __DIR__ . '/../vendor/autoload.php';
-$app = require_once __DIR__ . '/../bootstrap/app.php';
+require __DIR__.'/../vendor/autoload.php';
+$app = require_once __DIR__.'/../bootstrap/app.php';
 $kernel = $app->make(Illuminate\Contracts\Http\Kernel::class);
 $request = Illuminate\Http\Request::capture();
 $kernel->handle($request);
@@ -27,7 +27,7 @@ $kernel->handle($request);
 $user = Illuminate\Support\Facades\Auth::guard('admin')->user();
 if (! $user || ! $user->is_admin) {
     http_response_code(403);
-    die('Forbidden');
+    exit('Forbidden');
 }
 
 // Validate parameters
@@ -43,12 +43,12 @@ if (! $isServerDownload) {
     foreach ($userList as $u) {
         if (! preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $u)) {
             http_response_code(400);
-            die('Invalid username: ' . htmlspecialchars($u));
+            exit('Invalid username: '.htmlspecialchars($u));
         }
     }
     if (empty($userList)) {
         http_response_code(400);
-        die('No username specified');
+        exit('No username specified');
     }
 } else {
     $userList = [];
@@ -56,7 +56,7 @@ if (! $isServerDownload) {
 
 if (! preg_match('/^[a-f0-9]+$|^latest$/', $snapshotId)) {
     http_response_code(400);
-    die('Invalid snapshot ID');
+    exit('Invalid snapshot ID');
 }
 
 // Call agent to create the named pipe and start streaming
@@ -73,12 +73,12 @@ try {
     }
 } catch (\Throwable $e) {
     http_response_code(500);
-    die('Agent error');
+    exit('Agent error');
 }
 
 if (! ($result['success'] ?? false)) {
     http_response_code(500);
-    die($result['error'] ?? 'Export failed');
+    exit($result['error'] ?? 'Export failed');
 }
 
 // Disable output buffering
@@ -88,8 +88,8 @@ while (ob_get_level()) {
 
 // Send headers
 $filename = $isServerDownload
-    ? 'server-backup-' . date('Y-m-d') . '.tar.gz'
-    : implode('-', $userList) . '-backup-' . date('Y-m-d') . '.tar.gz';
+    ? 'server-backup-'.date('Y-m-d').'.tar.gz'
+    : implode('-', $userList).'-backup-'.date('Y-m-d').'.tar.gz';
 
 // Server downloads use a temp archive file (not a pipe) to avoid blocking workers.
 // Per-user downloads still use the named pipe for instant streaming.
@@ -99,7 +99,7 @@ if ($isServerDownload) {
 
     if (empty($archivePath) || empty($doneSentinel)) {
         http_response_code(500);
-        die('Export failed');
+        exit('Export failed');
     }
 
     // Poll for completion (background script creates .done when archive is ready)
@@ -115,19 +115,19 @@ if ($isServerDownload) {
 
     if (! file_exists($doneSentinel)) {
         http_response_code(504);
-        die('Export timed out');
+        exit('Export timed out');
     }
 
     @unlink($doneSentinel);
 
     if (! file_exists($archivePath)) {
         http_response_code(500);
-        die('Archive not found');
+        exit('Archive not found');
     }
 
     header('Content-Type: application/gzip');
-    header('Content-Disposition: attachment; filename="' . $filename . '"');
-    header('Content-Length: ' . filesize($archivePath));
+    header('Content-Disposition: attachment; filename="'.$filename.'"');
+    header('Content-Length: '.filesize($archivePath));
     header('Cache-Control: no-cache, no-store');
     header('X-Accel-Buffering: no');
 
@@ -140,18 +140,18 @@ if ($isServerDownload) {
 $pipePath = $result['pipe'] ?? '';
 if (empty($pipePath) || ! file_exists($pipePath)) {
     http_response_code(500);
-    die('Pipe not created');
+    exit('Pipe not created');
 }
 
 header('Content-Type: application/gzip');
-header('Content-Disposition: attachment; filename="' . $filename . '"');
+header('Content-Disposition: attachment; filename="'.$filename.'"');
 header('Cache-Control: no-cache, no-store');
 header('X-Accel-Buffering: no');
 
 $fp = fopen($pipePath, 'rb');
 if (! $fp) {
     http_response_code(500);
-    die('Cannot open pipe');
+    exit('Cannot open pipe');
 }
 
 while (! feof($fp)) {

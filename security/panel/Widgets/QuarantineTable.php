@@ -6,17 +6,17 @@ namespace App\JabaliSecurity\Widgets;
 
 use App\JabaliSecurity\JabaliSecurityClient;
 use Filament\Actions\Action;
-use Filament\Notifications\Notification;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Actions\BulkAction;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
+use Filament\Notifications\Notification;
+use Filament\Schemas\Concerns\InteractsWithSchemas;
+use Filament\Schemas\Contracts\HasSchemas;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Collection;
-use Filament\Actions\Concerns\InteractsWithActions;
-use Filament\Actions\Contracts\HasActions;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
 use Livewire\Component;
 
 class QuarantineTable extends Component implements HasActions, HasSchemas, HasTable
@@ -57,7 +57,7 @@ class QuarantineTable extends Component implements HasActions, HasSchemas, HasTa
 
                         Notification::make()
                             ->title($result ? __('File restored') : __('Failed to restore file'))
-                            ->{($result ? "success" : "danger")}()
+                            ->{($result ? 'success' : 'danger')}()
                             ->send();
                     }),
                 Action::make('delete')
@@ -70,7 +70,7 @@ class QuarantineTable extends Component implements HasActions, HasSchemas, HasTa
 
                         Notification::make()
                             ->title($result ? __('File deleted') : __('Failed to delete file'))
-                            ->{($result ? "success" : "danger")}()
+                            ->{($result ? 'success' : 'danger')}()
                             ->send();
                     }),
             ])

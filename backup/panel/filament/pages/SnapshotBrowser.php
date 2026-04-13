@@ -134,5 +134,4 @@ class SnapshotBrowser extends FileBrowser
     {
         return __('Browse Snapshot');
     }
-
 }

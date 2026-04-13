@@ -94,7 +94,7 @@ trait BrowsesSnapshots
         $accumulated = '';
 
         foreach ($parts as $part) {
-            $accumulated .= ($accumulated ? '/' : '') . $part;
+            $accumulated .= ($accumulated ? '/' : '').$part;
             $crumbs[] = ['label' => $part, 'path' => $accumulated];
         }
 

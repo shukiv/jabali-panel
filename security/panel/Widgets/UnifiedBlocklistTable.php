@@ -7,17 +7,15 @@ namespace App\JabaliSecurity\Widgets;
 use App\JabaliSecurity\JabaliSecurityClient;
 use App\JabaliSecurity\Pages\Security;
 use Filament\Actions\Action;
-use Filament\Actions\BulkAction;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Concerns\InteractsWithSchemas;
+use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
-use Illuminate\Support\Collection;
-use Filament\Actions\Concerns\InteractsWithActions;
-use Filament\Actions\Contracts\HasActions;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
 use Livewire\Component;
 
 class UnifiedBlocklistTable extends Component implements HasActions, HasSchemas, HasTable
@@ -37,7 +35,8 @@ class UnifiedBlocklistTable extends Component implements HasActions, HasSchemas,
             ->records(function () {
                 try {
                     $page = request()->query('blocklist_page', 1);
-                    $data = $this->client()->get('/blocklist/unified?page=' . (int) $page . '&per_page=100');
+                    $data = $this->client()->get('/blocklist/unified?page='.(int) $page.'&per_page=100');
+
                     return $data['blocked_ips'] ?? [];
                 } catch (\Exception) {
                     return [];
@@ -74,6 +73,7 @@ class UnifiedBlocklistTable extends Component implements HasActions, HasSchemas,
                                 if ($expires->isPast()) {
                                     return __('Expired');
                                 }
+
                                 return $expires->diffForHumans();
                             } catch (\Throwable) {
                                 return $val;
@@ -93,6 +93,7 @@ class UnifiedBlocklistTable extends Component implements HasActions, HasSchemas,
                         if ($seconds <= 0) {
                             return $val;
                         }
+
                         return \Carbon\Carbon::now()->addSeconds($seconds)->diffForHumans();
                     }),
             ])
@@ -110,9 +111,9 @@ class UnifiedBlocklistTable extends Component implements HasActions, HasSchemas,
                             return;
                         }
                         // Remove from both jabali and CrowdSec
-                        $this->client()->delete('/block/' . urlencode($ip));
+                        $this->client()->delete('/block/'.urlencode($ip));
                         if ($source === 'crowdsec') {
-                            $this->client()->delete('/crowdsec/decisions/' . urlencode($ip));
+                            $this->client()->delete('/crowdsec/decisions/'.urlencode($ip));
                         }
                         $this->client()->post('/bruteforce/whitelist', ['ip' => $ip]);
                         Notification::make()->title(__('IP whitelisted: :ip', ['ip' => $ip]))->success()->send();
@@ -131,9 +132,9 @@ class UnifiedBlocklistTable extends Component implements HasActions, HasSchemas,
                         }
                         // Remove from the appropriate source
                         if ($source === 'crowdsec') {
-                            $this->client()->delete('/crowdsec/decisions/' . urlencode($ip));
+                            $this->client()->delete('/crowdsec/decisions/'.urlencode($ip));
                         } else {
-                            $this->client()->delete('/block/' . urlencode($ip));
+                            $this->client()->delete('/block/'.urlencode($ip));
                         }
                         Notification::make()->title(__('IP unblocked: :ip', ['ip' => $ip]))->success()->send();
                         $this->redirect(Security::tabUrl('defense', 'bruteforce'), navigate: true);

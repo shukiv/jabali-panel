@@ -269,6 +269,7 @@ class Terminal extends Page
             ) {
                 $folded[] = ['[STDIN]', $content];
                 $i++; // skip the matching [STDOUT] echo
+
                 continue;
             }
             $folded[] = [$label, $content];

@@ -6,19 +6,17 @@ namespace App\JabaliSecurity\Widgets;
 
 use App\JabaliSecurity\JabaliSecurityClient;
 use App\JabaliSecurity\Pages\Security;
-use Filament\Actions\Action;
-use Filament\Forms\Components\TextInput;
-use Filament\Notifications\Notification;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Actions\BulkAction;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
+use Filament\Notifications\Notification;
+use Filament\Schemas\Concerns\InteractsWithSchemas;
+use Filament\Schemas\Contracts\HasSchemas;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Collection;
-use Filament\Actions\Concerns\InteractsWithActions;
-use Filament\Actions\Contracts\HasActions;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
 use Livewire\Component;
 
 class BruteforceBlockedTable extends Component implements HasActions, HasSchemas, HasTable
@@ -53,7 +51,7 @@ class BruteforceBlockedTable extends Component implements HasActions, HasSchemas
                     ->action(function ($record): void {
                         $ip = $record['ip'] ?? '';
                         if ($ip) {
-                            $this->client()->delete('/block/' . urlencode($ip));
+                            $this->client()->delete('/block/'.urlencode($ip));
                             $this->client()->post('/bruteforce/whitelist', ['ip' => $ip]);
                             Notification::make()->title(__('IP whitelisted: :ip', ['ip' => $ip]))->success()->send();
                             $this->redirect(Security::tabUrl('defense', 'bruteforce'), navigate: true);
@@ -67,7 +65,7 @@ class BruteforceBlockedTable extends Component implements HasActions, HasSchemas
                     ->action(function ($record): void {
                         $ip = $record['ip'] ?? '';
                         if ($ip) {
-                            $this->client()->delete('/block/' . urlencode($ip));
+                            $this->client()->delete('/block/'.urlencode($ip));
                             Notification::make()->title(__('IP unblocked: :ip', ['ip' => $ip]))->success()->send();
                             $this->redirect(Security::tabUrl('defense', 'bruteforce'), navigate: true);
                         }
@@ -88,7 +86,7 @@ class BruteforceBlockedTable extends Component implements HasActions, HasSchemas
                             if (! $ip) {
                                 continue;
                             }
-                            $result = $this->client()->delete('/block/' . urlencode($ip));
+                            $result = $this->client()->delete('/block/'.urlencode($ip));
                             if ($result) {
                                 $count++;
                             }

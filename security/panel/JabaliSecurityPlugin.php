@@ -99,7 +99,7 @@ class JabaliSecurityPlugin implements Plugin
     /**
      * Save security notification settings to the daemon config.
      *
-     * @param  array   $data   Form data from Server Settings
+     * @param  array  $data  Form data from Server Settings
      * @param  string  $email  Admin email recipients from panel
      */
     public static function saveNotificationSettings(array $data, string $email): void

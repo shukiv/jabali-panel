@@ -7,17 +7,17 @@ namespace App\JabaliSecurity\Widgets;
 use App\JabaliSecurity\JabaliSecurityClient;
 use App\JabaliSecurity\Pages\Security;
 use Filament\Actions\Action;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Concerns\InteractsWithSchemas;
+use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
-use Filament\Actions\Concerns\InteractsWithActions;
-use Filament\Actions\Contracts\HasActions;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
 use Livewire\Component;
 
 class GeoBlockTable extends Component implements HasActions, HasSchemas, HasTable
@@ -37,6 +37,7 @@ class GeoBlockTable extends Component implements HasActions, HasSchemas, HasTabl
             ->records(function () {
                 try {
                     $data = $this->client()->get('/webshield/geo-rules');
+
                     return $data['rules'] ?? [];
                 } catch (\Exception) {
                     return [];
@@ -71,7 +72,7 @@ class GeoBlockTable extends Component implements HasActions, HasSchemas, HasTabl
                         if (! $cc) {
                             return;
                         }
-                        $this->client()->delete('/webshield/geo-rules/' . urlencode($cc));
+                        $this->client()->delete('/webshield/geo-rules/'.urlencode($cc));
                         Notification::make()
                             ->title(__('Country removed: :cc', ['cc' => $cc]))
                             ->success()
@@ -102,6 +103,7 @@ class GeoBlockTable extends Component implements HasActions, HasSchemas, HasTabl
                         $codes = array_filter($codes, fn ($c) => preg_match('/^[A-Z]{2}$/', $c));
                         if (empty($codes)) {
                             Notification::make()->title(__('Invalid country codes'))->danger()->send();
+
                             return;
                         }
 

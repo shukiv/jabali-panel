@@ -17,19 +17,18 @@ use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Placeholder;
-use Filament\Schemas\Components\Section;
 use Filament\Forms\Components\Select;
-use Filament\Schemas\Components\Tabs;
-use Filament\Schemas\Components\Tabs\Tab;
-use Filament\Schemas\Components\Wizard\Step;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
-use Filament\Schemas\Schema;
 use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\Wizard\Step;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -74,7 +73,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     // Schedules
     public array $schedules = [];
 
-
     // Browser
     public string $browseSnapshotId = '';
 
@@ -85,8 +83,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     public array $browseItems = [];
 
     public array $selectedFiles = [];
-
-
 
     // (download state removed — downloads use direct URL via backup-download.php)
 
@@ -102,7 +98,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
 
     // Stalwart
     public array $stalwartStatus = [];
-
 
     public static function getNavigationLabel(): string
     {
@@ -182,11 +177,12 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         $storedPath = $data['archive'] ?? '';
                         if ($storedPath === '') {
                             Notification::make()->title(__('Import failed'))->body(__('No file uploaded'))->danger()->send();
+
                             return;
                         }
-                        $fullPath = storage_path('app/private/' . $storedPath);
+                        $fullPath = storage_path('app/private/'.$storedPath);
                         if (! file_exists($fullPath)) {
-                            $fullPath = storage_path('app/' . $storedPath);
+                            $fullPath = storage_path('app/'.$storedPath);
                         }
 
                         // Preview first
@@ -194,6 +190,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         if (! ($preview['success'] ?? false)) {
                             Notification::make()->title(__('Import failed'))->body($preview['error'] ?? __('Invalid archive'))->danger()->send();
                             @unlink($fullPath);
+
                             return;
                         }
 
@@ -648,7 +645,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->modalWidth('4xl')
                     ->steps(function (array $record): array {
                         // Load inventory from snapshot
-                        $cacheKey = $record['username'] . ':' . ($record['latest_snapshot_id'] ?? 'latest');
+                        $cacheKey = $record['username'].':'.($record['latest_snapshot_id'] ?? 'latest');
                         if (isset($this->inventoryCache[$cacheKey])) {
                             $inv = $this->inventoryCache[$cacheKey];
                         } else {
@@ -668,7 +665,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         try {
                             $snaps = app(AgentClient::class)->send('jb.list_snapshots', ['username' => $record['username']]);
                             foreach ($snaps['snapshots'] ?? [] as $snap) {
-                                $label = trim(($snap['date'] ?? '') . ' ' . ($snap['time'] ?? ''));
+                                $label = trim(($snap['date'] ?? '').' '.($snap['time'] ?? ''));
                                 $snapshotOptions[$snap['id']] = $label ?: $snap['id'];
                             }
                         } catch (\Throwable) {
@@ -753,14 +750,14 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         }
 
                         if ($inv['nginx']['exists'] ?? false) {
-                            $configs = collect($inv['nginx']['configs'] ?? [])->mapWithKeys(fn ($d) => [$d => $d . '.conf'])->all();
+                            $configs = collect($inv['nginx']['configs'] ?? [])->mapWithKeys(fn ($d) => [$d => $d.'.conf'])->all();
                             $tabs[] = Tab::make(__('Nginx'))->icon('heroicon-o-server')->schema([
                                 CheckboxList::make('restore_nginx')->label(__('Nginx configs to restore'))->options($configs)->default(array_keys($configs)),
                             ]);
                         }
 
                         if ($inv['php']['exists'] ?? false) {
-                            $pools = collect($inv['php']['pools'] ?? [])->mapWithKeys(fn ($d) => [$d => $d . '.conf'])->all();
+                            $pools = collect($inv['php']['pools'] ?? [])->mapWithKeys(fn ($d) => [$d => $d.'.conf'])->all();
                             $tabs[] = Tab::make(__('PHP'))->icon('heroicon-o-code-bracket')->schema([
                                 CheckboxList::make('restore_php')->label(__('PHP pool configs to restore'))->options($pools)->default(array_keys($pools)),
                             ]);
@@ -829,7 +826,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                                         $options['files'] = __('All home directory files');
                                                     } elseif (! empty($this->restoreFileList)) {
                                                         $list = implode(', ', array_slice($this->restoreFileList, 0, 5))
-                                                            . (count($this->restoreFileList) > 5 ? '...' : '');
+                                                            .(count($this->restoreFileList) > 5 ? '...' : '');
                                                         $options['files_selected'] = __(':count selected file(s): :list', [
                                                             'count' => count($this->restoreFileList),
                                                             'list' => $list,
@@ -890,19 +887,45 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                                 ->default(function (\Filament\Schemas\Components\Utilities\Get $get): array {
                                                     // All items are pre-selected (this is a read-only summary)
                                                     $keys = [];
-                                                    if ($get('restore_metadata')) $keys[] = 'metadata';
-                                                    if ($get('restore_files') || $get('restore_files') === null) $keys[] = 'files';
-                                                    elseif (! empty($this->restoreFileList)) $keys[] = 'files_selected';
-                                                    if (! empty($get('restore_databases'))) $keys[] = 'databases';
-                                                    if (! empty($get('restore_mysql_users'))) $keys[] = 'mysql_users';
-                                                    if (! empty($get('restore_postgres'))) $keys[] = 'postgres';
-                                                    if (! empty($get('restore_email'))) $keys[] = 'email';
-                                                    if (! empty($get('restore_dns'))) $keys[] = 'dns';
-                                                    if (! empty($get('restore_ssl'))) $keys[] = 'ssl';
-                                                    if (! empty($get('restore_nginx'))) $keys[] = 'nginx';
-                                                    if (! empty($get('restore_php'))) $keys[] = 'php';
-                                                    if ($get('restore_cron')) $keys[] = 'cron';
-                                                    if (! empty($get('restore_stalwart'))) $keys[] = 'stalwart';
+                                                    if ($get('restore_metadata')) {
+                                                        $keys[] = 'metadata';
+                                                    }
+                                                    if ($get('restore_files') || $get('restore_files') === null) {
+                                                        $keys[] = 'files';
+                                                    } elseif (! empty($this->restoreFileList)) {
+                                                        $keys[] = 'files_selected';
+                                                    }
+                                                    if (! empty($get('restore_databases'))) {
+                                                        $keys[] = 'databases';
+                                                    }
+                                                    if (! empty($get('restore_mysql_users'))) {
+                                                        $keys[] = 'mysql_users';
+                                                    }
+                                                    if (! empty($get('restore_postgres'))) {
+                                                        $keys[] = 'postgres';
+                                                    }
+                                                    if (! empty($get('restore_email'))) {
+                                                        $keys[] = 'email';
+                                                    }
+                                                    if (! empty($get('restore_dns'))) {
+                                                        $keys[] = 'dns';
+                                                    }
+                                                    if (! empty($get('restore_ssl'))) {
+                                                        $keys[] = 'ssl';
+                                                    }
+                                                    if (! empty($get('restore_nginx'))) {
+                                                        $keys[] = 'nginx';
+                                                    }
+                                                    if (! empty($get('restore_php'))) {
+                                                        $keys[] = 'php';
+                                                    }
+                                                    if ($get('restore_cron')) {
+                                                        $keys[] = 'cron';
+                                                    }
+                                                    if (! empty($get('restore_stalwart'))) {
+                                                        $keys[] = 'stalwart';
+                                                    }
+
                                                     return $keys;
                                                 })
                                                 ->disabled(),
@@ -1008,7 +1031,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                 try {
                                     $result = app(AgentClient::class)->send('jb.list_snapshots', ['username' => $record['username']]);
                                     foreach ($result['snapshots'] ?? [] as $snap) {
-                                        $label = trim(($snap['date'] ?? '') . ' ' . ($snap['time'] ?? ''));
+                                        $label = trim(($snap['date'] ?? '').' '.($snap['time'] ?? ''));
                                         $options[$snap['id']] = $label ?: $snap['id'];
                                     }
                                 } catch (\Throwable) {
@@ -1072,6 +1095,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         $snapshotId = $record['latest_snapshot_id'] ?? '';
                         if ($snapshotId === '' || $snapshotId === 'latest') {
                             Notification::make()->title(__('No snapshot to delete'))->warning()->send();
+
                             return;
                         }
                         try {
@@ -1359,7 +1383,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             return;
         }
 
-        $url = url('/backup-download.php?' . http_build_query([
+        $url = url('/backup-download.php?'.http_build_query([
             'users' => implode(',', $accounts),
             'snapshot' => $snapshot,
         ]));
@@ -1378,7 +1402,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         }
         $this->resetTable();
     }
-
 
     protected function getScheduleFormSchema(): array
     {
@@ -1451,6 +1474,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                                 return $d['name'] ?? $destId;
                             }
                         }
+
                         return $destId;
                     }),
                 TextColumn::make('cron')
@@ -1528,9 +1552,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         $cron = match ($freq) {
                             'daily' => ! empty($data['every_day'])
                                 ? "0 {$hour} * * *"
-                                : '0 ' . $hour . ' * * ' . implode(',', $data['days'] ?? ['*']),
-                            'weekly' => "0 {$hour} * * " . ($data['week_day'] ?? '0'),
-                            'monthly' => "0 {$hour} " . ($data['month_day'] ?? '1') . ' * *',
+                                : '0 '.$hour.' * * '.implode(',', $data['days'] ?? ['*']),
+                            'weekly' => "0 {$hour} * * ".($data['week_day'] ?? '0'),
+                            'monthly' => "0 {$hour} ".($data['month_day'] ?? '1').' * *',
                             default => "0 {$hour} * * *",
                         };
                         $accounts = ($data['account_mode'] ?? 'all') === 'all' ? 'all' : implode(',', $data['accounts'] ?? []);
@@ -1593,9 +1617,9 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                         $cron = match ($freq) {
                             'daily' => ! empty($data['every_day'])
                                 ? "0 {$hour} * * *"
-                                : '0 ' . $hour . ' * * ' . implode(',', $data['days'] ?? ['*']),
-                            'weekly' => "0 {$hour} * * " . ($data['week_day'] ?? '0'),
-                            'monthly' => "0 {$hour} " . ($data['month_day'] ?? '1') . ' * *',
+                                : '0 '.$hour.' * * '.implode(',', $data['days'] ?? ['*']),
+                            'weekly' => "0 {$hour} * * ".($data['week_day'] ?? '0'),
+                            'monthly' => "0 {$hour} ".($data['month_day'] ?? '1').' * *',
                             default => "0 {$hour} * * *",
                         };
                         $accounts = ($data['account_mode'] ?? 'all') === 'all' ? 'all' : implode(',', $data['accounts'] ?? []);
@@ -1696,7 +1720,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
         }
         $this->resetTable();
     }
-
 
     protected function getAddDestinationFormSchema(): array
     {
@@ -1905,7 +1928,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     public function viewLogDetailAction(): Action
     {
         return Action::make('viewLogDetail')
-            ->modalHeading(fn (array $arguments): string => ucfirst($arguments['job']['type'] ?? 'backup') . ' — ' . ($arguments['job']['started_at'] ?? ''))
+            ->modalHeading(fn (array $arguments): string => ucfirst($arguments['job']['type'] ?? 'backup').' — '.($arguments['job']['started_at'] ?? ''))
             ->modalContent(function (array $arguments): \Illuminate\Contracts\View\View {
                 $job = $arguments['job'] ?? [];
 
@@ -1965,7 +1988,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->formatStateUsing(fn (array $record): string => $record['started_at'] ?? ''),
                 TextColumn::make('duration_seconds')
                     ->label(__('Duration'))
-                    ->formatStateUsing(fn (array $record): string => isset($record['duration_seconds']) ? $record['duration_seconds'] . 's' : '-')
+                    ->formatStateUsing(fn (array $record): string => isset($record['duration_seconds']) ? $record['duration_seconds'].'s' : '-')
                     ->alignEnd(),
             ])
             ->recordActions([
@@ -1973,7 +1996,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
                     ->label(__('View Log'))
                     ->icon('heroicon-o-eye')
                     ->color('gray')
-                    ->modalHeading(fn (array $record): string => ucfirst($record['type'] ?? 'backup') . ' — ' . ($record['started_at'] ?? ''))
+                    ->modalHeading(fn (array $record): string => ucfirst($record['type'] ?? 'backup').' — '.($record['started_at'] ?? ''))
                     ->modalContent(function (array $record): \Illuminate\Contracts\View\View {
                         return view('filament.admin.pages.partials.log-modal', [
                             'events' => $record['events'] ?? [],
@@ -1996,7 +2019,6 @@ class Backups extends Page implements HasActions, HasForms, HasTable
     }
 
     // ─── Settings ───
-
 
     public function runForget(): void
     {
@@ -2028,7 +2050,7 @@ class Backups extends Page implements HasActions, HasForms, HasTable
             $keys = $result['keys'] ?? [];
             $options = [];
             foreach ($keys as $key) {
-                $options[$key['path']] = $key['name'] . ($key['type'] !== '' ? ' (' . $key['type'] . ')' : '');
+                $options[$key['path']] = $key['name'].($key['type'] !== '' ? ' ('.$key['type'].')' : '');
             }
 
             return $options;

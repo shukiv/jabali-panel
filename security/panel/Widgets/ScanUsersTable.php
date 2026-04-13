@@ -8,7 +8,6 @@ use App\JabaliSecurity\JabaliSecurityClient;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
-use Filament\Notifications\Notification;
 use Filament\Schemas\Concerns\InteractsWithSchemas;
 use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Tables\Columns\TextColumn;
@@ -48,7 +47,7 @@ class ScanUsersTable extends Component implements HasActions, HasSchemas, HasTab
 
     protected function scanPath(string $username): array
     {
-        $path = '/home/' . $username;
+        $path = '/home/'.$username;
         $result = $this->client()->post('/scan', ['path' => $path]);
 
         $threats = [];
@@ -234,7 +233,7 @@ class ScanUsersTable extends Component implements HasActions, HasSchemas, HasTab
                             'incident_count' => $incidents['incident_count'] ?? 0,
                             'max_score' => $incidents['max_score'] ?? 0,
                             'quarantine_count' => $incidents['quarantine_count'] ?? 0,
-                            'path' => '/home/' . $username,
+                            'path' => '/home/'.$username,
                             'scan_status' => $scanJob['status'] ?? null,
                             'scan_files' => $scanJob['files'] ?? 0,
                             'scan_threats' => $scanJob['threats_count'] ?? 0,
@@ -253,7 +252,7 @@ class ScanUsersTable extends Component implements HasActions, HasSchemas, HasTab
                             'incident_count' => $u['incident_count'] ?? 0,
                             'max_score' => $u['max_score'] ?? 0,
                             'quarantine_count' => $u['quarantine_count'] ?? 0,
-                            'path' => '/home/' . $username,
+                            'path' => '/home/'.$username,
                             'scan_status' => $scanJob['status'] ?? null,
                             'scan_files' => $scanJob['files'] ?? 0,
                             'scan_threats' => $scanJob['threats_count'] ?? 0,

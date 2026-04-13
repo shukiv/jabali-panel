@@ -6,20 +6,19 @@ namespace App\JabaliSecurity\Widgets;
 
 use App\JabaliSecurity\JabaliSecurityClient;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
-use Filament\Tables\Columns\IconColumn;
+use Filament\Schemas\Concerns\InteractsWithSchemas;
+use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Actions\BulkAction;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Collection;
-use Filament\Actions\Concerns\InteractsWithActions;
-use Filament\Actions\Contracts\HasActions;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
 use Livewire\Component;
 
 class FirewallRulesTable extends Component implements HasActions, HasSchemas, HasTable
@@ -106,7 +105,7 @@ class FirewallRulesTable extends Component implements HasActions, HasSchemas, Ha
 
                         Notification::make()
                             ->title($result ? __('Rule added') : __('Failed to add rule'))
-                            ->{($result ? "success" : "danger")}()
+                            ->{($result ? 'success' : 'danger')}()
                             ->send();
                     }),
             ])
@@ -121,7 +120,7 @@ class FirewallRulesTable extends Component implements HasActions, HasSchemas, Ha
 
                         Notification::make()
                             ->title($result ? __('Rule deleted') : __('Failed to delete rule'))
-                            ->{($result ? "success" : "danger")}()
+                            ->{($result ? 'success' : 'danger')}()
                             ->send();
                     }),
             ])

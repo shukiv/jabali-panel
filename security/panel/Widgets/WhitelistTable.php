@@ -7,18 +7,18 @@ namespace App\JabaliSecurity\Widgets;
 use App\JabaliSecurity\JabaliSecurityClient;
 use App\JabaliSecurity\Pages\Security;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
+use Filament\Actions\Concerns\InteractsWithActions;
+use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Concerns\InteractsWithSchemas;
+use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Actions\BulkAction;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Collection;
-use Filament\Actions\Concerns\InteractsWithActions;
-use Filament\Actions\Contracts\HasActions;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
 use Livewire\Component;
 
 class WhitelistTable extends Component implements HasActions, HasSchemas, HasTable
@@ -53,7 +53,7 @@ class WhitelistTable extends Component implements HasActions, HasSchemas, HasTab
                     ->action(function ($record): void {
                         $ip = $record['ip'] ?? '';
                         if ($ip) {
-                            $this->client()->delete('/bruteforce/whitelist/' . urlencode($ip));
+                            $this->client()->delete('/bruteforce/whitelist/'.urlencode($ip));
                             $this->client()->post('/block', ['ip' => $ip, 'reason' => 'Moved from whitelist']);
                             Notification::make()->title(__('IP blocked: :ip', ['ip' => $ip]))->success()->send();
                             $this->redirect(Security::tabUrl('defense', 'bruteforce'), navigate: true);
@@ -67,7 +67,7 @@ class WhitelistTable extends Component implements HasActions, HasSchemas, HasTab
                     ->action(function ($record): void {
                         $ip = $record['ip'] ?? '';
                         if ($ip) {
-                            $this->client()->delete('/bruteforce/whitelist/' . urlencode($ip));
+                            $this->client()->delete('/bruteforce/whitelist/'.urlencode($ip));
                             Notification::make()->title(__('Removed :ip from whitelist', ['ip' => $ip]))->success()->send();
                             $this->redirect(Security::tabUrl('defense', 'bruteforce'), navigate: true);
                         }
@@ -105,7 +105,7 @@ class WhitelistTable extends Component implements HasActions, HasSchemas, HasTab
                         foreach ($records as $record) {
                             $ip = $record['ip'] ?? '';
                             if ($ip) {
-                                $this->client()->delete('/bruteforce/whitelist/' . urlencode($ip));
+                                $this->client()->delete('/bruteforce/whitelist/'.urlencode($ip));
                                 $count++;
                             }
                         }

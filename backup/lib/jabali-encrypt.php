@@ -8,14 +8,13 @@ declare(strict_types=1);
  * Usage: php jabali-encrypt.php <plaintext_value>
  * APP_KEY must be set in JABALI_APP_KEY environment variable.
  */
-
 if ($argc < 2) {
     fwrite(STDERR, "Usage: php jabali-encrypt.php <plaintext_value>\n");
     exit(1);
 }
 
 $appKey = getenv('JABALI_APP_KEY');
-if (!$appKey) {
+if (! $appKey) {
     fwrite(STDERR, "Error: JABALI_APP_KEY environment variable not set\n");
     exit(1);
 }
@@ -39,7 +38,7 @@ if ($encrypted === false) {
 
 $ivB64 = base64_encode($iv);
 $valueB64 = base64_encode($encrypted);
-$mac = hash_hmac('sha256', $ivB64 . $valueB64, $appKey);
+$mac = hash_hmac('sha256', $ivB64.$valueB64, $appKey);
 
 $payload = json_encode([
     'iv' => $ivB64,

@@ -5,19 +5,16 @@ declare(strict_types=1);
 namespace App\JabaliSecurity\Pages;
 
 use App\JabaliSecurity\JabaliSecurityClient;
-use App\JabaliSecurity\Widgets\BlocklistTable;
-use App\JabaliSecurity\Widgets\BruteforceBlockedTable;
 use App\JabaliSecurity\Widgets\CleanupRecordsTable;
 use App\JabaliSecurity\Widgets\FirewallRulesTable;
+use App\JabaliSecurity\Widgets\GeoBlockTable;
 use App\JabaliSecurity\Widgets\IncidentsTable;
 use App\JabaliSecurity\Widgets\QuarantineTable;
 use App\JabaliSecurity\Widgets\ScanUsersTable;
 use App\JabaliSecurity\Widgets\ThreatFeedsTable;
+use App\JabaliSecurity\Widgets\UnifiedBlocklistTable;
 use App\JabaliSecurity\Widgets\UsersTable;
 use App\JabaliSecurity\Widgets\WafEventsTable;
-use App\JabaliSecurity\Widgets\CrowdsecDecisionsTable;
-use App\JabaliSecurity\Widgets\UnifiedBlocklistTable;
-use App\JabaliSecurity\Widgets\GeoBlockTable;
 use App\JabaliSecurity\Widgets\WebshieldRulesTable;
 use App\JabaliSecurity\Widgets\WhitelistTable;
 use App\JabaliSecurity\Widgets\YaraRulesTable;
@@ -35,11 +32,10 @@ use Filament\Pages\Page;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\Text;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\Text;
 use Filament\Schemas\Schema;
-use Filament\Support\Enums\FontWeight;
 use Filament\Support\Enums\TextSize;
 use Illuminate\Contracts\Support\Htmlable;
 use Livewire\Attributes\Url;
@@ -61,6 +57,7 @@ class Security extends Page implements HasActions, HasForms
         if ($subtab) {
             $params['defense'] = $subtab;
         }
+
         return static::getUrl($params);
     }
 
@@ -90,6 +87,7 @@ class Security extends Page implements HasActions, HasForms
     public bool $expertMode = false;
 
     public string $geoipLicenseKey = '';
+
     public string $geoipAction = 'block';
 
     public function mount(): void
@@ -118,6 +116,7 @@ class Security extends Page implements HasActions, HasForms
                 $keys[] = $key;
             }
         }
+
         return $keys;
     }
 
@@ -323,7 +322,6 @@ class Security extends Page implements HasActions, HasForms
 
     // ── Stat Cards (schema-based, compact) ─────────────────────────
 
-
     public function getOverviewStatsDataProperty(): array
     {
         $s = $this->client()->get('/status');
@@ -348,14 +346,14 @@ class Security extends Page implements HasActions, HasForms
     protected function overviewStats(): array
     {
         $data = $this->getOverviewStatsDataProperty();
+
         return [Grid::make(3)->dense()->schema(array_map(fn ($s) => $this->dashboardCard($s), $data))];
     }
-
-
 
     private function getWafStatsData(): array
     {
         $s = $this->client()->get('/waf/stats') ?? [];
+
         return [
             ['value' => (string) ($s['total_events_24h'] ?? 0), 'label' => __('Events (24h)'), 'icon' => 'heroicon-o-bolt', 'color' => ($s['total_events_24h'] ?? 0) > 0 ? 'warning' : 'success'],
             ['value' => (string) ($s['blocked_24h'] ?? 0), 'label' => __('Blocked (24h)'), 'icon' => 'heroicon-o-no-symbol', 'color' => ($s['blocked_24h'] ?? 0) > 0 ? 'danger' : 'success'],
@@ -366,6 +364,7 @@ class Security extends Page implements HasActions, HasForms
     {
         $s = $this->client()->get('/crowdsec/status') ?? [];
         $connected = $s['connected'] ?? false;
+
         return [
             ['value' => $connected ? __('Connected') : __('Disconnected'), 'label' => __('LAPI'), 'icon' => 'heroicon-o-globe-alt', 'color' => $connected ? 'success' : 'gray'],
             ['value' => (string) ($s['active_decisions'] ?? 0), 'label' => __('Decisions'), 'icon' => 'heroicon-o-shield-check', 'color' => ($s['active_decisions'] ?? 0) > 0 ? 'warning' : 'success'],
@@ -376,6 +375,7 @@ class Security extends Page implements HasActions, HasForms
     private function getBruteforceStatsData(): array
     {
         $s = $this->client()->get('/bruteforce/stats') ?? [];
+
         return [
             ['value' => (string) ($s['tracked_ips'] ?? 0), 'label' => __('Tracked IPs'), 'icon' => 'heroicon-o-signal', 'color' => 'info'],
             ['value' => (string) ($s['blocked_count'] ?? 0), 'label' => __('Blocked'), 'icon' => 'heroicon-o-no-symbol', 'color' => ($s['blocked_count'] ?? 0) > 0 ? 'danger' : 'success'],
@@ -385,6 +385,7 @@ class Security extends Page implements HasActions, HasForms
     private function getProactiveStatsData(): array
     {
         $s = $this->client()->get('/proactive/status') ?? [];
+
         return [
             ['value' => ($s['process_kill_enabled'] ?? false) ? __('Active') : __('Disabled'), 'label' => __('Process Killer'), 'icon' => 'heroicon-o-fire', 'color' => ($s['process_kill_enabled'] ?? false) ? 'success' : 'gray'],
             ['value' => (string) ($s['process_kill_count'] ?? 0), 'label' => __('Processes Killed'), 'icon' => 'heroicon-o-x-circle', 'color' => ($s['process_kill_count'] ?? 0) > 0 ? 'warning' : 'success'],
@@ -394,6 +395,7 @@ class Security extends Page implements HasActions, HasForms
     private function getWebshieldStatsData(): array
     {
         $s = $this->client()->get('/webshield/status') ?? [];
+
         return [
             ['value' => ($s['installed'] ?? false) ? __('Yes') : __('No'), 'label' => __('Installed'), 'icon' => 'heroicon-o-check-circle', 'color' => ($s['installed'] ?? false) ? 'success' : 'danger'],
             ['value' => ($s['rate_limiting'] ?? false) ? __('On') : __('Off'), 'label' => __('Rate Limiting'), 'icon' => 'heroicon-o-clock', 'color' => ($s['rate_limiting'] ?? false) ? 'success' : 'danger'],
@@ -407,6 +409,7 @@ class Security extends Page implements HasActions, HasForms
     private function getRulesStatsData(): array
     {
         $r = $this->client()->get('/rules') ?? [];
+
         return [
             ['value' => ($r['yara_enabled'] ?? false) ? __('Enabled') : __('Disabled'), 'label' => __('YARA'), 'icon' => 'heroicon-o-document-magnifying-glass', 'color' => ($r['yara_enabled'] ?? false) ? 'success' : 'gray'],
             ['value' => ($r['clamav_enabled'] ?? false) ? __('Enabled') : __('Disabled'), 'label' => __('ClamAV'), 'icon' => 'heroicon-o-shield-check', 'color' => ($r['clamav_enabled'] ?? false) ? 'success' : 'gray'],
@@ -417,6 +420,7 @@ class Security extends Page implements HasActions, HasForms
     protected function wafStats(): array
     {
         $data = $this->getWafStatsData();
+
         return [Grid::make(count($data))->dense()->schema(array_map(fn ($s) => $this->dashboardCard($s), $data))];
     }
 
@@ -485,36 +489,41 @@ class Security extends Page implements HasActions, HasForms
     protected function crowdsecStats(): array
     {
         $data = $this->getCrowdsecStatsData();
+
         return [Grid::make(count($data))->dense()->schema(array_map(fn ($s) => $this->dashboardCard($s), $data))];
     }
 
     protected function bruteforceStats(): array
     {
         $data = $this->getBruteforceStatsData();
+
         return [Grid::make(count($data))->dense()->schema(array_map(fn ($s) => $this->dashboardCard($s), $data))];
     }
 
     protected function proactiveStats(): array
     {
         $data = $this->getProactiveStatsData();
+
         return [Grid::make(count($data))->dense()->schema(array_map(fn ($s) => $this->dashboardCard($s), $data))];
     }
 
     protected function webshieldStats(): array
     {
         $data = $this->getWebshieldStatsData();
+
         return [Grid::make(3)->dense()->schema(array_map(fn ($s) => $this->dashboardCard($s), $data))];
     }
 
     protected function rulesStats(): array
     {
         $data = $this->getRulesStatsData();
+
         return [Grid::make(count($data))->dense()->schema(array_map(fn ($s) => $this->dashboardCard($s), $data))];
     }
 
     private function dashboardCard(array $stat): Section
     {
-        return Section::make($stat['label'] . ': ' . $stat['value'])
+        return Section::make($stat['label'].': '.$stat['value'])
             ->icon($stat['icon'])
             ->iconColor($stat['color'])
             ->schema([]);
@@ -699,14 +708,12 @@ class Security extends Page implements HasActions, HasForms
         ];
     }
 
-
     public function toggleExpertMode(): void
     {
         $this->expertMode = ! $this->expertMode;
     }
 
     // ── Module Toggles ───────────────────────────────────────────────
-
 
     public function saveAndRestart(): void
     {
@@ -749,7 +756,7 @@ class Security extends Page implements HasActions, HasForms
         $body = count($actions) > 0
             ? implode("\n", array_map(fn ($a) => "• {$a}", $actions))
             : __('Aggressive defenses activated');
-        $body .= "\n\n" . implode("\n", [
+        $body .= "\n\n".implode("\n", [
             __('• Process killer threshold lowered to 50'),
             __('• Auto-block IPs on suspicious activity'),
             __('• Brute-force threshold: 3 attempts in 120 seconds'),
@@ -829,7 +836,7 @@ class Security extends Page implements HasActions, HasForms
         $result = $this->client()->post('/firewall/ufw/enable');
         Notification::make()
             ->title($result ? __('Firewall enabled') : __('Failed to enable firewall'))
-            ->{($result ? "success" : "danger")}()
+            ->{($result ? 'success' : 'danger')}()
             ->send();
         $this->redirect(static::getUrl(['tab' => 'defense', 'defense' => 'firewall']));
     }
@@ -839,7 +846,7 @@ class Security extends Page implements HasActions, HasForms
         $result = $this->client()->post('/firewall/ufw/disable');
         Notification::make()
             ->title($result ? __('Firewall disabled') : __('Failed to disable firewall'))
-            ->{($result ? "success" : "danger")}()
+            ->{($result ? 'success' : 'danger')}()
             ->send();
         $this->redirect(static::getUrl(['tab' => 'defense', 'defense' => 'firewall']));
     }
