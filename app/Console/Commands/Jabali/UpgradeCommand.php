@@ -310,11 +310,6 @@ class UpgradeCommand extends Command
             $this->warn('Notifications migration warning: '.$e->getMessage());
         }
 
-        // Step 10: Update installed addons
-        $this->info('[10/11] Updating installed addons...');
-        $this->updateAddons();
-        $this->stepsRun[] = 'addons';
-
         // Step 11: Restart services
         $this->info('[11/11] Restarting services...');
         $this->restartServices();
@@ -835,52 +830,6 @@ class UpgradeCommand extends Command
         }
 
         $this->line('  Nginx page cache migrated to per-user directories.');
-    }
-
-    private function updateAddons(): void
-    {
-        $addons = config('jabali-addons', []);
-
-        $found = false;
-        $processes = [];
-        $addonNames = [];
-
-        // Create and start all addon update processes in parallel
-        foreach ($addons as $name => $addon) {
-            if (! file_exists($addon['binary'])) {
-                continue;
-            }
-
-            $found = true;
-            $this->line("  - Updating {$name}...");
-
-            try {
-                $command = sprintf('curl -fsSL %s | bash', escapeshellarg($addon['install_url']));
-                $process = new Process(['bash', '-c', $command]);
-                $process->setTimeout(300);
-                $process->start();
-
-                $processes[] = $process;
-                $addonNames[spl_object_id($process)] = $name;
-            } catch (Exception $e) {
-                $this->warn("  - {$name} update failed: ".$e->getMessage());
-            }
-        }
-
-        // Wait for all processes to complete
-        foreach ($processes as $process) {
-            $name = $addonNames[spl_object_id($process)];
-            $process->wait();
-            if ($process->isSuccessful()) {
-                $this->line("  - {$name} updated");
-            } else {
-                $this->warn("  - {$name} update failed: ".($process->getErrorOutput() ?: 'unknown error'));
-            }
-        }
-
-        if (! $found) {
-            $this->line('No addons installed, skipping.');
-        }
     }
 
     protected function restartServices(): void
