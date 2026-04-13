@@ -1,0 +1,274 @@
+# ============================================================================
+# Jabali Security Configuration
+# ============================================================================
+# Format: KEY="value"
+# Lines starting with # are comments. Blank lines are ignored.
+# Copy to /etc/jabali-security/jabali-security.conf and edit as needed.
+# ============================================================================
+
+# -- Daemon ------------------------------------------------------------------
+
+# Log verbosity: debug, info, warning, error, critical
+LOG_LEVEL="info"
+
+# Directory for log files (auto-created on start)
+LOG_DIR="/var/log/jabali-security"
+
+# Persistent data directory (SQLite database, state files)
+DATA_DIR="/var/lib/jabali-security"
+
+# Quarantine directory for malicious files
+QUARANTINE_DIR="/var/security/quarantine"
+
+# Number of async scan workers
+WORKERS="4"
+
+# -- API ---------------------------------------------------------------------
+
+# Unix socket path (primary, secure — no network exposure)
+API_SOCKET="/run/jabali-security/jabali-security.sock"
+
+# TCP fallback (optional — set API_BIND to enable, empty = disabled)
+API_BIND=""
+API_PORT="9876"
+
+# API authentication key (auto-generated on install; change if needed)
+API_KEY=""
+
+# -- File Watcher ------------------------------------------------------------
+
+# Comma-separated list of directories/globs to watch recursively
+WATCH_DIRS="/home/*/public_html,/home/*/domains/*/public_html,/home/*/tmp"
+
+# -- Pre-Filter --------------------------------------------------------------
+
+# Comma-separated extensions to scan
+SCAN_EXTENSIONS=".php,.phtml,.js,.py,.sh,.cgi,.pl,.asp,.aspx,.jsp"
+
+# Maximum file size to scan in bytes (default 2MB)
+MAX_FILE_SIZE="2097152"
+
+# Comma-separated directory names to skip
+SKIP_DIRS=".git,node_modules,vendor,__pycache__,.cache"
+
+# -- Detection ---------------------------------------------------------------
+
+# Entropy threshold (0.0 - 8.0); content above this is flagged.
+# Normal PHP source code scores 4.5-5.5; only obfuscated/encoded content exceeds 6.0.
+ENTROPY_THRESHOLD="6.0"
+
+# Directory containing YARA-X rule files (.yar)
+YARA_RULES_DIR="/usr/local/jabali-security/rules"
+
+# -- ClamAV (optional) ------------------------------------------------------
+
+# Enable ClamAV scanning: "no" (disabled), "auto" (detect clamd), "yes" (require)
+# Disabled by default to save resources. Enabled automatically in Under Attack mode.
+CLAMAV_ENABLED="no"
+
+# Path to clamd Unix socket
+CLAMAV_SOCKET="/var/run/clamav/clamd.ctl"
+
+# Run freshclam when `jabali-security rules update` is called
+FRESHCLAM_ON_UPDATE="yes"
+
+# -- Scoring -----------------------------------------------------------------
+
+# Minimum score to generate a log entry
+SCORE_LOG="40"
+
+# Minimum score to quarantine the file
+SCORE_QUARANTINE="70"
+
+# Minimum score to suspend the hosting account
+SCORE_SUSPEND="100"
+
+# -- Process Monitor ---------------------------------------------------------
+
+# Poll interval in seconds for /proc scanning
+PROCESS_POLL_INTERVAL="2"
+
+# -- Behavior Tracking -------------------------------------------------------
+
+# Time-to-live in seconds for behavior tracking records
+BEHAVIOR_TTL="300"
+
+# -- Response ----------------------------------------------------------------
+
+# Automatically quarantine files exceeding SCORE_QUARANTINE
+AUTO_QUARANTINE="yes"
+
+# Automatically suspend accounts exceeding SCORE_SUSPEND
+AUTO_SUSPEND="no"
+
+# Automatically block attacker IP addresses
+AUTO_BLOCK_IP="no"
+
+# -- Notifications -----------------------------------------------------------
+
+# Email address for alert notifications (empty = disabled)
+NOTIFY_EMAIL=""
+
+# Webhook URL for alert notifications (empty = disabled)
+NOTIFY_WEBHOOK=""
+
+# Minimum severity to trigger notifications: low, medium, high, critical
+NOTIFY_MIN_SEVERITY="high"
+
+# -- WAF (ModSecurity) -------------------------------------------------------
+
+# Enable ModSecurity WAF audit log parsing and rule management
+WAF_ENABLED="yes"
+
+# Path to the ModSecurity audit log file
+WAF_AUDIT_LOG="/var/log/modsec_audit.log"
+
+# Audit log type: "serial" (single file) or "concurrent" (directory-based)
+WAF_AUDIT_LOG_TYPE="serial"
+
+# Directory containing OWASP Core Rule Set .conf files
+# Installed from GitHub (coreruleset/coreruleset), updated via git pull
+WAF_RULES_DIR="/usr/local/share/owasp-crs/rules"
+
+# Jabali-managed overrides file for disabling individual rules
+WAF_OVERRIDES_FILE="/etc/modsecurity/jabali-overrides.conf"
+
+# Automatically update OWASP CRS on rules update
+WAF_CRS_AUTO_UPDATE="no"
+
+# Web server to reload after rule changes: "auto", "nginx", "apache"
+WAF_WEB_SERVER="auto"
+
+# Nginx include file for per-site modsecurity on/off toggle
+WAF_NGINX_INCLUDE="/etc/nginx/jabali/includes/waf.conf"
+
+# -- Process Killer ----------------------------------------------------------
+
+# Enable proactive killing of suspicious processes above score threshold
+PROCESS_KILL_ENABLED="no"
+
+# Minimum threat score to kill a process (1-100)
+PROCESS_KILL_THRESHOLD="70"
+
+# Minimum UID for killable processes (never kills system processes below this)
+PROCESS_KILL_MIN_UID="1000"
+
+# Comma-separated command substrings to whitelist from killing
+PROCESS_KILL_WHITELIST="wp-cron.php,artisan,composer"
+
+# -- Malware Cleanup ---------------------------------------------------------
+
+# Enable the cleanup engine (master switch)
+CLEANUP_ENABLED="yes"
+
+# Automatically attempt cleanup before quarantine
+CLEANUP_AUTO="no"
+
+# Directory for file backups before cleanup
+CLEANUP_BACKUP_DIR="/var/lib/jabali-security/backups"
+
+# Use CMS checksums for integrity verification during cleanup
+CLEANUP_CMS_CHECKSUMS="yes"
+
+# -- Scheduled Scan ----------------------------------------------------------
+
+# Enable periodic full-path scanning
+SCHEDULED_SCAN_ENABLED="yes"
+
+# Interval between scheduled scans in hours
+SCHEDULED_SCAN_INTERVAL="24"
+
+# Comma-separated paths/globs to scan on schedule
+SCHEDULED_SCAN_PATHS="/home/*/public_html"
+
+# -- Brute-Force Protection --------------------------------------------------
+
+# Enable brute-force detection and automatic IP blocking
+BRUTEFORCE_ENABLED="yes"
+
+# SSH/HTTP brute-force is handled by CrowdSec. Stalwart has built-in IP blocking.
+# Our brute-force module only monitors Stalwart mail server (no CrowdSec parser).
+
+# Progressive block durations in seconds (comma-separated)
+# Each repeat offense uses the next duration; 0 = permanent
+BRUTEFORCE_BLOCK_DURATIONS="600,3600,86400,0"
+
+# Firewall backend: "auto" (detect nftables/iptables), "nftables", "iptables", "none"
+FIREWALL_BACKEND="auto"
+
+# Comma-separated IPs to never block (whitelist)
+BRUTEFORCE_WHITELIST_IPS=""
+
+# -- UFW Management ----------------------------------------------------------
+
+# Enable UFW firewall rule management via the REST API
+UFW_ENABLED="no"
+
+# -- Threat Intelligence -----------------------------------------------------
+
+# Enable threat intelligence feeds (IP reputation + malware hash lookups)
+THREAT_INTEL_ENABLED="yes"
+
+# Feed update interval in hours
+THREAT_INTEL_UPDATE_INTERVAL="6"
+
+# Comma-separated list of enabled feeds
+# Available: spamhaus_drop, spamhaus_edrop, blocklist_de_all, malwarebazaar_recent
+THREAT_INTEL_FEEDS="spamhaus_drop,spamhaus_edrop,blocklist_de_all,malwarebazaar_recent"
+
+# Automatically block IPs found in threat intel feeds
+THREAT_INTEL_AUTO_BLOCK="no"
+
+# Number of feed matches required before auto-blocking an IP (1-10)
+THREAT_INTEL_AUTO_BLOCK_THRESHOLD="3"
+
+# -- WebShield (Bot Filtering + Rate Limiting) ------------------------------
+
+# Enable WebShield nginx integration (generates nginx config snippets)
+# Auto-enabled on Jabali Panel servers with bot filtering on by default
+WEBSHIELD_ENABLED="no"
+
+# Enable rate limiting (off by default — can block legitimate high-traffic sites)
+# Auto-enabled by Attack Mode
+WEBSHIELD_RATE_LIMITING="no"
+
+# Requests per second allowed per IP when rate limiting is enabled
+WEBSHIELD_RATE_LIMIT="10"
+
+# Burst size for rate limiter (requests allowed above the rate before 429)
+WEBSHIELD_RATE_BURST="20"
+
+# Enable JavaScript challenge page for suspicious bots
+WEBSHIELD_CHALLENGE_ENABLED="yes"
+
+# Enable user-agent based bot filtering
+WEBSHIELD_BOT_FILTERING="yes"
+
+# Directory for generated nginx config snippets
+WEBSHIELD_NGINX_CONF_DIR="/etc/nginx/jabali-security"
+
+# Nginx access log path (for WebShield stats)
+NGINX_ACCESS_LOG="/var/log/nginx/access.log"
+
+# -- RapidScan ---------------------------------------------------------------
+
+# Number of parallel workers for rapid directory scanning
+RAPIDSCAN_WORKERS="4"
+
+# Cache file modification times to skip unchanged files between scans
+RAPIDSCAN_MTIME_CACHE="yes"
+
+# -- CrowdSec (Community Threat Intelligence) --------------------------------
+
+# Enable CrowdSec LAPI integration: "auto" (detect if running), "yes", "no"
+CROWDSEC_ENABLED="yes"
+
+# CrowdSec Local API URL (default: localhost:8080)
+CROWDSEC_LAPI_URL="http://127.0.0.1:8080"
+
+# Bouncer API key (generated via: cscli bouncers add jabali-security -o raw)
+CROWDSEC_BOUNCER_KEY=""
+
+# Polling interval in seconds for decision stream updates
+CROWDSEC_SYNC_INTERVAL="10"
+

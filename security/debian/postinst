@@ -1,0 +1,95 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+INSTALL_DIR="/usr/local/jabali-security"
+CONFIG_DIR="/etc/jabali-security"
+LOG_DIR="/var/log/jabali-security"
+DATA_DIR="/var/lib/jabali-security"
+QUARANTINE_DIR="/var/security/quarantine"
+
+# -- Create directories --
+mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+mkdir -p "$LOG_DIR"
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR"
+mkdir -p "$QUARANTINE_DIR"
+chmod 700 "$QUARANTINE_DIR"
+
+# -- Copy config (only if not exists) --
+if [ ! -f "$CONFIG_DIR/jabali-security.conf" ]; then
+    cp "$INSTALL_DIR/etc/jabali-security.conf.example" "$CONFIG_DIR/jabali-security.conf"
+    chmod 600 "$CONFIG_DIR/jabali-security.conf"
+fi
+
+# -- Generate API_KEY if not set --
+if ! grep -q "^API_KEY=" "$CONFIG_DIR/jabali-security.conf" 2>/dev/null || \
+   grep -q '^API_KEY=""' "$CONFIG_DIR/jabali-security.conf" 2>/dev/null; then
+    api_key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    if grep -q "^API_KEY=" "$CONFIG_DIR/jabali-security.conf"; then
+        sed -i "s|^API_KEY=.*|API_KEY=\"${api_key}\"|" "$CONFIG_DIR/jabali-security.conf"
+    else
+        echo "API_KEY=\"${api_key}\"" >> "$CONFIG_DIR/jabali-security.conf"
+    fi
+    chmod 600 "$CONFIG_DIR/jabali-security.conf"
+fi
+
+# -- Set inotify watch limit if low --
+current_watches=$(cat /proc/sys/fs/inotify/max_user_watches 2>/dev/null || echo 0)
+if [ "$current_watches" -lt 524288 ]; then
+    echo "fs.inotify.max_user_watches=524288" > /etc/sysctl.d/99-jabali-security.conf
+    sysctl -p /etc/sysctl.d/99-jabali-security.conf 2>/dev/null || true
+fi
+
+# -- Create Python venv and install dependencies --
+_venv_dir="$INSTALL_DIR/venv"
+if [ ! -d "$_venv_dir" ] || [ ! -f "$_venv_dir/bin/pip" ]; then
+    if python3 -m venv "$_venv_dir" 2>/dev/null; then
+        echo "jabali-security: Python venv created at $_venv_dir"
+    else
+        echo "jabali-security: WARNING — failed to create venv. Install python3-venv." >&2
+    fi
+fi
+
+if [ -f "$_venv_dir/bin/pip" ]; then
+    # Prefer uv if available
+    if command -v uv &>/dev/null; then
+        uv pip install --python "$_venv_dir/bin/python" \
+            "pydantic>=2.0" "yara-x>=0.11" "click>=8.0" "aiohttp>=3.9" "pyyaml>=6.0" "aiosqlite>=0.20" \
+            2>/dev/null && echo "jabali-security: Dependencies installed (uv)."
+    elif "$_venv_dir/bin/pip" install --quiet \
+        "pydantic>=2.0" "yara-x>=0.11" "click>=8.0" "aiohttp>=3.9" "pyyaml>=6.0" "aiosqlite>=0.20" \
+        2>/dev/null; then
+        echo "jabali-security: Dependencies installed (pip)."
+    else
+        echo "jabali-security: WARNING — failed to install dependencies." >&2
+    fi
+fi
+
+# -- Install systemd service --
+if [ -f "$INSTALL_DIR/etc/jabali-security.service" ]; then
+    cp "$INSTALL_DIR/etc/jabali-security.service" /etc/systemd/system/jabali-security.service
+fi
+systemctl daemon-reload 2>/dev/null || true
+
+# -- Enable and manage service --
+if [ -n "$2" ]; then
+    # Upgrade: restart if running
+    if systemctl is-active jabali-security &>/dev/null; then
+        systemctl restart jabali-security || true
+    fi
+else
+    # Fresh install: enable and start
+    systemctl enable jabali-security 2>/dev/null || true
+    systemctl start jabali-security 2>/dev/null || true
+fi
+
+exit 0

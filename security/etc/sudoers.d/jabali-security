@@ -1,0 +1,29 @@
+# Jabali Security daemon -- privilege-separated commands
+# Installed to /etc/sudoers.d/jabali-security by install.sh
+# Validated with: visudo -cf /etc/sudoers.d/jabali-security
+
+# Service management
+jabali-security ALL=(root) NOPASSWD: /usr/bin/systemctl restart jabali-security
+jabali-security ALL=(root) NOPASSWD: /usr/bin/systemctl restart jabali-panel
+jabali-security ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
+jabali-security ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx
+
+# Nginx config test and reload
+jabali-security ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+jabali-security ALL=(root) NOPASSWD: /usr/sbin/nginx -s reload
+
+# UFW firewall management
+jabali-security ALL=(root) NOPASSWD: /usr/sbin/ufw *
+
+# CrowdSec LAPI management
+jabali-security ALL=(root) NOPASSWD: /usr/bin/cscli *
+
+# nftables (direct rule manipulation)
+jabali-security ALL=(root) NOPASSWD: /usr/sbin/nft *
+
+# iptables (fallback firewall)
+jabali-security ALL=(root) NOPASSWD: /usr/sbin/iptables *
+
+# Panel cache clear (used during update)
+jabali-security ALL=(root) NOPASSWD: /usr/local/bin/composer dump-autoload *
+jabali-security ALL=(root) NOPASSWD: /usr/bin/php artisan *

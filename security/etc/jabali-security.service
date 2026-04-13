@@ -1,0 +1,48 @@
+[Unit]
+Description=Jabali Security Daemon
+After=network.target crowdsec.service
+Wants=crowdsec.service
+
+[Service]
+Type=simple
+User=jabali-security
+Group=jabali-security
+SupplementaryGroups=www-data
+ExecStart=/usr/local/jabali-security/venv/bin/python -m daemon start
+WorkingDirectory=/usr/local/jabali-security
+Environment=PYTHONPATH=/usr/local/jabali-security
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jabali-security
+
+# Security hardening
+# Note: NoNewPrivileges must be 'no' because the daemon uses sudo
+# for privileged operations (systemctl, ufw, nginx) via sudoers whitelist.
+NoNewPrivileges=no
+# ProtectSystem=full protects /usr and /boot as read-only.
+# (strict would block sudo which needs /run/sudo and /var/lib/sudo)
+ProtectSystem=full
+# UFW needs /run/ufw.lock and /proc/sys/net for sysctl tuning
+ProtectKernelTunables=no
+RuntimeDirectory=jabali-security
+RuntimeDirectoryMode=0755
+ProtectHome=read-only
+PrivateTmp=yes
+# CAP_DAC_READ_SEARCH: read any file for scanning
+# CAP_DAC_OVERRIDE: write/move files for quarantine and nginx configs
+# CAP_NET_ADMIN: nftables/iptables IP blocking
+# CAP_KILL: process killer (proactive defense)
+# CAP_FOWNER: change permissions on quarantined files
+# CAP_SETUID + CAP_SETGID: required for sudo to escalate via sudoers whitelist
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_NET_ADMIN CAP_KILL CAP_FOWNER CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_NET_ADMIN CAP_KILL CAP_FOWNER
+LimitNOFILE=65536
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

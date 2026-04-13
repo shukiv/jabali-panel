@@ -1,0 +1,15 @@
+Package: jabali-security
+Version: {{VERSION}}
+Section: admin
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.12), python3-venv
+Recommends: iptables
+Suggests: clamav-daemon, clamav-freshclam
+Maintainer: Jabali <support@jabali-panel.com>
+Description: Event-driven security suite for Linux shared hosting
+ Jabali Security provides real-time file monitoring, heuristic malware
+ detection, YARA-X scanning, process monitoring, and automated threat
+ response for shared hosting environments. Lightweight alternative to
+ Imunify360 with under 100MB memory footprint.
+Homepage: https://jabali-panel.com

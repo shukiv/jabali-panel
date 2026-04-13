@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+.env
+*.db
+*.db-journal
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.log
+.dmux/
+
+# Claude Flow coordinator state (regenerates per-session, never commit)
+.claude-flow/
+
+# dmux hook state (regenerates per session)
+.dmux-hooks/

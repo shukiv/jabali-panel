@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    purge)
+        # Remove config, data, logs on purge only
+        rm -rf /etc/jabali-security
+        rm -rf /var/lib/jabali-security
+        rm -rf /var/log/jabali-security
+        rm -f /etc/systemd/system/jabali-security.service
+        rm -f /etc/sysctl.d/99-jabali-security.conf
+        systemctl daemon-reload 2>/dev/null || true
+        ;;
+    remove)
+        # Disable service but keep config
+        systemctl disable jabali-security 2>/dev/null || true
+        rm -f /etc/systemd/system/jabali-security.service
+        systemctl daemon-reload 2>/dev/null || true
+        ;;
+esac
+
+exit 0

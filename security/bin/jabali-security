@@ -1,0 +1,12 @@
+#!/bin/bash
+# Jabali Security CLI wrapper
+set -euo pipefail
+
+INSTALL_DIR="${JABALI_SECURITY_DIR:-/usr/local/jabali-security}"
+export PYTHONPATH="$INSTALL_DIR"
+
+if [ -d "$INSTALL_DIR/venv" ]; then
+    exec "$INSTALL_DIR/venv/bin/python" -m daemon "$@"
+else
+    exec python3 -m daemon "$@"
+fi

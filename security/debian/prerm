@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|upgrade)
+        systemctl stop jabali-security 2>/dev/null || true
+        ;;
+esac
+
+exit 0
