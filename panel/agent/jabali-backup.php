@@ -234,16 +234,21 @@ function jbLoadResticEnv(): ?array
 
             $args[] = '--repo';
             $args[] = $repo;
+            // Also expose via env so sourced helpers (lib/server-download.sh)
+            // that don't forward $args still authenticate correctly.
+            $env['RESTIC_REPOSITORY'] = $repo;
 
             // Restic repo password — check insecure_no_password first since the
             // password file may exist but be empty (created by --no-encryption)
             if ($creds['insecure_no_password'] ?? false) {
                 $args[] = '--insecure-no-password';
+                $env['RESTIC_INSECURE_NO_PASSWORD'] = 'true';
             } else {
                 $resPwFile = $creds['restic_password_file'] ?? '';
                 if ($resPwFile !== '' && file_exists($resPwFile) && trim((string) file_get_contents($resPwFile)) !== '') {
                     $args[] = '--password-file';
                     $args[] = $resPwFile;
+                    $env['RESTIC_PASSWORD_FILE'] = $resPwFile;
                 }
             }
 
@@ -300,7 +305,13 @@ function jbLoadResticEnv(): ?array
         }
         $pwFile = '/etc/jabali-backup/restic-password';
         if ($repoPath !== '' && file_exists($pwFile)) {
-            return ['env' => [], 'args' => ['--repo', $repoPath, '--password-file', $pwFile]];
+            return [
+                'env'  => [
+                    'RESTIC_REPOSITORY'    => $repoPath,
+                    'RESTIC_PASSWORD_FILE' => $pwFile,
+                ],
+                'args' => ['--repo', $repoPath, '--password-file', $pwFile],
+            ];
         }
     }
 
