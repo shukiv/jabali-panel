@@ -2183,11 +2183,19 @@ class ServerSettings extends Page implements HasActions, HasForms
             </script>
         JS;
 
+        // Order matters: the <script> that defines window.addonRow must land
+        // in the DOM BEFORE any x-data="addonRow(...)" div. When Livewire
+        // injects this tab's content after a tab-click (as opposed to a full
+        // page refresh), Alpine processes x-data directives as soon as the
+        // nodes are mounted. If the factory script hasn't executed yet,
+        // Alpine silently fails to mount the row — which hid the
+        // Install/Uninstall buttons on first navigation to the Addons tab
+        // until the user force-refreshed.
         return [
-            Grid::make(2)->schema($sections),
             Placeholder::make('addon_row_script')
                 ->label('')
                 ->content(new HtmlString($alpineScript)),
+            Grid::make(2)->schema($sections),
         ];
     }
 
