@@ -14672,10 +14672,20 @@ function serviceList(array $params): array
         // Get status text
         exec('systemctl status '.escapeshellarg($service).' 2>&1 | head -5', $statusOutput, $statusCode);
 
+        // systemctl is-failed returns 0 when the unit is actually in the
+        // failed state (not just inactive between oneshot runs), and
+        // non-zero otherwise. We expose that as a separate boolean so the
+        // panel can distinguish "benignly inactive" (oneshot+timer that
+        // just finished its drain) from "something broke".
+        $failedOutput = [];
+        exec('systemctl is-failed '.escapeshellarg($service).' 2>/dev/null', $failedOutput, $failedCode);
+        $isFailed = ($failedCode === 0);
+
         $results[$service] = [
             'is_active' => $isActive,
             'is_enabled' => $isEnabled,
-            'status' => $isActive ? 'running' : 'stopped',
+            'is_failed' => $isFailed,
+            'status' => $isActive ? 'running' : ($isFailed ? 'failed' : 'stopped'),
             'status_text' => implode("\n", $statusOutput),
         ];
     }

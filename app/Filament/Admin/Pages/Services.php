@@ -137,6 +137,16 @@ class Services extends Page implements HasActions, HasForms, HasTable
             if ($result->success) {
                 $this->services = [];
                 foreach ($result->get('services', []) as $name => $status) {
+                    $isFailed = (bool) ($status['is_failed'] ?? false);
+
+                    // jabali-queue runs as oneshot+timer (fires every 60s, completes in ~185ms).
+                    // Listing it alongside always-on daemons produced a misleading "Stopped" badge
+                    // between firings. Only surface it when systemd reports it as actually failed
+                    // — otherwise this is infrastructure the operator shouldn't be babysitting.
+                    if ($name === 'jabali-queue' && ! $isFailed) {
+                        continue;
+                    }
+
                     $config = $managedServices[$name] ?? [
                         'name' => ucfirst($name),
                         'description' => '',
@@ -146,6 +156,7 @@ class Services extends Page implements HasActions, HasForms, HasTable
                         'service' => $name,
                         'is_active' => $status['is_active'] ?? false,
                         'is_enabled' => $status['is_enabled'] ?? false,
+                        'is_failed' => $isFailed,
                         'status' => $status['status'] ?? 'unknown',
                     ]);
                 }
