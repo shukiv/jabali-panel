@@ -8,4 +8,3 @@
 | [0004](0004-standalone-backup-tool.md) | Standalone backup tool over integrated backup system | accepted | 2026-04-05 |
 | [0005](0005-agent-addon-routes.md) | Agent addon route loading from /etc/jabali/agent.d/ | accepted | 2026-04-05 |
 | [0006](0006-cgroup-v2-resource-limiting.md) | Per-user resource limiting via cgroups v2 systemd slices | accepted | 2026-04-09 |
-| [0007](0007-agent-v2-control-plane.md) | Agent v2 — unified background task control plane | accepted | 2026-04-13 |

@@ -3,16 +3,8 @@
 
 declare(strict_types=1);
 
-// Load the Laravel autoloader so the agent can use classes from app/Agent/.
-// See docs/adr/0007-agent-v2-control-plane.md for what lives there.
-$autoload = __DIR__.'/../vendor/autoload.php';
-if (file_exists($autoload)) {
-    require $autoload;
-}
-
 mysqli_report(MYSQLI_REPORT_OFF); // Disable mysqli exceptions
 define('SOCKET_PATH', '/var/run/jabali/agent.sock');
-define('AGENT_AUDIT_LOG', '/var/log/jabali/agent-audit.log');
 define('PID_FILE', '/var/run/jabali/agent.pid');
 define('LOG_FILE', '/var/log/jabali/agent.log');
 
@@ -594,11 +586,6 @@ function handleAction(array $request): array
 
     return match ($action) {
         'ping' => ['success' => true, 'message' => 'pong', 'version' => '1.0.0'],
-        'job.start' => jobStart($params),
-        'job.status' => jobStatus($params),
-        'job.cancel' => jobCancel($params),
-        'job.list' => jobList($params),
-        'job.tail' => jobTail($params),
         'server.restart_agent' => restartAgent($params),
         'server.reboot' => serverReboot($params),
         'server.git_pull' => gitPull($params),
@@ -13491,130 +13478,6 @@ function is_mounted(string $path): bool
 }
 
 // ============ SELF-RESTART ============
-
-// ============================================================================
-// Background task dispatcher (ADR-0007)
-//
-// Thin wrappers around App\Agent\Jobs\JobDispatcher. Singleton so the SQLite
-// connection (WAL mode) and the JobStore cache live for the life of the
-// agent process.
-// ============================================================================
-
-function jobDispatcher(): \App\Agent\Jobs\JobDispatcher
-{
-    static $dispatcher = null;
-    if ($dispatcher === null) {
-        $store = new \App\Agent\Jobs\JobStore('/var/lib/jabali/agent/jobs.db');
-        $runner = new \App\Agent\Jobs\SystemdRunner;
-        $dispatcher = new \App\Agent\Jobs\JobDispatcher($store, $runner, '/var/lib/jabali/jobs');
-    }
-
-    return $dispatcher;
-}
-
-function jobRegistry(): \App\Agent\MethodRegistry
-{
-    static $registry = null;
-    if ($registry === null) {
-        $registry = \App\Agent\MethodRegistry::default();
-    }
-
-    return $registry;
-}
-
-function jobStart(array $params): array
-{
-    try {
-        jobRegistry()->assertValid('job.start', $params);
-    } catch (\InvalidArgumentException $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-
-    $type = (string) ($params['type'] ?? '');
-    $argv = $params['argv'] ?? [];
-    $limits = $params['limits'] ?? [];
-    $payload = $params['payload'] ?? [];
-
-    if ($type === '' || ! is_array($argv)) {
-        return ['success' => false, 'error' => 'type and argv[] are required'];
-    }
-
-    try {
-        $callerId = isset($params['id']) && is_string($params['id']) ? $params['id'] : null;
-        $result = jobDispatcher()->start($type, array_values(array_map('strval', $argv)), $limits, $payload, $callerId);
-
-        return ['success' => true] + $result;
-    } catch (\Throwable $e) {
-        logger('[job.start] '.$e->getMessage(), 'ERROR');
-
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-}
-
-function jobStatus(array $params): array
-{
-    $id = (string) ($params['id'] ?? '');
-    if ($id === '') {
-        return ['success' => false, 'error' => 'id is required'];
-    }
-
-    try {
-        return ['success' => true, 'task' => jobDispatcher()->status($id)];
-    } catch (\Throwable $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-}
-
-function jobCancel(array $params): array
-{
-    $id = (string) ($params['id'] ?? '');
-    $grace = (int) ($params['grace_sec'] ?? 10);
-    if ($id === '') {
-        return ['success' => false, 'error' => 'id is required'];
-    }
-
-    try {
-        jobDispatcher()->cancel($id, $grace);
-
-        return ['success' => true];
-    } catch (\Throwable $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-}
-
-function jobList(array $params): array
-{
-    $filters = [];
-    foreach (['status', 'type'] as $f) {
-        if (isset($params[$f]) && is_string($params[$f])) {
-            $filters[$f] = $params[$f];
-        }
-    }
-    if (isset($params['limit'])) {
-        $filters['limit'] = (int) $params['limit'];
-    }
-
-    try {
-        return ['success' => true, 'tasks' => jobDispatcher()->list($filters)];
-    } catch (\Throwable $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-}
-
-function jobTail(array $params): array
-{
-    $id = (string) ($params['id'] ?? '');
-    $since = isset($params['since']) && is_string($params['since']) ? $params['since'] : null;
-    if ($id === '') {
-        return ['success' => false, 'error' => 'id is required'];
-    }
-
-    try {
-        return ['success' => true, 'events' => jobDispatcher()->tail($id, $since)];
-    } catch (\Throwable $e) {
-        return ['success' => false, 'error' => $e->getMessage()];
-    }
-}
 
 function restartAgent(array $params): array
 {

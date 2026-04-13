@@ -6,34 +6,6 @@ return [
     'agent' => [
         'socket' => env('JABALI_AGENT_SOCKET', '/var/run/jabali/agent.sock'),
         'timeout' => env('JABALI_AGENT_TIMEOUT', 30),
-        // Group that the panel's PHP process runs as. The agent uses this
-        // to chgrp task log files so TaskEventRelay can read them. Will
-        // change to 'jabali-panel' after ADR-0007 Phase 12.
-        'panel_group' => env('JABALI_PANEL_GROUP', 'www-data'),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Agent v2 rollout flags (ADR-0007)
-    |--------------------------------------------------------------------------
-    |
-    | Per-subsystem feature flags for migrating existing work into the
-    | background-tasks control plane. Each flag is opt-in so we can ship
-    | one migration at a time and roll back by flipping a single toggle.
-    |
-    */
-    'agent_v2' => [
-        // Phase 7 (shipped):
-        'ssl_enabled' => env('JABALI_AGENT_V2_SSL', false),
-        // Phase 8 (shipped — binary side owned by jabali-backup team):
-        'backup_binary' => env('JABALI_BACKUP_BINARY', '/opt/jabali-backup/bin/jabali-backup'),
-        // Phase 9:
-        'addons_enabled' => env('JABALI_AGENT_V2_ADDONS', false),
-        // Phase 9 follow-ups — flags reserved, binaries not yet implemented:
-        'git_deploy_enabled' => env('JABALI_AGENT_V2_GIT_DEPLOY', false),
-        'cpanel_restore_enabled' => env('JABALI_AGENT_V2_CPANEL_RESTORE', false),
-        'whm_migration_enabled' => env('JABALI_AGENT_V2_WHM_MIGRATION', false),
-        'imap_sync_enabled' => env('JABALI_AGENT_V2_IMAP_SYNC', false),
     ],
 
     'panel' => [

@@ -204,12 +204,6 @@ Route::post('/internal/page-cache-purge', function (Request $request) use ($allo
     }
 })->middleware('throttle:internal-api');
 
-// Agent-to-panel callback for background task progress (ADR-0007).
-// Auth is per-task via callback_token in the body, validated inside the
-// controller — rate limiting + internal-api throttle still apply.
-Route::post('/internal/tasks/{id}/event', \App\Http\Controllers\Internal\BackgroundTaskEventController::class)
-    ->middleware('throttle:internal-api');
-
 Route::post('/webhooks/git/{deployment}', GitWebhookController::class)
     ->middleware('throttle:git-webhooks');
 Route::post('/webhooks/git/{deployment}/{token}', GitWebhookController::class)

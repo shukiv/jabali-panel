@@ -3445,18 +3445,6 @@ setup_logrotate() {
     notifempty
     create 0640 www-data www-data
 }
-
-# Jabali agent audit log (every privileged method call — see ADR-0007)
-# Keep a longer history for incident forensics.
-/var/log/jabali/agent-audit.log {
-    daily
-    missingok
-    rotate 60
-    compress
-    delaycompress
-    notifempty
-    create 0600 root root
-}
 LOGROTATE
 
     log "Log rotation configured for Jabali logs (domains, ModSecurity, app logs)"

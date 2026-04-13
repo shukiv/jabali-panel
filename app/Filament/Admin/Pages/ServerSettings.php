@@ -2196,30 +2196,6 @@ class ServerSettings extends Page implements HasActions, HasForms
      */
     public function installAddon(string $addonId): array
     {
-        // Agent v2 path (ADR-0007): dispatch a BackgroundTask so the install
-        // shows up in /jabali-admin/background-tasks with live progress.
-        if (config('jabali.agent_v2.addons_enabled')) {
-            try {
-                $task = app(\App\Services\BackgroundTasks\AddonInstaller::class)->install($addonId);
-                if ($task === null) {
-                    Notification::make()->title(__('Install already in progress'))->warning()->send();
-
-                    return ['success' => false];
-                }
-                Notification::make()
-                    ->title(__('Install dispatched — see Background Tasks for progress'))
-                    ->success()->send();
-
-                return ['success' => true];
-            } catch (\Throwable $e) {
-                Notification::make()
-                    ->title(__('Installation failed: :error', ['error' => $e->getMessage()]))
-                    ->danger()->send();
-
-                return ['success' => false];
-            }
-        }
-
         try {
             $result = $this->agent()->send('addon.install', ['addon' => $addonId]);
             if ($result['success'] ?? false) {
@@ -2252,29 +2228,6 @@ class ServerSettings extends Page implements HasActions, HasForms
      */
     public function uninstallAddon(string $addonId): array
     {
-        // Agent v2 path (ADR-0007): dispatch a BackgroundTask.
-        if (config('jabali.agent_v2.addons_enabled')) {
-            try {
-                $task = app(\App\Services\BackgroundTasks\AddonInstaller::class)->uninstall($addonId);
-                if ($task === null) {
-                    Notification::make()->title(__('Uninstall already in progress'))->warning()->send();
-
-                    return ['success' => false];
-                }
-                Notification::make()
-                    ->title(__('Uninstall dispatched — see Background Tasks for progress'))
-                    ->success()->send();
-
-                return ['success' => true];
-            } catch (\Throwable $e) {
-                Notification::make()
-                    ->title(__('Uninstall failed: :error', ['error' => $e->getMessage()]))
-                    ->danger()->send();
-
-                return ['success' => false];
-            }
-        }
-
         try {
             $result = $this->agent()->send('addon.uninstall', ['addon' => $addonId]);
             if ($result['success'] ?? false) {

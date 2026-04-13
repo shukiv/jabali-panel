@@ -4,11 +4,9 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Enums\BackgroundTaskType;
 use App\Models\Domain;
 use App\Models\SslCertificate;
 use App\Services\AdminNotificationService;
-use App\Services\BackgroundTasks\BackgroundTaskDispatcher;
 use App\Services\SslManagementService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -66,16 +64,6 @@ class IssueSslCertificate implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        // Agent v2 path (ADR-0007): dispatch a BackgroundTask that runs
-        // certbot in a transient systemd unit with cgroup limits, and emits
-        // progress to the unified Background Tasks dashboard.
-        if (config('jabali.agent_v2.ssl_enabled')) {
-            $this->dispatchViaAgentV2($domain);
-
-            return;
-        }
-
-        // Legacy path: call the SSL service synchronously in this worker.
         Log::info("IssueSslCertificate: Issuing {$this->service} SSL for {$domain->domain}");
 
         $cert = $service->issue($domain, $this->service);
@@ -105,40 +93,5 @@ class IssueSslCertificate implements ShouldBeUnique, ShouldQueue
             'service' => $this->service,
             'error' => $exception->getMessage(),
         ]);
-    }
-
-    private function dispatchViaAgentV2(Domain $domain): void
-    {
-        $dispatcher = app(BackgroundTaskDispatcher::class);
-
-        $argv = [
-            '/usr/bin/php',
-            base_path('artisan'),
-            'jabali:tasks:run-ssl-issue',
-            '--domain-id='.$domain->id,
-            '--service='.$this->service,
-        ];
-
-        $task = $dispatcher->dispatch(
-            type: BackgroundTaskType::SslIssue,
-            argv: $argv,
-            payload: [
-                'domain_id' => $domain->id,
-                'domain' => $domain->domain,
-                'service' => $this->service,
-            ],
-            dedupeKey: 'ssl:'.$domain->id.':'.$this->service,
-            targetType: Domain::class,
-            targetId: (string) $domain->id,
-            limits: ['cpu' => 50, 'memory' => '256M', 'io' => 100],
-        );
-
-        if ($task === null) {
-            Log::info("IssueSslCertificate: dedupe — SSL task already running for {$domain->domain}/{$this->service}");
-
-            return;
-        }
-
-        Log::info("IssueSslCertificate: dispatched agent-v2 task {$task->id} for {$domain->domain}/{$this->service}");
     }
 }
