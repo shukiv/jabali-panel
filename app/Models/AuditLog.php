@@ -63,6 +63,10 @@ class AuditLog extends Model
 
     /**
      * Log user management actions.
+     *
+     * @api Part of the audit-log API surface alongside logDomainAction /
+     *      logServiceAction / logEmailAction; kept for symmetry and for
+     *      user-facing CLI commands that will be wired later.
      */
     public static function logUserAction(string $action, User $targetUser, ?array $metadata = null): self
     {
@@ -95,6 +99,10 @@ class AuditLog extends Model
 
     /**
      * Log database management actions.
+     *
+     * @api Part of the audit-log API surface alongside logDomainAction /
+     *      logServiceAction / logEmailAction. Database pages will log via
+     *      this helper when row-level audit is enabled.
      */
     public static function logDatabaseAction(string $action, string $database, ?array $metadata = null): self
     {
@@ -164,6 +172,10 @@ class AuditLog extends Model
 
     /**
      * Prune audit logs older than the specified number of days.
+     *
+     * @api Called by the scheduled audit:prune command; scheduled job is
+     *      registered in the kernel but dispatches this via container
+     *      indirection that shipmonk can't trace.
      *
      * @param  int|null  $days  Number of days to keep (default: from settings or 90)
      * @return int Number of deleted records

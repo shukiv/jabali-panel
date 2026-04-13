@@ -99,6 +99,14 @@ class ImpersonationToken extends Model
         return $record;
     }
 
+    /**
+     * Prune spent and expired impersonation tokens.
+     *
+     * @api Intended for the scheduled tokens:prune maintenance task;
+     *      createForUser() already garbage-collects stale tokens for the
+     *      current admin/target pair, so day-to-day operation doesn't need
+     *      this. Kept for ops to invoke manually or on a scheduled hook.
+     */
     public static function cleanupExpired(): int
     {
         return static::where('expires_at', '<', now())

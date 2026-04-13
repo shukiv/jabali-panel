@@ -58,43 +58,6 @@ class FilePermissionTest extends TestCase
         $this->assertSame(3, strlen($perm->toOctal()));
     }
 
-    // --- toUnixString() ---
-
-    public function test_to_unix_string_for_755(): void
-    {
-        $perm = FilePermission::fromOctal('755');
-
-        $this->assertSame('rwxr-xr-x', $perm->toUnixString());
-    }
-
-    public function test_to_unix_string_for_644(): void
-    {
-        $perm = FilePermission::fromOctal('644');
-
-        $this->assertSame('rw-r--r--', $perm->toUnixString());
-    }
-
-    public function test_to_unix_string_for_000(): void
-    {
-        $perm = FilePermission::fromOctal('000');
-
-        $this->assertSame('---------', $perm->toUnixString());
-    }
-
-    public function test_to_unix_string_for_777(): void
-    {
-        $perm = FilePermission::fromOctal('777');
-
-        $this->assertSame('rwxrwxrwx', $perm->toUnixString());
-    }
-
-    public function test_to_unix_string_for_400(): void
-    {
-        $perm = FilePermission::fromOctal('400');
-
-        $this->assertSame('r--------', $perm->toUnixString());
-    }
-
     // --- fromToggles() ---
 
     public function test_from_toggles_all_true_produces_777(): void
@@ -194,17 +157,6 @@ class FilePermissionTest extends TestCase
             '700' => ['700'],
             '750' => ['750'],
         ];
-    }
-
-    #[DataProvider('octalRoundTripValues')]
-    public function test_round_trip_octal_to_unix_and_back(string $octal): void
-    {
-        $perm = FilePermission::fromOctal($octal);
-        // Prepend a type char for fromUnixString (it expects 10-char string)
-        $unixStr = '-'.$perm->toUnixString();
-        $restored = FilePermission::fromUnixString($unixStr);
-
-        $this->assertSame($octal, $restored->toOctal());
     }
 
     // --- toFormState() ---

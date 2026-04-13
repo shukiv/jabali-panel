@@ -143,10 +143,4 @@ class SslCertificate extends Model
             && $this->status === 'active'
             && $this->isExpiringSoon(30);
     }
-
-    public function incrementRenewalAttempts(): void
-    {
-        $this->increment('renewal_attempts');
-        $this->update(['last_check_at' => now()]);
-    }
 }

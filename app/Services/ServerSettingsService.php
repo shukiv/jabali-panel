@@ -142,19 +142,6 @@ class ServerSettingsService
         DnsSetting::clearCache();
     }
 
-    public function saveSecurity(bool $passphrasePasswords): void
-    {
-        DnsSetting::set('passphrase_passwords', $passphrasePasswords ? '1' : '0');
-        DnsSetting::clearCache();
-    }
-
-    public function saveLogSettings(string $retentionDays, string $maxSize): void
-    {
-        DnsSetting::set('log_retention_days', $retentionDays);
-        DnsSetting::set('log_max_size', $maxSize);
-        DnsSetting::clearCache();
-    }
-
     /**
      * @param  array<string, mixed>  $data
      */

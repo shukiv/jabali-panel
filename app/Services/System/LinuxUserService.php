@@ -63,12 +63,4 @@ class LinuxUserService
 
         return $response['success'] ?? false;
     }
-
-    /**
-     * Validate username format
-     */
-    public static function isValidUsername(string $username): bool
-    {
-        return preg_match('/^[a-z][a-z0-9_]{0,31}$/', $username) === 1;
-    }
 }

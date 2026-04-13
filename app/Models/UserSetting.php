@@ -49,22 +49,4 @@ class UserSetting extends Model
 
         Cache::forget("user_setting.{$userId}.{$key}");
     }
-
-    public static function forgetForUser(int $userId, string $key): void
-    {
-        static::query()
-            ->where('user_id', $userId)
-            ->where('key', $key)
-            ->delete();
-
-        Cache::forget("user_setting.{$userId}.{$key}");
-    }
-
-    public static function getAllForUser(int $userId): array
-    {
-        return static::query()
-            ->where('user_id', $userId)
-            ->pluck('value', 'key')
-            ->toArray();
-    }
 }

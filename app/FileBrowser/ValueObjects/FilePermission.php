@@ -56,13 +56,6 @@ final readonly class FilePermission
         return "{$this->owner}{$this->group}{$this->other}";
     }
 
-    public function toUnixString(): string
-    {
-        return self::triadToRwx($this->owner)
-             .self::triadToRwx($this->group)
-             .self::triadToRwx($this->other);
-    }
-
     public function toFormState(): array
     {
         return [
@@ -98,12 +91,5 @@ final readonly class FilePermission
     private static function boolsToTriad(bool $read, bool $write, bool $execute): int
     {
         return ($read ? 4 : 0) + ($write ? 2 : 0) + ($execute ? 1 : 0);
-    }
-
-    private static function triadToRwx(int $triad): string
-    {
-        return (($triad & 4) ? 'r' : '-')
-             .(($triad & 2) ? 'w' : '-')
-             .(($triad & 1) ? 'x' : '-');
     }
 }

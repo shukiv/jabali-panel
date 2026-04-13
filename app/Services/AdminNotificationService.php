@@ -139,26 +139,6 @@ class AdminNotificationService
         );
     }
 
-    public static function loginFailure(string $ip, string $service, int $attempts): bool
-    {
-        return self::send(
-            'login_failures',
-            "Login Failure Alert: {$ip}",
-            'Multiple failed login attempts detected.',
-            ['IP Address' => $ip, 'Service' => $service, 'Attempts' => $attempts]
-        );
-    }
-
-    public static function systemUpdatesAvailable(int $updateCount): bool
-    {
-        return self::send(
-            'system_updates',
-            'System Updates Available',
-            "{$updateCount} system update(s) are available for your Jabali Panel.",
-            ['Available Updates' => $updateCount]
-        );
-    }
-
     public static function sshLogin(string $username, string $ip, string $method = 'password'): bool
     {
         return self::send(

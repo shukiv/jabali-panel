@@ -45,7 +45,7 @@ class TrashManager
             throw new RuntimeException('Failed to move to trash: '.$e->getMessage());
         }
 
-        return TrashResult::success("Moved '{$basename}' to trash");
+        return new TrashResult;
     }
 
     /**
@@ -99,10 +99,7 @@ class TrashManager
         $this->adapter->files()->move(self::DIR.'/'.$trashName, $originalPath);
         $this->store->forgetTrash($trashName);
 
-        return TrashResult::success(
-            message: "Restored to: {$originalPath}",
-            data: ['restored_path' => $originalPath],
-        );
+        return new TrashResult(['restored_path' => $originalPath]);
     }
 
     public function deletePermanently(string $trashName): TrashResult
@@ -113,7 +110,7 @@ class TrashManager
         $this->adapter->files()->delete(self::DIR.'/'.$trashName);
         $this->store->forgetTrash($trashName);
 
-        return TrashResult::success(message: 'Permanently deleted');
+        return new TrashResult;
     }
 
     public function empty(): TrashResult
@@ -131,15 +128,7 @@ class TrashManager
             }
         }
 
-        return TrashResult::success(
-            message: "{$deleted} items deleted",
-            data: ['deleted' => $deleted],
-        );
-    }
-
-    public function hasItems(): bool
-    {
-        return count($this->items()) > 0;
+        return new TrashResult(['deleted' => $deleted]);
     }
 
     private function ensureDir(): void

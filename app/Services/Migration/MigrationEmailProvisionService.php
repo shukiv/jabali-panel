@@ -75,7 +75,6 @@ class MigrationEmailProvisionService
 
                 $emailDomain = $this->enableEmailDomain($user, $domain);
                 $emailDomains[$domainName] = $emailDomain;
-                $result->domainsEnabled[] = $domainName;
                 $logger(__('Email enabled for domain: :domain', ['domain' => $domainName]), 'success');
             } catch (Exception $e) {
                 $result->errors[] = __('Failed to enable email for :domain: :error', [
@@ -154,35 +153,6 @@ class MigrationEmailProvisionService
         $this->syncMailRouting($logger);
 
         return $result;
-    }
-
-    /**
-     * Provision mailboxes from a flat list of email strings (e.g. from backup restore).
-     *
-     * @param  array<int, string>  $emails  Email addresses like ['user@domain.com']
-     * @param  callable(string, string): void|null  $logger
-     */
-    public function provisionFromEmailList(
-        User $user,
-        array $emails,
-        ?callable $logger = null,
-    ): MigrationEmailProvisionResult {
-        // Convert flat email list to discovered data format
-        $mailboxes = [];
-        foreach ($emails as $email) {
-            $parts = explode('@', $email);
-            if (count($parts) !== 2) {
-                continue;
-            }
-
-            $mailboxes[] = [
-                'email' => $email,
-                'local_part' => $parts[0],
-                'domain' => $parts[1],
-            ];
-        }
-
-        return $this->provisionFromDiscoveredData($user, ['mailboxes' => $mailboxes], $logger);
     }
 
     /**

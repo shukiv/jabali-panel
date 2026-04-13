@@ -80,12 +80,4 @@ class EmailDomain extends Model
     {
         return $this->mailboxes()->count();
     }
-
-    /**
-     * Check if more mailboxes can be created
-     */
-    public function canCreateMailbox(): bool
-    {
-        return $this->max_mailboxes === null || $this->mailbox_count < $this->max_mailboxes;
-    }
 }

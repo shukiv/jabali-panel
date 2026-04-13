@@ -39,12 +39,4 @@ class Setting extends Model
         );
         Cache::forget("setting.{$key}");
     }
-
-    /**
-     * Get all settings as key-value array
-     */
-    public static function getAll(): array
-    {
-        return static::pluck('value', 'key')->toArray();
-    }
 }

@@ -48,6 +48,7 @@ parameters:
                 - app/Filament/*/Widgets/*
                 - app/Filament/*/Resources/*/Pages/*
                 - app/Filament/*/Resources/*/Widgets/*
+                - app/Filament/*/Resources/*/Schemas/*
                 - app/Livewire/*
                 - app/FileBrowser/Components/*
                 - app/FileBrowser/Livewire/*
@@ -60,6 +61,7 @@ parameters:
                 - app/Filament/*/Widgets/*
                 - app/Filament/*/Resources/*/Pages/*
                 - app/Filament/*/Resources/*/Widgets/*
+                - app/Filament/*/Resources/*/Schemas/*
                 - app/Livewire/*
                 - app/FileBrowser/Components/*
                 - app/FileBrowser/Livewire/*

@@ -6,6 +6,7 @@ namespace App\Services\FileBrowser;
 
 use App\FileBrowser\Services\TrashResult;
 use App\Services\Agent\AgentClient;
+use RuntimeException;
 
 /**
  * TrashManager that delegates directly to the Jabali agent daemon.
@@ -27,10 +28,10 @@ class AgentTrashManager
         $result = $this->agent->fileTrash($this->username, $path);
 
         if (! ($result['success'] ?? false)) {
-            return TrashResult::failure($result['error'] ?? 'Failed to move to trash');
+            throw new RuntimeException($result['error'] ?? 'Failed to move to trash');
         }
 
-        return TrashResult::success("Moved '".basename($path)."' to trash");
+        return new TrashResult;
     }
 
     /**
@@ -49,13 +50,10 @@ class AgentTrashManager
         $result = $this->agent->fileRestore($this->username, $trashName);
 
         if (! ($result['success'] ?? false)) {
-            return TrashResult::failure($result['error'] ?? 'Failed to restore from trash');
+            throw new RuntimeException($result['error'] ?? 'Failed to restore from trash');
         }
 
-        return TrashResult::success(
-            message: 'Restored to: '.($result['restored_path'] ?? ''),
-            data: ['restored_path' => $result['restored_path'] ?? ''],
-        );
+        return new TrashResult(['restored_path' => $result['restored_path'] ?? '']);
     }
 
     public function deletePermanently(string $trashName): TrashResult
@@ -64,21 +62,13 @@ class AgentTrashManager
         $trashPath = ".trash/$trashName";
         $this->agent->fileDelete($this->username, $trashPath);
 
-        return TrashResult::success(message: 'Permanently deleted');
+        return new TrashResult;
     }
 
     public function empty(): TrashResult
     {
         $result = $this->agent->fileEmptyTrash($this->username);
 
-        return TrashResult::success(
-            message: ($result['deleted'] ?? 0).' items deleted',
-            data: ['deleted' => $result['deleted'] ?? 0],
-        );
-    }
-
-    public function hasItems(): bool
-    {
-        return count($this->items()) > 0;
+        return new TrashResult(['deleted' => $result['deleted'] ?? 0]);
     }
 }

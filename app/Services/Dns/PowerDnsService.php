@@ -61,6 +61,10 @@ class PowerDnsService
     /**
      * Get zone details including all RRsets.
      *
+     * @api Part of the DNS service API surface alongside createZone /
+     *      deleteZone / setRecords; used by ops tooling and CLI commands
+     *      that inspect a zone's current state.
+     *
      * @return array<string, mixed>
      */
     public function getZone(string $domain): array

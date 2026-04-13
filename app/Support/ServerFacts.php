@@ -53,29 +53,6 @@ final class ServerFacts
         return $fallback;
     }
 
-    public static function timezone(string $fallback = 'UTC'): string
-    {
-        $tz = trim((string) @file_get_contents('/etc/timezone'));
-
-        if ($tz !== '') {
-            return $tz;
-        }
-
-        // Common Debian/Ubuntu setup: /etc/localtime is a symlink into /usr/share/zoneinfo/...
-        if (@is_link('/etc/localtime')) {
-            $link = (string) @readlink('/etc/localtime');
-            $prefix = '/usr/share/zoneinfo/';
-            if (str_starts_with($link, $prefix)) {
-                $candidate = substr($link, strlen($prefix));
-                if (is_string($candidate) && $candidate !== '') {
-                    return $candidate;
-                }
-            }
-        }
-
-        return $fallback;
-    }
-
     public static function isSystemdResolved(): bool
     {
         // Prefer filesystem-based detection to avoid shelling out.

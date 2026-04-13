@@ -6,21 +6,12 @@ namespace App\FileBrowser\Services;
 
 class TrashResult
 {
-    private function __construct(
-        public readonly bool $success,
-        public readonly string $message,
-        public readonly array $data,
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    public function __construct(
+        public readonly array $data = [],
     ) {}
-
-    public static function success(string $message, array $data = []): self
-    {
-        return new self(success: true, message: $message, data: $data);
-    }
-
-    public static function failure(string $message, array $data = []): self
-    {
-        return new self(success: false, message: $message, data: $data);
-    }
 
     public function restoredPath(): string
     {

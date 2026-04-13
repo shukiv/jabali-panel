@@ -76,14 +76,4 @@ class CronCommandValidator
 
         return true;
     }
-
-    /**
-     * Get the list of allowed executables for display purposes.
-     *
-     * @return list<string>
-     */
-    public static function allowedExecutables(): array
-    {
-        return self::$allowedExecutables;
-    }
 }
