@@ -3,8 +3,18 @@ parameters:
     paths:
         - app
         - tests
+        # Monorepo subdirs — their panel/* code is deployed INTO the main
+        # Laravel app at install time, so we analyse them here as part of
+        # one combined tree (prevents cross-repo isAdmin-style incidents).
+        - security/panel
+        - backup/panel
+        - backup/lib
+        - terminal/panel
     excludePaths:
         - app/Filament/*/Pages/GeneratedClasses/*
+        - security/panel/*/tests/*
+        - backup/panel/*/tests/*
+        - terminal/panel/*/tests/*
     # The ignoreErrors block uses defensive scoping (e.g. listing Filament
     # Resource paths even when they're currently clean) so silences don't
     # silently evaporate if someone renames a file. Tolerate unmatched patterns.
@@ -188,3 +198,65 @@ parameters:
         -
             identifier: shipmonk.deadProperty.neverRead
             message: '#^Property App\\Console\\Cli\\ResolvedRoute::\$#'
+
+        # ─── Monorepo subdirs (addon panels) ──────────────────────────────────
+        # Each subdir was its own repo before 2026-04-13. Its panel/ code is
+        # deployed INTO the main Laravel app at install time, so the same
+        # Filament/Livewire/adapter-dispatch false positives that affect
+        # app/Filament/* also affect these trees.
+
+        # backup/ — Filament pages + Livewire traits + FileBrowserAdapter impl
+        # (ResticSnapshotAdapter is resolved polymorphically through the
+        # FileBrowserAdapter interface that the main panel's UI uses).
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - backup/panel/filament/*
+                - backup/panel/Filament/*
+                - backup/panel/Concerns/*
+                - backup/panel/backup/Concerns/*
+                - backup/panel/backup/Adapters/*
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - backup/panel/filament/*
+                - backup/panel/Filament/*
+                - backup/panel/Concerns/*
+                - backup/panel/backup/Concerns/*
+                - backup/panel/backup/Adapters/*
+
+        # terminal/ — Filament page, plugin factory invoked by the main
+        # panel provider, and JabaliTerminalClient resolved from the
+        # service container by pages/controllers.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - terminal/panel/Pages/*
+                - terminal/panel/Http/Controllers/*
+                - terminal/panel/JabaliTerminalPlugin.php
+                - terminal/panel/JabaliTerminalClient.php
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - terminal/panel/Pages/*
+                - terminal/panel/JabaliTerminalPlugin.php
+                - terminal/panel/JabaliTerminalClient.php
+
+        # security/ — Filament plugin page + widgets follow the same
+        # Filament/Livewire lifecycle dispatch as the main panel.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - security/panel/Pages/*
+                - security/panel/Widgets/*
+                - security/panel/Concerns/*
+                - security/panel/JabaliSecurityPlugin.php
+                - security/panel/JabaliSecurityClient.php
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - security/panel/Pages/*
+                - security/panel/Widgets/*
+                - security/panel/Concerns/*
+                - security/panel/JabaliSecurityPlugin.php
+                - security/panel/JabaliSecurityClient.php
