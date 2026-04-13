@@ -53,10 +53,13 @@ final class JobDispatcher
         $unit = 'jabali-job-'.$id;
         $logPath = rtrim($this->logDir, '/')."/{$id}.log";
 
-        // Pre-create the log file with restrictive perms so the spawned binary
-        // has somewhere to write and nothing else on the box can read it.
+        // Pre-create the log file with group ownership on the panel's uid
+        // so the panel can tail it (TaskEventRelay runs as www-data). The
+        // file is root-owned but group-readable to the panel group.
         @touch($logPath);
         @chmod($logPath, 0640);
+        $panelGroup = config('jabali.agent.panel_group', 'www-data');
+        @chgrp($logPath, $panelGroup);
 
         // Inject the contract args every spawned binary must accept.
         $fullArgv = array_merge($argv, [

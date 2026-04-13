@@ -6,6 +6,10 @@ return [
     'agent' => [
         'socket' => env('JABALI_AGENT_SOCKET', '/var/run/jabali/agent.sock'),
         'timeout' => env('JABALI_AGENT_TIMEOUT', 30),
+        // Group that the panel's PHP process runs as. The agent uses this
+        // to chgrp task log files so TaskEventRelay can read them. Will
+        // change to 'jabali-panel' after ADR-0007 Phase 12.
+        'panel_group' => env('JABALI_PANEL_GROUP', 'www-data'),
     ],
 
     /*
