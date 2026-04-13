@@ -86,17 +86,6 @@ $this->getRtlScript()
                     ? \App\JabaliTerminal\JabaliTerminalPlugin::make()
                     : null,
             ]))
-            ->navigationItems([
-                // opcodesio/log-viewer ships its own Livewire UI rather than
-                // as a Filament resource — link to it from the sidebar.
-                \Filament\Navigation\NavigationItem::make('Log Viewer')
-                    ->label(fn () => __('Log Viewer'))
-                    ->icon('heroicon-o-document-magnifying-glass')
-                    ->url(fn () => url('/jabali-admin/log-viewer'))
-                    ->openUrlInNewTab()
-                    ->sort(99)
-                    ->visible(fn () => (bool) (auth('admin')->user()?->is_admin ?? false)),
-            ])
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
