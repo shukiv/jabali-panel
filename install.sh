@@ -1181,6 +1181,19 @@ PHPINI
 
     info "FrankenPHP tuning: num_threads=${num_threads} max_threads=${max_threads} (mem=${mem_mb}M cpus=${cpus})"
 
+    # Preserve addon-injected Caddy blocks (marker-guarded) so addons like
+    # jabali-terminal survive panel updates. Addons inject between
+    # `# === <NAME> BEGIN ===` / `# === <NAME> END ===` markers inside the
+    # server block; we extract them here and re-inject before the final `}`.
+    local addon_blocks=""
+    if [ -f /etc/jabali/Caddyfile ]; then
+        addon_blocks="$(awk '
+            /^[[:space:]]*# === .* BEGIN ===/ { capture=1 }
+            capture { print }
+            /^[[:space:]]*# === .* END ===/  { capture=0; print "" }
+        ' /etc/jabali/Caddyfile)"
+    fi
+
     cat > /etc/jabali/Caddyfile <<CADDYEOF
 {
 	frankenphp {
@@ -1240,6 +1253,32 @@ PHPINI
 	respond @blocked_other 404
 }
 CADDYEOF
+
+    # Re-inject preserved addon blocks just before the final `}` of the server
+    # block. awk is used (not sed) because the blocks may contain metacharacters.
+    if [ -n "${addon_blocks}" ]; then
+        local tmp_caddyfile
+        tmp_caddyfile="$(mktemp)"
+        awk -v blocks="${addon_blocks}" '
+            # Buffer lines; when we hit the penultimate line (closing `}` of the
+            # server block), emit the saved blocks before it.
+            { lines[NR] = $0 }
+            END {
+                # Find the last `}` in the file (server block close).
+                for (i = NR; i >= 1; i--) {
+                    if (lines[i] ~ /^}[[:space:]]*$/) { close_line = i; break }
+                }
+                for (i = 1; i <= NR; i++) {
+                    if (i == close_line) {
+                        print blocks
+                    }
+                    print lines[i]
+                }
+            }
+        ' /etc/jabali/Caddyfile > "${tmp_caddyfile}"
+        mv "${tmp_caddyfile}" /etc/jabali/Caddyfile
+        info "Preserved addon Caddy blocks across panel update"
+    fi
 
     log "FrankenPHP configured"
 }
