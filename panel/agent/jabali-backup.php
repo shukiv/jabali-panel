@@ -1269,29 +1269,38 @@ function jbServerBackup(array $params): array
 
 function jbServerSnapshots(array $params): array
 {
-    $r = jbExec(['list', 'snapshots', '--type=server', '--json']);
+    // Call the CLI's dedicated server-snapshots lister in JSON mode — it
+    // forwards restic's native JSON, which is stable and already typed.
+    // (The former table-parsing regex expected 6 fields; restic only emits
+    // 5, so it always matched 0 rows and the panel rendered no server row.)
+    $r = jbExec(['list', 'server-snapshots', '--json']);
 
-    // The CLI outputs restic's table format, parse it
     $stdout = trim($r['stdout'] ?? '');
     if ($r['exitCode'] !== 0) {
-        return ['success' => false, 'error' => $r['stderr'] ?: $r['stdout']];
+        return ['success' => false, 'error' => $r['stderr'] ?: $stdout];
     }
 
-    // Parse restic snapshot table output into structured data
-    $snapshots = [];
-    $lines = explode("\n", $stdout);
-    foreach ($lines as $line) {
-        if (preg_match('/^(\w{8})\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\S+)\s+(.+?)\s{2,}(.+?)\s{2,}(.+)$/', trim($line), $m)) {
-            $snapshots[] = [
-                'id' => $m[1],
-                'time' => $m[2],
-                'host' => $m[3],
-                'tags' => $m[4],
-                'paths' => trim($m[5]),
-                'size' => trim($m[6]),
-            ];
-        }
+    $parsed = json_decode($stdout, true);
+    if (! is_array($parsed)) {
+        return ['success' => true, 'snapshots' => [], 'raw' => $stdout];
     }
+
+    $snapshots = [];
+    foreach ($parsed as $s) {
+        $tags = $s['tags'] ?? [];
+        $snapshots[] = [
+            'id'    => $s['short_id'] ?? '',
+            'time'  => $s['time'] ?? '',
+            'host'  => $s['hostname'] ?? '',
+            'tags'  => is_array($tags) ? implode(',', $tags) : (string) $tags,
+            'paths' => implode(',', $s['paths'] ?? []),
+            'size'  => '—', // restic snapshots doesn't include size; leave placeholder
+        ];
+    }
+
+    // restic returns newest last already, but sort by time for safety so
+    // end($snapshots) in the panel always yields the latest.
+    usort($snapshots, fn ($a, $b) => strcmp($a['time'] ?? '', $b['time'] ?? ''));
 
     return ['success' => true, 'snapshots' => $snapshots, 'raw' => $stdout];
 }
