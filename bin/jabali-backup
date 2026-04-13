@@ -256,8 +256,23 @@ cmd_doctor() {
             done
     fi
 
-    # Stalwart
+    # Panel DB connectivity — the most common failure mode (empty or stale
+    # [jabali] section in config.conf after a panel install/reinstall).
     cfg_load 2>/dev/null
+    echo ""
+    echo "Panel DB:"
+    if _db_query "SELECT 1" >/dev/null 2>&1; then
+        local n
+        n=$(_db_query "SELECT COUNT(*) FROM users WHERE is_active=1" 2>/dev/null || echo "?")
+        printf "  %-20s ✓ connected (%s active users)\n" "$CFG_DB_USER@$CFG_DB_HOST" "$n"
+    else
+        printf "  %-20s ✗ connection failed\n" "$CFG_DB_USER@$CFG_DB_HOST"
+        echo "  → Run: sudo jabali-backup config bootstrap"
+        echo "    (re-reads DB creds + APP_KEY from ${CFG_JABALI_PATH:-/var/www/jabali}/.env)"
+        ok=1
+    fi
+
+    # Stalwart
     if [[ "$CFG_STALWART_ENABLED" == "true" ]]; then
         echo ""
         echo "Stalwart:"
@@ -332,7 +347,115 @@ cmd_config() {
             echo "  log_file:   $CFG_LOG_FILE"
             echo "  log_level:  $CFG_LOG_LEVEL"
             ;;
+        bootstrap)
+            # Regenerate the [jabali] section + db-password + app-key files
+            # from the live Jabali panel .env. Used by the installer on upgrade
+            # (when it detects an empty [jabali] section) and by operators after
+            # a panel credential rotation or DB user rename.
+            local force=0
+            shift || true
+            for arg in "$@"; do
+                case "$arg" in --force) force=1 ;; esac
+            done
+            _cmd_config_bootstrap "$force"
+            ;;
+        *)
+            echo "Usage: jabali-backup config <test|show|bootstrap> [--force]" >&2
+            return 1
+            ;;
     esac
+}
+
+_cmd_config_bootstrap() {
+    local force="${1:-0}"
+    local jabali_path="${CFG_JABALI_PATH:-/var/www/jabali}"
+    local env_file="${jabali_path}/.env"
+    local conf_file="${JABALI_BACKUP_CONFIG:-/etc/jabali-backup/config.conf}"
+    local etc_dir="${conf_file%/*}"
+
+    if [[ ! -f "$env_file" ]]; then
+        log_error "config bootstrap: $env_file not found — is Jabali installed at $jabali_path?"
+        return 1
+    fi
+
+    local db_host db_name db_user db_pass app_key
+    db_host=$(grep -oP '^DB_HOST=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    db_name=$(grep -oP '^DB_DATABASE=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    db_user=$(grep -oP '^DB_USERNAME=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    db_pass=$(grep -oP '^DB_PASSWORD=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+    app_key=$(grep -oP '^APP_KEY=\K.*' "$env_file" 2>/dev/null | tr -d '"')
+
+    if [[ -z "$db_user" || -z "$db_pass" ]]; then
+        log_error "config bootstrap: DB_USERNAME / DB_PASSWORD missing from $env_file"
+        return 1
+    fi
+
+    # Write secret files
+    umask 077
+    printf '%s' "$db_pass" > "${etc_dir}/db-password"
+    chmod 600 "${etc_dir}/db-password"
+    if [[ -n "$app_key" ]]; then
+        printf '%s' "$app_key" > "${etc_dir}/app-key"
+        chmod 600 "${etc_dir}/app-key"
+    fi
+
+    # Rewrite the [jabali] block in-place without touching other sections
+    local new_block
+    new_block=$(cat <<EOB
+[jabali]
+db_host=${db_host:-127.0.0.1}
+db_name=${db_name}
+db_user=${db_user}
+db_password_file=${etc_dir}/db-password
+app_key_file=${etc_dir}/app-key
+jabali_path=${jabali_path}
+EOB
+)
+
+    # Detect existing [jabali] section contents
+    local have_section=0
+    if grep -q '^\[jabali\]' "$conf_file" 2>/dev/null; then
+        have_section=1
+    fi
+
+    # Preserve the rest of the file by splitting on section headers
+    local tmp="${conf_file}.tmp.$$"
+    awk -v block="$new_block" '
+        BEGIN { in_j=0; replaced=0 }
+        /^\[jabali\][[:space:]]*$/ {
+            print block
+            in_j=1; replaced=1
+            next
+        }
+        /^\[[a-z_]+\][[:space:]]*$/ && in_j {
+            in_j=0
+            print ""
+            print
+            next
+        }
+        { if (!in_j) print }
+        END { if (!replaced) { print ""; print block } }
+    ' "$conf_file" > "$tmp"
+
+    chmod 640 "$tmp"
+    mv "$tmp" "$conf_file"
+
+    if [[ "$have_section" -eq 1 ]]; then
+        echo "✓ Updated [jabali] section in $conf_file (from $env_file)"
+    else
+        echo "✓ Appended [jabali] section to $conf_file (from $env_file)"
+    fi
+
+    # Verify the credentials work
+    cfg_load
+    if _db_query "SELECT 1" >/dev/null 2>&1; then
+        local n
+        n=$(_db_query "SELECT COUNT(*) FROM users WHERE is_active=1")
+        echo "✓ DB connection OK ($n active users)"
+    else
+        echo "✗ DB connection still fails — check $env_file credentials" >&2
+        return 1
+    fi
 }
 
 cmd_init() {

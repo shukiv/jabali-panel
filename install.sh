@@ -344,6 +344,20 @@ if [[ -f "$INSTALL_ETC/config.conf" ]]; then
         cp "$SCRIPT_DIR/etc/config.conf.example" "$INSTALL_ETC/config.conf.example"
         ok "Updated config.conf.example for reference"
     fi
+
+    # Self-heal empty [jabali] section — a known failure mode where the
+    # section exists with no keys, so cfg_get falls back to defaults and the
+    # backup tool can't reach the panel DB. Detect by looking for at least
+    # one recognized key under [jabali].
+    jabali_section=$(awk '/^\[jabali\]/{f=1;next} /^\[/{f=0} f' "$INSTALL_ETC/config.conf" 2>/dev/null)
+    if ! echo "$jabali_section" | grep -qE '^(db_user|db_password_file|db_name)='; then
+        warn "[jabali] section is empty or missing — regenerating from ${JABALI_ENV}"
+        if /usr/local/bin/jabali-backup config bootstrap 2>&1 | sed 's/^/    /'; then
+            ok "[jabali] section bootstrapped from .env"
+        else
+            warn "Auto-bootstrap failed — edit $INSTALL_ETC/config.conf manually"
+        fi
+    fi
 else
     # Generate config from template with auto-detected values
     sed -e "s|^db_host=.*|db_host=${DB_HOST}|" \
