@@ -519,15 +519,16 @@ cmd_ls() {
     # Build the full path to list
     local full_path
     if [[ "$is_server" -eq 1 ]]; then
-        # Server snapshots live under the staging root (/tmp/jabali-backup/server-<pid>/server/…).
-        # Resolve the actual top-level path by asking restic what's in the snapshot root.
+        # Server snapshots live under the staging root (e.g.
+        # /tmp/jabali-backup/server-<pid>/server/…). Resolve the actual
+        # server_root by asking restic for the full tree (no path filter,
+        # since `restic ls <id> /` only returns top-level children).
         local server_root
-        server_root=$(restic ls "$snapshot_id" / "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
-            | grep -oE '^/[^/]+/[^/]+/server($|/)' | head -1 | sed 's|/$||')
+        server_root=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+            | grep -E '/server-manifest\.json$' | head -1 | sed 's|/server-manifest\.json$||')
         if [[ -z "$server_root" ]]; then
-            # Fallback: first directory that contains server-manifest.json
-            server_root=$(restic ls "$snapshot_id" / "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
-                | grep -E '/server-manifest\.json$' | head -1 | sed 's|/server-manifest\.json$||')
+            server_root=$(restic ls "$snapshot_id" "${RESTIC_EXTRA_OPTS[@]}" 2>/dev/null \
+                | grep -oE '^[^/]*/tmp/[^/]+/server-[^/]+/server$' | head -1)
         fi
         if [[ -z "$server_root" ]]; then
             log_error "Could not resolve server root in snapshot $snapshot_id"
