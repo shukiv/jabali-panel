@@ -4440,12 +4440,12 @@ with open(sys.argv[1], 'w') as f:
         pids+=($!)
     fi
 
-    # Install or update jabali-security
-    if command -v jabali-security &>/dev/null; then
-        step_info "Updating Jabali Security"
-        jabali-security update || warn "jabali-security update failed (non-fatal)" &
-        pids+=($!)
-    else
+    # jabali-security is now part of this repo (see plans/monorepo-merge.md)
+    # and gets updated by the main `git pull` in step 1. No separate update
+    # needed here. The initial installation still runs during first install
+    # via the dedicated install function below.
+    if [[ ! -d /etc/jabali-security ]]; then
+        step_info "Installing Jabali Security"
         install_jabali_security &
         pids+=($!)
     fi
@@ -5201,13 +5201,25 @@ SUDOERS
 install_jabali_security() {
     header "Installing Jabali Security"
 
+    # Monorepo: use the local security/ subdir if available (plans/monorepo-merge.md)
+    local local_subdir="$JABALI_DIR/security"
+    if [[ -d "$local_subdir" && -x "$local_subdir/install.sh" ]]; then
+        info "Installing from local monorepo subdir: $local_subdir"
+        if JABALI_WEB=no bash "$local_subdir/install.sh"; then
+            log "Jabali Security installed"
+        else
+            warn "jabali-security installation failed (non-fatal)"
+        fi
+        return
+    fi
+
+    # Legacy fallback: curl the external installer (for pre-monorepo installs)
     info "Downloading jabali-security installer..."
     if curl -fsSL --retry 3 --connect-timeout 30 "$JABALI_SECURITY_REPO" | JABALI_WEB=no bash; then
         log "Jabali Security installed"
     else
         warn "jabali-security installation failed (non-fatal)"
     fi
-
 }
 
 install_jabali_isolator() {
@@ -5223,7 +5235,18 @@ install_jabali_isolator() {
         }
     fi
 
-    if [[ -d "$JABALI_ISOLATOR_DIR" ]]; then
+    # Monorepo: use the local isolator/ subdir if available, otherwise fall
+    # back to cloning the legacy external repo (plans/monorepo-merge.md).
+    local local_subdir="$JABALI_DIR/isolator"
+    if [[ -d "$local_subdir" ]]; then
+        info "Using local jabali-isolator from $local_subdir"
+        mkdir -p "$(dirname "$JABALI_ISOLATOR_DIR")"
+        # rsync preserves the .venv/ if one already exists in the target,
+        # but always refreshes sources from the monorepo
+        rsync -a --delete \
+            --exclude='.venv/' --exclude='__pycache__/' --exclude='.pytest_cache/' \
+            "$local_subdir/" "$JABALI_ISOLATOR_DIR/"
+    elif [[ -d "$JABALI_ISOLATOR_DIR" ]]; then
         info "Updating existing jabali-isolator installation..."
         git -C "$JABALI_ISOLATOR_DIR" pull --ff-only 2>/dev/null || true
     else
