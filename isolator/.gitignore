@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.env
+.env.*
+*.pem
+*.key
+
+# Claude Flow coordinator state (regenerates per-session, never commit)
+.claude-flow/
