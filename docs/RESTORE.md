@@ -1,5 +1,10 @@
 # Restore Guide
 
+> **Scope:** this document covers **per-account** restore via
+> `jabali-backup restore <username>`. For rebuilding an entire server from a
+> disaster-recovery snapshot (all accounts + all configs), see
+> [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md).
+
 ## Overview
 
 `jabali-backup restore` recovers a Jabali hosting account from a restic snapshot.

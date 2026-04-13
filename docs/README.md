@@ -265,14 +265,32 @@ jabali-backup forget --dry-run             # preview only
 
 ### `jabali-backup schedule`
 
-Manage automated backup schedule.
+Manage automated backup schedules. Multiple independent jobs are supported;
+each writes its own crontab entry. Jobs live in
+`/etc/jabali-backup/schedules.json`. Use `--server-backup` on any job to run a
+**full disaster-recovery backup** (server layer + every user) instead of the
+per-account `run` path.
 
 ```bash
-jabali-backup schedule install             # daily at 2am (default)
-jabali-backup schedule install --cron="0 3 * * *"  # custom time
-jabali-backup schedule show
-jabali-backup schedule remove
+jabali-backup schedule list                                    # show all jobs
+jabali-backup schedule list --json
+jabali-backup schedule add --name="Daily All" --destination=rasp \
+    --cron="0 2 * * *"                                         # daily per-user
+jabali-backup schedule add --name="Weekly DR" --destination=rasp \
+    --cron="0 3 * * 0" --server-backup                         # weekly DR
+jabali-backup schedule add --name="Alice only" --destination=rasp \
+    --cron="0 4 * * *" --accounts=alice                        # single user
+jabali-backup schedule update --id=<id> --cron="0 5 * * *"
+jabali-backup schedule enable  --id=<id>                       # add to crontab
+jabali-backup schedule disable --id=<id>                       # remove from crontab
+jabali-backup schedule remove  --id=<id>
+jabali-backup schedule show    --id=<id>                       # JSON detail
+jabali-backup schedule sync                                    # rebuild crontab
 ```
+
+The panel's **Schedule** tab writes the same JSON — each row there maps 1-to-1
+to a CLI job. The "Server Backup (Disaster Recovery)" toggle on the form sets
+`server_backup: true`.
 
 ### `jabali-backup config`
 
@@ -353,11 +371,20 @@ Each account backup includes:
 <!-- AUTO-GENERATED:collectors-start -->
 ## Collector Reference
 
-Available collectors for `--only` and `--exclude` flags:
+Per-user collectors (usable with `--only` and `--exclude` on `run`, `restore`,
+and `download`):
 
-`files`, `mysql`, `postgres`, `dns`, `email`, `ssl`, `nginx`, `php`, `wordpress`, `cron`, `stalwart`, `redis`, `metadata`
+`files`, `mysql`, `postgres`, `dns`, `email`, `ssl`, `nginx`, `php`,
+`wordpress`, `cron`, `stalwart`, `redis`, `metadata`
 
-Server backup also includes a `server` collector (databases, configs, systemd units, SSL, Let's Encrypt state, package manifest).
+Server backup (`server-backup`) runs the `server` collector in addition to a
+per-user pass over every account. The `server` collector captures all 20
+categories of [`backup-server-spec.md`](../../jabali/docs/backup-server-spec.md),
+including the Stalwart RocksDB/DKIM snapshot (opt out with
+`--skip-stalwart-data`), Bulwark metadata-only record, and the panel app tree
+(git info + dirty patch or tarball fallback). See
+[`ARCHITECTURE.md`](ARCHITECTURE.md#server-backup-layout-disaster-recovery)
+for the full 20-row map.
 <!-- AUTO-GENERATED:collectors-end -->
 
 ## Configuration

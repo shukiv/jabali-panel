@@ -160,6 +160,57 @@ jabali-backup restore alice --file=domains/example.com/ --dry-run
 
 ---
 
+### server-backup
+
+```
+jabali-backup server-backup [--skip-users] [--skip-stalwart-data] [--dry-run]
+                            [--destination=NAME]
+```
+
+Capture a **disaster-recovery** snapshot of the whole server: databases, service
+configs, DKIM keys, Let's Encrypt state, systemd units, package manifest, and a
+per-user backup for every active account. Snapshots are tagged
+`type:server,date:YYYY-MM-DD,hostname:<host>` so they do not mix with per-user
+snapshots in listings. See `backup-server-spec.md` for the authoritative
+20-category list.
+
+**Options:**
+- `--skip-users`: server layer only (no per-user pass)
+- `--skip-stalwart-data`: skip `/var/lib/stalwart-mail` (RocksDB + DKIM keys).
+  Faster but DKIM will be regenerated on restore and must be re-published to DNS.
+- `--dry-run`: print the plan, make no changes
+- `--destination=NAME`: override active destination
+
+---
+
+### server-restore
+
+```
+jabali-backup server-restore [--snapshot=ID] [--skip-users] [--force]
+                             [--destination=NAME]
+```
+
+Replay a disaster-recovery snapshot onto a fresh machine, in 5 phases:
+base install → databases → service configs → user accounts → finalize.
+Must be run on a freshly-installed Jabali host (see DISASTER-RECOVERY.md).
+
+---
+
+### server-download
+
+```
+jabali-backup server-download [--snapshot=latest|ID] [--output=PATH]
+                              [--configs-only] [--destination=NAME]
+```
+
+Build a single tar.gz from a server snapshot for off-site archival or
+rehydration on a different host. Without `--configs-only`, the archive also
+contains the latest snapshot for every user (`./server/` + `./users/<user>/`).
+The panel's "Download Server Backup" button uses the same shared helper
+(`lib/server-download.sh`) and produces byte-identical output.
+
+---
+
 ### ls
 
 ```
@@ -177,14 +228,21 @@ jabali-backup ls alice domains/                           # list domains
 jabali-backup ls alice domains/example.com/public_html/   # list website files
 jabali-backup ls alice .ssh/                              # list SSH keys
 jabali-backup ls alice --snapshot=abc123                  # browse specific snapshot
+jabali-backup ls server                                   # browse latest DR snapshot
+jabali-backup ls server config/jabali                     # /etc/jabali contents in DR snapshot
 ```
+
+The literal pseudonym `server` (or `__server__`) selects the latest
+disaster-recovery snapshot; the path argument is rooted at the snapshot's
+`server/` staging tree (e.g. `config/jabali`, `data/stalwart`,
+`databases/jabali.sql.gz`).
 
 ---
 
 ### list
 
 ```
-jabali-backup list <accounts|snapshots|domains> [--user=username]
+jabali-backup list <accounts|snapshots|server-snapshots|domains> [--user=username] [--type=full|server] [--json]
 ```
 
 List resources.
@@ -194,7 +252,8 @@ List resources.
 | Subcommand | Description |
 |------------|-------------|
 | `accounts` | List all Jabali hosting accounts (ID, username, home dir, active status) |
-| `snapshots` | List restic snapshots. Use `--user=` to filter by account |
+| `snapshots` | List restic snapshots. Filter with `--user=` or `--type=full\|server` |
+| `server-snapshots` | Alias for `snapshots --type=server`. Prints a DR-oriented table; `--json` for machine-readable output |
 | `domains` | List domains for a user. Requires `--user=` |
 
 **Examples:**
@@ -203,6 +262,8 @@ List resources.
 jabali-backup list accounts
 jabali-backup list snapshots
 jabali-backup list snapshots --user=alice
+jabali-backup list server-snapshots
+jabali-backup list server-snapshots --json
 jabali-backup list domains --user=alice
 ```
 

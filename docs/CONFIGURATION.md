@@ -242,3 +242,22 @@ path=rclone:gdrive:jabali-backups
 type=local
 path=/mnt/external-drive/jabali-backups
 ```
+
+<!-- AUTO-GENERATED:env-vars-start -->
+## Environment Variables
+
+Variables that influence the CLI at runtime without being written to
+`config.conf`. Defined in `bin/jabali-backup` and `lib/collectors/server.sh`.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JABALI_BACKUP_CONFIG` | No | `/etc/jabali-backup/config.conf` | Path to the main config file |
+| `JABALI_DESTINATION` | No | default from `destinations.json` | Override active destination per-invocation (same as `--destination=`) |
+| `LIB_DIR` | No | `/usr/local/lib/jabali-backup` (or in-repo `lib/`) | Where to source collectors, restorers, and helpers from |
+| `CFG_SERVER_BACKUP_STALWART_DATA` | No | `true` | Set to `false` to skip the `/var/lib/stalwart-mail` snapshot (same as `--skip-stalwart-data`). DKIM keys and mail data will not be restorable |
+| `JABALI_BACKUP_VERSION` | No | baked in at install | Self-identification string stamped into `server-manifest.json` |
+
+All `CFG_*` values listed in the section reference above can also be
+overridden via environment variables of the same name — they are re-read
+after `cfg_load` runs if already set in the environment.
+<!-- AUTO-GENERATED:env-vars-end -->
