@@ -56,10 +56,11 @@ final class JobDispatcher
         // Pre-create the log file with group ownership on the panel's uid
         // so the panel can tail it (TaskEventRelay runs as www-data). The
         // file is root-owned but group-readable to the panel group.
+        // Not using Laravel's config() — the agent is a standalone script
+        // that autoloads classes but doesn't boot the framework container.
         @touch($logPath);
         @chmod($logPath, 0640);
-        $panelGroup = config('jabali.agent.panel_group', 'www-data');
-        @chgrp($logPath, $panelGroup);
+        @chgrp($logPath, getenv('JABALI_PANEL_GROUP') ?: 'www-data');
 
         // Inject the contract args every spawned binary must accept.
         $fullArgv = array_merge($argv, [
