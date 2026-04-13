@@ -5,19 +5,184 @@ parameters:
         - tests
     excludePaths:
         - app/Filament/*/Pages/GeneratedClasses/*
+    # The ignoreErrors block uses defensive scoping (e.g. listing Filament
+    # Resource paths even when they're currently clean) so silences don't
+    # silently evaporate if someone renames a file. Tolerate unmatched patterns.
+    reportUnmatchedIgnoredErrors: false
     shipmonkDeadCode:
         usageExcluders:
             tests:
                 enabled: true
     ignoreErrors:
-        # Optional runtime integrations — guarded by try/catch or class_exists().
-        # These classes live in separate addons/packages that are not always
-        # installed: jabali-security (separate daemon + Filament plugin) and
-        # minishlink/web-push (not in composer.json; loaded only when the
-        # web_push notification channel is actually enabled).
+        # ─── Optional runtime integrations ────────────────────────────────────
+        # Guarded by try/catch or class_exists(). Classes live in separate
+        # addons/packages that are not always installed: jabali-security
+        # (separate daemon + Filament plugin) and minishlink/web-push (not
+        # in composer.json; loaded only when the web_push notification
+        # channel is actually enabled).
         -
             message: '#^Instantiated class App\\JabaliSecurity\\JabaliSecurityClient not found\.$#'
             path: app/Filament/Admin/Pages/ServerSettings.php
         -
             message: '#^Call to static method create\(\) on an unknown class Minishlink\\WebPush\\Subscription\.$#'
             path: app/Notifications/Channels/WebPushDriver.php
+
+        # ─── Framework-entry-point false positives ────────────────────────────
+        # shipmonk's LaravelUsageProvider recognizes console commands, jobs,
+        # service providers, form requests, etc. — but NOT Filament, Livewire,
+        # or Fortify. Every "unused" match below is a framework callback that
+        # the framework itself invokes through reflection/magic. Silencing
+        # them here instead of sprinkling @api docblocks through 60+ pages.
+
+        # Filament Pages and Livewire components — EVERY public method on
+        # these classes is potentially callable from Blade via wire:click /
+        # wire:submit / wire:model, and Filament invokes lifecycle methods
+        # (mount, render, updatedFoo, fooForm schema builders) through magic.
+        # Shipmonk can't see into Blade files or trace Livewire's JSON-RPC
+        # dispatch, so ~every "unused" in these namespaces is a false positive.
+        # Narrow to the directories where Livewire/Filament components live.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - app/Filament/*/Pages/*
+                - app/Filament/*/Widgets/*
+                - app/Filament/*/Resources/*/Pages/*
+                - app/Filament/*/Resources/*/Widgets/*
+                - app/Livewire/*
+                - app/FileBrowser/Components/*
+                - app/FileBrowser/Livewire/*
+                - app/FileBrowser/Pages/*
+                - app/FileBrowser/FileBrowserPlugin.php
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - app/Filament/*/Pages/*
+                - app/Filament/*/Widgets/*
+                - app/Filament/*/Resources/*/Pages/*
+                - app/Filament/*/Resources/*/Widgets/*
+                - app/Livewire/*
+                - app/FileBrowser/Components/*
+                - app/FileBrowser/Livewire/*
+                - app/FileBrowser/Pages/*
+
+        # Fortify action classes — Fortify resolves each action class from the
+        # container and invokes a well-known method name by convention
+        # (reset/create/update/etc.). Scoped to app/Actions/Fortify/.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\Actions\\Fortify\\.*::(reset|create|update|password)$#'
+
+        # Filament Widget table()/chart data methods — invoked by the widget
+        # renderer through the `$view` / `->table($table)` indirection that
+        # shipmonk can't follow through Filament's internals.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\Filament\\.*\\Widgets\\.*::(table|getData|getStats|getType|getHeading|getDescription|getColumns|getColumnSpan|getFilters)$#'
+
+        # Event listener handle() — Laravel's event dispatcher invokes handle()
+        # on any listener registered in EventServiceProvider. Shipmonk's
+        # LaravelUsageProvider catches console command handle() but not
+        # event-listener handle(); scope this narrowly to app/Listeners/.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\Listeners\\.*::handle$#'
+
+        # Mailable/Notification build() and envelope() — Laravel invokes these
+        # when ->send() is called on the class. LaravelUsageProvider covers
+        # some but not all notification/mail variants.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\(Mail|Notifications)\\.*::(build|envelope|content|attachments|toMail|toArray|via)$#'
+
+        # Controllers — Laravel dispatches these from routes/web.php and
+        # routes/api.php via string tuples like [SomeController::class, 'method'].
+        # shipmonk's LaravelUsageProvider handles commands/middleware/jobs/etc.
+        # but not controller actions. All public methods on controllers are
+        # potential route targets.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - app/Http/Controllers/*
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - app/Http/Controllers/*
+
+        # Notification channel drivers — the driver registry dispatches to a
+        # concrete class's type() method based on channel config. Shipmonk
+        # can't see the registry's dynamic dispatch, so drivers look unused.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\Notifications\\Channels\\.*::(type|validateConfig|send)$#'
+
+        # API-surface wrapper classes — AgentClient wraps the agent RPC
+        # vocabulary (each method maps 1:1 to an agent command), and
+        # CpanelApiService / WhmApiService wrap the corresponding vendor
+        # REST APIs for migration imports. We intentionally keep unused
+        # methods so the wrapper stays complete — when a migration feature
+        # gets wired up next, the binding is already there. These are
+        # clearly labelled as API surface by the class name (*Client, *ApiService).
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - app/Services/Agent/AgentClient.php
+                - app/Services/Migration/CpanelApiService.php
+                - app/Services/Migration/WhmApiService.php
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - app/Services/Agent/AgentClient.php
+                - app/Services/Migration/CpanelApiService.php
+                - app/Services/Migration/WhmApiService.php
+
+        # Interface-dispatched service classes — AgentTrashManager /
+        # AgentArchiver / AgentFileOperations implement FileBrowser interfaces
+        # and are resolved by the file-browser adapter via its files() /
+        # archiver() / permissions() getters. The interface-satisfying
+        # methods look unused because shipmonk can't trace the polymorphic
+        # call through the interface.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - app/Services/FileBrowser/*
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - app/Services/FileBrowser/*
+
+        # Laravel queued jobs — the framework reads these properties at
+        # dispatch/retry time (tries/backoff/timeout/uniqueFor/maxExceptions)
+        # via Illuminate\Queue\CallQueuedHandler's reflection. User code
+        # never reads them, so shipmonk marks them unused.
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            message: '#^Property App\\Jobs\\.*::\$(tries|backoff|timeout|uniqueFor|maxExceptions|retryAfter|deleteWhenMissingModels|failOnTimeout)#'
+
+        # Event subscribers — Laravel calls subscribe(Dispatcher $events) on
+        # every class registered with Event::subscribe() or in the
+        # EventServiceProvider's $subscribe array. Covers Listeners/*Subscriber
+        # and any *Listener that exposes subscribe() for multi-event binding.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\Listeners\\.*::subscribe$#'
+
+        # SafeError::fromAgent() is API surface consumed by the jabali-backup
+        # addon (panel/backup/ and panel/filament/pages/ files that are
+        # deployed into this panel at install time). It has no caller inside
+        # this repo, only tests — but removing it would break the 5 backup
+        # call sites documented in commit b125a29.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\Support\\SafeError::fromAgent#'
+            path: app/Support/SafeError.php
+
+        # CLI router — bin/jabali (the console entry-point script) invokes
+        # CliRouter::resolve() dynamically and consumes ResolvedRoute's
+        # $arguments + $exitCode; the bin/ directory is outside phpstan's
+        # analysed paths, so shipmonk can't see those callers.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#^Unused App\\Console\\Cli\\CliRouter::resolve#'
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            message: '#^Property App\\Console\\Cli\\ResolvedRoute::\$#'
