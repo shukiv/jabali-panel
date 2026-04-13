@@ -21,37 +21,15 @@ final class SystemdRunner implements SystemdRunnerInterface
 
     public function startTransient(string $type, string $unit, array $argv, array $limits): array
     {
-        $cmd = [
-            $this->systemdRunBin,
-            '--unit='.$unit,
-            '--scope',
-            '--collect',
-            '--description=Jabali task '.$type,
-        ];
-
-        if (isset($limits['cpu']) && is_int($limits['cpu'])) {
-            $cmd[] = '--property=CPUQuota='.$limits['cpu'].'%';
-        }
-        if (isset($limits['memory']) && is_string($limits['memory'])) {
-            $cmd[] = '--property=MemoryMax='.$limits['memory'];
-        }
-        if (isset($limits['io']) && is_int($limits['io'])) {
-            $cmd[] = '--property=IOWeight='.$limits['io'];
-        }
-
-        $cmd[] = '--';
-        foreach ($argv as $arg) {
-            $cmd[] = $arg;
-        }
-
-        // --scope blocks; we need to run systemd-run in the background so it
-        // registers the unit and returns immediately. Use --no-block.
-        // --scope + --no-block is not valid; use transient service instead.
-        // Rebuild with the proper flag pattern:
+        // Transient service (not --scope — scope attaches the caller process).
+        // --no-block returns as soon as systemd accepts the unit; otherwise
+        // systemd-run sits in the foreground until the service exits, which
+        // for a backup is hours.
         $cmd = [
             $this->systemdRunBin,
             '--unit='.$unit,
             '--collect',
+            '--no-block',
             '--description=Jabali task '.$type,
         ];
         if (isset($limits['cpu']) && is_int($limits['cpu'])) {
