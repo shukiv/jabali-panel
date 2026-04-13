@@ -3,3 +3,4 @@
 /.mcp.json
 .env
 *.log
+/.codebase-memory/

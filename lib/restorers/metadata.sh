@@ -141,4 +141,3 @@ _json_val() {
 }
 
 _strip_json_str() { sed 's/^"//;s/"$//;s/^[[:space:]]*//;s/[[:space:]]*$//'; }
-_strip_json_num() { sed 's/[^0-9]//g; s/^$/0/'; }
