@@ -85,13 +85,6 @@ $this->getRtlScript()
                 class_exists(\App\JabaliTerminal\JabaliTerminalPlugin::class)
                     ? \App\JabaliTerminal\JabaliTerminalPlugin::make()
                     : null,
-                // croustibat/filament-jobs-monitor — surfaces recent/failed
-                // queue jobs as a resource under /jabali-admin/queue-monitors.
-                // Wrapped in class_exists so a partial composer install
-                // (e.g. removing the package in a slim deploy) doesn't fatal.
-                class_exists(\Croustibat\FilamentJobsMonitor\FilamentJobsMonitorPlugin::class)
-                    ? \Croustibat\FilamentJobsMonitor\FilamentJobsMonitorPlugin::make()
-                    : null,
             ]))
             ->navigationItems([
                 // opcodesio/log-viewer ships its own Livewire UI rather than
