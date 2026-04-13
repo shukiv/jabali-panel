@@ -10,6 +10,35 @@ declare(strict_types=1);
  */
 define('JABALI_ROOT', dirname(__DIR__));
 
+// ============ FAST-PATH DISPATCHER ============
+// Route `jabali <subcommand> …` to its native binary without booting
+// Laravel (saves ~30-50ms of container/autoload overhead). Binaries are
+// installed at well-known paths by install.sh (see plans/monorepo-merge.md).
+$subcommandBinaries = [
+    'security' => '/usr/local/bin/jabali-security',
+    'backup'   => '/usr/local/bin/jabali-backup',
+    'isolator' => '/usr/local/bin/jabali-isolator',
+];
+$firstArg = $_SERVER['argv'][1] ?? '';
+if (isset($subcommandBinaries[$firstArg])) {
+    $binary = $subcommandBinaries[$firstArg];
+    if (! is_executable($binary)) {
+        fwrite(STDERR, "Error: {$binary} not installed.\n");
+        fwrite(STDERR, "Run `jabali update` to reinstall the component.\n");
+        exit(127);
+    }
+    pcntl_exec($binary, array_slice($_SERVER['argv'], 2));
+    // pcntl_exec only returns on failure
+    fwrite(STDERR, "Error: failed to exec {$binary}\n");
+    exit(127);
+}
+// `jabali terminal` has no CLI — the addon is web-only via the Filament page
+if ($firstArg === 'terminal') {
+    fwrite(STDERR, "jabali terminal has no CLI commands.\n");
+    fwrite(STDERR, "Open the web panel at https://<host>/jabali-admin/jabali-terminal\n");
+    exit(2);
+}
+
 // Read version from VERSION file
 $versionFile = JABALI_ROOT.'/VERSION';
 $version = '0.0.0';
@@ -316,27 +345,9 @@ function handleUpdate(array $options): void
         echo C_GREEN.'✓ Services restarted'.C_RESET."\n";
     }
 
-    // Step 9: Update installed addons
-    $addonBinaries = [
-        'jabali-backup' => '/usr/local/bin/jabali-backup',
-        'jabali-security' => '/usr/local/bin/jabali-security',
-        'jabali-isolator' => '/usr/local/bin/jabali-isolator',
-    ];
-    $addonUpdated = false;
-    foreach ($addonBinaries as $addon => $binary) {
-        if (file_exists($binary)) {
-            if (! $addonUpdated) {
-                step('Updating installed addons...');
-                $addonUpdated = true;
-            }
-            $updateResult = runShell(escapeshellarg($binary).' update 2>&1');
-            if ($updateResult === false) {
-                echo C_YELLOW."  ⚠ {$addon} update failed".C_RESET."\n";
-            } else {
-                echo C_GREEN."  ✓ {$addon} updated".C_RESET."\n";
-            }
-        }
-    }
+    // Addons no longer update independently — security/, backup/, terminal/,
+    // and isolator/ are part of this repo (see plans/monorepo-merge.md) and
+    // were updated by the `git pull` in step 1.
 
     // Fix .git ownership after update so panel (www-data) can check for updates
     runShell('chown -R '.escapeshellarg($wwwUser).':'.escapeshellarg($wwwUser).' '.escapeshellarg($jabaliDir.'/.git').' 2>/dev/null');

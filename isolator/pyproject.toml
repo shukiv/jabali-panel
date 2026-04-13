@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = ["click>=8.0,<9"]
 
 [project.scripts]
-jabali-isolate = "jabali_isolator.__main__:cli"
+jabali-isolator = "jabali_isolator.__main__:cli"
 
 [build-system]
 requires = ["setuptools>=68"]
