@@ -1,0 +1,23 @@
+# Managed by jabali-terminal. Injected into the panel Caddyfile between the
+# `# === JABALI-TERMINAL CADDY BEGIN ===` / `END` markers by install.sh.
+#
+# Routes wss://<host>:<panel-port>/terminal-ws to the daemon's unix socket.
+# The public URL uses a dash (`/terminal-ws`) so it does not collide with
+# Filament's own route tree; the daemon registers `/terminal/ws` (slash)
+# because it treats `/terminal` as a prefix for future endpoints. Caddy
+# rewrites the path at the proxy layer so the daemon-side convention
+# stays stable.
+#
+# SEC-REV-6: the daemon's token IP-bind check trusts X-Real-IP. Caddy's
+# reverse_proxy sets X-Forwarded-For but NOT X-Real-IP, so we must set it
+# explicitly from {remote_host} (the direct peer IP, never a client-
+# supplied header). `header_up -X-Real-IP` is implicit: any inbound
+# X-Real-IP the client sent is dropped before we overwrite it.
+
+@jabali_terminal_ws path /terminal-ws
+handle @jabali_terminal_ws {
+    rewrite * /terminal/ws
+    reverse_proxy unix//run/jabali-terminal/jabali-terminal.sock {
+        header_up X-Real-IP {remote_host}
+    }
+}

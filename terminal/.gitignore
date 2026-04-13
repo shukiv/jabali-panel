@@ -1,0 +1,17 @@
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Populated config (secrets) must never be committed.
+configs/jabali-terminal.conf
+.claude/
+
+# composer-generated vendor tree in the panel subproject
+panel/vendor/

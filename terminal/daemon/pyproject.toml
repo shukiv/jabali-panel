@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jabali-terminal"
+version = "0.1.0"
+description = "Root PTY daemon for Jabali Panel terminal addon"
+requires-python = ">=3.12"
+authors = [{name = "Shuki Vaknin"}]
+license = {text = "MIT"}
+
+dependencies = [
+    "websockets>=12.0",
+    "aiohttp>=3.9.0",
+    "cryptography>=42.0.0",
+    "aiosqlite>=0.19.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-timeout>=2.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "types-cryptography",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["daemon"]
+
+[tool.pytest.ini_options]
+# auto-mode lets async fixtures work without decorating each with
+# @pytest_asyncio.fixture. Strict mode would require that on every
+# fixture, which conflicts with the test_nonce_store.py layout.
+asyncio_mode = "auto"
+
+[tool.ruff]
+# Bumped from 100 → 120 for consistency with the other jabali Python
+# repos (security, isolator). Three server.py / audit test lines legitimately
+# landed at 105–111; rewrapping them makes the code less readable than
+# matching the rest of the ecosystem.
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "A"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+disallow_untyped_defs = true
+disallow_untyped_calls = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true

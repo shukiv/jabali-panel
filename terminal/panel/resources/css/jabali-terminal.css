@@ -1,0 +1,17 @@
+/*
+ * Jabali Terminal — minimal overrides for xterm.js internals.
+ *
+ * The page chrome uses Filament's native Blade components (x-filament::section,
+ * x-filament::button, x-filament::badge) — no custom chrome CSS here. The
+ * rules below only style xterm's scrollbar, which the Filament theme has
+ * no equivalent for.
+ */
+
+#jt-root .xterm-viewport::-webkit-scrollbar {
+    width: 8px;
+}
+
+#jt-root .xterm-viewport::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}

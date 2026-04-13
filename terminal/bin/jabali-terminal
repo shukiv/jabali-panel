@@ -1,0 +1,91 @@
+#!/bin/bash
+# jabali-terminal — thin operator CLI for the daemon.
+set -euo pipefail
+
+SERVICE_NAME="jabali-terminal"
+LOG_DIR="/var/log/jabali-terminal/sessions"
+INSTALL_DIR="/usr/local/jabali-terminal"
+
+red()    { echo -e "\033[0;31m$*\033[0m"; }
+green()  { echo -e "\033[0;32m$*\033[0m"; }
+yellow() { echo -e "\033[0;33m$*\033[0m"; }
+
+usage() {
+    cat <<EOF
+jabali-terminal — manage the Jabali Terminal daemon.
+
+Usage:
+  jabali-terminal status              Show systemd unit status
+  jabali-terminal logs [-f]           Show daemon journal
+  jabali-terminal sessions list       List audit transcripts
+  jabali-terminal sessions show <id>  Cat a transcript (fuzzy id match)
+  jabali-terminal version             Show version
+  jabali-terminal help                Show this message
+EOF
+}
+
+cmd_status() {
+    systemctl status "$SERVICE_NAME" --no-pager
+}
+
+cmd_logs() {
+    if [ "${1:-}" = "-f" ]; then
+        journalctl -u "$SERVICE_NAME" -f
+    else
+        journalctl -u "$SERVICE_NAME" --no-pager -n "${1:-200}"
+    fi
+}
+
+cmd_sessions() {
+    local sub="${1:-list}"
+    case "$sub" in
+        list|"")
+            if [ ! -d "$LOG_DIR" ]; then
+                yellow "No session log dir at $LOG_DIR"
+                return 0
+            fi
+            ls -lh "$LOG_DIR"/*.log 2>/dev/null || yellow "No sessions recorded yet."
+            ;;
+        show)
+            local id="${2:-}"
+            if [ -z "$id" ]; then
+                red "usage: jabali-terminal sessions show <id>"
+                return 2
+            fi
+            # Glob-match uniquely; else list candidates.
+            local matches
+            mapfile -t matches < <(find "$LOG_DIR" -maxdepth 1 -name "*${id}*.log" 2>/dev/null | sort)
+            case ${#matches[@]} in
+                0) red "No session matches '$id'"; return 2 ;;
+                1) cat "${matches[0]}" ;;
+                *) yellow "Multiple matches — be more specific:"
+                   printf '  %s\n' "${matches[@]}"
+                   return 2 ;;
+            esac
+            ;;
+        *)
+            red "Unknown sessions subcommand: $sub"
+            usage
+            return 2
+            ;;
+    esac
+}
+
+cmd_version() {
+    if [ -f "$INSTALL_DIR/VERSION" ]; then
+        cat "$INSTALL_DIR/VERSION"
+    elif [ -f "$INSTALL_DIR/daemon/__init__.py" ]; then
+        grep -E '^__version__' "$INSTALL_DIR/daemon/__init__.py" | head -1 | cut -d'"' -f2
+    else
+        echo "unknown"
+    fi
+}
+
+case "${1:-help}" in
+    status)   shift; cmd_status "$@" ;;
+    logs)     shift; cmd_logs "$@" ;;
+    sessions) shift; cmd_sessions "$@" ;;
+    version)  cmd_version ;;
+    help|-h|--help) usage ;;
+    *) red "Unknown command: $1"; usage; exit 2 ;;
+esac

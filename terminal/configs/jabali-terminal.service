@@ -1,0 +1,46 @@
+[Unit]
+Description=Jabali Terminal — WebSocket-to-PTY daemon for browser root shell
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The daemon does not call sd_notify; Type=exec keeps systemd from hanging on
+# the notify handshake while still flagging an immediate exec failure as a
+# start failure. The daemon is imported as `daemon.*` from the install dir
+# on PYTHONPATH (flat layout — the daemon directory IS the package); this
+# avoids depending on hatchling's editable .pth generation, which has been
+# observed to produce an empty .pth file on some systems.
+Type=exec
+Environment=PYTHONPATH=/usr/local/jabali-terminal
+ExecStart=/usr/local/jabali-terminal/venv/bin/python -m daemon.server
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jabali-terminal
+
+# Security hardening
+User=root
+Group=root
+# NOTE (SEC-REV-9): NoNewPrivileges=no required so daemon can exec /bin/bash under PTY.
+# PTY bridge must be root to assign pty-master to www-data group (0660 perms).
+NoNewPrivileges=no
+# NOTE (SEC-REV-9): ProtectSystem=false required so daemon can read/write session logs
+# and nonce store in /var/lib/jabali-terminal/ and /var/log/jabali-terminal/.
+# Daemon does NOT write to /etc or /usr; logs and nonces are owned root:root 0600.
+ProtectSystem=false
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=no
+
+# Runtime directories (auto-created if absent)
+RuntimeDirectory=jabali-terminal
+RuntimeDirectoryMode=0755
+StateDirectory=jabali-terminal
+StateDirectoryMode=0755
+LogsDirectory=jabali-terminal
+LogsDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

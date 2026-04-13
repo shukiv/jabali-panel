@@ -1,0 +1,39 @@
+# Jabali Terminal — example configuration.
+# Copy to /etc/jabali-terminal/jabali-terminal.conf. install.sh generates the
+# real file with a freshly-minted HMAC secret; do NOT commit a populated copy.
+
+# Unix socket the daemon listens on (nginx proxies WS to this path).
+socket_path="/run/jabali-terminal/jabali-terminal.sock"
+
+# Directory for per-session audit transcripts. Created 0700 root:root.
+audit_log_dir="/var/log/jabali-terminal/sessions"
+
+# SQLite persistent nonce store (SEC-REV-1). Survives daemon restarts so a
+# token reissued in the last 60s cannot be replayed.
+nonce_db_path="/var/lib/jabali-terminal/nonces.db"
+
+# Idle timeout (SEC-REV-3): fires when BOTH stdin and stdout have been quiet
+# for this long. Running commands don't trigger it. Value in seconds.
+session_idle_seconds=300
+
+# Hard timeout (SEC-REV-9): force-close the session after this long regardless
+# of activity. Value in seconds.
+session_hard_seconds=3600
+
+# Max concurrent sessions across all admins (daemon-wide).
+max_concurrent_sessions=4
+
+# Comma-separated IP allow-list for the panel client (the IP that POSTs to
+# /api/v1/session, NOT the end-user's browser). Empty = allow any local.
+allowed_ips=""
+
+# Shell to exec under the PTY. MUST be an interactive login-capable shell.
+shell="/bin/bash"
+
+# HMAC secret for session tokens. MUST be >= 32 bytes (hex-encoded =>
+# 64 chars). install.sh sets this via `openssl rand -hex 32`.
+hmac_secret=""
+
+# HMAC secret for sealing audit logs (SEC-REV-4). Rotated independently from
+# the token HMAC secret so leaking one does not imply leaking the other.
+audit_hmac_secret=""

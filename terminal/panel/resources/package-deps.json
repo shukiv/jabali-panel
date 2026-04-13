@@ -1,0 +1,9 @@
+{
+  "_comment": "npm dependencies that install.sh injects into the parent jabali-panel package.json. The parent panel is responsible for running `npm install && npm run build` after the addon is deployed.",
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-canvas": "^0.7.0"
+  }
+}

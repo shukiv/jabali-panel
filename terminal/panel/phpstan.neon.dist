@@ -1,0 +1,59 @@
+parameters:
+    level: 0
+    # Panel PHP is deployed INTO the main jabali Filament app at install
+    # time. Bootstrap from jabali's autoload so Laravel/Filament/AgentClient
+    # classes resolve and we see only the real issues, not missing-framework noise.
+    bootstrapFiles:
+        - ../../jabali/vendor/autoload.php
+    paths:
+        - .
+    excludePaths:
+        - vendor/*
+        - tests/*
+    # Defensive scoping: patterns list paths even when currently clean so
+    # silences don't silently evaporate if someone renames a file.
+    reportUnmatchedIgnoredErrors: false
+    shipmonkDeadCode:
+        usageExcluders:
+            tests:
+                enabled: true
+    ignoreErrors:
+        # ─── Framework-entry-point false positives ────────────────────────────
+        # shipmonk's LaravelUsageProvider doesn't cover Filament pages or
+        # service-container-resolved clients; both are invoked through
+        # reflection/magic that shipmonk can't trace.
+
+        # Filament page — every public method is callable from Blade via
+        # wire:click / wire:submit, Filament lifecycle hooks (mount, render,
+        # updatedFoo) run through magic, and public properties are two-way
+        # bound to the component via wire:model.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - Pages/*
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - Pages/*
+
+        # Filament plugin + agent client — JabaliTerminalPlugin::make() is
+        # invoked by the main panel provider at panel-registration time, and
+        # JabaliTerminalClient is resolved from the service container
+        # (app(...)) by pages/controllers. Neither call is visible to shipmonk.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - JabaliTerminalPlugin.php
+                - JabaliTerminalClient.php
+        -
+            identifier: shipmonk.deadProperty.neverRead
+            paths:
+                - JabaliTerminalPlugin.php
+                - JabaliTerminalClient.php
+
+        # Controllers — dispatched from routes via string tuples that shipmonk
+        # can't resolve through the router.
+        -
+            identifier: shipmonk.deadMethod
+            paths:
+                - Http/Controllers/*
