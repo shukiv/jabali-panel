@@ -726,6 +726,22 @@ export const user: MockUser = {
 // ---------- helper: sign in through the login form ----------
 
 export async function signIn(page: Page, u: MockUser, password = "anypassword123"): Promise<void> {
+  // Suppress the admin Quick Start modal that pops on first login. Without
+  // this, every admin-shell spec races the modal's portal — it overlays
+  // navigation and click targets and ~half the admin tests fail with
+  // "element intercepts pointer events". Runs on every navigation so any
+  // post-login redirect/reload still has the key primed before React reads
+  // it. Real users see the modal once and dismiss it themselves.
+  await page.addInitScript(
+    ({ prefix, userId }) => {
+      try {
+        localStorage.setItem(prefix + userId, "1");
+      } catch {
+        // localStorage unavailable — modal will pop but only on this page.
+      }
+    },
+    { prefix: "jabali:quickstart:dismissed:", userId: u.id },
+  );
   await page.goto("/login");
   await page.getByLabel(/email/i).fill(u.email);
   await page.getByLabel(/password/i).fill(password);
