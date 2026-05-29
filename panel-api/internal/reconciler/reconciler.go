@@ -100,6 +100,10 @@ type Reconciler struct {
 	// agent dispatch omits the ip_acls field (no nginx directives
 	// rendered).
 	domainIPACLs repository.DomainIPACLRepository
+	// M50 per-directory password protection repo. When nil, agent
+	// dispatch omits directory_privacy_rules → no htpasswd files
+	// written, no auth_basic location blocks rendered.
+	domainDirPrivacy repository.DomainDirectoryPrivacyRepository
 	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
 	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
 	// the desired state hasn't changed since the last dispatch. Self-
@@ -142,6 +146,15 @@ func (r *Reconciler) WithUserEgressDropSamples(repo repository.UserEgressDropSam
 // renders the directives inside the server block.
 func (r *Reconciler) WithDomainIPACLs(repo repository.DomainIPACLRepository) *Reconciler {
 	r.domainIPACLs = repo
+	return r
+}
+
+// WithDomainDirectoryPrivacy injects the M50 per-directory password
+// protection repo. When set, createDomainOnAgent fetches each domain's
+// rules + credentials so the agent writes htpasswd files and the vhost
+// gets auth_basic location blocks.
+func (r *Reconciler) WithDomainDirectoryPrivacy(repo repository.DomainDirectoryPrivacyRepository) *Reconciler {
+	r.domainDirPrivacy = repo
 	return r
 }
 
@@ -1102,6 +1115,45 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			}
 			params["ip_acls"] = rules
 		}
+	}
+
+	// M50 per-directory password protection. Fetch rules + their
+	// credentials so the agent can write the htpasswd file and emit
+	// one `location ^~ <path>/ { auth_basic ...; }` block per rule.
+	// Always send the full rule-ID set (even when empty) so the agent
+	// can prune orphaned htpasswd files from previously-deleted rules.
+	if r.domainDirPrivacy != nil {
+		dpCtx, dpCancel := context.WithTimeout(ctx, 3*time.Second)
+		rules, err := r.domainDirPrivacy.ListRulesByDomain(dpCtx, domain.ID)
+		if err == nil {
+			ruleIDs := make([]string, 0, len(rules))
+			payload := make([]map[string]any, 0, len(rules))
+			for _, rule := range rules {
+				ruleIDs = append(ruleIDs, rule.ID)
+				creds, cErr := r.domainDirPrivacy.ListCredentialsByRule(dpCtx, rule.ID)
+				if cErr != nil {
+					creds = nil
+				}
+				credPayload := make([]map[string]string, 0, len(creds))
+				for _, c := range creds {
+					credPayload = append(credPayload, map[string]string{
+						"username":      c.Username,
+						"password_hash": c.PasswordHash,
+					})
+				}
+				payload = append(payload, map[string]any{
+					"rule_id":     rule.ID,
+					"path":        rule.Path,
+					"realm":       rule.Realm,
+					"credentials": credPayload,
+				})
+			}
+			params["directory_privacy_rule_ids"] = ruleIDs
+			if len(payload) > 0 {
+				params["directory_privacy_rules"] = payload
+			}
+		}
+		dpCancel()
 	}
 
 	// Add PHP INI overrides (only if not NULL).

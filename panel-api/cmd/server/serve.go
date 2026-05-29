@@ -280,6 +280,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
+		deps.DomainDirectoryPrivacy = repository.NewDomainDirectoryPrivacyRepository(sharedDB)
 		// M35: migration importers — Step 1 wires the repo only.
 		// Steps 3-7 land per-source importer code that calls these
 		// methods; admin REST + UI in Step 8. Default-off until
@@ -365,6 +366,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// agent's domain.create payload; agent renders nginx directives
 		// inside the server block.
 		rec.WithDomainIPACLs(deps.DomainIPACLs)
+		rec.WithDomainDirectoryPrivacy(deps.DomainDirectoryPrivacy)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		// M30.2 (ADR-0080): destinations + schedules. backup_copy_jobs

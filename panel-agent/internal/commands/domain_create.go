@@ -71,6 +71,15 @@ type domainCreateParams struct {
 	// `allow <cidr>;` / `deny <cidr>;` directive in priority order
 	// inside the server block.
 	IPACLs []domainIPACLRule `json:"ip_acls,omitempty"`
+
+	// M50 per-directory password protection. Each rule produces one
+	// htpasswd file under /etc/jabali-panel/dir-privacy/<rule_id>.htpasswd
+	// and one `location ^~ <path>/ { auth_basic ...; }` block inside the
+	// vhost. DirectoryPrivacyRuleIDs is the full set of rule IDs panel
+	// knows about for this domain — the agent uses it to detect orphaned
+	// htpasswd files (rule deleted on panel, file still on disk).
+	DirectoryPrivacyRules   []directoryPrivacyRule `json:"directory_privacy_rules,omitempty"`
+	DirectoryPrivacyRuleIDs []string               `json:"directory_privacy_rule_ids,omitempty"`
 }
 
 // domainIPACLRule is one allow/deny entry. CIDR is canonicalised by
@@ -153,6 +162,7 @@ server {
     {{.IndexDirective}}
 
     {{.IPACLDirectives}}
+    {{.DirectoryPrivacyDirectives}}
 
     location / {
 {{ if .HasPHP }}
@@ -272,6 +282,10 @@ type vhostData struct {
 	// string when the domain has no ACLs (zero overhead). Sits inside
 	// the server block so it applies to every location.
 	IPACLDirectives string
+	// M50 directory privacy — pre-rendered `location ^~ <path>/ {
+	// auth_basic ...; auth_basic_user_file ...; }` blocks, one per
+	// rule. Empty string when the domain has no privacy rules.
+	DirectoryPrivacyDirectives string
 	// ADR-0108 FastCGI micro-cache. All three are panel/agent-controlled
 	// (never user data). When CacheEnabled is false the template emits
 	// none of the cache/static directives → byte-identical to pre-0108.
@@ -353,7 +367,7 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -372,6 +386,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		CustomDirectives:   customDirectives,
 		RateLimitDirectives: rateLimitDirectives,
 		IPACLDirectives:    ipACLDirectives,
+		DirectoryPrivacyDirectives: dirPrivacyDirectives,
 		IsEnabled:          isEnabled,
 		SSLCertPath:        sslCertPath,
 		SSLKeyPath:         sslKeyPath,
@@ -545,7 +560,16 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 
 	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
 	ipACLDirectives := buildIPACLDirectives(p.IPACLs)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled)
+	// M50: write htpasswd files first; on failure, do NOT write the vhost
+	// (leaves nginx pointing at non-existent files = nginx -t fails).
+	if _, err := syncDirectoryPrivacyFiles(p.DirectoryPrivacyRules, p.DirectoryPrivacyRuleIDs); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: err.Error(),
+		}
+	}
+	dirPrivacyDirectives := buildDirectoryPrivacyDirectives(p.DirectoryPrivacyRules)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

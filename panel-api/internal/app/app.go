@@ -70,6 +70,7 @@ type Deps struct {
 	StalwartAdminThrottle api.ThrottleDispatcher
 	BWDaily                   repository.BWDailyRepository
 	DomainIPACLs              repository.DomainIPACLRepository
+	DomainDirectoryPrivacy    repository.DomainDirectoryPrivacyRepository
 	MigrationJobs             repository.MigrationJobRepository
 	MigrationSizeCache        repository.MigrationAccountSizeCacheRepository
 	AutomationTokens          repository.AutomationTokenRepository
@@ -442,6 +443,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterDomainIPACLRoutes(v1, api.DomainIPACLHandlerConfig{
 				Domains:   deps.Domains,
 				ACLs:      deps.DomainIPACLs,
+				Reconcile: schedule,
+			})
+		}
+		// M50 — per-directory password protection.
+		if deps.Domains != nil && deps.DomainDirectoryPrivacy != nil {
+			var schedule func(string)
+			if deps.Reconciler != nil {
+				rec := deps.Reconciler
+				schedule = func(id string) { rec.Schedule(id) }
+			}
+			api.RegisterDomainDirectoryPrivacyRoutes(v1, api.DomainDirectoryPrivacyHandlerConfig{
+				Domains:   deps.Domains,
+				Privacy:   deps.DomainDirectoryPrivacy,
 				Reconcile: schedule,
 			})
 		}

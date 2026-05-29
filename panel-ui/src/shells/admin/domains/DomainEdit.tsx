@@ -23,6 +23,7 @@ import { DomainBandwidthCard } from "../../../components/DomainBandwidthCard";
 import type { Domain } from "./DomainList";
 import { DomainEmailSection } from "./DomainEmailSection";
 import { DomainIPACLSection } from "./DomainIPACLSection";
+import { DomainDirectoryPrivacySection } from "./DomainDirectoryPrivacySection";
 import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainSSLSection } from "./DomainSSLSection";
@@ -168,6 +169,9 @@ export const DomainEdit = () => {
 
           <Divider>IP Allow / Deny</Divider>
           <DomainIPACLSection domainId={domain.id} />
+
+          <Divider>Directory Privacy</Divider>
+          <DomainDirectoryPrivacySection domainId={domain.id} />
 
           <Divider>Email</Divider>
           <DomainEmailSection domainId={domain.id} />
