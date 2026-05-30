@@ -1,8 +1,10 @@
 // DomainDirectoryPrivacySection — M50 cPanel-style "Directory Privacy".
 // Each rule locks a docroot subdirectory behind HTTP Basic Auth with a
 // custom realm; the expanded row holds the per-rule credentials (bcrypt
-// hashed at the API, never read back).
+// hashed at the API, never read back). Rule-creation form collects the
+// first credential too so newly-added rules ship with a working login.
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -17,6 +19,7 @@ import {
 } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@icons";
 
+import { apiClient } from "../../../apiClient";
 import {
   useCreateDirectoryPrivacyCredential,
   useCreateDirectoryPrivacyRule,
@@ -25,19 +28,33 @@ import {
   useDirectoryPrivacyCredentials,
   useDirectoryPrivacyRules,
   type CreateCredentialInput,
-  type CreateRuleInput,
   type DirectoryPrivacyCredential,
   type DirectoryPrivacyRule,
 } from "../../../hooks/useDomainDirectoryPrivacy";
 
-type Props = { domainId: string };
+type Props = { domainId: string; domainName?: string };
 
-export const DomainDirectoryPrivacySection = ({ domainId }: Props) => {
+type NewRuleForm = {
+  path: string;
+  realm: string;
+  username: string;
+  password: string;
+};
+
+export const DomainDirectoryPrivacySection = ({
+  domainId,
+  domainName,
+}: Props) => {
   const { data, isLoading } = useDirectoryPrivacyRules(domainId);
   const createRule = useCreateDirectoryPrivacyRule(domainId);
   const deleteRule = useDeleteDirectoryPrivacyRule(domainId);
-  const [form] = Form.useForm<CreateRuleInput>();
+  // Created rule ID drives the credential POST; mutator hook is keyed by
+  // ruleId at construction so we use apiClient directly + invalidate the
+  // credential list cache for the new rule after the POST.
+  const qc = useQueryClient();
+  const [form] = Form.useForm<NewRuleForm>();
   const [adding, setAdding] = useState(false);
+  const realmPlaceholder = domainName || "Restricted";
 
   if (isLoading && !data) {
     return <Skeleton active paragraph={{ rows: 3 }} />;
@@ -45,19 +62,35 @@ export const DomainDirectoryPrivacySection = ({ domainId }: Props) => {
 
   const rows = data?.data ?? [];
 
-  const onAddRule = async (values: CreateRuleInput) => {
+  const onAddRule = async (values: NewRuleForm) => {
     try {
-      await createRule.mutateAsync({
+      const rule = await createRule.mutateAsync({
         path: values.path.trim(),
-        realm: values.realm?.trim() || undefined,
+        realm: values.realm?.trim() || realmPlaceholder,
       });
-      message.success("Rule added");
+      // Second hop: post the first credential under the new rule. The
+      // credential mutator hook is keyed by ruleId at construction, so we
+      // call apiClient directly and invalidate the per-rule list cache.
+      await apiClient.post(
+        `/domains/${domainId}/directory-privacy/${rule.id}/credentials`,
+        { username: values.username, password: values.password },
+      );
+      await qc.invalidateQueries({
+        queryKey: [
+          "list",
+          "domain-directory-privacy-credentials",
+          domainId,
+          rule.id,
+        ],
+      });
+      message.success("Protected directory created");
       form.resetFields();
       setAdding(false);
     } catch (err: unknown) {
       const resp = (err as { response?: { data?: { error?: string } } })
         ?.response?.data;
-      message.error(resp?.error ?? "Failed to add rule");
+      const fallback = err instanceof Error ? err.message : "Failed to add rule";
+      message.error(resp?.error ?? fallback);
     }
   };
 
@@ -78,10 +111,10 @@ export const DomainDirectoryPrivacySection = ({ domainId }: Props) => {
         message="Per-directory password protection"
         description={
           <Typography.Paragraph style={{ marginBottom: 0 }}>
-            Lock a subdirectory of this domain behind HTTP Basic Auth.
-            Click a row to manage usernames + passwords for that rule. A
-            rule with zero credentials denies all access (safer than
-            silently allowing).
+            Lock a subdirectory of this domain behind HTTP Basic Auth.{" "}
+            <b>Authentication name</b> is the label the browser shows in the
+            login popup. Expand a row to add more users; a rule with zero
+            credentials denies all access (safer than silently allowing).
           </Typography.Paragraph>
         }
       />
@@ -108,7 +141,7 @@ export const DomainDirectoryPrivacySection = ({ domainId }: Props) => {
           render={(p: string) => <Typography.Text code>{p}</Typography.Text>}
         />
         <Table.Column<DirectoryPrivacyRule>
-          title="Realm"
+          title="Authentication name"
           dataIndex="realm"
         />
         <Table.Column<DirectoryPrivacyRule>
@@ -133,27 +166,56 @@ export const DomainDirectoryPrivacySection = ({ domainId }: Props) => {
       </Table>
 
       {adding ? (
-        <Form<CreateRuleInput>
+        <Form<NewRuleForm>
           form={form}
-          layout="inline"
+          layout="vertical"
           onFinish={onAddRule}
-          initialValues={{ realm: "Restricted" }}
+          style={{ maxWidth: 520 }}
         >
           <Form.Item
             label="Path"
             name="path"
+            tooltip="Directory under the docroot to protect (e.g. /secret)."
             rules={[
               { required: true, message: "Required" },
               {
-                pattern: /^\/[A-Za-z0-9_./-]+$/,
+                pattern: /^\/[A-Za-z0-9_./-]+$|^\/$/,
                 message: "Start with /, no spaces or special chars",
               },
             ]}
           >
-            <Input placeholder="/secret" style={{ width: 220 }} />
+            <Input placeholder="/secret" />
           </Form.Item>
-          <Form.Item label="Realm" name="realm">
-            <Input placeholder="Restricted" style={{ width: 180 }} />
+          <Form.Item
+            label="Authentication name"
+            name="realm"
+            tooltip="Label shown in the browser's Basic Auth popup."
+          >
+            <Input placeholder={realmPlaceholder} />
+          </Form.Item>
+          <Form.Item
+            label="Username"
+            name="username"
+            rules={[
+              { required: true, message: "Required" },
+              {
+                pattern: /^[A-Za-z0-9._-]{1,64}$/,
+                message: "1-64 chars; letters, digits, . _ -",
+              },
+            ]}
+          >
+            <Input placeholder="user" />
+          </Form.Item>
+          <Form.Item
+            label="Password"
+            name="password"
+            rules={[
+              { required: true, message: "Required" },
+              { min: 8, message: "Min 8 characters" },
+              { max: 128, message: "Max 128 characters" },
+            ]}
+          >
+            <Input.Password />
           </Form.Item>
           <Form.Item>
             <Space>
@@ -162,7 +224,7 @@ export const DomainDirectoryPrivacySection = ({ domainId }: Props) => {
                 htmlType="submit"
                 loading={createRule.isPending}
               >
-                Add
+                Create
               </Button>
               <Button
                 onClick={() => {
@@ -202,22 +264,22 @@ const DirectoryPrivacyCredentialsTable = ({
   const onAdd = async (values: CreateCredentialInput) => {
     try {
       await create.mutateAsync(values);
-      message.success("Credential added");
+      message.success("User added");
       form.resetFields();
       setAdding(false);
     } catch (err: unknown) {
       const resp = (err as { response?: { data?: { error?: string } } })
         ?.response?.data;
-      message.error(resp?.error ?? "Failed to add credential");
+      message.error(resp?.error ?? "Failed to add user");
     }
   };
 
   const onDelete = async (credId: string) => {
     try {
       await remove.mutateAsync({ credId });
-      message.success("Credential deleted");
+      message.success("User deleted");
     } catch {
-      message.error("Failed to delete credential");
+      message.error("Failed to delete user");
     }
   };
 
@@ -230,7 +292,7 @@ const DirectoryPrivacyCredentialsTable = ({
         pagination={false}
         size="small"
         locale={{
-          emptyText: "No credentials — directory is locked (deny by default).",
+          emptyText: "No users — directory is locked (deny by default).",
         }}
       >
         <Table.Column<DirectoryPrivacyCredential>
@@ -242,7 +304,7 @@ const DirectoryPrivacyCredentialsTable = ({
           width={80}
           render={(_, c) => (
             <Popconfirm
-              title="Delete this credential?"
+              title="Delete this user?"
               onConfirm={() => onDelete(c.id)}
               okText="Delete"
               okButtonProps={{ danger: true }}
