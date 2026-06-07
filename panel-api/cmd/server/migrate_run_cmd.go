@@ -803,8 +803,8 @@ func cpanelRestoreCallback(
 			warnings = append(warnings, fmt.Sprintf("appconfigs: %v", err))
 		} else {
 			warnings = append(warnings, fmt.Sprintf(
-				"appconfigs: wordpress=%d joomla=%d drupal=%d magento=%d caches_cleared=%d",
-				appRes.WordPress, appRes.Joomla, appRes.Drupal, appRes.Magento, appRes.CachesCleared))
+				"appconfigs: wordpress=%d joomla=%d drupal=%d magento=%d caches_cleared=%d php_ini_fixed=%d",
+				appRes.WordPress, appRes.Joomla, appRes.Drupal, appRes.Magento, appRes.CachesCleared, appRes.PhpIniFixed))
 			warnings = append(warnings, appRes.Skipped...)
 		}
 

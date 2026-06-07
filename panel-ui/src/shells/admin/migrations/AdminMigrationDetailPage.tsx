@@ -720,6 +720,7 @@ function parseRestoreManifest(raw: string): RestoreParsed {
       line.includes("already imported") ||
       line.includes("cron_disabled_import") ||
       line.includes("env_ignored") ||
+      line.includes("php_ini_sanitized") ||
       line.includes("_skipped:") ||
       line.startsWith("warning:") ||
       line.startsWith("skip:")

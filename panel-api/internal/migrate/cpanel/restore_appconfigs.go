@@ -40,6 +40,7 @@ type AppConfigsResult struct {
 	Drupal        int      // settings.php files rewritten
 	Magento       int      // app/etc/env.php files rewritten
 	CachesCleared int      // cache directories wiped (WP Rocket / LiteSpeed / W3TC / Joomla / Drupal etc.)
+	PhpIniFixed   int      // php.ini/.user.ini files whose out-of-jail path directives were neutralized
 	Skipped       []string // human-readable reasons (file unreadable, no match, etc.)
 }
 
@@ -103,6 +104,24 @@ func ImportAppConfigs(
 			res.Magento += n
 		} else if sk != "" {
 			res.Skipped = append(res.Skipped, sk)
+		}
+
+		// php.ini / .user.ini sanitization: a verbatim-copied cPanel ini
+		// often points session.save_path / open_basedir / *_tmp_dir /
+		// error_log / extension_dir at a path outside jabali's per-user
+		// open_basedir jail, which breaks every request under the pool.
+		// Neutralize only the out-of-jail path directives; preserve
+		// benign tunables (memory_limit, upload_max_filesize, …).
+		for _, ini := range []string{
+			filepath.Join(docroot, "php.ini"),
+			filepath.Join(docroot, ".user.ini"),
+		} {
+			n, sk := sanitizePhpIniFile(ctx, agentCli, targetUserID, targetUsername, ini, res)
+			if n > 0 {
+				res.PhpIniFixed += n
+			} else if sk != "" {
+				res.Skipped = append(res.Skipped, sk)
+			}
 		}
 
 		// Cache-plugin / framework-cache cleanup. cpanel-side
@@ -224,6 +243,49 @@ func rewriteOne(
 var (
 	wpDefineRe = regexp.MustCompile(`(?m)^\s*define\(\s*['"](DB_NAME|DB_USER|DB_PASSWORD|DB_HOST)['"]\s*,\s*['"]([^'"]*)['"]\s*\)\s*;`)
 )
+
+// sanitizePhpIniFile reads a migrated php.ini/.user.ini via the agent,
+// neutralizes path directives pointing outside the user's open_basedir
+// jail (sanitizePhpIni), and writes it back. Returns (1, "") on a real
+// rewrite, (0, "") when absent/clean, (0, note) on an error. The per-
+// directive changes are appended to res.Skipped as manifest notes.
+func sanitizePhpIniFile(ctx context.Context, agentCli agent.AgentInterface, targetUserID, targetUsername, path string, res *AppConfigsResult) (int, string) {
+	if _, err := os.Stat(path); err != nil {
+		return 0, ""
+	}
+	raw, err := agentCli.Call(ctx, "files.read", map[string]any{
+		"user_id":  targetUserID,
+		"username": targetUsername,
+		"path":     path,
+	})
+	if err != nil {
+		return 0, fmt.Sprintf("php_ini_read_skip:%s:%v", path, err)
+	}
+	var r struct {
+		Content  string `json:"content"`
+		IsBinary bool   `json:"is_binary"`
+	}
+	if jErr := json.Unmarshal(raw, &r); jErr != nil || r.IsBinary {
+		return 0, fmt.Sprintf("php_ini_decode_skip:%s", path)
+	}
+	updated, notes, changed := sanitizePhpIni(r.Content, targetUsername)
+	if !changed {
+		return 0, ""
+	}
+	if _, err := agentCli.Call(ctx, "files.write", map[string]any{
+		"user_id":  targetUserID,
+		"username": targetUsername,
+		"path":     path,
+		"content":  updated,
+		"mode":     "overwrite",
+	}); err != nil {
+		return 0, fmt.Sprintf("php_ini_write_skip:%s:%v", path, err)
+	}
+	for _, n := range notes {
+		res.Skipped = append(res.Skipped, fmt.Sprintf("php_ini_sanitized:%s: %s", path, n))
+	}
+	return 1, ""
+}
 
 func rewriteWordPress(text string, creds map[string]DBCredential) (string, bool) {
 	if !strings.Contains(text, "DB_NAME") {
