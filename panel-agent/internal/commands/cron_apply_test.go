@@ -267,7 +267,10 @@ func TestBuildCronServiceContent(t *testing.T) {
 }
 
 func TestBuildCronTimerContent(t *testing.T) {
-	content := buildCronTimerContent("job1", "0 * * * *")
+	content, err := buildCronTimerContent("job1", "0 * * * *")
+	if err != nil {
+		t.Fatalf("buildCronTimerContent: %v", err)
+	}
 
 	// Verify structure
 	if !contains(content, "[Unit]") {
@@ -279,8 +282,10 @@ func TestBuildCronTimerContent(t *testing.T) {
 	if !contains(content, "[Install]") {
 		t.Error("missing [Install] section")
 	}
-	if !contains(content, "OnCalendar=0 * * * *") {
-		t.Error("missing OnCalendar setting")
+	// 5-field cron is translated to systemd OnCalendar (NOT raw cron,
+	// which yields "Loaded: bad-setting"). "0 * * * *" → hourly at :00.
+	if !contains(content, "OnCalendar=*-*-* *:0:00") {
+		t.Errorf("OnCalendar not translated to systemd format; got:\n%s", content)
 	}
 	if !contains(content, "Unit=jabali-cron-job1.service") {
 		t.Error("missing Unit setting")

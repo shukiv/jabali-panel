@@ -163,7 +163,13 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 
 	// Generate unit file content
 	serviceContent := buildCronServiceContent(p.JobID, p.Name, cmd, p.Username, p.OwnedDocroots)
-	timerContent := buildCronTimerContent(p.JobID, p.Schedule)
+	timerContent, tcErr := buildCronTimerContent(p.JobID, p.Schedule)
+	if tcErr != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("translate schedule %q to OnCalendar: %v", p.Schedule, tcErr),
+		}
+	}
 
 	// Check for no-change (idempotency per spec §3 invariant)
 	serviceMatch := filesMatch(servicePath, []byte(serviceContent))
@@ -264,8 +270,15 @@ WorkingDirectory=%%h
 `, jobID, name, execStartPre, execStart)
 }
 
-// buildCronTimerContent generates the systemd timer unit content.
-func buildCronTimerContent(jobID, schedule string) string {
+// buildCronTimerContent generates the systemd timer unit content. The
+// stored schedule is 5-field POSIX cron; systemd OnCalendar= needs
+// systemd-calendar format (cron syntax yields "Loaded: bad-setting" and
+// the timer never fires), so translate it via cronvalidate.
+func buildCronTimerContent(jobID, schedule string) (string, error) {
+	onCalendar, err := cronvalidate.CronToSystemdCalendar(schedule)
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf(`[Unit]
 Description=Jabali cron timer for %s
 
@@ -276,7 +289,7 @@ Unit=jabali-cron-%s.service
 
 [Install]
 WantedBy=timers.target
-`, jobID, schedule, jobID)
+`, jobID, onCalendar, jobID), nil
 }
 
 // singleQuote wraps a token in single quotes, escaping any embedded single quotes.
@@ -371,7 +384,13 @@ func applyRootCron(ctx context.Context, p cronApplyParams) (any, error) {
 	timerPath := filepath.Join("/etc/systemd/system", fmt.Sprintf("jabali-cron-%s.timer", p.JobID))
 
 	serviceContent := buildRootCronServiceContent(p.JobID, p.Name, p.Command)
-	timerContent := buildCronTimerContent(p.JobID, p.Schedule)
+	timerContent, tcErr := buildCronTimerContent(p.JobID, p.Schedule)
+	if tcErr != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("translate schedule %q to OnCalendar: %v", p.Schedule, tcErr),
+		}
+	}
 
 	if filesMatch(servicePath, []byte(serviceContent)) && filesMatch(timerPath, []byte(timerContent)) {
 		return &cronApplyResponse{ServicePath: servicePath, TimerPath: timerPath, NoChange: true}, nil
