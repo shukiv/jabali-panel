@@ -589,7 +589,7 @@ func (h *dnsHandler) deleteRecord(c *gin.Context) {
 
 func isValidDNSType(t string) bool {
 	switch strings.ToUpper(t) {
-	case "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV":
+	case "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA":
 		return true
 	}
 	return false
@@ -601,7 +601,7 @@ func validateDNSRecord(r *models.DNSRecord) error {
 	r.Content = strings.TrimSpace(r.Content)
 
 	if !isValidDNSType(r.Type) {
-		return fmt.Errorf("unsupported record type %q (allowed: A, AAAA, CNAME, MX, TXT, NS, SRV)", r.Type)
+		return fmt.Errorf("unsupported record type %q (allowed: A, AAAA, CNAME, MX, TXT, NS, SRV, CAA)", r.Type)
 	}
 	if r.Name == "" {
 		return fmt.Errorf("name required (use '@' for apex)")
@@ -651,6 +651,24 @@ func validateDNSRecord(r *models.DNSRecord) error {
 		port, err := strconv.Atoi(fields[2])
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("SRV port must be 1-65535")
+		}
+	case "CAA":
+		// content format: "<flags> <tag> \"<value>\"" per RFC 8659,
+		// e.g. `0 issue "letsencrypt.org"`. flags 0-255, tag one of
+		// issue/issuewild/iodef (the common set jabali emits + most
+		// operators use). PowerDNS stores the content verbatim.
+		fields := strings.Fields(r.Content)
+		if len(fields) < 3 {
+			return fmt.Errorf("CAA content must be \"<flags> <tag> \\\"<value>\\\"\" e.g. 0 issue \\\"letsencrypt.org\\\"")
+		}
+		flags, err := strconv.Atoi(fields[0])
+		if err != nil || flags < 0 || flags > 255 {
+			return fmt.Errorf("CAA flags must be 0-255")
+		}
+		switch fields[1] {
+		case "issue", "issuewild", "iodef":
+		default:
+			return fmt.Errorf("CAA tag must be issue, issuewild, or iodef")
 		}
 	}
 	return nil

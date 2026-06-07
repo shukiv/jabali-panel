@@ -64,7 +64,7 @@ function useNotification() {
 import { apiClient } from "../../apiClient";
 
 // Type definitions
-type DNSRecordType = "A" | "AAAA" | "CNAME" | "MX" | "TXT" | "NS";
+type DNSRecordType = "A" | "AAAA" | "CNAME" | "MX" | "TXT" | "NS" | "SRV" | "CAA";
 
 // recordTypeColor maps each DNS record type to an AntD Tag colour so
 // the table scans visually — A/AAAA share the blue family (IPv4/IPv6
@@ -77,6 +77,12 @@ const recordTypeColor: Record<DNSRecordType, string> = {
   MX: "orange",
   TXT: "green",
   NS: "magenta",
+  // SRV (service discovery) + CAA (cert-authority authorization) are
+  // auto-created on email-enable (GH #134); give them colours so the
+  // table renders them cleanly even though they're not in the manual
+  // add-record dropdown.
+  SRV: "cyan",
+  CAA: "gold",
 };
 
 interface DNSZone {
@@ -156,6 +162,16 @@ const getPlaceholders = (
       return {
         nameHelper: "e.g. sub (subdomain)",
         contentHelper: "Nameserver, e.g. ns.external.com",
+      };
+    case "SRV":
+      return {
+        nameHelper: "e.g. _imap._tcp, _submission._tcp",
+        contentHelper: "priority weight port target, e.g. 0 1 993 mail.example.com",
+      };
+    case "CAA":
+      return {
+        nameHelper: "Usually @ (root)",
+        contentHelper: 'flags tag "value", e.g. 0 issue "letsencrypt.org"',
       };
   }
 };

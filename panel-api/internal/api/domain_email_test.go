@@ -112,7 +112,7 @@ func TestDomainEmail_Enable_Success(t *testing.T) {
 	// _autodiscover._tcp SRV, DKIM. Expanded from the pre-Step-6 count
 	// of 4 when we added autoconfig + autodiscover as part of the DNS
 	// autoconfig work.
-	require.Len(t, resp.Records, 6)
+	require.Len(t, resp.Records, 14)
 }
 
 // TestDomainEmail_Enable_AgentFails verifies the panel does NOT flip
@@ -224,17 +224,16 @@ func TestDomainEmail_Get_ShowsHints(t *testing.T) {
 	var resp domainEmailResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.False(t, resp.EmailEnabled)
-	// Six records in the hint list: MX, SPF, DMARC, autoconfig CNAME,
-	// _autodiscover._tcp SRV, DKIM. Expanded from the pre-Step-6 count
-	// of 4 when we added autoconfig + autodiscover as part of the DNS
-	// autoconfig work.
-	require.Len(t, resp.Records, 6)
+	// 14 records in the hint list: MX, SPF, DMARC, autoconfig CNAME,
+	// autodiscover CNAME, _autodiscover._tcp SRV, _imap/_imaps/
+	// _submission/_submissions SRV, TLS-RPT TXT, 2 CAA, DKIM (GH #134).
+	require.Len(t, resp.Records, 14)
 	// Last record is the DKIM placeholder before enable — empty Value
-	// is the contract for "generated later". Index 5 (last) is the
-	// DKIM slot; indices 3 + 4 are autoconfig/autodiscover.
-	require.Equal(t, "TXT", resp.Records[5].Type)
-	require.Contains(t, resp.Records[5].Purpose, "DKIM")
-	require.Equal(t, "", resp.Records[5].Value, "DKIM placeholder has empty value pre-enable")
+	// is the contract for "generated later".
+	last := len(resp.Records) - 1
+	require.Equal(t, "TXT", resp.Records[last].Type)
+	require.Contains(t, resp.Records[last].Purpose, "DKIM")
+	require.Equal(t, "", resp.Records[last].Value, "DKIM placeholder has empty value pre-enable")
 }
 
 // TestDomainEmail_Get_NotFound — requesting email for a non-existent
@@ -277,10 +276,11 @@ func TestDomainEmail_Enable_InsertsM6DNSRecords(t *testing.T) {
 		}
 		got[rec.Type+":"+rec.Name] = rec.Content
 	}
-	// 7 M6 records: DKIM TXT + autoconfig CNAME + 5 SRVs
-	// (_autodiscover + _caldav/_caldavs + _carddav/_carddavs).
-	// CalDAV/CardDAV SRVs added in 034a57e1.
-	require.Len(t, got, 7, "expected 7 M6 records, got %v", got)
+	// 14 distinct (type:name) M6 keys. BuildEmailRecords emits 15 rows
+	// — DKIM + autoconfig + autodiscover + 5 cal/carddav + 4 client SRVs
+	// + TLS-RPT + 2 apex CAA (GH #134) — but the two CAA share the
+	// type:name key "CAA:@" so the map collapses them to 13... +1 = 14.
+	require.Len(t, got, 14, "expected 14 M6 record keys, got %v", got)
 	require.Equal(t, `"v=DKIM1;k=ed25519;p=AAAA"`, got["TXT:jabali._domainkey"])
 	require.Equal(t, "mail.example.com", got["CNAME:autoconfig"])
 	require.Equal(t, "0 0 443 mail.example.com", got["SRV:_autodiscover._tcp"])
@@ -371,8 +371,9 @@ func TestDomainEmail_Enable_UserOverride_Warns(t *testing.T) {
 			m6Count++
 		}
 	}
-	// 7 M6 records normally; user-edited autoconfig blocks 1 insert → 6.
-	require.Equal(t, 6, m6Count, "user-edited autoconfig row blocks exactly one insert")
+	// 15 M6 records normally (GH #134 set); user-edited autoconfig blocks
+	// 1 insert → 14.
+	require.Equal(t, 14, m6Count, "user-edited autoconfig row blocks exactly one insert")
 
 	// Warning must mention autoconfig so the operator knows what to
 	// fix; the exact wording isn't locked down to avoid brittleness.
@@ -409,7 +410,7 @@ func TestDomainEmail_Enable_Idempotent(t *testing.T) {
 			m6Count++
 		}
 	}
-	require.Equal(t, 7, m6Count, "re-enable must not duplicate rows")
+	require.Equal(t, 15, m6Count, "re-enable must not duplicate rows")
 }
 
 // TestEnableDomainEmailInline_HappyPath exercises the shared helper

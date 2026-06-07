@@ -30,7 +30,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 		now,
 	)
 
-	require.Len(t, recs, 7, "M6 should inject 7 records — DKIM + autoconfig + autodiscover + CalDAV/CardDAV SRV")
+	require.Len(t, recs, 15, "M6 should inject 15 records — DKIM + autoconfig + autodiscover + CalDAV/CardDAV + client SRVs + TLS-RPT + 2 CAA")
 
 	// Record 0 — DKIM TXT. Quoted content to match BootstrapRecords.
 	require.Equal(t, "jabali._domainkey", recs[0].Name)
@@ -65,6 +65,31 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 	require.Equal(t, "SRV", recs[6].Type)
 	require.Equal(t, "0 1 80 mail.example.com", recs[6].Content)
 
+	// GH #134 additions (appended after the existing set).
+	require.Equal(t, "autodiscover", recs[7].Name)
+	require.Equal(t, "CNAME", recs[7].Type)
+	require.Equal(t, "mail.example.com", recs[7].Content)
+
+	require.Equal(t, "_imap._tcp", recs[8].Name)
+	require.Equal(t, "0 1 143 mail.example.com", recs[8].Content)
+	require.Equal(t, "_imaps._tcp", recs[9].Name)
+	require.Equal(t, "0 1 993 mail.example.com", recs[9].Content)
+	require.Equal(t, "_submission._tcp", recs[10].Name)
+	require.Equal(t, "0 1 587 mail.example.com", recs[10].Content)
+	require.Equal(t, "_submissions._tcp", recs[11].Name)
+	require.Equal(t, "0 1 465 mail.example.com", recs[11].Content)
+
+	require.Equal(t, "_smtp._tls", recs[12].Name)
+	require.Equal(t, "TXT", recs[12].Type)
+	require.Equal(t, `"v=TLSRPTv1; rua=mailto:postmaster@example.com"`, recs[12].Content)
+
+	require.Equal(t, "@", recs[13].Name)
+	require.Equal(t, "CAA", recs[13].Type)
+	require.Equal(t, `0 issue "letsencrypt.org"`, recs[13].Content)
+	require.Equal(t, "@", recs[14].Name)
+	require.Equal(t, "CAA", recs[14].Type)
+	require.Equal(t, `0 iodef "mailto:postmaster@example.com"`, recs[14].Content)
+
 	// All three must be flagged Managed + ManagedBy="m6" so the
 	// delete-on-disable WHERE clause can find them without touching
 	// M4 bootstrap records (which have ManagedBy=NULL).
@@ -98,7 +123,7 @@ func TestBuildEmailRecords_IDGeneratorCalledOncePerRecord(t *testing.T) {
 		require.False(t, seen[r.ID], "duplicate id %q", r.ID)
 		seen[r.ID] = true
 	}
-	require.Len(t, seen, 7)
+	require.Len(t, seen, 15)
 }
 
 // Sanity — the exported constants used across the package and the

@@ -36,9 +36,16 @@ const EmailRecordsSelector = "jabali"
 //
 //	jabali._domainkey  TXT    "v=DKIM1; k=ed25519; p=<pubkey>"
 //	autoconfig         CNAME  mail
+//	autodiscover       CNAME  mail
 //	_autodiscover._tcp SRV    0 0 443 mail
+//	_caldav(s)/_carddav(s)._tcp SRV ...
+//	_imap/_imaps/_submission/_submissions._tcp SRV ...  (RFC 6186)
+//	_smtp._tls         TXT    "v=TLSRPTv1; rua=mailto:postmaster@<zone>"
+//	@                  CAA    0 issue "letsencrypt.org"
+//	@                  CAA    0 iodef "mailto:postmaster@<zone>"
 //
-// Three records instead of the blueprint's "7 total" — the other four
+// The DKIM/autoconfig/SRV set plus the GH #134 additions (client-
+// service SRVs, TLS-RPT, CAA, autodiscover) — the apex A/MX/SPF/DMARC
 // exist already and rewriting them would (a) invalidate any operator
 // edit (the entire point of ManagedBy scoping is to preserve
 // overrides) and (b) churn PowerDNS unnecessarily. If an install
@@ -86,5 +93,25 @@ func BuildEmailRecords(
 		mk("_carddavs._tcp", "SRV", "0 1 443 "+mailTarget, 0),
 		mk("_caldav._tcp", "SRV", "0 1 80 "+mailTarget, 0),
 		mk("_carddav._tcp", "SRV", "0 1 80 "+mailTarget, 0),
+		// --- GH #134: full Stalwart-recommended mail record set ---
+		// autodiscover CNAME — the Outlook/Exchange autodiscovery
+		// flavour, alongside the _autodiscover._tcp SRV above.
+		mk("autodiscover", "CNAME", mailTarget, 0),
+		// Client-service SRV records (RFC 6186) — let MUAs auto-discover
+		// the IMAP + submission ports Stalwart listens on. weight 1 so a
+		// resolver picks them deterministically.
+		mk("_imap._tcp", "SRV", "0 1 143 "+mailTarget, 0),
+		mk("_imaps._tcp", "SRV", "0 1 993 "+mailTarget, 0),
+		mk("_submission._tcp", "SRV", "0 1 587 "+mailTarget, 0),
+		mk("_submissions._tcp", "SRV", "0 1 465 "+mailTarget, 0),
+		// TLS-RPT (RFC 8460) — where receivers send aggregate reports of
+		// TLS negotiation failures delivering to this domain.
+		mk("_smtp._tls", "TXT", `"v=TLSRPTv1; rua=mailto:postmaster@`+zoneName+`"`, 0),
+		// CAA — restrict certificate issuance to Let's Encrypt (the CA
+		// jabali uses for both web + mail certs) and publish an incident-
+		// reporting address. Two records form one CAA RRset; PowerDNS
+		// stores them as distinct rows under the apex.
+		mk("@", "CAA", `0 issue "letsencrypt.org"`, 0),
+		mk("@", "CAA", `0 iodef "mailto:postmaster@`+zoneName+`"`, 0),
 	}
 }

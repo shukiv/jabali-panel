@@ -546,7 +546,15 @@ func staticEmailHints(domainName, selector, pubKey string) []domainEmailDNSHint 
 		{Purpose: "SPF — authorises this host to send mail for the domain", Name: domainName + ".", Type: "TXT", Value: `v=spf1 mx ~all`},
 		{Purpose: "DMARC — tells receivers to reject unauthenticated mail", Name: "_dmarc." + domainName + ".", Type: "TXT", Value: "v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r"},
 		{Purpose: "autoconfig — Thunderbird / mobile client auto-discovery", Name: "autoconfig." + domainName + ".", Type: "CNAME", Value: "mail." + domainName + "."},
+		{Purpose: "autodiscover — Outlook auto-discovery (CNAME flavour)", Name: "autodiscover." + domainName + ".", Type: "CNAME", Value: "mail." + domainName + "."},
 		{Purpose: "_autodiscover._tcp — alternative auto-discovery flavour (Outlook)", Name: "_autodiscover._tcp." + domainName + ".", Type: "SRV", Value: "0 0 443 mail." + domainName + "."},
+		{Purpose: "_imap._tcp — IMAP client auto-config (RFC 6186)", Name: "_imap._tcp." + domainName + ".", Type: "SRV", Value: "0 1 143 mail." + domainName + "."},
+		{Purpose: "_imaps._tcp — IMAPS client auto-config", Name: "_imaps._tcp." + domainName + ".", Type: "SRV", Value: "0 1 993 mail." + domainName + "."},
+		{Purpose: "_submission._tcp — SMTP submission (STARTTLS) auto-config", Name: "_submission._tcp." + domainName + ".", Type: "SRV", Value: "0 1 587 mail." + domainName + "."},
+		{Purpose: "_submissions._tcp — SMTP submission (implicit TLS) auto-config", Name: "_submissions._tcp." + domainName + ".", Type: "SRV", Value: "0 1 465 mail." + domainName + "."},
+		{Purpose: "TLS-RPT — receives aggregate TLS-failure reports (RFC 8460)", Name: "_smtp._tls." + domainName + ".", Type: "TXT", Value: "v=TLSRPTv1; rua=mailto:postmaster@" + domainName},
+		{Purpose: "CAA — restricts cert issuance to Let's Encrypt", Name: domainName + ".", Type: "CAA", Value: `0 issue "letsencrypt.org"`},
+		{Purpose: "CAA — incident-reporting address for cert issues", Name: domainName + ".", Type: "CAA", Value: `0 iodef "mailto:postmaster@` + domainName + `"`},
 	}
 	if selector != "" && pubKey != "" {
 		hints = append(hints, domainEmailDNSHint{
