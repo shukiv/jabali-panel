@@ -451,6 +451,18 @@ func (h *cronHandler) runNow(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_response_invalid"})
 		return
 	}
+	// Persist the run outcome so the UI's "Last Run" / "Last Exit" columns
+	// reflect a manual Run-now (previously nothing ever called UpdateStatus,
+	// so Last Run stayed "Never" even after a successful run). Best-effort.
+	if h.cfg.CronJobs != nil {
+		lastErr := ""
+		if resp.ExitCode != 0 {
+			lastErr = resp.Stderr
+		}
+		if uErr := h.cfg.CronJobs.UpdateStatus(ctx, job.ID, time.Now().UTC(), resp.ExitCode, lastErr); uErr != nil {
+			h.cfg.Log.Warn("cron run_now: persist last-run failed", "job_id", job.ID, "err", uErr)
+		}
+	}
 	c.JSON(http.StatusOK, resp)
 }
 

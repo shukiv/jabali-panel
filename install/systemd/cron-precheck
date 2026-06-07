@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# jabali cron pre-check: runs as ExecStartPre before a tenant cron's
+# ExecStart. Validates that the docroot the cron targets still exists
+# and is a directory, so a stale cron (e.g. its domain was deleted but
+# the cron_jobs row lingered) fails cleanly instead of spamming PHP
+# "No such file" errors on every fire.
+#
+# Exits 0 → let the cron run. Non-zero → systemd marks the unit failed
+# and ExecStart is skipped (the intended "don't run" outcome).
+set -u
+
+docroot="${1:-}"
+if [[ -z "$docroot" ]]; then
+  echo "cron-precheck: no docroot argument" >&2
+  exit 1
+fi
+if [[ ! -d "$docroot" ]]; then
+  echo "cron-precheck: docroot '$docroot' does not exist — skipping cron" >&2
+  exit 1
+fi
+exit 0

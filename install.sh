@@ -1782,6 +1782,10 @@ install_jabali_slices() {
   install -d -m 0755 /usr/local/libexec/jabali
   install -m 0755 "$REPO_DIR/install/systemd/fpm-pre-start" /usr/local/libexec/jabali/fpm-pre-start
   install -m 0755 "$REPO_DIR/install/systemd/fpm-exec" /usr/local/libexec/jabali/fpm-exec
+  # cron-precheck is the ExecStartPre guard generated cron .service units
+  # reference (panel-agent buildCronServiceContent). Without it the unit
+  # dies 203/EXEC and scheduled crons never run.
+  install -m 0755 "$REPO_DIR/install/systemd/cron-precheck" /usr/local/libexec/jabali/cron-precheck
 
   install -m 0644 "$REPO_DIR/install/systemd/jabali.slice" /etc/systemd/system/jabali.slice
   install -m 0644 "$REPO_DIR/install/systemd/jabali-user.slice" /etc/systemd/system/jabali-user.slice

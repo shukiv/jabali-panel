@@ -372,6 +372,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 install -d -m 0755 /usr/local/libexec/jabali
 install -m 0755 ` + repoDir + `/install/systemd/fpm-pre-start /usr/local/libexec/jabali/fpm-pre-start
 install -m 0755 ` + repoDir + `/install/systemd/fpm-exec /usr/local/libexec/jabali/fpm-exec
+install -m 0755 ` + repoDir + `/install/systemd/cron-precheck /usr/local/libexec/jabali/cron-precheck
 install -m 0644 ` + repoDir + `/install/systemd/jabali.slice /etc/systemd/system/jabali.slice
 install -m 0644 ` + repoDir + `/install/systemd/jabali-user.slice /etc/systemd/system/jabali-user.slice
 install -m 0644 ` + repoDir + `/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service
