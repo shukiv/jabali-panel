@@ -4250,7 +4250,7 @@ LockPersonality=true
 # JIT-compiles YARA rules to WASM and requires PROT_EXEC mmap pages.
 # Defense-in-depth still covered by NoNewPrivileges + ProtectSystem +
 # RestrictAddressFamilies + ProtectKernel* above. ADR-0079.
-ReadWritePaths=$REPO_DIR /var/lib/jabali-uploads /var/lib/jabali-migrations /etc/jabali-panel/migration-secrets /run/mysqld
+ReadWritePaths=$REPO_DIR /var/lib/jabali-uploads /var/lib/jabali-migrations /etc/jabali-panel /run/mysqld
 
 [Install]
 WantedBy=multi-user.target
