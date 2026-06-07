@@ -149,7 +149,28 @@ server {
   # owns mail.<panel-hostname> cert renewal via its own pipeline.
   # Skip the ACME location entirely when DocRoot is empty so the
   # template doesn't emit a bare root directive that trips nginx -t.
+  #
+  # When DocRoot IS set (tenant domain) the location serves TWO
+  # webroots in priority order:
+  #   1. /var/www/jabali-acme — the shared panel ACME webroot used by
+  #      the M6.6 per-domain mail cert (ssl.mail.issue passes -w
+  #      /var/www/jabali-acme) and the M32 panel cert.
+  #   2. {{.DocRoot}} — the apex domain docroot used by the regular
+  #      per-domain cert (reconciler IssueDomainCert passes -w
+  #      DocRoot). Reached via the @acme_docroot fallback.
+  # Both certs cover mail.<domain> as a SAN and both validate over
+  # mail.<domain>:80, but they drop their challenge token into
+  # DIFFERENT directories — without serving both, whichever path
+  # didn't write here 404s. Incident GH #132: the M6.6 mail cert
+  # 404'd because this location only served the docroot, leaving
+  # Stalwart on its self-signed default on :465.
 {{ if .DocRoot }}  location ^~ /.well-known/acme-challenge/ {
+    default_type "text/plain";
+    root /var/www/jabali-acme;
+    try_files $uri @acme_docroot;
+  }
+
+  location @acme_docroot {
     default_type "text/plain";
     root {{.DocRoot}};
     try_files $uri =404;

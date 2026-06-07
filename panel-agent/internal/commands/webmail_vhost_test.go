@@ -366,3 +366,45 @@ func TestWebmailVhostApply_EmptyDocRootSkipsACMELocation(t *testing.T) {
 		t.Errorf("vhost missing :80 → :443 redirect:\n%s", s)
 	}
 }
+
+// TestWebmailVhostApply_DocRootServesBothACMEWebroots is the GH #132
+// regression guard. When a tenant domain has a docroot, the :80 ACME
+// location must serve BOTH the shared panel webroot (/var/www/jabali-
+// acme, where the M6.6 mail cert drops its token) AND the docroot
+// (where the regular per-domain cert drops its token), via a
+// @acme_docroot fallback. Before the fix the location only served the
+// docroot, so the M6.6 mail cert HTTP-01 challenge 404'd and the cert
+// never issued — Stalwart stayed on its self-signed default on :465.
+func TestWebmailVhostApply_DocRootServesBothACMEWebroots(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:  "example.com",
+		SSLCertPath: "/etc/letsencrypt/live/example.com/fullchain.pem",
+		SSLKeyPath:  "/etc/letsencrypt/live/example.com/privkey.pem",
+		DocRoot:     "/home/alice/domains/example.com/public_html",
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "example.com-mail.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	// Primary ACME root is the shared panel webroot (M6.6 + M32).
+	if !strings.Contains(s, "root /var/www/jabali-acme;") {
+		t.Errorf("vhost ACME location must root at the shared panel webroot:\n%s", s)
+	}
+	// Fallback to the tenant docroot via a named location.
+	if !strings.Contains(s, "try_files $uri @acme_docroot;") {
+		t.Errorf("vhost ACME location must fall back to @acme_docroot:\n%s", s)
+	}
+	if !strings.Contains(s, "location @acme_docroot {") {
+		t.Errorf("vhost must define the @acme_docroot fallback location:\n%s", s)
+	}
+	if !strings.Contains(s, "root /home/alice/domains/example.com/public_html;") {
+		t.Errorf("@acme_docroot must root at the tenant docroot:\n%s", s)
+	}
+}

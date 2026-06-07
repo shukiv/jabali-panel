@@ -128,7 +128,19 @@ server {
   ${LISTEN_80}
   server_name mail.${DOMAIN};
 
+  # Serves two webroots in priority order so BOTH the regular
+  # per-domain cert (-w docroot) and the M6.6 per-domain mail cert
+  # (-w /var/www/jabali-acme) can validate mail.<domain> over :80.
+  # GH #132: the mail cert 404'd here because only the docroot was
+  # served, parking the cert in dns_missing/failed and leaving
+  # Stalwart on its self-signed default on :465.
   location ^~ /.well-known/acme-challenge/ {
+    default_type "text/plain";
+    root /var/www/jabali-acme;
+    try_files $uri @acme_docroot;
+  }
+
+  location @acme_docroot {
     default_type "text/plain";
     root ${ACME_WEBROOT};
     try_files $uri =404;
