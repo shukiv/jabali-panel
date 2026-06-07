@@ -275,13 +275,13 @@ func TestEnableDomainEmail_HappyPath(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Errorf("clean zone should produce 0 warnings, got %v", warnings)
 	}
-	// dnscompile.BuildEmailRecords emits 7 rows: DKIM TXT + autoconfig
-	// CNAME + 5 SRVs (_autodiscover + _caldav/_caldavs + _carddav/_carddavs).
-	// CalDAV/CardDAV SRVs added in 034a57e1.
-	if len(rr.createCalls) != 7 {
-		t.Errorf("expected 7 DNS records inserted, got %d", len(rr.createCalls))
+	// dnscompile.BuildEmailRecords emits 15 rows: DKIM + autoconfig +
+	// autodiscover + 5 cal/carddav SRVs + 4 client SRVs + TLS-RPT + 2 CAA
+	// (GH #134).
+	if len(rr.createCalls) != 15 {
+		t.Errorf("expected 15 DNS records inserted, got %d", len(rr.createCalls))
 	}
-	// All 7 must be tagged managed_by="m6".
+	// All must be tagged managed_by="m6".
 	for _, r := range rr.createCalls {
 		if r.ManagedBy == nil || *r.ManagedBy != dnscompile.EmailRecordsManagedBy {
 			t.Errorf("record %s/%s not tagged managed_by=%q: %+v", r.Type, r.Name, dnscompile.EmailRecordsManagedBy, r.ManagedBy)
