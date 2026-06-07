@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,8 +60,12 @@ func (m *udMailboxRepo) ListByDomainID(_ context.Context, domainID string, _ rep
 	return mbs, int64(len(mbs)), nil
 }
 
-// udAgent records every Call.
+// udAgent records every Call. Thread-safe: the user-delete handler fires
+// some agent calls from background goroutines (fire-and-forget teardown)
+// that can outlive the HTTP response, so reads/writes of calls must be
+// guarded.
 type udAgent struct {
+	mu    sync.Mutex
 	calls []struct {
 		cmd    string
 		params any
@@ -68,11 +73,30 @@ type udAgent struct {
 }
 
 func (a *udAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
+	a.mu.Lock()
 	a.calls = append(a.calls, struct {
 		cmd    string
 		params any
 	}{cmd, params})
+	a.mu.Unlock()
 	return json.RawMessage(`{"ok":true}`), nil
+}
+
+// emails returns the set of emails passed to mailbox.delete calls.
+func (a *udAgent) mailboxDeleteEmails() map[string]bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := map[string]bool{}
+	for _, c := range a.calls {
+		if c.cmd == "mailbox.delete" {
+			if m, ok := c.params.(map[string]any); ok {
+				if e, ok := m["email"].(string); ok {
+					out[e] = true
+				}
+			}
+		}
+	}
+	return out
 }
 
 // TestUserDelete_DestroysStalwartAccounts is the regression guard for the
@@ -118,16 +142,9 @@ func TestUserDelete_DestroysStalwartAccounts(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
 	// Both mailboxes' Stalwart accounts must have been destroyed by email.
-	gotEmails := map[string]bool{}
-	for _, c := range ag.calls {
-		if c.cmd == "mailbox.delete" {
-			if m, ok := c.params.(map[string]any); ok {
-				if e, ok := m["email"].(string); ok {
-					gotEmails[e] = true
-				}
-			}
-		}
-	}
-	assert.True(t, gotEmails["info@victim.example.com"], "info mailbox Stalwart account must be destroyed; calls=%v", ag.calls)
-	assert.True(t, gotEmails["sales@victim.example.com"], "sales mailbox Stalwart account must be destroyed; calls=%v", ag.calls)
+	// mailbox.delete fires synchronously in the cascade (before the
+	// response), so it's recorded by the time doJSON returns.
+	gotEmails := ag.mailboxDeleteEmails()
+	assert.True(t, gotEmails["info@victim.example.com"], "info mailbox Stalwart account must be destroyed; got=%v", gotEmails)
+	assert.True(t, gotEmails["sales@victim.example.com"], "sales mailbox Stalwart account must be destroyed; got=%v", gotEmails)
 }
