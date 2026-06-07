@@ -582,13 +582,6 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, fmt.Sprintf("ssh: created=%d", sshRes.Created))
 		warnings = append(warnings, sshRes.Skipped...)
 
-		cronRes, err := cpanel.ImportCron(ctx, cronRepo, p.parsed, p.targetUserID)
-		if err != nil {
-			return bytes, warnings, fmt.Errorf("cron: %w", err)
-		}
-		warnings = append(warnings, fmt.Sprintf("cron: created=%d", cronRes.Created))
-		warnings = append(warnings, cronRes.Skipped...)
-
 		dbsRes, err := cpanel.ImportDatabases(ctx, dbsRepo, dbUsersRepo, dbGrantsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("databases: %w", err)
@@ -769,6 +762,17 @@ func cpanelRestoreCallback(
 		}
 		warnings = append(warnings, fmt.Sprintf("domains: created=%d email_enabled=%d", domainsRes.Created, domainsRes.EmailEnabled))
 		warnings = append(warnings, domainsRes.Skipped...)
+
+		// Cron import runs HERE — after ImportHomeSplit rsynced the
+		// docroots + ImportDomains created the domains — so the curl→php
+		// self-target rewrite can resolve URL paths to real .php files
+		// that exist on the dest disk (rewrite rule 5 "must exist").
+		cronRes, err := cpanel.ImportCron(ctx, cronRepo, p.parsed, p.targetUserID, p.targetUsername)
+		if err != nil {
+			return bytes, warnings, fmt.Errorf("cron: %w", err)
+		}
+		warnings = append(warnings, fmt.Sprintf("cron: created=%d", cronRes.Created))
+		warnings = append(warnings, cronRes.Skipped...)
 
 		mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, sharedAgent, job.ID, mbRepo, domainsRepo)
 		if err != nil {
