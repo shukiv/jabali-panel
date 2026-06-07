@@ -36,7 +36,7 @@ type Opts struct {
 	// session after the JWT exchange.
 	//
 	// Caller MUST populate from a managed source (the panel-api
-	// reconciler writes /etc/jabali-panel/webmail-hosts.list from the
+	// reconciler writes /var/lib/jabali-panel/webmail-hosts.list from the
 	// domain repo every pass; render-config + agent both read that
 	// file). MUST NOT be derived from the request — `req.Host
 	// startsWith "mail."` is bypassable via arbitrary Host headers

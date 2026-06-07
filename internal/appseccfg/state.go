@@ -23,7 +23,14 @@ import (
 // Format: one lower-case FQDN per line. Lines starting with '#' and
 // blank lines are ignored. Anything failing sanitizeWebmailHosts is
 // dropped silently — operators must not edit this file by hand.
-const WebmailHostsPath = "/etc/jabali-panel/webmail-hosts.list"
+// Lives under /var/lib/jabali-panel (owned by the panel's service user)
+// rather than /etc/jabali-panel (root-owned config dir): the reconciler
+// runs as the unprivileged service user and could not create the file
+// (or its tmp) in the root-owned config dir — "permission denied" every
+// pass — and widening that dir would have made the root-owned secrets
+// (kratos.yml, *.env) group-writable. The agent reads via this same
+// const, so both writer + readers follow the move.
+const WebmailHostsPath = "/var/lib/jabali-panel/webmail-hosts.list"
 
 // LoadWebmailHosts reads and sanitizes the state file at the given
 // path. Missing file is NOT an error (returns nil, nil) — fresh
