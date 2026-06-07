@@ -78,14 +78,19 @@ type dnsScan struct {
 	Error     string   `json:"error,omitempty"`
 }
 
-// scanMailSANDNS resolves each SAN hostname and returns whether
-// every one of them resolves to publicIP. The "every" semantics is
-// the right call here: a half-resolved SAN set fails HTTP-01 the
-// SAME way as an entirely-missing one.
-func scanMailSANDNS(ctx context.Context, sans []string, publicIP string) (map[string]dnsScan, bool) {
+// scanMailSANDNS resolves each SAN hostname and records whether it
+// points at publicIP. The mandatory-vs-opportunistic decision lives
+// in the caller: only mail.<d> MUST resolve to us (it is the live
+// SMTP/IMAP/JMAP endpoint). autoconfig/autodiscover/mta-sts often
+// legitimately point at a separate webmail or MTA-STS policy host,
+// so they are folded into the cert only when they happen to resolve
+// to us — bundling a name that resolves elsewhere fails HTTP-01 for
+// the ENTIRE certbot order, which previously parked the whole cert
+// in dns_missing and left Stalwart on its self-signed default
+// (GH #132). Returns the per-hostname result map.
+func scanMailSANDNS(ctx context.Context, sans []string, publicIP string) map[string]dnsScan {
 	resolver := &net.Resolver{PreferGo: true}
 	out := make(map[string]dnsScan, len(sans))
-	allOK := publicIP != ""
 	for _, h := range sans {
 		row := dnsScan{Hostname: h}
 		// 5s budget per lookup; reconciler tick has more, this just
@@ -95,23 +100,41 @@ func scanMailSANDNS(ctx context.Context, sans []string, publicIP string) (map[st
 		cancel()
 		if err != nil {
 			row.Error = err.Error()
-			allOK = false
 			out[h] = row
 			continue
 		}
 		row.Addresses = addrs
-		for _, a := range addrs {
-			if a == publicIP {
-				row.Matches = true
-				break
+		if publicIP != "" {
+			for _, a := range addrs {
+				if a == publicIP {
+					row.Matches = true
+					break
+				}
 			}
-		}
-		if !row.Matches {
-			allOK = false
 		}
 		out[h] = row
 	}
-	return out, allOK
+	return out
+}
+
+// selectEffectiveSANs returns the cert SAN list given the full
+// mailSANHostnames slice and the DNS scan. allSANs[0] (mail.<d>) is
+// always included — the caller has already verified it resolves to
+// us. Each aux name is appended only when its scan row reports a
+// match, so names pointing at a separate webmail / MTA-STS host are
+// dropped rather than failing the whole certbot order (GH #132).
+// Order is preserved so the lineage primary stays mail.<d>.
+func selectEffectiveSANs(allSANs []string, dns map[string]dnsScan) []string {
+	if len(allSANs) == 0 {
+		return allSANs
+	}
+	out := []string{allSANs[0]}
+	for _, h := range allSANs[1:] {
+		if dns[h].Matches {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func sslMailIssueHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -136,7 +159,11 @@ func sslMailIssueHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	sans := mailSANHostnames(p.Domain)
+	allSANs := mailSANHostnames(p.Domain)
+	// effectiveSANs is what we actually hand to certbot. mail.<d> is
+	// always first (primary lineage name); aux names are appended
+	// only when DNS proves they point at us.
+	effectiveSANs := allSANs
 
 	if !p.SkipDNS {
 		if p.PublicIP == "" {
@@ -145,16 +172,24 @@ func sslMailIssueHandler(ctx context.Context, params json.RawMessage) (any, erro
 				Message: "public_ip is required for DNS pre-check (or set skip_dns)",
 			}
 		}
-		dns, ok := scanMailSANDNS(ctx, sans, p.PublicIP)
-		if !ok {
+		dns := scanMailSANDNS(ctx, allSANs, p.PublicIP)
+		// Only mail.<d> (allSANs[0]) is mandatory — it is the live
+		// mail endpoint the cert protects. If it doesn't resolve to
+		// us there is nothing to issue for, so park in dns_missing.
+		if !dns[allSANs[0]].Matches {
 			return sslMailIssueResponse{
 				Outcome: "dns_missing",
 				Domain:  p.Domain,
-				SANs:    sans,
+				SANs:    allSANs,
 				DNS:     dns,
-				Detail:  fmt.Sprintf("one or more mail SAN hostnames do not resolve to %s", p.PublicIP),
+				Detail:  fmt.Sprintf("%s must resolve to %s before a mail certificate can be issued", allSANs[0], p.PublicIP),
 			}, nil
 		}
+		// Fold in autoconfig/autodiscover/mta-sts only when each
+		// resolves to us. A name pointing at a separate webmail /
+		// MTA-STS host is silently dropped from the order instead of
+		// failing the whole issuance (GH #132).
+		effectiveSANs = selectEffectiveSANs(allSANs, dns)
 	}
 
 	if p.Webroot == "" {
@@ -172,18 +207,19 @@ func sslMailIssueHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// certbot certonly --webroot --domains mail.<d>,autoconfig.<d>,
-	// autodiscover.<d>,mta-sts.<d>. Primary SAN = mail.<d> so the
+	// certbot certonly --webroot --domains mail.<d>[,autoconfig.<d>]
+	// [,autodiscover.<d>][,mta-sts.<d>]. Primary SAN = mail.<d> so the
 	// lineage lands at /etc/letsencrypt/live/mail.<d>/ -- the
 	// deploy-hook (step 4) uses the lineage basename to route the
-	// new cert into Stalwart's per-domain x:Certificate entry.
+	// new cert into Stalwart's per-domain x:Certificate entry. The
+	// aux SANs are only present when DNS proved they point at us.
 	runner := certbot.NewRunner()
-	res, err := runner.Issue(sans[0], p.Webroot, p.Email, p.Staging, sans[1:])
+	res, err := runner.Issue(effectiveSANs[0], p.Webroot, p.Email, p.Staging, effectiveSANs[1:])
 	if err != nil {
 		return sslMailIssueResponse{
 			Outcome: "failed",
 			Domain:  p.Domain,
-			SANs:    sans,
+			SANs:    effectiveSANs,
 			Detail:  firstMailErrLine(err.Error()),
 		}, nil
 	}
@@ -200,7 +236,7 @@ func sslMailIssueHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return sslMailIssueResponse{
 			Outcome:     "issued",
 			Domain:      p.Domain,
-			SANs:        sans,
+			SANs:        effectiveSANs,
 			LineagePath: lineageDirFromCertPath(res.CertPath),
 			IssuedAt:    res.IssuedAt.UTC().Format(time.RFC3339),
 			ExpiresAt:   res.ExpiresAt.UTC().Format(time.RFC3339),
@@ -211,7 +247,7 @@ func sslMailIssueHandler(ctx context.Context, params json.RawMessage) (any, erro
 	return sslMailIssueResponse{
 		Outcome:     "issued",
 		Domain:      p.Domain,
-		SANs:        sans,
+		SANs:        effectiveSANs,
 		LineagePath: lineageDirFromCertPath(res.CertPath),
 		IssuedAt:    res.IssuedAt.UTC().Format(time.RFC3339),
 		ExpiresAt:   res.ExpiresAt.UTC().Format(time.RFC3339),

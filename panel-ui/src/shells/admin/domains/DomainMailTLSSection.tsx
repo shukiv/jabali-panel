@@ -142,10 +142,13 @@ export const DomainMailTLSSection = ({ domainId }: Props) => {
       </Space>
 
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        Issues a Let's Encrypt certificate covering the four mail-related hostnames
-        below so mail clients can connect to <code>mail.&lt;your-domain&gt;</code> with a
-        trusted certificate. Without this, clients have to connect via the panel
-        hostname instead.
+        Issues a Let's Encrypt certificate so mail clients can connect to{" "}
+        <code>mail.&lt;your-domain&gt;</code> with a trusted certificate. Only{" "}
+        <code>mail.&lt;your-domain&gt;</code> must point at the panel public IP — the
+        autoconfig / autodiscover / mta-sts hostnames are added to the certificate
+        only when they also resolve here, so it's fine to point them at a separate
+        webmail host. Without this, clients have to connect via the panel hostname
+        instead.
       </Typography.Paragraph>
 
       {cert.last_error && cert.status !== "issued" && (
@@ -161,18 +164,21 @@ export const DomainMailTLSSection = ({ domainId }: Props) => {
         size="small"
         rowKey="hostname"
         pagination={false}
-        dataSource={cert.sans.map((h) => ({ hostname: h }))}
+        dataSource={cert.sans.map((h, idx) => ({ hostname: h, required: idx === 0 }))}
         columns={[
           {
-            title: "DNS A record required",
+            title: "Mail hostname",
             dataIndex: "hostname",
             render: (h: string) => <code>{h}</code>,
           },
           {
-            title: "Target",
-            render: () => (
-              <Typography.Text type="secondary">point at panel public IP</Typography.Text>
-            ),
+            title: "DNS A record",
+            render: (_: unknown, row: { required: boolean }) =>
+              row.required ? (
+                <Typography.Text type="danger">required — point at panel public IP</Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">optional — included if it resolves here</Typography.Text>
+              ),
           },
         ]}
         style={{ marginBottom: 12 }}
