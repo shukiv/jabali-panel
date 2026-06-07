@@ -34,6 +34,7 @@ type UserHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Databases       repository.DatabaseRepository
 	DatabaseUsers   repository.DatabaseUserRepository
+	Mailboxes       repository.MailboxRepository
 	Packages        repository.PackageRepository
 	Reconciler      *reconciler.Reconciler
 	Log             *slog.Logger
@@ -497,6 +498,36 @@ func (h *userHandler) delete(c *gin.Context) {
 			for i := range owned {
 				d := &owned[i]
 				name := d.Name
+				// Purge each mailbox's Stalwart Account BEFORE the domain
+				// delete FK-cascades the mailbox rows away. jabali user
+				// delete otherwise removed the panel row + home + DB but
+				// left the Stalwart registry account behind — re-migrating
+				// or recreating the same address then collided with
+				// {"type":"primaryKeyViolation","properties":["email"]}.
+				// Best-effort: a failure here doesn't block the delete (the
+				// reconciler/agent has no retry for this, but an orphan
+				// account is recoverable; a blocked user-delete is worse).
+				if h.cfg.Mailboxes != nil && h.cfg.Agent != nil {
+					mbs, _, mbErr := h.cfg.Mailboxes.ListByDomainID(c.Request.Context(), d.ID, repository.ListOptions{Limit: 10000})
+					if mbErr != nil {
+						slog.Warn("cascade delete: list domain mailboxes failed",
+							"user_id", id, "domain_id", d.ID, "domain", name, "err", mbErr)
+					} else {
+						for j := range mbs {
+							mb := &mbs[j]
+							mctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+							_, delErr := h.cfg.Agent.Call(mctx, "mailbox.delete", map[string]any{
+								"id":    mb.ID,
+								"email": mb.EmailCached,
+							})
+							cancel()
+							if delErr != nil {
+								slog.Warn("cascade delete: stalwart mailbox.delete failed",
+									"user_id", id, "domain", name, "email", mb.EmailCached, "err", delErr)
+							}
+						}
+					}
+				}
 				if err := h.cfg.Domains.Delete(c.Request.Context(), d.ID); err != nil {
 					slog.Warn("cascade delete: domain DB delete failed",
 						"user_id", id, "domain_id", d.ID, "domain", name, "err", err)
