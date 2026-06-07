@@ -20,7 +20,13 @@ export function JabaliFooter() {
   const { mode } = useThemeMode();
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
-  const isWide = screens.sm !== false;
+  // Inline row layout only on desktop (lg+). Phone + tablet stack
+  // vertically and center so the brand block and version block don't
+  // hug the left edge on narrow shells.
+  const isWide = screens.lg !== false;
+  // Tagline + AGPL link stay visible from sm upward (tablet still has
+  // room); only true phone xs hides them.
+  const showExtras = screens.sm !== false;
   const logoSrc =
     mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
   // Match the Layout body color (gray-50 light / colorBgLayout dark) so
@@ -34,8 +40,9 @@ export function JabaliFooter() {
       style={{
         display: "flex",
         flexDirection: isWide ? "row" : "column",
-        alignItems: isWide ? "center" : "flex-start",
-        justifyContent: "space-between",
+        alignItems: "center",
+        justifyContent: isWide ? "space-between" : "center",
+        textAlign: isWide ? "left" : "center",
         gap: isWide ? 16 : 8,
         // AntD's Footer default padding is 24px 50px — the 24 top/bottom
         // leaves a visible gap above the logo on short list views. Tight
@@ -62,7 +69,7 @@ export function JabaliFooter() {
               Jabali Panel
             </a>
           </Typography.Text>
-          {isWide && (
+          {showExtras && (
             <Typography.Text type="secondary">
               Web Hosting Control Panel
             </Typography.Text>
@@ -80,7 +87,7 @@ export function JabaliFooter() {
         >
           <GithubOutlined style={{ fontSize: 18 }} />
         </a>
-        {isWide && (
+        {showExtras && (
           <>
             <Typography.Text type="secondary">·</Typography.Text>
             <Typography.Text type="secondary">
