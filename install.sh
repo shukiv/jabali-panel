@@ -707,8 +707,8 @@ prompt_server_settings() {
     fi
     inp_hostname="$JABALI_HOSTNAME"
     _ok "using hostname from flag/env: $inp_hostname"
-    # Close the TTY FD even though we didn't read from it.
-    [[ "$input_fd" == "3" ]] && exec 3<&-
+    # Don't close the TTY FD yet — ns1/ns2 prompts below may still
+    # need it if JABALI_NS1_NAME / JABALI_NS2_NAME weren't supplied.
   elif [[ -z "$input_fd" ]]; then
     _warn "no TTY available — using auto-detected defaults + env vars."
     _warn "override hostname via --hostname flag or JABALI_HOSTNAME env"
@@ -761,19 +761,58 @@ prompt_server_settings() {
       [[ "$inp_hostname" =~ $_hostname_regex ]] && break
       _warn "invalid hostname; use letters/digits/dots/hyphens"
     done
-
-    # Close the TTY FD so we don't leak it to child processes.
-    [[ "$input_fd" == "3" ]] && exec 3<&-
   fi
 
-  # NS names + IPs are auto-derived from the hostname — no prompt.
-  # Both nameservers get the same IPv4 at install time; the operator
-  # later points ns2 at a separate server via the admin Server
-  # Settings page, which triggers a zone re-push automatically.
-  inp_ns1_name="ns1.${inp_hostname}"
+  # NS IPs are always the server's own IPv4 at install time. The
+  # operator can point ns2 at a separate server later via the admin
+  # Server Settings page (triggers a zone re-push automatically).
   inp_ns1_ip="${inp_ipv4}"
-  inp_ns2_name="ns2.${inp_hostname}"
   inp_ns2_ip="${inp_ipv4}"
+
+  # NS names default to ns1/ns2.<hostname> but can be overridden via
+  # env (JABALI_NS1_NAME / JABALI_NS2_NAME) for non-interactive
+  # provisioning or via interactive prompts when running on a TTY.
+  local _default_ns1="ns1.${inp_hostname}"
+  local _default_ns2="ns2.${inp_hostname}"
+
+  if [[ -n "${JABALI_NS1_NAME:-}" ]]; then
+    if [[ ! "$JABALI_NS1_NAME" =~ $_hostname_regex ]]; then
+      _die "invalid JABALI_NS1_NAME: '$JABALI_NS1_NAME'"
+    fi
+    inp_ns1_name="$JABALI_NS1_NAME"
+    _ok "using ns1 name from env: $inp_ns1_name"
+  elif [[ -z "$input_fd" ]]; then
+    inp_ns1_name="$_default_ns1"
+  else
+    while true; do
+      printf "Enter ns1 name [%s]: " "$_default_ns1" > /dev/tty 2>/dev/null         || printf "Enter ns1 name [%s]: " "$_default_ns1"
+      read -r -u "$input_fd" inp_ns1_name || true
+      inp_ns1_name="${inp_ns1_name:-$_default_ns1}"
+      [[ "$inp_ns1_name" =~ $_hostname_regex ]] && break
+      _warn "invalid ns1 name; use letters/digits/dots/hyphens"
+    done
+  fi
+
+  if [[ -n "${JABALI_NS2_NAME:-}" ]]; then
+    if [[ ! "$JABALI_NS2_NAME" =~ $_hostname_regex ]]; then
+      _die "invalid JABALI_NS2_NAME: '$JABALI_NS2_NAME'"
+    fi
+    inp_ns2_name="$JABALI_NS2_NAME"
+    _ok "using ns2 name from env: $inp_ns2_name"
+  elif [[ -z "$input_fd" ]]; then
+    inp_ns2_name="$_default_ns2"
+  else
+    while true; do
+      printf "Enter ns2 name [%s]: " "$_default_ns2" > /dev/tty 2>/dev/null         || printf "Enter ns2 name [%s]: " "$_default_ns2"
+      read -r -u "$input_fd" inp_ns2_name || true
+      inp_ns2_name="${inp_ns2_name:-$_default_ns2}"
+      [[ "$inp_ns2_name" =~ $_hostname_regex ]] && break
+      _warn "invalid ns2 name; use letters/digits/dots/hyphens"
+    done
+  fi
+
+  # Close the TTY FD now that every prompt is done.
+  [[ "$input_fd" == "3" ]] && exec 3<&-
 
   # Apply hostname at the OS layer now so later steps see the right name.
   hostnamectl set-hostname "$inp_hostname" 2>/dev/null || true
