@@ -389,6 +389,17 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/sys
 # self-restart fix from ever reaching deployed hosts.
 install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 install -m 0755 ` + repoDir + `/install/letsencrypt/jabali-panel-cert.sh /etc/letsencrypt/renewal-hooks/deploy/jabali-panel-cert.sh
+# jabali-stalwart-push-cert: install.sh only refreshes this inside
+# _install_stalwart_cli, which jabali update never calls (the cli is
+# already at the pinned version, so that function isn't in the update
+# path). Without re-copying here, hosts keep the pre-M6.6 hardcoded-
+# path push-cert that ignores the JABALI_STALWART_CERT_* env the
+# mail-domain deploy-hook exports — so per-domain mail certs (GH #132)
+# got pushed under the PANEL cert name and Stalwart served the panel
+# cert for every SNI on :465/:993. Idempotent file copy.
+if [ -f ` + repoDir + `/install/stalwart/jabali-stalwart-push-cert.sh ]; then
+  install -m 0755 ` + repoDir + `/install/stalwart/jabali-stalwart-push-cert.sh /usr/local/bin/jabali-stalwart-push-cert
+fi
 # jabali-kratos.service: sync with sha256 check so we restart only on change.
 sha_before_k=$(sha256sum /etc/systemd/system/jabali-kratos.service 2>/dev/null | awk '{print $1}' || echo "")
 install -m 0644 ` + repoDir + `/install/systemd/jabali-kratos.service /etc/systemd/system/jabali-kratos.service
