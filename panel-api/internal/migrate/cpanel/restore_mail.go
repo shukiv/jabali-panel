@@ -307,9 +307,13 @@ func insertOneMailboxRow(
 		return []string{fmt.Sprintf("mailbox_rows: create %s@%s: %v", localPart, domainName, cErr)}
 	}
 	res.MaildirsFound++
+	// Don't write the plaintext temp password into the manifest —
+	// manifest_json is persisted + queryable in the panel DB, so it
+	// would be a secret at rest. The mail password is reset via panel
+	// anyway (source Dovecot hashes aren't portable to Stalwart).
 	return []string{fmt.Sprintf(
-		"mailbox_rows: created %s@%s (temp_pwd=%s) — change via panel",
-		localPart, domainName, tempPwd)}
+		"mailbox_rows: created %s@%s (temp password set — reset via panel) — change via panel",
+		localPart, domainName)}
 }
 
 // looksLikeMaildir checks for the Maildir-spec directory markers.
