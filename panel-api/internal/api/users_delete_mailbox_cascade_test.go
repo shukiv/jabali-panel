@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/gin-gonic/gin"
@@ -82,21 +81,21 @@ func (a *udAgent) Call(_ context.Context, cmd string, params any) (json.RawMessa
 	return json.RawMessage(`{"ok":true}`), nil
 }
 
-// emails returns the set of emails passed to mailbox.delete calls.
-func (a *udAgent) mailboxDeleteEmails() map[string]bool {
+// purgedDomain reports whether mail.domain.purge_accounts was called for
+// the given domain.
+func (a *udAgent) purgedDomain(domain string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := map[string]bool{}
 	for _, c := range a.calls {
-		if c.cmd == "mailbox.delete" {
+		if c.cmd == "mail.domain.purge_accounts" {
 			if m, ok := c.params.(map[string]any); ok {
-				if e, ok := m["email"].(string); ok {
-					out[e] = true
+				if d, ok := m["domain"].(string); ok && d == domain {
+					return true
 				}
 			}
 		}
 	}
-	return out
+	return false
 }
 
 // TestUserDelete_DestroysStalwartAccounts is the regression guard for the
@@ -141,10 +140,10 @@ func TestUserDelete_DestroysStalwartAccounts(t *testing.T) {
 	rec := doJSON(t, r, http.MethodDelete, "/api/v1/users/"+victim.ID, nil)
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
-	// Both mailboxes' Stalwart accounts must have been destroyed by email.
-	// mailbox.delete fires synchronously in the cascade (before the
-	// response), so it's recorded by the time doJSON returns.
-	gotEmails := ag.mailboxDeleteEmails()
-	assert.True(t, gotEmails["info@victim.example.com"], "info mailbox Stalwart account must be destroyed; got=%v", gotEmails)
-	assert.True(t, gotEmails["sales@victim.example.com"], "sales mailbox Stalwart account must be destroyed; got=%v", gotEmails)
+	// The whole domain's Stalwart accounts must be purged (by domain, not
+	// per panel row — so orphans without a row are caught too). Fires
+	// synchronously in the cascade before the response.
+	if !ag.purgedDomain("victim.example.com") {
+		t.Errorf("expected mail.domain.purge_accounts for victim.example.com; calls=%v", ag.calls)
+	}
 }

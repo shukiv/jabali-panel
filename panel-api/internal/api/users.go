@@ -498,34 +498,32 @@ func (h *userHandler) delete(c *gin.Context) {
 			for i := range owned {
 				d := &owned[i]
 				name := d.Name
-				// Purge each mailbox's Stalwart Account BEFORE the domain
-				// delete FK-cascades the mailbox rows away. jabali user
-				// delete otherwise removed the panel row + home + DB but
-				// left the Stalwart registry account behind — re-migrating
-				// or recreating the same address then collided with
+				// Purge EVERY Stalwart registry account under this domain
+				// BEFORE the domain delete FK-cascades the panel mailbox
+				// rows away (the domain must still be registered in
+				// Stalwart for the purge to resolve it). jabali user
+				// delete otherwise left the Stalwart account behind →
+				// re-creating/re-migrating the same address collided with
 				// {"type":"primaryKeyViolation","properties":["email"]}.
-				// Best-effort: a failure here doesn't block the delete (the
-				// reconciler/agent has no retry for this, but an orphan
-				// account is recoverable; a blocked user-delete is worse).
-				if h.cfg.Mailboxes != nil && h.cfg.Agent != nil {
-					mbs, _, mbErr := h.cfg.Mailboxes.ListByDomainID(c.Request.Context(), d.ID, repository.ListOptions{Limit: 10000})
-					if mbErr != nil {
-						slog.Warn("cascade delete: list domain mailboxes failed",
-							"user_id", id, "domain_id", d.ID, "domain", name, "err", mbErr)
-					} else {
-						for j := range mbs {
-							mb := &mbs[j]
-							mctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-							_, delErr := h.cfg.Agent.Call(mctx, "mailbox.delete", map[string]any{
-								"id":    mb.ID,
-								"email": mb.EmailCached,
-							})
-							cancel()
-							if delErr != nil {
-								slog.Warn("cascade delete: stalwart mailbox.delete failed",
-									"user_id", id, "domain", name, "email", mb.EmailCached, "err", delErr)
-							}
-						}
+				//
+				// Purge BY DOMAIN, not per panel mailbox row: a row-driven
+				// loop skips orphans (a migration that pushed mail to
+				// Stalwart without a matching row, or a failed prior
+				// delete that removed the row but not the account), which
+				// is exactly how the orphan kept surviving. A domain
+				// belongs to one user, so destroying all its accounts on
+				// that user's delete is correct. Best-effort: a failure
+				// here logs + continues (orphan is recoverable; a blocked
+				// user delete is worse).
+				if h.cfg.Agent != nil {
+					mctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+					_, delErr := h.cfg.Agent.Call(mctx, "mail.domain.purge_accounts", map[string]any{
+						"domain": name,
+					})
+					cancel()
+					if delErr != nil {
+						slog.Warn("cascade delete: stalwart domain purge failed",
+							"user_id", id, "domain", name, "err", delErr)
 					}
 				}
 				if err := h.cfg.Domains.Delete(c.Request.Context(), d.ID); err != nil {
