@@ -302,10 +302,24 @@ non-interactive context (cron, CI, headless ssh).`,
 			if err != nil {
 				return fmt.Errorf("lookup user: %w", err)
 			}
+			// cron.run_now requires the command + the user's owned
+			// docroots (the agent re-validates before exec). The CLI
+			// previously sent neither, so post-#273 the agent rejected
+			// every `jabali cron run-now <id>` with "command required".
+			var docroots []string
+			if owned, _, dErr := repository.NewDomainRepository(sharedDB).ListByUserID(ctx, job.UserID, repository.ListOptions{Limit: 1000}); dErr == nil {
+				for _, dm := range owned {
+					if dm.DocRoot != "" {
+						docroots = append(docroots, dm.DocRoot)
+					}
+				}
+			}
 			raw, err := sharedAgent.Call(ctx, "cron.run_now", map[string]any{
-				"user_id":  u.ID,
-				"username": derefStr(u.Username),
-				"job_id":   job.ID,
+				"user_id":        u.ID,
+				"username":       derefStr(u.Username),
+				"job_id":         job.ID,
+				"command":        job.Command,
+				"owned_docroots": docroots,
 			})
 			if err != nil {
 				return fmt.Errorf("cron.run_now: %w", err)
