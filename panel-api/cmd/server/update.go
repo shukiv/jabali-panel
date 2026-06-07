@@ -169,13 +169,37 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 		return strings.TrimSpace(string(out)), nil
 	}
+	// fileContentSHA falls back to a sha256 of raw file bytes —
+	// used when a path lives outside HEAD (gitignored generated
+	// artifacts like panel-ui/dist/index.html). Returns "<missing>"
+	// only when the file truly isn't on disk.
+	fileContentSHA := func(path string) string {
+		full := filepath.Join(repoDir, path)
+		b, err := os.ReadFile(full)
+		if err != nil {
+			return "<missing>"
+		}
+		sum := sha256.Sum256(b)
+		return hex.EncodeToString(sum[:])
+	}
 	compositeSHA := func(paths ...string) string {
 		lines := make([]string, 0, len(paths))
 		for _, p := range paths {
+			// Prefer git's blob SHA when the path is tracked (free, no
+			// extra I/O). Fall back to a content hash for gitignored
+			// build outputs (panel-ui/dist/index.html) — without it,
+			// those paths always resolve to "<missing>" and the
+			// composite never changes from rebuilds of generated files.
+			// PR #248 added panel-ui/dist/index.html to apiInputs to
+			// trigger a panel-api rebuild on every UI change, but the
+			// gitPathSHA-only impl meant the SHA was always "<missing>"
+			// — UI rebuilds never bumped apiInputs and the binary never
+			// re-embedded the new dist (observed on testserver 2026-
+			// 06-07: binary stuck at #250 through three PRs of UI-only
+			// changes).
 			sha, err := gitPathSHA(p)
 			if err != nil {
-				lines = append(lines, p+":<missing>")
-				continue
+				sha = fileContentSHA(p)
 			}
 			lines = append(lines, p+":"+sha)
 		}
