@@ -3,8 +3,10 @@ package cpanel
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -71,6 +73,17 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
+			// Crontab environment-assignment lines (MAILTO="",
+			// SHELL=/bin/bash, PATH=…) are valid crontab syntax, not
+			// malformed cron entries. Recognise + skip them with an
+			// info note instead of flagging "malformed". jabali's
+			// systemd-user-timer cron model has no per-job env knob,
+			// so the values are dropped — recorded so the operator
+			// knows (e.g. a custom PATH a script relied on).
+			if isCronEnvLine(line) {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("%s:%d env_ignored: %s", cronPath, lineNum, line))
+				continue
+			}
 			schedule, command, ok := splitCronLine(line)
 			if !ok {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("%s:%d malformed", cronPath, lineNum))
@@ -85,6 +98,24 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 				continue
 			}
 			if _, vErr := cronvalidate.ValidateCommand(command, nil); vErr != nil {
+				// curl/wget hitting a wp-cron.php URL is the single most
+				// common cPanel cron (the WordPress scheduler). The raw
+				// allowlist rejection ("binary_not_allowed: first token
+				// must be 'wp' or 'php'") is correct but useless to the
+				// operator. Emit an actionable remediation instead so
+				// they know the WP scheduler was skipped + how to restore
+				// it. (A true auto-rewrite to `php <docroot>/wp-cron.php`
+				// can't run in v1 — migration passes empty ownedDocroots
+				// to the validator, which rejects any --path, so the
+				// rewritten command wouldn't validate either; tracked for
+				// a follow-up that resolves the dest docroot first.)
+				var ve *cronvalidate.ValidationError
+				if errors.As(vErr, &ve) && ve.Code == cronvalidate.ErrCodeBinaryNotAllowed && isWPCronTrigger(command) {
+					res.Skipped = append(res.Skipped, fmt.Sprintf(
+						"%s:%d wp_scheduler_skipped: %q — WordPress cron. Re-add via the Cron page as 'php <docroot>/wp-cron.php', or leave WP's built-in pseudo-cron to run on page hits.",
+						cronPath, lineNum, command))
+					continue
+				}
 				res.Skipped = append(res.Skipped, fmt.Sprintf("%s:%d command: %s", cronPath, lineNum, vErr.Error()))
 				continue
 			}
@@ -136,4 +167,28 @@ func splitCronLine(line string) (schedule, command string, ok bool) {
 		return "", "", false
 	}
 	return strings.Join(fields[:5], " "), strings.Join(fields[5:], " "), true
+}
+
+// cronEnvLineRe matches a crontab environment-assignment line:
+// NAME=value or NAME = value, where NAME is a shell-style identifier.
+// vixie-cron treats any line whose first token is `NAME =` (optional
+// spaces around =) as an env setting, not a job.
+var cronEnvLineRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*[ \t]*=`)
+
+// isCronEnvLine reports whether line is a crontab environment
+// assignment (MAILTO, SHELL, PATH, HOME, …) rather than a cron job.
+func isCronEnvLine(line string) bool {
+	return cronEnvLineRe.MatchString(line)
+}
+
+// wpCronTriggerRe matches a curl/wget command whose URL ends in
+// wp-cron.php (optionally with a ?query). Used only to turn the
+// allowlist rejection into an actionable "WordPress scheduler skipped"
+// note — it does not rewrite or schedule anything.
+var wpCronTriggerRe = regexp.MustCompile(`(?i)(?:curl|wget).*/wp-cron[.]php`)
+
+// isWPCronTrigger reports whether command is a curl/wget WordPress-cron
+// trigger.
+func isWPCronTrigger(command string) bool {
+	return wpCronTriggerRe.MatchString(command)
 }
