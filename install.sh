@@ -10848,6 +10848,25 @@ provision_new_software() {
   ensure_jabali_panel_dir_traversable
   ensure_snuffleupagus_loadable
 
+  # Libexec helpers (fpm-pre-start, fpm-exec, cron-precheck) — generated
+  # systemd units reference these by absolute path. The fresh-install
+  # path installs them, and update.go's unit-sync heredoc re-copies them,
+  # but that heredoc runs the PRIOR binary embedded code on the first
+  # jabali update after a release that added one (one-update lag). This
+  # provision step is sourced FRESH from the just-pulled install.sh, so
+  # converging the helpers here installs them on the FIRST update — no
+  # lag. cron-precheck specifically: without it a tenant cron ExecStartPre
+  # dies 203/EXEC and the scheduled job never runs.
+  if [[ -d "$REPO_DIR/install/systemd" ]]; then
+    install -d -m 0755 /usr/local/libexec/jabali
+    local _h
+    for _h in fpm-pre-start fpm-exec cron-precheck; do
+      if [[ -f "$REPO_DIR/install/systemd/$_h" ]]; then
+        install -m 0755 "$REPO_DIR/install/systemd/$_h" "/usr/local/libexec/jabali/$_h"
+      fi
+    done
+  fi
+
   # GH#111: install_php / install_phpmyadmin* run only in fresh-install
   # main(), so `jabali update` never installed the PHP 8.4 default nor
   # applied the phpMyAdmin DI patch — existing hosts stayed broken
