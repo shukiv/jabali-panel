@@ -6397,6 +6397,16 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/http-dos
   fi
 
+  # Generic HTTP probe detection — crawling, bad UAs, path traversal,
+  # sensitive-file access, SQLi/XSS probing, backdoor probing, admin
+  # interface probing, technology probing, CVE probing. Catches what's
+  # not WordPress-specific (Joomla/phpMyAdmin/custom PHP/static probes).
+  # Parser-side off nginx logs we already ingest — zero extra cost.
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/base-http-scenarios'; then
+    _spin "cscli collections install base-http-scenarios" \
+      cscli collections install crowdsecurity/base-http-scenarios
+  fi
+
   # Refresh every installed parser/scenario/collection to the hub's
   # latest tag. Idempotent: skips items already at the newest version
   # and only re-downloads what changed. Critical for sshd-logs which
