@@ -895,8 +895,16 @@ test -x node_modules/.bin/tsc || {
 			// nginx serves the cached HTML pointing at a stale /assets/
 			// index-XXX.js that the embedded FS still has, and the browser
 			// keeps rendering the old UI even after `jabali update`.
-			apiInputs := compositeSHA("panel-api", "agentwire", "go.mod", "go.sum", "panel-ui/dist/index.html")
-			agentInputs := compositeSHA("panel-agent", "agentwire", "go.mod", "go.sum")
+			// "internal" = the repo-root /internal/ tree of SHARED Go
+			// packages (appseccfg, cronvalidate, kratosclient, backup,
+			// limits, …) that BOTH binaries import. It is NOT under the
+			// "panel-api"/"panel-agent" subtrees, so without listing it
+			// explicitly a change to any shared package (e.g. moving
+			// appseccfg.WebmailHostsPath) doesn't bump these composites
+			// and the binary is skipped — shipping a stale binary against
+			// a new unit/config. Same failure mode #255 fixed for dist.
+			apiInputs := compositeSHA("panel-api", "agentwire", "internal", "go.mod", "go.sum", "panel-ui/dist/index.html")
+			agentInputs := compositeSHA("panel-agent", "agentwire", "internal", "go.mod", "go.sum")
 			apiSkip := artifactUnchanged("panel-api-bin", apiInputs, defaultPanelBinPath)
 			agentSkip := artifactUnchanged("panel-agent-bin", agentInputs, defaultAgentBinPath)
 			if apiSkip {
