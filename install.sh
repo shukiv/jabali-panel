@@ -9521,6 +9521,26 @@ _install_stalwart_cli() {
   local url="https://github.com/stalwartlabs/cli/releases/download/v${cli_version}/${tarball}"
   local sha_file="${REPO_DIR}/install/stalwart-cli.sha256"
 
+  # Companion script that uses stalwart-cli to push LE certs into
+  # Stalwart's Certificate object — the panel-mail cert (kind=mail) AND
+  # every per-domain mail cert (kind=mail-domain, M6.6, via env
+  # overrides JABALI_STALWART_CERT_*). Installed BEFORE the cli
+  # version-skip gate below: when stalwart-cli is already current the
+  # function early-returns, so an end-of-function copy would never
+  # refresh this script on `jabali update`. That stranded the stale
+  # env-less push-cert on hosts installed before M6.6, so per-domain
+  # mail certs (GH #132) pushed under the panel cert name + path
+  # instead of their own — Stalwart kept serving the panel cert for
+  # every SNI. Hoisted here so the refresh always runs.
+  local push_src="${REPO_DIR}/install/stalwart/jabali-stalwart-push-cert.sh"
+  local push_dst="/usr/local/bin/jabali-stalwart-push-cert"
+  if [[ -f "$push_src" ]]; then
+    install -m 0755 -o root -g root "$push_src" "$push_dst"
+    _ok "jabali-stalwart-push-cert installed at $push_dst"
+  else
+    _warn "$push_src missing — Stalwart will keep serving its rcgen self-signed cert"
+  fi
+
   if [[ -x "$cli_binary" ]]; then
     local installed_version
     installed_version="$("$cli_binary" --version 2>&1 | grep -oP 'v?\K[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo unknown)"
@@ -9571,18 +9591,6 @@ _install_stalwart_cli() {
   rm -rf "$new_dir"
   _ok "stalwart-cli $cli_version installed at $cli_binary"
 
-  # Companion script that uses stalwart-cli to push the panel-mail LE
-  # cert into Stalwart's Certificate object. Called by install.sh after
-  # apply-plan AND by install/letsencrypt/jabali-panel-cert.sh on every
-  # renewal of the mail.<panel-hostname> lineage.
-  local push_src="${REPO_DIR}/install/stalwart/jabali-stalwart-push-cert.sh"
-  local push_dst="/usr/local/bin/jabali-stalwart-push-cert"
-  if [[ -f "$push_src" ]]; then
-    install -m 0755 -o root -g root "$push_src" "$push_dst"
-    _ok "jabali-stalwart-push-cert installed at $push_dst"
-  else
-    _warn "$push_src missing — Stalwart will keep serving its rcgen self-signed cert"
-  fi
 }
 
 # _install_spam_rules vendors the Stalwart spam-filter rules bundle into
