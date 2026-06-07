@@ -718,9 +718,17 @@ function parseRestoreManifest(raw: string): RestoreParsed {
       line.includes("not found") ||
       line.includes("pending_manual") ||
       line.includes("already imported") ||
+      line.includes("wp_scheduler_skipped") ||
+      line.includes("env_ignored") ||
+      line.includes("_skipped:") ||
       line.startsWith("warning:") ||
       line.startsWith("skip:")
     ) {
+      // Surface actionable migration skips in the warnings card rather
+      // than burying them in the raw-manifest collapse. wp_scheduler_
+      // skipped (curl wp-cron the allowlist rejected) + env_ignored
+      // (MAILTO/SHELL/PATH crontab lines) are the operator's cue to
+      // re-add the WP scheduler / re-apply env via the panel.
       out.warnings.push(line);
     }
   }
