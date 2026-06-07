@@ -80,16 +80,42 @@ if [[ "$ready" != "1" ]]; then
   exit 0
 fi
 
-# Delete any prior Certificate with the same name so the next create
-# carries the fresh PEM. stalwart-cli delete swallows "not found" — no
-# need to pre-check existence.
-prior_id="$(STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \
-  "$STW_CLI" query x:Certificate --json 2>/dev/null \
-  | jq -r ".[] | select(.id == \"$CERT_NAME\") | .id" \
-  | head -1)"
-if [[ -n "$prior_id" ]]; then
-  STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \
-    "$STW_CLI" delete x:Certificate --ids "$prior_id" >/dev/null 2>&1 || true
+# Delete any prior Certificate covering the SAME primary hostname so
+# the next create carries the fresh PEM (renewals must REPLACE, not
+# duplicate — two certs with the same SAN make Stalwart's SNI pick
+# ambiguous, and re-creating under the same name key hits a
+# primaryKeyViolation that silently keeps the OLD content).
+#
+# `stalwart-cli query x:Certificate --json` emits ONE JSON object per
+# line (NDJSON), each shaped:
+#   {"subjectAlternativeNames":{"mail.example.com":true},"id":"<opaque>"}
+# The `id` is a Stalwart-assigned opaque handle, NOT the name we pass
+# on create — so we can't match prior certs by CERT_NAME. Match by SAN
+# instead: pull the cert's own primary CN (= the certbot primary
+# domain, e.g. mail.<d>) and delete every registry entry whose SAN set
+# contains it. This scopes the delete to THIS cert's hostname and
+# never touches the panel cert (different SAN).
+#
+# Robust under `set -euo pipefail`: the old `jq '.[] | select(.id...)'`
+# crashed with "Cannot index string with string" because the output is
+# NDJSON objects, not a JSON array — `.[]` iterated an object's values
+# (the SAN map + the id string) and `.id` on the string aborted the
+# whole script before the create ever ran (GH #132: per-domain mail
+# cert never reached Stalwart).
+primary_san="$(openssl x509 -in "$CERT_PATH" -noout -subject 2>/dev/null \
+  | sed -n 's/.*CN *= *\([^,]*\).*/\1/p' | head -1)"
+if [[ -n "$primary_san" ]]; then
+  mapfile -t prior_ids < <(
+    STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \
+      "$STW_CLI" query x:Certificate --json 2>/dev/null \
+      | jq -r --arg san "$primary_san" \
+          'select(.subjectAlternativeNames[$san] == true) | .id' 2>/dev/null || true
+  )
+  for prior_id in "${prior_ids[@]}"; do
+    [[ -n "$prior_id" ]] || continue
+    STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \
+      "$STW_CLI" delete x:Certificate --ids "$prior_id" >/dev/null 2>&1 || true
+  done
 fi
 
 # Build the create plan with JSON-escaped PEM. jq -Rs reads stdin raw +

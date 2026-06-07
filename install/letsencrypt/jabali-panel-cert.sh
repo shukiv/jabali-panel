@@ -95,6 +95,15 @@ case "$kind" in
       JABALI_STALWART_KEY_PATH="$src/privkey.pem" \
         /usr/local/bin/jabali-stalwart-push-cert || \
         echo "jabali-panel-cert.sh: mail-domain push-cert non-zero (continuing)" >&2
+      # Stalwart caches its TLS certs in memory at startup and does NOT
+      # hot-reload the x:Certificate registry when push-cert writes a
+      # new entry — without a restart it keeps presenting the previously
+      # loaded cert (the panel default) for the new SNI on :465/:993.
+      # The kind=mail branch already restarts for the same reason; the
+      # per-domain branch must too or GH #132 stays broken (cert pushed
+      # but never served).
+      systemctl restart jabali-stalwart || \
+        echo "jabali-panel-cert.sh: mail-domain jabali-stalwart restart failed (continuing)" >&2
     fi
     ;;
 
