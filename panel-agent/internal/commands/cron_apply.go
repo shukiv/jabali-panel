@@ -115,11 +115,15 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	uid, _ := strconv.Atoi(u.Uid)
 	runtimeDir := fmt.Sprintf("/run/user/%d", uid)
 
-	// Check user has linger enabled (ADR-0025 guarantee, but validate anyway)
-	if err := checkUserLinger(ctx, p.Username); err != nil {
+	// Ensure linger is enabled + the per-user systemd manager is up so the
+	// user bus (/run/user/<uid>/bus) exists before we touch `systemctl
+	// --user`. A freshly-created (e.g. migrated) user may not be lingering
+	// yet; erroring here and waiting for a separate user_slice_ensure tick
+	// left timers unscheduled in practice, so self-heal it idempotently.
+	if err := ensureUserManager(ctx, p.Username, uid, runtimeDir); err != nil {
 		return nil, &agentwire.AgentError{
-			Code:    "user_not_lingering",
-			Message: fmt.Sprintf("user %s does not have lingering enabled. Enable with: loginctl enable-linger %s", p.Username, p.Username),
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("prepare user systemd manager for %s: %v", p.Username, err),
 		}
 	}
 
@@ -269,14 +273,50 @@ func checkUserLinger(ctx context.Context, username string) error {
 	return err
 }
 
-// systemctlUserExec runs a systemctl command as the specified user.
+// ensureUserManager makes `systemctl --user` usable for username:
+//   1. enable-linger (idempotent) so the user manager persists + the
+//      runtime dir is created.
+//   2. start user@<uid>.service synchronously so /run/user/<uid>/bus
+//      exists right now (enable-linger alone can be async).
+// Both are no-ops when already in place.
+func ensureUserManager(ctx context.Context, username string, uid int, runtimeDir string) error {
+	if err := checkUserLinger(ctx, username); err != nil {
+		if out, lErr := exec.CommandContext(ctx, "loginctl", "enable-linger", username).CombinedOutput(); lErr != nil {
+			return fmt.Errorf("enable-linger: %v: %s", lErr, strings.TrimSpace(string(out)))
+		}
+	}
+	// Start (idempotent) the user manager so the bus socket is present.
+	if _, err := os.Stat(filepath.Join(runtimeDir, "bus")); err != nil {
+		if out, sErr := exec.CommandContext(ctx, "systemctl", "start",
+			fmt.Sprintf("user@%d.service", uid)).CombinedOutput(); sErr != nil {
+			return fmt.Errorf("start user@%d.service: %v: %s", uid, sErr, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+// systemctlUserExec runs `systemctl --user <args>` as the target user.
+//
+// `sudo -u <user>` RESETS the environment (env_reset is the sudoers
+// default), so setting cmd.Env is useless — the vars are stripped before
+// systemctl runs and it reports "Failed to connect to user scope bus …
+// $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined". Pass the
+// two vars the user-bus connection needs THROUGH sudo via the `env`
+// command so they land in the child's environment:
+//   XDG_RUNTIME_DIR=/run/user/<uid>
+//   DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus
+// This is the bug that left every migrated user's cron timer unscheduled
+// (panel row enabled, but `systemctl --user list-timers` empty).
 func systemctlUserExec(ctx context.Context, username string, runtimeDir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "sudo", "-u", username)
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("XDG_RUNTIME_DIR=%s", runtimeDir),
-	)
-	cmd.Args = append(cmd.Args, "systemctl", "--user")
-	cmd.Args = append(cmd.Args, args...)
+	full := []string{
+		"-u", username,
+		"env",
+		"XDG_RUNTIME_DIR=" + runtimeDir,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDir + "/bus",
+		"systemctl", "--user",
+	}
+	full = append(full, args...)
+	cmd := exec.CommandContext(ctx, "sudo", full...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
