@@ -235,9 +235,17 @@ func ImportDatabases(
 							if gErr := dbGrantsRepo.Create(ctx, gRow); gErr != nil {
 								res.Skipped = append(res.Skipped, fmt.Sprintf("%s: database_user_grants row: %v", finalName, gErr))
 							} else {
+								// Do NOT write the plaintext password into the
+								// manifest — manifest_json is persisted in the
+								// panel DB (migration_jobs.manifest_json, longtext)
+								// and is queryable, so a generated DB credential
+								// would sit in cleartext at rest. The real value
+								// is spliced into the app config below (in-memory,
+								// this run only); the operator resets via panel if
+								// they need direct DB access.
 								res.Skipped = append(res.Skipped, fmt.Sprintf(
-									"%s: db_user created (temp_pwd=%s) — change via panel",
-									finalName, plainPwd))
+									"%s: db_user created (temp password set — reset via panel) — change via panel",
+									finalName))
 								// Stash (name, user, plaintext-pwd) so the
 								// config-rewrite step can splice values
 								// into wp-config.php / configuration.php /

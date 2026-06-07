@@ -355,14 +355,21 @@ func ImportDNS(
 		}
 		res.Skipped = append(res.Skipped, skipped...)
 
-		// Filter apex SOA + apex NS — pdns owns those.
+		// Filter apex SOA + apex NS — pdns owns those. A normal zone
+		// carries two apex NS records (ns1 + ns2); emit the skip note
+		// ONCE per zone, not once per filtered record, so the manifest
+		// doesn't duplicate apex_ns_handled_by_pdns:<origin>.
 		filtered := zone.Records[:0]
+		apexNSFiltered := false
 		for _, r := range zone.Records {
 			if r.Type == "NS" && (r.Name == zone.Origin || r.Name == "@") {
-				res.Skipped = append(res.Skipped, "apex_ns_handled_by_pdns:"+zone.Origin)
+				apexNSFiltered = true
 				continue
 			}
 			filtered = append(filtered, r)
+		}
+		if apexNSFiltered {
+			res.Skipped = append(res.Skipped, "apex_ns_handled_by_pdns:"+zone.Origin)
 		}
 		zone.Records = filtered
 		if len(zone.Records) == 0 {
