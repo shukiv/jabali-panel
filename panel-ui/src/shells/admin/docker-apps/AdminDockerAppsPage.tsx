@@ -90,14 +90,9 @@ export const AdminDockerAppsPage = () => {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          <ContainerOutlined /> Docker Apps
-        </Typography.Title>
-        <Typography.Text type="secondary">
-          {installed.data?.length ?? 0} installed • {catalog.data?.length ?? 0} in catalog
-        </Typography.Text>
-      </Space>
+      <Typography.Title level={3} style={{ margin: 0, marginBottom: 16 }}>
+        <ContainerOutlined /> Docker Apps
+      </Typography.Title>
 
       <Tabs
         activeKey={activeTab}
@@ -155,14 +150,14 @@ export const AdminDockerAppsPage = () => {
                   );
                   return (
                     <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-                      <Col xs={12} sm={6}>
+                      <Col xs={24} sm={12} lg={6}>
                         {renderStat(
                           "rgba(207, 19, 34, 0.12)", "#cf1322", AppstoreOutlined,
                           "Installed Apps", installedCount,
                           <Typography.Text type="secondary">{catalogCount} in catalog</Typography.Text>,
                         )}
                       </Col>
-                      <Col xs={12} sm={6}>
+                      <Col xs={24} sm={12} lg={6}>
                         {renderStat(
                           "rgba(114, 46, 209, 0.12)", "#722ed1", SyncOutlined,
                           "Updates Available", updateCount,
@@ -171,14 +166,14 @@ export const AdminDockerAppsPage = () => {
                             : <Typography.Text type="secondary">Up to date</Typography.Text>,
                         )}
                       </Col>
-                      <Col xs={12} sm={6}>
+                      <Col xs={24} sm={12} lg={6}>
                         {renderStat(
                           "rgba(63, 134, 0, 0.12)", "#3f8600", PlayCircleOutlined,
                           "Running", runningCount,
                           <Typography.Text type="secondary">{pct(runningCount)}% of installed</Typography.Text>,
                         )}
                       </Col>
-                      <Col xs={12} sm={6}>
+                      <Col xs={24} sm={12} lg={6}>
                         {renderStat(
                           "rgba(212, 107, 8, 0.12)", "#d46b08", PauseCircleOutlined,
                           "Stopped", stoppedCount,
@@ -193,6 +188,7 @@ export const AdminDockerAppsPage = () => {
                 size="small"
                 loading={installed.isLoading}
                 dataSource={installed.data ?? []}
+                scroll={{ x: 1100 }}
                 pagination={{
                   pageSize: 25,
                   showTotal: (total, range) => `Showing ${range[0]} to ${range[1]} of ${total} results`,
@@ -213,6 +209,7 @@ export const AdminDockerAppsPage = () => {
                   {
                     title: "Name",
                     dataIndex: "name",
+                    width: 260,
                     render: (n, r) => (
                       <Space size={12} align="start">
                         <Avatar
