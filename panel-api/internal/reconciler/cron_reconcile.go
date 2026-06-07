@@ -72,6 +72,9 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 			}
 			applied++
 			delete(onDisk, job.ID)
+			// Harvest the last autonomous (timer) run so the panel's
+			// "Last Run" reflects scheduled fires, not just Run-now.
+			r.cronHarvestLastRun(ctx, userID, username, job)
 		}
 
 		for _, job := range userJobs {
@@ -147,6 +150,48 @@ func (r *Reconciler) cronListOnDisk(ctx context.Context, userID, username string
 		set[id] = struct{}{}
 	}
 	return set, nil
+}
+
+// cronHarvestLastRun polls the user cron's systemd service for its last
+// completion (cron.status) and writes last_run_at/last_exit_code back to
+// the DB — but ONLY when the systemd timestamp is newer than the stored
+// value, so a recent manual Run-now (#275) isn't clobbered by an older
+// scheduled-fire poll (and vice-versa). Best-effort: any failure is
+// logged at Debug and the pass continues (display-only).
+func (r *Reconciler) cronHarvestLastRun(ctx context.Context, userID, username string, job *models.CronJob) {
+	if r.cronJobs == nil {
+		return
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	raw, err := r.agent.Call(agentCtx, "cron.status", map[string]any{
+		"user_id":  userID,
+		"username": username,
+		"job_id":   job.ID,
+	})
+	if err != nil {
+		r.log.Debug("reconcile: cron.status failed", "job_id", job.ID, "err", err)
+		return
+	}
+	var st struct {
+		HasRun    bool   `json:"has_run"`
+		LastRunAt string `json:"last_run_at"`
+		ExitCode  int    `json:"exit_code"`
+	}
+	if jErr := json.Unmarshal(raw, &st); jErr != nil || !st.HasRun {
+		return
+	}
+	t, pErr := time.Parse(time.RFC3339, st.LastRunAt)
+	if pErr != nil {
+		return
+	}
+	// Don't clobber a newer stored value (e.g. a Run-now that just landed).
+	if job.LastRunAt != nil && !t.After(*job.LastRunAt) {
+		return
+	}
+	if uErr := r.cronJobs.UpdateStatus(ctx, job.ID, t.UTC(), st.ExitCode, ""); uErr != nil {
+		r.log.Debug("reconcile: cron.status write-back failed", "job_id", job.ID, "err", uErr)
+	}
 }
 
 func (r *Reconciler) cronApplyOne(ctx context.Context, userID, username string, job *models.CronJob, docroots []string) error {
