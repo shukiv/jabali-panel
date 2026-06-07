@@ -840,7 +840,24 @@ func cpanelRestoreCallback(
 				warnings = append(warnings, fmt.Sprintf("kratos: load user %s: %v", p.targetUserID, uErr))
 			} else {
 				status, newID, _ := rebuildOne(ctx, kc, usersRepo, targetUser, "168h")
-				warnings = append(warnings, fmt.Sprintf("kratos: status=%s new_id=%s", status, newID))
+				// Annotate the ambiguous statuses so the manifest reads
+				// unambiguously. skipped_live is the COMMON + healthy
+				// path on auto-create migrations: the user was just
+				// minted with --target-password (its Kratos identity +
+				// password already set), so this "ensure identity"
+				// rebuild correctly finds it live and does nothing. It
+				// does NOT mean a password step was skipped — login
+				// works with the password from user creation.
+				note := ""
+				switch string(status) {
+				case "skipped_live":
+					note = " (identity already live — login works; password was set at user creation, no rebuild needed)"
+				case "ok":
+					note = " (identity rebuilt — recovery link issued)"
+				case "probe_failed", "create_failed", "link_failed", "recovery_missing":
+					note = " (NEEDS ATTENTION — see status; user may not be able to log in)"
+				}
+				warnings = append(warnings, fmt.Sprintf("kratos: status=%s new_id=%s%s", status, newID, note))
 			}
 		}
 
