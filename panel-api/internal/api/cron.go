@@ -141,9 +141,11 @@ type cronRemoveAgentParams struct {
 }
 
 type cronRunNowAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	JobID    string `json:"job_id"`
+	UserID        string   `json:"user_id"`
+	Username      string   `json:"username"`
+	JobID         string   `json:"job_id"`
+	Command       string   `json:"command"`
+	OwnedDocroots []string `json:"owned_docroots"`
 }
 
 type cronTailLogAgentParams struct {
@@ -424,8 +426,21 @@ func (h *cronHandler) runNow(c *gin.Context) {
 		return
 	}
 
+	// Resolve the user's owned docroots so the agent can re-validate the
+	// command (defense-in-depth) before executing it.
+	var docroots []string
+	if h.cfg.Domains != nil {
+		if owned, _, dErr := h.cfg.Domains.ListByUserID(ctx, job.UserID, repository.ListOptions{Limit: 1000}); dErr == nil {
+			for _, dm := range owned {
+				if dm.DocRoot != "" {
+					docroots = append(docroots, dm.DocRoot)
+				}
+			}
+		}
+	}
 	result, err := h.cfg.Agent.Call(ctx, "cron.run_now", cronRunNowAgentParams{
 		UserID: job.UserID, Username: username, JobID: job.ID,
+		Command: job.Command, OwnedDocroots: docroots,
 	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_run_now_failed", "detail": err.Error()})

@@ -54,7 +54,9 @@ func TestCronRunNowUnknownUser(t *testing.T) {
 	params := json.RawMessage(`{
 		"user_id": "999",
 		"username": "nonexistentuser12345",
-		"job_id": "job1"
+		"job_id": "job1",
+		"command": "php /home/nonexistentuser12345/public_html/wp-cron.php",
+		"owned_docroots": ["/home/nonexistentuser12345/public_html"]
 	}`)
 
 	_, err := cronRunNowHandler(context.Background(), params)

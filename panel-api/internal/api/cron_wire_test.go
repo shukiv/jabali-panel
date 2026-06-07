@@ -31,8 +31,8 @@ func TestCronAgentParamsWireShape(t *testing.T) {
 		},
 		{
 			name:    "cron.run_now",
-			payload: cronRunNowAgentParams{UserID: "u", Username: "shuki", JobID: "j"},
-			want:    []string{"job_id", "user_id", "username"},
+			payload: cronRunNowAgentParams{UserID: "u", Username: "shuki", JobID: "j", Command: "php /home/u/public_html/wp-cron.php", OwnedDocroots: []string{"/home/u/public_html"}},
+			want:    []string{"command", "job_id", "owned_docroots", "user_id", "username"},
 		},
 		{
 			name:    "cron.tail_log_with_lines",

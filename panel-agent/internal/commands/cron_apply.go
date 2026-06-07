@@ -127,14 +127,35 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		}
 	}
 
-	// Create cron-units directory
-	unitsDir := fmt.Sprintf("/etc/jabali-panel/cron-units/%s", p.Username)
+	// Units MUST live in a systemd-user search path or `systemctl --user
+	// enable <name>` can't find them ("Unit … does not exist"). The
+	// previous /etc/jabali-panel/cron-units/<user> path is NOT a search
+	// path, so timers were written to disk but never loaded (list-timers
+	// empty, last_run NULL). Write into the user's
+	// ~/.config/systemd/user/ — the standard per-user search path — and
+	// chown the tree so the user manager can read it.
+	uidN, _ := strconv.Atoi(u.Uid)
+	gidN, _ := strconv.Atoi(u.Gid)
+	unitsDir := filepath.Join(u.HomeDir, ".config", "systemd", "user")
 	if err := os.MkdirAll(unitsDir, 0755); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("failed to create units directory: %v", err),
 		}
 	}
+	// chown the dirs we may have just created (idempotent if already
+	// user-owned) so systemd --user + the user can manage them.
+	for _, d := range []string{
+		filepath.Join(u.HomeDir, ".config"),
+		filepath.Join(u.HomeDir, ".config", "systemd"),
+		unitsDir,
+	} {
+		_ = os.Chown(d, uidN, gidN)
+	}
+	// Best-effort: clean up units stranded in the old non-search-path
+	// location from before this fix so they don't linger on disk.
+	_ = os.RemoveAll(fmt.Sprintf("/etc/jabali-panel/cron-units/%s/jabali-cron-%s.service", p.Username, p.JobID))
+	_ = os.RemoveAll(fmt.Sprintf("/etc/jabali-panel/cron-units/%s/jabali-cron-%s.timer", p.Username, p.JobID))
 
 	// Generate unit file paths
 	servicePath := filepath.Join(unitsDir, fmt.Sprintf("jabali-cron-%s.service", p.JobID))
@@ -169,6 +190,8 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			Message: fmt.Sprintf("failed to write timer file: %v", err),
 		}
 	}
+	_ = os.Chown(servicePath, uidN, gidN)
+	_ = os.Chown(timerPath, uidN, gidN)
 
 	// Reload systemd as user and enable timer
 	if err := systemctlUserExec(ctx, p.Username, runtimeDir, "daemon-reload"); err != nil {
