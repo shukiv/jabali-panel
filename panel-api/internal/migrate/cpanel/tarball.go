@@ -236,6 +236,37 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 			break
 		}
 	}
+
+	// OwnerEmail = <sourceUser>@<primaryDomain>. The cPanel "default"
+	// / system account's mail lives in the TOP-LEVEL Maildir
+	// (mail/cur, mail/new) rather than a per-domain subdir, and the
+	// agent's migration.import_mailboxes only imports it when
+	// OwnerEmail is non-empty (it keys the owner INBOX off this
+	// address). Without this the owner's mail — every message a
+	// customer using the default address ever received — is silently
+	// dropped AND the manifest under-reports messages_found=0
+	// (GH bug: 99 real messages in mail/cur, manifest said 0). The
+	// primary domain comes from the cp/<user> account-config file's
+	// DNS= field (same source peek.go uses for the pre-flight); the
+	// userdata fallbacks mirror peek's lookup order.
+	if out.SourceUser != "" {
+		prefixed := func(rel string) string {
+			if wrapperPrefix != "" {
+				rel = filepath.Join(strings.TrimRight(wrapperPrefix, string(filepath.Separator)), rel)
+			}
+			return filepath.Join(extractDir, rel)
+		}
+		for _, candidate := range []string{
+			prefixed(filepath.Join("cp", out.SourceUser)),
+			prefixed("userdata"),
+			prefixed(filepath.Join("userdata", "main")),
+		} {
+			if dom := extractKV(candidate, "DNS"); dom != "" {
+				out.OwnerEmail = out.SourceUser + "@" + dom
+				break
+			}
+		}
+	}
 	return out, nil
 }
 

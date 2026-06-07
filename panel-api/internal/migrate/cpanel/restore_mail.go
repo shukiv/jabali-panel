@@ -87,6 +87,22 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		return res, nil
 	}
 
+	// cPanel "default"/system account: the owner mailbox sits in the
+	// TOP-LEVEL Maildir (mail/cur, mail/new) rather than a per-domain
+	// subdir. Count it here when OwnerEmail is known so messages_found
+	// reflects it (the per-domain loop below skips top-level cur/new).
+	// The agent imports the same mailbox off OwnerEmail; keeping the
+	// count in step prevents the "0 found / N pushed" mismatch
+	// (silent data loss masked by a clean manifest).
+	if parsed.OwnerEmail != "" {
+		if ownerMaildir, ok := looksLikeMaildir(mailRoot); ok {
+			res.MaildirsFound++
+			n, b := countMaildirMessages(ownerMaildir)
+			res.MessagesFound += n
+			res.BytesFound += b
+		}
+	}
+
 	// cPanel Maildir layout: home/mail/<domain>/<localpart>/{cur,new,tmp}/
 	// We walk to depth 2 (domain → localpart) and look for Maildir
 	// markers (any of cur/, new/, tmp/) inside.
@@ -176,7 +192,7 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 	// Without these rows the UI and API are blind to the mailboxes even
 	// though Stalwart holds the actual data.
 	if mbRepo != nil && domainsRepo != nil {
-		res.Skipped = append(res.Skipped, insertMailboxPanelRows(ctx, mailRoot, mbRepo, domainsRepo, res)...)
+		res.Skipped = append(res.Skipped, insertMailboxPanelRows(ctx, mailRoot, parsed.OwnerEmail, mbRepo, domainsRepo, res)...)
 	}
 
 	return res, nil
@@ -189,14 +205,29 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 func insertMailboxPanelRows(
 	ctx context.Context,
 	mailRoot string,
+	ownerEmail string,
 	mbRepo repository.MailboxRepository,
 	domainsRepo repository.DomainRepository,
 	res *MailImportResult,
 ) []string {
 	var msgs []string
+
+	// Owner/default account: top-level mail/{cur,new} → one panel
+	// mailbox row keyed off OwnerEmail (<sourceUser>@<primaryDomain>).
+	// Without this row the UI/API never show the owner mailbox even
+	// though the agent pushed its messages into Stalwart.
+	if ownerEmail != "" {
+		if _, ok := looksLikeMaildir(mailRoot); ok {
+			if at := strings.LastIndex(ownerEmail, "@"); at > 0 {
+				lp, dn := ownerEmail[:at], ownerEmail[at+1:]
+				msgs = append(msgs, insertOneMailboxRow(ctx, lp, dn, mbRepo, domainsRepo, res)...)
+			}
+		}
+	}
+
 	domains, err := os.ReadDir(mailRoot)
 	if err != nil {
-		return []string{fmt.Sprintf("mailbox_rows: readdir mail root: %v", err)}
+		return append(msgs, fmt.Sprintf("mailbox_rows: readdir mail root: %v", err))
 	}
 	for _, dom := range domains {
 		if !dom.IsDir() {
@@ -215,11 +246,6 @@ func insertMailboxPanelRows(
 		if strings.HasPrefix(name, ".") || name == "cur" || name == "new" || name == "tmp" {
 			continue
 		}
-		domain, dErr := domainsRepo.FindByName(ctx, name)
-		if dErr != nil {
-			msgs = append(msgs, fmt.Sprintf("mailbox_rows: domain %s not found in panel: %v", name, dErr))
-			continue
-		}
 		usersDir := filepath.Join(mailRoot, dom.Name())
 		users, uErr := os.ReadDir(usersDir)
 		if uErr != nil {
@@ -234,44 +260,56 @@ func insertMailboxPanelRows(
 			if _, ok := looksLikeMaildir(filepath.Join(usersDir, localPart)); !ok {
 				continue
 			}
-			exists, exErr := mbRepo.ExistsByDomainAndLocalPart(ctx, domain.ID, localPart)
-			if exErr != nil {
-				msgs = append(msgs, fmt.Sprintf("mailbox_rows: exists check %s@%s: %v", localPart, dom.Name(), exErr))
-				continue
-			}
-			if exists {
-				msgs = append(msgs, fmt.Sprintf("mailbox_rows: %s@%s already exists", localPart, dom.Name()))
-				continue
-			}
-			// Generate a temporary password the operator must change.
-			// Stalwart already holds the real credentials; this hash
-			// only gates panel-level password management.
-			tempPwd := ids.NewULID()
-			hash, hErr := bcrypt.GenerateFromPassword([]byte(tempPwd), bcrypt.DefaultCost)
-			if hErr != nil {
-				msgs = append(msgs, fmt.Sprintf("mailbox_rows: bcrypt %s@%s: %v", localPart, dom.Name(), hErr))
-				continue
-			}
-			mb := &models.Mailbox{
-				ID:           ids.NewULID(),
-				DomainID:     domain.ID,
-				LocalPart:    localPart,
-				PasswordHash: string(hash),
-				QuotaBytes:   1073741824,
-				CreatedAt:    time.Now().UTC(),
-				UpdatedAt:    time.Now().UTC(),
-			}
-			if cErr := mbRepo.Create(ctx, mb); cErr != nil {
-				msgs = append(msgs, fmt.Sprintf("mailbox_rows: create %s@%s: %v", localPart, dom.Name(), cErr))
-				continue
-			}
-			res.MaildirsFound++
-			msgs = append(msgs, fmt.Sprintf(
-				"mailbox_rows: created %s@%s (temp_pwd=%s) — change via panel",
-				localPart, dom.Name(), tempPwd))
+			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, mbRepo, domainsRepo, res)...)
 		}
 	}
 	return msgs
+}
+
+// insertOneMailboxRow creates a single panel mailboxes row for
+// localPart@domainName. Shared by the per-domain loop and the owner/
+// default-account path (top-level mail/{cur,new}). Best-effort: every
+// outcome (domain-not-found, already-exists, create error, success) is
+// returned as a skip/info line; the caller never aborts on one row.
+func insertOneMailboxRow(
+	ctx context.Context,
+	localPart, domainName string,
+	mbRepo repository.MailboxRepository,
+	domainsRepo repository.DomainRepository,
+	res *MailImportResult,
+) []string {
+	domain, dErr := domainsRepo.FindByName(ctx, domainName)
+	if dErr != nil {
+		return []string{fmt.Sprintf("mailbox_rows: domain %s not found in panel: %v", domainName, dErr)}
+	}
+	exists, exErr := mbRepo.ExistsByDomainAndLocalPart(ctx, domain.ID, localPart)
+	if exErr != nil {
+		return []string{fmt.Sprintf("mailbox_rows: exists check %s@%s: %v", localPart, domainName, exErr)}
+	}
+	if exists {
+		return []string{fmt.Sprintf("mailbox_rows: %s@%s already exists", localPart, domainName)}
+	}
+	tempPwd := ids.NewULID()
+	hash, hErr := bcrypt.GenerateFromPassword([]byte(tempPwd), bcrypt.DefaultCost)
+	if hErr != nil {
+		return []string{fmt.Sprintf("mailbox_rows: bcrypt %s@%s: %v", localPart, domainName, hErr)}
+	}
+	mb := &models.Mailbox{
+		ID:           ids.NewULID(),
+		DomainID:     domain.ID,
+		LocalPart:    localPart,
+		PasswordHash: string(hash),
+		QuotaBytes:   1073741824,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if cErr := mbRepo.Create(ctx, mb); cErr != nil {
+		return []string{fmt.Sprintf("mailbox_rows: create %s@%s: %v", localPart, domainName, cErr)}
+	}
+	res.MaildirsFound++
+	return []string{fmt.Sprintf(
+		"mailbox_rows: created %s@%s (temp_pwd=%s) — change via panel",
+		localPart, domainName, tempPwd)}
 }
 
 // looksLikeMaildir checks for the Maildir-spec directory markers.
