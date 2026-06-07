@@ -9,7 +9,7 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { Badge, Button, Card, Dropdown, Input, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
-import { EditOutlined, MoreOutlined, SearchOutlined, TeamOutlined } from "@icons";
+import { DeleteOutlined, EditOutlined, MoreOutlined, PauseCircleOutlined, PlayCircleOutlined, SafetyOutlined, SearchOutlined, TeamOutlined } from "@icons";
 
 import { RowActionButton } from "../../../components/RowActionButton";
 import type { SorterResult } from "antd/es/table/interface";
@@ -62,52 +62,72 @@ function RowActions({
   user: User;
   onEdit: (id: string) => void;
 }) {
+  const [reset2faOpen, setReset2faOpen] = useState(false);
+  const [suspendOpen, setSuspendOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  type MenuItem = NonNullable<
+    NonNullable<Parameters<typeof Dropdown>[0]["menu"]>["items"]
+  >[number];
+  const items: MenuItem[] = [
+    {
+      key: "reset2fa",
+      icon: <SafetyOutlined />,
+      label: "Reset 2FA",
+      onClick: () => setReset2faOpen(true),
+    },
+    ...(!user.is_admin
+      ? [
+          {
+            key: "suspend",
+            icon: user.suspended ? <PlayCircleOutlined /> : <PauseCircleOutlined />,
+            label: user.suspended ? "Unsuspend" : "Suspend",
+            danger: !user.suspended,
+            onClick: () => setSuspendOpen(true),
+          } as MenuItem,
+        ]
+      : []),
+    { type: "divider" } as MenuItem,
+    {
+      key: "delete",
+      icon: <DeleteOutlined />,
+      label: "Delete",
+      danger: true,
+      onClick: () => setDeleteOpen(true),
+    },
+  ];
+
   return (
     <Space size="middle">
       <RowActionButton icon={<EditOutlined />} onClick={() => onEdit(user.id)}>
         Edit
       </RowActionButton>
-      <Dropdown
-        trigger={["click"]}
-        placement="bottomRight"
-        menu={{
-          items: [
-            {
-              key: "reset2fa",
-              label: (
-                <UserReset2FAAction userId={user.id} userEmail={user.email} />
-              ),
-            },
-            ...(!user.is_admin
-              ? [
-                  {
-                    key: "suspend",
-                    label: (
-                      <UserSuspendAction
-                        userId={user.id}
-                        userEmail={user.email}
-                        suspended={!!user.suspended}
-                      />
-                    ),
-                  },
-                ]
-              : []),
-            {
-              key: "delete",
-              label: (
-                <UserDeleteAction
-                  recordItemId={user.id}
-                  userEmail={user.email}
-                />
-              ),
-            },
-          ],
-        }}
-      >
+      <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items }}>
         <RowActionButton icon={<MoreOutlined />} color="default">
           Actions
         </RowActionButton>
       </Dropdown>
+      <UserReset2FAAction
+        userId={user.id}
+        userEmail={user.email}
+        open={reset2faOpen}
+        onClose={() => setReset2faOpen(false)}
+      />
+      {!user.is_admin && (
+        <UserSuspendAction
+          userId={user.id}
+          userEmail={user.email}
+          suspended={!!user.suspended}
+          open={suspendOpen}
+          onClose={() => setSuspendOpen(false)}
+        />
+      )}
+      <UserDeleteAction
+        recordItemId={user.id}
+        userEmail={user.email}
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+      />
     </Space>
   );
 }

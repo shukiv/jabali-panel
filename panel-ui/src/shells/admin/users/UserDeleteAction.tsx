@@ -1,10 +1,10 @@
-// UserDeleteAction — row-level destructive action with a confirmation
-// modal. There is no longer a "preserve files" mode; deleting a user
-// always removes everything they own (domains, databases, mailboxes,
-// cron jobs, OS account, /home, related rows).
+// UserDeleteAction — controlled destructive confirmation modal.
+// There is no longer a "preserve files" mode; deleting a user always
+// removes everything they own (domains, databases, mailboxes, cron
+// jobs, OS account, /home, related rows). Parent (UserList RowActions)
+// drives `open` via its dropdown menu.
 import { useState } from "react";
 import { Button, Modal, message } from "antd";
-import { DeleteOutlined } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -12,23 +12,18 @@ import { apiClient } from "../../../apiClient";
 interface UserDeleteActionProps {
   recordItemId: string;
   userEmail: string;
+  open: boolean;
+  onClose: () => void;
 }
 
 export const UserDeleteAction = ({
   recordItemId,
   userEmail,
+  open,
+  onClose,
 }: UserDeleteActionProps) => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const qc = useQueryClient();
-
-  const handleOpenModal = () => {
-    setIsModalOpen(true);
-  };
-
-  const handleCancel = () => {
-    setIsModalOpen(false);
-  };
 
   const handleDelete = async () => {
     setIsLoading(true);
@@ -42,7 +37,7 @@ export const UserDeleteAction = ({
       qc.invalidateQueries({ queryKey: ["list", "users"] });
       qc.invalidateQueries({ queryKey: ["one", "users", recordItemId] });
 
-      setIsModalOpen(false);
+      onClose();
     } catch (err: unknown) {
       const errMsg =
         err instanceof Error ? err.message : "Failed to delete user";
@@ -55,51 +50,39 @@ export const UserDeleteAction = ({
   const localPart = userEmail.split("@")[0];
 
   return (
-    <>
-      <Button
-        variant="filled"
-        color="danger"
-        icon={<DeleteOutlined />}
-        aria-label="Delete"
-        onClick={handleOpenModal}
-      >
-        Delete
-      </Button>
-
-      <Modal
-        title={`Delete user "${userEmail}"?`}
-        open={isModalOpen}
-        onCancel={handleCancel}
-        footer={[
-          <Button key="cancel" onClick={handleCancel}>
-            Cancel
-          </Button>,
-          <Button
-            key="delete"
-            danger
-            type="primary"
-            loading={isLoading}
-            onClick={handleDelete}
-          >
-            Delete user
-          </Button>,
-        ]}
-      >
-        <p>
-          This is permanent and cannot be undone. Deleting{" "}
-          <strong>{userEmail}</strong> will remove:
-        </p>
-        <ul>
-          <li>All owned domains, DNS zones, SSL certificates, nginx sites</li>
-          <li>All databases and database users (panel + MariaDB)</li>
-          <li>All mailboxes, forwarders, and Stalwart mail accounts</li>
-          <li>All cron jobs, applications, SSH keys</li>
-          <li>
-            The OS account <code>{localPart}</code> and <code>/home/{localPart}</code>
-          </li>
-          <li>The Kratos identity (login record)</li>
-        </ul>
-      </Modal>
-    </>
+    <Modal
+      title={`Delete user "${userEmail}"?`}
+      open={open}
+      onCancel={onClose}
+      footer={[
+        <Button key="cancel" onClick={onClose}>
+          Cancel
+        </Button>,
+        <Button
+          key="delete"
+          danger
+          type="primary"
+          loading={isLoading}
+          onClick={handleDelete}
+        >
+          Delete user
+        </Button>,
+      ]}
+    >
+      <p>
+        This is permanent and cannot be undone. Deleting{" "}
+        <strong>{userEmail}</strong> will remove:
+      </p>
+      <ul>
+        <li>All owned domains, DNS zones, SSL certificates, nginx sites</li>
+        <li>All databases and database users (panel + MariaDB)</li>
+        <li>All mailboxes, forwarders, and Stalwart mail accounts</li>
+        <li>All cron jobs, applications, SSH keys</li>
+        <li>
+          The OS account <code>{localPart}</code> and <code>/home/{localPart}</code>
+        </li>
+        <li>The Kratos identity (login record)</li>
+      </ul>
+    </Modal>
   );
 };

@@ -290,60 +290,29 @@ export const DomainList = () => {
                     items: [
                       {
                         key: "redirects",
-                        label: (
-                          <Button
-                            variant="filled"
-                            color="primary"
-                            icon={<SwapOutlined />}
-                            block
-                            onClick={() => setActiveModal({ domain: r, type: "redirects" })}
-                          >
-                            Redirects
-                          </Button>
-                        ),
+                        icon: <SwapOutlined />,
+                        label: "Redirects",
+                        onClick: () => setActiveModal({ domain: r, type: "redirects" }),
                       },
                       {
                         key: "index",
-                        label: (
-                          <Button
-                            variant="filled"
-                            color="primary"
-                            icon={<FileTextOutlined />}
-                            block
-                            onClick={() => setActiveModal({ domain: r, type: "index" })}
-                          >
-                            Index Files
-                          </Button>
-                        ),
+                        icon: <FileTextOutlined />,
+                        label: "Index Files",
+                        onClick: () => setActiveModal({ domain: r, type: "index" }),
                       },
                       {
                         key: "settings",
-                        label: (
-                          <Button
-                            variant="filled"
-                            color="primary"
-                            icon={<SettingOutlined />}
-                            block
-                            onClick={() => setActiveModal({ domain: r, type: "settings" })}
-                          >
-                            Nginx Settings
-                          </Button>
-                        ),
+                        icon: <SettingOutlined />,
+                        label: "Nginx Settings",
+                        onClick: () => setActiveModal({ domain: r, type: "settings" }),
                       },
                       {
                         key: "toggle",
-                        label: (
-                          <Button
-                            variant="filled"
-                            color={r.is_enabled ? "danger" : "primary"}
-                            icon={r.is_enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-                            block
-                            disabled={togglingId === r.id}
-                            onClick={() => handleToggle(r)}
-                          >
-                            {r.is_enabled ? "Disable" : "Enable"}
-                          </Button>
-                        ),
+                        icon: r.is_enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />,
+                        label: r.is_enabled ? "Disable" : "Enable",
+                        danger: r.is_enabled,
+                        disabled: togglingId === r.id,
+                        onClick: () => handleToggle(r),
                       },
                       ...(r.is_panel_primary
                         ? []
@@ -351,26 +320,18 @@ export const DomainList = () => {
                             { type: "divider" as const },
                             {
                               key: "delete",
-                              label: (
-                                <Button
-                                  variant="filled"
-                                  color="danger"
-                                  icon={<DeleteOutlined />}
-                                  block
-                                  onClick={() =>
-                                    Modal.confirm({
-                                      title: `Delete domain "${r.name}"?`,
-                                      okText: "Delete",
-                                      okButtonProps: { danger: true },
-                                      onOk: async () => {
-                                        await deleteMutation.mutateAsync({ id: r.id });
-                                      },
-                                    })
-                                  }
-                                >
-                                  Delete
-                                </Button>
-                              ),
+                              icon: <DeleteOutlined />,
+                              label: "Delete",
+                              danger: true,
+                              onClick: () =>
+                                Modal.confirm({
+                                  title: `Delete domain "${r.name}"?`,
+                                  okText: "Delete",
+                                  okButtonProps: { danger: true },
+                                  onOk: async () => {
+                                    await deleteMutation.mutateAsync({ id: r.id });
+                                  },
+                                }),
                             },
                           ]),
                     ],
