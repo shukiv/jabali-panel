@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // reconcileMailCertificates is the M6.6 reconciler hook. For every
@@ -25,6 +26,30 @@ import (
 func (r *Reconciler) reconcileMailCertificates(ctx context.Context) {
 	if r.mailCerts == nil || r.serverSettings == nil {
 		return
+	}
+	// Backfill: every email-enabled domain must have a mail_certificate
+	// row so the state machine below has something to drive. Without
+	// this pass, pre-M6.6 domains stay self-signed forever — they were
+	// never given a row at create time (M6.6 shipped after they were
+	// created) and the on-demand REST handler (GET .../mail-tls) only
+	// fires when an admin opens the Mail TLS section in the UI. Caught
+	// by GH #132: fresh mail.<d>:465 served the Stalwart self-signed
+	// default cert because no row was ever lazy-created.
+	if r.domains != nil {
+		domains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			r.log.Warn("mail-cert backfill failed to list domains", "error", err)
+		} else {
+			for i := range domains {
+				d := &domains[i]
+				if !d.EmailEnabled {
+					continue
+				}
+				if _, err := r.mailCerts.EnsureForDomain(ctx, d.ID); err != nil {
+					r.log.Warn("mail-cert backfill EnsureForDomain failed", "domain_id", d.ID, "error", err)
+				}
+			}
+		}
 	}
 	rows, err := r.mailCerts.List(ctx)
 	if err != nil {
