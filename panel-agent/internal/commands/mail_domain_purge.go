@@ -40,34 +40,53 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "domain required"}
 	}
 
-	domainID, err := domainIDByName(ctx, p.Domain)
+	targetID, err := domainIDByName(ctx, p.Domain)
 	if err != nil {
 		return nil, err
 	}
-	if domainID == "" {
+	if targetID == "" {
 		// Domain never entered the registry → no accounts to purge.
 		return mailDomainPurgeResult{Destroyed: 0}, nil
 	}
 
-	// All accounts under the domain. The SQL directory accepts a filter
-	// on domainId (see accountIDByEmail's note on supported columns).
-	args := map[string]any{
-		"filter": map[string]any{"domainId": domainID},
-		"limit":  50000,
+	// Enumerate ALL accounts (no filter) and match domainId CLIENT-SIDE.
+	// Do NOT use `x:Account/query filter:{domainId}` — that filter is
+	// honoured on some Stalwart builds but silently returns 0 on others
+	// (cf. accountIDByEmail's "supported columns" caveat), which left the
+	// orphan surviving every delete. The unfiltered query + x:Account/get
+	// + domainIDByName are all proven-working primitives (the same ones
+	// the per-email `jabali mailbox delete` path uses).
+	var q jmapQueryResult
+	if err := jmapCall(ctx, "x:Account/query", map[string]any{"limit": 100000}, &q); err != nil {
+		return nil, err
 	}
-	var result jmapQueryResult
-	if err := jmapCall(ctx, "x:Account/query", args, &result); err != nil {
+	if len(q.IDs) == 0 {
+		return mailDomainPurgeResult{Destroyed: 0}, nil
+	}
+
+	var got jmapGetResult
+	if err := jmapCall(ctx, "x:Account/get", map[string]any{
+		"ids":        q.IDs,
+		"properties": []string{"domainId"},
+	}, &got); err != nil {
 		return nil, err
 	}
 
 	destroyed := 0
-	for _, id := range result.IDs {
-		if err := accountDestroy(ctx, id); err != nil {
-			// Best-effort: log-equivalent via the returned error would
-			// abort the whole purge; instead skip the one that failed
-			// and keep destroying the rest. The caller treats a partial
-			// purge as non-fatal (orphan is recoverable, blocked delete
-			// is worse).
+	for _, raw := range got.List {
+		var acct struct {
+			ID       string `json:"id"`
+			DomainID string `json:"domainId"`
+		}
+		if jErr := json.Unmarshal(raw, &acct); jErr != nil {
+			continue
+		}
+		if acct.DomainID != targetID {
+			continue
+		}
+		if err := accountDestroy(ctx, acct.ID); err != nil {
+			// Best-effort: skip a failed destroy, keep going. Partial
+			// purge is non-fatal (orphan recoverable; blocked delete worse).
 			continue
 		}
 		destroyed++
