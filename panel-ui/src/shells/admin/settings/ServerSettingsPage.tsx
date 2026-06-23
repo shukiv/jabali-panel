@@ -453,7 +453,6 @@ const GeneralSettingsTab = () => {
           type="primary"
           icon={<SaveOutlined />}
           loading={saving}
-          htmlType="submit"
           onClick={() => {
             const currentSSHPort = form.getFieldValue("ssh_port") || 22;
             const currentSSHPasswordAuth =
