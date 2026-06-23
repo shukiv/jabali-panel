@@ -266,33 +266,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		fn   func() error
 	}{
 		{"fix repo ownership", func() error {
-			// `git pull` runs as the jabali user, but a previous hand-run
-			// of `git fetch`/`git pull` as root inside the repo silently
-			// chowns FETCH_HEAD/ORIG_HEAD/objects/* to root — and the
-			// next `jabali update` then dies with "cannot open
-			// '.git/FETCH_HEAD': Permission denied". Re-chown the .git
-			// dir before pulling so the update self-heals instead of
-			// requiring the operator to know the magic chown command.
+			// `git reset --hard` runs as the jabali user, but root-owned
+			// paths anywhere in the tree make it fail. This happens when a
+			// previous git op ran as root (e.g. a hand-run `git fetch`/`pull`
+			// chowning .git/FETCH_HEAD|objects to root), when `npx playwright
+			// test` ran as root and dropped root-owned files under
+			// panel-ui/test-results|playwright-report, or when a root
+			// checkout of a branch added a new top-level dir owned by root —
+			// most recently "cannot create directory at
+			// 'wp-plugins/jabali-cache': Permission denied" (exit 128).
 			//
-			// Also chown panel-ui/test-results/ + playwright-report/
-			// since `npx playwright test` run as root drops files
-			// there which then block sudo-as-jabali `git reset --hard`
-			// with "unable to unlink: Permission denied". Both dirs
-			// are .gitignore'd; chown is purely to let `git reset`
-			// remove any leftovers from a previous Playwright run.
+			// Chown the WHOLE repo tree (not just .git) so the update
+			// self-heals any such ownership drift instead of requiring the
+			// operator to know the magic chown command.
 			if err := run("", "chown", "-R",
-				serviceUser+":"+serviceUser, repoDir+"/.git"); err != nil {
+				serviceUser+":"+serviceUser, repoDir); err != nil {
 				return err
 			}
-			// Ignore failures on the panel-ui dirs — they may not
-			// exist yet on a fresh install, and missing dirs are not
-			// a deployment-blocking condition.
-			_ = run("", "bash", "-c",
-				"shopt -s nullglob; "+
-					"chown -R "+serviceUser+":"+serviceUser+" "+
-					repoDir+"/panel-ui/test-results "+
-					repoDir+"/panel-ui/playwright-report 2>/dev/null; "+
-					"true")
 			return nil
 		}},
 		{"ensure mail ACME webroot (/var/www/jabali-acme)", func() error {
