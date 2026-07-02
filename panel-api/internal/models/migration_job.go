@@ -6,10 +6,15 @@ import "time"
 // constants live as string literals so a new importer (e.g. `plesk`)
 // only needs a switch arm in internal/migrate, no schema migration.
 const (
-	MigrationSourceCpanel       = "cpanel"
-	MigrationSourceDirectAdmin  = "directadmin"
-	MigrationSourceHestia       = "hestiacp"
-	MigrationSourceWHMpkgacct   = "whm_pkgacct"
+	MigrationSourceCpanel      = "cpanel"
+	MigrationSourceDirectAdmin = "directadmin"
+	MigrationSourceHestia      = "hestiacp"
+	MigrationSourceWHMpkgacct  = "whm_pkgacct"
+	// MigrationSourceWordPressPlugin (GH #648) — the PUSH model: no source
+	// host/creds; a jabali-migrator WP plugin on the source claims a one-time
+	// key and streams the site in. Job source_host/source_user are placeholders
+	// at create, pinned from the claimed source URL (see migration_keys).
+	MigrationSourceWordPressPlugin = "wordpress_plugin"
 )
 
 // MigrationState is the per-job lifecycle. Stage transitions are

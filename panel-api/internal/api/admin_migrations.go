@@ -260,7 +260,8 @@ func isKnownSourceKind(s string) bool {
 	case models.MigrationSourceCpanel,
 		models.MigrationSourceWHMpkgacct,
 		models.MigrationSourceDirectAdmin,
-		models.MigrationSourceHestia:
+		models.MigrationSourceHestia,
+		models.MigrationSourceWordPressPlugin: // GH #648 push model
 		return true
 	}
 	return false
