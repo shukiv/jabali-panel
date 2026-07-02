@@ -116,10 +116,10 @@ S12 (SSRF + adversarial gate) gates MERGE of S3–S7.
 
 **Verify:** missing/mismatched → fail, no import; clean → `pulled`. **Exit:** only a verified, contained payload reaches import. **Rollback:** read-only.
 
-## S7 — Import + config rewrite + serialized-safe URL replace  ·  reuse, validate fit
+## S7 — Import = the SHARED `migration.import_wp` (⋆ from #647)
 
 **Tasks**
-- **Validate the import-reuse fits** (don't assume): `migrationImportHomeHandler` was built for a cPanel account-home tree; a WP pull is one site's docroot + DB. Confirm the layout matches; if not, add a thin `migration.import_wp_docroot` verb.
+- **Import is the shared `migration.import_wp` spine defined in `plans/m647-wordpress-ssh-migration.md` S4** (the canonical WP import contract for BOTH transports). Whichever of #647/#648 ships first BUILDS it; here we REUSE it — do NOT fork a second WP import, and do NOT reuse the cPanel-account-shaped `migration.import_run`. This pull just lands `files/` + `dump.sql` in staging (S5/S6); `import_wp` does DB create + import + files→docroot (containment) + `wp-config.php` rewrite + serialized-safe `wp search-replace` + perms + cache flush.
 - Import staging→dest docroot (containment guards); import DB into the dest Jabali DB.
 - Rewrite `wp-config.php` to Jabali DB creds/socket (reuse `wordpress_clone.go` openat2 no-symlink pattern). **Serialized-safe** `wp search-replace` for `domain_change`. Fix perms; flush object/opcache; strip foreign source cache drop-ins (mirror #621).
 
