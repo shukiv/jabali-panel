@@ -22,6 +22,11 @@ runtime files. Steps 3–6 are the critical ones and MUST get the strongest-mode
 
 **Workflow:** git + gh present → branch per step, PR, CI green before merge. Agents commit to feature branches, never main; dispatcher merges. ADR target: **ADR-00NN (wordpress_plugin migration + inbound upload protocol)**.
 
+## Progress (branch `m648/wp-plugin-migration`)
+- **S1 DONE** (`cd01dfbc`): source kind + `migration_keys` (000207) + `MigrationKey` model + `MigrationKeyRepository`. One-time claim = atomic conditional UPDATE, repo-tested (claim once→nil, second/expired→ErrNotFound, guard asserted in SQL).
+- **S2 DONE** (`1193a75d`): admin key-mint API (`POST /admin/migrations/wordpress-plugin` + revoke + status), owner-coherence check, claim URL from `server_settings.hostname`, plaintext key once. Built+wired, no regressions. **Deferred: S2 handler test** (owner-scope 400/404, key-once) — needs migration mock scaffolding (the migration API has zero handler tests today); do it FIRST in the continuation.
+- **NEXT: S3** — public claim endpoint. ⚠️ security trust boundary; strongest-model review; do NOT rush. Then S4→S12.
+
 ---
 
 ## Architecture decisions — RESOLVE IN S1/S3 (do not discover in S5)
