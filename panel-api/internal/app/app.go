@@ -1176,6 +1176,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SizeCache: deps.MigrationSizeCache,
 				Settings:  deps.ServerSettings,
 				Agent:     deps.Agent,
+				// GH #648 wordpress_plugin push migration — key management.
+				Keys:    repository.NewMigrationKeyRepository(deps.DB),
+				Domains: deps.Domains,
+				Users:   deps.Users,
 			})
 		}
 		if deps.Agent != nil {

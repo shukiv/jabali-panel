@@ -51,6 +51,12 @@ type AdminMigrationsHandlerConfig struct {
 	SizeCache repository.MigrationAccountSizeCacheRepository
 	Settings  repository.ServerSettingsRepository
 	Agent     agent.AgentInterface
+	// GH #648 wordpress_plugin push migration. Optional — the wp-plugin key
+	// endpoints only register when Keys is wired. Domains/Users resolve the
+	// destination docroot + owner for the key binding.
+	Keys    repository.MigrationKeyRepository
+	Domains repository.DomainRepository
+	Users   repository.UserRepository
 }
 
 // RegisterAdminMigrationRoutes mounts /admin/migrations* on g.
@@ -91,6 +97,11 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.GET("/discover-accounts/:host/:user/size", h.discoverAccountSize)
 	rg.GET("/:id/discover-accounts", h.discoverAccounts)
 	rg.GET("/:id/account-size/:user", h.accountSizeProbe)
+
+	// GH #648 wordpress_plugin push migration — admin key management.
+	if cfg.Keys != nil {
+		h.registerWPPluginKeyRoutes(rg)
+	}
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
