@@ -1,208 +1,190 @@
-# Blueprint — WordPress Plugin Migration (push model) · GH #648
+# Blueprint — WordPress Plugin Migration (PULL-via-API) · GH #648
 
-**Objective:** move a WordPress site into Jabali with **no source SSH** — a Jabali WP
-plugin on the source site claims a one-time migration key and *pushes* the DB + files
-(resumable, chunked) into a Jabali destination, which imports + URL-rewrites + verifies.
+**Objective:** move a WordPress site into Jabali with **no source SSH** — the operator
+installs the **jabali-migrator** plugin on the source WP site, which exposes token-authed
+REST endpoints; **Jabali pulls** the DB + files (resumable, chunked) into a destination,
+then imports + URL-rewrites + verifies.
 
-**Model:** the existing `internal/migrate` framework is **pull** (`Discoverer.Connect(host,user,secret)` → cPanel/DA/Hestia). This adds a **push** source kind `wordpress_plugin`: the source connects *in* through a public token-gated endpoint. It **reuses** the migration-job model, the **staging area**, and the **import/restore handlers** (`migrationImportHomeHandler`, DB import); it **replaces** the `pull-source` step with an inbound upload protocol.
+**Design pivot (2026-07-02):** the first draft was a **push** model (source uploads to a
+public Jabali endpoint). Reworked to **pull** because it deletes the biggest risk — a new
+internet-facing, tenant-triggerable upload surface on the control plane — and it *is* the
+shape the existing framework already runs.
 
-**Security is the spine.** A public, tenant-triggerable upload endpoint is a new attack
-surface. Every step below carries its slice of: token scoping, path normalization,
-size/count/chunk caps, symlink handling, no-PHP-exec-in-staging, protect Jabali-managed
-runtime files. Steps 3–6 are the critical ones and MUST get the strongest-model review.
+**Model.** The existing `internal/migrate` framework is **pull** (`Discoverer.Connect(host,user,secret)` → cPanel/DA/Hestia; `migrationPullSourceRunHandler` runs the pull **in the agent**, writing staging as root; then `import` stages→dest). This adds a `wordpress_plugin` **Discoverer** that connects to the source's `jabali-migrator` REST API and pulls. **It reuses:** the migration-job model, the migration **secret** store, the **agent pull runner**, the **staging area**, and the **import handlers**. **It adds:** the WP-REST source client + a WP plugin that serves it. **No new public Jabali endpoint** (optional tiny phone-home only).
 
-**Grounding (reuse these, don't reinvent):**
-- `panel-api/internal/api/admin_migrations.go` — `RegisterAdminMigrationRoutes`, `isKnownSourceKind` (allowlist — add the new kind here), `migrationStagingDir`.
-- `panel-api/internal/repository/migration_job_repository.go` — `MigrationJobRepository` (job model, `FindBySource`, `UpdateSourceUser`, status transitions).
-- Existing routes `/admin/migrations/:jobId/{pull-source,import}`.
-- `panel-agent/internal/commands/migration_admin_run.go` — `migrationImportRunHandler`, `migrationPullSourceRunHandler`.
-- `panel-agent/internal/commands/migration_import_home.go` — `migrationImportHomeHandler` + `TestMigrationImportHomeContainment` (path-containment security — the pattern staging→dest must follow).
-- Short-lived one-time token precedent: the M22 self-deleting SSO file (256-bit nonce, flock+unlink, TTL, systemd reaper) and the magic-link token — mirror their expiry/one-time/revoke discipline.
-- Per-tenant ownership scoping: `FindByIDAndUserID` pattern (a tenant may only target a domain/app they own).
+**Why pull > push (recorded so the executor doesn't relitigate):**
+- **Security:** Jabali is a CLIENT, not a server for untrusted uploads. The public surface is the SOURCE's own WP REST (already public), behind a plugin token. A leaked token exposes the user's OWN site export, not Jabali. The entire push S3–S6 public-endpoint hardening spine evaporates.
+- **Framework fit:** it's the `Discoverer`/pull model already in production for 3 source kinds. Far less net-new code.
+- **Jabali drives:** capacity-gate, retry, resume, parallelism from the strong side, before pulling.
+- **Trade-off (the ONE cost):** the source must be reachable by Jabali. For "migrate my live WordPress site" it always is (it's an inbound HTTP server). Push only wins for firewalled/unreachable sources — rare; keep push as a documented future fallback, not v1.
 
-**Workflow:** git + gh present → branch per step, PR, CI green before merge. Agents commit to feature branches, never main; dispatcher merges. ADR target: **ADR-00NN (wordpress_plugin migration + inbound upload protocol)**.
+**Grounding (reuse, don't reinvent):**
+- `panel-api/internal/migrate/discover.go` — the `Discoverer` interface (`Connect`/`ListAccounts`/`DescribeAccount`/`Close`) + `Session`/`AccountManifest`. Add a `wordpress_plugin` Discoverer here (blank-import registered like cpanel/directadmin/hestiacp in serve.go).
+- `panel-agent/internal/commands/migration_admin_run.go` — `migrationPullSourceRunHandler` (the agent pull) + `migrationImportRunHandler` (staging→dest). The WP pull hooks the SAME run path.
+- `panel-agent/internal/commands/migration_import_home.go` — `migrationImportHomeHandler` + `TestMigrationImportHomeContainment` (staging→dest path containment — reuse).
+- `panel-api/internal/api/admin_migrations.go` — routes (`/pull-source`, `/import`), `isKnownSourceKind` (already has `wordpress_plugin`), the migration **secret** upload mechanism + the `jabali-migration-secrets-reap.timer`.
+- Migration secret store (encrypted at rest, reaped) — the `wordpress_plugin` token lives here (Jabali must SEND it to the source, so it's stored recoverable, NOT hash-only).
+- SSRF floor + per-user egress (M34 / GH #401) — the agent's outbound to the source URL must be validated public (see A4).
 
-## Progress (branch `m648/wp-plugin-migration`)
-- **S1 DONE** (`cd01dfbc`): source kind + `migration_keys` (000207) + `MigrationKey` model + `MigrationKeyRepository`. One-time claim = atomic conditional UPDATE, repo-tested (claim once→nil, second/expired→ErrNotFound, guard asserted in SQL).
-- **S2 DONE** (`1193a75d`): admin key-mint API (`POST /admin/migrations/wordpress-plugin` + revoke + status), owner-coherence check, claim URL from `server_settings.hostname`, plaintext key once. Built+wired, no regressions. **Deferred: S2 handler test** (owner-scope 400/404, key-once) — needs migration mock scaffolding (the migration API has zero handler tests today); do it FIRST in the continuation.
-- **NEXT: S3** — public claim endpoint. ⚠️ security trust boundary; strongest-model review; do NOT rush. Then S4→S12.
+**Workflow:** git + gh; branch per step, PR, CI green before merge. ADR target: **ADR-00NN (wordpress_plugin PULL migration)**.
 
 ---
 
-## Architecture decisions — RESOLVE IN S1/S3 (do not discover in S5)
+## Architecture decisions
 
-**A1 — Ingress: where does the public endpoint live + what URL does the plugin hit?**
-Post-M25 panel-api listens on a **unix socket behind nginx**; the source WP site is on the public internet. Decision: expose `/public/migrations/*` as an nginx `location` on the **panel hostname's public vhost** (the same TLS vhost that already fronts panel-api), proxied to panel-api's socket. S2's "install instructions" MUST emit the concrete base URL = `https://<panel-hostname>/public/migrations` + the key. No per-tenant hostnames (avoids cert/routing sprawl). Rate-limit this location at nginx too.
+**A1 — No public Jabali ingress.** Pull means Jabali connects OUT; there is NO public upload endpoint to expose or harden. (Optional later: a tiny unauthenticated `plugin-register` phone-home so the plugin can hand Jabali its URL + confirm reachability — a single URL write, not a data path. v1 skips it: the operator enters the source URL when minting the key.)
 
-**A2 — Staging writer: panel-api (jabali) vs agent (root) — the ownership fork.**
-Existing staging is **agent-written as root**, then the agent imports. The public upload endpoints are in **panel-api (jabali user)** → a writer/permission mismatch, and streaming GB-scale payloads through the control-plane API + unix socket is awkward. **Decision (recommended, spell out in S3/S5):** panel-api TERMINATES the public request (auth, path-safety, caps, hash) but **forwards each validated chunk to the AGENT via a new `migration.upload_chunk` verb**, and the **agent writes staging as root** — preserving the existing staging ownership + the containment guards `migrationImportHome` already trusts. panel-api never writes the staging tree; it is the validating front. (Alternative to reject explicitly: a dedicated agent-owned HTTP ingress — more surface, rejected unless perf demands it.) This decision is load-bearing for S5's write path and S10's client target.
+**A2 — The AGENT pulls + writes staging** (unchanged from the existing pull kinds). The `wordpress_plugin` pull runs under the same transient-unit `migrationPullSourceRunHandler` path as cPanel/DA; it fetches manifest + chunks over HTTPS from the source and writes the job staging dir as root. panel-api never touches the payload. This resolves the push draft's panel-api-vs-agent writer fork by simply reusing the pull path.
 
-**A3 — Import trigger (see S6): operator-gated by default**, a deliberate deviation from the issue's implied auto-flow — called out below.
+**A3 — Import is operator-gated by default** (unchanged): after the pull completes + verifies, the operator triggers `/import`. Destructive (overwrites a docroot + DB) from an untrusted source → a human authorizes. S11 shows `pulled — awaiting import`.
+
+**A4 — SSRF is the new #1 risk (replaces public-upload hardening).** The source URL is user-supplied and the AGENT fetches it. **Pin-the-IP, not check-the-name:** resolve the host, validate the resolved address is **public** (reject loopback, RFC1918, link-local, `169.254.169.254` + cloud metadata, and anything the SSRF floor blocks), then **connect to that pinned IP** with the Host header set — a pre-check on the hostname alone loses to **DNS rebinding** (the name re-resolves to a private IP between check and fetch). Re-validate the peer IP on every redirect (no redirect to a private host); https-only. Cap response size + total (a hostile source could serve a decompression bomb or an infinite chunk stream — bound every fetch, don't stream forever). This is the S12 gate's core.
 
 ---
 
 ## Dependency graph
 
 ```
-S1 (data model + token) ──┬─> S2 (mgmt API, authed) ──┐
-                          ├─> S3 (public claim) ──> S4 (manifest+validate) ──> S5 (chunked upload) ──> S6 (finalize+verify) ──> S7 (import+rewrite) ──> S8 (health+cleanup)
-                          └─> S9 (progress) ───────────────────────────────────────────────────────────────────────────────────┘ (cross-cuts 3–8)
-S10 (WP plugin)  depends on the wire contract frozen after S4/S5 (can start once endpoints are stubbed).
-S11 (panel UI)   depends on S2 (+ S9 for live progress).
-S12 (security hardening + adversarial tests) gates MERGE of S3–S7.
+S1 (token+job model) ──> S2 (mint API + source URL) ──> S3 (wordpress_plugin Discoverer: Connect+ping) ──> S4 (pull manifest + capacity/ownership/multisite gate) ──> S5 (resumable chunked PULL: DB+files → staging) ──> S6 (verify hashes+containment) ──> S7 (import+rewrite) ──> S8 (health+cleanup)
+S9 (progress) cross-cuts S3–S8.  S10 (WP plugin, REST provider) ∥ once the S3–S5 REST contract is frozen.  S11 (UI) ∥ after S2.
+S12 (SSRF + adversarial gate) gates MERGE of S3–S7.
 ```
-Parallel after S1: S2 ∥ S3-start. S10 (plugin) ∥ once the S3–S5 wire contract is frozen. S11 (UI) ∥ after S2.
 
 ---
 
-## S1 — Data model: source kind + one-time migration key + upload session
+## S1 — Token + job model  ·  ⚠ THE COMMITTED S1/S2 CODE IS PUSH-SHAPED — this is REWORK + DEAD-CODE REMOVAL, not a tweak
 
-**Context.** The job model exists; add the push-source vocabulary + the token. A `wordpress_plugin` job has NO source host/credentials (Jabali never connects out) — instead a **migration key** the plugin claims.
+**Reality check.** `cd01dfbc`/`1193a75d` were built for the PUSH model and are now largely wrong: **there is no claim in pull.** Dead / inverted:
+- `MigrationKey.KeyHash` (hash-at-rest) — pull needs a **recoverable, encrypted** token because Jabali *sends* it outbound. The posture INVERTS.
+- Repo `Claim` (atomic conditional UPDATE), `FindByKeyHash`, `FindByUploadSessionHash` — DELETE (no claim, no upload session).
+- **`TestMigrationKeyRepo_Claim_OneTime` + `TestMigrationKeyRepo_FindByKeyHash` — DELETE.** They test deleted mechanisms; keeping them is the exact "inert artifact after a pivot" trap caught earlier this session (the drawer's object/page/TTL fields), now at a security-critical layer.
+- Migration `000207` — **rewrite** to the pull shape (drop `key_hash`/`claimed_source_url`/`upload_session_hash`; add `source_url`). Additive, branch unmerged, so a clean rewrite is fine.
 
-**Tasks**
-- Add `wordpress_plugin` to `isKnownSourceKind` (allowlist) and any source-kind enum.
-- New table `migration_keys` (migration NNNNNN, additive): `id`, `job_id` (FK), `key_hash` (store only a hash — never the plaintext), `dest_user_id`, `dest_domain_id`, `dest_docroot`, `domain_change bool`, `status` (`unclaimed|claimed|active|done|revoked`), `expires_at`, `claimed_source_url` (NULL until claimed, then pinned), `upload_session_hash` (the exchanged scoped token, hashed), `created_at`. Nullable/additive, no data restructure.
-- Repo `MigrationKeyRepository`: `Create`, `FindByKeyHash` (constant-time compare in the handler, not SQL), `Claim(id, sourceURL)`, `Revoke`, `SetUploadSession`, `MarkDone`, `ReapExpired`.
-- Key = 256-bit random, shown ONCE to the operator; only its hash persists.
+**Tasks (pull shape)**
+- Keep: `wordpress_plugin` source kind + `isKnownSourceKind` (`cd01dfbc`).
+- Rewrite `migration_keys`: `id, job_id, dest_user_id, dest_domain_id, dest_docroot, domain_change, status(unclaimed→active→done/revoked), expires_at, source_url`. The **token itself** lives in the existing migration-**secret** store (encrypted, reaped), NOT in this table.
+- Repo: `Create`, `FindByJobID`, `SetSourceURL`, `UpdateStatus`, `Revoke`, `ReapExpired` — and remove the push methods + their tests.
 
-**Verify:** `go build ./...`; migration up/down clean on MariaDB 11.x (see [[feedback_mariadb_reserved_words]], [[feedback_merge_audit_migrations]] — schema only, no seeding); repo unit tests (claim once → second claim rejected; expired → rejected).
-**Exit:** the model + repo compile + are unit-tested; `wordpress_plugin` is an allowed kind. **Rollback:** drop the table + revert the allowlist line.
+**Verify:** `go build`; migration up/down clean (MariaDB 11.x, schema-only); repo test (create/find/status — NOT claim). **Exit:** model fits the pull token + source URL; no push-era symbol or test survives. **Rollback:** revert the table rewrite.
 
-## S2 — Key generation + management API (AUTHENTICATED, owner-scoped)
+## S2 — Mint token + source URL (AUTHENTICATED, owner-scoped)  ·  keep, extend
 
-**Context.** Admin OR tenant creates a `wordpress_plugin` job + key. **Tenant may only target a domain/app they own** (mirror `FindByIDAndUserID`). Under the existing migration route family.
-
-**Tasks**
-- `POST /migrations/wordpress-plugin` — body: dest user/domain/app + `domain_change`. Owner-scoped (admin any; tenant own). Creates the job (`internal/migrate`) + a key (S1). Returns the plaintext key ONCE + install instructions payload.
-- `POST /migrations/:jobId/key/revoke` and `/rotate` — owner-scoped.
-- `GET /migrations/:jobId` — status + progress (reads S9). Owner-scoped.
-- Rate-limit key creation per user.
-
-**Verify:** handler tests through the real router: tenant creating for an unowned domain → 404; key returned once, only hash stored; revoke flips status. **Exit:** authed CRUD + owner scope proven by test. **Rollback:** unregister routes.
-
-## S3 — Public claim endpoint  ⚠️ CRITICAL / strongest-model review
-
-**Context.** The plugin (no Jabali session) POSTs the key to a PUBLIC endpoint → exchange for a **scoped upload session token** bound to this one job + dest. This is the trust boundary.
+**Context.** S2 built the admin mint (`1193a75d`). Extend: accept the **source URL** and store the token in the secret store.
 
 **Tasks**
-- `POST /public/migrations/claim` (unauthenticated except by the key). Validate: key hash matches (constant-time), status `unclaimed`, not expired. On success: pin `claimed_source_url` (from the body, validated as a URL/host), generate a scoped upload-session token (hashed at rest), set status `claimed`. Return the session token + the manifest endpoint.
-- **One-time:** a claimed/expired/revoked key is rejected. Re-claim from a DIFFERENT source URL is rejected.
-- Aggressive rate-limit + generic errors (no key-existence oracle). Log claims (M14 + audit).
-- All subsequent upload calls authenticate with the **session token**, scoped to `job_id` — never the key again.
+- `POST /admin/migrations/wordpress-plugin` — body: dest user/domain + `domain_change` + **`source_url`**. Owner-coherence (already). Generate a 256-bit token, store it in the migration-secret store for the job, return it ONCE + install instructions ("install jabali-migrator on `<source_url>`, paste this token"). Validate `source_url` is a well-formed https URL up front (full SSRF check is at pull time, A4).
+- Revoke / status — keep.
+- **Do the deferred S2 handler test now** (needs the migration mock scaffolding): owner-coherence 400/404, token-once, source-URL required.
+- Owner-scoped **tenant** route (own domains only) can follow in S11.
 
-**Verify:** tests — valid claim once; second claim rejected; expired rejected; wrong key rejected (same generic 401/403, timing-safe); source-URL pinning enforced on later calls. **Exit:** claim is one-time, scoped, rate-limited, oracle-free. **Rollback:** unregister route (no data at rish — keys unclaimed).
+**Verify:** handler tests through the router (token once; secret stored, not returned again; bad source_url → 400). **Exit:** authed mint with source URL, tested. **Rollback:** routes off.
 
-## S4 — Manifest submit + capacity/ownership/multisite gate  ⚠️ CRITICAL
+## S3 — `wordpress_plugin` Discoverer + Connect/ping  ·  ⚠ SSRF gate (A4)
 
-**Context.** Before ANY payload, the plugin sends a manifest; Jabali validates and can reject early (the issue's "validate capacity + destination ownership before accepting payloads").
-
-**Tasks**
-- `POST /public/migrations/manifest` (session-token auth). Body: site URLs, DB table list+sizes, file count+total size, active plugins/themes, WP+PHP version, table prefix, `multisite` flag.
-- Validate: dest still owned + has capacity (disk quota headroom vs declared size); **multisite** → explicit-support decision (default: block with a clear message per the edge cases); declared totals within hard caps.
-- Persist the manifest against the job; move status → `active`. Reject → terminal + revoke.
-
-**Verify:** manifest over quota → rejected; multisite → blocked with message; accepted manifest advances status. **Exit:** payload is gated on a validated manifest. **Rollback:** route off.
-
-## S5 — Resumable chunked upload (DB + files)  ⚠️ CRITICAL / strongest-model review
-
-**Context.** The heart. Resumable chunked protocol (NOT one giant zip) so shared hosts with low limits / disabled ZipArchive work. Lands in the SAME staging area the import step reads.
+**Context.** Replaces the push "public claim." A Discoverer that validates the source is reachable + the token works, before a long pull.
 
 **Tasks**
-- `POST /public/migrations/db-chunk` and `/file-chunk` (session-token auth, scoped to job). Each chunk: `{path (for files), offset, total, sha256, bytes}`. Idempotent by `(path, offset, sha256)` for retry/resume/dedupe.
-- Land under `migrationStagingDir(job)` ONLY. **Path safety (the whole ballgame):** normalize + reject any `..`, absolute paths, or escape from the job staging root — reuse the containment logic proven by `TestMigrationImportHomeContainment`. Reject symlinks in the payload (store as regular files or refuse). Enforce per-chunk size, per-file size, total size, and file-count caps (from the manifest, hard-capped).
-- **Never execute uploaded PHP** during staging (files written, never included/run). Quarantine, do NOT let the payload overwrite Jabali-managed runtime files (`wp-config.php`, object-cache/advanced-cache drop-ins, `.user.ini`, custom `php.ini`) — those are handled explicitly in S7, not accepted raw.
-- `GET /public/migrations/upload-status` — which chunks are present (drives client resume).
+- **FIRST verify the reuse claim (do not assume):** read `migrationPullSourceRunHandler` internals. cPanel/DA pull over **SSH/rsync**; a WP pull is **HTTP-REST chunk fetching**. Confirm the runner dispatches by `source_kind` (so a new kind slots in) rather than being SSH-shaped throughout. If it's SSH-only, S3/S5 are bigger (a parallel WP pull path in the agent) and the "far less net-new code" claim weakens — know this before committing to reuse.
+- New `panel-api/internal/migrate/wordpressplugin/` Discoverer (blank-import registered in serve.go like the others). `Connect(sourceURL, token)` → `GET <source>/wp-json/jabali-migrator/v1/ping` with `Authorization: Bearer <token>` → 200 + a version → Session; auth/unreachable → clear error surfaced early.
+- **A4 SSRF validation** in the HTTP client used for the pull: resolve host, reject private/loopback/link-local/metadata, https-only, no-redirect-to-private, bounded timeouts. Shared by S3–S5.
 
-**Verify:** unit + integration — traversal payload (`../../etc`, absolute, symlink) rejected; oversized/over-count rejected; resume after interruption completes; hash mismatch rejected; a `wp-config.php` in the payload is quarantined not written to the live drop-in path. **Exit:** upload is path-safe, size-bounded, resumable, PHP-inert. **Rollback:** route off; S8 reaper cleans partial staging.
+**Verify:** unit — ping ok → Session; wrong token → auth error; private/metadata source URL → refused before any fetch. **Exit:** reachability+auth+SSRF proven before pull. **Rollback:** don't register the Discoverer.
 
-## S6 — Finalize + hash verify + containment recheck
-
-**Context.** After the plugin signals complete, verify integrity before import.
+## S4 — Pull manifest + capacity/ownership/multisite gate
 
 **Tasks**
-- `POST /public/migrations/finalize` (session token). Verify every declared file/chunk present + sha256 matches the manifest; assemble; final containment check of the whole staged tree; DB export reassembled + basic sanity (SQL, not arbitrary).
-- Mark payload `staged`. **Do NOT auto-import.** DECISION (A3): import is **operator-gated by default** — the operator/tenant clicks "Import" in S11 after the upload finalizes. This is a **deliberate deviation** from the issue's implied auto-flow (upload→import→verify), chosen because the import is destructive (overwrites a dest docroot + DB) and the source is untrusted; a human authorizes the irreversible step. S11 progress therefore shows `staged — awaiting import`, not a running import. (If product wants auto-import later, gate it behind an explicit per-job "auto-import on finalize" opt-in — do not make it the default.)
+- `DescribeAccount` → `GET <source>/wp-json/jabali-migrator/v1/manifest` (token). Manifest: site URLs, DB tables+sizes, file count+total, plugins/themes, WP+PHP version, table prefix, `multisite`.
+- Gate BEFORE pulling payload: dest still owned + quota headroom vs declared size; **multisite** → block with a clear message (v1) or explicit support; declared totals within hard caps. Persist manifest on the job.
 
-**Verify:** missing/mismatched chunk → finalize fails, no import; clean payload → `staged` and STOPS (no import fires). **Exit:** only a hash-verified, contained payload reaches the (operator-triggered) import. **Rollback:** none (read-only verify).
+**Verify:** over-quota → refused; multisite → blocked; accepted → advances. **Exit:** payload pull gated on a validated manifest. **Rollback:** n/a (read-only pull).
 
-## S7 — Import + config rewrite + serialized-safe URL replace
+## S5 — Resumable chunked PULL (DB + files) → staging  ·  ⚠ agent-side, path-safe
 
-**Context.** Reuse the existing import runner. Staging → dest home; then WP-specific rewrite.
+**Context.** The agent pull runner fetches chunks and writes the job staging dir (as root), resumable so a shared-host source with low limits works.
 
 **Tasks**
-- **First validate the import-reuse fits** (do not assume): `migrationImportHomeHandler` was built for a cPanel-style **account-home tree**, but a plugin push is one site's **docroot + DB**. Confirm the staging→dest layout matches; if there's an impedance mismatch (home-tree vs single-site docroot), add a thin `migration.import_wp_docroot` verb instead of forcing the account-home path.
-- Trigger the import (existing handler if it fits, else the WP-docroot variant) to move staging → dest docroot (its containment guards apply).
-- Import the DB into the dest's Jabali DB (existing DB-import path).
-- Rewrite `wp-config.php` to the **Jabali** DB creds + socket (reuse the wp-config rewrite from `wordpress_clone.go` / `setWPConfigCacheConstants` — same trust-boundary openat2 no-symlink pattern).
-- **Serialized-safe search-replace** for `domain_change` (old→new URL) — WP-CLI `search-replace` (handles PHP-serialized data) as the tenant, never a raw SQL `REPLACE`.
-- Fix perms (tenant:www-data), flush object cache / opcache. Strip source cache drop-ins that point at a foreign Redis prefix (mirror the #621 clone strip).
+- Agent (under `migrationPullSourceRunHandler` for kind=wordpress_plugin): loop `GET <source>/wp-json/jabali-migrator/v1/db-chunk?offset=` and `/file-chunk?path=&offset=` (token), each returning `{sha256, bytes, total}`; verify sha256 per chunk; write under `migrationStagingDir(job)` ONLY.
+- **Path safety on the WRITE (still critical):** normalize each declared file path, reject `..`/absolute/escape (reuse `TestMigrationImportHomeContainment` logic), reject symlinks, enforce per-file/total/count caps from the manifest (hard-capped — never trust the source's numbers). **Never execute pulled PHP** in staging. Quarantine `wp-config.php`/drop-ins/`.user.ini`/`php.ini` (handled in S7, not written raw).
+- Resume: skip chunks already present+hash-matched. Bound EVERY fetch (size/time) — a hostile source must not stream forever or bomb memory.
 
-**Verify:** on a test source→dest, imported site serves; domain-change rewrites serialized option data correctly; wp-config points at Jabali DB. **Exit:** a migrated site is live + correct. **Rollback:** dest is a fresh app; delete + retry.
+**Verify:** unit+integration — a source serving a `../../etc` path / symlink / oversized-count is rejected; resume after interruption completes; hash mismatch rejected; wp-config quarantined. **Exit:** pull is path-safe, size-bounded, resumable, PHP-inert. **Rollback:** reaper cleans partial staging.
+
+## S6 — Verify (hashes + containment) + mark pulled
+
+**Tasks**
+- After the pull loop, verify every manifest file/chunk present + sha256 matches; final containment check of the staged tree; DB dump reassembled + sane. Mark job `pulled` (NOT auto-import — A3).
+
+**Verify:** missing/mismatched → fail, no import; clean → `pulled`. **Exit:** only a verified, contained payload reaches import. **Rollback:** read-only.
+
+## S7 — Import + config rewrite + serialized-safe URL replace  ·  reuse, validate fit
+
+**Tasks**
+- **Validate the import-reuse fits** (don't assume): `migrationImportHomeHandler` was built for a cPanel account-home tree; a WP pull is one site's docroot + DB. Confirm the layout matches; if not, add a thin `migration.import_wp_docroot` verb.
+- Import staging→dest docroot (containment guards); import DB into the dest Jabali DB.
+- Rewrite `wp-config.php` to Jabali DB creds/socket (reuse `wordpress_clone.go` openat2 no-symlink pattern). **Serialized-safe** `wp search-replace` for `domain_change`. Fix perms; flush object/opcache; strip foreign source cache drop-ins (mirror #621).
+
+**Verify:** test source→dest serves; domain-change rewrites serialized data; wp-config points at Jabali. **Exit:** migrated site live+correct. **Rollback:** dest is a fresh app; delete+retry.
 
 ## S8 — Health verify, cleanup, token revoke
 
 **Tasks**
-- HTTP/WP health probe of the migrated site (reuse the `migration.http_probe` / local-nginx `--resolve` fetch pattern). On success → job `done`.
-- **Terminal cleanup (any outcome):** wipe the job staging dir, revoke the key + upload-session token, mark `migration_keys.status`. A systemd timer reaps expired/stranded keys + orphan staging (mirror `detectOrphanMigrationStaging`/`orphanMigrationStagingDirs` in `repair.go` + the M22 SSO reaper).
+- WP/HTTP health probe (reuse `migration.http_probe` / `--resolve`); success → job `done`.
+- Terminal cleanup (any outcome): wipe staging, revoke the token (secret store), mark key status. Reaper timer for stranded tokens + orphan staging (existing `jabali-migration-secrets-reap.timer` + `orphanMigrationStagingDirs`).
 
-**Verify:** success → healthy + staging gone + token revoked; failure → staging gone + token revoked. **Exit:** no token or payload outlives a terminal state. **Rollback:** n/a.
+**Verify:** success → healthy + staging gone + token revoked; failure likewise. **Exit:** no token/payload outlives terminal state. **Rollback:** n/a.
 
-## S8b — Same-domain preview + safe cutover (before DNS switch)
-
-**Context.** The issue's edge case: a **same-domain** migration (`domain_change=false`) must be **testable on Jabali while DNS still points at the old host** — the operator can't just overwrite and pray. This is a deliverable, not a note.
+## S8b — Same-domain preview + safe cutover
 
 **Tasks**
-- After import (S7), let the operator PREVIEW the migrated site on this box *without* moving DNS: serve it via a temp preview URL and/or the `curl --resolve <domain>:443:<box-ip>` technique already used for warmup (#615) and health probe (#635) — pin the domain to the Jabali box locally for the preview, so the real vhost + FPM run against the migrated data. Surface a "Preview" action + a copy-paste `--resolve`/hosts-file hint in S11.
-- Only after the operator confirms the preview do they cut over DNS (out of band). Same-domain import should NOT auto-serve to the world before that confirmation — until cutover, the live domain still resolves to the old host, and Jabali's copy is reachable only via the preview path.
-- Domain-change (`domain_change=true`) skips this (the new domain has no prior host); S7's serialized-safe search-replace handles the URL rewrite.
+- Same-domain (`domain_change=false`): preview the imported site on Jabali via `curl --resolve <domain>:443:<box-ip>` (the warmup/probe technique) BEFORE DNS cutover — a "Preview" action + copy-paste hint in S11. Only after operator confirmation does DNS cut over (out of band). Domain-change skips this (S7's search-replace handles the new URL).
 
-**Verify:** a same-domain migrated site renders correctly via the preview `--resolve` path while public DNS is unchanged. **Exit:** the operator can validate before cutover. **Rollback:** preview is read-only; discard the dest app if wrong.
+**Verify:** same-domain site renders via the preview path while public DNS is unchanged. **Exit:** validate before cutover. **Rollback:** discard the dest app if wrong.
 
 ## S9 — Progress reporting (cross-cuts S3–S8)
 
 **Tasks**
-- Plugin reports stage/percent via the session-token endpoints (chunk counters already give upload %); server aggregates onto the job. `GET /migrations/:jobId` (S2) returns live progress; emit M14 events on state changes (mirror the notifications event sources).
+- The agent pull writes `migration_stages` (BytesProcessed) as it fetches — the EXISTING stage/progress model already used by cPanel/DA pulls. `GET /admin/migrations/:id` returns live progress; M14 events on state change. Little new code — reuse the stage rows.
 
-**Verify:** progress advances through claim→manifest→upload→import→done in the status API. **Exit:** operator sees live progress. **Rollback:** progress is read-only.
+**Verify:** progress advances ping→manifest→pull→pulled→(import)→done. **Exit:** operator sees live progress. **Rollback:** read-only.
 
-## S10 — The WordPress source plugin (new `wp-plugins/jabali-migrator/`)  ∥ after S4/S5 contract frozen
+## S10 — The jabali-migrator WordPress plugin (REST provider)  ∥ after S3–S5 contract
 
-**Context.** A NEW WP plugin (like `jabali-cache`), installed on the SOURCE site. wp-admin only — no SSH.
+**Context.** New WP plugin `wp-plugins/jabali-migrator/` (like jabali-cache), installed on the SOURCE. wp-admin only. It SERVES a token-authed REST API that Jabali pulls; it does NOT push.
 
 **Tasks**
-- Admin screen: paste the migration key → claim (S3) → show progress.
-- Collect metadata (WP/PHP version, active theme/plugins, table prefix, home/siteurl, upload size estimate, multisite flag) → manifest (S4).
-- **DB export**: `WP_CLI` if available else `mysqldump` else a chunked PHP `SELECT` export; split into chunks. Never expose DB creds to the browser.
-- **Files**: walk `wp-content` (+ core), send a manifest then file chunks with sha256; ZipArchive if present else pure-PHP chunked (the "disabled ZipArchive / low memory / low max_execution_time" fallback). Resumable via `upload-status`.
-- Optional: maintenance mode during final sync. Report progress/errors back.
-- Ship to WordPress.org later (like jabali-cache); bundle a fallback in the repo.
+- Admin screen: generate/paste the token, show status. `register_rest_route('jabali-migrator/v1', …)`: `ping`, `manifest`, `db-chunk`, `file-chunk` — ALL behind a constant-time token check (Bearer). Never expose DB creds to the browser.
+- `manifest`: WP/PHP version, active theme/plugins, table prefix, home/siteurl, file count+size estimate, multisite flag.
+- `db-chunk`: stream the DB in ranges — `WP_CLI` if available, else `mysqldump`, else a chunked `SELECT` export; per-chunk sha256.
+- `file-chunk`: serve `wp-content` (+ core) file ranges with sha256; handle low `max_execution_time`/memory by serving small ranges (Jabali drives the loop). Optional maintenance mode during final pull.
+- Rate-limit + lock the endpoints to the token; ship to WordPress.org later + bundle a fallback in the repo.
 
-**Verify:** on a real shared-host-like WP, plugin claims + streams a full site; resumes after a killed request. **Exit:** a full site migrates from wp-admin only. **Rollback:** plugin is source-side; deactivate.
+**Verify:** on a real shared-host-like WP, Jabali pulls a full site through the plugin's REST; resumes after a killed request. **Exit:** a full site migrates, source needs only wp-admin + being reachable. **Rollback:** deactivate the plugin.
 
 ## S11 — Panel UI: Applications → Migration → WordPress (plugin mode)  ∥ after S2
 
 **Tasks**
-- In the Applications Migration flow, add WordPress → **plugin** mode: pick dest user/domain/app + same-or-changing domain; generate key (S2); show install instructions + the one-time key; **live progress** (S9); revoke/rotate. Admin (any) + tenant (own only). Follow the repo Drawer/SearchableTable conventions; `npm run build` + a component test (see the #616 drawer test pattern).
+- Migration flow → WordPress → plugin mode: dest user/domain + same-or-changing domain + **source URL**; mint token (S2); show install instructions + the one-time token; live progress (S9); **Preview** (S8b) + **Import** (A3) actions; revoke. Admin + tenant-owner-scoped. Repo Drawer/SearchableTable conventions; `npm run build` + a component test (#616 drawer pattern) + a browser/Playwright drive.
 
-**Verify:** `npm run build` clean; component test locks the wire contract; a manual/Playwright drive of the create→key→progress flow. **Exit:** operator drives the whole flow from the panel. **Rollback:** UI-only.
+**Verify:** `npm run build` clean; component test locks the wire contract; manual drive of mint→token→pull→preview→import. **Exit:** operator drives the whole flow. **Rollback:** UI-only.
 
-## S12 — Security hardening + adversarial tests (GATES merge of S3–S7)
+## S12 — SSRF + adversarial gate (GATES merge of S3–S7)
 
-**Context.** The public upload surface must be attacked before it ships. This is a gate, not a feature.
+**Context.** The risk moved from "defend a public upload endpoint" to "the agent safely pulls from an untrusted, possibly-hostile source." That's the gate.
 
 **Tasks**
-- Adversarial test suite: path traversal (`..`, absolute, encoded, symlink), zip-slip, oversized/over-count payloads, chunk hash forgery, key oracle/timing, claimed-key reuse, cross-tenant dest targeting, PHP-in-staging non-execution, wp-config/drop-in overwrite attempts, resumable-upload race/dedup abuse.
-- Confirm size/count/quota caps enforced server-side (never trust the manifest).
-- **Non-negotiable:** a real end-to-end run on the test server (source WP → dest) with `X`-style verification, + at least one adversarial payload proven rejected at runtime (unit + `nginx -t`-class checks are NOT sufficient for the upload boundary — cf. the #601/#637 lesson that runtime caught wiring/behavior bugs unit tests missed).
+- Adversarial suite: **SSRF** (source URL = loopback/RFC1918/link-local/`169.254.169.254`/metadata, DNS-rebind, redirect-to-private) refused; hostile source serving path-traversal/symlink/zip-slip file paths → write refused; oversized/over-count/decompression-bomb/infinite-stream → bounded + aborted; chunk hash forgery → rejected; token oracle/timing; PHP-in-staging non-execution; wp-config/drop-in raw-write refused.
+- Server-side caps never trust the manifest.
+- **Non-negotiable:** a real end-to-end **pull** on the test server (a live WP source → dest) + at least one adversarial case (an SSRF source URL AND a traversal file path) proven refused at runtime (unit tests lie at trust boundaries — cf. #601/#637 runtime-caught bugs).
 
-**Verify:** the adversarial suite is green AND a live source→dest migration succeeds on the test box. **Exit:** the public surface is proven hostile-input-safe at runtime. **Rollback:** if any adversarial case fails, S3–S7 do not merge.
+**Verify:** adversarial suite green AND a live source→dest pull succeeds on the test box. **Exit:** the agent-pull path is hostile-source-safe at runtime. **Rollback:** if any adversarial case fails, S3–S7 don't merge.
 
 ---
 
 ## Anti-patterns (learned)
 - Don't trust the manifest for caps — enforce server-side (S4/S5).
 - Don't accept `wp-config.php`/drop-ins/`.user.ini`/`php.ini` raw — quarantine + handle in S7 (S5).
-- Don't auto-import on finalize — a human/authorized path runs the destructive step (S6→S7).
-- Don't reuse the migration key after claim — session token only (S3).
-- Don't skip the runtime adversarial test — the upload boundary is exactly where unit tests lie (S12; cf. #601 `WithWordPressInstalls` dead-wiring caught only at runtime).
+- Don't auto-import on pull-finalize — operator-gated (S6→S7, A3).
+- Don't fetch the source URL without SSRF validation — the agent is the new attack vector (A4/S3/S12).
+- Don't build a public Jabali upload endpoint — pull, no ingress (A1). (This is the whole pivot; don't drift back to push without re-justifying.)
+- Don't skip the runtime adversarial test — trust boundaries lie in unit tests (S12; cf. #601 dead-wiring).
 - Migration = schema only; no seeding from app-populated tables ([[feedback_migration_data_seed_ordering]]).
