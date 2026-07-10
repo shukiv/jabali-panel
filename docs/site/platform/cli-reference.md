@@ -1349,6 +1349,98 @@ Show a tenant's last stored disk-usage snapshot
 jabali disk-usage show <user-email|username|id>
 ```
 
+### `jabali dns`
+
+DNS zones and records (dns_zones / dns_records): list / add / update / delete
+
+```
+jabali dns
+```
+
+#### `jabali dns record`
+
+DNS records: list / add / update / delete
+
+```
+jabali dns record
+```
+
+##### `jabali dns record add`
+
+Add a record to a zone (same validation + conflict rules as the UI)
+
+```
+jabali dns record add <domain> --name <name> --type <TYPE> --content <content> [flags]
+```
+
+**Flags:**
+
+- `--content` — record content (e.g. an IP, hostname, or TXT value)
+- `--disabled` — create the record disabled (kept in DB, not served)
+- `--name` — record name ('@' for apex)
+- `--priority` — priority (MX/SRV) (default `0`)
+- `--ttl` — TTL seconds (60-604800; 0 uses default 300) (default `0`)
+- `--type` — record type: A, AAAA, CNAME, MX, TXT, NS, SRV, CAA
+
+##### `jabali dns record delete`
+
+Delete a record from a zone
+
+```
+jabali dns record delete <domain> <record-id> [flags]
+```
+
+**Flags:**
+
+- `--force` — confirm deletion
+
+##### `jabali dns record list`
+
+List records in a zone
+
+```
+jabali dns record list <domain>
+```
+
+##### `jabali dns record update`
+
+Update a record's content / ttl / priority / enabled flag
+
+```
+jabali dns record update <domain> <record-id> [flags]
+```
+
+**Flags:**
+
+- `--content` — new content
+- `--enabled` — set enabled flag (default `true`)
+- `--priority` — new priority (MX/SRV) (default `0`)
+- `--ttl` — new TTL seconds (60-604800) (default `0`)
+
+#### `jabali dns zone`
+
+DNS zones: list / show
+
+```
+jabali dns zone
+```
+
+##### `jabali dns zone list`
+
+List all DNS zones
+
+```
+jabali dns zone list
+```
+
+##### `jabali dns zone show`
+
+Show a zone and its records
+
+```
+jabali dns zone show <domain>
+```
+
 ### `jabali docker`
 
 Manage the docker engine + app-marketplace host (M48/M49)

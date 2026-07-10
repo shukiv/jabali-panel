@@ -379,7 +379,7 @@ func (h *dnsHandler) createRecord(c *gin.Context) {
 	}
 
 	// Validate record
-	if err := validateDNSRecord(record); err != nil {
+	if err := ValidateDNSRecord(record); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":  "invalid_record",
 			"detail": err.Error(),
@@ -388,7 +388,7 @@ func (h *dnsHandler) createRecord(c *gin.Context) {
 	}
 
 	// Conflict check: CNAME exclusivity + exact-duplicate rejection.
-	if err := checkDNSRecordConflict(c.Request.Context(), h.cfg.Records, zone.ID, record, ""); err != nil {
+	if err := CheckDNSRecordConflict(c.Request.Context(), h.cfg.Records, zone.ID, record, ""); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "record_conflict", "detail": err.Error()})
 		return
 	}
@@ -523,7 +523,7 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 	}
 
 	// Validate updated record
-	if err := validateDNSRecord(record); err != nil {
+	if err := ValidateDNSRecord(record); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":  "invalid_record",
 			"detail": err.Error(),
@@ -532,7 +532,7 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 	}
 
 	// Conflict check (skip self via excludeID).
-	if err := checkDNSRecordConflict(c.Request.Context(), h.cfg.Records, record.ZoneID, record, record.ID); err != nil {
+	if err := CheckDNSRecordConflict(c.Request.Context(), h.cfg.Records, record.ZoneID, record, record.ID); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "record_conflict", "detail": err.Error()})
 		return
 	}
@@ -643,7 +643,7 @@ func (h *dnsHandler) deleteRecord(c *gin.Context) {
 
 // Validation helpers
 
-func isValidDNSType(t string) bool {
+func IsValidDNSType(t string) bool {
 	switch strings.ToUpper(t) {
 	case "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA":
 		return true
@@ -651,12 +651,12 @@ func isValidDNSType(t string) bool {
 	return false
 }
 
-func validateDNSRecord(r *models.DNSRecord) error {
+func ValidateDNSRecord(r *models.DNSRecord) error {
 	r.Type = strings.ToUpper(strings.TrimSpace(r.Type))
 	r.Name = strings.TrimSpace(r.Name)
 	r.Content = strings.TrimSpace(r.Content)
 
-	if !isValidDNSType(r.Type) {
+	if !IsValidDNSType(r.Type) {
 		return fmt.Errorf("unsupported record type %q (allowed: A, AAAA, CNAME, MX, TXT, NS, SRV, CAA)", r.Type)
 	}
 	if r.Name == "" {
@@ -731,7 +731,7 @@ func validateDNSRecord(r *models.DNSRecord) error {
 }
 
 
-// checkDNSRecordConflict enforces RFC 1034 §3.6.2 (CNAME exclusivity)
+// CheckDNSRecordConflict enforces RFC 1034 §3.6.2 (CNAME exclusivity)
 // and prevents exact-duplicate rows.
 //
 // Rules:
@@ -745,7 +745,7 @@ func validateDNSRecord(r *models.DNSRecord) error {
 //
 // excludeID is the record being updated (skip self-conflict on edit);
 // pass "" on create.
-func checkDNSRecordConflict(ctx context.Context, records repository.DNSRecordRepository, zoneID string, candidate *models.DNSRecord, excludeID string) error {
+func CheckDNSRecordConflict(ctx context.Context, records repository.DNSRecordRepository, zoneID string, candidate *models.DNSRecord, excludeID string) error {
 	existing, err := records.ListByZoneID(ctx, zoneID)
 	if err != nil {
 		return fmt.Errorf("list records for conflict check: %w", err)
