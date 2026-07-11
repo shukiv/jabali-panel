@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -205,10 +206,17 @@ func (h *adminUpdatesHandler) repairDomainOrphansPrune(c *gin.Context) {
 
 // --- apt -------------------------------------------------------------------
 
-// aptCheckResult mirrors the agent's system.apt_check wire shape.
+// aptCheckResult mirrors the agent's system.apt_check wire shape. Error is the
+// structured diagnostic (JAB-10) present when the check itself failed (apt lock,
+// repo unreachable, …); when set, Total/SecurityTotal are meaningless.
 type aptCheckResult struct {
 	Total         int `json:"total"`
 	SecurityTotal int `json:"security_total"`
+	Error         *struct {
+		Reason   string `json:"reason"`
+		Command  string `json:"command"`
+		ExitCode int    `json:"exit_code"`
+	} `json:"error"`
 }
 
 func (h *adminUpdatesHandler) aptCheck(c *gin.Context) {
@@ -216,11 +224,17 @@ func (h *adminUpdatesHandler) aptCheck(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.cfg.State != nil {
-		var r aptCheckResult
-		if json.Unmarshal(raw, &r) == nil {
-			_ = h.cfg.State.UpsertApt(c.Request.Context(), r.Total, r.SecurityTotal, time.Now())
-		}
+	// Persist the counts only on a clean check. On a structured failure
+	// (JAB-10) we do NOT UpsertApt — clobbering the last-known-good total
+	// with a failed-check 0 would misreport "0 updates" as if healthy.
+	var r aptCheckResult
+	decoded := json.Unmarshal(raw, &r) == nil
+	if h.cfg.State != nil && decoded && r.Error == nil {
+		_ = h.cfg.State.UpsertApt(c.Request.Context(), r.Total, r.SecurityTotal, time.Now())
+	}
+	if decoded && r.Error != nil {
+		log.Printf("[updates] system.apt_check failed: reason=%s command=%q exit=%d",
+			r.Error.Reason, r.Error.Command, r.Error.ExitCode)
 	}
 	writeAgentJSON(c, raw)
 }
