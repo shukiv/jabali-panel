@@ -13,6 +13,7 @@ import {
   Card,
   Form,
   Input,
+  Checkbox,
   InputNumber,
   Modal,
   Progress,
@@ -118,6 +119,7 @@ export const DomainMailboxesSection = ({
     local_part: string;
     password?: string;
     quota_mib?: number;
+    send_only?: boolean;
   }>();
 
   // Only render the in-dialog domain picker when the caller actually
@@ -245,6 +247,7 @@ export const DomainMailboxesSection = ({
           local_part: values.local_part,
           password: values.password || undefined,
           quota_bytes: parseQuotaInput(values.quota_mib),
+          send_only: values.send_only || undefined,
         },
       });
       setCreateOpen(false);
@@ -349,8 +352,12 @@ export const DomainMailboxesSection = ({
               title: "Status",
               dataIndex: "is_disabled",
               width: 100,
-              render: (disabled: boolean) =>
-                disabled ? <Tag color="red">disabled</Tag> : <Tag color="green">active</Tag>,
+              render: (disabled: boolean, row: Mailbox) => (
+                <Space size={4} wrap>
+                  {disabled ? <Tag color="red">disabled</Tag> : <Tag color="green">active</Tag>}
+                  {row.send_only && <Tag color="blue">send-only</Tag>}
+                </Space>
+              ),
             },
             {
               title: "Actions",
@@ -455,6 +462,13 @@ export const DomainMailboxesSection = ({
               step={256}
               style={{ width: 200 }}
             />
+          </Form.Item>
+          <Form.Item
+            name="send_only"
+            valuePropName="checked"
+            tooltip="A send-only mailbox authenticates for SMTP submission but never receives or stores mail — inbound is rejected. Useful for per-service notification credentials."
+          >
+            <Checkbox>Send-only (SMTP submission, no inbox)</Checkbox>
           </Form.Item>
         </Form>
       </Modal>

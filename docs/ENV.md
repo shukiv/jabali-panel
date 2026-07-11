@@ -154,7 +154,7 @@ production use; listed here so the one-liner env audit stays honest.
 | `JABALI_GO_ROOT` | No | `/usr/local/go` | Where the installer writes the Go toolchain. |
 | `JABALI_SERVICE_USER` | No | `jabali` | Service account the panel + agent run as. |
 | `JABALI_REPO_DIR` | No | `/opt/jabali2` | Git checkout path on the target host. |
-| `JABALI_REPO_URL` | No | `https://codeberg.org/shukivaknin/jabali2.git` | Override the git remote `install.sh` clones from (useful for private mirrors). |
+| `JABALI_REPO_URL` | No | `https://github.com/shukiv/jabali-panel.git` | Override the git remote `install.sh` clones from (useful for private mirrors). |
 | `JABALI_REPO_BRANCH` | No | `main` | Branch `install.sh` checks out. |
 | `JABALI_GITEA_TOKEN` | No | *(unset)* | Personal access token for private Gitea mirror. Used by `install.sh` when the source repo requires auth. Equivalent to the first positional arg to `install.sh`. |
 | `JABALI_PHP_VERSIONS` | No | `8.5` | Space-separated list of PHP versions `install.sh install_php` fetches from the Sury repo. Supported range: 7.4 through 8.5. Example: `JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh`. See [ADR-0023](adr/0023-m9-php-fpm-pool-manager.md). |

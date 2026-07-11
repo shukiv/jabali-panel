@@ -305,6 +305,7 @@ func (h *mailGroupHandler) create(c *gin.Context) {
 		"display_name":  g.DisplayName,
 		"description":   g.Description,
 		"internal_only": g.InternalOnly,
+		"has_files":     g.HasFiles,
 	})
 
 	g.EmailCached = email
@@ -387,6 +388,9 @@ func (h *mailGroupHandler) update(c *gin.Context) {
 			return
 		}
 		g.HasMailbox, g.HasCalendar, g.HasAddressbook, g.HasFiles = mbx, cal, ab, fl
+		// GH #350: re-run apply so a newly-enabled resource (esp. files, whose
+		// node is created on demand) is named after the group, not a default.
+		metaChanged = true
 	}
 	// GH #348: toggling internal-only re-projects via mailgroup.apply, which
 	// installs/removes the sender-domain sieve on the group account.
@@ -407,6 +411,7 @@ func (h *mailGroupHandler) update(c *gin.Context) {
 			"display_name":  g.DisplayName,
 			"description":   g.Description,
 			"internal_only": g.InternalOnly,
+			"has_files":     g.HasFiles,
 		})
 	}
 	_ = dom

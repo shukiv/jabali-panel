@@ -73,7 +73,7 @@ const STEPS: Step[] = [
   },
   {
     number: 6,
-    title: "API Tokens",
+    title: "Personal API Tokens",
     desc: "Mint a token for scripting / DDNS — same key works in routers, ddclient, CI.",
     href: "/jabali-panel/api-tokens",
     icon: ApiOutlined,

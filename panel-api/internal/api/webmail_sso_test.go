@@ -113,6 +113,7 @@ func (r *ssoFakeMailboxRepo) UpdateDisplayName(_ context.Context, _ string, _ st
 	return nil
 }
 func (r *ssoFakeMailboxRepo) SetDisabled(_ context.Context, _ string, _ bool) error { return nil }
+func (r *ssoFakeMailboxRepo) SetSendOnly(_ context.Context, _ string, _ bool) error { return nil }
 func (r *ssoFakeMailboxRepo) ListAllWithDomain(_ context.Context) ([]repository.MailboxWithDomain, error) {
 	return nil, nil
 }

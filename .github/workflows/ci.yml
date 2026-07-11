@@ -1,0 +1,110 @@
+# GitHub Actions CI — gate every PR against the test suite. Ported from the
+# retired Codeberg/Forgejo workflow when the project moved its source-of-truth
+# to GitHub (shukiv/jabali-panel). Runs on a self-hosted runner (host-exec,
+# dedicated box) registered with this repo.
+#
+# Jobs (all run unconditionally): Go tests+vet, install.sh lint, vitest+eslint,
+# Playwright E2E.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Per-ref concurrency: PR pushes auto-supersede stale in-flight runs; main runs
+# always run to completion (each commit is an authoritative green/red record).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  GO_VERSION: "1.25"
+  NODE_VERSION: "20"
+
+jobs:
+  go:
+    name: Go tests + vet
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # cache: false — the runner's persistent $GOMODCACHE already caches;
+          # setup-go's tar layer conflicts with a pre-existing cache.
+          cache: false
+      - name: go vet
+        run: make vet
+      - name: go test -race
+        run: make test
+
+  install-sh-lint:
+    name: install.sh phantom-function lint
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run lint
+        run: tools/lint-install-sh.sh
+
+  ui-unit:
+    name: panel-ui unit tests (vitest)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+      - name: Install deps
+        run: cd panel-ui && npm ci --no-audit --no-fund --prefer-offline
+      - name: eslint
+        run: cd panel-ui && npm run lint
+      - name: vitest
+        run: cd panel-ui && npm test
+
+  e2e:
+    name: Playwright E2E
+    runs-on: self-hosted
+    # Serialize e2e across ALL refs — port 4173 is a host-level resource.
+    concurrency:
+      group: e2e-port-4173
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+      - name: Install deps
+        run: cd panel-ui && npm ci --no-audit --no-fund --prefer-offline
+      - name: Install Playwright Chromium
+        run: cd panel-ui && npx playwright install chromium
+      - name: Build SPA
+        run: cd panel-ui && npm run build
+      - name: Free port 4173
+        run: |
+          pgrep -a -f "vite preview" || echo "(none)"
+          pkill -9 -f "vite preview" 2>/dev/null || true
+          for i in $(seq 1 10); do
+            ss -tln | grep -q ":4173 " || break
+            sleep 1
+          done
+          if ss -tln | grep -q ":4173 "; then
+            echo "ERROR: port 4173 still in use after kill + 10s wait"
+            exit 1
+          fi
+      - name: Playwright
+        run: cd panel-ui && npx playwright test --project=chromium --reporter=list
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            panel-ui/test-results/
+            panel-ui/playwright-report/
+          retention-days: 7

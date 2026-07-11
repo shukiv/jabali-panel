@@ -1,17 +1,6 @@
-# Nightly full-suite run — the safety net for ci.yml's path-filtered PR gate.
-#
-# ci.yml skips a job's expensive steps when the PR didn't touch that tree
-# (Go-only PR skips E2E, panel-ui-only PR skips the Go race suite, etc.).
-# That is safe for the common case but can, in principle, miss a
-# cross-cutting change the path filter didn't attribute correctly. This
-# workflow runs EVERYTHING unconditionally once a day so any such gap is
-# caught within 24h rather than at deploy time.
-#
-# Also does the slow/advisory checks we deliberately keep OFF the PR path:
-# `npm audit` (dependency vulnerabilities — advisory, non-blocking).
-#
-# Trigger: schedule (03:00 UTC) + manual (workflow_dispatch). If the Gitea
-# instance has scheduled Actions disabled, the manual trigger still works.
+# Nightly full-suite run — the daily safety net for the PR gate. Runs the whole
+# suite unconditionally + the slow/advisory checks kept off the PR path
+# (npm audit). Ported to GitHub Actions with the source-of-truth move.
 
 name: Nightly
 
@@ -27,7 +16,7 @@ env:
 jobs:
   go:
     name: Go tests + vet (race)
-    runs-on: jabali-ci
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -39,7 +28,7 @@ jobs:
 
   ui-unit:
     name: panel-ui unit tests (vitest)
-    runs-on: jabali-ci
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,7 +42,7 @@ jobs:
 
   e2e:
     name: Playwright E2E (full)
-    runs-on: jabali-ci
+    runs-on: self-hosted
     concurrency:
       group: e2e-port-4173
       cancel-in-progress: false
@@ -81,7 +70,7 @@ jobs:
       - run: cd panel-ui && npx playwright test --project=chromium --reporter=list
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: nightly-playwright-report
           path: |
@@ -91,14 +80,12 @@ jobs:
 
   audit:
     name: npm audit (advisory)
-    runs-on: jabali-ci
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      # Advisory only — a fresh CVE in a transitive dep shouldn't red-X the
-      # nightly. Surfaces the report; triage happens off the pipeline.
       - name: npm audit
         continue-on-error: true
         run: cd panel-ui && npm audit --omit=dev || true

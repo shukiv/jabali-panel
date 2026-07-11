@@ -92,7 +92,7 @@ const USER_PANEL_CARDS: { key: string; label: string; icon: React.ReactNode; pat
   { key: "disk-usage", label: "Disk Usage", icon: <HddOutlined />, path: "/jabali-panel/disk-usage" },
   { key: "logs", label: "Logs", icon: <FileTextOutlined />, path: "/jabali-panel/logs" },
   { key: "ssh-keys", label: "SSH Keys", icon: <KeyOutlined />, path: "/jabali-panel/ssh-keys" },
-  { key: "api-tokens", label: "API Tokens", icon: <ApiOutlined />, path: "/jabali-panel/api-tokens" },
+  { key: "api-tokens", label: "Personal API Tokens", icon: <ApiOutlined />, path: "/jabali-panel/api-tokens" },
   { key: "cron", label: "Cron Jobs", icon: <ClockCircleOutlined />, path: "/jabali-panel/cron" },
 ];
 

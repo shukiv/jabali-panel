@@ -47,6 +47,7 @@ type FormValues = {
   display_name?: string;
   password?: string;
   quota_mib?: number;
+  send_only?: boolean;
   group_ids?: string[];
   aliases?: string;
   forward_target?: string;
@@ -92,6 +93,7 @@ export const CreateMailboxWizardModal = ({
           display_name: values.display_name?.trim() || undefined,
           password: values.password || undefined,
           quota_bytes: parseQuotaInput(values.quota_mib),
+          send_only: values.send_only || undefined,
         },
       });
       if (values.group_ids?.length) {
@@ -244,6 +246,14 @@ export const CreateMailboxWizardModal = ({
                 step={256}
                 style={{ width: 200 }}
               />
+            </Form.Item>
+
+            <Form.Item
+              name="send_only"
+              valuePropName="checked"
+              tooltip="A send-only mailbox can authenticate for SMTP submission (sending) but never receives or stores mail — inbound is rejected. Ideal for per-service or per-appliance notification credentials, so each system has its own account to revoke or rotate."
+            >
+              <Checkbox>Send-only (SMTP submission, no inbox)</Checkbox>
             </Form.Item>
 
             {domainGroups && domainGroups.length > 0 && (

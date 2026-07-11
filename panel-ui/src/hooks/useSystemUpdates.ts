@@ -32,11 +32,23 @@ export interface AptPackage {
   security?: boolean;
 }
 
+// AptCheckError (JAB-10) — structured diagnostic when the package check itself
+// failed. reason is a stable key: apt_locked | repo_unreachable | permission |
+// command_failed. When present, total/packages are meaningless.
+export interface AptCheckError {
+  reason: string;
+  command: string;
+  exit_code: number;
+  stderr: string;
+  hint: string;
+}
+
 export interface AptCheckResult {
   packages: AptPackage[];
   total: number;
   security_total?: number;
   installed_total?: number;
+  error?: AptCheckError | null;
 }
 
 export interface RunResult {

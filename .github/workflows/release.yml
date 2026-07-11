@@ -1,0 +1,136 @@
+# GitHub Actions release publisher. Ported from the Codeberg/Forgejo workflow
+# with the source-of-truth move to GitHub. Runs on every push to main: builds
+# the panel-ui SPA + the Go binaries via tools/build-release.sh, bundles them
+# into jabali-release-<short_sha>.tar.gz + .sha256, and publishes both as
+# assets of a GitHub Release tagged `release-<short_sha>`.
+#
+# `jabali update` (panel-api/cmd/server/update_release.go) resolves the release
+# by tag via the GitHub API and downloads the .tar.gz + .sha256, so the stable
+# contract is:
+#   1. Tag name:   release-<short_sha>
+#   2. Asset names: jabali-release-<short_sha>.tar.gz[.sha256]
+#   3. A MANIFEST inside the tarball (short_sha + full_sha + build_time).
+#
+# Unlike Codeberg, GitHub imposes no per-repo release-asset storage quota, so
+# there is NO prune step — old release tarballs stay available and `jabali
+# update` can pin any historical commit.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Only the latest main commit needs a release; supersede stale in-flight builds.
+concurrency:
+  group: release-main
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build + publish release tarball
+    runs-on: self-hosted
+    env:
+      GO_VERSION: "1.25"
+      NODE_VERSION: "20"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+
+      - name: Build release tarball
+        id: build
+        run: |
+          set -euo pipefail
+          tools/build-release.sh
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=release-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          ls -lh dist/
+
+      - name: Publish release + assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.build.outputs.tag }}
+          SHORT_SHA: ${{ steps.build.outputs.short_sha }}
+          FULL_SHA: ${{ steps.build.outputs.full_sha }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com"
+          UPLOADS="https://uploads.github.com"
+          hdr=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          TARBALL="dist/jabali-release-${SHORT_SHA}.tar.gz"
+          CHECKSUM="${TARBALL}.sha256"
+
+          # Create the release for this commit. GitHub returns 201 on success,
+          # 422 if a release already exists for the tag (a workflow rerun).
+          create_resp="$(curl -sS -w '\nHTTP_STATUS:%{http_code}' "${hdr[@]}" \
+            -X POST "${API}/repos/${REPO}/releases" \
+            -d "$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Release %s","body":"Auto-built release for commit %s.","draft":false,"prerelease":false}' \
+                  "$TAG" "$FULL_SHA" "$SHORT_SHA" "$FULL_SHA")")"
+          status="$(echo "$create_resp" | sed -n 's/^HTTP_STATUS://p')"
+          body="$(echo "$create_resp" | sed '/^HTTP_STATUS:/d')"
+          if [[ "$status" == "201" ]]; then
+            release_id="$(echo "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          elif [[ "$status" == "422" ]]; then
+            release_id="$(curl -sS "${hdr[@]}" "${API}/repos/${REPO}/releases/tags/${TAG}" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          else
+            echo "release create failed (status=${status}): ${body}"; exit 1
+          fi
+          echo "release_id=${release_id}"
+
+          # Upload assets to uploads.github.com (NOT api.github.com). On a
+          # duplicate name from a partial prior run, delete + retry once.
+          upload_asset() {
+            local f="$1" name ctype
+            name="$(basename "$f")"
+            case "$name" in *.sha256) ctype="text/plain";; *) ctype="application/gzip";; esac
+            if ! curl -sS --fail -X POST "${hdr[@]}" -H "Content-Type: ${ctype}" \
+                   "${UPLOADS}/repos/${REPO}/releases/${release_id}/assets?name=${name}" \
+                   --data-binary @"$f" >/dev/null; then
+              existing="$(curl -sS "${hdr[@]}" "${API}/repos/${REPO}/releases/${release_id}/assets" \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((a['id'] for a in d if a['name']=='${name}'), ''))")"
+              [[ -n "$existing" ]] && curl -sS -X DELETE "${hdr[@]}" "${API}/repos/${REPO}/releases/assets/${existing}"
+              curl -sS --fail -X POST "${hdr[@]}" -H "Content-Type: ${ctype}" \
+                "${UPLOADS}/repos/${REPO}/releases/${release_id}/assets?name=${name}" \
+                --data-binary @"$f" >/dev/null
+            fi
+            echo "uploaded ${name}"
+          }
+          upload_asset "$TARBALL"
+          upload_asset "$CHECKSUM"
+
+      # Authoritative gate: the release is GOOD iff both assets are fetchable
+      # for this commit's tag. Runs even if publish reported a transient blip.
+      - name: Confirm assets published
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.build.outputs.tag }}
+          SHORT_SHA: ${{ steps.build.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          names="$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(a["name"] for a in d.get("assets",[])))')"
+          echo "assets for ${TAG}:"; echo "${names}"
+          for name in "jabali-release-${SHORT_SHA}.tar.gz" "jabali-release-${SHORT_SHA}.tar.gz.sha256"; do
+            echo "${names}" | grep -qx "${name}" || { echo "MISSING asset: ${name}"; exit 1; }
+          done
+          echo "==> both assets confirmed for ${TAG}"
