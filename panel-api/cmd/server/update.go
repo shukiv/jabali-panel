@@ -342,18 +342,18 @@ chmod 0750 "$WR"`)
 			// content. Be LOUD about discarded drift so an operator who
 			// didn't expect it sees what's gone and can recover it from
 			// reflog if needed.
-			// One-time self-cutover to Codeberg: the forge moved from the
-			// retired self-hosted Gitea (git.jabali-panel.com /
-			// git.linux-hosting.co.il) to Codeberg. A CF redirect bridges
-			// the old host to Codeberg so existing clones keep fetching, but
-			// repointing origin here means that after the first
-			// bridge-redirected update the host talks to Codeberg directly
-			// and no longer depends on the bridge. Idempotent + best-effort.
+			// One-time self-cutover to GitHub: the forge moved retired Gitea
+			// (git.jabali-panel.com / git.linux-hosting.co.il) → Codeberg →
+			// GitHub (shukiv/jabali-panel; Codeberg dropped after its release
+			// storage quota kept 413-ing publishes). Any origin still pointing
+			// at a superseded host is repointed to GitHub here, so after this
+			// one update the host fetches from GitHub directly and every
+			// subsequent update comes from GitHub. Idempotent + best-effort.
 			_ = asUser(repoDir, "bash", "-c",
 				`u=$(git remote get-url origin 2>/dev/null); `+
 					`case "$u" in `+
-					`*git.jabali-panel.com*|*git.linux-hosting.co.il*) `+
-					`git remote set-url origin https://codeberg.org/shukivaknin/jabali2.git;; `+
+					`*git.jabali-panel.com*|*git.linux-hosting.co.il*|*codeberg.org*) `+
+					`git remote set-url origin https://github.com/shukiv/jabali-panel.git;; `+
 					`esac`)
 			// Always fetch main (required).
 			if err := asUser(repoDir, "git", "fetch", "origin", "main"); err != nil {

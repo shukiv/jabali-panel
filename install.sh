@@ -6,7 +6,7 @@
 #   1. Installs base OS packages (git, curl, ca-certificates, build-essential).
 #   2. Installs Go 1.25.1 into /usr/local/go (idempotent).
 #   3. Creates a `jabali` system user (no login) + /opt/jabali-panel state dir.
-#   4. Clones (or pulls) https://codeberg.org/shukivaknin/jabali2
+#   4. Clones (or pulls) https://github.com/shukiv/jabali-panel
 #      into /opt/jabali-panel. If the repo is private, pass a Gitea token via
 #      JABALI_GITEA_TOKEN env var or the first positional arg.
 #   5. Builds panel-api and installs the binary at /usr/local/bin/jabali-panel.
@@ -19,7 +19,7 @@
 # scoped to what Phase 1 actually ships.
 #
 # Usage (public repo):
-#   curl -fsSL https://codeberg.org/shukivaknin/jabali2/raw/branch/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh | bash
 #
 # Flags (all optional, can be combined):
 #   --hostname <fqdn>  Server hostname; skips the TTY prompt. Equivalent
@@ -98,7 +98,7 @@ trap '__on_err' ERR
 
 # ---------- config (override via env) ---------------------------------------
 
-REPO_URL="${JABALI_REPO_URL:-https://codeberg.org/shukivaknin/jabali2.git}"
+REPO_URL="${JABALI_REPO_URL:-https://github.com/shukiv/jabali-panel.git}"
 REPO_BRANCH="${JABALI_REPO_BRANCH:-main}"
 REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 
@@ -4360,7 +4360,7 @@ clone_or_update_repo() {
   local _clone_dns_ok=0
   local attempt
   for attempt in 1 2 3 4 5 6 7 8; do
-    if getent hosts "${REPO_HOST:-codeberg.org}" >/dev/null 2>&1; then
+    if getent hosts "${REPO_HOST:-github.com}" >/dev/null 2>&1; then
       _clone_dns_ok=1
       break
     fi
@@ -4372,7 +4372,7 @@ clone_or_update_repo() {
     sleep 1
     systemctl restart systemd-resolved 2>/dev/null || true
     sleep 2
-    if ! getent hosts "${REPO_HOST:-codeberg.org}" >/dev/null 2>&1; then
+    if ! getent hosts "${REPO_HOST:-github.com}" >/dev/null 2>&1; then
       _die "cannot resolve $REPO_URL — check 'systemctl status pdns-recursor systemd-resolved' and 'dig @127.0.0.1 <host>'"
     fi
   fi

@@ -44,14 +44,16 @@ import (
 )
 
 const (
-	// defaultReleaseAPIBase is the Codeberg (Forgejo) instance the
-	// project is hosted on. Override via JABALI_RELEASE_API_BASE for
-	// staging mirrors, internal forks, or air-gapped operators who run
-	// their own Forgejo/Gitea.
-	defaultReleaseAPIBase = "https://codeberg.org/api/v1/repos/shukivaknin/jabali2"
+	// defaultReleaseAPIBase is the GitHub repo the project is hosted on.
+	// Override via JABALI_RELEASE_API_BASE for staging mirrors, internal
+	// forks, or air-gapped operators who run their own forge. GitHub's
+	// releases API is shape-compatible with the Forgejo one we came from
+	// ({tag_name, assets:[{name, browser_download_url, size}]}), and
+	// browser_download_url is a plain GET on this public repo.
+	defaultReleaseAPIBase = "https://api.github.com/repos/shukiv/jabali-panel"
 
 	// releaseShortSHALen matches the build-release.sh convention.
-	// Gitea API returns full SHAs; we truncate to derive the tag name
+	// The API returns full SHAs; we truncate to derive the tag name
 	// `release-<short_sha>` and the asset name.
 	releaseShortSHALen = 7
 
@@ -452,7 +454,10 @@ func installBinaryAtomic(src, dst string) error {
 // commit count crosses a threshold, more for very large repos. Update
 // can't predict the length, so it iterates instead.
 func findReleaseForCommit(ctx context.Context, base, fullSHA string) (*releaseResponse, string, error) {
-	url := base + "/releases?limit=20"
+	// GitHub uses ?per_page, Forgejo ?limit — send both; each forge ignores
+	// the parameter it doesn't recognise, so a JABALI_RELEASE_API_BASE override
+	// pointing at a self-hosted Forgejo still works.
+	url := base + "/releases?per_page=20&limit=20"
 	body, err := httpGetJSON(ctx, url, releaseAPITimeout)
 	if err != nil {
 		return nil, "", err
