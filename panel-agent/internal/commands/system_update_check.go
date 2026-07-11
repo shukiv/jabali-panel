@@ -117,6 +117,26 @@ func systemUpdateCheckHandler(ctx context.Context, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
+	// Self-heal the origin remote BEFORE fetching. A client whose origin still
+	// points at the retired Codeberg / self-hosted-gitea mirror (git.jabali-
+	// panel.com / git.linux-hosting.co.il / codeberg.org) would fetch a frozen
+	// ref, report "up to date" forever, and never trigger the update that
+	// migrates it — a deadlock, since the migrating rewrite in update.go only
+	// runs on an actual update the UI won't offer. Mirror that rewrite here so
+	// the *check* itself repoints to GitHub (the source of truth after the
+	// 2026-07 cutover), fetches real commits, and surfaces the backlog. No-op
+	// once origin is already GitHub. Best-effort — a get-url/set-url hiccup
+	// must not fail the check.
+	if urlOut, uerr := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "remote", "get-url", "origin"); uerr == nil {
+		u := strings.TrimSpace(string(urlOut))
+		if strings.Contains(u, "codeberg.org") ||
+			strings.Contains(u, "git.linux-hosting.co.il") ||
+			strings.Contains(u, "git.jabali-panel.com") {
+			_, _ = runAsServiceUser(ctx, "git", "-C", systemRepoDir,
+				"remote", "set-url", "origin", "https://github.com/shukiv/jabali-panel.git")
+		}
+	}
+
 	// Resolve the channel target ref to compare against.
 	// Always fetch main (required). It also keeps RemoteSHA/branch sane.
 	if _, err := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "fetch", "--quiet", "origin", "main"); err != nil {
