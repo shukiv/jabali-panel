@@ -1,0 +1,37 @@
+# Managed by jabali install.sh (JAB-106).
+# Parse the panel's Kratos-flow rate-limit marker (JAB-4 / PR #139). The
+# limiter on /.ory self-service login+recovery emits, per throttled request:
+#
+#   JSON  (production): {"time":...,"level":"WARN","msg":"kratos flow rate limited",
+#                        "marker":"kratos_flow_rate_limited","flow":"login",
+#                        "client_ip":"1.2.3.4","path":"/.ory/self-service/login/..."}
+#   text  (LOG_FORMAT=text): time=... level=WARN msg="kratos flow rate limited"
+#                        marker=kratos_flow_rate_limited flow=login
+#                        client_ip=1.2.3.4 path=/.ory/self-service/login/...
+#
+# The filter keys on the marker SUBSTRING (present in both shapes, order-
+# independent), and the grok extracts client_ip with a format-agnostic
+# `client_ip[=:] "?<ip>"?` so it matches JSON and text alike — no reliance on
+# slog attribute order. This mirrors the risk-aversion of the Stalwart parser:
+# validate against a live CrowdSec instance (cscli explain) before trusting it.
+name: jabali/panel-kratos
+description: "Parse jabali-panel Kratos-flow rate-limit markers from journalctl"
+
+filter: "evt.Line.Labels.type == 'jabali-panel' && evt.Line.Raw contains 'kratos_flow_rate_limited'"
+onsuccess: next_stage
+nodes:
+  - grok:
+      # Extract the client IP regardless of JSON ("client_ip":"1.2.3.4") or
+      # logfmt (client_ip=1.2.3.4) rendering. The optional `"?` after the key
+      # eats the JSON key's closing quote (`"client_ip":`) so both the JSON
+      # `":"` and the logfmt `=` separators match.
+      pattern: 'client_ip"?\s*[=:]\s*"?%{IP:client_ip}"?'
+      apply_on: Line.Raw
+
+statics:
+  - meta: service
+    value: jabali-panel
+  - meta: source_ip
+    expression: evt.Parsed.client_ip
+  - meta: log_type
+    value: kratos_flow_rate_limited

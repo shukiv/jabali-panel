@@ -1,0 +1,15 @@
+# Managed by jabali install.sh (JAB-106).
+# Source jabali-panel structured logs from systemd-journald. panel-api logs
+# to stdout; in production the slog handler emits JSON (config auto-upgrades
+# env=production to JSON unless LOG_FORMAT=text). systemd captures those lines
+# under jabali-panel.service; CrowdSec tails them here. Same journalctl ingest
+# shape as the Stalwart acquis (install/crowdsec/stalwart/acquis.d/).
+#
+# Today this feeds the JAB-4 rate-limit marker (marker=kratos_flow_rate_limited)
+# into the jabali/kratos-flow-bf scenario; any future panel security markers
+# can reuse this acquisition + a sibling parser node.
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=jabali-panel.service"
+labels:
+  type: jabali-panel

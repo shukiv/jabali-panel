@@ -565,6 +565,7 @@ install_module_security() {
   install_login_allowlist_default_conf
   install_crowdsec_jabali_scenarios
   install_crowdsec_jabali_stalwart_scenarios
+  install_crowdsec_jabali_kratos_scenarios
   install_crowdsec_blocklists
   install_malware_stack
   install_ufw
@@ -8358,6 +8359,58 @@ install_crowdsec_jabali_stalwart_scenarios() {
   fi
 }
 
+install_crowdsec_jabali_kratos_scenarios() {
+  # JAB-106: surface the panel's Kratos-flow rate-limit marker
+  # (marker=kratos_flow_rate_limited, from JAB-4 / PR #139) in the
+  # Security -> CrowdSec dashboard. Drops the panel acquis + parser +
+  # leaky scenario into the CrowdSec config tree, with the same
+  # write-on-diff (parser/acquis) + seed-only (scenario) discipline as
+  # install_crowdsec_jabali_stalwart_scenarios.
+  local src="${REPO_DIR}/install/crowdsec/panel"
+  if [[ ! -d "$src" ]]; then
+    _warn "install/crowdsec/panel not present in repo — skipping panel/Kratos CrowdSec wiring"
+    return 0
+  fi
+
+  install -d -m 0755 /etc/crowdsec/parsers/s01-parse
+  install -d -m 0755 /etc/crowdsec/scenarios
+  install -d -m 0755 /etc/crowdsec/acquis.d
+
+  local changed=0 f base dst
+  # parser + acquis: write-on-diff (jabali-owned, never touched at runtime).
+  for f in "$src"/parsers/s01-parse/jabali-panel-*.yaml \
+           "$src"/acquis.d/jabali-panel*.yaml; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    case "$f" in
+      */parsers/*) dst="/etc/crowdsec/parsers/s01-parse/$base" ;;
+      */acquis.d/*) dst="/etc/crowdsec/acquis.d/$base" ;;
+    esac
+    if [[ ! -f "$dst" ]] || ! cmp -s "$f" "$dst"; then
+      install -m 0644 -o root -g root "$f" "$dst"
+      changed=1
+      _log "wrote $dst"
+    fi
+  done
+  # scenarios: SEED-ONLY. The panel-agent's security.crowdsec.sensitivity.apply
+  # verb rewrites these at runtime to apply relaxed/strict thresholds; write-on-
+  # diff here would clobber the operator's preset on every `jabali update`.
+  for f in "$src"/scenarios/jabali-kratos-*.yaml; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    dst="/etc/crowdsec/scenarios/$base"
+    if [[ ! -f "$dst" ]]; then
+      install -m 0644 -o root -g root "$f" "$dst"
+      changed=1
+      _log "wrote $dst"
+    fi
+  done
+
+  if (( changed )); then
+    systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec 2>/dev/null || true
+  fi
+}
+
 install_crowdsec_jabali_scenarios() {
   # Seed jabali-owned CrowdSec scenarios that target the panel itself.
   # Three rules:
@@ -13060,6 +13113,7 @@ main() {
   run_if_module security install_login_allowlist_default_conf
   run_if_module security install_crowdsec_jabali_scenarios
   run_if_module security install_crowdsec_jabali_stalwart_scenarios
+  run_if_module security install_crowdsec_jabali_kratos_scenarios
   run_if_module security install_crowdsec_blocklists
   cleanup_modsecurity
   run_if_module security install_malware_stack
