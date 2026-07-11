@@ -88,7 +88,19 @@ selfservice:
     password:
       enabled: true
     profile:
-      enabled: true
+      # JAB-5: DISABLED. The panel DB is authoritative for identity/RBAC
+      # (user id, username, email, is_admin). The self-service profile
+      # method is the only settings-flow method that mutates identity
+      # *traits* — leaving it on lets any signed-in user PATCH their own
+      # traits.username / traits.email / traits.is_admin via a crafted
+      # /.ory settings flow, desyncing Kratos from the panel DB (broken
+      # recovery, misleading sessions/audit, and drift for anything that
+      # later consumes traits). All authoritative changes go through the
+      # Jabali admin/user APIs, which sync to Kratos over the ADMIN API
+      # (kratosclient UpdateUsernameTrait / SetPassword / SetIdentityState
+      # → PATCH /admin/identities/{id}) — unaffected by this. Password,
+      # TOTP, and lookup-secret settings stay enabled (separate methods).
+      enabled: false
     link:
       enabled: false
     code:
