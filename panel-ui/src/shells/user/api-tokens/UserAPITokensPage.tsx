@@ -307,7 +307,7 @@ export function UserAPITokensPage(): JSX.Element {
 
   const tokensCard = (
     <Card
-      title="API Tokens"
+      title="Personal API Tokens"
       extra={
         <Button
           type="primary"

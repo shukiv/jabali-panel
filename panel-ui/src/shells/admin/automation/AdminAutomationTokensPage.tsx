@@ -159,7 +159,7 @@ export const AdminAutomationTokensPage = () => {
     <div>
       <Typography.Title level={2}>
         <Space>
-          <KeyOutlined /> Automation API Tokens
+          <KeyOutlined /> Server API Access
         </Space>
       </Typography.Title>
       <Typography.Paragraph type="secondary">
@@ -262,7 +262,7 @@ export const AdminAutomationTokensPage = () => {
       </Card>
 
       <Drawer
-        title="Mint Automation API Token"
+        title="Mint Server API Token"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={500}
