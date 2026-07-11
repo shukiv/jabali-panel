@@ -140,7 +140,21 @@ func ImportDomains(
 		applyMigratedHtaccess(filepath.Join(docRoot, ".htaccess"), domainName, d, res)
 
 		if err := domainsRepo.Create(ctx, d); err != nil {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed:%s:%v", domainName, err))
+			// JAB-57: domain.create already built the nginx vhost (+ enabled
+			// symlink) but the panel row failed to land — an unmanaged vhost
+			// that serves traffic and collides with a retry (whose collision
+			// check keys on the domains row, now absent). Roll it back:
+			// domain.delete removes the vhost + reloads nginx. The docroot
+			// under /home is left (harmless; overwritten by the home-split
+			// rsync on retry) — only the serving/system state is reverted.
+			delCtx, dcancel := context.WithTimeout(ctx, 60*time.Second)
+			_, delErr := agentCli.Call(delCtx, "domain.delete", map[string]string{"domain": domainName})
+			dcancel()
+			if delErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed_AND_vhost_rollback_failed:%s:row=%v:delete=%v", domainName, err, delErr))
+			} else {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed_vhost_rolled_back:%s:%v", domainName, err))
+			}
 			continue
 		}
 		res.Created++
