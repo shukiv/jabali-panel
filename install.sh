@@ -10849,7 +10849,11 @@ print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
   if [[ -z "$sql_dir_id" ]]; then
     _warn "could not resolve SQL Directory id — skipping query-field convergence"
   else
-    local query_recipient="SELECT m.email_cached, m.password_hash FROM (SELECT ? AS lookup) input JOIN mailboxes m ON m.is_disabled = 0 AND (m.email_cached = input.lookup OR m.id = (SELECT f.mailbox_id FROM email_forwarders f JOIN domains d ON d.id = f.domain_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND CONCAT(f.local_part, '@', d.name) = input.lookup LIMIT 1))"
+    # GH #371: `AND m.send_only = 0` excludes send-only mailboxes from the
+    # recipient/delivery lookup while queryLogin (auth) still returns them —
+    # so a send-only account can submit mail but inbound gets a 550 (no valid
+    # recipient) and nothing is ever stored. Same gate shape as is_disabled.
+    local query_recipient="SELECT m.email_cached, m.password_hash FROM (SELECT ? AS lookup) input JOIN mailboxes m ON m.is_disabled = 0 AND m.send_only = 0 AND (m.email_cached = input.lookup OR m.id = (SELECT f.mailbox_id FROM email_forwarders f JOIN domains d ON d.id = f.domain_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND CONCAT(f.local_part, '@', d.name) = input.lookup LIMIT 1))"
     local query_aliases="SELECT CONCAT(f.local_part, '@', d.name) AS alias FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND m.email_cached = ?"
     local patch_json
     patch_json="$(python3 -c 'import json,sys; print(json.dumps({"queryRecipient": sys.argv[1], "queryEmailAliases": sys.argv[2]}))' "$query_recipient" "$query_aliases")"
