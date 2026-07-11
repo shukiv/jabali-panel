@@ -11,6 +11,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined } from "@icons";
@@ -138,9 +139,16 @@ export function PythonAppsPage() {
         />
         <Table.Column<PythonApp>
           title="Status"
-          render={(_, r) => (
-            <Tag color={STATUS_COLOR[r.status] ?? "default"}>{r.status}</Tag>
-          )}
+          render={(_, r) => {
+            const tag = <Tag color={STATUS_COLOR[r.status] ?? "default"}>{r.status}</Tag>;
+            // GH #357: a failed app used to show just "failed" with no reason
+            // ("nothing in logs") — surface last_error on hover, like Docker apps.
+            return r.status === "failed" && r.last_error ? (
+              <Tooltip title={r.last_error}>{tag}</Tooltip>
+            ) : (
+              tag
+            );
+          }}
         />
         <Table.Column<PythonApp>
           title=""
