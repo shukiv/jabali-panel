@@ -183,14 +183,23 @@ func ImportDatabases(
 			UpdatedAt: time.Now().UTC(),
 		}
 		if err := dbsRepo.Create(ctx, row); err != nil {
-			// Schema is materialised, dump is loaded, but the
-			// panel's row failed to land. Operator can SQL the
-			// row in by hand from logs, or re-run import (the
-			// idempotent check above will skip the existing
-			// DB, but databases row insert here is what fails).
-			// Surface the error rather than silent — restore
-			// stage caller decides whether to retry.
-			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: databases row insert failed: %v", finalName, err))
+			// JAB-57: schema is materialised + the dump is loaded, but the
+			// panel's row failed to land. Without compensation this leaves
+			// an INVISIBLE restored database (customer data the UI, quota,
+			// backups, and user-deletion cleanup never see) and a resume
+			// gets worse — the collision check keys on DB rows, not system
+			// state. Roll the side effect back: drop the restored DB so the
+			// system matches the (absent) panel row and a retry re-imports
+			// cleanly from the tarball dump. Safe on migration targets
+			// (freshly provisioned; M35 restores INTO new accounts).
+			dropCtx, dcancel := context.WithTimeout(ctx, 30*time.Second)
+			_, dropErr := agentClient.Call(dropCtx, "db.drop", map[string]any{"db_name": finalName})
+			dcancel()
+			if dropErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("%s: databases row insert failed AND rollback db.drop failed (orphan DB may remain): row=%v drop=%v", finalName, err, dropErr))
+			} else {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("%s: databases row insert failed; restored DB rolled back: %v", finalName, err))
+			}
 			continue
 		}
 		res.Created++
@@ -223,7 +232,14 @@ func ImportDatabases(
 						UpdatedAt:    time.Now().UTC(),
 					}
 					if duErr := dbUsersRepo.Create(ctx, duRow); duErr != nil {
-						res.Skipped = append(res.Skipped, fmt.Sprintf("%s: database_users row: %v", finalName, duErr))
+						// JAB-57: the MariaDB user exists but its panel row
+						// failed — an orphaned credential the panel doesn't
+						// manage. Drop the user so no unmanaged login survives;
+						// retry recreates it.
+						duDropCtx, duDropCancel := context.WithTimeout(ctx, 30*time.Second)
+						_, _ = agentClient.Call(duDropCtx, "db_user.drop", map[string]any{"db_user_name": finalName})
+						duDropCancel()
+						res.Skipped = append(res.Skipped, fmt.Sprintf("%s: database_users row failed; MariaDB user rolled back: %v", finalName, duErr))
 					} else {
 						grantCtx, grantCancel := context.WithTimeout(ctx, 30*time.Second)
 						_, grantErr := agentClient.Call(grantCtx, "db_user.grant", map[string]any{
