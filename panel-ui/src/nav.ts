@@ -215,14 +215,14 @@ export const adminNav: NavItem[] = [
   },
   {
     key: "automation",
-    label: "Automation API",
-    description: "Automation API tokens and scopes",
+    label: "Server API Access",
+    description: "Server/global API tokens and scopes for automations",
     icon: navIcon(KeyOutlined),
     path: "/jabali-admin/automation",
   },
   {
     key: "api-tokens",
-    label: "API Tokens",
+    label: "Personal API Tokens",
     description: "REST API keys",
     icon: navIcon(ApiOutlined),
     path: "/jabali-admin/api-tokens",
@@ -337,7 +337,7 @@ export const userNav: NavItem[] = [
   },
   {
     key: "api-tokens",
-    label: "API Tokens",
+    label: "Personal API Tokens",
     icon: navIcon(ApiOutlined),
     path: "/jabali-panel/api-tokens",
   },

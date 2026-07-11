@@ -1,6 +1,6 @@
-// DomainList — admin domains grid. Post-M21 the row action strip
-// stays the same (DNS/Redirects/Index/Settings/Toggle/Edit/Delete);
-// only the hook and the two Refine action buttons change.
+// DomainList — admin domains grid. GH #351: Edit is the primary
+// always-visible row action (used far more than DNS); DNS moved into the
+// "..." overflow with Info/Redirects/Index/Settings/Caching/Toggle/Delete.
 import { useState } from "react";
 import { Button, Card, Dropdown, Modal, Space, Table, Tag, Tooltip, Typography, notification } from "antd";
 import {
@@ -360,19 +360,19 @@ export const DomainList = () => {
             render={(_, r) => (
               <Space>
                 <RowActionButton
-                  icon={<GlobalOutlined />}
-                  onClick={() => navigate(`/jabali-admin/domains/${r.id}/dns`)}
+                  icon={<EditOutlined />}
+                  onClick={() => navigate(`/jabali-admin/domains/edit/${r.id}`)}
                 >
-                  DNS
+                  Edit
                 </RowActionButton>
                 <Dropdown
                   menu={{
                     items: [
                       {
-                        key: "edit",
-                        icon: <EditOutlined />,
-                        label: "Edit",
-                        onClick: () => navigate(`/jabali-admin/domains/edit/${r.id}`),
+                        key: "dns",
+                        icon: <GlobalOutlined />,
+                        label: "DNS",
+                        onClick: () => navigate(`/jabali-admin/domains/${r.id}/dns`),
                       },
                       {
                         key: "info",

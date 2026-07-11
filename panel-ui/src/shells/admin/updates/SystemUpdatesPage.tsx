@@ -131,6 +131,7 @@ import {
   useUpdateAutoupdate,
   useUpdateHistory,
   useUpdateState,
+  type AptCheckError,
   type AptCheckResult,
   type AptPackage,
   type AutoupdateConfig,
@@ -568,6 +569,94 @@ function JabaliPanelCard({ check }: { check: ReturnType<typeof useJabaliCheck> }
   );
 }
 
+// aptErrorMeta maps a structured apt-check failure reason (JAB-10) to a title
+// and Alert severity. apt_locked is a transient "in progress" state (warning),
+// the rest are real errors.
+function aptErrorMeta(reason: string): { title: string; type: "warning" | "error" } {
+  switch (reason) {
+    case "apt_locked":
+      return { title: "A package operation is in progress", type: "warning" };
+    case "repo_unreachable":
+      return { title: "Couldn't reach the package repositories", type: "error" };
+    case "permission":
+      return { title: "Insufficient privileges to check packages", type: "error" };
+    default:
+      return { title: "Couldn't check system packages", type: "error" };
+  }
+}
+
+// SystemPackagesError renders the structured apt-check diagnostic (JAB-10):
+// a plain-language reason + recovery hint, the failed command / exit code /
+// stderr under a collapse, and a Retry. When a lock is held by a running apt
+// upgrade the retry is disabled so we don't stack duplicate checks.
+function SystemPackagesError({
+  err,
+  running,
+  retrying,
+  onRetry,
+}: {
+  err: AptCheckError;
+  running: boolean;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const meta = aptErrorMeta(err.reason);
+  const lockedDuringRun = err.reason === "apt_locked" && running;
+  return (
+    <Alert
+      type={meta.type}
+      showIcon
+      style={{ marginTop: 8 }}
+      message={meta.title}
+      description={
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Text>{err.hint}</Text>
+          <Collapse
+            ghost
+            size="small"
+            items={[
+              {
+                key: "details",
+                label: "Diagnostics",
+                children: (
+                  <Space direction="vertical" size={2} style={{ width: "100%" }}>
+                    <Text type="secondary">
+                      Command: <Text code>{err.command}</Text>
+                      {err.exit_code >= 0 ? <> · exit {err.exit_code}</> : null}
+                    </Text>
+                    {err.stderr ? (
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: "pre-wrap",
+                          fontSize: 12,
+                          maxHeight: 160,
+                          overflow: "auto",
+                        }}
+                      >
+                        {err.stderr}
+                      </pre>
+                    ) : null}
+                  </Space>
+                ),
+              },
+            ]}
+          />
+          <Button
+            size="small"
+            icon={<ReloadOutlined />}
+            loading={retrying}
+            disabled={lockedDuringRun}
+            onClick={onRetry}
+          >
+            {lockedDuringRun ? "Waiting for the update to finish…" : "Retry"}
+          </Button>
+        </Space>
+      }
+    />
+  );
+}
+
 // --- System Packages card --------------------------------------------------
 
 function SystemPackagesCard({ check }: { check: ReturnType<typeof useAptCheck> }) {
@@ -634,6 +723,17 @@ function SystemPackagesCard({ check }: { check: ReturnType<typeof useAptCheck> }
         <div style={{ textAlign: "center", padding: 24 }}>
           <Spin />
         </div>
+      ) : result?.error ? (
+        // JAB-10: the check ran but apt failed — surface the real reason
+        // (lock / repo / perms / command) instead of a bare "up to date" or
+        // a generic error. When a lock is held by a running apt upgrade we
+        // disable the retry so we don't pile on duplicate checks.
+        <SystemPackagesError
+          err={result.error}
+          running={running}
+          retrying={check.isPending}
+          onRetry={() => check.mutate()}
+        />
       ) : result && result.total === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="System is up to date" />
       ) : result ? (

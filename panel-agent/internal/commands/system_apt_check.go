@@ -4,20 +4,43 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os/exec"
 	"regexp"
 	"strings"
-
-	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
 
 // systemAptCheckResponse is the wire shape for system.apt_check.
+//
+// JAB-10: on a healthy host Error is nil and Packages/Total are populated.
+// When apt fails (dpkg lock held by a running upgrade, repo unreachable,
+// bad perms, unparseable output, …) the handler does NOT return a bare
+// agent error — it returns this response with a *structured* Error the
+// admin UI can render (reason + failed command + exit code + stderr
+// summary + a recovery hint). A hard agent error is reserved for the
+// agent being unreachable, which is a different failure than "apt said no".
 type systemAptCheckResponse struct {
 	Packages       []aptUpgradablePackage `json:"packages"`
 	Total          int                    `json:"total"`
 	SecurityTotal  int                    `json:"security_total"`
 	InstalledTotal int                    `json:"installed_total"`
+	Error          *aptCheckError         `json:"error,omitempty"`
+}
+
+// aptCheckError is the admin-facing, structured diagnostic for a failed
+// system-package check (JAB-10).
+type aptCheckError struct {
+	// Reason is a stable machine key the UI switches on:
+	//   apt_locked | repo_unreachable | permission | command_failed
+	Reason string `json:"reason"`
+	// Command is the failed command, e.g. "apt-get update".
+	Command string `json:"command"`
+	// ExitCode is the process exit code, or -1 when it never ran / was killed.
+	ExitCode int `json:"exit_code"`
+	// Stderr is a trimmed, size-capped stderr/stdout summary.
+	Stderr string `json:"stderr"`
+	// Hint is the next recovery step, in plain admin language.
+	Hint string `json:"hint"`
 }
 
 type aptUpgradablePackage struct {
@@ -32,20 +55,24 @@ type aptUpgradablePackage struct {
 
 // systemAptCheckHandler runs `apt-get update` then `apt list --upgradable`
 // and parses the column-stable output. Every apt invocation includes
-// `-o DPkg::Lock::Timeout=60` because unattended-upgrades.timer runs
-// nightly and holds the dpkg lock; without the timeout, ops see a
-// cryptic crash. LC_ALL=C pins the column header locale.
+// `-o DPkg::Lock::Timeout=60` because unattended-upgrades.timer (and the
+// panel's own jabali-apt-oneshot.service) can hold the dpkg lock; without
+// the timeout, ops see a cryptic crash. LC_ALL=C pins the column locale.
 //
 // This command takes NO user-controlled parameters — apt is invoked with
 // fixed args only. Any future params should be type-tagged enums, not
 // passed through as strings.
 func systemAptCheckHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	if err := runApt(ctx, "update", "-qq"); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("apt-get update: %v", err)}
+	if _, stderr, code, err := runAptCapture(ctx, "update", "-qq"); err != nil {
+		return systemAptCheckResponse{
+			Error: classifyAptError("apt-get update", stderr, code, err),
+		}, nil
 	}
-	out, err := aptList(ctx)
+	out, stderr, code, err := aptListCapture(ctx)
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("apt list: %v", err)}
+		return systemAptCheckResponse{
+			Error: classifyAptError("apt list --upgradable", stderr, code, err),
+		}, nil
 	}
 	pkgs := parseAptUpgradable(string(out))
 	sec := 0
@@ -60,6 +87,99 @@ func systemAptCheckHandler(ctx context.Context, _ json.RawMessage) (any, error) 
 		SecurityTotal:  sec,
 		InstalledTotal: countInstalledPackages(ctx),
 	}, nil
+}
+
+// aptLockPatterns / aptRepoPatterns / aptPermPatterns are matched
+// case-insensitively against the failed command's output to pick a Reason.
+// Order matters: lock is checked before the generic fallback so a lock held
+// by a running upgrade reads as "in progress", not "command failed".
+var (
+	aptLockPatterns = []string{
+		"could not get lock", "unable to acquire the dpkg", "dpkg frontend lock",
+		"dpkg::lock::timeout", "lock::timeout", "dpkg was interrupted",
+		"is another process using it", "resource temporarily unavailable",
+	}
+	aptRepoPatterns = []string{
+		"failed to fetch", "could not resolve", "temporary failure resolving",
+		"could not connect", "unable to connect", "connection failed",
+		"connection timed out", "network is unreachable", "cannot initiate the connection",
+	}
+	aptPermPatterns = []string{
+		"permission denied", "are you root", "requires superuser",
+		"must be run as root", "eacces", "operation not permitted",
+	}
+)
+
+// classifyAptError maps a failed apt invocation to a structured, admin-facing
+// diagnostic. It never returns nil.
+func classifyAptError(command, stderr string, exitCode int, err error) *aptCheckError {
+	low := strings.ToLower(stderr)
+	summary := summarizeStderr(stderr)
+	if summary == "" && err != nil {
+		summary = err.Error()
+	}
+	switch {
+	case containsAny(low, aptLockPatterns):
+		return &aptCheckError{
+			Reason: "apt_locked", Command: command, ExitCode: exitCode, Stderr: summary,
+			Hint: "A package operation is in progress (unattended-upgrades or a Jabali system update holds the dpkg lock). Wait for it to finish, then retry.",
+		}
+	case containsAny(low, aptRepoPatterns):
+		return &aptCheckError{
+			Reason: "repo_unreachable", Command: command, ExitCode: exitCode, Stderr: summary,
+			Hint: "apt could not reach a repository. Check the server's network/DNS and its apt sources, then retry.",
+		}
+	case containsAny(low, aptPermPatterns):
+		return &aptCheckError{
+			Reason: "permission", Command: command, ExitCode: exitCode, Stderr: summary,
+			Hint: "The package check must run with root privileges. Verify the panel-agent is running as root.",
+		}
+	default:
+		return &aptCheckError{
+			Reason: "command_failed", Command: command, ExitCode: exitCode, Stderr: summary,
+			Hint: "The package manager returned an error. Run `sudo apt-get update` on the host to reproduce and inspect the full output.",
+		}
+	}
+}
+
+func containsAny(haystack string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(haystack, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// summarizeStderr trims apt's output to a compact, admin-safe summary: the
+// last few non-empty lines (apt puts the actionable error last), capped in
+// length so it stays displayable and never leaks a wall of text.
+func summarizeStderr(s string) string {
+	const maxLines, maxLen = 4, 600
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			lines = append(lines, t)
+		}
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	out := strings.Join(lines, "\n")
+	if len(out) > maxLen {
+		out = out[:maxLen] + "…"
+	}
+	return out
+}
+
+// exitCodeOf extracts the process exit code from an exec error, or -1 when
+// the command could not run (binary missing, context cancelled, killed).
+func exitCodeOf(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 // countInstalledPackages returns the number of installed dpkg packages, for
@@ -78,25 +198,33 @@ func countInstalledPackages(ctx context.Context) int {
 	return n
 }
 
-func runApt(ctx context.Context, args ...string) error {
+// runAptCapture runs apt-get with the shared lock-timeout + locale env and
+// returns stdout, a combined output summary source, the exit code, and err.
+func runAptCapture(ctx context.Context, args ...string) (stdout []byte, stderr string, exitCode int, err error) {
 	full := append([]string{"-o", "DPkg::Lock::Timeout=60"}, args...)
 	cmd := exec.CommandContext(ctx, "apt-get", full...)
 	cmd.Env = append(cmd.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	// apt-get writes most diagnostics to stderr but some to stdout; combine
+	// so classification sees everything regardless of stream.
+	out, runErr := cmd.CombinedOutput()
+	if runErr != nil {
+		return nil, string(out), exitCodeOf(runErr), runErr
 	}
-	return nil
+	return out, "", 0, nil
 }
 
-func aptList(ctx context.Context) ([]byte, error) {
+// aptListCapture runs `apt list --upgradable`, capturing stderr separately so
+// a failure (rare — lock/perm) is classifiable.
+func aptListCapture(ctx context.Context) (stdout []byte, stderr string, exitCode int, err error) {
 	cmd := exec.CommandContext(ctx, "apt", "list", "--upgradable")
 	cmd.Env = append(cmd.Environ(), "LC_ALL=C")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	out, runErr := cmd.Output()
+	if runErr != nil {
+		return nil, errBuf.String(), exitCodeOf(runErr), runErr
 	}
-	return out, nil
+	return out, "", 0, nil
 }
 
 // parseAptUpgradable reads `apt list --upgradable` output, format example:

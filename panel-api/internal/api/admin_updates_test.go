@@ -111,3 +111,28 @@ func TestAdminUpdates_Stop_CallsUnitStop(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"ok":true`)
 }
+
+// JAB-10: when the agent's system.apt_check reports a structured failure
+// (apt lock etc.), the panel forwards it as a 200 body carrying the reason +
+// hint (not a bare "agent_error"), so the admin card can render diagnostics.
+func TestAdminUpdates_AptCheck_ForwardsStructuredError(t *testing.T) {
+	mock := agent.NewMockClient().On("system.apt_check", map[string]any{
+		"packages": []map[string]any{},
+		"total":    0,
+		"error": map[string]any{
+			"reason":    "apt_locked",
+			"command":   "apt-get update",
+			"exit_code": 100,
+			"stderr":    "E: Could not get lock /var/lib/dpkg/lock-frontend",
+			"hint":      "A package operation is in progress. Wait, then retry.",
+		},
+	})
+	r := newAdminUpdatesRouter(mock, true)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/updates/apt/check", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"reason":"apt_locked"`)
+	assert.Contains(t, rec.Body.String(), `"hint":`)
+}

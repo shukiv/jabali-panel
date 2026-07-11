@@ -66,6 +66,9 @@ export interface Mailbox {
   display_name: string;
   quota_bytes: number;
   is_disabled: boolean;
+  // send_only (GH #371): authenticates for SMTP submission but never
+  // receives or stores mail.
+  send_only: boolean;
   last_usage_bytes: number;
   last_usage_at?: string | null;
   created_at: string;
@@ -77,6 +80,7 @@ export interface CreateMailboxInput {
   display_name?: string;
   password?: string;
   quota_bytes?: number;
+  send_only?: boolean;
 }
 
 export interface CreateMailboxResponse {
@@ -84,6 +88,7 @@ export interface CreateMailboxResponse {
   email: string;
   quota_bytes: number;
   display_name?: string;
+  send_only?: boolean;
   // Present only when caller didn't supply a password — reveal-once.
   password?: string;
 }

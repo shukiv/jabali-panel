@@ -29,6 +29,11 @@ type Mailbox struct {
 	PasswordEnc    []byte    `gorm:"type:varbinary(512)" json:"-"`
 	QuotaBytes     uint64    `gorm:"type:bigint unsigned;not null;default:1073741824" json:"quota_bytes"`
 	IsDisabled     bool      `gorm:"type:tinyint(1);not null;default:0" json:"is_disabled"`
+	// SendOnly (GH #371) — the account authenticates for SMTP submission
+	// but is excluded from delivery (Stalwart directory queryRecipient
+	// filters `send_only = 0`), so it can send mail but never receives or
+	// stores any. Set at create; toggleable via update.
+	SendOnly       bool      `gorm:"column:send_only;type:tinyint(1);not null;default:0" json:"send_only"`
 	LastUsageBytes uint64    `gorm:"type:bigint unsigned;not null;default:0" json:"last_usage_bytes"`
 	LastUsageAt    *time.Time `gorm:"type:datetime(6)" json:"last_usage_at,omitempty"`
 	CreatedAt      time.Time `gorm:"type:datetime(6);not null" json:"created_at"`

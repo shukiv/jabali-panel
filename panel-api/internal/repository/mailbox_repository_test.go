@@ -121,6 +121,24 @@ func TestMailboxRepository_UpdateQuota(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// GH #371: SetSendOnly flips the send_only column so Stalwart's
+// queryRecipient (which filters `send_only = 0`) stops delivering to it.
+func TestMailboxRepository_SetSendOnly(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewMailboxRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `mailboxes` SET .*`send_only`.* WHERE id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := repo.SetSendOnly(context.Background(), "mb_new", true)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestMailboxRepository_Delete(t *testing.T) {
 	db, mock, raw := newMockDB(t)
 	defer raw.Close()

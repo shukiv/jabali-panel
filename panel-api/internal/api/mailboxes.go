@@ -119,6 +119,11 @@ type createMailboxRequest struct {
 	// DisplayName — optional human-readable name (GH #197). Wired to the
 	// Stalwart principal description → Bulwark webmail identity name.
 	DisplayName string `json:"display_name"`
+
+	// SendOnly (GH #371) — when true the mailbox can authenticate for SMTP
+	// submission but never receives or stores mail. Handy for per-service
+	// notification credentials.
+	SendOnly bool `json:"send_only"`
 }
 
 type createMailboxResponse struct {
@@ -126,6 +131,7 @@ type createMailboxResponse struct {
 	Email       string `json:"email"`
 	QuotaBytes  uint64 `json:"quota_bytes"`
 	DisplayName string `json:"display_name"`
+	SendOnly    bool   `json:"send_only"`
 	// Password is returned exactly once when the caller did NOT send a
 	// password — the agent-computed random one. Empty when the caller
 	// supplied their own.
@@ -148,6 +154,7 @@ type updateMailboxRequest struct {
 	QuotaBytes  *uint64 `json:"quota_bytes"`
 	DisplayName *string `json:"display_name"`
 	IsDisabled  *bool   `json:"is_disabled"`
+	SendOnly    *bool   `json:"send_only"`
 }
 
 type mailboxResponse struct {
@@ -157,6 +164,7 @@ type mailboxResponse struct {
 	DisplayName    string     `json:"display_name"`
 	QuotaBytes     uint64     `json:"quota_bytes"`
 	IsDisabled     bool       `json:"is_disabled"`
+	SendOnly       bool       `json:"send_only"`
 	LastUsageBytes uint64     `json:"last_usage_bytes"`
 	LastUsageAt    *time.Time `json:"last_usage_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
@@ -320,6 +328,7 @@ func (h *mailboxHandler) create(c *gin.Context) {
 		PasswordHash: string(hash),
 		PasswordEnc:  enc,
 		QuotaBytes:   quota,
+		SendOnly:     req.SendOnly,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -347,6 +356,7 @@ func (h *mailboxHandler) create(c *gin.Context) {
 		Email:       canonLocal + "@" + dom.Name,
 		QuotaBytes:  quota,
 		DisplayName: mb.DisplayName,
+		SendOnly:    mb.SendOnly,
 		Password:    generatedPassword,
 	})
 }
@@ -444,6 +454,14 @@ func (h *mailboxHandler) update(c *gin.Context) {
 			return
 		}
 		mb.IsDisabled = *req.IsDisabled
+	}
+
+	if req.SendOnly != nil {
+		if err := h.cfg.Mailboxes.SetSendOnly(ctx, mb.ID, *req.SendOnly); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		mb.SendOnly = *req.SendOnly
 	}
 
 	mb.UpdatedAt = time.Now().UTC()
@@ -723,6 +741,7 @@ func toMailboxResponse(mb models.Mailbox) mailboxResponse {
 		DisplayName:    mb.DisplayName,
 		QuotaBytes:     mb.QuotaBytes,
 		IsDisabled:     mb.IsDisabled,
+		SendOnly:       mb.SendOnly,
 		LastUsageBytes: mb.LastUsageBytes,
 		LastUsageAt:    mb.LastUsageAt,
 		CreatedAt:      mb.CreatedAt,

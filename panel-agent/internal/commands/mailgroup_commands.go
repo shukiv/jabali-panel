@@ -33,6 +33,7 @@ type mailGroupApplyParams struct {
 	DisplayName  string `json:"display_name"`  // drives the group's sending Identity name
 	Description  string `json:"description"`   // admin note (also stored on the principal)
 	InternalOnly bool   `json:"internal_only"` // GH #348: reject external senders
+	HasFiles     bool   `json:"has_files"`     // GH #350: name the shared file folder too
 }
 
 func mailGroupApplyHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -63,7 +64,7 @@ func mailGroupApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	// GH #350: rename the group's auto-created "Personal (<addr>)" calendar +
 	// address book to the group name so shared resources read as the group,
 	// not each member's "Personal". Best-effort (guards on empty name).
-	renameGroupResources(ctx, email, name)
+	renameGroupResources(ctx, email, name, p.HasFiles)
 	// GH #348: install/remove the internal-only delivery Sieve on the group.
 	applyGroupInternalOnly(ctx, email, p.InternalOnly)
 	return mailGroupApplyResult{Ok: true, GroupID: gid}, nil

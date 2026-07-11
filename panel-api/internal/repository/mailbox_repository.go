@@ -36,6 +36,7 @@ type MailboxRepository interface {
 	UpdateQuota(ctx context.Context, id string, quotaBytes uint64) error
 	UpdateDisplayName(ctx context.Context, id, displayName string) error
 	SetDisabled(ctx context.Context, id string, disabled bool) error
+	SetSendOnly(ctx context.Context, id string, sendOnly bool) error
 	UpdateUsage(ctx context.Context, id string, usageBytes uint64, at time.Time) error
 	ExistsByDomainAndLocalPart(ctx context.Context, domainID, localPart string) (bool, error)
 }
@@ -209,6 +210,19 @@ func (r *mailboxRepo) SetDisabled(ctx context.Context, id string, disabled bool)
 		Updates(map[string]any{
 			"is_disabled": disabled,
 			"updated_at":  time.Now().UTC(),
+		}).Error
+}
+
+// SetSendOnly flips the send-only flag (GH #371). Stalwart's SqlDirectory
+// re-reads the row on the next recipient lookup (no cache to invalidate,
+// ADR-0045), so a send-only account stops receiving on the next inbound
+// delivery attempt with no agent round-trip.
+func (r *mailboxRepo) SetSendOnly(ctx context.Context, id string, sendOnly bool) error {
+	return r.db.WithContext(ctx).Model(&models.Mailbox{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"send_only":  sendOnly,
+			"updated_at": time.Now().UTC(),
 		}).Error
 }
 

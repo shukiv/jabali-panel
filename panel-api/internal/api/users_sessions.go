@@ -47,7 +47,17 @@ func (h *userHandler) listSessions(c *gin.Context) {
 		if s.Identity != nil {
 			r.Email = s.Identity.GetTraitEmail()
 			r.Username = s.Identity.GetTraitUsername()
+			// JAB-5: the panel DB is authoritative for role — never trust
+			// the Kratos is_admin trait for display or anything else.
+			// Resolve from the DB by the session's email; fall back to the
+			// trait only when no panel row matches (deleted user, or a
+			// dev environment running without Kratos↔DB in lock-step).
 			r.IsAdmin = s.Identity.GetTraitIsAdmin()
+			if h.cfg.Repo != nil && r.Email != "" {
+				if u, uErr := h.cfg.Repo.FindByEmail(c.Request.Context(), r.Email); uErr == nil && u != nil {
+					r.IsAdmin = u.IsAdmin
+				}
+			}
 		}
 		if len(s.Devices) > 0 {
 			r.IP = s.Devices[0].IPAddress

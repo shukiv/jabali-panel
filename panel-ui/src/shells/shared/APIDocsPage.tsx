@@ -324,7 +324,7 @@ function ExampleCurl(props: {
   return (
     <div>
       <Typography.Text strong>Example</Typography.Text>{" "}
-      <Tooltip title="Replace jat_REPLACE_ME with your token from the API Tokens page. Replace panel.example.com with your panel hostname.">
+      <Tooltip title="Replace jat_REPLACE_ME with your token from the Personal API Tokens page. Replace panel.example.com with your panel hostname.">
         <LinkOutlined style={{ color: "#999" }} />
       </Tooltip>
       <pre

@@ -233,6 +233,7 @@ func newMailGroupCreateCmd() *cobra.Command {
 				"display_name":  g.DisplayName,
 				"description":   g.Description,
 				"internal_only": g.InternalOnly,
+				"has_files":     g.HasFiles,
 			})
 			cliAuditOK(ctx, "mail_group.create", "mail_group", g.ID, nil)
 			fmt.Printf("created %s mail group %s\n", g.GroupKind, email)
