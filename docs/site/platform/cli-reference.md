@@ -4266,6 +4266,42 @@ Show service status details
 jabali service status
 ```
 
+### `jabali session`
+
+Audit and revoke active login sessions (Kratos)
+
+```
+jabali session
+```
+
+#### `jabali session list`
+
+List active login sessions (optionally filtered by --user email)
+
+```
+jabali session list [flags]
+```
+
+**Flags:**
+
+- `--user` — only show sessions for this user email
+
+#### `jabali session revoke`
+
+Revoke a single login session
+
+```
+jabali session revoke <session-id>
+```
+
+#### `jabali session revoke-user`
+
+Revoke ALL login sessions for a user (sign out everywhere)
+
+```
+jabali session revoke-user <email-or-id>
+```
+
 ### `jabali settings`
 
 Inspect and patch server settings (headless equivalent of /admin/settings)

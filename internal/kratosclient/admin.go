@@ -767,3 +767,28 @@ func (c *Client) RevokeSession(ctx context.Context, sessionID string) error {
 	}
 	return nil
 }
+
+// RevokeIdentitySessions deletes ALL active sessions for one identity (JAB-120):
+// the headless equivalent of "sign this user out everywhere". Kratos admin:
+// DELETE /admin/identities/{id}/sessions. A 404 (identity has no sessions /
+// unknown) is treated as success — the desired end state already holds.
+func (c *Client) RevokeIdentitySessions(ctx context.Context, identityID string) error {
+	if identityID == "" {
+		return fmt.Errorf("revokeidentitysessions: empty identity id")
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		c.adminURL+"/admin/identities/"+url.PathEscape(identityID)+"/sessions", nil)
+	if err != nil {
+		return fmt.Errorf("revokeidentitysessions: request: %w", err)
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("revokeidentitysessions: do: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("revokeidentitysessions: status %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
