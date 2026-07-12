@@ -1,0 +1,32 @@
+# Managed by jabali install.sh (JAB-106). Mirrors the shape of
+# install/crowdsec/stalwart/scenarios/jabali-stalwart-auth-bf.yaml.
+# Capacity / leakspeed / blackhole may be overwritten at runtime by the
+# panel-agent's security.crowdsec.sensitivity.apply verb (relaxed/strict).
+#
+# Kratos self-service brute-force: each parsed event is already a request the
+# panel THROTTLED (JAB-4), i.e. an IP hammering /.ory login/recovery past the
+# per-IP limit. A handful from one IP = a persistent attacker → ban, so the
+# Security → CrowdSec dashboard shows what the limiter alone couldn't.
+type: leaky
+name: jabali/kratos-flow-bf
+description: "Detect brute force on Kratos self-service login/recovery flows (panel-throttled)"
+
+filter: evt.Meta.log_type == 'kratos_flow_rate_limited'
+
+# Group by source IP to track per-attacker.
+groupby: evt.Meta.source_ip
+
+# 5 throttle-hits within the window → ban. These lines only appear once an IP is
+# ALREADY over the panel's rate limit, so the threshold is deliberately low.
+leakspeed: "30s"
+capacity: 5
+
+# Silence after triggering to reduce alert spam.
+blackhole: "1m"
+
+labels:
+  service: jabali-panel
+  type: bruteforce
+  remediation: true
+  confidence: 3
+  spoofable: 0
