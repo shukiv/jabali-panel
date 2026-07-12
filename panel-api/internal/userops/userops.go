@@ -39,6 +39,8 @@ type AgentCaller interface {
 type Deps struct {
 	Users        repository.UserRepository
 	Packages     repository.PackageRepository
+	Domains      repository.DomainRepository
+	DockerApps   repository.DockerAppRepository
 	Agent        AgentCaller
 	KratosClient *kratosclient.Client
 	BcryptCost   int

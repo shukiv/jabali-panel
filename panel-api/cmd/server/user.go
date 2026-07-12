@@ -31,6 +31,8 @@ func newUserCmd() *cobra.Command {
 		newUserDeleteCmd(),
 		newUserPasswordCmd(),
 		newUser2FAResetCmd(),
+		newUserSuspendCmd(),
+		newUserUnsuspendCmd(),
 	)
 	return cmd
 }
