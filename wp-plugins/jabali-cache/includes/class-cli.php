@@ -51,6 +51,11 @@ class Jabali_Cache_CLI {
 			? ( defined( 'JABALI_CACHE_PAGE_CACHE' ) && JABALI_CACHE_PAGE_CACHE )
 			: (bool) $s['page_cache'];
 
+		// JAB-94: cheap cached + bounded key count for the status view (this is
+		// a UI-polled path); an exact full scan stays in `diagnose`.
+		$kc           = $ok ? $c->stats_key_count( $cfg['prefix'] ) : array( 'count' => 0, 'approx' => false );
+		$keys_display = $ok ? ( ( ! empty( $kc['approx'] ) ? '~' : '' ) . (int) $kc['count'] ) : '-';
+
 		$rows = array(
 			array( 'field' => 'managed_by', 'value' => $managed ? 'jabali panel (wp-config constants)' : 'plugin options' ),
 			array( 'field' => 'enabled', 'value' => $enabled ? 'yes' : 'no' ),
@@ -59,7 +64,7 @@ class Jabali_Cache_CLI {
 			array( 'field' => 'target', 'value' => ( 'unix' === $cfg['scheme'] ? $cfg['socket'] : $cfg['host'] . ':' . $cfg['port'] ) ),
 			array( 'field' => 'database', 'value' => (string) $cfg['database'] ),
 			array( 'field' => 'prefix', 'value' => $cfg['prefix'] ),
-			array( 'field' => 'keys', 'value' => $ok ? (string) $c->count_keys( $cfg['prefix'] ) : '-' ),
+			array( 'field' => 'keys', 'value' => $keys_display ),
 			array( 'field' => 'page_cache', 'value' => $page ? 'on' : 'off' ),
 		);
 		if ( ! $ok ) {
@@ -237,7 +242,11 @@ class Jabali_Cache_CLI {
 		if ( $c->connect() ) {
 			$out['connected'] = true;
 			$out['driver']    = $c->driver();
-			$out['keys']      = (int) $c->count_keys( $cfg['prefix'] );
+			// JAB-94: cached + bounded (stats is polled); `keys_approx` flags a
+			// capped count so the panel can render "~N".
+			$kc                = $c->stats_key_count( $cfg['prefix'] );
+			$out['keys']       = (int) $kc['count'];
+			$out['keys_approx'] = ! empty( $kc['approx'] );
 			$info             = $c->info();
 			$h                = $this->info_int( $info, 'keyspace_hits' );
 			$m                = $this->info_int( $info, 'keyspace_misses' );

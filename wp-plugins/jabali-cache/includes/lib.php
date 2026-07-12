@@ -273,6 +273,25 @@ class Jabali_Cache_Client {
 	const CIRCUIT_TTL_JITTER = 10;
 
 	/**
+	 * @var bool Set by count_keys() when a bounded scan was cut short before
+	 * traversing the whole keyspace — the returned count is a floor, not exact.
+	 * JAB-94.
+	 */
+	private $last_count_approx = false;
+
+	/** Stats-cache TTL (seconds) + scan-step ceiling for the UI/stats path. */
+	const STATS_CACHE_TTL   = 45;
+	const STATS_SCAN_STEPS  = 40; // ~40k keys @ COUNT 1000 before going approximate.
+
+	/**
+	 * Max excess keys trim_to_budget() will collect (and thus delete) in one
+	 * run (JAB-94). Bounds the scan + the delete so an over-budget site trims
+	 * incrementally across timer runs instead of collecting a huge array and
+	 * issuing one big delete spike on the shared Redis.
+	 */
+	const TRIM_MAX_PER_RUN = 5000;
+
+	/**
 	 * @param array<string,mixed>|null $cfg
 	 */
 	public function __construct( $cfg = null ) {
@@ -307,7 +326,7 @@ class Jabali_Cache_Client {
 	 * @return int
 	 */
 	public function circuit_open_until() {
-		$st = $this->breaker_read();
+		$st = $this->shared_get( $this->breaker_key() );
 		return ( is_array( $st ) && isset( $st['until'] ) && (int) $st['until'] > time() ) ? (int) $st['until'] : 0;
 	}
 
@@ -371,13 +390,13 @@ class Jabali_Cache_Client {
 
 	/** @return bool true while Redis is marked down. */
 	private function breaker_is_open() {
-		$st = $this->breaker_read();
+		$st = $this->shared_get( $this->breaker_key() );
 		return is_array( $st ) && isset( $st['until'] ) && (int) $st['until'] > time();
 	}
 
 	/** @return string last error recorded when the breaker tripped. */
 	private function breaker_last_error() {
-		$st = $this->breaker_read();
+		$st = $this->shared_get( $this->breaker_key() );
 		return ( is_array( $st ) && isset( $st['err'] ) ) ? (string) $st['err'] : '';
 	}
 
@@ -388,7 +407,8 @@ class Jabali_Cache_Client {
 	 */
 	private function breaker_open( $err ) {
 		$ttl = self::CIRCUIT_TTL_BASE + mt_rand( 0, self::CIRCUIT_TTL_JITTER );
-		$this->breaker_write(
+		$this->shared_set(
+			$this->breaker_key(),
 			array( 'until' => time() + $ttl, 'err' => (string) $err ),
 			$ttl
 		);
@@ -396,61 +416,76 @@ class Jabali_Cache_Client {
 
 	/** Clear the breaker (Redis is healthy again). */
 	private function breaker_clear() {
-		if ( function_exists( 'apcu_enabled' ) && apcu_enabled() ) {
-			@apcu_delete( $this->breaker_key() ); // phpcs:ignore
-			return;
-		}
-		$f = $this->breaker_file();
-		if ( '' !== $f && is_file( $f ) ) {
-			@unlink( $f ); // phpcs:ignore
-		}
+		$this->shared_del( $this->breaker_key() );
 	}
 
 	/**
-	 * Read the breaker state. APCu when available (shared across the pool's
-	 * FPM workers and cheap in the early object-cache drop-in); otherwise a
-	 * small JSON file under wp-content/cache/jabali-cache.
+	 * Shared cross-request KV store used by the circuit breaker (JAB-89) and
+	 * the stats-count cache (JAB-94). APCu when available (shared across the
+	 * pool's FPM workers, cheap in the early object-cache drop-in); otherwise a
+	 * small JSON file under wp-content/cache/jabali-cache. When neither is
+	 * available the caller degrades to per-request behaviour (still correct).
 	 *
+	 * @param string $key
 	 * @return array<string,mixed>|null
 	 */
-	private function breaker_read() {
+	private function shared_get( $key ) {
 		if ( function_exists( 'apcu_enabled' ) && apcu_enabled() ) {
 			$ok = false;
-			$v  = apcu_fetch( $this->breaker_key(), $ok );
+			$v  = apcu_fetch( $key, $ok );
 			return ( $ok && is_array( $v ) ) ? $v : null;
 		}
-		$f = $this->breaker_file();
+		$f = $this->shared_file( $key );
 		if ( '' !== $f && is_file( $f ) ) {
 			$raw = @file_get_contents( $f ); // phpcs:ignore
 			$v   = $raw ? json_decode( $raw, true ) : null;
+			// The file fallback has no native TTL — honour an embedded expiry.
+			if ( is_array( $v ) && isset( $v['__exp'] ) && (int) $v['__exp'] < time() ) {
+				@unlink( $f ); // phpcs:ignore
+				return null;
+			}
 			return is_array( $v ) ? $v : null;
 		}
 		return null;
 	}
 
 	/**
-	 * @param array<string,mixed> $st
+	 * @param string              $key
+	 * @param array<string,mixed> $val
 	 * @param int                 $ttl
 	 */
-	private function breaker_write( array $st, $ttl ) {
+	private function shared_set( $key, array $val, $ttl ) {
 		if ( function_exists( 'apcu_enabled' ) && apcu_enabled() ) {
-			@apcu_store( $this->breaker_key(), $st, (int) $ttl + 5 ); // phpcs:ignore
+			@apcu_store( $key, $val, (int) $ttl + 5 ); // phpcs:ignore
 			return;
 		}
-		$f = $this->breaker_file();
+		$f = $this->shared_file( $key );
 		if ( '' !== $f ) {
-			@file_put_contents( $f, json_encode( $st ), LOCK_EX ); // phpcs:ignore
+			$val['__exp'] = time() + (int) $ttl; // embed expiry for the fileless-TTL fallback.
+			@file_put_contents( $f, json_encode( $val ), LOCK_EX ); // phpcs:ignore
+		}
+	}
+
+	/** @param string $key */
+	private function shared_del( $key ) {
+		if ( function_exists( 'apcu_enabled' ) && apcu_enabled() ) {
+			@apcu_delete( $key ); // phpcs:ignore
+			return;
+		}
+		$f = $this->shared_file( $key );
+		if ( '' !== $f && is_file( $f ) ) {
+			@unlink( $f ); // phpcs:ignore
 		}
 	}
 
 	/**
-	 * Path to the file-fallback breaker marker, or '' when no writable cache
-	 * dir is available (then the breaker is best-effort per-request only —
-	 * still correct, just without cross-request memory).
+	 * File path backing shared_* for one key, or '' when no writable cache dir
+	 * is available.
 	 *
+	 * @param string $key
 	 * @return string
 	 */
-	private function breaker_file() {
+	private function shared_file( $key ) {
 		if ( ! defined( 'WP_CONTENT_DIR' ) ) {
 			return '';
 		}
@@ -461,7 +496,7 @@ class Jabali_Cache_Client {
 		if ( ! is_dir( $dir ) || ! is_writable( $dir ) ) {
 			return '';
 		}
-		return $dir . '/circuit-' . md5( $this->breaker_key() ) . '.json';
+		return $dir . '/kv-' . md5( $key ) . '.json';
 	}
 
 	/**
@@ -1015,18 +1050,41 @@ class Jabali_Cache_Client {
 	/**
 	 * @return int number of keys in the current DB matching our prefix.
 	 */
-	public function count_keys( $prefix ) {
+	/**
+	 * Count keys under $prefix via SCAN.
+	 *
+	 * JAB-94: pass $max_steps > 0 to bound the scan to that many SCAN
+	 * iterations — on a huge, shared keyspace an unbounded full scan on every
+	 * UI poll creates host-wide latency. When the cap is hit before the cursor
+	 * wraps, the returned count is a floor and last_count_was_approx() is true.
+	 * $max_steps = 0 (default) keeps the exact, unbounded behaviour for
+	 * diagnostics.
+	 *
+	 * @param string $prefix
+	 * @param int    $max_steps
+	 * @return int
+	 */
+	public function count_keys( $prefix, $max_steps = 0 ) {
+		$this->last_count_approx = false;
 		if ( ! $this->is_connected() ) {
 			return 0;
 		}
 		$count   = 0;
 		$pattern = $prefix . '*';
 		$cursor  = '0';
+		$steps   = 0;
 		if ( 'phpredis' === $this->driver ) {
 			try {
 				$it = null;
 				while ( false !== ( $keys = $this->redis->scan( $it, $pattern, 1000 ) ) ) {
 					$count += count( $keys );
+					++$steps;
+					if ( $max_steps > 0 && $steps >= $max_steps ) {
+						if ( 0 !== (int) $it ) {
+							$this->last_count_approx = true;
+						}
+						break;
+					}
 					if ( 0 === (int) $it ) {
 						break;
 					}
@@ -1043,8 +1101,41 @@ class Jabali_Cache_Client {
 			}
 			$cursor = (string) $res[0];
 			$count += is_array( $res[1] ) ? count( $res[1] ) : 0;
+			++$steps;
+			if ( $max_steps > 0 && $steps >= $max_steps ) {
+				if ( '0' !== $cursor ) {
+					$this->last_count_approx = true;
+				}
+				break;
+			}
 		} while ( '0' !== $cursor && ! $this->dead );
 		return $count;
+	}
+
+	/** @return bool whether the last count_keys() was cut short (JAB-94). */
+	public function last_count_was_approx() {
+		return $this->last_count_approx;
+	}
+
+	/**
+	 * Key count for the UI/stats path: short-TTL cached + bounded scan (JAB-94).
+	 * Repeated UI polls read the cached value instead of re-scanning the whole
+	 * shared keyspace each time; a cold read is capped at STATS_SCAN_STEPS.
+	 * Returns array( 'count' => int, 'approx' => bool, 'cached' => bool ).
+	 *
+	 * @param string $prefix
+	 * @return array{count:int,approx:bool,cached:bool}
+	 */
+	public function stats_key_count( $prefix ) {
+		$ck  = 'jabali_cache_kc:' . md5( (string) $prefix );
+		$hit = $this->shared_get( $ck );
+		if ( is_array( $hit ) && isset( $hit['count'] ) ) {
+			return array( 'count' => (int) $hit['count'], 'approx' => ! empty( $hit['approx'] ), 'cached' => true );
+		}
+		$count  = $this->count_keys( $prefix, self::STATS_SCAN_STEPS );
+		$approx = $this->last_count_was_approx();
+		$this->shared_set( $ck, array( 'count' => $count, 'approx' => $approx ), self::STATS_CACHE_TTL );
+		return array( 'count' => $count, 'approx' => $approx, 'cached' => false );
 	}
 
 	/**
@@ -1072,7 +1163,7 @@ class Jabali_Cache_Client {
 					foreach ( $batch as $k ) {
 						$keys[] = $k;
 					}
-					if ( count( $keys ) > 100000 || 0 === (int) $it ) {
+					if ( count( $keys ) >= $maxKeys + self::TRIM_MAX_PER_RUN || 0 === (int) $it ) {
 						break;
 					}
 				}
@@ -1093,7 +1184,7 @@ class Jabali_Cache_Client {
 						$keys[] = $k;
 					}
 				}
-			} while ( '0' !== $cursor && ! $this->dead && count( $keys ) <= 100000 );
+			} while ( '0' !== $cursor && ! $this->dead && count( $keys ) < $maxKeys + self::TRIM_MAX_PER_RUN );
 		}
 		$n = count( $keys );
 		if ( $n <= $maxKeys ) {

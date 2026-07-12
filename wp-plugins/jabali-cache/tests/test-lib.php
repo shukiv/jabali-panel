@@ -161,6 +161,16 @@ $cb3 = ( new Jabali_Cache_Client( $cb_cfg ) )->force_probe();
 jc_assert( false === $cb3->connect(), 'breaker: force_probe still fails on a dead socket' );
 jc_assert( false === strpos( $cb3->last_error(), 'circuit breaker open' ), 'breaker: force_probe bypasses the breaker' );
 
+// JAB-94: stats_key_count() caches its (bounded) result in the shared store,
+// so repeated UI polls don't re-scan. On a disconnected client the count is 0,
+// but the cache path is still exercised: cold read is uncached, the next read
+// is served from cache.
+jc_assert( false === $cb1->last_count_was_approx(), 'stats: count_keys approx flag defaults false' );
+$sc1 = $cb1->stats_key_count( 'jc:sctest:' );
+jc_assert( 0 === $sc1['count'] && false === $sc1['cached'], 'stats: cold key-count read is uncached' );
+$sc2 = $cb1->stats_key_count( 'jc:sctest:' );
+jc_assert( true === $sc2['cached'], 'stats: second key-count read is served from the cache' );
+
 // Cleanup temp breaker artifacts.
 $cb_glob = glob( $cb_root . '/cache/jabali-cache/*' );
 if ( is_array( $cb_glob ) ) {
