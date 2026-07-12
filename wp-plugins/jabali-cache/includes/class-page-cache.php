@@ -127,6 +127,68 @@ class Jabali_Cache_Page_Cache {
 		return $this->client->delete_by_pattern( $this->cfg['prefix'] . 'page:*' );
 	}
 
+	/**
+	 * Build the exact page-cache keys for a set of URL paths (JAB-91). Mirrors
+	 * request_hash(): one key per path per variant (desktop 'd' + mobile 'm'),
+	 * with any query string stripped so /p and /p?utm_x map to the same entry.
+	 * Pure + prefix-scoped so it is unit-testable without Redis.
+	 *
+	 * @param array<int,string> $paths
+	 * @param string            $scheme 'http' | 'https'
+	 * @param string            $host   host[:port], as it appears in HTTP_HOST
+	 * @return array<int,string> deduped page-cache keys
+	 */
+	public function keys_for_paths( array $paths, $scheme, $host ) {
+		$keys = array();
+		foreach ( $paths as $path ) {
+			$path = (string) $path;
+			$qpos = strpos( $path, '?' );
+			if ( false !== $qpos ) {
+				$path = substr( $path, 0, $qpos );
+			}
+			if ( '' === $path ) {
+				continue;
+			}
+			foreach ( array( 'd', 'm' ) as $variant ) {
+				$key            = $this->cfg['prefix'] . 'page:' . md5( $scheme . '|' . $host . '|' . $path . '|' . $variant );
+				$keys[ $key ] = true;
+			}
+		}
+		return array_keys( $keys );
+	}
+
+	/**
+	 * Targeted purge (JAB-91): delete only the page-cache entries for $paths, in
+	 * both desktop and mobile variants, instead of nuking the whole site's warm
+	 * cache on a single post edit. Falls back to purge_all() when the canonical
+	 * scheme/host can't be derived (correctness over precision).
+	 *
+	 * @param array<int,string> $paths
+	 * @return int keys deleted (or the purge_all() count on fallback)
+	 */
+	public function purge_paths( array $paths ) {
+		if ( ! $this->client->connect() ) {
+			return 0;
+		}
+		// The stored key used the visitor's HTTP_HOST + REQUEST_URI (see
+		// request_hash()). home_url() gives the site's own scheme+host; on the
+		// common single-host install they match. If we can't resolve a host,
+		// fall back to a whole-site purge rather than silently missing.
+		$home = function_exists( 'home_url' ) ? home_url( '/' ) : '';
+		$u    = $home ? wp_parse_url( $home ) : false;
+		if ( ! is_array( $u ) || empty( $u['host'] ) ) {
+			return $this->purge_all();
+		}
+		$scheme = ( isset( $u['scheme'] ) && 'https' === $u['scheme'] ) ? 'https' : 'http';
+		$host   = $u['host'] . ( isset( $u['port'] ) ? ':' . $u['port'] : '' );
+
+		$keys = $this->keys_for_paths( $paths, $scheme, $host );
+		if ( empty( $keys ) ) {
+			return 0;
+		}
+		return (int) $this->client->del( $keys );
+	}
+
 	// ------------------------------------------------------------------
 	// Decisions.
 	// ------------------------------------------------------------------

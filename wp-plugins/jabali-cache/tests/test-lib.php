@@ -180,5 +180,36 @@ if ( is_array( $cb_glob ) ) {
 @rmdir( $cb_root . '/cache' );
 @rmdir( $cb_root );
 
+// ---------------------------------------------------------------------------
+// Targeted page-cache purge key derivation (JAB-91).
+// ---------------------------------------------------------------------------
+echo "Page-cache targeted purge (JAB-91):\n";
+require __DIR__ . '/../includes/class-page-cache.php';
+$pc  = new Jabali_Cache_Page_Cache();
+$pfx = $cfg['prefix'];
+
+// One path → desktop + mobile keys, matching request_hash()'s md5 format.
+$k_home = $pc->keys_for_paths( array( '/' ), 'https', 'example.com' );
+jc_assert( 2 === count( $k_home ), 'purge_paths: one path yields desktop + mobile keys' );
+$expect_d = $pfx . 'page:' . md5( 'https|example.com|/|d' );
+$expect_m = $pfx . 'page:' . md5( 'https|example.com|/|m' );
+jc_assert(
+	in_array( $expect_d, $k_home, true ) && in_array( $expect_m, $k_home, true ),
+	'purge_paths: keys match the request_hash format for both variants'
+);
+
+// Query string is stripped: /p and /p?utm=1 map to the same keys.
+$k_q   = $pc->keys_for_paths( array( '/p?utm=1' ), 'https', 'example.com' );
+$k_noq = $pc->keys_for_paths( array( '/p' ), 'https', 'example.com' );
+jc_assert( $k_q === $k_noq, 'purge_paths: query string is stripped' );
+
+// Two distinct paths → 4 keys; duplicates deduped.
+$k2 = $pc->keys_for_paths( array( '/', '/hello/', '/hello/' ), 'https', 'example.com' );
+jc_assert( 4 === count( $k2 ), 'purge_paths: two distinct paths -> 4 keys, dupes deduped' );
+
+// Empty / query-only paths yield nothing (guards the whole-site fallback path).
+$k_empty = $pc->keys_for_paths( array( '', '?only-query' ), 'http', 'example.com' );
+jc_assert( 0 === count( $k_empty ), 'purge_paths: empty / query-only paths produce no keys' );
+
 echo "\n{$tests} checks, {$failed} failed\n";
 exit( $failed > 0 ? 1 : 0 );
