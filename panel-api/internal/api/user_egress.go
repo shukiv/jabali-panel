@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/egressops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -195,89 +196,27 @@ func (h *userEgressHandler) denyRequest(c *gin.Context) {
 
 func (h *userEgressHandler) decideRequest(c *gin.Context, status string) {
 	requestID := c.Param("id")
-	req, err := h.cfg.Requests.Get(c.Request.Context(), requestID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "request_not_found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch_request"})
-		return
-	}
-	if req.Status != models.UserEgressRequestStatusPending {
-		c.JSON(http.StatusConflict, gin.H{"error": "already_decided", "status": req.Status})
-		return
-	}
-
 	claims := ginctx.Claims(c)
 	reviewedBy := ""
 	if claims != nil {
 		reviewedBy = claims.UserID
 	}
 
-	if err := h.cfg.Requests.Decide(c.Request.Context(), requestID, status, reviewedBy); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decide", "detail": err.Error()})
+	req, err := egressops.DecideRequest(c.Request.Context(),
+		egressops.Deps{Requests: h.cfg.Requests, Policies: h.cfg.Policies},
+		requestID, status, reviewedBy)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "request_not_found"})
+		case errors.Is(err, egressops.ErrAlreadyDecided):
+			c.JSON(http.StatusConflict, gin.H{"error": "already_decided", "status": req.Status})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "decide", "detail": err.Error()})
+		}
 		return
 	}
-
-	if status == models.UserEgressRequestStatusApproved {
-		if err := h.foldRequestIntoPolicy(c, req); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "fold_request", "detail": err.Error()})
-			return
-		}
-	}
 	c.JSON(http.StatusOK, gin.H{"id": requestID, "status": status})
-}
-
-// foldRequestIntoPolicy appends the approved destination to the user's
-// allowed_extra list. Dedupes on (cidr, port, protocol).
-func (h *userEgressHandler) foldRequestIntoPolicy(c *gin.Context, req *models.UserEgressRequest) error {
-	policy, err := h.cfg.Policies.Get(c.Request.Context(), req.UserID)
-	if err != nil {
-		if !errors.Is(err, repository.ErrNotFound) {
-			return err
-		}
-		// User has no row yet; create one in enforced state with the
-		// approved destination as the only entry.
-		policy = &models.UserEgressPolicy{
-			UserID: req.UserID,
-			State:  models.UserEgressStateEnforced,
-		}
-	}
-	existing, _ := policy.DecodeAllowedExtra()
-	proto := req.Protocol
-	if proto == "" {
-		proto = models.UserEgressProtocolTCP
-	}
-	for _, e := range existing {
-		samePort := (e.Port == nil && req.Port == nil) ||
-			(e.Port != nil && req.Port != nil && uint(*e.Port) == *req.Port)
-		if e.CIDR == req.CIDR && samePort && e.Protocol == proto {
-			return nil // already there
-		}
-	}
-	var portPtr *int
-	if req.Port != nil {
-		v := int(*req.Port)
-		portPtr = &v
-	}
-	existing = append(existing, models.EgressDestination{
-		CIDR:     req.CIDR,
-		Port:     portPtr,
-		Protocol: proto,
-		Comment:  "approved request " + req.ID,
-	})
-	jsonExtras, _ := json.Marshal(existing)
-	policy.AllowedExtra = jsonExtras
-	if policy.State == "" {
-		policy.State = models.UserEgressStateEnforced
-	}
-	claims := ginctx.Claims(c)
-	if claims != nil && claims.UserID != "" {
-		uid := claims.UserID
-		policy.UpdatedBy = &uid
-	}
-	return h.cfg.Policies.Upsert(c.Request.Context(), policy)
 }
 
 // summary returns a quick aggregate for the admin dashboard widget.

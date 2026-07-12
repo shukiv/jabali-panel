@@ -3871,6 +3871,22 @@ Per-user PHP-FPM egress firewall (M34) operator commands
 jabali per-user-egress
 ```
 
+#### `jabali per-user-egress approve`
+
+Approve a pending egress request
+
+```
+jabali per-user-egress approve <request-id>
+```
+
+#### `jabali per-user-egress deny`
+
+Deny a pending egress request
+
+```
+jabali per-user-egress deny <request-id>
+```
+
 #### `jabali per-user-egress flip-mature`
 
 Flip mature LEARNING policies to ENFORCED
@@ -3883,6 +3899,43 @@ jabali per-user-egress flip-mature [flags]
 
 - `--dry-run` — show what would change without writing to DB
 - `--soak-days` — minimum LEARNING age before auto-flip to ENFORCED (default `7`)
+
+#### `jabali per-user-egress get`
+
+Show a user's egress policy
+
+```
+jabali per-user-egress get <email-or-id>
+```
+
+#### `jabali per-user-egress requests`
+
+List pending egress requests (the admin queue)
+
+```
+jabali per-user-egress requests
+```
+
+#### `jabali per-user-egress set-policy`
+
+Set a user's egress state + allowed destinations (replaces the list)
+
+```
+jabali per-user-egress set-policy <email-or-id> [flags]
+```
+
+**Flags:**
+
+- `--allow` — allowed destination CIDR[,PORT[,PROTO]] (repeatable; replaces the list) (default `[]`)
+- `--state` — egress state: off|learning|enforced (required)
+
+#### `jabali per-user-egress summary`
+
+Show egress policy state counts + pending queue depth
+
+```
+jabali per-user-egress summary
+```
 
 ### `jabali php`
 

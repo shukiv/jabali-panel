@@ -31,7 +31,15 @@ func newPerUserEgressCmd() *cobra.Command {
 		Use:   "per-user-egress",
 		Short: "Per-user PHP-FPM egress firewall (M34) operator commands",
 	}
-	cmd.AddCommand(newPerUserEgressFlipMatureCmd())
+	cmd.AddCommand(
+		newPerUserEgressFlipMatureCmd(),
+		newPerUserEgressRequestsCmd(),
+		newPerUserEgressDecideCmd(true),  // approve
+		newPerUserEgressDecideCmd(false), // deny
+		newPerUserEgressGetCmd(),
+		newPerUserEgressSummaryCmd(),
+		newPerUserEgressSetPolicyCmd(),
+	)
 	return cmd
 }
 
