@@ -255,6 +255,24 @@ class Jabali_Cache_Client {
 	private $driver = '';
 
 	/**
+	 * @var bool When true, ignore the cross-request circuit breaker and always
+	 * attempt a live Redis connection. Set by diagnostics (wp jabali-cache
+	 * verify, panel health probes) so an open breaker can't mask a real test.
+	 * JAB-89.
+	 */
+	private $force_probe = false;
+
+	/**
+	 * Circuit breaker (JAB-89). After a connection/auth/socket failure Redis is
+	 * marked "known down" for CIRCUIT_TTL_BASE + up-to-JITTER seconds (jitter
+	 * spreads the recovery probe across a fleet). While open, connect() returns
+	 * runtime-only immediately instead of paying the per-request connect
+	 * timeout on every uncached page.
+	 */
+	const CIRCUIT_TTL_BASE   = 15;
+	const CIRCUIT_TTL_JITTER = 10;
+
+	/**
 	 * @param array<string,mixed>|null $cfg
 	 */
 	public function __construct( $cfg = null ) {
@@ -267,6 +285,30 @@ class Jabali_Cache_Client {
 
 	public function last_error() {
 		return $this->last_error;
+	}
+
+	/**
+	 * Force live Redis probes, bypassing the circuit breaker. Chainable.
+	 * Used by `wp jabali-cache verify` + panel health checks. JAB-89.
+	 *
+	 * @param bool $on
+	 * @return $this
+	 */
+	public function force_probe( $on = true ) {
+		$this->force_probe = (bool) $on;
+		return $this;
+	}
+
+	/**
+	 * Unix timestamp the circuit breaker stays open until, or 0 if closed.
+	 * Surfaced in status/diagnostics so the panel can show "Redis down until X".
+	 * JAB-89.
+	 *
+	 * @return int
+	 */
+	public function circuit_open_until() {
+		$st = $this->breaker_read();
+		return ( is_array( $st ) && isset( $st['until'] ) && (int) $st['until'] > time() ) ? (int) $st['until'] : 0;
 	}
 
 	public function is_connected() {
@@ -288,15 +330,138 @@ class Jabali_Cache_Client {
 			return false;
 		}
 
+		// JAB-89: cross-request circuit breaker. If a recent request already
+		// found Redis down, skip the connect attempt (and its timeout) and go
+		// straight to runtime-only caching until the breaker expires. Bypassed
+		// by force_probe() for diagnostics so `verify` always tests live.
+		if ( ! $this->force_probe && $this->breaker_is_open() ) {
+			$this->fail( 'redis unavailable (circuit breaker open): ' . $this->breaker_last_error() );
+			return false;
+		}
+
+		$ok = false;
 		if ( class_exists( 'Redis' ) ) {
-			if ( $this->connect_phpredis() ) {
-				return true;
-			}
 			// Fall through to pure-PHP only if phpredis is present but failed
 			// for a non-protocol reason — usually it just means unavailable,
 			// in which case pure-PHP will fail too. Try anyway; it is cheap.
+			$ok = $this->connect_phpredis();
 		}
-		return $this->connect_pure();
+		if ( ! $ok ) {
+			$ok = $this->connect_pure();
+		}
+
+		if ( $ok ) {
+			// Recovery self-heals immediately on the first successful connect,
+			// not only after the breaker TTL.
+			$this->breaker_clear();
+			return true;
+		}
+		// Both drivers failed → trip the breaker so the next requests fail fast.
+		$this->breaker_open( $this->last_error );
+		return false;
+	}
+
+	/** Storage key for this client's breaker, unique per socket/host + DB. */
+	private function breaker_key() {
+		return 'jabali_cache_cb:' . md5(
+			$this->cfg['scheme'] . '|' . $this->cfg['socket'] . '|' .
+			$this->cfg['host'] . '|' . (int) $this->cfg['port'] . '|' . (int) $this->cfg['database']
+		);
+	}
+
+	/** @return bool true while Redis is marked down. */
+	private function breaker_is_open() {
+		$st = $this->breaker_read();
+		return is_array( $st ) && isset( $st['until'] ) && (int) $st['until'] > time();
+	}
+
+	/** @return string last error recorded when the breaker tripped. */
+	private function breaker_last_error() {
+		$st = $this->breaker_read();
+		return ( is_array( $st ) && isset( $st['err'] ) ) ? (string) $st['err'] : '';
+	}
+
+	/**
+	 * Trip the breaker for CIRCUIT_TTL_BASE + jitter seconds.
+	 *
+	 * @param string $err
+	 */
+	private function breaker_open( $err ) {
+		$ttl = self::CIRCUIT_TTL_BASE + mt_rand( 0, self::CIRCUIT_TTL_JITTER );
+		$this->breaker_write(
+			array( 'until' => time() + $ttl, 'err' => (string) $err ),
+			$ttl
+		);
+	}
+
+	/** Clear the breaker (Redis is healthy again). */
+	private function breaker_clear() {
+		if ( function_exists( 'apcu_enabled' ) && apcu_enabled() ) {
+			@apcu_delete( $this->breaker_key() ); // phpcs:ignore
+			return;
+		}
+		$f = $this->breaker_file();
+		if ( '' !== $f && is_file( $f ) ) {
+			@unlink( $f ); // phpcs:ignore
+		}
+	}
+
+	/**
+	 * Read the breaker state. APCu when available (shared across the pool's
+	 * FPM workers and cheap in the early object-cache drop-in); otherwise a
+	 * small JSON file under wp-content/cache/jabali-cache.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	private function breaker_read() {
+		if ( function_exists( 'apcu_enabled' ) && apcu_enabled() ) {
+			$ok = false;
+			$v  = apcu_fetch( $this->breaker_key(), $ok );
+			return ( $ok && is_array( $v ) ) ? $v : null;
+		}
+		$f = $this->breaker_file();
+		if ( '' !== $f && is_file( $f ) ) {
+			$raw = @file_get_contents( $f ); // phpcs:ignore
+			$v   = $raw ? json_decode( $raw, true ) : null;
+			return is_array( $v ) ? $v : null;
+		}
+		return null;
+	}
+
+	/**
+	 * @param array<string,mixed> $st
+	 * @param int                 $ttl
+	 */
+	private function breaker_write( array $st, $ttl ) {
+		if ( function_exists( 'apcu_enabled' ) && apcu_enabled() ) {
+			@apcu_store( $this->breaker_key(), $st, (int) $ttl + 5 ); // phpcs:ignore
+			return;
+		}
+		$f = $this->breaker_file();
+		if ( '' !== $f ) {
+			@file_put_contents( $f, json_encode( $st ), LOCK_EX ); // phpcs:ignore
+		}
+	}
+
+	/**
+	 * Path to the file-fallback breaker marker, or '' when no writable cache
+	 * dir is available (then the breaker is best-effort per-request only —
+	 * still correct, just without cross-request memory).
+	 *
+	 * @return string
+	 */
+	private function breaker_file() {
+		if ( ! defined( 'WP_CONTENT_DIR' ) ) {
+			return '';
+		}
+		$dir = WP_CONTENT_DIR . '/cache/jabali-cache';
+		if ( ! is_dir( $dir ) ) {
+			@mkdir( $dir, 0755, true ); // phpcs:ignore
+		}
+		if ( ! is_dir( $dir ) || ! is_writable( $dir ) ) {
+			return '';
+		}
+		return $dir . '/circuit-' . md5( $this->breaker_key() ) . '.json';
 	}
 
 	/**

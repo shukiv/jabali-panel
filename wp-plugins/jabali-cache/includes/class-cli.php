@@ -64,6 +64,12 @@ class Jabali_Cache_CLI {
 		);
 		if ( ! $ok ) {
 			$rows[] = array( 'field' => 'error', 'value' => $c->last_error() );
+			// JAB-89: surface the circuit breaker so an operator sees Redis is
+			// held down (fail-fast) rather than being re-probed every request.
+			$open = $c->circuit_open_until();
+			if ( $open > 0 ) {
+				$rows[] = array( 'field' => 'circuit_open_until', 'value' => gmdate( 'c', $open ) . ' (' . max( 0, $open - time() ) . 's)' );
+			}
 		}
 		$c->close();
 		\WP_CLI\Utils\format_items( 'table', $rows, array( 'field', 'value' ) );
@@ -164,7 +170,9 @@ class Jabali_Cache_CLI {
 	 */
 	public function verify() {
 		$cfg = Jabali_Cache_Config::load();
-		$c   = new Jabali_Cache_Client( $cfg );
+		// JAB-89: force a live probe so an open circuit breaker never masks a
+		// real diagnostic run.
+		$c = ( new Jabali_Cache_Client( $cfg ) )->force_probe();
 		if ( ! $c->connect() ) {
 			\WP_CLI::error( 'Redis connect failed: ' . $c->last_error() );
 		}
@@ -194,7 +202,8 @@ class Jabali_Cache_CLI {
 		\WP_CLI::log( 'igbinary extension: ' . ( function_exists( 'igbinary_serialize' ) ? 'present' : 'absent' ) );
 		\WP_CLI::log( 'scheme/target: ' . $cfg['scheme'] . ' ' . ( 'unix' === $cfg['scheme'] ? $cfg['socket'] : $cfg['host'] . ':' . $cfg['port'] ) );
 
-		$c = new Jabali_Cache_Client( $cfg );
+		// JAB-89: diagnose forces a live probe too (bypass the breaker).
+		$c = ( new Jabali_Cache_Client( $cfg ) )->force_probe();
 		if ( $c->connect() ) {
 			\WP_CLI::success( 'Connected via ' . $c->driver() . '. Keys for this site: ' . $c->count_keys( $cfg['prefix'] ) );
 			$c->close();
