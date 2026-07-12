@@ -181,27 +181,7 @@ export const SystemUpdatesPage = () => {
       <Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
         <DownloadOutlined /> Updates
       </Title>
-      <Alert
-        type="warning"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="Update carefully — especially system packages"
-        description={
-          <div>
-            <ul style={{ margin: "4px 0 8px", paddingLeft: 18 }}>
-              <li>System package upgrades can restart services, change packages, or briefly break access.</li>
-              <li>Make sure you have direct <strong>SSH access as root</strong> (or a sudo admin) first — do not rely only on this web session as your recovery path.</li>
-              <li>Take or verify a recent backup/snapshot before a major update.</li>
-              <li>Prefer a maintenance window if this server hosts production sites or mail.</li>
-            </ul>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>If something breaks, SSH in as root and:</Typography.Text>
-            <pre style={{ margin: "4px 0 0", fontSize: 12, whiteSpace: "pre-wrap" }}>{`systemctl status jabali-panel jabali-agent nginx mariadb
-journalctl -u jabali-panel -u jabali-agent -u nginx -n 200 --no-pager
-jabali repair --diagnose
-systemctl restart jabali-panel jabali-agent nginx   # only after reading the logs`}</pre>
-          </div>
-        }
-      />
+      <UpdateWarningAlert />
       <ReleaseChannelCard />
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <StatCards
@@ -652,6 +632,51 @@ function SystemPackagesError({
             {lockedDuringRun ? "Waiting for the update to finish…" : "Retry"}
           </Button>
         </Space>
+      }
+    />
+  );
+}
+
+// UpdateWarningAlert — JAB-137. The production-safety warning kept the full
+// SSH recovery command block always-visible, making the card tall enough to
+// push the actual update controls below the fold. Keep the core cautions (the
+// bullets) always shown, and progressively disclose the detailed recovery
+// commands behind a "Show recovery steps" toggle (collapsed by default each
+// load, so the page stays compact). No safety content is removed.
+export function UpdateWarningAlert() {
+  const [showRecovery, setShowRecovery] = useState(false);
+  return (
+    <Alert
+      type="warning"
+      showIcon
+      style={{ marginBottom: 16 }}
+      message="Update carefully — especially system packages"
+      description={
+        <div>
+          <ul style={{ margin: "4px 0 8px", paddingLeft: 18 }}>
+            <li>System package upgrades can restart services, change packages, or briefly break access.</li>
+            <li>Make sure you have direct <strong>SSH access as root</strong> (or a sudo admin) first — do not rely only on this web session as your recovery path.</li>
+            <li>Take or verify a recent backup/snapshot before a major update.</li>
+            <li>Prefer a maintenance window if this server hosts production sites or mail.</li>
+          </ul>
+          <Typography.Link
+            style={{ fontSize: 12 }}
+            onClick={() => setShowRecovery((v) => !v)}
+          >
+            {showRecovery ? "Hide recovery steps" : "Show recovery steps"}
+          </Typography.Link>
+          {showRecovery ? (
+            <div style={{ marginTop: 8 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                If something breaks, SSH in as root and:
+              </Typography.Text>
+              <pre style={{ margin: "4px 0 0", fontSize: 12, whiteSpace: "pre-wrap" }}>{`systemctl status jabali-panel jabali-agent nginx mariadb
+journalctl -u jabali-panel -u jabali-agent -u nginx -n 200 --no-pager
+jabali repair --diagnose
+systemctl restart jabali-panel jabali-agent nginx   # only after reading the logs`}</pre>
+            </div>
+          ) : null}
+        </div>
       }
     />
   );
