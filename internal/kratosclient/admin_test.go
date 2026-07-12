@@ -752,3 +752,52 @@ func TestSetIdentityState_EmptyIDFails(t *testing.T) {
 		t.Fatal("expected error on empty identity id")
 	}
 }
+
+func TestRevokeIdentitySessions_Success(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/admin/identities/idA/sessions" {
+			t.Errorf("wrong path: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	if err := c.RevokeIdentitySessions(context.Background(), "idA"); err != nil {
+		t.Fatalf("RevokeIdentitySessions: %v", err)
+	}
+}
+
+func TestRevokeIdentitySessions_404IsIdempotent(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	if err := c.RevokeIdentitySessions(context.Background(), "no-sessions"); err != nil {
+		t.Fatalf("404 (no sessions) must be idempotent: %v", err)
+	}
+}
+
+func TestRevokeIdentitySessions_EmptyIDShortCircuits(t *testing.T) {
+	t.Parallel()
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	if err := c.RevokeIdentitySessions(context.Background(), ""); err == nil {
+		t.Fatal("empty id should error")
+	}
+	if hits != 0 {
+		t.Errorf("empty id triggered %d HTTP calls (want 0)", hits)
+	}
+}
