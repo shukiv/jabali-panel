@@ -4839,6 +4839,26 @@ jabali user password <email|username|user-id> [flags]
 - `--password` — explicit new password (omit to auto-generate)
 - `--password-stdin` — read new password from stdin (no prompt, no echo)
 
+#### `jabali user suspend`
+
+Suspend a user (same cascade as the admin GUI/API)
+
+```
+jabali user suspend <id> [flags]
+```
+
+**Flags:**
+
+- `--reason` — operator-facing suspend reason (shown in the admin user list)
+
+#### `jabali user unsuspend`
+
+Unsuspend a user (reverse the cascade)
+
+```
+jabali user unsuspend <id>
+```
+
 ### `jabali user-token`
 
 Manage a user's API tokens (mint / list / revoke)
