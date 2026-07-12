@@ -91,7 +91,23 @@ func (h *forwarderHandler) loadMailbox(ctx context.Context, id string, claims *a
 func (h *forwarderHandler) listAll(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
-	fwds, _, err := h.cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 500})
+	page, pageSize := paginationParams(c)
+	opts := repository.ListOptions{Offset: (page - 1) * pageSize, Limit: pageSize}
+
+	// JAB-107: scope to the tenant in SQL so every one of their forwarders is
+	// returned regardless of the global row count (the old global newest-500
+	// window hid a tenant's rows past 500 total). Admins keep the cross-tenant
+	// view via ListAll.
+	var (
+		fwds  []models.EmailForwarder
+		total int64
+		err   error
+	)
+	if claims.IsAdmin {
+		fwds, total, err = h.cfg.Forwarders.ListAll(ctx, opts)
+	} else {
+		fwds, total, err = h.cfg.Forwarders.ListByUserID(ctx, claims.UserID, opts)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -101,7 +117,8 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 		if f.MailboxID == nil {
 			// Domain-scoped DA-imported forwarder; M65 mailbox-keyed UI
 			// can't render it. Skip — future domain-scoped endpoint will
-			// surface these.
+			// surface these. (ListByUserID already excludes these; only the
+			// admin ListAll path reaches here.)
 			continue
 		}
 		mb, err := h.cfg.Mailboxes.FindByID(ctx, *f.MailboxID)
@@ -113,11 +130,11 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 			continue
 		}
 		if !claims.IsAdmin && dom.UserID != claims.UserID {
-			continue
+			continue // defense-in-depth; ListByUserID already enforces this
 		}
 		items = append(items, h.resolve(ctx, f, mb, dom))
 	}
-	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items)), "page": 1, "page_size": len(items)})
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "page": page, "page_size": pageSize})
 }
 
 // applyForwarders re-lists a mailbox's forwarders and pushes the full

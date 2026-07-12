@@ -17,6 +17,7 @@ type MailboxShareRepository interface {
 	FindByID(ctx context.Context, id string) (*models.MailboxShare, error)
 	FindByOwnerID(ctx context.Context, ownerMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error)
 	FindBySharedWithID(ctx context.Context, sharedWithMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error)
+	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.MailboxShare, int64, error)
 	ListAll(ctx context.Context, opts ListOptions) ([]models.MailboxShare, int64, error)
 	Create(ctx context.Context, share *models.MailboxShare) error
 	Update(ctx context.Context, share *models.MailboxShare) error
@@ -68,6 +69,33 @@ func (r *mailboxShareRepo) FindByOwnerID(ctx context.Context, ownerMailboxID str
 
 func (r *mailboxShareRepo) FindBySharedWithID(ctx context.Context, sharedWithMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error) {
 	return r.listByField(ctx, "shared_with_mailbox_id", sharedWithMailboxID, opts)
+}
+
+// ListByUserID returns the shares owned by one user — those whose owner mailbox
+// lives in a domain the user owns — scoped in SQL (mailbox_shares -> mailboxes
+// -> domains) so a tenant always sees all of their own shares regardless of the
+// global row count (JAB-107).
+func (r *mailboxShareRepo) ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.MailboxShare, int64, error) {
+	var shares []models.MailboxShare
+	var total int64
+	q := r.db.WithContext(ctx).Model(&models.MailboxShare{}).
+		Joins("JOIN mailboxes ON mailboxes.id = mailbox_shares.owner_mailbox_id").
+		Joins("JOIN domains ON domains.id = mailboxes.domain_id").
+		Where("domains.user_id = ?", userID)
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := q.Select("mailbox_shares.*").Order("mailbox_shares.created_at DESC")
+	if opts.Limit > 0 {
+		tx = tx.Limit(opts.Limit)
+	}
+	if opts.Offset > 0 {
+		tx = tx.Offset(opts.Offset)
+	}
+	if err := tx.Find(&shares).Error; err != nil {
+		return nil, 0, err
+	}
+	return shares, total, nil
 }
 
 func (r *mailboxShareRepo) ListAll(ctx context.Context, opts ListOptions) ([]models.MailboxShare, int64, error) {

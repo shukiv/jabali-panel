@@ -100,10 +100,23 @@ func (h *shareHandler) list(c *gin.Context) {
 func (h *shareHandler) listAllForUser(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
-	// Load user's mailboxes — filter shares to owners the user controls.
-	// Simplified: fetch all shares, filter by ownership in-memory. For scale,
-	// add ListByUser at repo layer later.
-	shares, _, err := h.cfg.MailboxShares.ListAll(ctx, repository.ListOptions{Limit: 500})
+	page, pageSize := paginationParams(c)
+	opts := repository.ListOptions{Offset: (page - 1) * pageSize, Limit: pageSize}
+
+	// JAB-107: scope to the tenant in SQL (owner mailbox -> domain -> user) so
+	// every one of their shares is returned regardless of the global row count.
+	// The old global newest-500 window filtered in memory hid a tenant's shares
+	// past 500 total. Admins keep the cross-tenant view via ListAll.
+	var (
+		shares []models.MailboxShare
+		total  int64
+		err    error
+	)
+	if claims.IsAdmin {
+		shares, total, err = h.cfg.MailboxShares.ListAll(ctx, opts)
+	} else {
+		shares, total, err = h.cfg.MailboxShares.ListByUserID(ctx, claims.UserID, opts)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -119,11 +132,11 @@ func (h *shareHandler) listAllForUser(c *gin.Context) {
 			continue
 		}
 		if !claims.IsAdmin && dom.UserID != claims.UserID {
-			continue
+			continue // defense-in-depth; ListByUserID already enforces this
 		}
 		items = append(items, h.resolve(ctx, s))
 	}
-	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items)), "page": 1, "page_size": len(items)})
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "page": page, "page_size": pageSize})
 }
 
 func (h *shareHandler) create(c *gin.Context) {
