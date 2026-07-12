@@ -10260,6 +10260,13 @@ install_logrotate() {
   elif ! logrotate -d "$dst" >/dev/null 2>&1; then
     _warn "logrotate parse failed for $dst — review syntax"
   fi
+
+  # JAB-104: the install logger falls back to /tmp/jabali_install-<ts>.log
+  # when /var/log/jabali can't be created (see LOG_FILE bootstrap). Those
+  # fall outside every logrotate policy, so age them out opportunistically on
+  # each install/update tick — the only events that create them — so they
+  # can't accumulate forever on hosts with weak /tmp cleanup.
+  find /tmp -maxdepth 1 -name 'jabali_install-*.log' -type f -mtime +14 -delete 2>/dev/null || true
 }
 
 install_notify_template() {

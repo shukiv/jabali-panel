@@ -102,19 +102,19 @@
     su root root
 }
 
-/var/log/nginx/jabali-pma.access.log {
-    daily
-    rotate 14
-    compress
-    delaycompress
-    missingok
-    notifempty
-    sharedscripts
-    postrotate
-        # nginx default logrotate sends USR1; ours rides alongside.
-        [ ! -f /var/run/nginx.pid ] || kill -USR1 "$(cat /var/run/nginx.pid)"
-    endscript
-}
+# nginx logs (JAB-104): every log jabali points nginx at lives under
+# /var/log/nginx/*.log —
+#   default.access.log        default.error.log
+#   jabali-hostname.access.log jabali-hostname.error.log
+#   jabali-pma.access.log     jabali-pma.error.log
+# The distro nginx package ships /etc/logrotate.d/nginx with a
+# `/var/log/nginx/*.log` glob (with the USR1 postrotate), which already
+# rotates ALL of the above — both the access AND error side. install.sh
+# never removes that drop-in, so we deliberately do NOT restate any
+# /var/log/nginx/* path here: a jabali stanza would either duplicate the
+# distro glob (logrotate "duplicate log entry" noise) or, worse, cover only
+# one half of an access/error pair and create a false sense of coverage —
+# which is exactly the jabali-pma.access-only stanza this comment replaced.
 
 # M8 per-user cron logs (#432). One subdir per hosting user under
 # /var/log/jabali/cron/<user>/. maxsize caps a chatty cron from filling the
