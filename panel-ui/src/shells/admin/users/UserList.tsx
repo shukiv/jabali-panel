@@ -30,6 +30,7 @@ import { UserDiskUsage } from "./UserDiskUsage";
 import { UserReset2FAAction } from "./UserReset2FAAction";
 import { UserResetPasswordAction } from "./UserResetPasswordAction";
 import { UserSuspendAction } from "./UserSuspendAction";
+import { AdminSessionsPage } from "../sessions/AdminSessionsPage";
 
 type User = {
   id: string;
@@ -365,7 +366,9 @@ function UsersShellTable({
 }
 
 export const UserList = () => {
-  const [activeTab, setActiveTab] = useTabParam<"users" | "admins">("users");
+  const [activeTab, setActiveTab] = useTabParam<"users" | "admins" | "sessions">(
+    "users",
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
 
@@ -407,9 +410,11 @@ export const UserList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           <TeamOutlined /> Users
         </Typography.Title>
-        <Button type="primary" onClick={openCreate}>
-          Create
-        </Button>
+        {activeTab !== "sessions" && (
+          <Button type="primary" onClick={openCreate}>
+            Create
+          </Button>
+        )}
       </Space>
 
       {/* Card.tabList renders the tab strip visually attached to the
@@ -436,11 +441,21 @@ export const UserList = () => {
               </Space>
             ),
           },
+          {
+            // JAB-126: Sessions is now a tab here rather than a standalone
+            // sidebar entry. The view itself (AdminSessionsPage) is unchanged.
+            key: "sessions",
+            tab: <span>Sessions</span>,
+          },
         ]}
         activeTabKey={activeTab}
-        onTabChange={(k) => setActiveTab(k as "users" | "admins")}
+        onTabChange={(k) =>
+          setActiveTab(k as "users" | "admins" | "sessions")
+        }
       >
-        {activeTab === "users" ? (
+        {activeTab === "sessions" ? (
+          <AdminSessionsPage />
+        ) : activeTab === "users" ? (
           <UsersShellTable
             isAdmin={false}
             searchPlaceholder="Search by email, username, or name"

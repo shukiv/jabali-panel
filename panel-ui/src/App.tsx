@@ -45,7 +45,6 @@ import { PANEL_COLORS } from "./lib/panelColors";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
 import { ServerStatusPage } from "./shells/admin/server-status/ServerStatusPage";
 import { CacheOverviewPage } from "./shells/admin/cache/CacheOverviewPage";
-import { AdminSessionsPage } from "./shells/admin/sessions/AdminSessionsPage";
 import { MailDeliverabilityPage } from "./shells/admin/mail/MailDeliverabilityPage";
 import { MailThrottlesPage } from "./shells/admin/mail/MailThrottlesPage";
 import { SystemUpdatesPage } from "./shells/admin/updates/SystemUpdatesPage";
@@ -189,7 +188,14 @@ const ThemedApp = () => {
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="cache" element={<CacheOverviewPage />} />
-            <Route path="sessions" element={<AdminSessionsPage />} />
+            {/* JAB-126: Sessions moved into the Users page as a tab.
+                Preserve old bookmarks/deep-links. */}
+            <Route
+              path="sessions"
+              element={
+                <Navigate to="/jabali-admin/users?tab=sessions" replace />
+              }
+            />
             <Route path="users">
               <Route index element={<UserList />} />
               {/* legacy /create + /edit/:id redirect to list — Drawer

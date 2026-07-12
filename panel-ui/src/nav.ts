@@ -89,16 +89,12 @@ export const adminNav: NavItem[] = [
   {
     key: "users",
     label: "Users",
-    description: "Manage panel users and impersonation",
+    // JAB-126: Sessions moved into the Users page as a tab
+    // (/jabali-admin/users?tab=sessions), so this row stays active while
+    // viewing sessions and the sidebar loses the standalone Sessions entry.
+    description: "Manage panel users, sessions, and impersonation",
     icon: navIcon(TeamOutlined),
     path: "/jabali-admin/users",
-  },
-  {
-    key: "sessions",
-    label: "Sessions",
-    description: "Active login sessions",
-    icon: navIcon(KeyOutlined),
-    path: "/jabali-admin/sessions",
   },
   {
     key: "domains",
