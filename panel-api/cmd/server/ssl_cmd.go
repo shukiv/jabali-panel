@@ -30,6 +30,7 @@ func newSSLCmd() *cobra.Command {
 		newSSLEnableCmd(),
 		newSSLDisableCmd(),
 		newSSLRenewCmd(),
+		newSSLSetCustomCmd(),
 	)
 	return cmd
 }

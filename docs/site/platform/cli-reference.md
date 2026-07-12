@@ -4618,6 +4618,20 @@ jabali ssl renew <domain> [flags]
 
 - `--force` — force renewal even if cert is not due
 
+#### `jabali ssl set-custom`
+
+Install an operator-supplied SSL cert + key (JAB-128)
+
+```
+jabali ssl set-custom [flags]
+```
+
+**Flags:**
+
+- `--cert` — path to the certificate PEM file (leaf + chain) (required)
+- `--domain` — domain name or id (required)
+- `--key` — path to the private key PEM file (required)
+
 ### `jabali sso`
 
 SSO (Single Sign-On) management commands
