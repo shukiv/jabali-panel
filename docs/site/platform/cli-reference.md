@@ -1824,6 +1824,73 @@ jabali domain delete <domain-name|domain-id> [flags]
 
 - `--force` — Skip confirmation prompt
 
+#### `jabali domain dir-privacy`
+
+Manage password-protected directories (auth_basic) (JAB-130)
+
+```
+jabali domain dir-privacy
+```
+
+##### `jabali domain dir-privacy add`
+
+Protect a directory
+
+```
+jabali domain dir-privacy add <domain> --path /dir [--realm ...] [flags]
+```
+
+**Flags:**
+
+- `--path` — directory path under the docroot (e.g. /admin)
+- `--realm` — auth realm shown in the browser prompt (default Restricted)
+
+##### `jabali domain dir-privacy cred-add`
+
+Add a credential to a protected directory
+
+```
+jabali domain dir-privacy cred-add <domain> <rule-id> --user <name> (--password <p> | --password-stdin) [flags]
+```
+
+**Flags:**
+
+- `--password` — basic-auth password (8-128 chars; prefer --password-stdin)
+- `--password-stdin` — read the password from stdin (no argv leak)
+- `--user` — basic-auth username
+
+##### `jabali domain dir-privacy cred-list`
+
+List credentials for a protected directory
+
+```
+jabali domain dir-privacy cred-list <domain> <rule-id>
+```
+
+##### `jabali domain dir-privacy cred-remove`
+
+Remove a credential from a protected directory
+
+```
+jabali domain dir-privacy cred-remove <domain> <rule-id> <cred-id>
+```
+
+##### `jabali domain dir-privacy list`
+
+List protected directories for a domain
+
+```
+jabali domain dir-privacy list <domain>
+```
+
+##### `jabali domain dir-privacy remove`
+
+Remove a protected directory (and its credentials)
+
+```
+jabali domain dir-privacy remove <domain> <rule-id>
+```
+
 #### `jabali domain disable`
 
 Disable a domain (direct DB — M20-safe)
