@@ -143,7 +143,7 @@ func (h *domainDNSSECHandler) update(c *gin.Context) {
 		}
 		raw, err := h.cfg.Agent.Call(agentCtx, cmd, map[string]any{"domain_name": dom.Name})
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+			respondAgentErr(c, "agent_error", err)
 			return
 		}
 		if req.Enabled {
@@ -214,7 +214,7 @@ func (h *domainDNSSECHandler) dsExport(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(agentCtx, "dns.dnssec_ds_export", map[string]any{"domain_name": dom.Name})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var agentResp struct {

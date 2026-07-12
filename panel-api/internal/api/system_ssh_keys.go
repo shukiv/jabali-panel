@@ -47,7 +47,7 @@ func (h *systemSSHKeysHandler) list(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, "system.sshkeys.list", map[string]any{})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call", "detail": err.Error()})
+		respondAgentErrStatus(c, "agent_call", err)
 		return
 	}
 	var resp struct {
@@ -84,7 +84,7 @@ func (h *systemSSHKeysHandler) generate(c *gin.Context) {
 		"name": req.Name, "type": keyType,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call", "detail": err.Error()})
+		respondAgentErrStatus(c, "agent_call", err)
 		return
 	}
 	var resp struct {

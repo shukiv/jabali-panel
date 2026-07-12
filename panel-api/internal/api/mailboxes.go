@@ -550,7 +550,7 @@ func (h *mailboxHandler) delete(c *gin.Context) {
 		"email": mb.LocalPart + "@" + dom.Name,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 

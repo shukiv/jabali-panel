@@ -44,7 +44,7 @@ func (h *adminSupportHandler) diagnostic(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, "system.diagnostic_report", nil)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var data any

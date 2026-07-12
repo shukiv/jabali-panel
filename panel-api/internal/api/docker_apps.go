@@ -1229,7 +1229,7 @@ func (h *dockerAppHandler) delete(c *gin.Context) {
 				app.Status == models.DockerAppStatusInstalling ||
 				app.Status == models.DockerAppStatusPending
 			if !force && !broken {
-				c.JSON(http.StatusBadGateway, gin.H{"error": "agent_delete_failed", "detail": err.Error()})
+				respondAgentErr(c, "agent_delete_failed", err)
 				return
 			}
 			// Fall through to DB cleanup.
@@ -1311,7 +1311,7 @@ func (h *dockerAppHandler) lifecycle(action string) gin.HandlerFunc {
 		}
 		raw, err := h.cfg.Agent.Call(callCtx, verb, lifeParams)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": err.Error()})
+			respondAgentErr(c, "agent_call_failed", err)
 			return
 		}
 		// Reflect the post-lifecycle state in the docker_apps row so
@@ -1478,7 +1478,7 @@ func (h *dockerAppHandler) logs(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(callCtx, "docker_app.logs", params)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_call_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
@@ -1520,7 +1520,7 @@ func (h *dockerAppHandler) execCmd(c *gin.Context) {
 		"command": req.Command,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_call_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
@@ -1551,7 +1551,7 @@ func (h *dockerAppHandler) backup(c *gin.Context) {
 	}
 	raw, err := h.cfg.Agent.Call(callCtx, "docker_app.backup", bkParams)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_backup_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_backup_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
@@ -1582,7 +1582,7 @@ func (h *dockerAppHandler) listBackups(c *gin.Context) {
 	}
 	raw, err := h.cfg.Agent.Call(callCtx, "docker_app.list_backups", lbParams)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_call_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
@@ -1621,7 +1621,7 @@ func (h *dockerAppHandler) restoreBackup(c *gin.Context) {
 	}
 	raw, err := h.cfg.Agent.Call(callCtx, "docker_app.restore", rsParams)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_restore_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_restore_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
@@ -1736,7 +1736,7 @@ func (h *dockerAppHandler) maintenanceDiskUsage(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(callCtx, "docker.disk_usage", map[string]any{})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_call_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
@@ -1765,7 +1765,7 @@ func (h *dockerAppHandler) maintenancePrune(c *gin.Context) {
 		"all":     req.All,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_call_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
@@ -1787,7 +1787,7 @@ func (h *dockerAppHandler) engineStatus(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(callCtx, "docker.status", map[string]any{})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_call_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)

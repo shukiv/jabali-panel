@@ -501,7 +501,7 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		})
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -644,7 +644,7 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		})
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -743,7 +743,7 @@ func (h *databaseUserHandler) deleteGrant(c *gin.Context) {
 		})
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -818,7 +818,7 @@ func (h *databaseUserHandler) delete(c *gin.Context) {
 			})
 		}
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+			respondAgentErr(c, "agent_failed", err)
 			return
 		}
 	}
@@ -829,7 +829,7 @@ func (h *databaseUserHandler) delete(c *gin.Context) {
 
 	_, err = h.cfg.Agent.Call(agentCtx, dbUserCmd(du.Engine, "drop"), dbUserDropParams(du.Engine, du.Username))
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -910,7 +910,7 @@ func (h *databaseUserHandler) rotatePassword(c *gin.Context) {
 		})
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -1031,7 +1031,7 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		})
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -1068,7 +1068,7 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 				"privileges":   strings.Split(grant.Privileges, ","),
 			})
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 

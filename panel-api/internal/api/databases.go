@@ -324,7 +324,7 @@ func dbopsRESTError(c *gin.Context, err error) {
 	case errors.Is(err, dbops.ErrNameTaken):
 		c.JSON(http.StatusConflict, gin.H{"error": "database_name_exists"})
 	case errors.Is(err, dbops.ErrAgentFailed):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 	case errors.Is(err, dbops.ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 	default:
@@ -420,7 +420,7 @@ func (h *databaseHandler) delete(c *gin.Context) {
 	}
 	if _, err := h.cfg.Agent.Call(agentCtx, dropCmd, map[string]any{"db_name": d.Name}); err != nil {
 		slog.ErrorContext(ctx, "databases.delete: agent drop failed", "err", err, "db_name", d.Name, "engine", d.Engine)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -472,7 +472,7 @@ func (h *databaseHandler) backup(c *gin.Context) {
 		"db_name": d.Name,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 
@@ -596,7 +596,7 @@ func (h *databaseHandler) restore(c *gin.Context) {
 	if err != nil {
 		// Agent cleanup the file on failure, but delete it here too just in case
 		_ = deleteFile(restorePath)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 

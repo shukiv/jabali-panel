@@ -77,7 +77,7 @@ func (h *dockerAppHandler) getEnv(c *gin.Context) {
 	}
 	env, err := h.readInstallEnv(c.Request.Context(), app.EffectiveSlug())
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "read_env_failed", "detail": err.Error()})
+		respondAgentErr(c, "read_env_failed", err)
 		return
 	}
 	out := make([]envVarView, 0, len(env))
@@ -123,7 +123,7 @@ func (h *dockerAppHandler) putEnv(c *gin.Context) {
 	ctx := c.Request.Context()
 	existing, err := h.readInstallEnv(ctx, app.EffectiveSlug())
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "read_env_failed", "detail": err.Error()})
+		respondAgentErr(c, "read_env_failed", err)
 		return
 	}
 	merged := make(map[string]string, len(existing)+len(body.Env))
@@ -135,7 +135,7 @@ func (h *dockerAppHandler) putEnv(c *gin.Context) {
 	}
 
 	if err := h.applyEnv(ctx, app, merged); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "apply_failed", "detail": err.Error()})
+		respondAgentErr(c, "apply_failed", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "applied"})
@@ -171,13 +171,13 @@ func (h *dockerAppHandler) regenerateEnv(c *gin.Context) {
 	ctx := c.Request.Context()
 	existing, err := h.readInstallEnv(ctx, app.EffectiveSlug())
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "read_env_failed", "detail": err.Error()})
+		respondAgentErr(c, "read_env_failed", err)
 		return
 	}
 	delete(existing, body.Key) // absent → MaterialiseEnv generates a fresh value
 
 	if err := h.applyEnv(ctx, app, existing); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "apply_failed", "detail": err.Error()})
+		respondAgentErr(c, "apply_failed", err)
 		return
 	}
 	// Read back so the UI can show the new secret once.

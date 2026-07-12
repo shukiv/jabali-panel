@@ -107,7 +107,7 @@ func (h *adminServicesHandler) action(c *gin.Context) {
 	if err != nil {
 		h.cfg.Log.Warn("event=audit kind=service_action_failed",
 			"actor_id", actorID, "service", name, "action", action, "err", err.Error())
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var data any

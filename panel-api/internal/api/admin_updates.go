@@ -83,7 +83,7 @@ func (h *adminUpdatesHandler) callAgentRaw(c *gin.Context, cmd string, params an
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, cmd, params)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return nil, false
 	}
 	return raw, true

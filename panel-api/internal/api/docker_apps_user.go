@@ -277,7 +277,7 @@ func (h *userDockerAppHandler) lifecycle(statusOnSuccess string, composeArgs ...
 				}
 			}
 			if _, err := h.cfg.Agent.Call(ctx, "docker_app."+composeArgs[0], params); err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "detail": firstLineString(err.Error())})
+				respondAgentErr(c, "agent_error", err)
 				return
 			}
 		}
@@ -673,7 +673,7 @@ func (h *userDockerAppHandler) logs(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, "docker_app.logs", params)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_call_failed", "detail": firstLineString(err.Error())})
+		respondAgentErr(c, "agent_call_failed", err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)

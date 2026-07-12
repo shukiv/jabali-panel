@@ -599,7 +599,7 @@ func (h *mailGroupHandler) delete(c *gin.Context) {
 			"group_email":   g.EmailCached,
 			"member_emails": memberEmails,
 		}); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+			respondAgentErr(c, "agent_failed", err)
 			return
 		}
 	}

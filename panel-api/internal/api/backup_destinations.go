@@ -471,7 +471,7 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 	}
 	raw, err := h.agent.Call(ctx, "backup.dest.test", payload)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call", "detail": err.Error()})
+		respondAgentErrStatus(c, "agent_call", err)
 		return
 	}
 	var resp struct {

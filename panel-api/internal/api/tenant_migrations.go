@@ -310,13 +310,13 @@ func (h *tenantMigrationsHandler) scanWP(c *gin.Context) {
 	secret := migrate.SecretRef{Path: filepath.Join(migrate.SecretsDir, job.ID+".env")}
 	sess, err := wordpressssh.Connect(ctx, job.SourceHost, 0, sshUser, secret, allowPrivate)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+		respondAgentErr(c, "connect_failed", err)
 		return
 	}
 	defer sess.Close()
 	installs, err := wordpressssh.ScanWordPress(ctx, sess)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "scan_failed", "detail": err.Error()})
+		respondAgentErr(c, "scan_failed", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"installs": installs})
@@ -386,7 +386,7 @@ func (h *tenantMigrationsHandler) verify(c *gin.Context) {
 		}
 		facts, err := cli.Manifest(ctx)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "manifest_failed", "detail": err.Error()})
+			respondAgentErr(c, "manifest_failed", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
@@ -416,7 +416,7 @@ func (h *tenantMigrationsHandler) verify(c *gin.Context) {
 	}
 	facts, err := wordpressssh.DiscoverWordPress(ctx, sess, hint)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "discover_failed", "detail": err.Error()})
+		respondAgentErr(c, "discover_failed", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -452,7 +452,7 @@ func (h *tenantMigrationsHandler) callAgent(c *gin.Context, verb string, params 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	if _, err := h.cfg.Agent.Call(ctx, verb, params); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "detail": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

@@ -936,7 +936,7 @@ func TestApplicationsClone_Characterization(t *testing.T) {
 		}
 	})
 
-	t.Run("agent failure -> 502 + detail", func(t *testing.T) {
+	t.Run("agent failure -> 502, no leaked detail", func(t *testing.T) {
 		wpRepo, domainRepo, userRepo := wpUserAndDomain()
 		domainRepo.domains["domain2"] = &models.Domain{ID: "domain2", UserID: "user1", Name: "dest.com", DocRoot: "/home/alice/domains/dest.com/public_html"}
 		wpRepo.Create(ctx, &models.WordPressInstall{ID: "src", UserID: "user1", DomainID: "domain1", AppType: "wordpress", Subdirectory: "blog", DBID: models.DBIDPtr("srcdb")})
@@ -953,8 +953,13 @@ func TestApplicationsClone_Characterization(t *testing.T) {
 		if body["error"] != "agent_failed" {
 			t.Fatalf("want error=agent_failed, got %v", body["error"])
 		}
-		if d, _ := body["detail"].(string); d == "" {
-			t.Fatalf("want non-empty detail, got %v", body["detail"])
+		// JAB-114: the raw agent error ("boom") must NOT be echoed to the
+		// client — it's logged server-side instead.
+		if _, ok := body["detail"]; ok {
+			t.Fatalf("agent error detail leaked to client: %v", body["detail"])
+		}
+		if strings.Contains(w.Body.String(), "boom") {
+			t.Fatalf("raw agent error leaked in body: %s", w.Body.String())
 		}
 	})
 

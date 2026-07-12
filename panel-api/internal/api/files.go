@@ -452,7 +452,12 @@ func agentErrorCode(err error) string {
 }
 
 func respondAgentError(c *gin.Context, err error) {
-	c.JSON(agentErrorStatus(err), gin.H{"error": agentErrorCode(err), "detail": err.Error()})
+	// JAB-114: derive a stable status + client code from the error, but never
+	// echo the raw agent error string (paths / stderr / driver internals) to the
+	// client — log it server-side instead.
+	code := agentErrorCode(err)
+	logAgentError(c, code, err)
+	c.JSON(agentErrorStatus(err), gin.H{"error": code})
 }
 
 // ---- handlers ----

@@ -384,7 +384,7 @@ func (h *databaseAdminOpsHandler) putConfig(c *gin.Context) {
 				Body:      req.Engine + " did not recover after a config change AND rollback. Manual intervention required (see /var/lib/jabali-agent/db-config-broken.json).",
 				Deeplink:  "/jabali-admin/settings",
 			})
-			c.JSON(http.StatusBadGateway, gin.H{"error": "unrecoverable", "detail": aerr.Error()})
+			respondAgentErr(c, "unrecoverable", aerr)
 			return
 		}
 		h.audit(ctx, claims.UserID, req.Engine, "config.apply", "", "error", "agent rejected")
@@ -396,7 +396,7 @@ func (h *databaseAdminOpsHandler) putConfig(c *gin.Context) {
 			Deeplink:  "/jabali-admin/settings",
 			UserID:    claims.UserID,
 		})
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": aerr.Error()})
+		respondAgentErr(c, "agent_failed", aerr)
 		return
 	}
 

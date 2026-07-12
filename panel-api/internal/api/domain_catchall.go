@@ -112,7 +112,7 @@ func (h *domainCatchallHandler) update(c *gin.Context) {
 			"target":      req.Target,
 		})
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+			respondAgentErr(c, "agent_error", err)
 			return
 		}
 	}
@@ -169,7 +169,7 @@ func (h *domainCatchallHandler) delete(c *gin.Context) {
 			"domain_name": dom.Name,
 		})
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+			respondAgentErr(c, "agent_error", err)
 			return
 		}
 	}

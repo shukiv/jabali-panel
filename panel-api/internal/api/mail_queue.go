@@ -106,7 +106,7 @@ func RegisterAdminMailQueueRoutes(rg *gin.RouterGroup, cli agent.AgentInterface)
 			Total int              `json:"total"`
 		}
 		if jerr := json.Unmarshal(raw, &resp); jerr != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_parse_failed", "detail": jerr.Error()})
+			respondAgentErr(c, "agent_parse_failed", jerr)
 			return
 		}
 		filtered := filterByDomain(resp.Data, c.Query("domain"))

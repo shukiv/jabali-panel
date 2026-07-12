@@ -159,7 +159,7 @@ func (h *domainCacheHandler) purge(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := h.cfg.Agent.Call(agentCtx, "nginx.cache.purge", map[string]any{"domain": dom.Name, "paths": req.Paths}); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	// GH #632: re-warm the cache after a manual purge so the next visitor

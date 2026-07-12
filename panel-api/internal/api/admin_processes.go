@@ -68,7 +68,7 @@ func (h *adminProcessesHandler) kill(c *gin.Context) {
 	if err != nil {
 		h.cfg.Log.Warn("event=audit kind=process_kill_failed",
 			"actor_id", actorID, "pid", pid, "force", req.Force, "err", err.Error())
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var data any

@@ -94,7 +94,7 @@ func (h *domainWhoisHandler) get(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(agentCtx, "domain.whois", map[string]any{"domain": dom.Name})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var data whoisData

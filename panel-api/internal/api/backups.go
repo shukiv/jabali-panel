@@ -428,7 +428,7 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 			// Mark failed so the UI surfaces the issue right away.
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,
 				"", "", 0, 0, nil, nil, err.Error())
-			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed", "detail": err.Error()})
+			respondAgentErrStatus(c, "agent_call_failed", err)
 			return
 		}
 		_ = h.cfg.Jobs.MarkStarted(c.Request.Context(), job.ID)
@@ -564,7 +564,7 @@ func (h *backupHandler) status(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, "backup.status", map[string]string{"job_id": jobID})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErrStatus(c, "agent_call_failed", err)
 		return
 	}
 	var resp any
@@ -609,7 +609,7 @@ func (h *backupHandler) logs(c *gin.Context) {
 		"kind":   job.Kind,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErrStatus(c, "agent_call_failed", err)
 		return
 	}
 	var resp any
@@ -779,7 +779,7 @@ func (h *backupHandler) restore(c *gin.Context) {
 	if err != nil {
 		_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,
 			"", "", 0, 0, nil, nil, err.Error())
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed", "detail": err.Error()})
+		respondAgentErrStatus(c, "agent_call_failed", err)
 		return
 	}
 	// Parse the agent's restore result so the job row reflects what

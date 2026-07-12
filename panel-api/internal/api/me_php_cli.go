@@ -96,7 +96,7 @@ func (h *mePhpCliHandler) put(c *gin.Context) {
 			"username": *user.Username,
 			"version":  req.Version,
 		}); aerr != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "detail": firstLineString(aerr.Error())})
+			respondAgentErr(c, "agent_error", aerr)
 			return
 		}
 	}

@@ -595,7 +595,7 @@ func (h *adminMigrationsHandler) callAgent(c *gin.Context, cmd string, params an
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, cmd, params)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var data any
@@ -1203,14 +1203,14 @@ func (h *adminMigrationsHandler) discoverAccounts(c *gin.Context) {
 
 	sess, err := disc.Connect(ctx, job.SourceHost, job.SourceUser, migrate.SecretRef{Path: secretPath, ExpectedHostKey: job.ExpectedHostKey})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+		respondAgentErr(c, "connect_failed", err)
 		return
 	}
 	defer func() { _ = disc.Close(ctx, sess) }()
 
 	accounts, err := disc.ListAccounts(ctx, sess)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "list_failed", "detail": err.Error()})
+		respondAgentErr(c, "list_failed", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -1362,14 +1362,14 @@ func (h *adminMigrationsHandler) accountSizeProbe(c *gin.Context) {
 
 	sess, err := disc.Connect(ctx, job.SourceHost, job.SourceUser, migrate.SecretRef{Path: secretPath, ExpectedHostKey: job.ExpectedHostKey})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+		respondAgentErr(c, "connect_failed", err)
 		return
 	}
 	defer func() { _ = disc.Close(ctx, sess) }()
 
 	size, err := prober.AccountSize(ctx, sess, login)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "probe_failed", "detail": err.Error()})
+		respondAgentErr(c, "probe_failed", err)
 		return
 	}
 

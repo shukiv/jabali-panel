@@ -54,7 +54,7 @@ func (h *cronHandler) mapCronopsErr(c *gin.Context, err error) {
 	case errors.Is(err, cronops.ErrJobNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 	case errors.Is(err, cronops.ErrAgentFailed):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_apply_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_apply_failed", err)
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 	}
@@ -453,7 +453,7 @@ func (h *cronHandler) runNow(c *gin.Context) {
 		Command: job.Command, OwnedDocroots: docroots, OwnedDomains: domains,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_run_now_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_run_now_failed", err)
 		return
 	}
 	var resp runNowResponse
@@ -502,7 +502,7 @@ func (h *cronHandler) readLog(c *gin.Context) {
 		UserID: job.UserID, Username: username, JobID: job.ID, Lines: lines,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_tail_log_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_tail_log_failed", err)
 		return
 	}
 	var resp cronLogResponse

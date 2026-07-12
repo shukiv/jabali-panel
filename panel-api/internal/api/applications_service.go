@@ -181,7 +181,9 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 		chain, err = provisionDBChain(ctx, deps, p.UserID, osUser, descriptor.Name, domain.Name, p.Subdirectory, dbPassword)
 		if err != nil {
 			slog.ErrorContext(ctx, "applications create: provision db chain", "err", err)
-			return nil, newInstallErr(http.StatusBadGateway, "agent_failed", err.Error())
+			// JAB-114: err here is agent-origin (db.create) — logged above,
+			// never echoed to the client (InstallError.Detail renders to the body).
+			return nil, newInstallErr(http.StatusBadGateway, "agent_failed", "")
 		}
 	}
 

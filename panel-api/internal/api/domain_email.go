@@ -390,9 +390,9 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		case errors.Is(err, errAgentUnconfigured):
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_unconfigured"})
 		case errors.Is(err, errAgentBadResponse):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bad_response", "detail": err.Error()})
+			respondAgentErr(c, "agent_bad_response", err)
 		case errors.Is(err, errAgentFailed):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+			respondAgentErr(c, "agent_failed", err)
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
@@ -448,7 +448,7 @@ func (h *domainEmailHandler) disable(c *gin.Context) {
 		"domain_id":   dom.ID,
 		"domain_name": dom.Name,
 	}); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		respondAgentErr(c, "agent_failed", err)
 		return
 	}
 

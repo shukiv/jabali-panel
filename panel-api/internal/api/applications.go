@@ -1379,7 +1379,7 @@ func (h *applicationsHandler) scan(c *gin.Context) {
 		"username": *user.Username,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "detail": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var resp struct {
@@ -1392,7 +1392,7 @@ func (h *applicationsHandler) scan(c *gin.Context) {
 		} `json:"hits"`
 	}
 	if jErr := json.Unmarshal(raw, &resp); jErr != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_decode", "detail": jErr.Error()})
+		respondAgentErr(c, "agent_decode", jErr)
 		return
 	}
 

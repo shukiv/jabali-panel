@@ -238,7 +238,7 @@ func (h *ipHandler) create(c *gin.Context) {
 			// Roll back the DB row — caller sees a clean 502 instead of
 			// a half-created entry.
 			_ = h.cfg.Repo.Delete(ctx, row.ID)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bind_failed", "detail": bindErr.Error()})
+			respondAgentErr(c, "agent_bind_failed", bindErr)
 			return
 		}
 		resp.Warnings = warnings

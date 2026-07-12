@@ -73,12 +73,12 @@ func (h *adminMigrationsHandler) testConnection(c *gin.Context) {
 		cli := wordpressplugin.New(site, token, allowPrivate)
 		ping, err := cli.PingInfo(ctx)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "handshake_failed", "detail": err.Error()})
+			respondAgentErr(c, "handshake_failed", err)
 			return
 		}
 		facts, err := cli.Manifest(ctx)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "manifest_failed", "detail": err.Error()})
+			respondAgentErr(c, "manifest_failed", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true, "kind": "wordpress_plugin", "panel": "WordPress",
@@ -90,7 +90,7 @@ func (h *adminMigrationsHandler) testConnection(c *gin.Context) {
 	case models.MigrationSourceWordPressSSH:
 		sess, err := wordpressssh.Connect(ctx, job.SourceHost, 0, sshUserOrRoot(job.SourceUser), secret, allowPrivate)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+			respondAgentErr(c, "connect_failed", err)
 			return
 		}
 		defer sess.Close()
@@ -100,7 +100,7 @@ func (h *adminMigrationsHandler) testConnection(c *gin.Context) {
 		}
 		facts, err := wordpressssh.DiscoverWordPress(ctx, sess, hint)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "discover_failed", "detail": err.Error()})
+			respondAgentErr(c, "discover_failed", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true, "kind": "wordpress_ssh", "panel": "WordPress",
@@ -117,13 +117,13 @@ func (h *adminMigrationsHandler) testConnection(c *gin.Context) {
 	}
 	sess, err := d.Connect(ctx, job.SourceHost, sshUserOrRoot(job.SourceUser), secret)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+		respondAgentErr(c, "connect_failed", err)
 		return
 	}
 	defer func() { _ = d.Close(ctx, sess) }()
 	accts, err := d.ListAccounts(ctx, sess)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "list_failed", "detail": err.Error()})
+		respondAgentErr(c, "list_failed", err)
 		return
 	}
 	var domains int
@@ -185,13 +185,13 @@ func (h *adminMigrationsHandler) describeAccount(c *gin.Context) {
 	secret := migrate.SecretRef{Path: filepath.Join(migrate.SecretsDir, job.ID+".env")}
 	sess, err := d.Connect(ctx, job.SourceHost, sshUserOrRoot(job.SourceUser), secret)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+		respondAgentErr(c, "connect_failed", err)
 		return
 	}
 	defer func() { _ = d.Close(ctx, sess) }()
 	m, err := d.DescribeAccount(ctx, sess, strings.TrimSpace(req.SourceUser))
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "describe_failed", "detail": err.Error()})
+		respondAgentErr(c, "describe_failed", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

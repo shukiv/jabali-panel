@@ -350,7 +350,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		}); acErr != nil {
 			rollbackPanelRows()
 			slog.ErrorContext(ctx, "wordpress create: agent db.create", "err", acErr, "db_name", dbName)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			respondAgentErr(c, "agent_failed", acErr)
 			return
 		}
 
@@ -362,7 +362,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": dbName})
 			rollbackPanelRows()
 			slog.ErrorContext(ctx, "wordpress create: agent db_user.create", "err", acErr, "db_user", dbUsername)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			respondAgentErr(c, "agent_failed", acErr)
 			return
 		}
 
@@ -376,7 +376,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": dbName})
 			rollbackPanelRows()
 			slog.ErrorContext(ctx, "wordpress create: agent db_user.grant", "err", acErr)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			respondAgentErr(c, "agent_failed", acErr)
 			return
 		}
 	}
@@ -735,7 +735,7 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 	case errors.Is(err, errCloneUserNotProvisioned):
 		c.JSON(http.StatusConflict, gin.H{"error": "user_not_provisioned"})
 	case errors.As(err, &agentErr):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": agentErr.detail})
+		respondAgentErr(c, "agent_failed", agentErr)
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 	}

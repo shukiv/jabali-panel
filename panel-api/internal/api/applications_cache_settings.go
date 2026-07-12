@@ -263,7 +263,7 @@ func (h *wordPressHandler) cacheStats(c *gin.Context) {
 		"os_user": osUser, "install_path": installPath,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "detail": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var stats map[string]any
@@ -359,7 +359,7 @@ func (h *wordPressHandler) cacheAdvise(c *gin.Context) {
 		"os_user": osUser, "install_path": installPath, "host": dom.Name,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "detail": err.Error()})
+		respondAgentErr(c, "agent_error", err)
 		return
 	}
 	var probe struct {

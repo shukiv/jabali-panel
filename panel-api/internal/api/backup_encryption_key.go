@@ -38,7 +38,7 @@ func (h *backupEncryptionKeyHandler) reveal(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, "backup.repo.password.read", map[string]any{})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call", "detail": err.Error()})
+		respondAgentErrStatus(c, "agent_call", err)
 		return
 	}
 	var resp struct {
