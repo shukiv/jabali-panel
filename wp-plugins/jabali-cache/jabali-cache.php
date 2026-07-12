@@ -213,7 +213,11 @@ function jabali_cache_purge_pages() {
  * @param int $post_id
  */
 function jabali_cache_purge_post( $post_id ) {
-	jabali_cache_purge_redis();
+	// JAB-91: build the affected paths first (home + the post permalink), then
+	// purge ONLY those from the Redis page cache — a single post edit must not
+	// discard the whole site's warm cache. Whole-site Redis purge stays for
+	// site-wide changes (jabali_cache_purge_pages via theme/customize/option
+	// hooks). The nginx purge was already path-targeted.
 	$paths = array( '/' );
 	$link  = get_permalink( (int) $post_id );
 	if ( $link ) {
@@ -222,7 +226,23 @@ function jabali_cache_purge_post( $post_id ) {
 			$paths[] = $p;
 		}
 	}
+	jabali_cache_purge_redis_paths( $paths );
 	jabali_cache_purge_nginx( $paths );
+}
+
+/**
+ * Targeted Redis page-cache purge for specific URL paths (JAB-91). No-op when
+ * the optional Redis page cache is off.
+ *
+ * @param array<int,string> $paths
+ */
+function jabali_cache_purge_redis_paths( array $paths ) {
+	$cfg = Jabali_Cache_Config::load();
+	if ( empty( $cfg['page_cache'] ) || ! class_exists( 'Jabali_Cache_Page_Cache' ) ) {
+		return;
+	}
+	$pc = new Jabali_Cache_Page_Cache();
+	$pc->purge_paths( $paths );
 }
 
 /**
