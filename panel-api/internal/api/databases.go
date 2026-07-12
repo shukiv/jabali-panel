@@ -494,8 +494,11 @@ func (h *databaseHandler) backup(c *gin.Context) {
 	}
 	defer f.Close()
 
-	// Set response headers for download
-	c.Header("Content-Disposition", "attachment; filename=\""+d.Name+"-"+time.Now().Format("20060102-150405")+".sql\"")
+	// Set response headers for download. JAB-108: d.Name is a user-chosen
+	// database name — route it through the RFC 6266 escaper so it can't
+	// break out of the quoted filename value.
+	dumpName := d.Name + "-" + time.Now().Format("20060102-150405") + ".sql"
+	c.Header("Content-Disposition", contentDisposition("attachment", dumpName))
 	c.Header("Content-Type", "application/sql")
 	c.Header("Content-Length", fmt.Sprintf("%d", resp.SizeBytes))
 

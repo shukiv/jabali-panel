@@ -586,10 +586,15 @@ func (h *filesHandler) download(c *gin.Context) {
 	// downloads as an attachment.
 	inline := (strings.HasPrefix(ct, "image/") && !strings.Contains(ct, "svg")) ||
 		ct == "application/pdf"
-	disposition := `attachment; filename="` + filename + `"`
+	// JAB-108: filename is user-controlled (tenants can create files named
+	// with `"` / `;` / control chars over SFTP). Emit an RFC 6266-escaped
+	// header so the name can't break out of the quoted value and spoof the
+	// browser's save-as name.
+	dispType := "attachment"
 	if inline {
-		disposition = `inline; filename="` + filename + `"`
+		dispType = "inline"
 	}
+	disposition := contentDisposition(dispType, filename)
 
 	c.Header("Content-Type", ct)
 	c.Header("Content-Disposition", disposition)
