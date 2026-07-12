@@ -46,6 +46,24 @@ class Jabali_Cache_Page_Cache {
 	/** @var bool */
 	private $store = false;
 
+	/** @var string request hash (the tail of $key), reused for the lock key. */
+	private $hash = '';
+
+	/** @var bool true when this request holds the single-flight regen lock. */
+	private $holds_lock = false;
+
+	/**
+	 * Stampede protection (JAB-90). A stored page carries an `expires_at`
+	 * freshness boundary but the Redis key lives STALE_WINDOW seconds longer, so
+	 * a stale copy can be served while exactly one request (the regen-lock
+	 * winner) regenerates. LOCK_TTL bounds the lock for crash safety;
+	 * TTL_JITTER_PCT spreads expiries so a warmup batch doesn't all expire on the
+	 * same second.
+	 */
+	const STALE_WINDOW   = 30;
+	const LOCK_TTL       = 20;
+	const TTL_JITTER_PCT = 10;
+
 	public function __construct() {
 		$this->cfg    = Jabali_Cache_Config::load();
 		$this->ttl    = max( 1, (int) $this->cfg['page_ttl'] );
@@ -67,20 +85,103 @@ class Jabali_Cache_Page_Cache {
 			return;
 		}
 
-		$this->key = $this->cfg['prefix'] . 'page:' . $this->request_hash();
+		$this->hash = $this->request_hash();
+		$this->key  = $this->cfg['prefix'] . 'page:' . $this->hash;
 
-		$raw = $this->client->get( $this->key );
-		if ( false !== $raw ) {
-			$payload = @unserialize( $raw, array( 'allowed_classes' => false ) ); // phpcs:ignore
-			if ( is_array( $payload ) && isset( $payload['body'] ) ) {
-				$this->serve( $payload );
-				// serve() exits.
+		$payload = $this->read_payload( $this->client->get( $this->key ) );
+		if ( null !== $payload ) {
+			if ( $this->payload_is_fresh( $payload ) ) {
+				$this->serve( $payload ); // fresh HIT — serve() exits.
 			}
+			// Stale but present (within STALE_WINDOW). Single-flight: the lock
+			// winner regenerates; everyone else serves the stale copy so only ONE
+			// request hits PHP/MySQL. Lock failure just means we serve stale.
+			if ( $this->acquire_regen_lock() ) {
+				$this->store = true;
+				ob_start( array( $this, 'on_flush' ) );
+				return;
+			}
+			$this->serve( $payload, 'STALE' ); // serve() exits.
 		}
 
-		// Miss: capture the generated page.
+		// Hard miss (no copy at all). Try to be the single generator.
+		if ( $this->acquire_regen_lock() ) {
+			$this->store = true;
+			ob_start( array( $this, 'on_flush' ) );
+			return;
+		}
+		// Another request holds the lock but there's no stale copy yet: wait a
+		// small bounded time and retry once (it may have just stored), else fall
+		// through and render normally (rare cold-start race — correctness over a
+		// perfect single-flight here).
+		usleep( 50000 ); // 50ms.
+		$payload = $this->read_payload( $this->client->get( $this->key ) );
+		if ( null !== $payload && $this->payload_is_fresh( $payload ) ) {
+			$this->serve( $payload ); // serve() exits.
+		}
 		$this->store = true;
 		ob_start( array( $this, 'on_flush' ) );
+	}
+
+	/**
+	 * Decode a stored page payload, or null when absent/corrupt.
+	 *
+	 * @param string|false $raw
+	 * @return array<string,mixed>|null
+	 */
+	private function read_payload( $raw ) {
+		if ( false === $raw ) {
+			return null;
+		}
+		$payload = @unserialize( $raw, array( 'allowed_classes' => false ) ); // phpcs:ignore
+		return ( is_array( $payload ) && isset( $payload['body'] ) ) ? $payload : null;
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 * @return bool true while the copy is within its (jittered) freshness window.
+	 */
+	private function payload_is_fresh( array $payload ) {
+		$expires = isset( $payload['expires_at'] ) ? (int) $payload['expires_at'] : 0;
+		// Legacy payloads without expires_at (pre-JAB-90) are treated as fresh —
+		// they'll be rewritten with the new field on their next regeneration.
+		return 0 === $expires || time() < $expires;
+	}
+
+	/** @return string the per-page regen lock key. */
+	private function lock_key() {
+		return $this->cfg['prefix'] . 'lock:page:' . $this->hash;
+	}
+
+	/** @return bool whether this request won the single-flight regen lock. */
+	private function acquire_regen_lock() {
+		// SET NX EX — client->add() is exactly that. Failure (e.g. Redis blip)
+		// returns false and the caller degrades to normal render / stale serve.
+		$this->holds_lock = (bool) $this->client->add( $this->lock_key(), '1', self::LOCK_TTL );
+		return $this->holds_lock;
+	}
+
+	/** Best-effort lock release; the LOCK_TTL is the crash-safety backstop. */
+	private function release_regen_lock() {
+		if ( $this->holds_lock ) {
+			$this->client->del( $this->lock_key() );
+			$this->holds_lock = false;
+		}
+	}
+
+	/**
+	 * Page TTL with ±TTL_JITTER_PCT jitter so a warmup batch of pages doesn't all
+	 * expire on the same second (which would itself cause a mini-stampede).
+	 *
+	 * @return int
+	 */
+	private function jittered_ttl() {
+		$base = $this->ttl;
+		$span = (int) round( $base * self::TTL_JITTER_PCT / 100 );
+		if ( $span < 1 ) {
+			return max( 1, $base );
+		}
+		return max( 1, $base + mt_rand( -$span, $span ) );
 	}
 
 	/**
@@ -103,14 +204,20 @@ class Jabali_Cache_Page_Cache {
 			return $body;
 		}
 
-		$payload = array(
-			'body'    => $body,
-			'type'    => $this->detect_content_type(),
-			'created' => time(),
-			'gen'     => defined( 'JABALI_CACHE_VERSION' ) ? JABALI_CACHE_VERSION : '1',
+		// JAB-90: freshness window is jittered; the Redis key lives STALE_WINDOW
+		// seconds beyond that so a stale copy can be served during regeneration.
+		$fresh_ttl = $this->jittered_ttl();
+		$payload   = array(
+			'body'       => $body,
+			'type'       => $this->detect_content_type(),
+			'created'    => time(),
+			'expires_at' => time() + $fresh_ttl,
+			'gen'        => defined( 'JABALI_CACHE_VERSION' ) ? JABALI_CACHE_VERSION : '1',
 		);
 		// Best-effort store; failure just means no caching this time.
-		$this->client->set( $this->key, serialize( $payload ), $this->ttl ); // phpcs:ignore
+		$this->client->set( $this->key, serialize( $payload ), $fresh_ttl + self::STALE_WINDOW ); // phpcs:ignore
+		// Release the single-flight lock now that the fresh copy is in place.
+		$this->release_regen_lock();
 		return $body;
 	}
 
@@ -403,12 +510,12 @@ class Jabali_Cache_Page_Cache {
 	/**
 	 * @param array<string,mixed> $payload
 	 */
-	private function serve( array $payload ) {
+	private function serve( array $payload, $status = 'HIT' ) {
 		$type = isset( $payload['type'] ) ? $payload['type'] : 'text/html; charset=UTF-8';
 		$age  = isset( $payload['created'] ) ? max( 0, time() - (int) $payload['created'] ) : 0;
 		if ( ! headers_sent() ) {
 			header( 'Content-Type: ' . $type );
-			header( 'X-Jabali-Cache: HIT' );
+			header( 'X-Jabali-Cache: ' . $status ); // HIT (fresh) | STALE (served during regen).
 			header( 'X-Jabali-Cache-Age: ' . $age );
 		}
 		echo $payload['body']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped

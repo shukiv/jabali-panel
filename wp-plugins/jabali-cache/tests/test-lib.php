@@ -211,5 +211,32 @@ jc_assert( 4 === count( $k2 ), 'purge_paths: two distinct paths -> 4 keys, dupes
 $k_empty = $pc->keys_for_paths( array( '', '?only-query' ), 'http', 'example.com' );
 jc_assert( 0 === count( $k_empty ), 'purge_paths: empty / query-only paths produce no keys' );
 
+// ---------------------------------------------------------------------------
+// Stampede protection helpers (JAB-90) — freshness + TTL jitter (pure logic;
+// the single-flight/stale-serve path needs a live Redis + concurrency).
+// ---------------------------------------------------------------------------
+echo "Page-cache stampede protection (JAB-90):\n";
+$refl  = new ReflectionClass( $pc );
+$jt    = $refl->getMethod( 'jittered_ttl' );
+$fresh = $refl->getMethod( 'payload_is_fresh' );
+$jt->setAccessible( true );
+$fresh->setAccessible( true );
+
+// jittered_ttl stays within +-TTL_JITTER_PCT of the base page TTL (300) and varies.
+$min = PHP_INT_MAX;
+$max = 0;
+for ( $i = 0; $i < 300; $i++ ) {
+	$v   = (int) $jt->invoke( $pc );
+	$min = min( $min, $v );
+	$max = max( $max, $v );
+}
+jc_assert( $min >= 270 && $max <= 330, "stampede: jittered TTL within +-10% of 300 (got {$min}..{$max})" );
+jc_assert( $min < $max, 'stampede: jittered TTL actually varies across draws' );
+
+// Freshness boundary.
+jc_assert( true === $fresh->invoke( $pc, array( 'expires_at' => time() + 60 ) ), 'stampede: future expires_at is fresh' );
+jc_assert( false === $fresh->invoke( $pc, array( 'expires_at' => time() - 5 ) ), 'stampede: past expires_at is stale' );
+jc_assert( true === $fresh->invoke( $pc, array() ), 'stampede: legacy payload (no expires_at) is treated fresh' );
+
 echo "\n{$tests} checks, {$failed} failed\n";
 exit( $failed > 0 ? 1 : 0 );
