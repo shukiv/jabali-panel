@@ -26,6 +26,12 @@ function jc_assert( $cond, $msg ) {
 	}
 }
 
+// lib.php guards direct access with `defined( 'ABSPATH' ) || exit;`. Define a
+// dummy so the standalone harness can require it without WordPress loaded.
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+
 require __DIR__ . '/../includes/lib.php';
 
 // ---------------------------------------------------------------------------
@@ -118,6 +124,51 @@ if ( $live ) {
 } else {
 	echo "Client (live): SKIP (set JABALI_TEST_REDIS=/run/redis/redis.sock to enable)\n";
 }
+
+// ---------------------------------------------------------------------------
+// Circuit breaker (JAB-89): a Redis outage must fail fast across requests.
+// Define a temp WP_CONTENT_DIR so the file-fallback store persists across
+// client instances (APCu is usually disabled in CLI).
+// ---------------------------------------------------------------------------
+echo "Circuit breaker (JAB-89):\n";
+$cb_root = sys_get_temp_dir() . '/jc-cb-test-' . getmypid();
+@mkdir( $cb_root, 0755, true );
+if ( ! defined( 'WP_CONTENT_DIR' ) ) {
+	define( 'WP_CONTENT_DIR', $cb_root );
+}
+$cb_cfg = array_merge(
+	$cfg,
+	array( 'scheme' => 'unix', 'socket' => '/nonexistent/jc-cb.sock', 'timeout' => 0.2 )
+);
+
+// First client: connect to a dead socket fails → breaker trips.
+$cb1 = new Jabali_Cache_Client( $cb_cfg );
+jc_assert( false === $cb1->connect(), 'breaker: first connect to a dead socket fails' );
+jc_assert( $cb1->circuit_open_until() > time(), 'breaker: circuit is open after the failure' );
+jc_assert(
+	$cb1->circuit_open_until() <= time() + Jabali_Cache_Client::CIRCUIT_TTL_BASE + Jabali_Cache_Client::CIRCUIT_TTL_JITTER,
+	'breaker: open window is within the TTL bounds'
+);
+
+// Second client (same target): breaker open → fail fast with the breaker error.
+$cb2 = new Jabali_Cache_Client( $cb_cfg );
+jc_assert( false === $cb2->connect(), 'breaker: second connect fails while open' );
+jc_assert( false !== strpos( $cb2->last_error(), 'circuit breaker open' ), 'breaker: fail-fast error names the breaker' );
+
+// force_probe() bypasses the breaker → real connect attempt (still fails on a
+// dead socket, but the error is the real one, not the breaker short-circuit).
+$cb3 = ( new Jabali_Cache_Client( $cb_cfg ) )->force_probe();
+jc_assert( false === $cb3->connect(), 'breaker: force_probe still fails on a dead socket' );
+jc_assert( false === strpos( $cb3->last_error(), 'circuit breaker open' ), 'breaker: force_probe bypasses the breaker' );
+
+// Cleanup temp breaker artifacts.
+$cb_glob = glob( $cb_root . '/cache/jabali-cache/*' );
+if ( is_array( $cb_glob ) ) {
+	array_map( 'unlink', $cb_glob );
+}
+@rmdir( $cb_root . '/cache/jabali-cache' );
+@rmdir( $cb_root . '/cache' );
+@rmdir( $cb_root );
 
 echo "\n{$tests} checks, {$failed} failed\n";
 exit( $failed > 0 ? 1 : 0 );
