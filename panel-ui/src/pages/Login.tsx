@@ -206,7 +206,15 @@ export const LoginPage = () => {
             <img
               src={logoSrc}
               alt="Jabali"
-              style={{ height: 64, width: "auto" }}
+              // Prominent brand mark: scales with the viewport but is
+              // capped so it never crowds the card or pushes fields below
+              // the fold on small laptop/mobile screens. SVG keeps it crisp
+              // on high-DPI displays at any size.
+              style={{
+                height: "clamp(96px, 16vw, 132px)",
+                width: "auto",
+                maxWidth: "100%",
+              }}
             />
             <Typography.Title level={2} style={{ margin: 0 }}>
               Jabali Panel
