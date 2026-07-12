@@ -21,6 +21,17 @@ Slice=jabali.slice
 # signatures) live as JMAP objects in Stalwart's registry, provisioned
 # via `stalwart-cli apply` at bootstrap time.
 EnvironmentFile=-/etc/jabali-panel/stalwart.env
+
+# Redirect Stalwart's temp dir into its writable data volume. Stalwart unpacks
+# downloaded application bundles — the WebAdmin SPA served at /admin (opt-in via
+# Server Settings → Stalwart WebAdmin), plus periodically-refreshed resources —
+# into the system temp dir by default. Under ProtectSystem=strict that default
+# path is read-only to the sandbox, so the unpack failed with "Permission denied
+# (os error 13) — Failed to unpack application bundle" and /admin returned 404
+# (no AppArmor denial: it's the mount-namespace, not AA). Pointing TMPDIR at a
+# pre-created dir inside ReadWritePaths lets the unpack land. Verified on .86.
+Environment=TMPDIR=/var/lib/stalwart/tmp
+ExecStartPre=/usr/bin/mkdir -p /var/lib/stalwart/tmp
 ExecStart=/usr/local/bin/stalwart --config=/etc/stalwart/config.json
 
 Restart=on-failure
