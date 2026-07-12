@@ -40,6 +40,7 @@ func newDomainCmd() *cobra.Command {
 	cmd.AddCommand(domainExtraSubcommands()...)
 	// GH #329 per-domain PHP version (domain_php_version_cmd.go).
 	cmd.AddCommand(domainPHPVersionSubcommands()...)
+	cmd.AddCommand(domainPHPSettingsSubcommands()...)
 	return cmd
 }
 
