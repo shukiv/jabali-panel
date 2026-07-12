@@ -1981,6 +1981,39 @@ jabali domain mta-sts <domain-name|domain-id> [flags]
 - `--disable` — disable MTA-STS
 - `--enable` — enable MTA-STS
 
+#### `jabali domain php-settings`
+
+Get/set a domain's php.ini directives (JAB-129)
+
+```
+jabali domain php-settings
+```
+
+##### `jabali domain php-settings get`
+
+Show a domain's php.ini directives
+
+```
+jabali domain php-settings get <domain-name-or-id>
+```
+
+##### `jabali domain php-settings set`
+
+Set php.ini directives (only the flags you pass change; reconciler converges)
+
+```
+jabali domain php-settings set <domain-name-or-id> [flags]
+```
+
+**Flags:**
+
+- `--max-execution-time` — max_execution_time seconds (1..86400) (default `0`)
+- `--max-input-time` — max_input_time seconds (1..86400) (default `0`)
+- `--max-input-vars` — max_input_vars (1..86400) (default `0`)
+- `--memory-limit` — memory_limit (e.g. 256M)
+- `--post-max-size` — post_max_size (e.g. 64M)
+- `--upload-max-filesize` — upload_max_filesize (e.g. 64M)
+
 #### `jabali domain php-version`
 
 Manage a domain's PHP version (per-domain FPM pool, GH #329)
