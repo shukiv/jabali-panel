@@ -97,11 +97,14 @@ import type { UploadDrawerHandle } from "./UploadDrawer";
 // the bundled monaco-editor module to loader.config so no network
 // fetch happens; the chunk lives inside our own vite-built bundle.
 const Editor = lazy(async () => {
-  const [{ loader }, monaco, EditorWorker] = await Promise.all([
+  const [{ loader }, monacoMod, EditorWorker] = await Promise.all([
     import("@monaco-editor/react"),
-    import("monaco-editor"),
+    // JAB-146: slim Monaco (editor core + basic-language grammars only) —
+    // drops the multi-MB ts.worker / css / html / json language services.
+    import("./monacoSlim"),
     import("monaco-editor/esm/vs/editor/editor.worker?worker"),
   ]);
+  const monaco = monacoMod.default;
   // Monaco resolves language workers via self.MonacoEnvironment. We
   // only need the base editor worker for plain-text editing of
   // wp-config.php / .htaccess / etc.; JSON / CSS / HTML / TS
