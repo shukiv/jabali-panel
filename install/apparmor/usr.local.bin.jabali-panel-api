@@ -203,6 +203,17 @@ profile jabali-panel flags=(attach_disconnected) {
   # runs as root/unconfined and reads it without a rule here.
   /var/lib/jabali-uploads/     rw,
   /var/lib/jabali-uploads/**   rwk,
+  # Offline migration tarball staging. uploadTarball (POST
+  # /admin/migrations/:id/tarball) runs in the daemon and does MkdirAll
+  # + OpenFile under /var/lib/jabali-migrations/<id>/ (admin_migrations.go).
+  # Same layer split as the upload staging above (GH #355): the dir is
+  # jabali-owned 0750 and in ReadWritePaths, but without a profile rule
+  # the offline cPanel/HestiaCP tarball upload EACCESes once the profile
+  # is in enforce. (The migration-secrets dir is root-owned and written
+  # by the root agent, so it stays read-only here — covered by
+  # /etc/jabali-panel/** r above.)
+  /var/lib/jabali-migrations/     rw,
+  /var/lib/jabali-migrations/**   rwk,
   /var/log/jabali-panel/       rw,
   /var/log/jabali-panel/**     rwk,
 
