@@ -193,6 +193,16 @@ profile jabali-panel flags=(attach_disconnected) {
 
   /var/lib/jabali-panel/       rw,
   /var/lib/jabali-panel/**     rwk,
+  # GH #355: file-manager upload staging. panel-api writes the incoming
+  # upload to /var/lib/jabali-uploads/jabali-upload-* before the agent's
+  # files.ingest moves it into the tenant home (both units share this
+  # path — see files.go). The dir is in the unit's ReadWritePaths and is
+  # owned by the jabali user 0750, but under enforce mode AppArmor also
+  # needs an explicit rule or the open() EACCESes ("permission denied"
+  # on every upload once the profile matures out of complain). The agent
+  # runs as root/unconfined and reads it without a rule here.
+  /var/lib/jabali-uploads/     rw,
+  /var/lib/jabali-uploads/**   rwk,
   /var/log/jabali-panel/       rw,
   /var/log/jabali-panel/**     rwk,
 
