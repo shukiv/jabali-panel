@@ -22,7 +22,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { App as AntdApp, ConfigProvider, Empty, Spin } from "antd";
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { RequireAdmin } from "./auth/RequireAdmin";
@@ -33,64 +33,69 @@ import { AdminLayout } from "./shells/AdminLayout";
 import { UserLayout } from "./shells/UserLayout";
 import { LandingRedirect } from "./shells/LandingRedirect";
 import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
-import { Dashboard } from "./shells/admin/Dashboard";
-import { UserList } from "./shells/admin/users/UserList";
-import { AdminUserOverview } from "./shells/admin/users/AdminUserOverview";
-import { AdminIPList } from "./shells/admin/ips/AdminIPList";
-import { AdminMailPage } from "./shells/admin/mail/AdminMailPage";
-import { AdminAuditList } from "./shells/admin/audit/AdminAuditList";
-import { NotificationsTabsPage } from "./shells/admin/notifications/NotificationsTabsPage";
 import { useApplyBrandingToTitle, useBranding } from "./hooks/useBranding";
 import { PANEL_COLORS } from "./lib/panelColors";
-import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
-import { ServerStatusPage } from "./shells/admin/server-status/ServerStatusPage";
-import { CacheOverviewPage } from "./shells/admin/cache/CacheOverviewPage";
-import { MailDeliverabilityPage } from "./shells/admin/mail/MailDeliverabilityPage";
-import { MailThrottlesPage } from "./shells/admin/mail/MailThrottlesPage";
-import { SystemUpdatesPage } from "./shells/admin/updates/SystemUpdatesPage";
-import { SupportPage } from "./shells/admin/support/SupportPage";
-import { AdminAutomationTokensPage } from "./shells/admin/automation/AdminAutomationTokensPage";
-import { AdminMigrationsPage } from "./shells/admin/migrations/AdminMigrationsPage";
-import { AdminMigrationDetailPage } from "./shells/admin/migrations/AdminMigrationDetailPage";
-import { AdminBackupsPage } from "./shells/admin/backups/AdminBackupsPage";
-import { PackageCreate } from "./shells/admin/packages/PackageCreate";
-import { PackageEdit } from "./shells/admin/packages/PackageEdit";
-import { PackageList } from "./shells/admin/packages/PackageList";
-import { DomainCreate } from "./shells/admin/domains/DomainCreate";
-import { DomainEdit } from "./shells/admin/domains/DomainEdit";
-import { DomainList } from "./shells/admin/domains/DomainList";
-import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
-import { AdminTerminal } from "./shells/admin/terminal/AdminTerminal";
-import { MyProfile } from "./shells/user/MyProfile";
-import { UserDashboard } from "./shells/user/UserDashboard";
-import { FileManagerPage } from "./shells/user/files/FileManagerPage";
-import { UserDomainList } from "./shells/user/domains/UserDomainList";
-import { UserDatabasesPage } from "./shells/user/databases/UserDatabasesPage";
-import { DNSRecordsPage } from "./shells/dns/DNSRecordsPage";
-import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
-import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverviewPage";
-import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
-import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
-import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
-import { UserApplicationList } from "./shells/user/applications/UserApplicationList";
-import { DiskUsagePage } from "./shells/user/disk-usage/DiskUsagePage";
 import { CapabilityRoute } from "./components/CapabilityRoute";
-import { PythonAppsPage } from "./shells/user/python-apps/PythonAppsPage";
-import { UserDockerAppsPage } from "./shells/user/docker-apps/UserDockerAppsPage";
-import { UserBackupsPage } from "./shells/user/backups/UserBackupsPage";
-import { UserLogsPage } from "./shells/user/logs/UserLogsPage";
-import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
-import { UserAPITokensPage } from "./shells/user/api-tokens/UserAPITokensPage";
-import { APIDocsPage } from "./shells/shared/APIDocsPage";
-import { UserCronList } from "./shells/user/cron/UserCronList";
-import { AdminCronList } from "./shells/admin/cron/AdminCronList";
-import { MailTabsPage } from "./shells/user/mail/MailTabsPage";
-import { AdminApplicationList } from "./shells/admin/applications/AdminApplicationList";
-import { AdminDockerAppsPage } from "./shells/admin/docker-apps/AdminDockerAppsPage";
-import { LogsPage } from "./shells/admin/logs/LogsPage";
-import { PHPVersionsPage } from "./shells/admin/php/PHPVersionsPage";
-import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
+
+// JAB-145: route-level code splitting — each page is its own lazy chunk
+// so the initial bundle no longer eagerly pulls all ~55 pages. Layouts,
+// guards, and the public LoginPage stay eager (needed on first paint).
+const Dashboard = lazy(() => import("./shells/admin/Dashboard").then((m) => ({ default: m.Dashboard })));
+const UserList = lazy(() => import("./shells/admin/users/UserList").then((m) => ({ default: m.UserList })));
+const AdminUserOverview = lazy(() => import("./shells/admin/users/AdminUserOverview").then((m) => ({ default: m.AdminUserOverview })));
+const AdminIPList = lazy(() => import("./shells/admin/ips/AdminIPList").then((m) => ({ default: m.AdminIPList })));
+const AdminMailPage = lazy(() => import("./shells/admin/mail/AdminMailPage").then((m) => ({ default: m.AdminMailPage })));
+const AdminAuditList = lazy(() => import("./shells/admin/audit/AdminAuditList").then((m) => ({ default: m.AdminAuditList })));
+const NotificationsTabsPage = lazy(() => import("./shells/admin/notifications/NotificationsTabsPage").then((m) => ({ default: m.NotificationsTabsPage })));
+const AdminSecurityPage = lazy(() => import("./shells/admin/security/AdminSecurityPage").then((m) => ({ default: m.AdminSecurityPage })));
+const ServerStatusPage = lazy(() => import("./shells/admin/server-status/ServerStatusPage").then((m) => ({ default: m.ServerStatusPage })));
+const CacheOverviewPage = lazy(() => import("./shells/admin/cache/CacheOverviewPage").then((m) => ({ default: m.CacheOverviewPage })));
+const MailDeliverabilityPage = lazy(() => import("./shells/admin/mail/MailDeliverabilityPage").then((m) => ({ default: m.MailDeliverabilityPage })));
+const MailThrottlesPage = lazy(() => import("./shells/admin/mail/MailThrottlesPage").then((m) => ({ default: m.MailThrottlesPage })));
+const SystemUpdatesPage = lazy(() => import("./shells/admin/updates/SystemUpdatesPage").then((m) => ({ default: m.SystemUpdatesPage })));
+const SupportPage = lazy(() => import("./shells/admin/support/SupportPage").then((m) => ({ default: m.SupportPage })));
+const AdminAutomationTokensPage = lazy(() => import("./shells/admin/automation/AdminAutomationTokensPage").then((m) => ({ default: m.AdminAutomationTokensPage })));
+const AdminMigrationsPage = lazy(() => import("./shells/admin/migrations/AdminMigrationsPage").then((m) => ({ default: m.AdminMigrationsPage })));
+const AdminMigrationDetailPage = lazy(() => import("./shells/admin/migrations/AdminMigrationDetailPage").then((m) => ({ default: m.AdminMigrationDetailPage })));
+const AdminBackupsPage = lazy(() => import("./shells/admin/backups/AdminBackupsPage").then((m) => ({ default: m.AdminBackupsPage })));
+const PackageCreate = lazy(() => import("./shells/admin/packages/PackageCreate").then((m) => ({ default: m.PackageCreate })));
+const PackageEdit = lazy(() => import("./shells/admin/packages/PackageEdit").then((m) => ({ default: m.PackageEdit })));
+const PackageList = lazy(() => import("./shells/admin/packages/PackageList").then((m) => ({ default: m.PackageList })));
+const DomainCreate = lazy(() => import("./shells/admin/domains/DomainCreate").then((m) => ({ default: m.DomainCreate })));
+const DomainEdit = lazy(() => import("./shells/admin/domains/DomainEdit").then((m) => ({ default: m.DomainEdit })));
+const DomainList = lazy(() => import("./shells/admin/domains/DomainList").then((m) => ({ default: m.DomainList })));
+const ServerSettingsPage = lazy(() => import("./shells/admin/settings/ServerSettingsPage").then((m) => ({ default: m.ServerSettingsPage })));
+const AdminTerminal = lazy(() => import("./shells/admin/terminal/AdminTerminal").then((m) => ({ default: m.AdminTerminal })));
+const MyProfile = lazy(() => import("./shells/user/MyProfile").then((m) => ({ default: m.MyProfile })));
+const UserDashboard = lazy(() => import("./shells/user/UserDashboard").then((m) => ({ default: m.UserDashboard })));
+const FileManagerPage = lazy(() => import("./shells/user/files/FileManagerPage").then((m) => ({ default: m.FileManagerPage })));
+const UserDomainList = lazy(() => import("./shells/user/domains/UserDomainList").then((m) => ({ default: m.UserDomainList })));
+const UserDatabasesPage = lazy(() => import("./shells/user/databases/UserDatabasesPage").then((m) => ({ default: m.UserDatabasesPage })));
+const DNSRecordsPage = lazy(() => import("./shells/dns/DNSRecordsPage").then((m) => ({ default: m.DNSRecordsPage })));
+const DNSZonesOverviewPage = lazy(() => import("./shells/admin/dns/DNSZonesOverviewPage").then((m) => ({ default: m.DNSZonesOverviewPage })));
+const UserDNSZonesOverviewPage = lazy(() => import("./shells/user/dns/UserDNSZonesOverviewPage").then((m) => ({ default: m.UserDNSZonesOverviewPage })));
+const SSLManagerPage = lazy(() => import("./shells/admin/ssl/SSLManagerPage").then((m) => ({ default: m.SSLManagerPage })));
+const UserSSLManagerPage = lazy(() => import("./shells/user/ssl/UserSSLManagerPage").then((m) => ({ default: m.UserSSLManagerPage })));
+const UserPHPSettingsPage = lazy(() => import("./shells/user/php-settings/UserPHPSettingsPage").then((m) => ({ default: m.UserPHPSettingsPage })));
+const UserApplicationList = lazy(() => import("./shells/user/applications/UserApplicationList").then((m) => ({ default: m.UserApplicationList })));
+const DiskUsagePage = lazy(() => import("./shells/user/disk-usage/DiskUsagePage").then((m) => ({ default: m.DiskUsagePage })));
+const PythonAppsPage = lazy(() => import("./shells/user/python-apps/PythonAppsPage").then((m) => ({ default: m.PythonAppsPage })));
+const UserDockerAppsPage = lazy(() => import("./shells/user/docker-apps/UserDockerAppsPage").then((m) => ({ default: m.UserDockerAppsPage })));
+const UserBackupsPage = lazy(() => import("./shells/user/backups/UserBackupsPage").then((m) => ({ default: m.UserBackupsPage })));
+const UserLogsPage = lazy(() => import("./shells/user/logs/UserLogsPage").then((m) => ({ default: m.UserLogsPage })));
+const UserSSHKeysPage = lazy(() => import("./shells/user/ssh-keys/UserSSHKeysPage").then((m) => ({ default: m.UserSSHKeysPage })));
+const UserAPITokensPage = lazy(() => import("./shells/user/api-tokens/UserAPITokensPage").then((m) => ({ default: m.UserAPITokensPage })));
+const APIDocsPage = lazy(() => import("./shells/shared/APIDocsPage").then((m) => ({ default: m.APIDocsPage })));
+const UserCronList = lazy(() => import("./shells/user/cron/UserCronList").then((m) => ({ default: m.UserCronList })));
+const AdminCronList = lazy(() => import("./shells/admin/cron/AdminCronList").then((m) => ({ default: m.AdminCronList })));
+const MailTabsPage = lazy(() => import("./shells/user/mail/MailTabsPage").then((m) => ({ default: m.MailTabsPage })));
+const AdminApplicationList = lazy(() => import("./shells/admin/applications/AdminApplicationList").then((m) => ({ default: m.AdminApplicationList })));
+const AdminDockerAppsPage = lazy(() => import("./shells/admin/docker-apps/AdminDockerAppsPage").then((m) => ({ default: m.AdminDockerAppsPage })));
+const LogsPage = lazy(() => import("./shells/admin/logs/LogsPage").then((m) => ({ default: m.LogsPage })));
+const PHPVersionsPage = lazy(() => import("./shells/admin/php/PHPVersionsPage").then((m) => ({ default: m.PHPVersionsPage })));
+const PHPPoolEdit = lazy(() => import("./shells/admin/php-pools/PHPPoolEdit").then((m) => ({ default: m.PHPPoolEdit })));
+
 
 // If a logged-in user hits /login, bounce them to their shell home
 // instead of letting them see the form. Public routes use this — the
@@ -175,6 +180,20 @@ const ThemedApp = () => {
       >
         <AntdApp>
         <BrandingTitleApplier />
+        <Suspense
+          fallback={
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                minHeight: "60vh",
+              }}
+            >
+              <Spin size="large" />
+            </div>
+          }
+        >
         <Routes>
           {/* ---------------- admin shell ---------------- */}
           <Route
@@ -399,6 +418,7 @@ const ThemedApp = () => {
           <Route path="/" element={<LandingRedirect />} />
           <Route path="*" element={<LandingRedirect />} />
         </Routes>
+        </Suspense>
         </AntdApp>
       </ConfigProvider>
     </BrowserRouter>
