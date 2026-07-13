@@ -9394,23 +9394,42 @@ install_ufw() {
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
 
+  # GH #415: SSH port 22 is OPERATOR-DISCRETIONARY. It's allowed on the FIRST
+  # install (so a fresh host isn't locked out the moment default-deny activates,
+  # and tenant SFTP works out of the box), but must NEVER be re-asserted on
+  # `jabali update`. An operator who deliberately closed 22 (jump host, moved
+  # SSH, IP-restricted it) reported the update silently re-opening it — so on an
+  # already-active firewall we leave 22 exactly as the operator left it and only
+  # keep the panel/mail/DNS service ports in sync.
+  local ufw_was_active=0
+  if ufw status 2>/dev/null | grep -q '^Status: active'; then
+    ufw_was_active=1
+  fi
+  # Service ports the panel itself needs (always kept open). Port 22 is added
+  # only on first install.
+  local svc_ports=(80 443 8443 25 465 587 993 995 4190 53)
+  local manage_ports=("${svc_ports[@]}")
+  if [[ "$ufw_was_active" -eq 0 ]]; then
+    manage_ports=(22 "${svc_ports[@]}")
+  fi
+
   # Clean up legacy protocol-agnostic rules (e.g. "allow 8443" which
   # opens both TCP and UDP) that may exist from pre-N/tcp install.sh
   # runs. These create duplicate entries alongside the "allow N/tcp"
   # rules added below, unnecessarily opening UDP on TCP-only ports.
   # `ufw delete allow N` exits non-zero with "Could not delete
   # non-existent rule" if absent — silence the error; idempotent.
-  for port in 22 80 443 8443 25 465 587 993 995 4190 53; do
+  local port
+  for port in "${manage_ports[@]}"; do
     ufw delete allow "$port" >/dev/null 2>&1 || true
   done
 
-  # Allow-list: SSH, web (panel + nginx), mail (Stalwart), DNS (PowerDNS
+  # Allow-list: web (panel + nginx), mail (Stalwart), DNS (PowerDNS
   # authoritative, TCP for AXFR + large UDP responses, UDP for normal
-  # queries). MUST be in place BEFORE `ufw enable` runs in the same
-  # install — otherwise default-deny locks out SSH the moment the
-  # firewall activates.
-  local port
-  for port in 22 80 443 8443 25 465 587 993 995 4190 53; do
+  # queries), plus SSH on first install only. MUST be in place BEFORE
+  # `ufw enable` runs in the same install — otherwise default-deny locks
+  # out SSH the moment the firewall activates.
+  for port in "${manage_ports[@]}"; do
     # `ufw allow N/tcp` is idempotent — second invocation prints
     # "Skipping adding existing rule" but exits 0.
     ufw allow "${port}/tcp" >/dev/null
@@ -9436,19 +9455,25 @@ install_ufw() {
     _log "UFW already active — skipping enable (rules synced above)"
   fi
 
-  # Verify the allow-list landed and SSH is still in it. If SSH dropped
-  # off, the next reboot would lock the operator out — fail the install.
-  # Grep is lenient across UFW versions: rule line may render as
-  # "22/tcp ALLOW ...", "22 (v6) ALLOW ...", or "22 ALLOW ..." on Debian
-  # 13's ufw 0.36.x. Anchor on "ALLOW" and require a 22 token on the
-  # To-column rather than relying on a specific /tcp suffix.
-  if ! ufw status verbose 2>/dev/null \
-       | awk '/ALLOW/ && ($1 == "22" || $1 == "22/tcp" || $1 ~ /^22\/tcp/)' \
-       | grep -q .; then
-    ufw status verbose 2>&1 >&2 || true
-    _die "UFW allow rule for port 22 missing after install — refusing to leave operator at risk of SSH lockout (status dumped above)"
+  # Verify the allow-list landed and SSH is still in it — but ONLY on the first
+  # install, where we just added the 22 rule and default-deny is going live for
+  # the first time. On update (GH #415) the operator owns the SSH policy: if
+  # they intentionally closed 22 we must not die here, or `jabali update` would
+  # fail on exactly the hosts that tightened their firewall. Grep is lenient
+  # across UFW versions: "22/tcp ALLOW ...", "22 (v6) ALLOW ...", "22 ALLOW ...".
+  if [[ "$ufw_was_active" -eq 0 ]]; then
+    if ! ufw status verbose 2>/dev/null \
+         | awk '/ALLOW/ && ($1 == "22" || $1 == "22/tcp" || $1 ~ /^22\/tcp/)' \
+         | grep -q .; then
+      ufw status verbose 2>&1 >&2 || true
+      _die "UFW allow rule for port 22 missing after first install — refusing to leave operator at risk of SSH lockout (status dumped above)"
+    fi
   fi
-  _ok "UFW active; default-deny incoming with allow-list (22, 80, 443, 8443, 25, 465, 587, 993, 995, 4190, 53/tcp+udp)"
+  if [[ "$ufw_was_active" -eq 0 ]]; then
+    _ok "UFW active; default-deny incoming with allow-list (22, 80, 443, 8443, 25, 465, 587, 993, 995, 4190, 53/tcp+udp)"
+  else
+    _ok "UFW allow-list synced (panel/mail/DNS ports; SSH port 22 left as operator configured — GH #415)"
+  fi
 }
 
 # ---------- step 8a.0.5: M34 per-user PHP-FPM egress firewall ----------
