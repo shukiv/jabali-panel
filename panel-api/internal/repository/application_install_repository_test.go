@@ -352,3 +352,27 @@ func TestWordPressInstallDelete_NotFound(t *testing.T) {
 	require.Equal(t, ErrNotFound, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #378: the reconciler's WordPress drift probe must only see WordPress
+// installs — the query has to scope status='ready' AND app_type='wordpress',
+// otherwise non-WordPress apps (itflow, dokuwiki, …) get falsely flagged as
+// drifted. This asserts both predicates are in the SQL.
+func TestListReadyByUpdatedAtAsc_ScopesToWordPress(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE status = \\? AND app_type = \\?.*ORDER BY updated_at ASC.*LIMIT").
+		WithArgs("ready", "wordpress", 100).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "status", "app_type", "updated_at"},
+		).AddRow("inst_wp", "ready", "wordpress", now))
+
+	rows, err := repo.ListReadyByUpdatedAtAsc(context.Background(), 100)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "inst_wp", rows[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

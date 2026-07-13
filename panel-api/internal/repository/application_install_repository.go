@@ -60,10 +60,13 @@ type ApplicationInstallRepository interface {
 	// (GH #409).
 	CountCacheEnabledByDomainID(ctx context.Context, domainID, excludeID string) (int64, error)
 	Delete(ctx context.Context, id string) error
-	// ListReadyByUpdatedAtAsc returns ready installs ordered oldest-
-	// updated-first, capped to limit. Reconciler probe loop uses this
-	// for round-robin fairness — without it the probe always picks
-	// the same head-of-list installs first.
+	// ListReadyByUpdatedAtAsc returns ready WORDPRESS installs ordered
+	// oldest-updated-first, capped to limit. The reconciler probe loop
+	// uses this for round-robin fairness. It is scoped to app_type =
+	// 'wordpress' because the only probe is a WordPress-specific
+	// wp-includes/version.php check — non-WordPress apps (itflow,
+	// dokuwiki, …) have no such file and would be falsely flagged as
+	// drifted (GH #378).
 	ListReadyByUpdatedAtAsc(ctx context.Context, limit int) ([]models.ApplicationInstall, error)
 }
 
@@ -291,7 +294,7 @@ func (r *applicationInstallRepo) ListReadyByUpdatedAtAsc(ctx context.Context, li
 	}
 	var rows []models.ApplicationInstall
 	err := r.db.WithContext(ctx).
-		Where("status = ?", "ready").
+		Where("status = ? AND app_type = ?", "ready", "wordpress").
 		Order("updated_at ASC").
 		Limit(limit).
 		Find(&rows).Error

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -115,6 +116,11 @@ func (r *Reconciler) probeReadyWordPressInstalls(ctx context.Context, _ []models
 // retries next tick.
 func (r *Reconciler) probeOneWordPressInstall(ctx context.Context, install models.ApplicationInstall) {
 	if r.agent == nil || r.domains == nil {
+		return
+	}
+	// GH #378: the version.php probe is WordPress-specific. Never run it against
+	// another app type — belt-and-braces behind the app_type-scoped query.
+	if !strings.EqualFold(install.AppType, "wordpress") {
 		return
 	}
 	dom, err := r.domains.FindByID(ctx, install.DomainID)
