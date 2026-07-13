@@ -85,7 +85,8 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		return
 	}
 	var res struct {
-		Active bool `json:"active"`
+		Active bool   `json:"active"`
+		Unit   string `json:"unit"`
 	}
 	_ = json.Unmarshal(raw, &res)
 	status := models.PythonAppStatusFailed
@@ -93,8 +94,11 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 	if res.Active {
 		status = models.PythonAppStatusRunning
 	} else {
-		m := "app started but is not active — check the app logs"
+		m := "app started but is not active — check the app logs (journalctl -u " + res.Unit + ")"
 		lastErr = &m
+		// GH #357: surface the failure server-side, not just in the DB row —
+		// otherwise an app that goes pending→failed leaves "nothing in logs".
+		r.log.Warn("pyapp: app applied but not active", "id", app.ID, "unit", res.Unit)
 	}
 	if app.Status != status {
 		if err := r.pythonApps.UpdateStatus(ctx, app.ID, status, lastErr); err != nil {
@@ -104,6 +108,11 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 }
 
 func (r *Reconciler) failPythonApp(ctx context.Context, id, msg string) {
+	// GH #357: log the reason so a failed apply is diagnosable from the server
+	// log, not only the app's last_error column. The agent returns detailed
+	// errors (pip install / systemd restart output) that were previously
+	// swallowed into the DB row alone.
+	r.log.Warn("pyapp: apply failed", "id", id, "reason", msg)
 	if err := r.pythonApps.UpdateStatus(ctx, id, models.PythonAppStatusFailed, &msg); err != nil {
 		r.log.Warn("pyapp: fail status update failed", "id", id, "err", err)
 	}
