@@ -33,13 +33,13 @@ type MailboxShareHandlerConfig struct {
 }
 
 type shareResponse struct {
-	ID                     string         `json:"id"`
-	OwnerMailboxID         string         `json:"owner_mailbox_id"`
-	OwnerMailboxEmail      string         `json:"owner_mailbox_email,omitempty"`
-	SharedWithMailboxID    string         `json:"shared_with_mailbox_id"`
-	SharedWithMailboxEmail string         `json:"shared_with_mailbox_email,omitempty"`
-	Rights                 models.Rights  `json:"rights"`
-	CreatedAt              string         `json:"created_at"`
+	ID                     string        `json:"id"`
+	OwnerMailboxID         string        `json:"owner_mailbox_id"`
+	OwnerMailboxEmail      string        `json:"owner_mailbox_email,omitempty"`
+	SharedWithMailboxID    string        `json:"shared_with_mailbox_id"`
+	SharedWithMailboxEmail string        `json:"shared_with_mailbox_email,omitempty"`
+	Rights                 models.Rights `json:"rights"`
+	CreatedAt              string        `json:"created_at"`
 }
 
 type shareCreateRequest struct {
@@ -90,9 +90,10 @@ func (h *shareHandler) list(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	mbByID, domByID := h.shareRowMaps(ctx, shares)
 	items := make([]shareResponse, 0, len(shares))
 	for _, s := range shares {
-		items = append(items, h.resolve(ctx, s))
+		items = append(items, resolveShareFromMaps(s, mbByID, domByID))
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "page": 1, "page_size": 200})
 }
@@ -121,20 +122,22 @@ func (h *shareHandler) listAllForUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// JAB-147: batch-load owner/target mailboxes + their domains once.
+	mbByID, domByID := h.shareRowMaps(ctx, shares)
 	items := make([]shareResponse, 0, len(shares))
 	for _, s := range shares {
-		owner, err := h.cfg.Mailboxes.FindByID(ctx, s.OwnerMailboxID)
-		if err != nil {
+		owner := mbByID[s.OwnerMailboxID]
+		if owner == nil {
 			continue
 		}
-		dom, err := h.cfg.Domains.FindByID(ctx, owner.DomainID)
-		if err != nil {
+		dom := domByID[owner.DomainID]
+		if dom == nil {
 			continue
 		}
 		if !claims.IsAdmin && dom.UserID != claims.UserID {
 			continue // defense-in-depth; ListByUserID already enforces this
 		}
-		items = append(items, h.resolve(ctx, s))
+		items = append(items, resolveShareFromMaps(s, mbByID, domByID))
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "page": page, "page_size": pageSize})
 }
@@ -189,6 +192,44 @@ func (h *shareHandler) del(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusNoContent, nil)
+}
+
+// shareRowMaps batch-loads every owner + shared-with mailbox for the given
+// shares and their domains into id→row maps (JAB-147), replacing the per-row
+// FindByID pairs the list handlers used to run.
+func (h *shareHandler) shareRowMaps(ctx context.Context, shares []models.MailboxShare) (map[string]*models.Mailbox, map[string]*models.Domain) {
+	mbIDs := make([]string, 0, len(shares)*2)
+	for _, s := range shares {
+		mbIDs = append(mbIDs, s.OwnerMailboxID, s.SharedWithMailboxID)
+	}
+	mbByID := mailboxMapByID(ctx, h.cfg.Mailboxes, mbIDs)
+	domIDs := make([]string, 0, len(mbByID))
+	for _, mb := range mbByID {
+		domIDs = append(domIDs, mb.DomainID)
+	}
+	return mbByID, domainMapByID(ctx, h.cfg.Domains, domIDs)
+}
+
+// resolveShareFromMaps builds a shareResponse from pre-batched maps (no query).
+func resolveShareFromMaps(s models.MailboxShare, mbByID map[string]*models.Mailbox, domByID map[string]*models.Domain) shareResponse {
+	resp := shareResponse{
+		ID:                  s.ID,
+		OwnerMailboxID:      s.OwnerMailboxID,
+		SharedWithMailboxID: s.SharedWithMailboxID,
+		Rights:              s.Rights,
+		CreatedAt:           s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if owner := mbByID[s.OwnerMailboxID]; owner != nil {
+		if dom := domByID[owner.DomainID]; dom != nil {
+			resp.OwnerMailboxEmail = owner.LocalPart + "@" + dom.Name
+		}
+	}
+	if target := mbByID[s.SharedWithMailboxID]; target != nil {
+		if dom := domByID[target.DomainID]; dom != nil {
+			resp.SharedWithMailboxEmail = target.LocalPart + "@" + dom.Name
+		}
+	}
+	return resp
 }
 
 func (h *shareHandler) resolve(ctx context.Context, s models.MailboxShare) shareResponse {

@@ -86,6 +86,16 @@ func (r *ssoFakeMailboxRepo) FindByID(ctx context.Context, id string) (*models.M
 	}
 	return nil, repository.ErrNotFound
 }
+
+func (r *ssoFakeMailboxRepo) FindByIDs(_ context.Context, ids []string) ([]models.Mailbox, error) {
+	var out []models.Mailbox
+	for _, id := range ids {
+		if mb, ok := r.mbs[id]; ok {
+			out = append(out, *mb)
+		}
+	}
+	return out, nil
+}
 func (r *ssoFakeMailboxRepo) Create(ctx context.Context, mb *models.Mailbox) error { return nil }
 func (r *ssoFakeMailboxRepo) FindByEmail(ctx context.Context, email string) (*models.Mailbox, error) {
 	return nil, repository.ErrNotFound

@@ -54,6 +54,16 @@ func (m *mockDomainRepo) FindByID(ctx context.Context, id string) (*models.Domai
 	return nil, repository.ErrNotFound
 }
 
+func (m *mockDomainRepo) FindByIDs(_ context.Context, ids []string) ([]models.Domain, error) {
+	var out []models.Domain
+	for _, id := range ids {
+		if d, ok := m.domains[id]; ok {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
+}
+
 func (m *mockDomainRepo) FindByName(ctx context.Context, name string) (*models.Domain, error) {
 	for _, d := range m.domains {
 		if d.Name == name {

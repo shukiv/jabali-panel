@@ -37,6 +37,16 @@ func newFakeDomainRepo(doms ...*models.Domain) *fakeDomainRepo {
 	return f
 }
 
+func (f *fakeDomainRepo) FindByIDs(_ context.Context, ids []string) ([]models.Domain, error) {
+	var out []models.Domain
+	for _, id := range ids {
+		if d, ok := f.byID[id]; ok {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeDomainRepo) FindByID(_ context.Context, id string) (*models.Domain, error) {
 	if d, ok := f.byID[id]; ok {
 		cp := *d

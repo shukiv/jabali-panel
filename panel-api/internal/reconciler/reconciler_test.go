@@ -62,6 +62,16 @@ func (f *fakeDomainRepo) Create(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
+func (f *fakeDomainRepo) FindByIDs(_ context.Context, ids []string) ([]models.Domain, error) {
+	var out []models.Domain
+	for _, id := range ids {
+		if d, ok := f.domains[id]; ok {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeDomainRepo) FindByID(ctx context.Context, id string) (*models.Domain, error) {
 	d, ok := f.domains[id]
 	if !ok {

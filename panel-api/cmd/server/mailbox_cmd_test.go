@@ -34,6 +34,16 @@ func newFakeMailboxRepo() *fakeMailboxRepo {
 	return &fakeMailboxRepo{rows: map[string]*models.Mailbox{}}
 }
 
+func (f *fakeMailboxRepo) FindByIDs(_ context.Context, ids []string) ([]models.Mailbox, error) {
+	var out []models.Mailbox
+	for _, id := range ids {
+		if mb, ok := f.rows[id]; ok {
+			out = append(out, *mb)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeMailboxRepo) FindByID(_ context.Context, id string) (*models.Mailbox, error) {
 	if f.findErr != nil {
 		return nil, f.findErr

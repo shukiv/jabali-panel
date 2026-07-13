@@ -141,6 +141,10 @@ func (m *MockDomainRepository) FindByID(ctx context.Context, id string) (*models
 }
 
 func (m *MockDomainRepository) UpdateSSLMode(context.Context, string, string) error { return nil }
+func (m *MockDomainRepository) FindByIDs(context.Context, []string) ([]models.Domain, error) {
+	return nil, nil
+}
+
 
 func (m *MockDomainRepository) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) {
 	return 0, nil

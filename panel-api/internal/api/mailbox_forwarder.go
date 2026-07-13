@@ -112,6 +112,19 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// JAB-147: batch-load the mailboxes + domains once instead of a per-row
+	// FindByID pair (N+1). Build id→row maps, then resolve from memory.
+	mbIDs := make([]string, 0, len(fwds))
+	domIDs := make([]string, 0, len(fwds))
+	for _, f := range fwds {
+		if f.MailboxID != nil {
+			mbIDs = append(mbIDs, *f.MailboxID)
+		}
+		domIDs = append(domIDs, f.DomainID)
+	}
+	mbByID := mailboxMapByID(ctx, h.cfg.Mailboxes, mbIDs)
+	domByID := domainMapByID(ctx, h.cfg.Domains, domIDs)
+
 	items := make([]forwarderResponse, 0, len(fwds))
 	for _, f := range fwds {
 		if f.MailboxID == nil {
@@ -121,12 +134,9 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 			// admin ListAll path reaches here.)
 			continue
 		}
-		mb, err := h.cfg.Mailboxes.FindByID(ctx, *f.MailboxID)
-		if err != nil {
-			continue
-		}
-		dom, err := h.cfg.Domains.FindByID(ctx, f.DomainID)
-		if err != nil {
+		mb := mbByID[*f.MailboxID]
+		dom := domByID[f.DomainID]
+		if mb == nil || dom == nil {
 			continue
 		}
 		if !claims.IsAdmin && dom.UserID != claims.UserID {
@@ -274,8 +284,13 @@ func (h *forwarderHandler) resolve(_ context.Context, f models.EmailForwarder, m
 		lp = *f.LocalPart
 	}
 	return forwarderResponse{
-		ID:           f.ID,
-		MailboxID:    func() string { if f.MailboxID != nil { return *f.MailboxID }; return "" }(),
+		ID: f.ID,
+		MailboxID: func() string {
+			if f.MailboxID != nil {
+				return *f.MailboxID
+			}
+			return ""
+		}(),
 		MailboxEmail: mb.LocalPart + "@" + dom.Name,
 		DomainID:     f.DomainID,
 		DomainName:   dom.Name,
@@ -304,15 +319,15 @@ func (h *forwarderHandler) writeErr(c *gin.Context, err error) {
 // mailbox list. No mailbox_email — the entry redirects without a
 // source account.
 type domainScopedForwarderResponse struct {
-	ID          string `json:"id"`
-	DomainID    string `json:"domain_id"`
-	DomainName  string `json:"domain_name"`
-	Type        string `json:"type"`
-	LocalPart   string `json:"local_part"`
-	Target      string `json:"target"`
-	Enabled     bool   `json:"enabled"`
-	ManagedBy   string `json:"managed_by"`
-	CreatedAt   string `json:"created_at"`
+	ID         string `json:"id"`
+	DomainID   string `json:"domain_id"`
+	DomainName string `json:"domain_name"`
+	Type       string `json:"type"`
+	LocalPart  string `json:"local_part"`
+	Target     string `json:"target"`
+	Enabled    bool   `json:"enabled"`
+	ManagedBy  string `json:"managed_by"`
+	CreatedAt  string `json:"created_at"`
 }
 
 func (h *forwarderHandler) listDomainScoped(c *gin.Context) {

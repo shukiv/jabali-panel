@@ -15,6 +15,9 @@ import (
 type DomainRepository interface {
 	Create(ctx context.Context, d *models.Domain) error
 	FindByID(ctx context.Context, id string) (*models.Domain, error)
+	// FindByIDs batch-loads domains by id (deduped, one query) — the
+	// N+1-free path for list handlers resolving many rows (JAB-147).
+	FindByIDs(ctx context.Context, ids []string) ([]models.Domain, error)
 	FindByName(ctx context.Context, name string) (*models.Domain, error)
 	List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error)
@@ -200,6 +203,19 @@ func (r *domainRepo) FindByID(ctx context.Context, id string) (*models.Domain, e
 		return nil, err
 	}
 	return &d, nil
+}
+
+// FindByIDs batch-loads domains by id (deduped, one query) — the N+1-free
+// path for list handlers resolving many rows (JAB-147).
+func (r *domainRepo) FindByIDs(ctx context.Context, ids []string) ([]models.Domain, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []models.Domain
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *domainRepo) FindByName(ctx context.Context, name string) (*models.Domain, error) {
@@ -406,7 +422,6 @@ func (r *domainRepo) CountByUserID(ctx context.Context, userID string) (int64, e
 	}
 	return count, nil
 }
-
 
 func (r *domainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *string) error {
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).

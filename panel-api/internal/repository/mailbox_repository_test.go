@@ -215,3 +215,33 @@ func TestMailboxRepository_UpdateUsage(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// JAB-147: FindByIDs must batch-load in a single IN query (the N+1-free path
+// for the mail list handlers), not one SELECT per id.
+func TestMailboxFindByIDs_SingleINQuery(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := NewMailboxRepository(db)
+
+	cols := []string{"id", "domain_id", "local_part", "email_cached"}
+	mock.ExpectQuery("SELECT .* FROM `mailboxes` WHERE id IN \\(\\?,\\?\\)").
+		WithArgs("mb1", "mb2").
+		WillReturnRows(sqlmock.NewRows(cols).
+			AddRow("mb1", "dom1", "alice", "alice@example.com").
+			AddRow("mb2", "dom1", "bob", "bob@example.com"))
+
+	rows, err := repo.FindByIDs(context.Background(), []string{"mb1", "mb2"})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMailboxFindByIDs_EmptyNoQuery(t *testing.T) {
+	db, _, raw := newMockDB(t)
+	defer raw.Close()
+	repo := NewMailboxRepository(db)
+	// No ExpectQuery registered — an empty id set must not hit the DB.
+	rows, err := repo.FindByIDs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}

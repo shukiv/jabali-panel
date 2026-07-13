@@ -18,6 +18,9 @@ import (
 // migration 000054 — we never set it here directly.
 type MailboxRepository interface {
 	FindByID(ctx context.Context, id string) (*models.Mailbox, error)
+	// FindByIDs batch-loads mailboxes by id (deduped, one query) — the
+	// N+1-free path for list handlers that resolve many rows (JAB-147).
+	FindByIDs(ctx context.Context, ids []string) ([]models.Mailbox, error)
 	FindByEmail(ctx context.Context, email string) (*models.Mailbox, error)
 	ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.Mailbox, int64, error)
 	ListAllWithDomain(ctx context.Context) ([]MailboxWithDomain, error)
@@ -56,6 +59,17 @@ func (r *mailboxRepo) FindByID(ctx context.Context, id string) (*models.Mailbox,
 		return nil, err
 	}
 	return &mb, nil
+}
+
+func (r *mailboxRepo) FindByIDs(ctx context.Context, ids []string) ([]models.Mailbox, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []models.Mailbox
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *mailboxRepo) FindByEmail(ctx context.Context, email string) (*models.Mailbox, error) {

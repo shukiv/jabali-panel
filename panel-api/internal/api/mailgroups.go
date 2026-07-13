@@ -328,10 +328,13 @@ func (h *mailGroupHandler) get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// JAB-147: batch-load the member mailboxes once (was per-member FindByID).
+	// Iterate memberIDs to preserve order; the map gives O(1) lookup.
+	mbByID := mailboxMapByID(ctx, h.cfg.Mailboxes, memberIDs)
 	members := make([]mailGroupMemberDTO, 0, len(memberIDs))
 	for _, mid := range memberIDs {
-		mb, err := h.cfg.Mailboxes.FindByID(ctx, mid)
-		if err != nil {
+		mb := mbByID[mid]
+		if mb == nil {
 			continue // mailbox vanished mid-read; cascade will clean the edge
 		}
 		members = append(members, mailGroupMemberDTO{MailboxID: mb.ID, Email: mb.EmailCached})
