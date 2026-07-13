@@ -4,7 +4,8 @@
 // / mailboxes). Routing each through its own list endpoint with limit=1
 // works for users + domains but mailboxes only ships per-domain lists,
 // so the SPA would have to N+1 across domains. /admin/counts collapses
-// that into one round-trip with three COUNT(*) queries.
+// that into a single round-trip: one SELECT with three scalar COUNT(*)
+// subqueries (JAB-148), instead of three sequential COUNT statements.
 
 package api
 
@@ -48,18 +49,17 @@ type adminCountsHandler struct {
 
 func (h *adminCountsHandler) get(c *gin.Context) {
 	ctx := c.Request.Context()
-	db := h.cfg.DB.WithContext(ctx)
 
+	// JAB-148: one round-trip via scalar subqueries instead of three
+	// sequential COUNT(*) statements. The column aliases match the response
+	// field names, so GORM scans them straight into the struct.
 	var resp adminCountsResponse
-	if err := db.Table("users").Count(&resp.Users).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	if err := db.Table("domains").Count(&resp.Domains).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	if err := db.Table("mailboxes").Count(&resp.Mailboxes).Error; err != nil {
+	if err := h.cfg.DB.WithContext(ctx).Raw(
+		"SELECT " +
+			"(SELECT COUNT(*) FROM users) AS users, " +
+			"(SELECT COUNT(*) FROM domains) AS domains, " +
+			"(SELECT COUNT(*) FROM mailboxes) AS mailboxes",
+	).Scan(&resp).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
