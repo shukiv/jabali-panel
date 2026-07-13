@@ -55,6 +55,16 @@ server {
   # setting "just works" without re-rendering this vhost.
   client_max_body_size 10240m;
 
+  # JAB-142: the SPA (JS/CSS) is served by panel-api (go:embed) via the
+  # proxied `location /` below, so nginx must compress PROXIED responses —
+  # gzip_proxied defaults to `off` and would skip them entirely, shipping the
+  # ~3.1 MB main bundle raw. Compress the text asset types (~3.5x smaller).
+  gzip on;
+  gzip_proxied any;
+  gzip_vary on;
+  gzip_min_length 1024;
+  gzip_types application/javascript text/javascript text/css application/json image/svg+xml application/manifest+json;
+
   access_log /var/log/nginx/jabali-panel.access.log;
   error_log  /var/log/nginx/jabali-panel.error.log;
 
@@ -121,6 +131,30 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
     proxy_hide_header Content-Security-Policy;
     proxy_hide_header X-Frame-Options;
+  }
+
+  # JAB-143: content-hashed build assets (index-<hash>.js / .css) are
+  # immutable — every build emits a new filename — so cache them for a year
+  # instead of re-fetching the ~3 MB bundle each session. Proxies to the same
+  # panel-api upstream (the SPA is embedded there). A per-location add_header
+  # suppresses the server-scope add_headers, so the security headers relevant
+  # to a static asset response are re-declared here.
+  location ^~ /assets/ {
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_http_version 1.1;
+    # Exactly one Cache-Control: drop any the upstream might set, then add ours.
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
   }
 
   # /.ory/* is handled by panel-api itself (in-process reverse proxy
