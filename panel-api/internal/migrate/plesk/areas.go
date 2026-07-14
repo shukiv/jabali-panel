@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
@@ -107,17 +106,9 @@ func (d *Discoverer) AccountSize(ctx context.Context, raw migrate.Session, login
 	if err != nil {
 		return 0, nil // best-effort; caller renders "unknown"
 	}
-	// Take the first whitespace field: robust whether or not the shell
-	// `cut -f1` collapsed the `du` output to bare bytes.
-	fields := strings.Fields(string(out))
-	if len(fields) == 0 {
-		return 0, nil
-	}
-	n, perr := strconv.ParseInt(fields[0], 10, 64)
-	if perr != nil {
-		return 0, nil
-	}
-	return n, nil
+	// First whitespace field: robust whether or not the shell `cut -f1`
+	// already collapsed the `du` output to bare bytes.
+	return parseFirstInt(string(out)), nil
 }
 
 // --- small helpers ---

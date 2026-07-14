@@ -93,6 +93,12 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 		m.Warnings = append(m.Warnings, warns...)
 	}
 
+	// Mailboxes (GH #429 step 4): enumerate /var/qmail/mailnames per
+	// owned domain. Best-effort — warns, never fatal.
+	boxes, mailWarns := d.describeMailboxes(ctx, s, m.Domains)
+	m.Mailboxes = boxes
+	m.Warnings = append(m.Warnings, mailWarns...)
+
 	// WordPress detection (GH #429 step 3): WP Toolkit JSON with a
 	// docroot wp-config.php fallback. Best-effort — warns, never fatal.
 	apps, wpWarns := d.describeWordPress(ctx, s, m.Domains)
@@ -104,7 +110,7 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	// manifest is partial (plans/gh429-plesk-migration.md).
 	m.Warnings = append(m.Warnings, migrate.Warning{
 		Code:   "plesk_areas_pending",
-		Detail: "DNS/cron/SSH, mailboxes, and customers/packages ship in follow-up steps; describe currently covers domains + databases + WordPress detection.",
+		Detail: "DNS/cron/SSH and customers/packages ship in follow-up steps; describe currently covers domains + databases + WordPress + mailboxes.",
 	})
 
 	if firstErr != nil && len(m.Domains) == 0 {
