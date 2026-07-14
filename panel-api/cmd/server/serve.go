@@ -49,6 +49,7 @@ import (
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
+	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
 )
 
 const (

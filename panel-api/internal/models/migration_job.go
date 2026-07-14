@@ -26,6 +26,13 @@ const (
 	// to the shared migration.import_mailboxes agent step. See
 	// plans/gh374-imap-mail-migration.md.
 	MigrationSourceIMAP = "imap"
+	// MigrationSourcePlesk (GH #429) — full control-panel migration from a Plesk
+	// source over SSH. Discovers subscriptions, WordPress installs, mailboxes,
+	// databases, DNS, and (reseller) customers + service plans via `plesk bin` /
+	// `plesk ext wp-toolkit` read-only CLI, then restores destination-side by
+	// synthesising a cpmove-shaped tarball and reusing the cpanel restore
+	// writers. See plans/gh429-plesk-migration.md.
+	MigrationSourcePlesk = "plesk"
 )
 
 // MigrationState is the per-job lifecycle. Stage transitions are
@@ -61,14 +68,14 @@ type MigrationJob struct {
 	ID string `gorm:"column:id;type:char(26);primaryKey" json:"id"`
 	// BatchID — ADR-0095 decision 3. NULL for single-account jobs.
 	// Non-NULL ULID groups every job created from one bulk-WHM submit.
-	BatchID         *string `gorm:"column:batch_id;type:varchar(26);index" json:"batch_id,omitempty"`
-	SourceKind      string  `gorm:"column:source_kind;type:varchar(32);not null;uniqueIndex:uq_migration_source,priority:3" json:"source_kind"`
+	BatchID    *string `gorm:"column:batch_id;type:varchar(26);index" json:"batch_id,omitempty"`
+	SourceKind string  `gorm:"column:source_kind;type:varchar(32);not null;uniqueIndex:uq_migration_source,priority:3" json:"source_kind"`
 	// Mode (GH #646): "import" (first migration / resume) or "refresh"
 	// (force re-pull into an already-migrated account, backup-first).
-	Mode            string  `gorm:"column:mode;type:varchar(16);not null;default:'import'" json:"mode"`
-	SourceHost      string  `gorm:"column:source_host;type:varchar(255);not null;uniqueIndex:uq_migration_source,priority:1" json:"source_host"`
-	SourceUser      string  `gorm:"column:source_user;type:varchar(64);not null;uniqueIndex:uq_migration_source,priority:2" json:"source_user"`
-	ExpectedHostKey string  `gorm:"column:expected_host_key;type:varchar(128);not null;default:''" json:"expected_host_key"`
+	Mode            string `gorm:"column:mode;type:varchar(16);not null;default:'import'" json:"mode"`
+	SourceHost      string `gorm:"column:source_host;type:varchar(255);not null;uniqueIndex:uq_migration_source,priority:1" json:"source_host"`
+	SourceUser      string `gorm:"column:source_user;type:varchar(64);not null;uniqueIndex:uq_migration_source,priority:2" json:"source_user"`
+	ExpectedHostKey string `gorm:"column:expected_host_key;type:varchar(128);not null;default:''" json:"expected_host_key"`
 	// SourcePath (GH #647) — the WordPress root on the source (control-INPUT,
 	// like source_host/source_user). NULL until the operator supplies it or the
 	// discoverer auto-detects it. Distinct from ManifestJSON, which holds the
