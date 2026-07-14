@@ -17,7 +17,7 @@ import {
 import { ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 import { PythonAppEnvDrawer } from "./PythonAppEnvDrawer";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -28,6 +28,7 @@ import {
   useCreatePythonApp,
   useDeletePythonApp,
   usePythonApps,
+  usePythonVersions,
 } from "./usePythonApps";
 
 type DomainRow = { id: string; name: string };
@@ -44,6 +45,16 @@ export function PythonAppsPage() {
   const { message } = App.useApp();
   const apps = usePythonApps();
   const create = useCreatePythonApp();
+  const pyVersions = usePythonVersions();
+  // Only offer installed interpreters; fall back to the common trio only if
+  // the probe is unavailable (the API still gates the final choice, GH #357).
+  const versionOptions = useMemo(
+    () =>
+      pyVersions.data?.versions && pyVersions.data.versions.length > 0
+        ? pyVersions.data.versions
+        : ["3.11", "3.12", "3.13"],
+    [pyVersions.data],
+  );
   const del = useDeletePythonApp();
   const control = useControlPythonApp();
 
@@ -62,6 +73,16 @@ export function PythonAppsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm<CreatePythonAppInput>();
+  // When the create dialog opens, default the Python version to the newest
+  // interpreter actually installed on this host.
+  useEffect(() => {
+    if (!createOpen) return;
+    const def =
+      pyVersions.data?.default || versionOptions[versionOptions.length - 1];
+    if (def && !form.getFieldValue("python_version")) {
+      form.setFieldValue("python_version", def);
+    }
+  }, [createOpen, pyVersions.data, versionOptions, form]);
   const [logsApp, setLogsApp] = useState<PythonApp | null>(null);
   const [logsText, setLogsText] = useState("");
   const [envApp, setEnvApp] = useState<PythonApp | null>(null);
@@ -182,7 +203,7 @@ export function PythonAppsPage() {
         okText="Create"
         confirmLoading={create.isPending}
       >
-        <Form form={form} layout="vertical" initialValues={{ app_type: "wsgi", python_version: "3.11", base_uri: "/" }}>
+        <Form form={form} layout="vertical" initialValues={{ app_type: "wsgi", base_uri: "/" }}>
           <Form.Item name="name" label="Name" rules={[{ required: true }]}>
             <Input placeholder="My API" />
           </Form.Item>
@@ -200,7 +221,9 @@ export function PythonAppsPage() {
             <Form.Item name="python_version" label="Python" rules={[{ required: true }]}>
               <Select
                 style={{ width: 120 }}
-                options={["3.11", "3.12", "3.13"].map((v) => ({ value: v, label: v }))}
+                loading={pyVersions.isLoading}
+                options={versionOptions.map((v) => ({ value: v, label: v }))}
+                notFoundContent="No Python runtime installed on this server"
               />
             </Form.Item>
             <Form.Item name="app_type" label="Type" rules={[{ required: true }]}>

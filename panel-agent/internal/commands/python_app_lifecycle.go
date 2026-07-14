@@ -34,6 +34,16 @@ func pythonAppControlHandler(ctx context.Context, params json.RawMessage) (any, 
 	unit := pythonAppUnitName(p.AppID)
 	switch p.Action {
 	case "start", "stop", "restart":
+		// GH #357: if the app never finished provisioning (its build failed
+		// at the venv/pip step, before the unit was written) the raw
+		// systemctl error is a cryptic "Unit ... not found". Detect the
+		// missing unit and return an actionable message instead.
+		if _, statErr := os.Stat(filepath.Join(pythonAppUnitDir, unit)); statErr != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeFailedPrecondition,
+				Message: "app is not provisioned — its build has not completed or failed (check the app logs / requirements). It rebuilds automatically once the problem is fixed.",
+			}
+		}
 		if out, err := exec.CommandContext(ctx, "systemctl", p.Action, unit).CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("systemctl %s %s: %v: %s", p.Action, unit, err, strings.TrimSpace(string(out)))}
 		}

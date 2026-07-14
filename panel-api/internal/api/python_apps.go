@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -37,6 +38,7 @@ func RegisterPythonAppRoutes(g *gin.RouterGroup, cfg PythonAppHandlerConfig) {
 	grp := g.Group("/python-apps")
 	grp.Use(h.requireEnabled)
 	grp.GET("", h.list)
+	grp.GET("/versions", h.versions)
 	grp.POST("", h.create)
 	grp.GET("/:id", h.get)
 	grp.DELETE("/:id", h.delete)
@@ -148,6 +150,18 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 	}
 	if !pyVersionRe.MatchString(req.PythonVersion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_python_version"})
+		return
+	}
+	// GH #357: reject a version whose interpreter isn't installed on this
+	// host, echoing the installed list — instead of accepting it and letting
+	// the app die pending→failed at the venv step (which shells out to
+	// python<ver>) with a cryptic "Unit not found" on the next Restart.
+	if avail, derr := h.installedPythonVersions(c.Request.Context()); derr == nil && len(avail) > 0 && !containsStr(avail, req.PythonVersion) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":     "python_version_not_available",
+			"detail":    "Python " + req.PythonVersion + " is not installed on this server",
+			"available": avail,
+		})
 		return
 	}
 	if req.AppType != "wsgi" && req.AppType != "asgi" {
@@ -377,4 +391,48 @@ func envMapToRows(m map[string]string) []models.PythonAppEnv {
 		rows = append(rows, models.PythonAppEnv{ID: ulid.Make().String(), Key: k, Value: v})
 	}
 	return rows
+}
+
+// versions lists the Python interpreters installed on this host so the UI
+// only ever offers a version that will actually build (GH #357).
+func (h *pythonAppHandler) versions(c *gin.Context) {
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusOK, gin.H{"versions": []string{}, "default": ""})
+		return
+	}
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), "app.python.versions", nil)
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", raw)
+}
+
+// installedPythonVersions asks the agent which python3.X interpreters exist.
+// Fail-open: on any agent/probe error the caller skips the create-time gate
+// rather than blocking creation when the probe is unavailable.
+func (h *pythonAppHandler) installedPythonVersions(ctx context.Context) ([]string, error) {
+	if h.cfg.Agent == nil {
+		return nil, nil
+	}
+	raw, err := h.cfg.Agent.Call(ctx, "app.python.versions", nil)
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Versions []string `json:"versions"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return nil, err
+	}
+	return res.Versions, nil
+}
+
+func containsStr(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

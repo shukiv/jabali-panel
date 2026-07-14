@@ -108,3 +108,20 @@ export function useUpdatePythonAppEnv() {
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
+
+export type PythonVersions = { versions: string[]; default: string };
+
+// GH #357: the create dialog must only offer interpreters that are actually
+// installed on this host, so an app can never be created against a python
+// that isn't there (which failed silently at the venv step).
+export function usePythonVersions() {
+  return useQuery({
+    queryKey: ["python-app-versions"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<PythonVersions>(
+        "/python-apps/versions",
+      );
+      return data;
+    },
+  });
+}
