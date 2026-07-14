@@ -34,7 +34,7 @@ func (d *Discoverer) describeWordPress(ctx context.Context, s *session, domains 
 	warns := []migrate.Warning{}
 	owned := map[string]migrate.DomainSpec{}
 	for _, dom := range domains {
-		owned[strings.ToLower(dom.Name)] = dom
+		owned[normalizeHost(dom.Name)] = dom
 	}
 
 	out, err := s.run(ctx, d.CommandTimeout, "plesk ext wp-toolkit --list -format json")
@@ -57,14 +57,18 @@ func (d *Discoverer) describeWordPress(ctx context.Context, s *session, domains 
 
 	apps := []migrate.AppSpec{}
 	for _, inst := range instances {
-		host := strings.ToLower(inst.domainHost())
-		dom, ok := owned[host]
+		dom, ok := owned[normalizeHost(inst.domainHost())]
 		if !ok {
 			continue // instance belongs to another account
 		}
+		// Prefer WP Toolkit's absolute fullPath; else derive from docroot.
+		instPath := inst.FullPath
+		if instPath == "" {
+			instPath = joinDocrootPath(dom, inst.Path)
+		}
 		apps = append(apps, migrate.AppSpec{
 			Kind:    "wordpress",
-			Path:    joinDocrootPath(dom, inst.Path),
+			Path:    instPath,
 			Version: inst.Version,
 		})
 	}
@@ -92,6 +96,7 @@ type wpInstance struct {
 	MainDomain string
 	SiteURL    string
 	Path       string
+	FullPath   string // absolute install path (WP Toolkit "fullPath")
 	Version    string
 }
 
@@ -147,6 +152,7 @@ func parseWPToolkitList(raw string) ([]wpInstance, error) {
 			MainDomain: strFromKeys(r, "mainDomain", "main_domain", "domainName", "domain"),
 			SiteURL:    strFromKeys(r, "siteUrl", "site_url", "url"),
 			Path:       strFromKeys(r, "path", "mainDomainPath", "main_domain_path", "mainDomainsPath"),
+			FullPath:   strFromKeys(r, "fullPath", "full_path"),
 			Version:    strFromKeys(r, "version", "wpVersion", "wp_version"),
 		})
 	}
@@ -180,4 +186,11 @@ func joinDocrootPath(dom migrate.DomainSpec, wpPath string) string {
 	// vhost root is the docroot with a trailing "/httpdocs" removed.
 	vhostRoot := strings.TrimSuffix(dom.DocRoot, "/httpdocs")
 	return path.Clean(vhostRoot + "/" + strings.TrimPrefix(wpPath, "/"))
+}
+
+// normalizeHost lowercases a hostname and strips a leading "www." so a
+// WP Toolkit siteUrl of https://www.example.com matches the account's
+// "example.com" domain.
+func normalizeHost(h string) string {
+	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(h)), "www.")
 }

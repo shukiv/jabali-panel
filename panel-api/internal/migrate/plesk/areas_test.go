@@ -24,31 +24,50 @@ func fixtureSession(responses map[string]string) *session {
 	}}
 }
 
-func TestParsePleskInfo(t *testing.T) {
-	raw := "Subscription info:\n" +
-		"    Domain name: example.com\n" +
-		"    PHP version: 8.2\n" +
-		"    Hosting type: virtual\n" +
-		"    # a comment\n" +
-		"    Status\n" // valueless line → skipped
+func TestParsePleskInfo_ColonFormat(t *testing.T) {
+	raw := "General\n" +
+		"=============================\n" +
+		"Domain name:                            example.com\n" +
+		"PHP support:                            Yes\n" +
+		"Total size of local backup files (if enabled in Server Settings):0 B\n"
 	got := parsePleskInfo(raw)
 	if got["domain name"] != "example.com" {
 		t.Errorf("domain name = %q, want example.com", got["domain name"])
 	}
-	if got["php version"] != "8.2" {
-		t.Errorf("php version = %q, want 8.2", got["php version"])
+	if got["php support"] != "Yes" {
+		t.Errorf("php support = %q, want Yes", got["php support"])
 	}
-	if _, ok := got["status"]; ok {
-		t.Error("valueless line must be skipped")
+	if _, ok := got["general"]; ok {
+		t.Error("section header must be skipped")
+	}
+}
+
+func TestParsePleskInfo_AlignedFormat(t *testing.T) {
+	raw := "Limits\n" +
+		"================================================\n" +
+		"Service plan name                               Unlimited\n" +
+		"Disk space                                      10240M\n" +
+		"Log rotation condition                          by size: 10240 KB\n"
+	got := parsePleskInfo(raw)
+	if got["service plan name"] != "Unlimited" {
+		t.Errorf("service plan name = %q, want Unlimited", got["service plan name"])
+	}
+	if got["disk space"] != "10240M" {
+		t.Errorf("disk space = %q, want 10240M", got["disk space"])
+	}
+	if got["log rotation condition"] != "by size: 10240 KB" {
+		t.Errorf("log rotation condition = %q, want 'by size: 10240 KB'", got["log rotation condition"])
 	}
 }
 
 func TestDescribeDomains_DocrootAndPHP(t *testing.T) {
 	d := New()
 	s := fixtureSession(map[string]string{
-		"subscription --info":               "Domain name: example.com\ndomains: example.com, addon.example.net\n",
-		"domain --info 'example.com'":       "PHP version: 8.2\nphp: on\n",
-		"domain --info 'addon.example.net'": "PHP version: 7.4\nphp: on\nwww-root: /var/www/vhosts/example.com/addon\n",
+		// domains enumerated from the psa DB (primary + addon); key is a
+		// quote-free substring of the shell-escaped `plesk db` command.
+		"SELECT name FROM domains":          "example.com\naddon.example.net\n",
+		"domain --info 'example.com'":       "PHP support:  Yes\n",
+		"domain --info 'addon.example.net'": "PHP support:  Yes\n",
 	})
 	rows, err := d.describeDomains(context.Background(), s, "example.com")
 	if err != nil {
@@ -63,12 +82,8 @@ func TestDescribeDomains_DocrootAndPHP(t *testing.T) {
 	if rows[0].DocRoot != "/var/www/vhosts/example.com/httpdocs" {
 		t.Errorf("primary docroot = %q, want default vhost path", rows[0].DocRoot)
 	}
-	if rows[0].PHPVer != "8.2" {
-		t.Errorf("primary PHPVer = %q, want 8.2", rows[0].PHPVer)
-	}
-	// addon carries an overridden docroot from www-root.
-	if rows[1].DocRoot != "/var/www/vhosts/example.com/addon" {
-		t.Errorf("addon docroot override not applied: %q", rows[1].DocRoot)
+	if !rows[0].HasPHP {
+		t.Error("primary should have PHP (PHP support: Yes)")
 	}
 	if rows[1].IsPrimary {
 		t.Error("addon domain must not be primary")
@@ -93,7 +108,10 @@ func TestDescribeDomains_FallbackToPrimary(t *testing.T) {
 func TestDescribeDatabases_ParsesAndWarnsPerDomain(t *testing.T) {
 	d := New()
 	s := fixtureSession(map[string]string{
-		"database --list -domain 'example.com'": "wp_main\nwp_shop\n",
+		// key on the bare domain (a literal substring of the escaped SQL,
+		// which wraps quotes as '\'') so only example.com resolves;
+		// addon.example.net returns empty → no rows.
+		"example.com": "wp_main\nwp_shop\n",
 		// addon.example.net returns empty → no rows, no crash.
 	})
 	domains := []migrate.DomainSpec{{Name: "example.com"}, {Name: "addon.example.net"}}

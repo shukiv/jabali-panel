@@ -8,13 +8,18 @@ import (
 )
 
 func TestParseWPToolkitList_ArrayAndWrapper(t *testing.T) {
-	arr := `[{"mainDomain":"example.com","path":"/httpdocs","version":"6.5","siteUrl":"https://example.com"}]`
+	// Real Plesk Obsidian 18 shape: no mainDomain; siteUrl carries www.,
+	// fullPath is absolute.
+	arr := `[{"id":1,"mainDomainId":1,"path":"\/httpdocs","siteUrl":"https:\/\/www.example.com","version":"6.7.5","fullPath":"\/var\/www\/vhosts\/example.com\/httpdocs"}]`
 	rows, err := parseWPToolkitList(arr)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("array parse: %v rows=%+v", err, rows)
 	}
-	if rows[0].MainDomain != "example.com" || rows[0].Version != "6.5" {
+	if rows[0].SiteURL != "https://www.example.com" || rows[0].Version != "6.7.5" {
 		t.Errorf("row = %+v", rows[0])
+	}
+	if rows[0].FullPath != "/var/www/vhosts/example.com/httpdocs" {
+		t.Errorf("fullPath = %q", rows[0].FullPath)
 	}
 
 	wrapped := `{"instances":[{"domainName":"shop.example.net","mainDomainPath":"/httpdocs/blog","wpVersion":"6.4"}]}`
@@ -56,9 +61,11 @@ func TestDescribeWordPress_FiltersToAccountDomains(t *testing.T) {
 	d := New()
 	// Server has two instances; only example.com belongs to this account.
 	s := fixtureSession(map[string]string{
+		// siteUrl carries www.; matching must normalise. fullPath is used
+		// for Path. Second instance belongs to another account → filtered.
 		"wp-toolkit --list -format json": `[
-			{"mainDomain":"example.com","path":"/httpdocs","version":"6.5"},
-			{"mainDomain":"other.tld","path":"/httpdocs","version":"6.5"}
+			{"siteUrl":"https://www.example.com","version":"6.7.5","fullPath":"/var/www/vhosts/example.com/httpdocs"},
+			{"siteUrl":"https://other.tld","version":"6.5","fullPath":"/var/www/vhosts/other.tld/httpdocs"}
 		]`,
 	})
 	domains := []migrate.DomainSpec{{Name: "example.com", DocRoot: "/var/www/vhosts/example.com/httpdocs"}}
@@ -66,7 +73,7 @@ func TestDescribeWordPress_FiltersToAccountDomains(t *testing.T) {
 	if len(apps) != 1 {
 		t.Fatalf("got %d apps, want 1 (filtered to account domains): %+v", len(apps), apps)
 	}
-	if apps[0].Kind != "wordpress" || apps[0].Path != "/var/www/vhosts/example.com/httpdocs" || apps[0].Version != "6.5" {
+	if apps[0].Kind != "wordpress" || apps[0].Path != "/var/www/vhosts/example.com/httpdocs" || apps[0].Version != "6.7.5" {
 		t.Errorf("app = %+v", apps[0])
 	}
 	if len(warns) != 0 {

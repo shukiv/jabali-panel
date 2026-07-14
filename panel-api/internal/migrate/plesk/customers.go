@@ -75,7 +75,11 @@ func (d *Discoverer) DiscoverTenants(ctx context.Context, raw migrate.Session) (
 	}
 	ts := &TenantSet{Plans: []PleskPlan{}, Customers: []PleskCustomer{}}
 
-	if out, err := s.run(ctx, d.CommandTimeout, "plesk bin service_plan --list"); err == nil {
+	// `plesk bin service_plan` / `customer` have no list verb; enumerate the
+	// names via the psa DB (`plesk db` reads bypass the customer-management
+	// license gate), then pull each one's detail with `--info`. Hosting
+	// plans are Templates.type='domain' (reseller plans are 'reseller').
+	if out, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote("SELECT name FROM Templates WHERE type='domain'")); err == nil {
 		for _, name := range splitLines(string(out)) {
 			info, ierr := s.run(ctx, d.CommandTimeout, "plesk bin service_plan --info "+shellQuote(name))
 			if ierr != nil {
@@ -85,7 +89,7 @@ func (d *Discoverer) DiscoverTenants(ctx context.Context, raw migrate.Session) (
 		}
 	}
 
-	if out, err := s.run(ctx, d.CommandTimeout, "plesk bin customer --list"); err == nil {
+	if out, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote("SELECT login FROM clients WHERE type='customer'")); err == nil {
 		for _, login := range splitLines(string(out)) {
 			info, ierr := s.run(ctx, d.CommandTimeout, "plesk bin customer --info "+shellQuote(login))
 			if ierr != nil {
@@ -106,7 +110,7 @@ func parsePleskPlan(name, info string) PleskPlan {
 		MaxDomains:   parsePleskCount(firstNonEmpty(m["domains"], m["max domains"], m["maximum number of domains"])),
 		MaxMailboxes: parsePleskCount(firstNonEmpty(m["mailboxes"], m["mailboxes number"], m["maximum number of mailboxes"])),
 		MaxDatabases: parsePleskCount(firstNonEmpty(m["databases"], m["max databases"], m["maximum number of databases"])),
-		Owner:        firstNonEmpty(m["owner"], m["reseller"]),
+		Owner:        firstNonEmpty(m["service plan owner"], m["owner"], m["reseller"]),
 	}
 }
 

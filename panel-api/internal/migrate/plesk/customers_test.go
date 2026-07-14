@@ -93,12 +93,13 @@ func TestSanitizeUsername(t *testing.T) {
 func TestDiscoverTenants_ParsesPlansAndCustomers(t *testing.T) {
 	d := New()
 	s := fixtureSession(map[string]string{
-		"service_plan --list":             "Unlimited\nBusiness\n",
-		"service_plan --info 'Unlimited'": "disk space: unlimited\nmax traffic: unlimited\ndomains: unlimited\n",
-		"service_plan --info 'Business'":  "disk space: 10240M\nmax traffic: 100G\ndomains: 25\nmailboxes: 100\ndatabases: 50\n",
-		"customer --list":                 "jdoe\nacme\n",
-		"customer --info 'jdoe'":          "contact name: John Doe\nemail: jd@example.com\nstatus: active\n",
-		"customer --info 'acme'":          "company: ACME Ltd\nemail: ops@acme.com\nsuspended: true\nreseller: bigres\n",
+		"SELECT name FROM Templates": "Unlimited\nBusiness\n",
+		// real service_plan --info: column-aligned (no colon).
+		"service_plan --info 'Unlimited'": "Disk space                Unlimited\nTraffic                   Unlimited\nDomains                   Unlimited\n",
+		"service_plan --info 'Business'":  "Disk space                10240M\nTraffic                   100G\nDomains                   25\nMailboxes                 100\nDatabases                 50\n",
+		"SELECT login FROM clients":       "jdoe\nacme\n",
+		"customer --info 'jdoe'":          "Contact name:  John Doe\nEmail:  jd@example.com\nStatus:  active\n",
+		"customer --info 'acme'":          "Company:  ACME Ltd\nEmail:  ops@acme.com\nSuspended:  true\nReseller:  bigres\n",
 	})
 	ts, err := d.DiscoverTenants(context.Background(), s)
 	if err != nil {

@@ -29,12 +29,26 @@ const pleskVhostRoot = "/var/www/vhosts"
 // `plesk bin domain --info <domain>`; docroot defaults to the standard
 // Plesk vhost path.
 func (d *Discoverer) describeDomains(ctx context.Context, s *session, account string) ([]migrate.DomainSpec, error) {
+	// All domains of the subscription: the primary (name=account) plus any
+	// domain whose webspace_id points at the primary's id (addon domains).
+	// The `plesk bin subscription/domain --info` output does NOT list the
+	// domain set, so this comes from the psa `domains` table.
 	domains := []string{account}
-	if out, err := s.run(ctx, d.CommandTimeout, "plesk bin subscription --info "+shellQuote(account)); err == nil {
-		info := parsePleskInfo(string(out))
-		if v := firstNonEmpty(info["domains"], info["domain aliases"]); v != "" {
-			if parsed := splitCSV(v); len(parsed) > 0 {
-				domains = parsed
+	sql := fmt.Sprintf(
+		"SELECT name FROM domains WHERE name=%s OR webspace_id=(SELECT id FROM domains WHERE name=%s LIMIT 1)",
+		sqlQuote(account), sqlQuote(account))
+	if out, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote(sql)); err == nil {
+		if parsed := splitLines(string(out)); len(parsed) > 0 {
+			seen := map[string]bool{}
+			domains = domains[:0]
+			for _, n := range parsed {
+				if !seen[n] {
+					seen[n] = true
+					domains = append(domains, n)
+				}
+			}
+			if !seen[account] {
+				domains = append([]string{account}, domains...)
 			}
 		}
 	}
@@ -49,14 +63,13 @@ func (d *Discoverer) describeDomains(ctx context.Context, s *session, account st
 		}
 		if out, err := s.run(ctx, d.CommandTimeout, "plesk bin domain --info "+shellQuote(dom)); err == nil {
 			di := parsePleskInfo(string(out))
+			// Real Plesk exposes "PHP support: Yes" (not "php"); PHP version
+			// isn't in this block. Docroot stays the standard vhost path.
+			if v := firstNonEmpty(di["php support"], di["php"]); v != "" {
+				spec.HasPHP = truthy(v)
+			}
 			if v := firstNonEmpty(di["php version"], di["php_version"]); v != "" {
 				spec.PHPVer = v
-			}
-			if v := firstNonEmpty(di["www-root"], di["www_root"], di["document root"]); v != "" {
-				spec.DocRoot = v
-			}
-			if v := di["php"]; v != "" {
-				spec.HasPHP = truthy(v)
 			}
 		}
 		rows = append(rows, spec)
@@ -73,7 +86,11 @@ func (d *Discoverer) describeDatabases(ctx context.Context, s *session, domains 
 	rows := []migrate.DatabaseSpec{}
 	warns := []migrate.Warning{}
 	for _, dom := range domains {
-		out, err := s.run(ctx, d.CommandTimeout, "plesk bin database --list -domain "+shellQuote(dom.Name))
+		// `plesk bin database` has no list verb; enumerate via the psa DB.
+		sql := fmt.Sprintf(
+			"SELECT db.name FROM data_bases db JOIN domains d ON db.dom_id=d.id WHERE d.name=%s",
+			sqlQuote(dom.Name))
+		out, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote(sql))
 		if err != nil {
 			warns = append(warns, migrate.Warning{
 				Code:   "databases_domain_failed",
