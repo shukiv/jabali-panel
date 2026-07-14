@@ -37,6 +37,7 @@ import { BulkWhmDrawer } from "./BulkWhmDrawer";
 import { RefreshMigrationModal } from "./RefreshMigrationModal";
 import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 import { CreateMigrationWizard } from "./CreateMigrationWizard";
+import { MigrateImapDrawer } from "./MigrateImapDrawer";
 
 type MigrationJob = {
   id: string;
@@ -85,6 +86,7 @@ export const AdminMigrationsPage = () => {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
+  const [imapOpen, setImapOpen] = useState(false);
   const screens = Grid.useBreakpoint();
 
   // M35.4 — auto-open wizard on landing if URL carries ?wizard=<id>.
@@ -235,6 +237,7 @@ export const AdminMigrationsPage = () => {
             </Tooltip>
             <Button onClick={() => setBulkOpen(true)}>Bulk WHM (paste)</Button>
             <Button onClick={() => setWizardOpen(true)}>Wizard</Button>
+            <Button onClick={() => setImapOpen(true)}>Migrate IMAP mailbox</Button>
             <Button danger onClick={() => setRefreshOpen(true)}>Refresh (re-pull)</Button>
             <Button
               type="primary"
@@ -456,6 +459,7 @@ export const AdminMigrationsPage = () => {
         onClose={() => setDrawerOpen(false)}
       />
       <RefreshMigrationModal open={refreshOpen} onClose={() => setRefreshOpen(false)} />
+      <MigrateImapDrawer open={imapOpen} onClose={() => setImapOpen(false)} />
       <BulkWhmDrawer
         open={bulkOpen}
         onClose={() => setBulkOpen(false)}
