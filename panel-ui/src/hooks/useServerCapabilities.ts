@@ -20,6 +20,8 @@ export interface ServerCapabilities {
   api_enabled: boolean;
   /** GH #361: the server's public IPv4, for the dashboard. "" when unset. */
   public_ipv4: string;
+  /** GH #361: the server's public IPv6, for the dashboard. "" when unset. */
+  public_ipv6: string;
 }
 
 export function useServerCapabilities() {
@@ -39,6 +41,7 @@ export function useServerCapabilities() {
         quota_enabled: data.quota_enabled !== false,
         api_enabled: data.api_enabled !== false,
         public_ipv4: data.public_ipv4 ?? "",
+        public_ipv6: data.public_ipv6 ?? "",
       };
     },
     staleTime: 60_000,

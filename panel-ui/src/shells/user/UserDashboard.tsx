@@ -253,12 +253,19 @@ export function UserDashboard() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      {caps?.public_ipv4 ? (
+      {caps?.public_ipv4 || caps?.public_ipv6 ? (
         <Typography.Text type="secondary" style={{ fontSize: 13 }}>
           Server IP:{" "}
-          <Typography.Text copyable code style={{ fontSize: 13 }}>
-            {caps.public_ipv4}
-          </Typography.Text>
+          {caps?.public_ipv4 ? (
+            <Typography.Text copyable code style={{ fontSize: 13 }}>
+              {caps.public_ipv4}
+            </Typography.Text>
+          ) : null}
+          {caps?.public_ipv6 ? (
+            <Typography.Text copyable code style={{ fontSize: 13, marginLeft: caps?.public_ipv4 ? 8 : 0 }}>
+              {caps.public_ipv6}
+            </Typography.Text>
+          ) : null}
         </Typography.Text>
       ) : null}
       <Row gutter={[16, 16]}>

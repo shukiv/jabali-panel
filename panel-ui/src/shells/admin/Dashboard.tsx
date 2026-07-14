@@ -13,6 +13,7 @@ import { apiClient } from "../../apiClient";
 import { StatCard } from "../../components/StatCard";
 import { useListQuery } from "../../hooks/useQueries";
 import { useServerStatus } from "../../hooks/useServerStatus";
+import { useServerCapabilities } from "../../hooks/useServerCapabilities";
 
 interface UserRow {
   id: string;
@@ -57,6 +58,7 @@ const formatCount = (n: number | undefined) =>
 export const Dashboard = () => {
   const status = useServerStatus();
   const env = status.data;
+  const { data: caps } = useServerCapabilities();
 
   const counts = useQuery({
     queryKey: ["dashboard", "admin-counts"],
@@ -149,6 +151,25 @@ export const Dashboard = () => {
                     </Typography.Title>
                     {healthTag}
                   </Space>
+                  {caps?.public_ipv4 || caps?.public_ipv6 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                      Server IP:{" "}
+                      {caps?.public_ipv4 ? (
+                        <Typography.Text copyable code style={{ fontSize: 13 }}>
+                          {caps.public_ipv4}
+                        </Typography.Text>
+                      ) : null}
+                      {caps?.public_ipv6 ? (
+                        <Typography.Text
+                          copyable
+                          code
+                          style={{ fontSize: 13, marginLeft: caps?.public_ipv4 ? 8 : 0 }}
+                        >
+                          {caps.public_ipv6}
+                        </Typography.Text>
+                      ) : null}
+                    </Typography.Text>
+                  ) : null}
                   <Typography.Text type="secondary">
                     Top-level summary. For live metrics, services, network, and processes,
                     see Server Status.

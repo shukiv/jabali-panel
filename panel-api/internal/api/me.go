@@ -55,7 +55,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "public_ipv4": ""})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "public_ipv4": "", "public_ipv6": ""})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -92,9 +92,11 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		"security_enabled": settings.SecurityEnabled,
 		"quota_enabled":    settings.QuotaEnabled,
 		"api_enabled":      settings.APIEnabled,
-		// GH #361: surface the server's public IPv4 so the user dashboard can show
-		// it (already tracked for the panel cert + DNS; not per-user sensitive).
+		// GH #361: surface the server's public IPv4/IPv6 so the user + admin
+		// dashboards can show them (already tracked for the panel cert + DNS;
+		// not per-user sensitive). Empty string when unset.
 		"public_ipv4": settings.PublicIPv4,
+		"public_ipv6": settings.PublicIPv6,
 	})
 }
 
