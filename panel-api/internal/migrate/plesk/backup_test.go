@@ -63,3 +63,14 @@ func TestBackupUser_RejectsBadSubscription(t *testing.T) {
 		t.Error("BackupUser must reject a shell-unsafe subscription name")
 	}
 }
+
+// pullCaller is the method set migrate_pull_cmd.go's pullPlesk relies on.
+// This compile-time assertion catches a signature drift in BackupUser /
+// PullFile / RemoveRemote before it breaks the pull command's build.
+type pullCaller interface {
+	BackupUser(ctx context.Context, raw interface{}, account string) (string, error)
+	PullFile(ctx context.Context, raw interface{}, remotePath, localPath string) (int64, error)
+	RemoveRemote(ctx context.Context, raw interface{}, path string) error
+}
+
+var _ pullCaller = (*Discoverer)(nil)

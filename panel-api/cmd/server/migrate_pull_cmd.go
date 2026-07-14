@@ -41,6 +41,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressplugin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressssh"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -195,6 +196,8 @@ live source SSH. Use scp directly for that kind.`,
 				localTar, err = pullDirectAdmin(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceHestia:
 				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir, allowPrivate)
+			case models.MigrationSourcePlesk:
+				localTar, err = pullPlesk(ctx, sshUser, job, secret, localDir, allowPrivate)
 			default:
 				return markPullFailed(fmt.Errorf("unknown source kind %q", job.SourceKind))
 			}
@@ -533,6 +536,36 @@ func pullDirectAdmin(ctx context.Context, sshUser string, job *models.MigrationJ
 		return "", fmt.Errorf("PullFile: %w", err)
 	}
 	// JAB-50: don't leave the full account backup on the source server.
+	if rmErr := d.RemoveRemote(ctx, s, remoteTar); rmErr != nil {
+		fmt.Printf("  (warning: source-side rm %s failed: %v)\n", remoteTar, rmErr)
+	}
+	return localTar, nil
+}
+
+// pullPlesk stages the Plesk source's cpmove METADATA tarball into localDir,
+// mirroring pullDirectAdmin. The tarball is tiny (~KB) — DB dumps + docroots
+// + Maildirs are manifested inside it (databases.txt / domains-paths.txt /
+// mail-paths.txt) and streamed/rsynced by the import step, NOT bundled here
+// (a real Plesk box carried a 6.9 GB DB). SourceUser is the subscription
+// (primary domain). Read-only on the source; stages locally + stops.
+func pullPlesk(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
+	d := plesk.New()
+	d.AllowPrivate = allowPrivate
+	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
+	if err != nil {
+		return "", fmt.Errorf("plesk.Connect: %w", err)
+	}
+	defer func() { _ = d.Close(ctx, s) }()
+	remoteTar, err := d.BackupUser(ctx, s, job.SourceUser)
+	if err != nil {
+		return "", fmt.Errorf("plesk cpmove synthesize: %w", err)
+	}
+	localTar := filepath.Join(localDir, fmt.Sprintf("user.%s.tar.gz", job.SourceUser))
+	if _, err := d.PullFile(ctx, s, remoteTar, localTar); err != nil {
+		return "", fmt.Errorf("PullFile: %w", err)
+	}
+	// JAB-50: don't leave the metadata backup (DB dumps manifest, contact
+	// email) on the source server.
 	if rmErr := d.RemoveRemote(ctx, s, remoteTar); rmErr != nil {
 		fmt.Printf("  (warning: source-side rm %s failed: %v)\n", remoteTar, rmErr)
 	}
