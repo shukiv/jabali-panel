@@ -6,14 +6,15 @@
 // import); the REST adds a UI-friendly observation surface.
 //
 // Routes mounted under /admin/migrations:
-//   GET    /admin/migrations                  list (paginated envelope)
-//   POST   /admin/migrations                  create (state=pending; runner
-//                                             stays operator-driven via CLI)
-//   GET    /admin/migrations/:id              one job + recent stages
-//   GET    /admin/migrations/:id/stages       full stage timeline
-//   DELETE /admin/migrations/:id              soft-revoke (state→cancelled)
-//   POST   /admin/migrations/:id/destroy      hard-delete row + secret + extracted dir
-//                                             (requires terminal state)
+//
+//	GET    /admin/migrations                  list (paginated envelope)
+//	POST   /admin/migrations                  create (state=pending; runner
+//	                                          stays operator-driven via CLI)
+//	GET    /admin/migrations/:id              one job + recent stages
+//	GET    /admin/migrations/:id/stages       full stage timeline
+//	DELETE /admin/migrations/:id              soft-revoke (state→cancelled)
+//	POST   /admin/migrations/:id/destroy      hard-delete row + secret + extracted dir
+//	                                          (requires terminal state)
 //
 // Admin-gated. RequireAdmin already mounted by the parent group.
 package api
@@ -25,9 +26,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -69,12 +70,16 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.DELETE("/:id", h.cancel)
 	rg.POST("/:id/destroy", h.destroy)
 	rg.POST("/refresh", h.refresh) // GH #646
+	// GH #390/#374 phase A — per-mailbox IMAP source. probe enumerates
+	// remote folders; the run endpoint launches fetch+import async.
+	rg.POST("/imap/probe", h.probeIMAP)
+	rg.POST("/imap", h.runIMAP)
 	// SPA-driven migration endpoints. Each writes/launches via the
 	// agent (transient systemd unit pattern, M29 §updates) so the
 	// long-running pull + import survive panel-api restarts.
 	rg.POST("/:id/secrets", h.uploadSecrets)
-	rg.POST("/:id/test-connection", h.testConnection) // GH #665
-	rg.PUT("/:id/plan", h.updatePlan)                 // GH #665
+	rg.POST("/:id/test-connection", h.testConnection)   // GH #665
+	rg.PUT("/:id/plan", h.updatePlan)                   // GH #665
 	rg.POST("/:id/describe-account", h.describeAccount) // GH #665
 	rg.POST("/:id/pull-source", h.runPullSource)
 	rg.POST("/:id/import", h.runImport)
@@ -126,8 +131,8 @@ func (h *adminMigrationsHandler) list(c *gin.Context) {
 // recent stage rows so the UI can render the timeline without
 // a follow-up call.
 type migrationJobDetailResponse struct {
-	Job    *models.MigrationJob     `json:"job"`
-	Stages []models.MigrationStage  `json:"stages"`
+	Job    *models.MigrationJob    `json:"job"`
+	Stages []models.MigrationStage `json:"stages"`
 }
 
 func (h *adminMigrationsHandler) get(c *gin.Context) {
@@ -234,11 +239,11 @@ func (h *adminMigrationsHandler) create(c *gin.Context) {
 		state = models.MigrationStateDraft
 	}
 	row := &models.MigrationJob{
-		ID:         genULID(),
-		SourceKind: req.SourceKind,
-		SourceHost: req.SourceHost,
-		SourceUser: req.SourceUser,
-		State:      state,
+		ID:              genULID(),
+		SourceKind:      req.SourceKind,
+		SourceHost:      req.SourceHost,
+		SourceUser:      req.SourceUser,
+		State:           state,
 		ExpectedHostKey: strings.TrimSpace(req.ExpectedHostKey),
 	}
 	if sp := strings.TrimSpace(req.SourcePath); sp != "" { // GH #647 wordpress_ssh
@@ -250,7 +255,6 @@ func (h *adminMigrationsHandler) create(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, row)
 }
-
 
 // validMigrationFingerprint accepts an empty value (TOFU) or a SHA256 host-key
 // fingerprint: an optional "SHA256:" prefix over 43 base64 chars (Gitea #461).
@@ -271,8 +275,9 @@ func isKnownSourceKind(s string) bool {
 		models.MigrationSourceWHMpkgacct,
 		models.MigrationSourceDirectAdmin,
 		models.MigrationSourceHestia,
-		models.MigrationSourceWordPressSSH, // GH #647
-		models.MigrationSourceWordPressPlugin: // GH #648
+		models.MigrationSourceWordPressSSH,    // GH #647
+		models.MigrationSourceWordPressPlugin, // GH #648
+		models.MigrationSourceIMAP:            // GH #390/#374
 		return true
 	}
 	return false
@@ -631,7 +636,6 @@ func atoiNonNeg(s string) (int, error) {
 	return n, nil
 }
 
-
 // migrationStagingDir returns the per-job staging dir used by both
 // SSH-pull (jabali migrate pull-source) and the offline tarball-
 // upload paths. Mirrored from migrate_pull_cmd.go so the SPA hits
@@ -761,8 +765,8 @@ func (h *adminMigrationsHandler) uploadTarball(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"path":        target,
-		"size_bytes":  wrote,
+		"path":       target,
+		"size_bytes": wrote,
 	})
 }
 
@@ -1292,12 +1296,13 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 // the cache, returns the size.
 //
 // 5xx ladder:
-//   501 Not Implemented — Discoverer for this source_kind doesn't
-//       implement SizeProber. Falls back to "discovery returned 0".
-//   502 Bad Gateway     — SSH connect / du failed upstream.
-//   412 Precondition    — secret missing (POST /:id/secrets first).
-//   404 Not Found       — draft job missing.
-//   409 Conflict        — job not in draft/pending state.
+//
+//	501 Not Implemented — Discoverer for this source_kind doesn't
+//	    implement SizeProber. Falls back to "discovery returned 0".
+//	502 Bad Gateway     — SSH connect / du failed upstream.
+//	412 Precondition    — secret missing (POST /:id/secrets first).
+//	404 Not Found       — draft job missing.
+//	409 Conflict        — job not in draft/pending state.
 func (h *adminMigrationsHandler) accountSizeProbe(c *gin.Context) {
 	id := c.Param("id")
 	login := c.Param("user")
