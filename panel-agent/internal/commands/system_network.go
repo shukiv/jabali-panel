@@ -158,9 +158,11 @@ type procNetDevRow struct {
 	rxBytes   uint64
 	rxPackets uint64
 	rxErrors  uint64
+	rxDrop    uint64
 	txBytes   uint64
 	txPackets uint64
 	txErrors  uint64
+	txDrop    uint64
 }
 
 // parseProcNetDev reads /proc/net/dev. Format (after the two header
@@ -187,9 +189,11 @@ func parseProcNetDev(content string) []procNetDevRow {
 		row.rxBytes, _ = strconv.ParseUint(fields[0], 10, 64)
 		row.rxPackets, _ = strconv.ParseUint(fields[1], 10, 64)
 		row.rxErrors, _ = strconv.ParseUint(fields[2], 10, 64)
+		row.rxDrop, _ = strconv.ParseUint(fields[3], 10, 64)
 		row.txBytes, _ = strconv.ParseUint(fields[8], 10, 64)
 		row.txPackets, _ = strconv.ParseUint(fields[9], 10, 64)
 		row.txErrors, _ = strconv.ParseUint(fields[10], 10, 64)
+		row.txDrop, _ = strconv.ParseUint(fields[11], 10, 64)
 		out = append(out, row)
 	}
 	return out

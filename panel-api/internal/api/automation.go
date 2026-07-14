@@ -290,6 +290,7 @@ func (m *automationMetrics) handle(c *gin.Context) {
 		info     json.RawMessage
 		services json.RawMessage
 		cpu      json.RawMessage
+		netRaw   json.RawMessage
 		errs     = map[string]string{}
 	)
 	fetch := func(name, cmd string, dst *json.RawMessage) {
@@ -310,6 +311,10 @@ func (m *automationMetrics) handle(c *gin.Context) {
 	fetch("info", "system.info", &info)
 	fetch("services", "system.service_details", &services)
 	fetch("cpu", "system.cpu_usage", &cpu)
+	// JAB-150: WAN throughput + packet loss for the Sounder Monitor. The
+	// collector samples over a short window, so this leg is the slow one;
+	// the 8s per-fetch timeout above bounds it.
+	fetch("net", "system.net_telemetry", &netRaw)
 	_ = g.Wait()
 
 	out := gin.H{
@@ -322,9 +327,17 @@ func (m *automationMetrics) handle(c *gin.Context) {
 	}
 	if services != nil {
 		out["services"] = services
+		// Normalized per-service health for the Sounder Monitor (JAB-150).
+		// Additive: existing consumers keep reading the raw "services".
+		if health := normalizeServiceHealth(services); len(health) > 0 {
+			out["service_health"] = health
+		}
 	}
 	if cpu != nil {
 		out["cpu"] = cpu
+	}
+	if netRaw != nil {
+		out["net"] = netRaw
 	}
 	if len(errs) > 0 {
 		out["errors"] = errs
@@ -334,4 +347,105 @@ func (m *automationMetrics) handle(c *gin.Context) {
 	m.cached, m.cachedAt = out, time.Now()
 	m.mu.Unlock()
 	c.JSON(http.StatusOK, out)
+}
+
+// agentServiceDetail is the subset of the agent's system.service_details
+// ServiceDetail that the normalized health view needs. Declared locally so
+// panel-api doesn't import the agent's command package.
+type agentServiceDetail struct {
+	Unit          string `json:"unit"`
+	Active        string `json:"active"`
+	Sub           string `json:"sub"`
+	LoadState     string `json:"load_state"`
+	UnitFileState string `json:"unit_file_state"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+}
+
+// automationServiceHealth is the normalized, monitor-friendly health row
+// the Sounder Monitor consumes (JAB-150). Status is one of healthy |
+// degraded | failed | stopped; reason carries the systemd sub-state for
+// context (e.g. "running", "dead", "failed").
+type automationServiceHealth struct {
+	Name          string `json:"name"`
+	Unit          string `json:"unit"`
+	Status        string `json:"status"`
+	Reason        string `json:"reason,omitempty"`
+	UptimeSeconds int64  `json:"uptime_seconds,omitempty"`
+	LastChecked   string `json:"last_checked"`
+}
+
+// automationLogicalServices maps a stable logical service name (what the
+// monitor keys on, forward-compatible across host layout changes) to the
+// systemd unit that backs it. Only units the agent actually reports get a
+// row — the list is intentionally a superset. Units with no clean single
+// systemd unit on jabali hosts (php-fpm runs as per-user jabali-fpm@<user>
+// slices per ADR-0025; backups run via agent backup.run + per-user timers,
+// not a daemon; crowdsec is not in the agent probe allowlist) are omitted
+// rather than reported as perpetually "stopped".
+var automationLogicalServices = []struct{ Name, Unit string }{
+	{"web", "nginx.service"},
+	{"database", "mariadb.service"},
+	{"cache", "redis-server.service"},
+	{"mail", "jabali-stalwart.service"},
+	{"webmail", "jabali-webmail.service"},
+	{"identity", "jabali-kratos.service"},
+	{"dns", "pdns.service"},
+	{"docker", "docker.service"},
+	{"panel", "jabali-panel.service"},
+	{"agent", "jabali-agent.service"},
+	{"ssh", "ssh.service"},
+}
+
+// normalizeServiceHealth folds the raw system.service_details payload into
+// the normalized health view. Capability-aware: a logical service whose
+// unit is absent, not-found, or masked on this host is omitted so the
+// monitor only ever sees actions/services that exist here. Returns nil on
+// a malformed payload (the raw "services" field is still emitted).
+func normalizeServiceHealth(raw json.RawMessage) []automationServiceHealth {
+	var payload struct {
+		Services []agentServiceDetail `json:"services"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	byUnit := make(map[string]agentServiceDetail, len(payload.Services))
+	for _, d := range payload.Services {
+		byUnit[d.Unit] = d
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	out := make([]automationServiceHealth, 0, len(automationLogicalServices))
+	for _, ls := range automationLogicalServices {
+		d, ok := byUnit[ls.Unit]
+		if !ok {
+			continue // agent didn't report it → not installed here
+		}
+		if d.LoadState == "not-found" || d.LoadState == "masked" {
+			continue // capability-aware omit
+		}
+		out = append(out, automationServiceHealth{
+			Name:          ls.Name,
+			Unit:          ls.Unit,
+			Status:        serviceHealthStatus(d.Active),
+			Reason:        d.Sub,
+			UptimeSeconds: d.UptimeSeconds,
+			LastChecked:   now,
+		})
+	}
+	return out
+}
+
+// serviceHealthStatus maps a systemd ActiveState to the normalized status
+// vocabulary. activating/deactivating are transient → degraded so a
+// mid-restart blip doesn't page the monitor as a hard failure.
+func serviceHealthStatus(active string) string {
+	switch active {
+	case "active", "reloading":
+		return "healthy"
+	case "failed":
+		return "failed"
+	case "activating", "deactivating":
+		return "degraded"
+	default: // inactive, dead, unknown
+		return "stopped"
+	}
 }
