@@ -25,6 +25,10 @@ func newMigrateCmd() *cobra.Command {
 	// One-shot offline restore: create job + stage cpmove + run import.
 	cmd.AddCommand(newMigrateRestoreCmd())
 	cmd.AddCommand(newMigrateRefreshCmd()) // GH #646
+	// GH #390 (Google Workspace) / #374 (M365) phase A — per-mailbox IMAP
+	// account import (single account or --csv batch). Distinct from the
+	// panel-account cpmove sources: each account carries its own remote login.
+	cmd.AddCommand(newMigrateImapCmd())
 	return cmd
 }
 

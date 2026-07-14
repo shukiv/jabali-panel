@@ -3249,6 +3249,27 @@ Database migration commands
 jabali migrate
 ```
 
+#### `jabali migrate imap`
+
+Migrate a remote IMAP mailbox into a jabali mailbox (GH #390/#374)
+
+```
+jabali migrate imap [flags]
+```
+
+**Flags:**
+
+- `--allow-private` — permit RFC1918/loopback targets (migrating from a LAN server)
+- `--csv` — batch: CSV with header host,user,password,to[,port,starttls]
+- `--host` — remote IMAP host (e.g. imap.gmail.com)
+- `--password-file` — read the app-password from a file (single account)
+- `--password-stdin` — read the app-password from stdin (single account)
+- `--port` — remote IMAP port (0 = 993 implicit-TLS, or 143 with --starttls) (default `0`)
+- `--probe` — list the remote folder layout and exit without migrating
+- `--starttls` — use STARTTLS on 143 instead of implicit TLS on 993
+- `--to` — destination jabali mailbox (must already exist)
+- `--user` — remote IMAP login (full address)
+
 #### `jabali migrate import`
 
 Run (or resume) a migration job through the four-stage pipeline
