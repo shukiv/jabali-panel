@@ -86,6 +86,13 @@ func fetchWithClient(ctx context.Context, c *imapclient.Client, username, passwo
 		if sub != "" {
 			targetDir = filepath.Join(stagingDir, "."+sub)
 		}
+		// Authoritative containment guard: after the join, the target must
+		// still resolve inside stagingDir. Defends against any path-escape
+		// that slipped past maildirSub's sanitisation.
+		if rel, rerr := filepath.Rel(stagingDir, targetDir); rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: unsafe folder name", f.Name))
+			continue
+		}
 		n, b, err := selectAndWrite(ctx, c, f.Name, targetDir)
 		if err != nil {
 			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: %v", f.Name, err))
@@ -127,8 +134,17 @@ func maildirSub(f Folder) (sub string, skip bool) {
 	if f.Delim != 0 {
 		raw = strings.ReplaceAll(raw, string(f.Delim), ".")
 	}
+	// f.Name is the remote server's LIST output — untrusted. Neutralise
+	// every OS path separator + NUL so the name can't escape the staging
+	// dir when it becomes a Maildir++ ".<sub>" segment (a malicious or
+	// buggy source server on a non-"/" delimiter could otherwise return
+	// e.g. "../../etc/x"). Then reject residual traversal / empties.
+	// fetchWithClient also verifies containment after the join.
+	raw = strings.ReplaceAll(raw, "/", ".")
+	raw = strings.ReplaceAll(raw, "\\", ".")
+	raw = strings.ReplaceAll(raw, "\x00", "")
 	raw = strings.Trim(raw, ".")
-	if raw == "" {
+	if raw == "" || strings.Contains(raw, "..") {
 		return "", true
 	}
 	return raw, false

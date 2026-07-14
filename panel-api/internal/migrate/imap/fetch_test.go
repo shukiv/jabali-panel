@@ -136,6 +136,13 @@ func TestMaildirSub(t *testing.T) {
 		{"ordinary nested slash", Folder{Name: "Work/2026", Role: "", Delim: '/'}, "Work.2026", false},
 		{"ordinary nested dot", Folder{Name: "Work.2026", Role: "", Delim: '.'}, "Work.2026", false},
 		{"empty normalises to skip", Folder{Name: "/", Role: "", Delim: '/'}, "", true},
+		// Untrusted remote names must not escape the staging dir. Separators
+		// are neutralised to dots; residual ".." → skip.
+		{"traversal slash delim", Folder{Name: "../../etc/passwd", Role: "", Delim: '/'}, "etc.passwd", false},
+		{"traversal dot delim", Folder{Name: "../../secret", Role: "", Delim: '.'}, "secret", false},
+		{"traversal backslash", Folder{Name: "..\\..\\x", Role: "", Delim: 0}, "x", false},
+		{"nul stripped", Folder{Name: "a\x00b", Role: "", Delim: 0}, "ab", false},
+		{"double-dot only skips", Folder{Name: "..", Role: "", Delim: 0}, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
