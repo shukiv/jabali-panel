@@ -55,6 +55,11 @@ type Folder struct {
 	// Selectable is false for \Noselect / \NonExistent container nodes
 	// that hold no messages (skip them when migrating).
 	Selectable bool `json:"selectable"`
+	// Delim is the server's hierarchy delimiter for this mailbox (e.g.
+	// '/' on Gmail, '.' on Dovecot), used to translate the remote name
+	// into the staging Maildir++ layout. 0 when the server reports a
+	// flat namespace (NIL delimiter).
+	Delim rune `json:"-"`
 }
 
 // ProbeResult is the enumerated remote account.
@@ -69,11 +74,10 @@ type ProbeResult struct {
 // message (don't leak remote banners).
 var ErrAuth = errors.New("imap: authentication failed")
 
-// Probe dials the remote account over the SSRF-guarded transport, logs
-// in, lists folders, and returns the enumeration. It is the network
-// entrypoint; the login + list + mapping logic lives in probeWithClient
-// so it can be unit-tested against an in-memory server.
-func Probe(ctx context.Context, cfg ProbeConfig) (*ProbeResult, error) {
+// connect dials the remote host over the SSRF-guarded transport and
+// returns a ready (but NOT logged-in) IMAP client. Shared by Probe and
+// Fetch. Caller must Close the client.
+func connect(ctx context.Context, cfg ProbeConfig) (*imapclient.Client, error) {
 	host := strings.TrimSpace(cfg.Host)
 	if host == "" {
 		return nil, errors.New("imap: host required")
@@ -98,22 +102,33 @@ func Probe(ctx context.Context, cfg ProbeConfig) (*ProbeResult, error) {
 		return nil, fmt.Errorf("imap: connect %s:%d: %w", host, port, err)
 	}
 
-	var client *imapclient.Client
 	if cfg.STARTTLS {
-		client, err = imapclient.NewStartTLS(conn, &imapclient.Options{
+		client, serr := imapclient.NewStartTLS(conn, &imapclient.Options{
 			TLSConfig: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12},
 		})
-		if err != nil {
+		if serr != nil {
 			conn.Close()
-			return nil, fmt.Errorf("imap: starttls %s: %w", host, err)
+			return nil, fmt.Errorf("imap: starttls %s: %w", host, serr)
 		}
-	} else {
-		tlsConn := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
-		if herr := tlsConn.HandshakeContext(ctx); herr != nil {
-			conn.Close()
-			return nil, fmt.Errorf("imap: tls handshake %s: %w", host, herr)
-		}
-		client = imapclient.New(tlsConn, nil)
+		return client, nil
+	}
+
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	if herr := tlsConn.HandshakeContext(ctx); herr != nil {
+		conn.Close()
+		return nil, fmt.Errorf("imap: tls handshake %s: %w", host, herr)
+	}
+	return imapclient.New(tlsConn, nil), nil
+}
+
+// Probe dials the remote account over the SSRF-guarded transport, logs
+// in, lists folders, and returns the enumeration. It is the network
+// entrypoint; the login + list + mapping logic lives in probeWithClient
+// so it can be unit-tested against an in-memory server.
+func Probe(ctx context.Context, cfg ProbeConfig) (*ProbeResult, error) {
+	client, err := connect(ctx, cfg)
+	if err != nil {
+		return nil, err
 	}
 	defer client.Close()
 
@@ -131,15 +146,23 @@ func probeWithClient(c *imapclient.Client, username, password string) (*ProbeRes
 	// c.Logout() receiver immediately, sending LOGOUT before the LIST below.
 	defer func() { _ = c.Logout().Wait() }()
 
-	// RETURN (SPECIAL-USE) so the server tags Sent/Drafts/Junk/Trash/
-	// Archive/All folders (RFC 6154) — both Gmail and M365 advertise
-	// SPECIAL-USE, and it's how roleOf classifies folders. A non-nil
-	// options value is also required by RFC 5258 LIST-EXTENDED.
+	folders, err := listFolders(c)
+	if err != nil {
+		return nil, err
+	}
+	return &ProbeResult{Folders: folders}, nil
+}
+
+// listFolders runs LIST (RETURN SPECIAL-USE) and maps the result. The
+// SPECIAL-USE return tags Sent/Drafts/Junk/Trash/Archive/All (RFC 6154)
+// — both Gmail and M365 advertise it, and it's how roleOf classifies
+// folders. A non-nil options value is also required by RFC 5258
+// LIST-EXTENDED. Caller must already be logged in.
+func listFolders(c *imapclient.Client) ([]Folder, error) {
 	entries, err := c.List("", "*", &imap.ListOptions{ReturnSpecialUse: true}).Collect()
 	if err != nil {
 		return nil, fmt.Errorf("imap: list folders: %w", err)
 	}
-
 	folders := make([]Folder, 0, len(entries))
 	for _, e := range entries {
 		if e == nil {
@@ -149,9 +172,10 @@ func probeWithClient(c *imapclient.Client, username, password string) (*ProbeRes
 			Name:       e.Mailbox,
 			Role:       roleOf(e.Mailbox, e.Attrs),
 			Selectable: selectable(e.Attrs),
+			Delim:      e.Delim,
 		})
 	}
-	return &ProbeResult{Folders: folders}, nil
+	return folders, nil
 }
 
 // roleOf normalises a mailbox to a SPECIAL-USE role. INBOX has no
