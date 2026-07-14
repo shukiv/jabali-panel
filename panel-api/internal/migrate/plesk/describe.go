@@ -10,6 +10,10 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
+// Compile-time: the Plesk Discoverer answers cheap per-account size
+// queries for the lazy size endpoint.
+var _ migrate.SizeProber = (*Discoverer)(nil)
+
 // DescribeAccount returns a manifest scaffold for one Plesk
 // subscription. Step 1 validates the subscription exists on the source
 // and returns an empty-but-valid manifest (SchemaVersion + Source). The
@@ -57,16 +61,48 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 		}
 	}
 
-	return &migrate.AccountManifest{
+	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,
 		Source: migrate.SourceRef{
 			Kind: models.MigrationSourcePlesk,
 			Host: host,
 			User: accountID,
 		},
-		Warnings: []migrate.Warning{{
-			Code:   "plesk_areas_pending",
-			Detail: "Plesk per-area builders (domains/databases/dns/cron), WordPress, mail, and customers/packages ship in follow-up steps (plans/gh429-plesk-migration.md).",
-		}},
-	}, nil
+		Warnings: []migrate.Warning{},
+	}
+
+	// Per-area builders. Best-effort: each area records a warning on
+	// failure but does not short-circuit. Domains is load-bearing — a
+	// hard failure with zero domains parsed returns an error so the
+	// operator sees it.
+	var firstErr error
+	if doms, err := d.describeDomains(ctx, s, accountID); err != nil {
+		firstErr = fmt.Errorf("domains: %w", err)
+		m.Warnings = append(m.Warnings, migrate.Warning{Code: "domains_failed", Detail: err.Error()})
+	} else {
+		m.Domains = doms
+	}
+
+	if dbs, warns, err := d.describeDatabases(ctx, s, m.Domains); err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("databases: %w", err)
+		}
+		m.Warnings = append(m.Warnings, migrate.Warning{Code: "databases_failed", Detail: err.Error()})
+	} else {
+		m.Databases = dbs
+		m.Warnings = append(m.Warnings, warns...)
+	}
+
+	// DNS zones, cron, SSH keys, mailboxes, WordPress, and the
+	// customers/packages layer land in later steps — flagged so the
+	// operator knows the manifest is partial (plans/gh429-plesk-migration.md).
+	m.Warnings = append(m.Warnings, migrate.Warning{
+		Code:   "plesk_areas_pending",
+		Detail: "DNS/cron/SSH, mailboxes, WordPress, and customers/packages ship in follow-up steps; describe currently covers domains + databases.",
+	})
+
+	if firstErr != nil && len(m.Domains) == 0 {
+		return nil, firstErr
+	}
+	return m, nil
 }

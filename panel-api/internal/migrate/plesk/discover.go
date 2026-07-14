@@ -67,6 +67,9 @@ func (d *Discoverer) SetAllowPrivate(b bool) { d.AllowPrivate = b }
 type session struct {
 	client        *ssh.Client
 	connectedUser string
+	// execFn lets tests substitute the SSH round-trip with a fixture
+	// runner. nil in production → run() shells out over SSH.
+	execFn func(ctx context.Context, timeout time.Duration, cmd string) ([]byte, error)
 }
 
 func (s *session) Kind() string { return models.MigrationSourcePlesk }
@@ -172,9 +175,18 @@ func zero(b []byte) {
 	}
 }
 
-// run executes one command via SSH and returns stdout. Hard timeout via
-// context; SIGKILL on expiry so a stuck command doesn't pin the session.
+// run executes one command against the source, dispatching to the
+// injected fixture runner in tests or SSH in production.
 func (s *session) run(ctx context.Context, timeout time.Duration, cmd string) ([]byte, error) {
+	if s.execFn != nil {
+		return s.execFn(ctx, timeout, cmd)
+	}
+	return s.sshExec(ctx, timeout, cmd)
+}
+
+// sshExec runs one command via SSH and returns stdout. Hard timeout via
+// context; SIGKILL on expiry so a stuck command doesn't pin the session.
+func (s *session) sshExec(ctx context.Context, timeout time.Duration, cmd string) ([]byte, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
