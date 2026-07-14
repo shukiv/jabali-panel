@@ -19,6 +19,13 @@ const (
 	// jabali-migrator plugin's token-authed REST API (no source SSH). Jabali
 	// fetches manifest+DB+files, stages, then runs the shared import-wp.
 	MigrationSourceWordPressPlugin = "wordpress_plugin"
+	// MigrationSourceIMAP (GH #390 Google Workspace / #374 M365) — per-mailbox
+	// IMAP account migration. Unlike the panel-account sources above this is
+	// per-mailbox: each migrated account carries its own remote IMAP login.
+	// The importer FETCHes remote messages into a staging Maildir and hands it
+	// to the shared migration.import_mailboxes agent step. See
+	// plans/gh374-imap-mail-migration.md.
+	MigrationSourceIMAP = "imap"
 )
 
 // MigrationState is the per-job lifecycle. Stage transitions are
