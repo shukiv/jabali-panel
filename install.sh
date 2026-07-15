@@ -5199,6 +5199,13 @@ LockPersonality=true
 # Defense-in-depth still covered by NoNewPrivileges + ProtectSystem +
 # RestrictAddressFamilies + ProtectKernel* above. ADR-0079.
 ReadWritePaths=$REPO_DIR /var/lib/jabali-uploads /var/lib/jabali-migrations /var/lib/jabali-panel /etc/jabali-panel/migration-secrets /run/mysqld
+# GH #355: systemd creates + chowns /var/lib/jabali-uploads to the panel
+# service user on EVERY start, so a drifted owner (e.g. root, from an old
+# install) self-heals on a plain restart — not only on \`jabali update\`.
+# Uploads failed with "open …/jabali-upload-…: permission denied" when the
+# dir was owned by someone the service user couldn't write as.
+StateDirectory=jabali-uploads
+StateDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
