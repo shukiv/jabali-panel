@@ -8,6 +8,7 @@ import {
   Drawer,
   Form,
   Input,
+  InputNumber,
   Card,
   Space,
   Steps,
@@ -27,6 +28,7 @@ type CreateInput = {
   source_kind: string;
   source_host: string;
   source_user: string;
+  source_port?: number;
   source_path?: string;
 };
 
@@ -35,6 +37,7 @@ type MigrationJob = {
   source_kind: string;
   source_host: string;
   source_user: string;
+  source_port?: number;
   state: string;
 };
 
@@ -538,7 +541,7 @@ export const CreateMigrationDrawer = ({
           form={form}
           layout="vertical"
           onFinish={handleSubmit}
-          initialValues={{ source_kind: "cpanel" }}
+          initialValues={{ source_kind: "cpanel", source_port: 22 }}
         >
           <Form.Item
             label="Source kind"
@@ -555,9 +558,9 @@ export const CreateMigrationDrawer = ({
                 <Form.Item
                   label={isPlugin ? "Source site URL" : "Source host"}
                   name="source_host"
-                  tooltip={isPlugin ? "The source WordPress site URL (https://old-site.com)." : "Hostname/IP of the source panel. Not required for WHM tarball uploads."}
+                  tooltip={isPlugin ? "The source WordPress site URL (https://old-site.com)." : "Hostname or IP of the source panel. Prefer the direct IP if the server sits behind Cloudflare/a proxy — a hostname can resolve to the proxy instead of the source. Not required for WHM tarball uploads."}
                 >
-                  <Input placeholder={isPlugin ? "https://old-site.com" : "src.example.com"} />
+                  <Input placeholder={isPlugin ? "https://old-site.com" : "203.0.113.10 or src.example.com"} />
                 </Form.Item>
               );
             }}
@@ -578,6 +581,24 @@ export const CreateMigrationDrawer = ({
                   tooltip={k === "wordpress_ssh" ? "SSH login on the source. Cloudways: the master_xxx user (needs an SSH KEY, not a password)." : "Login name on the source panel."}
                 >
                   <Input placeholder={k === "wordpress_ssh" ? "root or master_xxxx" : "bob"} />
+                </Form.Item>
+              );
+            }}
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.source_kind !== b.source_kind}>
+            {({ getFieldValue }) => {
+              const k = getFieldValue("source_kind");
+              // No SSH for token-plugin or offline tarball sources.
+              if (k === "wordpress_plugin" || k === "whm_pkgacct") {
+                return null;
+              }
+              return (
+                <Form.Item
+                  label="SSH port"
+                  name="source_port"
+                  tooltip="The source server's SSH port. Defaults to 22."
+                >
+                  <InputNumber min={1} max={65535} style={{ width: 140 }} />
                 </Form.Item>
               );
             }}

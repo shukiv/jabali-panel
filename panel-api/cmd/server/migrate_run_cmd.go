@@ -1043,6 +1043,7 @@ func cpanelRestoreCallback(
 				for _, r := range rsyncRows {
 					destPath := filepath.Join("/home", p.targetUsername, "domains", r.Dom, "public_html")
 					rawResp, rerr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+						"port":        srcSSHPort(job),
 						"job_id":      job.ID,
 						"host":        job.SourceHost,
 						"ssh_user":    remoteSSHUser,
@@ -1630,6 +1631,7 @@ func pleskAuthorizedDocroots(ctx context.Context, job *models.MigrationJob, db *
 	}
 	d := plesk.New()
 	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
 	secret := migrate.SecretRef{Path: fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)}
 	sess, err := d.Connect(ctx, job.SourceHost, migrationSSHUser(job), secret)
 	if err != nil {

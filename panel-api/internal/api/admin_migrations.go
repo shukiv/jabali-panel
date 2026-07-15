@@ -182,6 +182,8 @@ type createMigrationRequest struct {
 	ExpectedHostKey string `json:"expected_host_key,omitempty"`
 	// SourcePath (GH #647 wordpress_ssh) — the WP root on the source.
 	SourcePath string `json:"source_path,omitempty"`
+	// SourcePort (GH #429) — source SSH port; 0/absent → default 22.
+	SourcePort int `json:"source_port,omitempty"`
 }
 
 // create inserts a fresh migration_jobs row with state='pending'.
@@ -245,6 +247,7 @@ func (h *adminMigrationsHandler) create(c *gin.Context) {
 		SourceUser:      req.SourceUser,
 		State:           state,
 		ExpectedHostKey: strings.TrimSpace(req.ExpectedHostKey),
+		SourcePort:      normalizeSourcePort(req.SourcePort),
 	}
 	if sp := strings.TrimSpace(req.SourcePath); sp != "" { // GH #647 wordpress_ssh
 		row.SourcePath = &sp
@@ -1431,4 +1434,13 @@ func (h *adminMigrationsHandler) refresh(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, res)
+}
+
+// normalizeSourcePort clamps an operator-supplied SSH port to a valid range,
+// defaulting to 22 when unset (0) or out of range (GH #429).
+func normalizeSourcePort(p int) int {
+	if p < 1 || p > 65535 {
+		return 22
+	}
+	return p
 }

@@ -266,6 +266,7 @@ live source SSH. Use scp directly for that kind.`,
 func pullCpanel(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
 	d := cpanel.New()
 	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return "", fmt.Errorf("cpanel.Connect: %w", err)
@@ -312,7 +313,7 @@ func wpMigDoneStage(ctx context.Context, repo repository.MigrationJobRepository,
 }
 
 func pullWordPressSSH(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool, repo repository.MigrationJobRepository) error {
-	sess, err := wordpressssh.Connect(ctx, job.SourceHost, 0, sshUser, secret, allowPrivate)
+	sess, err := wordpressssh.Connect(ctx, job.SourceHost, srcSSHPort(job), sshUser, secret, allowPrivate)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -533,6 +534,7 @@ func readPluginToken(path string) (string, error) {
 func pullDirectAdmin(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
 	d := directadmin.New()
 	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return "", fmt.Errorf("directadmin.Connect: %w", err)
@@ -562,6 +564,7 @@ func pullDirectAdmin(ctx context.Context, sshUser string, job *models.MigrationJ
 func pullPlesk(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
 	d := plesk.New()
 	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return "", fmt.Errorf("plesk.Connect: %w", err)
@@ -590,6 +593,7 @@ func pullPlesk(ctx context.Context, sshUser string, job *models.MigrationJob, se
 func populatePleskDBsAfterExtract(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, extractDir string, allowPrivate bool) error {
 	d := plesk.New()
 	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return fmt.Errorf("plesk.Connect: %w", err)
@@ -609,6 +613,7 @@ func populatePleskDBsAfterExtract(ctx context.Context, sshUser string, job *mode
 func pullHestia(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
 	d := hestiacp.New()
 	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return "", fmt.Errorf("hestiacp.Connect: %w", err)
@@ -637,3 +642,12 @@ func pullHestia(ctx context.Context, sshUser string, job *models.MigrationJob, s
 // extractTar streams a .tar or .tar.gz into dest. Uses the same
 // path-escape + size-cap hardening as cpanel.ParseTarball; doesn't
 // classify entries since the per-importer parser does that.
+
+// srcSSHPort returns the migration job's source SSH port, defaulting to 22
+// when unset (GH #429).
+func srcSSHPort(job *models.MigrationJob) int {
+	if job != nil && job.SourcePort >= 1 && job.SourcePort <= 65535 {
+		return job.SourcePort
+	}
+	return 22
+}

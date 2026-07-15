@@ -76,6 +76,9 @@ type MigrationJob struct {
 	SourceHost      string `gorm:"column:source_host;type:varchar(255);not null;uniqueIndex:uq_migration_source,priority:1" json:"source_host"`
 	SourceUser      string `gorm:"column:source_user;type:varchar(64);not null;uniqueIndex:uq_migration_source,priority:2" json:"source_user"`
 	ExpectedHostKey string `gorm:"column:expected_host_key;type:varchar(128);not null;default:''" json:"expected_host_key"`
+	// SourcePort (GH #429) — the source panel's SSH port; connectors default to
+	// 22 when unset. Lets operators migrate a source behind a custom SSH port.
+	SourcePort int `gorm:"column:source_port;type:int;not null;default:22" json:"source_port"`
 	// SourcePath (GH #647) — the WordPress root on the source (control-INPUT,
 	// like source_host/source_user). NULL until the operator supplies it or the
 	// discoverer auto-detects it. Distinct from ManifestJSON, which holds the

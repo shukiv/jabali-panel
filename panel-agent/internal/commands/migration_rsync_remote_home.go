@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ type migrationRsyncRemoteHomeParams struct {
 	SrcAccount string `json:"src_account"` // source cPanel/DA account; src_path must live under /home/<src_account>/ (JAB-45)
 	DestPath   string `json:"dest_path"`   // absolute dest path on this host
 	DestUser   string `json:"dest_user"`   // chown target after rsync
+	Port       int    `json:"port"`        // source SSH port; 0 → 22 (GH #429)
 }
 
 type migrationRsyncRemoteHomeResult struct {
@@ -173,6 +175,11 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 	// first use — never the old blind StrictHostKeyChecking=no + /dev/null.
 	knownHosts := strings.TrimSuffix(p.SecretPath, ".env") + ".known_hosts"
 	sshOpt := "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + knownHosts
+	port := p.Port
+	if port < 1 || port > 65535 {
+		port = 22
+	}
+	sshOpt += " -p " + strconv.Itoa(port)
 	if keyTmp != "" {
 		sshOpt += " -i " + keyTmp + " -o IdentitiesOnly=yes"
 	}

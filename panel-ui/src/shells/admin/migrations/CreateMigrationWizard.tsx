@@ -28,6 +28,7 @@ import {
   Drawer,
   Form,
   Input,
+  InputNumber,
   Modal,
   Radio,
   Card,
@@ -117,6 +118,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
   };
   const [sourceKind, setSourceKind] = useState<string>("whm_pkgacct");
   const [sourceHost, setSourceHost] = useState<string>("");
+  const [sourcePort, setSourcePort] = useState<number>(22);
   const [sourceUser, setSourceUser] = useState<string>("");
   const [credKind, setCredKind] = useState<"password" | "key">("password");
   const [credValue, setCredValue] = useState<string>("");
@@ -193,6 +195,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
         source_kind: sourceKind,
         source_host: sourceHost || `__draft_${(crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).replace(/-/g, "").slice(0, 24)}`,
         source_user: sourceUser || `__draft_${(crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).replace(/-/g, "").slice(0, 24)}`,
+        source_port: sourcePort,
         state: "draft",
       });
       return data;
@@ -224,6 +227,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
       await apiClient.patch(`/admin/migrations/${draftId}`, {
         source_host: sourceHost,
         source_user: sourceUser,
+        source_port: sourcePort,
         expected_host_key: expectedHostKey.trim(),
       });
       const body: Record<string, string> =
@@ -475,11 +479,24 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             description="Credentials are written to /etc/jabali-panel/migration-secrets and reaped 24h after job completion."
           />
           <Form layout="vertical">
-            <Form.Item label="Source host" required>
+            <Form.Item
+              label="Source host"
+              required
+              tooltip="Use the server's direct IP if it sits behind Cloudflare or another proxy — a hostname can resolve to the proxy instead of the source server."
+            >
               <Input
                 value={sourceHost}
                 onChange={(e) => setSourceHost(e.target.value)}
-                placeholder="src.example.com"
+                placeholder="203.0.113.10 or src.example.com"
+              />
+            </Form.Item>
+            <Form.Item label="SSH port" tooltip="The source server's SSH port. Defaults to 22.">
+              <InputNumber
+                min={1}
+                max={65535}
+                value={sourcePort}
+                onChange={(v: number | null) => setSourcePort(typeof v === "number" ? v : 22)}
+                style={{ width: 140 }}
               />
             </Form.Item>
             <Form.Item label="Admin user" required>
