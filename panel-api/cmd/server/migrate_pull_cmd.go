@@ -223,6 +223,17 @@ live source SSH. Use scp directly for that kind.`,
 				return markPullFailed(fmt.Errorf("extract: %w", err))
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "tarball extracted at %s\n", extractDir)
+
+			// GH #429: the Plesk cpmove is metadata-only (databases.txt
+			// manifest, no bundled dumps — a real box had a 6.9 GB DB).
+			// Stream each DB straight into the extracted mysql/ tree so the
+			// cpanel ImportDatabases writer finds it. Re-connect (pullPlesk
+			// closed its session); read-only mysqldump, no source staging.
+			if job.SourceKind == models.MigrationSourcePlesk {
+				if perr := populatePleskDBsAfterExtract(ctx, sshUser, job, secret, extractDir, allowPrivate); perr != nil {
+					return markPullFailed(fmt.Errorf("plesk db populate: %w", perr))
+				}
+			}
 			// Auto-kick import via the agent so the operator's "discover →
 			// select → continue" expectation lands at done, not at pending-
 			// with-tarball. CLI defaults (above) for target user/email/
@@ -570,6 +581,29 @@ func pullPlesk(ctx context.Context, sshUser string, job *models.MigrationJob, se
 		fmt.Printf("  (warning: source-side rm %s failed: %v)\n", remoteTar, rmErr)
 	}
 	return localTar, nil
+}
+
+// populatePleskDBsAfterExtract re-connects to the Plesk source and streams
+// each manifested database into extractDir/cpmove-<slug>/mysql/<db>.sql, so
+// the cpanel ImportDatabases writer consumes them. Read-only on the source;
+// the dump is streamed straight to disk (never buffered — 6.9 GB DBs exist).
+func populatePleskDBsAfterExtract(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, extractDir string, allowPrivate bool) error {
+	d := plesk.New()
+	d.AllowPrivate = allowPrivate
+	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
+	if err != nil {
+		return fmt.Errorf("plesk.Connect: %w", err)
+	}
+	defer func() { _ = d.Close(ctx, s) }()
+	slug := plesk.Slug(job.SourceUser)
+	n, err := plesk.PopulatePleskDBs(extractDir, slug, func(cmd, dst string) error {
+		return d.StreamDBDump(ctx, s, cmd, dst)
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  \u2192 streamed %d database(s) into the cpmove tree\n", n)
+	return nil
 }
 
 func pullHestia(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {

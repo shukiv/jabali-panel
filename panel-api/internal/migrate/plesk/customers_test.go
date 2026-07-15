@@ -129,3 +129,18 @@ func TestDiscoverTenants_ParsesPlansAndCustomers(t *testing.T) {
 		t.Errorf("acme customer parsed wrong: %+v", acme)
 	}
 }
+
+func TestAuthoritativeDomains(t *testing.T) {
+	d := New()
+	s := fixtureSession(map[string]string{
+		// keyed on the SELECT (quote-free substring of the escaped command).
+		"SELECT name FROM domains WHERE name=": "lychee-fruits.co.il\naddon.example.net\n",
+	})
+	doms, err := d.AuthoritativeDomains(context.Background(), s, "lychee-fruits.co.il")
+	if err != nil {
+		t.Fatalf("AuthoritativeDomains: %v", err)
+	}
+	if len(doms) != 2 || doms[0] != "lychee-fruits.co.il" || doms[1] != "addon.example.net" {
+		t.Errorf("domains = %v", doms)
+	}
+}

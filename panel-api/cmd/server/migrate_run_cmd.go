@@ -29,10 +29,13 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"gorm.io/gorm"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
@@ -295,7 +298,8 @@ failed stage. Already-done stages are skipped.`,
 			case models.MigrationSourceCpanel,
 				models.MigrationSourceWHMpkgacct,
 				models.MigrationSourceDirectAdmin,
-				models.MigrationSourceHestia:
+				models.MigrationSourceHestia,
+				models.MigrationSourcePlesk:
 				// supported — fall through
 			default:
 				return failJob(fmt.Errorf("source kind %q not yet supported by jabali migrate import; "+
@@ -385,6 +389,41 @@ failed stage. Already-done stages are skipped.`,
 					fmt.Fprintf(cmd.ErrOrStderr(),
 						"warning: cpanel.ParseTarball failed on DA tarball %s (%v); using pre-extracted cp/<user>/ assumption\n",
 						daTarPath, perr)
+				}
+			case models.MigrationSourcePlesk:
+				// Plesk pull synthesises a METADATA cpmove (cpmove-<slug>/
+				// {cp,mysql,databases.txt,domains-paths.txt,mail-paths.txt,
+				// dnszones}). DBs were streamed into mysql/ during pull;
+				// docroots are rsynced source->dest at restore (below), NOT
+				// staged — a real box carried a 6.9 GB DB. Parse the cpmove
+				// for cp meta + the streamed mysql dumps, then take the
+				// domain list from domains-paths.txt (no homedir to walk).
+				pleskTar := filepath.Join("/var/lib/jabali-migrations", job.ID,
+					fmt.Sprintf("user.%s.tar.gz", job.SourceUser))
+				if cp, perr := cpanel.ParseTarball(pleskTar, extractDir); perr == nil {
+					parsed = cp
+					slug := plesk.Slug(job.SourceUser)
+					manifest := filepath.Join(extractDir, "cpmove-"+slug, "domains-paths.txt")
+					if raw, rerr := os.ReadFile(manifest); rerr == nil {
+						if parsed.DocRoots == nil {
+							parsed.DocRoots = map[string]string{}
+						}
+						for _, line := range strings.Split(string(raw), "\n") {
+							line = strings.TrimSpace(line)
+							if line == "" {
+								continue
+							}
+							parts := strings.SplitN(line, "\t", 2)
+							if len(parts) != 2 {
+								continue
+							}
+							dom := parts[0]
+							parsed.DomainNames = append(parsed.DomainNames, dom)
+							parsed.DocRoots[dom] = filepath.Join("/home", *user.Username, "domains", dom, "public_html")
+						}
+					}
+				} else {
+					return failJob(fmt.Errorf("plesk cpmove parse %s: %w", pleskTar, perr))
 				}
 			case models.MigrationSourceHestia:
 				// Hestia tar at /var/lib/jabali-migrations/<id>/
@@ -849,7 +888,7 @@ func cpanelRestoreCallback(
 			type rsyncPair struct{ Dom, SrcPath string }
 			var rsyncRows []rsyncPair
 			switch job.SourceKind {
-			case models.MigrationSourceDirectAdmin:
+			case models.MigrationSourceDirectAdmin, models.MigrationSourcePlesk:
 				manifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "domains-paths.txt")
 				if raw, rerr := os.ReadFile(manifest); rerr == nil {
 					for _, line := range strings.Split(string(raw), "\n") {
@@ -934,7 +973,42 @@ func cpanelRestoreCallback(
 				// source tenant's files (the SSH session is root/admin). Reject rows
 				// outside the account root (clean path, no traversal) as a security
 				// critical — the job degrades rather than silently copying.
-				if p.parsed.SourceUser != "" {
+				if job.SourceKind == models.MigrationSourcePlesk {
+					// SECURITY (cross-tenant), airtight: Plesk has NO
+					// per-subscription filesystem root (each domain is its
+					// own /var/www/vhosts/<domain>/), so we allowlist ONLY
+					// the docroots of the domains this subscription owns per
+					// the SOURCE's psa DB — queried fresh here, never trusting
+					// the staged manifest. FAIL CLOSED: if the source can't be
+					// verified, refuse every home rsync rather than risk
+					// copying another source tenant's files (SSH is root).
+					allowed, aerr := pleskAuthorizedDocroots(ctx, job, sharedDB)
+					if aerr != nil {
+						p.criticals = append(p.criticals, fmt.Sprintf(
+							"security: could not verify Plesk subscription domains from source psa (%v) — home rsync refused (fail-closed)", aerr))
+						rsyncRows = nil
+					} else {
+						kept := rsyncRows[:0]
+						for _, r := range rsyncRows {
+							cl := filepath.Clean(r.SrcPath)
+							ok := false
+							for a := range allowed {
+								if cl == a || strings.HasPrefix(cl, a+"/") {
+									ok = true
+									break
+								}
+							}
+							if ok {
+								kept = append(kept, r)
+							} else {
+								p.criticals = append(p.criticals, fmt.Sprintf(
+									"security: rsync source %q for domain %q is not an authoritative docroot of subscription %q — refused",
+									r.SrcPath, r.Dom, job.SourceUser))
+							}
+						}
+						rsyncRows = kept
+					}
+				} else if p.parsed.SourceUser != "" {
 					srcRoot := "/home/" + p.parsed.SourceUser
 					kept := rsyncRows[:0]
 					for _, r := range rsyncRows {
@@ -1539,4 +1613,57 @@ func primaryDomainFromManifest(manifestJSON *string) string {
 		return mf.Domains[0].Name
 	}
 	return ""
+}
+
+// pleskAuthorizedDocroots connects to the Plesk source and returns the SET
+// of docroots the subscription legitimately owns, per the source's psa DB
+// (authoritative — not the staged manifest). The import rsync guard rsyncs
+// ONLY paths under these. Returns an error (→ fail-closed refuse-all) when
+// the source can't be reached/verified or reports zero domains.
+func pleskAuthorizedDocroots(ctx context.Context, job *models.MigrationJob, db *gorm.DB) (map[string]bool, error) {
+	allowPrivate := false
+	if s, err := repository.NewServerSettingsRepository(db).Get(ctx); err == nil && s != nil {
+		allowPrivate = s.MigrationAllowPrivateHosts
+	}
+	d := plesk.New()
+	d.AllowPrivate = allowPrivate
+	secret := migrate.SecretRef{Path: fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)}
+	sess, err := d.Connect(ctx, job.SourceHost, migrationSSHUser(job), secret)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer func() { _ = d.Close(ctx, sess) }()
+	doms, err := d.AuthoritativeDomains(ctx, sess, job.SourceUser)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, dom := range doms {
+		if isHostnameLike(dom) { // defence-in-depth on psa output
+			out["/var/www/vhosts/"+dom+"/httpdocs"] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("source psa reported no domains for subscription %q", job.SourceUser)
+	}
+	return out, nil
+}
+
+// isHostnameLike accepts a DNS-hostname-shaped string (lowercase letters,
+// digits, dot, hyphen; at least one dot; no path separators or traversal).
+// Used by the Plesk rsync guard to bound a source docroot to its domain.
+func isHostnameLike(h string) bool {
+	if h == "" || len(h) > 253 || !strings.Contains(h, ".") {
+		return false
+	}
+	for _, r := range h {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '-':
+		default:
+			return false
+		}
+	}
+	return !strings.Contains(h, "..")
 }

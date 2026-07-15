@@ -59,6 +59,7 @@ const SOURCE_DESC: Record<string, string> = {
   whm_pkgacct: "Uploaded WHM Full Backup / pkgacct tarball",
   directadmin: "Live SSH or backup_user tarball — domains, users, DBs, mail, DNS, SSL",
   hestiacp: "Live SSH or v-backup-user tarball — web, mail, DNS, databases, cron",
+  plesk: "Live SSH — subscriptions, WordPress, DBs (streamed), mail, DNS",
   wordpress_ssh: "Cloudways / VPS / generic SSH — single WP site (files + DB + wp-config rewrite)",
   wordpress_plugin: "No SSH — jabali-migrator plugin on the source pushes over a token-authed API",
 };
@@ -92,6 +93,7 @@ const SOURCE_OPTIONS = [
   { value: "whm_pkgacct", label: "WHM pkgacct (uploaded tarball)" },
   { value: "directadmin", label: "DirectAdmin (live SSH source)" },
   { value: "hestiacp", label: "HestiaCP (live SSH source)" },
+  { value: "plesk", label: "Plesk (live SSH source)" },
 ];
 
 // ─── sub-step components ───────────────────────────────────────────────────────

@@ -277,7 +277,8 @@ func isKnownSourceKind(s string) bool {
 		models.MigrationSourceHestia,
 		models.MigrationSourceWordPressSSH,    // GH #647
 		models.MigrationSourceWordPressPlugin, // GH #648
-		models.MigrationSourceIMAP:            // GH #390/#374
+		models.MigrationSourceIMAP,            // GH #390/#374
+		models.MigrationSourcePlesk:           // GH #429
 		return true
 	}
 	return false

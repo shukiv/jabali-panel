@@ -222,3 +222,22 @@ func parsePleskCount(s string) uint32 {
 	}
 	return uint32(n)
 }
+
+// AuthoritativeDomains returns the domains a subscription owns as reported
+// by the source's psa DB — the AUTHORITATIVE source-of-truth used by the
+// import rsync guard to allowlist docroots (never trusting the staged
+// manifest). Read-only.
+func (d *Discoverer) AuthoritativeDomains(ctx context.Context, raw migrate.Session, sub string) ([]string, error) {
+	s, ok := raw.(*session)
+	if !ok {
+		return nil, fmt.Errorf("AuthoritativeDomains: wrong session type")
+	}
+	sql := fmt.Sprintf(
+		"SELECT name FROM domains WHERE name=%s OR webspace_id=(SELECT id FROM domains WHERE name=%s LIMIT 1)",
+		sqlQuote(sub), sqlQuote(sub))
+	out, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote(sql))
+	if err != nil {
+		return nil, fmt.Errorf("query psa domains: %w", err)
+	}
+	return splitLines(string(out)), nil
+}
