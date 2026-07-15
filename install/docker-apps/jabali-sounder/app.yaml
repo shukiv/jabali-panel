@@ -1,0 +1,35 @@
+slug: jabali-sounder
+name: Jabali Sounder
+tags: ["Monitoring"]
+version: "0.5.17"
+description: |
+  Control plane for managing multiple Jabali Panel servers from one
+  place: enroll panels, monitor their health, and run remediation.
+  Single container, SQLite by default. Serves plain HTTP behind the
+  panel's reverse proxy. Set JABALI_SOUNDER_ADMIN_PASSWORD in the app's
+  environment on first run to create the admin login.
+icon: icon.svg
+upstream: https://github.com/shukiv/jabali-sounder
+documentation: https://github.com/shukiv/jabali-sounder/blob/main/docs/DOCKER.md
+
+image_channel: ghcr.io/shukiv/jabali-sounder:0.5.17@sha256:03f982343f03c2674ac83ffa09d9d2608f8f055b461847c2b4f24e291b85c0ed
+volume_owner: "10001:10001"
+update_mode: manual
+
+resources:
+  cpu: "0.5"
+  memory: "256m"
+  pids: 200
+
+volumes:
+  - name: data
+    container_path: /data
+
+ports:
+  - name: http
+    container_port: 8484
+    protocol: tcp
+    default_enabled: true
+    default_bind: loopback
+    default_reverse_proxy: true
+    health_path: /health

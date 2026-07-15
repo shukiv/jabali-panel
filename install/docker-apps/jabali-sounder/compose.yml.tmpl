@@ -1,0 +1,28 @@
+services:
+  jabali-sounder:
+    image: {{ .ImageChannel }}
+    container_name: jabali-app-{{ .Slug }}
+    restart: unless-stopped
+    environment:
+      # Control-plane on a LAN: allow enrolling panels on private addresses.
+      JABALI_SOUNDER_ALLOW_PRIVATE_TARGETS: "true"
+{{- range $name, $val := .Env }}
+      {{ $name }}: {{ q $val }}
+{{- end }}
+    volumes:
+      - {{ .DataRoot }}/data:/data
+    ports:
+{{- with index .Ports "http" }}
+      - "{{ .BindInterface }}:{{ .HostPort }}:{{ .ContainerPort }}/{{ .Protocol }}"
+{{- end }}
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ .CPULimit }}"
+          memory: {{ .MemoryLimit }}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8484/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
