@@ -208,10 +208,13 @@ failed stage. Already-done stages are skipped.`,
 				if targetPackageID != "" {
 					cu.PackageID = &targetPackageID
 				}
-				// GH #327 (johnnyq): carry the HestiaCP Contact Name
-				// (user.conf FNAME/LNAME) onto the created user's name.
+				// GH #327 (johnnyq): carry the HestiaCP Contact Name onto the
+				// created user's name. Read it from the STAGED tarball, not the
+				// extractDir — the offline restore path hasn't extracted yet at
+				// this point (extraction happens later in the parse step).
 				if job.SourceKind == models.MigrationSourceHestia {
-					if fn, ln := hestiacp.PeekUserName(extractDir); fn != "" || ln != "" {
+					stagingDir := filepath.Join("/var/lib/jabali-migrations", jobID)
+					if fn, ln := hestiacp.PeekUserNameFromStaging(stagingDir, job.SourceUser); fn != "" || ln != "" {
 						cu.NameFirst, cu.NameLast = fn, ln
 						fmt.Printf("  → carried Hestia contact name: %s %s\n", fn, ln)
 					}
@@ -1156,8 +1159,8 @@ func cpanelRestoreCallback(
 				return bytes, warnings, fmt.Errorf("mailboxes: %w", err)
 			}
 			warnings = append(warnings, fmt.Sprintf(
-				"mailboxes: maildirs=%d messages_found=%d messages_pushed=%d bytes_pushed=%d",
-				mailRes.MaildirsFound, mailRes.MessagesFound, mailRes.MessagesPushed, mailRes.BytesPushed))
+				"mailboxes: count=%d messages_found=%d messages_pushed=%d bytes_pushed=%d",
+				mailRes.MailboxesCreated, mailRes.MessagesFound, mailRes.MessagesPushed, mailRes.BytesPushed))
 			warnings = append(warnings, mailRes.Skipped...)
 			// JAB-31: messages found but none pushed means the mailbox import hit
 			// an error (e.g. a JMAP failure) — core failure, not a warning.

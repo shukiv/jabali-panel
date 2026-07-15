@@ -30,12 +30,13 @@ import (
 //     on the agent. Counts/bytes reflect what Stalwart actually
 //     ingested via Email/import.
 type MailImportResult struct {
-	MaildirsFound  int
-	MessagesFound  int
-	MessagesPushed int64
-	BytesFound     int64
-	BytesPushed    int64
-	Skipped        []string
+	MaildirsFound    int // maildir-shaped dirs the pre-scan found (message import + dispatch gate)
+	MailboxesCreated int // GH #327: DISTINCT panel mailbox rows created — the operator-facing count
+	MessagesFound    int
+	MessagesPushed   int64
+	BytesFound       int64
+	BytesPushed      int64
+	Skipped          []string
 }
 
 // agentImportMailboxesResult mirrors panel-agent's
@@ -343,7 +344,10 @@ func insertOneMailboxRow(
 	if cErr := mbRepo.Create(ctx, mb); cErr != nil {
 		return []string{fmt.Sprintf("mailbox_rows: create %s@%s: %v", localPart, domainName, cErr)}
 	}
-	res.MaildirsFound++
+	// GH #327: the pre-scan already counted maildir-shaped dirs into
+	// MaildirsFound; counting again here double-reported real mailboxes
+	// (johnnyq saw "7" for 3). Count DISTINCT rows created separately.
+	res.MailboxesCreated++
 	if preserved {
 		return []string{fmt.Sprintf(
 			"mailbox_rows: created %s@%s — SOURCE password preserved (--preserve-source-state); the tenant's original mail password works",
