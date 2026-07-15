@@ -183,3 +183,7 @@ func truncForLog(s string, n int) string {
 	}
 	return s[:n] + "...[truncated]"
 }
+
+// Slug exposes the subscription→archive-slug mapping to the pull/import
+// wiring (which locates cpmove-<slug>/ inside the extracted tree).
+func Slug(sub string) string { return pleskSlug(sub) }

@@ -245,3 +245,34 @@ func (d *Discoverer) Close(ctx context.Context, raw migrate.Session) error {
 	}
 	return nil
 }
+
+// streamCommandToFile runs cmd on the source and streams its stdout to
+// localPath WITHOUT buffering — essential for a multi-GB mysqldump (a real
+// box carried a 6.9 GB DB; buffering it through run() would OOM the panel).
+func (s *session) streamCommandToFile(ctx context.Context, timeout time.Duration, cmd, localPath string) error {
+	subctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	sess, err := s.client.NewSession()
+	if err != nil {
+		return fmt.Errorf("ssh new session: %w", err)
+	}
+	defer sess.Close()
+	f, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	if err != nil {
+		return fmt.Errorf("open local %s: %w", localPath, err)
+	}
+	defer f.Close()
+	sess.Stdout = f
+	done := make(chan error, 1)
+	go func() { done <- sess.Run(cmd) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("ssh stream %q: %w", cmd, err)
+		}
+		return nil
+	case <-subctx.Done():
+		_ = sess.Signal(ssh.SIGKILL)
+		return fmt.Errorf("ssh stream %q: timed out after %s", cmd, timeout)
+	}
+}
