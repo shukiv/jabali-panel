@@ -68,6 +68,7 @@ const SOURCE_OPTIONS = [
   // migrate_run_cmd.go.
   { value: "directadmin", label: "DirectAdmin (single account)" },
   { value: "hestiacp", label: "HestiaCP (single account)" },
+  { value: "plesk", label: "Plesk (single subscription)" },
 ];
 
 const SOURCE_DESC: Record<string, string> = {
@@ -75,6 +76,7 @@ const SOURCE_DESC: Record<string, string> = {
   cpanel: "Live SSH or pkgacct backup — one full cPanel account",
   directadmin: "Live SSH or backup_user tarball — DA account(s)",
   hestiacp: "Live SSH or v-backup-user tarball — Hestia account(s)",
+  plesk: "Live SSH — subscriptions, WordPress, DBs (streamed), mail, DNS",
   wordpress_ssh: "Cloudways / VPS / generic SSH — a single WordPress site",
 };
 
