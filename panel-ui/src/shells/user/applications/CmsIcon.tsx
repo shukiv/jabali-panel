@@ -1,5 +1,6 @@
 import { BookOutlined } from "@icons";
 import type { CSSProperties } from "react";
+import { useThemeMode } from "../../../theme/ThemeModeContext";
 import wordpressLogo from "../../../icons/brand/apps/wordpress.svg";
 import mediawikiLogo from "../../../icons/brand/apps/mediawiki.svg";
 import drupalLogo from "../../../icons/brand/apps/drupal.svg";
@@ -11,6 +12,10 @@ import flarumLogo from "../../../icons/brand/apps/flarum.svg";
 import itflowLogo from "../../../icons/brand/apps/itflow.svg";
 import moodleLogo from "../../../icons/brand/apps/moodle.svg";
 import dokuwikiLogo from "../../../icons/brand/apps/dokuwiki.svg";
+// Theme-aware variants: "<name>-<theme>.svg" is the logo shown FOR that theme
+// (a light-coloured mark for dark mode, a dark-coloured mark for light mode).
+import prestashopDark from "../../../icons/brand/apps/prestashop-dark.svg";
+import prestashopLight from "../../../icons/brand/apps/prestashop-light.svg";
 
 interface CmsIconProps {
   appType: string | undefined;
@@ -36,6 +41,13 @@ const APP_LOGOS: Record<string, string> = {
   dokuwiki: dokuwikiLogo,
 };
 
+// Apps whose logo differs per theme. Keyed by app_type → { dark, light }
+// where each value is the logo to show under that panel theme. Takes
+// precedence over APP_LOGOS. Mirrors the marketing-site slider's themed set.
+const APP_LOGOS_THEMED: Record<string, { dark: string; light: string }> = {
+  prestashop: { dark: prestashopDark, light: prestashopLight },
+};
+
 // appDisplayName maps an app_type to its proper display name (for table badges
 // where the icon alone isn't enough — GH #504). Falls back to title-case.
 const APP_DISPLAY_NAMES: Record<string, string> = {
@@ -52,8 +64,9 @@ export function appDisplayName(appType?: string): string {
 // CmsIcon renders the brand logo for an app_type. Unknown app_type falls
 // back to the AntD BookOutlined generic icon.
 export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
+  const { mode } = useThemeMode();
   const key = appType || "wordpress";
-  const logo = APP_LOGOS[key];
+  const logo = APP_LOGOS_THEMED[key]?.[mode] ?? APP_LOGOS[key];
 
   if (logo) {
     return (

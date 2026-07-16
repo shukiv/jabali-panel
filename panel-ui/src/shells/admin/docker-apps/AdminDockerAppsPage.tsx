@@ -36,6 +36,7 @@ import { EditDrawer } from "./EditDrawer";
 import { EnvSection } from "./EnvSection";
 import { MaintenanceTab } from "./MaintenanceTab";
 import { StatCard } from "../../../components/StatCard";
+import { useThemeMode } from "../../../theme/ThemeModeContext";
 
 const STATUS_COLOR: Record<string, string> = {
   pending: "default",
@@ -50,6 +51,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export const AdminDockerAppsPage = () => {
   const { message } = App.useApp();
+  const { mode } = useThemeMode();
   const qc = useQueryClient();
   const [installEntry, setInstallEntry] = useState<CatalogEntry | null>(null);
   const [catalogTags, setCatalogTags] = useState<string[]>([]);
@@ -246,7 +248,7 @@ export const AdminDockerAppsPage = () => {
                         <Avatar
                           shape="square"
                           size={40}
-                          src={`/api/v1/admin/docker-apps/catalog/${r.slug}/icon`}
+                          src={`/api/v1/admin/docker-apps/catalog/${r.slug}/icon?theme=${mode}`}
                           style={{ background: "rgba(255,255,255,0.04)" }}
                         >
                           {r.slug.slice(0, 2).toUpperCase()}
@@ -449,7 +451,7 @@ export const AdminDockerAppsPage = () => {
                           <Avatar
                             shape="square"
                             size={40}
-                            src={`/api/v1/admin/docker-apps/catalog/${e.slug}/icon`}
+                            src={`/api/v1/admin/docker-apps/catalog/${e.slug}/icon?theme=${mode}`}
                             style={{ backgroundColor: "transparent", color: "#1f1f1f" }}
                           >
                             {e.name[0]}

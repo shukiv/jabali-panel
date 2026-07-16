@@ -6,7 +6,7 @@ description: |
   Modern publishing platform. SQLite by default; the operator can
   switch to MySQL by editing the compose post-install. Single
   container, persistent /var/lib/ghost/content.
-icon: icon.svg
+icon: icon.png
 upstream: https://github.com/TryGhost/Ghost
 documentation: https://ghost.org/docs/
 

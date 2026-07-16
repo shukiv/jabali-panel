@@ -195,14 +195,21 @@ func (h *userDockerAppHandler) catalogIcon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_icon"})
 		return
 	}
+	// Theme-aware variant selection (see resolveThemedIcon in docker_apps.go).
+	name = resolveThemedIcon(e.Dir(), name, c.Query("theme"))
 	body, err := os.ReadFile(filepath.Join(e.Dir(), name))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
 	}
 	ctype := "image/svg+xml"
-	if strings.EqualFold(filepath.Ext(name), ".png") {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png":
 		ctype = "image/png"
+	case ".jpg", ".jpeg":
+		ctype = "image/jpeg"
+	case ".webp":
+		ctype = "image/webp"
 	}
 	c.Data(http.StatusOK, ctype, body)
 }

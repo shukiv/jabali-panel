@@ -5,7 +5,7 @@ version: "8.6.3"
 description: |
   Free, open-source IT asset management. Track hardware, licenses,
   accessories, and consumables. Laravel app container + bundled MariaDB.
-icon: icon.svg
+icon: icon.webp
 upstream: https://github.com/snipe/snipe-it
 documentation: https://snipe-it.readme.io/docs
 

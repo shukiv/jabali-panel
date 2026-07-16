@@ -178,6 +178,10 @@ func (h *dockerAppHandler) catalogIcon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_icon"})
 		return
 	}
+	// Theme-aware: a "<base>-dark.<ext>" / "-light.<ext>" variant next to the
+	// base icon wins when the caller passes ?theme=dark|light. Falls back to
+	// the base icon when no variant exists.
+	name = resolveThemedIcon(entry.Dir(), name, c.Query("theme"))
 	full := filepath.Join(entry.Dir(), name)
 	bytes, err := os.ReadFile(full)
 	if err != nil {
@@ -195,6 +199,22 @@ func (h *dockerAppHandler) catalogIcon(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "public, max-age=3600")
 	c.Data(http.StatusOK, ctype, bytes)
+}
+
+// resolveThemedIcon returns the icon file to serve for the requested theme.
+// If theme is "dark" or "light" and a sibling "<base>-<theme>.<ext>" file
+// exists in dir, that variant is returned; otherwise the base name is used.
+// theme is trusted only for the two literals, so no path escaping is possible.
+func resolveThemedIcon(dir, name, theme string) string {
+	if theme != "dark" && theme != "light" {
+		return name
+	}
+	ext := filepath.Ext(name)
+	variant := strings.TrimSuffix(name, ext) + "-" + theme + ext
+	if _, err := os.Stat(filepath.Join(dir, variant)); err == nil {
+		return variant
+	}
+	return name
 }
 
 func catalogEntryToResponse(e dockerapp.Entry) catalogEntryResponse {

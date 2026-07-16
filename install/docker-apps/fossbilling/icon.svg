@@ -1,6 +1,96 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
-  <rect width="48" height="48" rx="10" fill="#0FA968"/>
-  <path d="M15 9h13l6 6v22a2 2 0 0 1-2 2H15a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2Z" fill="#fff"/>
-  <path d="M28 9v4a2 2 0 0 0 2 2h4" fill="#A7E8CC"/>
-  <path d="M24 19c-2.4 0-4 1.2-4 3 0 1.7 1.4 2.5 4 3 2.6.5 4 1.3 4 3 0 1.8-1.6 3-4 3m0-15v2m0 11v2" stroke="#0FA968" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="75.253998mm"
+   height="75.253998mm"
+   viewBox="0 0 75.253997 75.253997"
+   version="1.1"
+   id="svg1"
+   inkscape:export-filename="FOSSBilling.svg"
+   inkscape:export-xdpi="118.17168"
+   inkscape:export-ydpi="118.17168"
+   inkscape:version="1.4 (e7c3feb100, 2024-10-09)"
+   sodipodi:docname="FOSSBilling.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="0.68684764"
+     inkscape:cx="70.612457"
+     inkscape:cy="159.424"
+     inkscape:window-width="1920"
+     inkscape:window-height="1003"
+     inkscape:window-x="0"
+     inkscape:window-y="40"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1">
+    <style
+       id="style1">
+      .cls-1{fill:#0081c5;}
+      .cls-2{fill:#fff;}
+      .cls-3{fill:#fac965;}
+      .cls-4{fill:#050407;}
+      .cls-4,.cls-5{stroke:#fff;stroke-miterlimit:10;}
+      .cls-5{fill:#1a110f;}
+    </style>
+  </defs>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(-77.919744,-94.281226)">
+    <g
+       id="Layer_1-2"
+       transform="matrix(1.0954672,0,0,1.0954672,82.993137,94.281271)">
+      <g
+         id="g5">
+        <g
+           id="g4">
+          <g
+             id="g2">
+            <path
+               class="cls-1"
+               d="m 9.84,37.86 c -1.37,0 -2.51,-1.35 -2.58,-3.08 L 5.99,6.56 C 5.91,4.77 7,3.24 8.43,3.15 L 51.23,0.5 h 0.13 c 1.37,0 2.51,1.35 2.58,3.07 L 55.2,31.8 c 0.08,1.79 -1.01,3.32 -2.44,3.41 L 9.96,37.86 H 9.83 Z"
+               id="path1" />
+            <path
+               class="cls-2"
+               d="m 51.36,1 c 1.09,0 2.02,1.17 2.08,2.6 l 1.26,28.23 c 0.07,1.49 -0.84,2.82 -1.97,2.89 l -42.8,2.65 c 0,0 -0.07,0 -0.1,0 -1.09,0 -2.02,-1.17 -2.08,-2.6 L 6.49,6.54 C 6.42,5.05 7.33,3.72 8.46,3.65 L 51.27,1 c 0,0 0.07,0 0.1,0 M 51.36,0 C 51.31,0 51.26,0 51.2,0 L 8.4,2.65 C 6.7,2.76 5.4,4.51 5.49,6.58 l 1.26,28.23 c 0.09,2 1.45,3.55 3.08,3.55 0.05,0 0.11,0 0.16,0 l 42.8,-2.65 c 1.7,-0.11 3,-1.86 2.91,-3.93 L 54.44,3.55 C 54.36,1.55 52.99,0 51.36,0 Z"
+               id="path2" />
+          </g>
+          <path
+             class="cls-3"
+             d="M 46.57,21.91 40,22.25 c -1.46,0.08 -2.71,-1.01 -2.79,-2.42 l -0.14,-2.59 c -0.08,-1.41 1.05,-2.62 2.51,-2.69 l 6.57,-0.34 c 1.46,-0.08 2.71,1.01 2.79,2.42 l 0.14,2.59 c 0.08,1.41 -1.05,2.62 -2.51,2.69 z"
+             id="path3" />
+          <rect
+             class="cls-4"
+             x="1.72"
+             y="28.16"
+             width="56"
+             height="38"
+             rx="4"
+             ry="4"
+             transform="rotate(5,29.709037,47.121945)"
+             id="rect3" />
+          <path
+             class="cls-5"
+             d="m 47.63,45.08 h 10 v 8 h -10 c -1.1,0 -2,-0.9 -2,-2 v -4 c 0,-1.1 0.9,-2 2,-2 z"
+             transform="rotate(5,51.592615,49.034916)"
+             id="path4" />
+        </g>
+      </g>
+    </g>
+  </g>
 </svg>
