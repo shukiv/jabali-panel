@@ -1,53 +1,41 @@
-import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiPrestashop, SiMoodle } from "react-icons/si";
-import { FaOpencart, FaRegComments, FaBriefcase } from "react-icons/fa6";
 import { BookOutlined } from "@icons";
 import type { CSSProperties } from "react";
+import wordpressLogo from "../../../icons/brand/apps/wordpress.svg";
+import mediawikiLogo from "../../../icons/brand/apps/mediawiki.svg";
+import drupalLogo from "../../../icons/brand/apps/drupal.svg";
+import joomlaLogo from "../../../icons/brand/apps/joomla.svg";
+import phpbbLogo from "../../../icons/brand/apps/phpbb.svg";
+import opencartLogo from "../../../icons/brand/apps/opencart.svg";
+import prestashopLogo from "../../../icons/brand/apps/prestashop.svg";
+import flarumLogo from "../../../icons/brand/apps/flarum.svg";
+import itflowLogo from "../../../icons/brand/apps/itflow.svg";
+import moodleLogo from "../../../icons/brand/apps/moodle.svg";
+import dokuwikiLogo from "../../../icons/brand/apps/dokuwiki.svg";
 
 interface CmsIconProps {
   appType: string | undefined;
   size?: number;
 }
 
-// Brand colors for the CMS logos. Falling back to currentColor for the
-// generic icon so themed dark/light backgrounds keep contrast without a
-// per-mode override.
-const BRAND_COLOR: Record<string, string> = {
-  wordpress: "#21759B",
-  mediawiki: "#990000",
-  drupal: "#0678BE",
-  joomla: "#F44321",
-  phpbb: "#26477F",
-  opencart: "#2AC2EF",
-  prestashop: "#DF0067",
-  flarum: "#5d61d6",
-  itflow: "#0d6efd",
-  moodle: "#f98012",
+// Real brand logos for each native CMS app_type, keyed the same way the
+// backend names them. These are the official marks (collected under
+// icons/brand/apps/) — they replace the earlier monochrome react-icons
+// glyphs, several of which were the wrong brand (e.g. the Wikipedia mark
+// stood in for MediaWiki, a speech bubble for Flarum, a briefcase for ITFlow).
+const APP_LOGOS: Record<string, string> = {
+  wordpress: wordpressLogo,
+  mediawiki: mediawikiLogo,
+  drupal: drupalLogo,
+  joomla: joomlaLogo,
+  phpbb: phpbbLogo,
+  opencart: opencartLogo,
+  prestashop: prestashopLogo,
+  flarum: flarumLogo,
+  itflow: itflowLogo,
+  moodle: moodleLogo,
+  dokuwiki: dokuwikiLogo,
 };
 
-// DokuWikiMark — react-icons has no DokuWiki brand glyph, so render its logo
-// inline (mirrors the docker-app catalog icon.svg).
-function DokuWikiMark({ size }: { size: number }) {
-  return (
-    <svg
-      viewBox="0 0 64 64"
-      width={size}
-      height={size}
-      style={{ flexShrink: 0 }}
-      role="img"
-      aria-label="DokuWiki"
-    >
-      <rect width="64" height="64" rx="12" fill="#88bb11" />
-      <path
-        fill="#fff"
-        d="M18 16h17a13 13 0 0 1 0 26H18a2 2 0 0 1-2-2V18a2 2 0 0 1 2-2zm6 6v14h11a7 7 0 0 0 0-14H24z"
-      />
-      <rect x="16" y="46" width="32" height="4" rx="2" fill="#fff" opacity="0.85" />
-    </svg>
-  );
-}
-
-// CmsIcon renders the brand logo for an app_type. Unknown app_type falls
-// back to the AntD BookOutlined generic icon.
 // appDisplayName maps an app_type to its proper display name (for table badges
 // where the icon alone isn't enough — GH #504). Falls back to title-case.
 const APP_DISPLAY_NAMES: Record<string, string> = {
@@ -61,49 +49,29 @@ export function appDisplayName(appType?: string): string {
   return APP_DISPLAY_NAMES[appType] || appType.charAt(0).toUpperCase() + appType.slice(1);
 }
 
+// CmsIcon renders the brand logo for an app_type. Unknown app_type falls
+// back to the AntD BookOutlined generic icon.
 export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
   const key = appType || "wordpress";
-  const color = BRAND_COLOR[key];
+  const logo = APP_LOGOS[key];
+
+  if (logo) {
+    return (
+      <img
+        src={logo}
+        width={size}
+        height={size}
+        alt={appDisplayName(key)}
+        style={{ width: size, height: size, flexShrink: 0, objectFit: "contain" }}
+      />
+    );
+  }
+
   const style: CSSProperties = {
     fontSize: size,
     width: size,
     height: size,
-    color,
     flexShrink: 0,
   };
-
-  if (key === "wordpress") {
-    return <SiWordpress style={style} />;
-  }
-  if (key === "mediawiki") {
-    return <SiWikipedia style={style} />;
-  }
-  if (key === "drupal") {
-    return <SiDrupal style={style} />;
-  }
-  if (key === "joomla") {
-    return <SiJoomla style={style} />;
-  }
-  if (key === "phpbb") {
-    return <SiPhpbb style={style} />;
-  }
-  if (key === "opencart") {
-    return <FaOpencart style={style} />;
-  }
-  if (key === "prestashop") {
-    return <SiPrestashop style={style} />;
-  }
-  if (key === "flarum") {
-    return <FaRegComments style={style} />;
-  }
-  if (key === "itflow") {
-    return <FaBriefcase style={style} />;
-  }
-  if (key === "moodle") {
-    return <SiMoodle style={style} />;
-  }
-  if (key === "dokuwiki") {
-    return <DokuWikiMark size={size} />;
-  }
   return <BookOutlined style={style} />;
 }
