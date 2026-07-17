@@ -7,10 +7,10 @@
 **Deciders**: shuki
 
 **Related**:
-- [ADR-0036: OIDC for WordPress Admin Access (M16)](./0036-oidc-for-wordpress-admin.md) — superseded by this ADR
-- [ADR-0038: Rollback of M16 OIDC (M16R)](./0038-rollback-of-m16-oidc.md) — immediate predecessor
+- [ADR-0036: OIDC for WordPress Admin Access (M16)](./0036-m16-hydra-identity.md) — superseded by this ADR
+- [ADR-0038: Rollback of M16 OIDC (M16R)](./0038-m16-rollback.md) — immediate predecessor
 - [ADR-0040: Self-Deleting SSO File (M22 Rework)](./0040-m22-sso-file.md) — supersedes this ADR
-- [M16 Hydra Deployment](../runbooks/m16-hydra.md) — decommissioned by M16R
+- M16 Hydra Deployment (runbook decommissioned) — decommissioned by M16R
 - [M22 Magic-Link Plan](../../plans/m16-rollback-and-m22-magic-link.md)
 - [M22 Rework Plan](../../plans/m22-rework-sso-file.md)
 

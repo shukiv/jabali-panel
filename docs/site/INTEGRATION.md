@@ -520,9 +520,9 @@ Keys follow camelCase with the leading prefix `admin` / `user`:
 
 Do **not** port these existing legacy `.astro` pages into the new build:
 
-- `admin/geo-block-rules.astro`, `admin/geo-block-rules-create.astro`, `admin/geo-block-rules-edit.astro` — the model is replaced by [CrowdSec scenarios + allowlists](../admin/crowdsec-decisions.md) plus [AppSec](../admin/appsec.md).
-- `admin/waf.astro` — superseded by [AppSec](../admin/appsec.md).
-- `admin/webhook-endpoints*.astro` — admin webhooks are not currently shipped; use [Notifications](../admin/notifications-channels.md) sender channels instead.
+- `admin/geo-block-rules.astro`, `admin/geo-block-rules-create.astro`, `admin/geo-block-rules-edit.astro` — the model is replaced by [CrowdSec scenarios + allowlists](./admin/crowdsec-decisions.md) plus [AppSec](./admin/appsec.md).
+- `admin/waf.astro` — superseded by [AppSec](./admin/appsec.md).
+- `admin/webhook-endpoints*.astro` — admin webhooks are not currently shipped; use [Notifications](./admin/notifications-channels.md) sender channels instead.
 - `user/cdn-integration.astro` — not shipped.
 - `user/git-deployment.astro` — not shipped.
 - `user/image-optimization.astro` — not shipped.
@@ -586,7 +586,7 @@ done
 
 ### Sidebar grouping for the subpages
 
-In `src/layouts/DocsLayout.astro`, the sidebar should mirror the page-level IA from [admin.md](../admin.md) and [user.md](../user.md). Suggested structure:
+In `src/layouts/DocsLayout.astro`, the sidebar should mirror the page-level IA from [admin.md](./admin.md) and [user.md](./user.md). Suggested structure:
 
 **Admin sidebar group**
 

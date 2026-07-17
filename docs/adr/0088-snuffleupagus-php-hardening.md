@@ -143,6 +143,6 @@ audit-detect alerts on any unwrapped php-cli invocation.
 - Snuffleupagus upstream: https://github.com/jvoisin/snuffleupagus
 - Documentation: https://snuffleupagus.readthedocs.io/
 - Imunify360 Proactive Defense (the comparison product):
-  https://docs.imunify360.com/proactive_defense/
+  https://docs.imunify360.com/
 - ADR-0031 (M9.6 PHP extension build pipeline)
 - ADR-0086 (M40 AppArmor — parked, this ADR's predecessor in scope)

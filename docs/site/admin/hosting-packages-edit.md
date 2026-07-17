@@ -22,7 +22,7 @@ Convergence completes within 60 seconds (the reconciler tick interval).
 
 ## Field-level audit
 
-Every save writes one audit row per changed field, with a structured diff (old value → new value). See [Audit Log](./audit.md).
+Every save writes one audit row per changed field, with a structured diff (old value → new value). See [Audit Log](./audit-log.md).
 
 ## CLI
 

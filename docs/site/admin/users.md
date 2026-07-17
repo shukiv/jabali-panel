@@ -54,4 +54,4 @@ jabali admin purge-orphan-identities --username <name> --apply
 
 ## Audit
 
-Every action above writes an audit row: actor user, subject user, action, result. See [Audit Log](./audit.md).
+Every action above writes an audit row: actor user, subject user, action, result. See [Audit Log](./audit-log.md).

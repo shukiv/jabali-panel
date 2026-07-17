@@ -27,7 +27,7 @@ If keystroke-level recording is required for compliance, run a real SSH session 
 
 - Single-tab. Open two browser tabs for two sessions.
 - No tmux / screen multiplexing inside the panel terminal (the terminal element does not interpret all terminal-multiplexer escape sequences correctly). Use `tmux` from a real SSH session.
-- No file upload. Use [Files](./files.md) (or SFTP) to move files.
+- No file upload. Use [Files](../user/files.md) (or SFTP) to move files.
 - Performance is bounded by the WebSocket latency; for high-throughput operations (large `find`, `tail -f` of a chatty log) use SSH instead.
 
 ## Disabling

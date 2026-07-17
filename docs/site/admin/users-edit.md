@@ -30,4 +30,4 @@ A single transactional `UPDATE` against `users`, plus a Kratos call if identity 
 
 ## Audit
 
-Every field-level change writes an audit row with a structured diff (old value → new value). See [Audit Log](./audit.md).
+Every field-level change writes an audit row with a structured diff (old value → new value). See [Audit Log](./audit-log.md).

@@ -48,7 +48,7 @@ Deploy **Ory Hydra v2.4.x** as a separate systemd unit under `jabali.slice`, bou
 
 The apps framework mints a per-install OIDC client when a WordPress install is created: `client_id` + AES-GCM-sealed `client_secret` persist on `application_installs` (migration 000050). The installer auto-provisions the OpenID Connect Generic WP plugin (SHA-256 pinned) with the rendered callback URI. Trusted first-party clients (`metadata.trusted=true`, set server-side only by the apps framework) auto-accept consent; untrusted clients render the AntD consent screen at `/oauth2-consent`.
 
-Full 16-decision matrix: [plans/m16-hydra-oauth.md](../../plans/m16-hydra-oauth.md).
+Full 16-decision matrix: plans/m16-hydra-oauth.md (archived on M16 rollback).
 
 ## Alternatives Considered
 

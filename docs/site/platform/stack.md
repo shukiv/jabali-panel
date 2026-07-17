@@ -69,4 +69,4 @@ Wire-contract drift is caught by golden tests (mirror `security_crowdsec_geobloc
 - **Single agent over UDS** keeps privilege boundary one process; no setuid binaries, no sudoers.d expansion.
 - **Sockets only for everything that can be a socket** (Kratos public/admin, MariaDB, Stalwart admin) removes TCP attack surface.
 
-ADRs covering the major decisions live under [docs/adr/](https://github.com/shuki-vaknin/jabali2/tree/main/docs/adr).
+ADRs covering the major decisions live under [docs/adr/](https://github.com/shukiv/jabali-panel/tree/main/docs/adr).
