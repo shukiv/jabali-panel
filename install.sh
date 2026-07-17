@@ -1595,6 +1595,14 @@ EARLYDNS
     if echo "$php_versions" | grep -qw "$_pv"; then
       continue
     fi
+    # In-use guard: a version with a configured FPM tree is panel-managed and a
+    # tenant pool uses it — provision_php_extensions reinstalls its ext packages
+    # on the same signal, so purging here causes an install/uninstall flap on
+    # every update. Only purge pure transitive php-cli pulls (no FPM tree).
+    if [[ -d "/etc/php/${_pv}/fpm" ]]; then
+      _log "keeping php${_pv} (configured FPM version in use)"
+      continue
+    fi
     if dpkg -l "php${_pv}-cli" 2>/dev/null | grep -q "^ii"; then
       # Preserve versions an admin installed on purpose via the panel PHP
       # version manager (GH #302): those packages are apt-"manual". Only purge
@@ -12749,6 +12757,16 @@ provision_new_software() {
   # Purge any stale PHP versions not in JABALI_PHP_VERSIONS
   for _pv in 8.4 8.3 8.2 8.1 8.0 7.4; do
     if echo "$_upd_php_versions" | grep -qw "$_pv"; then continue; fi
+    # In-use guard: a version with a configured FPM tree is one the panel PHP
+    # Manager installed and a tenant pool/domain uses. provision_php_extensions
+    # keys on this same /etc/php/<v>/fpm signal and reinstalls the ext packages,
+    # so purging here just gets it reinstalled on the SAME update run — an
+    # install/uninstall flap on every `jabali update`. Only pure transitive
+    # php-cli pulls (no FPM tree) should be purged.
+    if [[ -d "/etc/php/${_pv}/fpm" ]]; then
+      _log "provision: keeping php${_pv} (configured FPM version in use)"
+      continue
+    fi
     if dpkg -l "php${_pv}-cli" 2>/dev/null | grep -q "^ii"; then
       # Preserve admin-installed versions (apt-manual, via the panel PHP
       # version manager) — only purge transitive/auto pulls (GH #302).
