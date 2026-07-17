@@ -428,6 +428,13 @@ func (h *adminServerStatusHandler) filterModuleServices(ctx context.Context, raw
 	kept := payload.Services[:0]
 	for _, svc := range payload.Services {
 		unit, _ := svc["unit"].(string)
+		// Capability-aware: a unit that isn't installed on this host, or was
+		// masked because its module is off (e.g. pdns on a no-DNS install —
+		// GH #447), shouldn't be reported as a failed/down service. Matches
+		// the dashboard health path (normalizeServiceHealth in automation.go).
+		if ls, _ := svc["load_state"].(string); ls == "masked" || ls == "not-found" {
+			continue
+		}
 		if gate, ok := moduleGatedUnits[unit]; ok && !gate(settings) {
 			continue // owning module is off — hide it
 		}

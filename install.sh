@@ -3276,6 +3276,39 @@ PG_DROPIN
 
 # ---------- step 2.6: PowerDNS authoritative nameserver ----------------------
 
+# converge_pdns_masking — GH #447. The base package batch apt-installs the
+# pdns + pdns-recursor units on EVERY host, but their post-install config only
+# runs when the DNS module is enabled (run_if_module dns install_powerdns). On a
+# no-DNS host the units are therefore left unconfigured and sit in "failed",
+# surfacing as a bogus "pdns.service is failed" warning on the dashboard and the
+# Server Status page. Mask them when DNS is off so systemd reports "masked"
+# (the capability-aware health paths omit masked/not-found units) instead of
+# "failed"; unmask when DNS is on so install_powerdns can start them.
+# Idempotent + convergent: safe on fresh install and on every `jabali update`.
+converge_pdns_masking() {
+  command -v systemctl >/dev/null 2>&1 || return 0
+  # Desired DNS state: on an installed host the DB (server_settings.dns_enabled)
+  # is truth — `jabali update` runs with JABALI_MODULES unset, so is_module_enabled
+  # would wrongly report "on". Only fall back to the module selection on a fresh
+  # install where the settings row doesn't exist yet.
+  local dns_on=1 db_val=""
+  if command -v mariadb >/dev/null 2>&1; then
+    db_val="$(mariadb jabali_panel -N -B -e \
+      "SELECT dns_enabled FROM server_settings WHERE id=1;" 2>/dev/null)"
+  fi
+  if [[ -n "$db_val" ]]; then
+    [[ "$db_val" == "0" ]] && dns_on=0
+  elif ! is_module_enabled dns; then
+    dns_on=0
+  fi
+  if [[ "$dns_on" -eq 1 ]]; then
+    systemctl unmask pdns.service pdns-recursor.service >/dev/null 2>&1 || true
+  else
+    systemctl mask pdns.service pdns-recursor.service >/dev/null 2>&1 || true
+    _log "DNS module off — masked pdns/pdns-recursor so they don't report failed (GH #447)"
+  fi
+}
+
 install_powerdns() {
   _log "configuring PowerDNS (packages installed in base batch; this runs post-install config)"
 
@@ -12566,6 +12599,11 @@ provision_new_software() {
   ensure_jabali_panel_dir_traversable
   ensure_snuffleupagus_loadable
 
+  # GH #447: converge pdns/pdns-recursor masking to the DB's dns_enabled on
+  # every update, so a host that has the DNS module off stops reporting the
+  # unconfigured pdns unit as "failed" on the dashboard + Server Status.
+  converge_pdns_masking
+
   # GH #253: refresh the per-user PHP-FPM pool template so updated installs pick
   # up new shared-hosting defaults (memory_limit, upload sizes, etc.). Idempotent
   # copy; the reconciler re-renders each pool from the installed template on its
@@ -13121,6 +13159,9 @@ main() {
   # fresh install. Operator flips server_settings.postgres_enabled in
   # the Databases tab; panel-api dispatches db.postgres.install which
   # sources install.sh and runs install_postgres on demand.
+  # Mask/unmask pdns units to match the DNS module state BEFORE the config
+  # step runs (unmask must precede install_powerdns starting pdns). GH #447.
+  converge_pdns_masking
   run_if_module dns install_powerdns
   run_if_module dns bootstrap_pdns_self_zone
   # M6.3: recursor owns loopback :53 and forwards panel-authoritative zones
