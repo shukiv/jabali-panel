@@ -37,7 +37,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { apiClient } from "../../../apiClient";
-import { AdminBreadcrumb } from "../../../components/admin/AdminBreadcrumb";
+import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { adminLinks, ownerCrumbs, ownerLabel } from "../../../components/admin/entityLinks";
 import { startImpersonation } from "../../../impersonation";
 
@@ -134,6 +134,8 @@ export function AdminUserOverview() {
     }
   };
 
+  useSetBreadcrumbs(userQ.data ? ownerCrumbs(userQ.data) : null);
+
   if (userQ.isLoading) {
     return <Skeleton active paragraph={{ rows: 4 }} />;
   }
@@ -155,8 +157,6 @@ export function AdminUserOverview() {
 
   return (
     <div>
-      <AdminBreadcrumb items={ownerCrumbs(user)} />
-
       <Space align="start" style={{ width: "100%", justifyContent: "space-between", flexWrap: "wrap" }}>
         <div>
           <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 4 }}>

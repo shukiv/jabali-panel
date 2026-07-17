@@ -28,7 +28,7 @@ import { humanBytes } from "../../../utils/bytes";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
 import { useDeleteMutation, useOneQuery } from "../../../hooks/useQueries";
-import { AdminBreadcrumb } from "../../../components/admin/AdminBreadcrumb";
+import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, adminLinks, ownerLabel } from "../../../components/admin/entityLinks";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
@@ -238,17 +238,18 @@ export const DomainList = () => {
     });
   };
 
+  useSetBreadcrumbs(
+    ownerId
+      ? ownerResourceCrumbs({ id: ownerId, username: ownerQ.data?.username }, { key: "domains", label: "Domains" })
+      : null,
+  );
+
   const ownerRef = ownerId
     ? { id: ownerId, username: ownerQ.data?.username }
     : undefined;
 
   return (
     <div>
-      {ownerRef && (
-        <AdminBreadcrumb
-          items={ownerResourceCrumbs(ownerRef, { key: "domains", label: "Domains" })}
-        />
-      )}
       <Space
         wrap
         align="center"

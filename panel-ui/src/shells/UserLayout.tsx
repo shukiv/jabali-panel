@@ -13,6 +13,8 @@ import { ImpersonationBanner } from "../components/ImpersonationBanner";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { selectedNavKey, userNav } from "../nav";
+import { BreadcrumbProvider } from "../components/admin/BreadcrumbContext";
+import { RouteBreadcrumb } from "../components/admin/RouteBreadcrumb";
 import { useThemeMode } from "../theme/ThemeModeContext";
 import { useServerCapabilities } from "../hooks/useServerCapabilities";
 import { QuickStartModal } from "./user/QuickStartModal";
@@ -180,7 +182,10 @@ export function UserLayout() {
               overflowX: "hidden",
             }}
           >
-            <Outlet />
+            <BreadcrumbProvider>
+              <RouteBreadcrumb nav={userNav} homePath="/jabali-panel/dashboard" homeLabel="Dashboard" />
+              <Outlet />
+            </BreadcrumbProvider>
             <QuickStartModal />
           </Content>
           <JabaliFooter />

@@ -26,7 +26,7 @@ import { deleteApp, lifecycleAction, listCatalog, listInstalled, updateApp } fro
 import type { CatalogEntry, InstalledApp } from "./types";
 import { useSearchParams } from "react-router";
 import { useOneQuery } from "../../../hooks/useQueries";
-import { AdminBreadcrumb } from "../../../components/admin/AdminBreadcrumb";
+import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, ownerLabel } from "../../../components/admin/entityLinks";
 import { InstallDrawer } from "./InstallDrawer";
 import { LogsDrawer } from "./LogsDrawer";
@@ -128,13 +128,12 @@ export const AdminDockerAppsPage = () => {
     ? { id: ownerId, username: ownerQ.data?.username }
     : undefined;
 
+  useSetBreadcrumbs(
+    ownerRef ? ownerResourceCrumbs(ownerRef, { key: "docker-apps", label: "Docker Apps" }) : null,
+  );
+
   return (
     <div>
-      {ownerRef && (
-        <AdminBreadcrumb
-          items={ownerResourceCrumbs(ownerRef, { key: "docker-apps", label: "Docker Apps" })}
-        />
-      )}
       <Space wrap align="center" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>
           <ContainerOutlined /> Docker Apps

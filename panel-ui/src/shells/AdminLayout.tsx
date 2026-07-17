@@ -13,6 +13,8 @@ import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { adminNav, selectedNavKey } from "../nav";
+import { BreadcrumbProvider } from "../components/admin/BreadcrumbContext";
+import { RouteBreadcrumb } from "../components/admin/RouteBreadcrumb";
 import { useThemeMode } from "../theme/ThemeModeContext";
 import { QuickStartModal } from "./admin/QuickStartModal";
 
@@ -176,7 +178,10 @@ export function AdminLayout() {
               overflowX: "hidden",
             }}
           >
-            <Outlet />
+            <BreadcrumbProvider>
+              <RouteBreadcrumb nav={adminNav} homePath="/jabali-admin/dashboard" homeLabel="Dashboard" />
+              <Outlet />
+            </BreadcrumbProvider>
             <QuickStartModal />
           </Content>
           <JabaliFooter />

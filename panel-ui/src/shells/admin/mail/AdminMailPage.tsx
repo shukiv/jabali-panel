@@ -30,7 +30,7 @@ import {
 } from "../../../hooks/useMailboxes";
 import { useListQuery, useOneQuery } from "../../../hooks/useQueries";
 import { useSearchParams, Link } from "react-router";
-import { AdminBreadcrumb } from "../../../components/admin/AdminBreadcrumb";
+import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, ownerLabel, adminLinks } from "../../../components/admin/entityLinks";
 import type { Domain } from "../../user/domains/UserDomainList";
 import { EditMailboxModal } from "../../../components/mail/EditMailboxModal";
@@ -152,19 +152,18 @@ export function AdminMailPage() {
     }
   };
 
+  useSetBreadcrumbs(
+    ownerId
+      ? ownerResourceCrumbs({ id: ownerId, username: ownerQ.data?.username }, { key: "mailboxes", label: "Mailboxes" })
+      : null,
+  );
+
   if (isLoading && !rows) return <Skeleton active paragraph={{ rows: 6 }} />;
 
-  const ownerRef = ownerId
-    ? { id: ownerId, username: ownerQ.data?.username }
-    : undefined;
+  const ownerRef = ownerId ? { id: ownerId, username: ownerQ.data?.username } : undefined;
 
   return (
     <>
-      {ownerRef && (
-        <AdminBreadcrumb
-          items={ownerResourceCrumbs(ownerRef, { key: "mailboxes", label: "Mailboxes" })}
-        />
-      )}
       <Space
         wrap
         align="center"

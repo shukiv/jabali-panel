@@ -21,7 +21,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
-import { AdminBreadcrumb } from "../../../components/admin/AdminBreadcrumb";
+import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, adminLinks, ownerLabel } from "../../../components/admin/entityLinks";
 import type { Domain } from "./DomainList";
 import { DomainEmailSection } from "./DomainEmailSection";
@@ -72,6 +72,18 @@ export const DomainEdit = () => {
       });
     }
   }, [domain, form]);
+
+  useSetBreadcrumbs(
+    domain
+      ? [
+          ...ownerResourceCrumbs(
+            { id: domain.user_id, username: ownerQ.data?.username ?? domain.username },
+            { key: "domains", label: "Domains" },
+          ),
+          { title: domain.name },
+        ]
+      : null,
+  );
 
   const handleFinish = async (values: DomainEditInput) => {
     if (!id) return;
@@ -266,12 +278,6 @@ export const DomainEdit = () => {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <AdminBreadcrumb
-        items={[
-          ...ownerResourceCrumbs(ownerRef, { key: "domains", label: "Domains" }),
-          { title: domain.name },
-        ]}
-      />
       <Card>
         <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 4 }}>
           Edit domain — {domain.name}
