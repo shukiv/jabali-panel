@@ -1,0 +1,28 @@
+services:
+  pocket-id:
+    image: {{ .ImageChannel }}
+    container_name: jabali-app-{{ .Slug }}
+    restart: unless-stopped
+    environment:
+      # Public URL the panel reverse-proxies to this app; passkeys are
+      # origin-bound so this must be the exact https origin users hit.
+      APP_URL: "https://{{ .Domain }}"
+      TRUST_PROXY: "true"
+      ENCRYPTION_KEY: "{{ index .Env "ENCRYPTION_KEY" }}"
+    volumes:
+      - {{ .DataRoot }}/data:/app/data
+    ports:
+{{- with index .Ports "http" }}
+      - "{{ .BindInterface }}:{{ .HostPort }}:{{ .ContainerPort }}/{{ .Protocol }}"
+{{- end }}
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ .CPULimit }}"
+          memory: {{ .MemoryLimit }}
+    healthcheck:
+      test: ["CMD", "/app/pocket-id", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s

@@ -1,0 +1,40 @@
+slug: pocket-id
+tenant_installable: true
+name: Pocket ID
+tags: ["Security", "IT"]
+version: "2.11.0"
+description: |
+  Simple OIDC provider that signs users in with passkeys instead of
+  passwords. Self-hosted single sign-on for the rest of your apps.
+  Single container, SQLite storage.
+icon: icon.svg
+upstream: https://github.com/pocket-id/pocket-id
+documentation: https://pocket-id.org/docs
+
+image_channel: pocketid/pocket-id:v2.11.0@sha256:b7c37ab3044e53fd29b5f7295eebff5fdc0367dc043f36b41bcbe1815fcd965d
+update_mode: manual
+
+resources:
+  cpu: "0.5"
+  memory: "256m"
+  pids: 200
+
+env:
+  # 32-byte base64 key that encrypts stored secrets at rest. Generated
+  # once at install; changing it invalidates existing encrypted data.
+  - name: ENCRYPTION_KEY
+    secret: true
+    generate: password32
+
+volumes:
+  - name: data
+    container_path: /app/data
+
+ports:
+  - name: http
+    container_port: 1411
+    protocol: tcp
+    default_enabled: true
+    default_bind: loopback
+    default_reverse_proxy: true
+    health_path: /healthz
