@@ -49,7 +49,7 @@ one command:
 
 ```bash
 # On the NEW server (root)
-bash <(curl -fsSL https://github.com/shukiv/jabali-panel/raw/branch/main/install.sh) \
+bash <(curl -fsSL https://github.com/shukiv/jabali-panel/raw/main/install.sh) \
     --restore-from=sftp:user@backup-host:/path/to/repo \
     --restore-credentials=/root/dest.env \
     --restore-password=/root/restic-repo.password \

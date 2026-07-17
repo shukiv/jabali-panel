@@ -75,7 +75,7 @@ curl -fsSL https://get.jabali-panel.com | head -5   # expect the bash shebang + 
 ```
 
 If it fails, the canonical fallback always works:
-`curl -fsSL https://github.com/shukiv/jabali-panel/raw/branch/main/install.sh | sudo bash`.
+`curl -fsSL https://github.com/shukiv/jabali-panel/raw/main/install.sh | sudo bash`.
 Setup + redirect config live in `deploy/get-installer/`.
 
 ### Add a new PHP version
