@@ -982,6 +982,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterMeBackupRoutes(v1, api.MeBackupsHandlerConfig{
 				Agent:          deps.Agent,
 				Jobs:           deps.BackupJobs,
+				Destinations:   deps.BackupDestinations,
 				Users:          deps.Users,
 				Databases:      deps.Databases,
 				DatabaseUsers:  deps.DatabaseUsers,

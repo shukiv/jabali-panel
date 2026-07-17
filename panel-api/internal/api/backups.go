@@ -271,6 +271,22 @@ func (h *backupHandler) resolveDest(c *gin.Context, destID string) (*models.Back
 	return d, nil
 }
 
+// materializeDestParams resolves the restic repo params for a backup job's
+// download from the job's recorded destination. Returns nil when the job has
+// no destination (a truly-local backup) so the agent keeps its local default.
+// Without this the download always opened the local repo and 404'd remote
+// backups with "no snapshots for job" (GH #462).
+func materializeDestParams(ctx context.Context, dests repository.BackupDestinationRepository, job *models.BackupJob) map[string]any {
+	if dests == nil || job.DestinationID == nil || *job.DestinationID == "" {
+		return nil
+	}
+	d, err := dests.Get(ctx, *job.DestinationID)
+	if err != nil || d == nil {
+		return nil
+	}
+	return destWireParams(d)
+}
+
 // destWireParams projects a destination into the JSON keys the agent
 // backup commands accept. Mirror of backupscheduler.destWireParams;
 // kept duplicated to avoid the api → backupscheduler import cycle.
@@ -623,7 +639,7 @@ func (h *backupHandler) download(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "no_completed_snapshot"})
 		return
 	}
-	streamBackupArtifact(c, h.cfg.Agent, job, h.cfg.logErr)
+	streamBackupArtifact(c, h.cfg.Agent, job, materializeDestParams(c.Request.Context(), h.cfg.Destinations, job), h.cfg.logErr)
 }
 
 // streamBackupArtifact materializes a SUCCEEDED backup job's restic snapshot
@@ -637,7 +653,7 @@ func (h *backupHandler) download(c *gin.Context) {
 // 0600/0700 root:root), so the restic restore is dispatched to the agent, which
 // materializes the snapshot under /var/lib/jabali-backups/downloads/<job_id>/ as
 // root:jabali 0750 for the tar to read without elevated privileges.
-func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.BackupJob, logErr func(string, error, ...any)) {
+func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.BackupJob, destParams map[string]any, logErr func(string, error, ...any)) {
 	if job.Status != models.BackupJobStatusSucceeded {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "no_completed_snapshot"})
 		return
@@ -652,10 +668,19 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 	}
 	matCtx, matCancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
 	defer matCancel()
-	raw, err := ag.Call(matCtx, "backup.materialize", map[string]string{
+	// The snapshot lives in the job's DESTINATION repo. Forward repo_url +
+	// credentials so the agent opens that repo, not the local default at
+	// /var/lib/jabali-backups/repo (which has no snapshots and 404s with
+	// "no snapshots for job" — GH #462). destParams is nil for a truly-local
+	// backup, in which case the agent keeps its local default.
+	params := map[string]any{
 		"job_id":      job.ID,
 		"snapshot_id": job.SnapshotID,
-	})
+	}
+	for k, v := range destParams {
+		params[k] = v
+	}
+	raw, err := ag.Call(matCtx, "backup.materialize", params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error", "error": "restic_restore_failed", "detail": err.Error(),
@@ -938,6 +963,7 @@ func (h *backupHandler) allUserMailboxes(ctx context.Context, userID string) []s
 type MeBackupsHandlerConfig struct {
 	Agent          agent.AgentInterface
 	Jobs           repository.BackupJobRepository
+	Destinations   repository.BackupDestinationRepository
 	Users          repository.UserRepository
 	Databases      repository.DatabaseRepository
 	DatabaseUsers  repository.DatabaseUserRepository
@@ -1462,5 +1488,5 @@ func (h *meBackupHandler) download(c *gin.Context) {
 	// returned job metadata as JSON, so the browser's <a href> download
 	// got a JSON blob, never a file). Same agent-materialize path as the
 	// admin handler, scoped to the caller's own job by the check above.
-	streamBackupArtifact(c, h.cfg.Agent, job, h.cfg.logErr)
+	streamBackupArtifact(c, h.cfg.Agent, job, materializeDestParams(c.Request.Context(), h.cfg.Destinations, job), h.cfg.logErr)
 }
