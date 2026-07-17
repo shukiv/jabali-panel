@@ -1,0 +1,51 @@
+slug: dawarich
+name: Dawarich
+tags: ["Productivity", "Analytics"]
+version: "1.10.0"
+description: |
+  Self-hosted location history and timeline, a privacy-first replacement
+  for Google Timeline / Maps history. Import your data, visualize trips
+  on a map, and track places you've visited. Four containers: web app,
+  background worker, a PostGIS database and Redis.
+icon: icon.svg
+upstream: https://github.com/Freika/dawarich
+documentation: https://dawarich.app
+
+image_channel: freikin/dawarich:1.10.0@sha256:25ba1dc02e5571cc915bd104aae9c4c28929848ad1741c1829f5c40f86489a16
+update_mode: manual
+
+resources:
+  cpu: "1.0"
+  memory: "1536m"
+  pids: 500
+
+env:
+  - name: SECRET_KEY_BASE
+    secret: true
+    generate: password64
+  - name: DATABASE_PASSWORD
+    secret: true
+    generate: password32
+
+volumes:
+  - name: storage
+    container_path: /var/app/storage
+  - name: public
+    container_path: /var/app/public
+  - name: watched
+    container_path: /var/app/tmp/imports/watched
+  - name: db
+    container_path: /var/lib/postgresql/data
+  - name: redis
+    container_path: /data
+  - name: shared
+    container_path: /var/shared
+
+ports:
+  - name: http
+    container_port: 3000
+    protocol: tcp
+    default_enabled: true
+    default_bind: loopback
+    default_reverse_proxy: true
+    health_path: /api/v1/health

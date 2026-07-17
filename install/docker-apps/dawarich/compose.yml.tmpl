@@ -1,0 +1,107 @@
+services:
+  app:
+    image: {{ .ImageChannel }}
+    container_name: jabali-app-{{ .Slug }}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    entrypoint: web-entrypoint.sh
+    command: ["bin/rails", "server", "-p", "3000", "-b", "0.0.0.0"]
+    environment:
+      RAILS_ENV: "production"
+      SECRET_KEY_BASE: "{{ index .Env "SECRET_KEY_BASE" }}"
+      DATABASE_HOST: "db"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "dawarich_production"
+      DATABASE_USERNAME: "postgres"
+      DATABASE_PASSWORD: "{{ index .Env "DATABASE_PASSWORD" }}"
+      REDIS_URL: "redis://redis:6379/0"
+      APPLICATION_PROTOCOL: "https"
+      APPLICATION_HOSTS: "{{ .Domain }},localhost,127.0.0.1"
+      TIME_ZONE: "UTC"
+    volumes:
+      - {{ .DataRoot }}/storage:/var/app/storage
+      - {{ .DataRoot }}/public:/var/app/public
+      - {{ .DataRoot }}/watched:/var/app/tmp/imports/watched
+    ports:
+{{- with index .Ports "http" }}
+      - "{{ .BindInterface }}:{{ .HostPort }}:{{ .ContainerPort }}/{{ .Protocol }}"
+{{- end }}
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ .CPULimit }}"
+          memory: {{ .MemoryLimit }}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS -o /dev/null http://127.0.0.1:3000/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  sidekiq:
+    image: {{ .ImageChannel }}
+    container_name: jabali-app-{{ .Slug }}-sidekiq
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    entrypoint: sidekiq-entrypoint.sh
+    environment:
+      RAILS_ENV: "production"
+      SECRET_KEY_BASE: "{{ index .Env "SECRET_KEY_BASE" }}"
+      DATABASE_HOST: "db"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "dawarich_production"
+      DATABASE_USERNAME: "postgres"
+      DATABASE_PASSWORD: "{{ index .Env "DATABASE_PASSWORD" }}"
+      REDIS_URL: "redis://redis:6379/0"
+      APPLICATION_PROTOCOL: "https"
+      APPLICATION_HOSTS: "{{ .Domain }},localhost,127.0.0.1"
+      TIME_ZONE: "UTC"
+    volumes:
+      - {{ .DataRoot }}/storage:/var/app/storage
+      - {{ .DataRoot }}/public:/var/app/public
+      - {{ .DataRoot }}/watched:/var/app/tmp/imports/watched
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+
+  db:
+    image: postgis/postgis:17-3.5-alpine@sha256:fe9821935d163abca5611e3e0a6a7c73c8c547f3412ed2036ec0ed8f789390da
+    container_name: jabali-app-{{ .Slug }}-db
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "{{ index .Env "DATABASE_PASSWORD" }}"
+      POSTGRES_DB: "dawarich_production"
+    volumes:
+      - {{ .DataRoot }}/db:/var/lib/postgresql/data
+      - {{ .DataRoot }}/shared:/var/shared
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dawarich_production"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    container_name: jabali-app-{{ .Slug }}-redis
+    restart: unless-stopped
+    volumes:
+      - {{ .DataRoot }}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
