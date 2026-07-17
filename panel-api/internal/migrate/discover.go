@@ -57,6 +57,26 @@ func ApplyAllowPrivate(d Discoverer, allow bool) {
 	}
 }
 
+// PortSetter is the optional capability for Discoverers that connect over a
+// configurable SSH port (GH #429). Mirrors AllowPrivateSetter so the
+// registry-backed admin call sites can apply job.source_port without a
+// per-kind switch.
+type PortSetter interface {
+	SetPort(int)
+}
+
+// ApplyPort sets the source SSH port on a Discoverer obtained from the
+// registry when it implements PortSetter. No-op otherwise. Ports outside
+// 1..65535 (including 0) are ignored so the Discoverer keeps its default 22.
+func ApplyPort(d Discoverer, port int) {
+	if port < 1 || port > 65535 {
+		return
+	}
+	if s, ok := d.(PortSetter); ok {
+		s.SetPort(port)
+	}
+}
+
 // Session is an opaque per-importer connection handle. Concrete
 // implementations live under internal/migrate/<kind>/.
 type Session interface {

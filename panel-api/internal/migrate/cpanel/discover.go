@@ -52,6 +52,14 @@ var _ migrate.AllowPrivateSetter = (*Discoverer)(nil)
 // time + apply via migrate.ApplyAllowPrivate.
 func (d *Discoverer) SetAllowPrivate(b bool) { d.AllowPrivate = b }
 
+// SetPort sets the source SSH port (GH #429); ApplyPort calls it via the
+// PortSetter interface. Ports outside 1..65535 keep the default 22.
+func (d *Discoverer) SetPort(p int) {
+	if p >= 1 && p <= 65535 {
+		d.Port = p
+	}
+}
+
 type session struct {
 	client *ssh.Client
 	// principal records whether the connected user is the cpanel

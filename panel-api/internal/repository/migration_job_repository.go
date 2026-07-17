@@ -41,7 +41,7 @@ type MigrationJobRepository interface {
 	// still in state='draft'. ADR-0095 decision 5. Returns ErrNotFound
 	// if the row is missing OR in any non-draft state — callers map
 	// that to 409. Pass nil for any field to skip it.
-	PatchDraft(ctx context.Context, id string, sourceHost, sourceUser, targetUserID, expectedHostKey *string) error
+	PatchDraft(ctx context.Context, id string, sourceHost, sourceUser, targetUserID, expectedHostKey *string, sourcePort *int) error
 	// ListByBatch returns every job sharing a batch_id (ADR-0095
 	// decision 3 — bulk-WHM). Empty result on unknown batch.
 	ListByBatch(ctx context.Context, batchID string) ([]models.MigrationJob, error)
@@ -313,7 +313,7 @@ func (r *migrationJobRepo) UpdateTargetUser(ctx context.Context, id, targetUserI
 }
 
 // PatchDraft updates draft-only mutable fields. Caller passes nil to skip.
-func (r *migrationJobRepo) PatchDraft(ctx context.Context, id string, sourceHost, sourceUser, targetUserID, expectedHostKey *string) error {
+func (r *migrationJobRepo) PatchDraft(ctx context.Context, id string, sourceHost, sourceUser, targetUserID, expectedHostKey *string, sourcePort *int) error {
 	updates := map[string]any{"updated_at": time.Now().UTC()}
 	if sourceHost != nil {
 		updates["source_host"] = *sourceHost
@@ -326,6 +326,9 @@ func (r *migrationJobRepo) PatchDraft(ctx context.Context, id string, sourceHost
 	}
 	if expectedHostKey != nil {
 		updates["expected_host_key"] = *expectedHostKey
+	}
+	if sourcePort != nil {
+		updates["source_port"] = *sourcePort
 	}
 	res := r.db.WithContext(ctx).
 		Model(&models.MigrationJob{}).

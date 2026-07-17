@@ -814,6 +814,10 @@ type patchDraftRequest struct {
 	SourceUser      *string `json:"source_user,omitempty"`
 	TargetUserID    *string `json:"target_user_id,omitempty"`
 	ExpectedHostKey *string `json:"expected_host_key,omitempty"`
+	// SourcePort (GH #429) — the wizard collects the SSH port in the
+	// Connection step, which PATCHes the draft. Without this the port was
+	// silently dropped and the pull dialed 22.
+	SourcePort *int `json:"source_port,omitempty"`
 }
 
 // patchDraft updates a draft-state job. Allows the wizard to keep the
@@ -830,7 +834,13 @@ func (h *adminMigrationsHandler) patchDraft(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_fingerprint", "detail": "expected_host_key must be a SHA256 fingerprint (optionally SHA256:-prefixed)"})
 		return
 	}
-	if err := h.cfg.Jobs.PatchDraft(c.Request.Context(), id, req.SourceHost, req.SourceUser, req.TargetUserID, req.ExpectedHostKey); err != nil {
+	// Clamp the port to a valid range when supplied (GH #429).
+	var portPtr *int
+	if req.SourcePort != nil {
+		p := normalizeSourcePort(*req.SourcePort)
+		portPtr = &p
+	}
+	if err := h.cfg.Jobs.PatchDraft(c.Request.Context(), id, req.SourceHost, req.SourceUser, req.TargetUserID, req.ExpectedHostKey, portPtr); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusConflict, gin.H{"error": "not_draft", "detail": "job missing or not in draft state"})
 			return
@@ -1185,6 +1195,9 @@ func (h *adminMigrationsHandler) discoverAccounts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no_discoverer", "detail": err.Error()})
 		return
 	}
+	// Honor the job's custom source SSH port (GH #429) so test-connection
+	// and size-probe dial the same port the pull will use, not always 22.
+	migrate.ApplyPort(disc, job.SourcePort)
 	// Apply the SSRF private-host override from server_settings so the
 	// admin UI toggle takes effect on the next discover call without a
 	// process restart. Best-effort: settings repo unset or row missing
@@ -1347,6 +1360,9 @@ func (h *adminMigrationsHandler) accountSizeProbe(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no_discoverer", "detail": err.Error()})
 		return
 	}
+	// Honor the job's custom source SSH port (GH #429) so test-connection
+	// and size-probe dial the same port the pull will use, not always 22.
+	migrate.ApplyPort(disc, job.SourcePort)
 	if h.cfg.Settings != nil {
 		if s, sErr := h.cfg.Settings.Get(c.Request.Context()); sErr == nil && s != nil {
 			migrate.ApplyAllowPrivate(disc, s.MigrationAllowPrivateHosts)
