@@ -9,7 +9,7 @@
 //
 // No 5s polling. If an operator wants a fresh number, they hit Cmd+R.
 import { useQuery } from "@tanstack/react-query";
-import { Typography } from "antd";
+import { Progress, Typography } from "antd";
 
 import { apiClient } from "../../../apiClient";
 
@@ -58,7 +58,19 @@ export function UserDiskUsage({ userId }: { userId: string }) {
         : 0;
 
   if (limitKB > 0) {
-    return <span>{`${formatBytes(usedKB * 1024)} / ${formatBytes(limitKB * 1024)}`}</span>;
+    const pct = Math.min(100, Math.round((usedKB / limitKB) * 100));
+    return (
+      <div style={{ minWidth: 130, maxWidth: 180 }}>
+        <Progress
+          percent={pct}
+          size="small"
+          status={pct >= 95 ? "exception" : "normal"}
+        />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {`${formatBytes(usedKB * 1024)} / ${formatBytes(limitKB * 1024)}`}
+        </Typography.Text>
+      </div>
+    );
   }
   if (usedKB > 0) {
     return <span>{formatBytes(usedKB * 1024)}</span>;
