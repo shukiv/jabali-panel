@@ -314,8 +314,9 @@ var knownChannelKinds = map[string]struct{}{
 	models.NotificationChannelKindDiscord: {},
 	models.NotificationChannelKindNtfy:    {},
 	models.NotificationChannelKindWebhook: {},
-	models.NotificationChannelKindWebpush: {},
-	models.NotificationChannelKindSMS:     {},
+	models.NotificationChannelKindWebpush:  {},
+	models.NotificationChannelKindSMS:      {},
+	models.NotificationChannelKindTelegram: {},
 }
 
 var knownSeverities = map[string]struct{}{
@@ -350,7 +351,7 @@ func validateChannelName(name string) error {
 
 func validateChannelKindAndConfig(kind string, cfg models.NotificationChannelConfig) error {
 	if _, ok := knownChannelKinds[kind]; !ok {
-		return fmt.Errorf("unknown channel kind %q (valid: email/slack/discord/ntfy/webhook/webpush/sms)", kind)
+		return fmt.Errorf("unknown channel kind %q (valid: email/slack/discord/ntfy/webhook/webpush/sms/telegram)", kind)
 	}
 	switch kind {
 	case models.NotificationChannelKindEmail:
@@ -404,6 +405,13 @@ func validateChannelKindAndConfig(kind string, cfg models.NotificationChannelCon
 		// HMAC secret optional but recommended.
 		if cfg.HMACSecret != "" && len(cfg.HMACSecret) < 16 {
 			return errors.New("sms channel: hmac_secret must be >= 16 chars when set")
+		}
+	case models.NotificationChannelKindTelegram:
+		if cfg.BotToken == "" {
+			return errors.New("telegram channel: bot_token required (from @BotFather)")
+		}
+		if cfg.ChatID == "" {
+			return errors.New("telegram channel: chat_id required (the chat/channel to post to)")
 		}
 	}
 	return nil

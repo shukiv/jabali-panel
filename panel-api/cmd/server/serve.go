@@ -1123,6 +1123,7 @@ func buildNotificationRegistry(parent context.Context, deps app.Deps, log *slog.
 	registry.Register(senders.NewNtfy())
 	registry.Register(senders.NewWebhook())
 	registry.Register(senders.NewSMS())
+	registry.Register(senders.NewTelegram())
 	notifyEmail := provisionNotifyMailbox(parent, deps, log)
 	registry.Register(senders.NewEmail("127.0.0.1:587").WithLocalCreds(notifyLocalCreds(deps, notifyEmail)))
 	if deps.ServerSettings != nil && deps.WebPushSubs != nil {

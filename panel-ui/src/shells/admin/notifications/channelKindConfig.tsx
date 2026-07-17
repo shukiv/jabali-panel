@@ -10,7 +10,8 @@ export type ChannelKind =
   | "ntfy"
   | "webhook"
   | "webpush"
-  | "sms";
+  | "sms"
+  | "telegram";
 
 // CHANNEL_KINDS — kinds the admin can pick when creating a channel.
 // "webpush" lives in the type union (and the kindLabels/kindFields
@@ -24,6 +25,7 @@ export const CHANNEL_KINDS: ChannelKind[] = [
   "ntfy",
   "webhook",
   "sms",
+  "telegram",
 ];
 
 export const kindColors: Record<ChannelKind, string> = {
@@ -34,6 +36,7 @@ export const kindColors: Record<ChannelKind, string> = {
   webhook: "gold",
   webpush: "green",
   sms: "magenta",
+  telegram: "blue",
 };
 
 export const kindLabels: Record<ChannelKind, string> = {
@@ -44,6 +47,7 @@ export const kindLabels: Record<ChannelKind, string> = {
   webhook: "Generic webhook",
   webpush: "Web Push (browser)",
   sms: "SMS (gateway)",
+  telegram: "Telegram",
 };
 
 // ChannelFormFields — which per-kind config fields to render. The
@@ -78,6 +82,8 @@ export type ChannelFormConfig = {
   smtp_password?: string;
   smtp_tls?: "starttls" | "tls" | "none";
   to_number?: string;
+  bot_token?: string;
+  chat_id?: string;
 };
 
 export const kindFields: Record<ChannelKind, FieldSpec[]> = {
@@ -183,6 +189,22 @@ export const kindFields: Record<ChannelKind, FieldSpec[]> = {
       label: "Bearer token (optional)",
       type: "password",
       help: "Sent as Authorization: Bearer … if your gateway authenticates that way.",
+    },
+  ],
+  telegram: [
+    {
+      name: "bot_token",
+      label: "Bot token",
+      type: "password",
+      required: true,
+      help: "From @BotFather. Create a bot with /newbot, copy the token.",
+    },
+    {
+      name: "chat_id",
+      label: "Chat ID",
+      placeholder: "123456789 or -1001234567890",
+      required: true,
+      help: "The chat/group/channel to post to. Message the bot, then check https://api.telegram.org/bot<token>/getUpdates for your chat id.",
     },
   ],
 };

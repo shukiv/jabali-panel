@@ -10,13 +10,14 @@ import (
 // NotificationChannelKind enumerates the channel transports. Mirrors the
 // ENUM in migration 000064.
 const (
-	NotificationChannelKindEmail   = "email"
-	NotificationChannelKindSlack   = "slack"
-	NotificationChannelKindDiscord = "discord"
-	NotificationChannelKindNtfy    = "ntfy"
-	NotificationChannelKindWebhook = "webhook"
-	NotificationChannelKindWebpush = "webpush"
-	NotificationChannelKindSMS     = "sms"
+	NotificationChannelKindEmail    = "email"
+	NotificationChannelKindSlack    = "slack"
+	NotificationChannelKindDiscord  = "discord"
+	NotificationChannelKindNtfy     = "ntfy"
+	NotificationChannelKindWebhook  = "webhook"
+	NotificationChannelKindWebpush  = "webpush"
+	NotificationChannelKindSMS      = "sms"
+	NotificationChannelKindTelegram = "telegram"
 )
 
 // NotificationChannel is a configured delivery target for system events.
@@ -69,6 +70,11 @@ type NotificationChannelConfig struct {
 	// (e.g. "+15551234567"). Sent as the "to" field in the JSON
 	// payload POSTed to the gateway URL.
 	ToNumber string `json:"to_number,omitempty"`
+
+	// Telegram channel: bot token (from @BotFather) + the chat/channel ID
+	// to deliver to. The sender POSTs to the Bot API sendMessage endpoint.
+	BotToken string `json:"bot_token,omitempty"`
+	ChatID   string `json:"chat_id,omitempty"`
 }
 
 func (c *NotificationChannelConfig) Scan(src any) error {

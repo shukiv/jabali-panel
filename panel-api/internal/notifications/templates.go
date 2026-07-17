@@ -32,6 +32,15 @@ func RenderForChannel(env Envelope, kind string) (title, body string) {
 			body = strings.TrimSpace(body + "\n" + env.Deeplink)
 		}
 		return
+	case "telegram":
+		// Telegram Bot API plain-text message (no parse_mode → no escaping).
+		// The sender joins title + body; append the deeplink as a bare URL.
+		title = env.Title
+		body = strings.TrimSpace(env.Body)
+		if env.Deeplink != "" {
+			body = strings.TrimSpace(body + "\n\n" + env.Deeplink)
+		}
+		return
 	case "webpush":
 		// Push payloads are size-limited (~4KB). Truncate aggressively.
 		title = truncate(env.Title, 100)
