@@ -1,4 +1,5 @@
 slug: ghost
+popularity: 80
 name: Ghost
 tags: ["Blog", "CMS"]
 version: "6.44.1"

@@ -1,4 +1,5 @@
 slug: gitea
+popularity: 82
 name: Gitea
 tags: ["Developer tools"]
 version: "1.26.2"

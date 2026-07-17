@@ -1,4 +1,5 @@
 slug: mealie
+popularity: 60
 tenant_installable: true
 name: Mealie
 tags: ["Productivity"]

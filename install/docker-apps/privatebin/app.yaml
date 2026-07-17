@@ -1,4 +1,5 @@
 slug: privatebin
+popularity: 36
 tenant_installable: true
 name: PrivateBin
 tags: ["Developer tools"]

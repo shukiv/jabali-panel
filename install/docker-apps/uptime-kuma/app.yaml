@@ -1,4 +1,5 @@
 slug: uptime-kuma
+popularity: 85
 tenant_installable: true
 name: Uptime Kuma
 tags: ["Monitoring"]

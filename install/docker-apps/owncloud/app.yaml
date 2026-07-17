@@ -1,4 +1,5 @@
 slug: owncloud
+popularity: 52
 name: ownCloud
 tags: ["File sharing"]
 version: "10.16.3"

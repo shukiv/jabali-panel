@@ -1,4 +1,5 @@
 slug: grafana
+popularity: 78
 name: Grafana
 tags: ["Monitoring", "Analytics"]
 version: "13.0.2"

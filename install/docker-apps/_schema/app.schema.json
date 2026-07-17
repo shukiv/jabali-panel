@@ -30,6 +30,11 @@
       "minLength": 1,
       "maxLength": 32
     },
+    "popularity": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Catalog ordering weight; higher floats to the top of the listing. Optional, default 0."
+    },
     "description": {
       "type": "string",
       "minLength": 1,

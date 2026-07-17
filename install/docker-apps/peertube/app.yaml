@@ -1,4 +1,5 @@
 slug: peertube
+popularity: 30
 name: PeerTube
 tags: ["Media", "Video", "Streaming"]
 version: "8.2.1"

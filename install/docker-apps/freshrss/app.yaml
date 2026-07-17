@@ -1,4 +1,5 @@
 slug: freshrss
+popularity: 55
 tenant_installable: true
 name: FreshRSS
 tags: ["Productivity"]

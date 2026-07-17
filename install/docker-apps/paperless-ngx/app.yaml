@@ -1,4 +1,5 @@
 slug: paperless-ngx
+popularity: 75
 tenant_installable: true
 name: Paperless-ngx
 tags: ["Document management", "File sharing"]

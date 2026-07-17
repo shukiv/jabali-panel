@@ -1,4 +1,5 @@
 slug: matomo
+popularity: 62
 name: Matomo
 tags: ["Analytics"]
 version: "5.10.1"

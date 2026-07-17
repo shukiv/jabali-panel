@@ -1,4 +1,5 @@
 slug: forgejo
+popularity: 70
 name: Forgejo
 tags: ["Developer tools"]
 version: "15.0.3"

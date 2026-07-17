@@ -1,4 +1,5 @@
 slug: nextcloud
+popularity: 100
 name: Nextcloud
 tags: ["File sharing"]
 version: "33.0.5"

@@ -1,4 +1,5 @@
 slug: odoo
+popularity: 42
 name: Odoo
 tags: ["ERP", "CRM"]
 version: "18.0"

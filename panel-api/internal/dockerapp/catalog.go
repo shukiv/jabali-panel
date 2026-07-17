@@ -31,6 +31,10 @@ type Entry struct {
 	Version       string     `yaml:"version"`
 	Description   string     `yaml:"description"`
 	Tags          []string   `yaml:"tags,omitempty" json:"tags,omitempty"`
+	// Popularity orders the catalog: higher floats to the top of the listing,
+	// ties break alphabetically by slug. Optional (default 0). Operator-tunable
+	// per app.yaml so the most-installed apps surface first.
+	Popularity    int        `yaml:"popularity,omitempty" json:"popularity,omitempty"`
 	Icon          string     `yaml:"icon,omitempty"`
 	Upstream      string     `yaml:"upstream,omitempty"`
 	Documentation string     `yaml:"documentation,omitempty"`
@@ -191,7 +195,15 @@ func LoadDir(root string) (*Catalog, []EntryError) {
 		c.order = append(c.order, e.Slug)
 	}
 
-	sort.Strings(c.order)
+	// Order the catalog by popularity (desc) so the most-installed apps surface
+	// first, ties alphabetical by slug for a stable listing.
+	sort.SliceStable(c.order, func(i, j int) bool {
+		a, b := c.bySlug[c.order[i]], c.bySlug[c.order[j]]
+		if a.Popularity != b.Popularity {
+			return a.Popularity > b.Popularity
+		}
+		return a.Slug < b.Slug
+	})
 	return c, errs
 }
 
