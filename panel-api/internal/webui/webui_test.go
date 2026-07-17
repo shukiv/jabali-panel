@@ -85,3 +85,49 @@ func TestAPIPathIs404JSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json...", ct)
 	}
 }
+
+// TestMissingAssetReturns404 — a stale hashed chunk (tab open across a deploy)
+// must 404, not fall through to index.html; serving text/html for a .js request
+// trips the browser MIME check and blanks the SPA. GH: docker-apps blank screen.
+func TestMissingAssetReturns404(t *testing.T) {
+	r := newTestEngine(t)
+	for _, p := range []string{
+		"/assets/RowActions-STALE.js",
+		"/assets/AdminDockerAppsPage-GONE.js",
+		"/assets/index-XXXX.css",
+		"/favicon.ico",
+	} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("path %q: status = %d, want 404 (must not fall back to SPA shell)", p, w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "" && ct[:9] == "text/html" {
+			t.Errorf("path %q: Content-Type = %q, want non-HTML for a missing asset", p, ct)
+		}
+	}
+}
+
+// TestExistingAssetStillServed — a real hashed asset is served (not 404'd).
+func TestExistingAssetStillServed(t *testing.T) {
+	r := newTestEngine(t)
+	req := httptest.NewRequest(http.MethodGet, "/assets/index-abc.js", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("existing asset status = %d, want 200", w.Code)
+	}
+}
+
+// TestSPARouteStillFallsBack — a genuine deep link (no extension) still serves
+// the SPA shell so client routing works.
+func TestSPARouteStillFallsBack(t *testing.T) {
+	r := newTestEngine(t)
+	req := httptest.NewRequest(http.MethodGet, "/jabali-admin/docker-apps", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("SPA deep-link status = %d, want 200 (index.html fallback)", w.Code)
+	}
+}

@@ -54,6 +54,15 @@ func RegisterStatic(g *gin.Engine, panelFS fs.FS) {
 		// take over.
 		isFallback := p == "/" || !fileExists(panelFS, strings.TrimPrefix(p, "/"))
 		if isFallback {
+			// A missing hashed asset (a stale chunk requested by a tab that was
+			// open across a deploy) must 404 — NOT fall through to index.html.
+			// Serving the HTML shell for a .js/.css request makes the browser
+			// block it with a "disallowed MIME type (text/html)" error and blank
+			// the SPA until a manual refresh. Only genuine SPA routes fall back.
+			if isStaticAssetPath(p) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+				return
+			}
 			c.Request.URL.Path = "/"
 			// SPA shell must revalidate on every load. Vite hashes asset
 			// filenames so JS/CSS can be cached forever, but index.html
@@ -109,6 +118,23 @@ func looksLikeAPI(p string) bool {
 	case strings.HasPrefix(p, "/health"):
 		return true
 	case strings.HasPrefix(p, "/ws/"):
+		return true
+	}
+	return false
+}
+
+// isStaticAssetPath reports whether p is a request for a build asset (a Vite
+// hashed chunk under /assets/, or any file with a code/font/image extension).
+// When such a path misses the embed it must 404 rather than fall back to the
+// SPA shell — a text/html body for a .js/.css request trips the browser's MIME
+// check and blanks the page (stale-chunk-after-deploy).
+func isStaticAssetPath(p string) bool {
+	if strings.HasPrefix(p, "/assets/") {
+		return true
+	}
+	switch strings.ToLower(path.Ext(p)) {
+	case ".js", ".mjs", ".css", ".map", ".woff", ".woff2", ".ttf",
+		".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico":
 		return true
 	}
 	return false

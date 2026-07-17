@@ -10,6 +10,22 @@ import "./global.css";
 import App from "./App";
 import { registerServiceWorker } from "./lib/registerServiceWorker";
 
+// A dynamic import (lazy route chunk) failing almost always means the tab was
+// open across a panel deploy: the shell in memory references old asset hashes
+// that no longer exist on the server (now a 404). Reload once to pull the fresh
+// index.html + hashes instead of leaving the user on a blank screen. Guarded so
+// a genuinely broken chunk can't loop-reload; the flag is cleared on any
+// successful load below.
+window.addEventListener("vite:preloadError", () => {
+  // Reload at most once per 10s: a stale chunk recovers on the first reload,
+  // while a genuinely-missing asset (persistent 404) can't spin a reload loop.
+  const last = Number(sessionStorage.getItem("jabali-chunk-reload-at") || 0);
+  if (Date.now() - last > 10_000) {
+    sessionStorage.setItem("jabali-chunk-reload-at", String(Date.now()));
+    window.location.reload();
+  }
+});
+
 const rootEl = document.getElementById("root");
 if (!rootEl) {
   // This would mean index.html was modified incorrectly. Fail loud so
