@@ -4,10 +4,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os/exec"
@@ -703,15 +705,60 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 		_, _ = ag.Call(cleanCtx, "backup.materialize_cleanup", map[string]string{"job_id": job.ID})
 	}()
 
-	c.Header("Content-Type", "application/zstd")
-	c.Header("Content-Disposition", "attachment; filename=\""+job.ID+".tar.zst\"")
-	tarCmd := exec.CommandContext(c.Request.Context(),
-		"tar", "-I", "zstd", "-cf", "-",
-		"-C", filepath.Dir(mat.Path), filepath.Base(mat.Path),
-	)
-	tarCmd.Stdout = c.Writer
-	if err := tarCmd.Run(); err != nil {
-		logErr("tar download", err, "job_id", job.ID)
+	// GH #462: choose the compressor by what's actually installed. A box that
+	// lacks the zstd binary (installed before zstd became a dependency, then
+	// only ever `jabali update`d) fails `tar -I zstd` and hands the browser a
+	// 0-byte file. Fall back to an uncompressed tar so the download always works.
+	useZstd := false
+	if _, lerr := exec.LookPath("zstd"); lerr == nil {
+		useZstd = true
+	}
+	tarArgs := []string{"-cf", "-"}
+	filename := job.ID + ".tar"
+	contentType := "application/x-tar"
+	if useZstd {
+		tarArgs = []string{"-I", "zstd", "-cf", "-"}
+		filename = job.ID + ".tar.zst"
+		contentType = "application/zstd"
+	}
+	tarArgs = append(tarArgs, "-C", filepath.Dir(mat.Path), filepath.Base(mat.Path))
+	tarCmd := exec.CommandContext(c.Request.Context(), "tar", tarArgs...)
+	var tarErr bytes.Buffer
+	tarCmd.Stderr = &tarErr
+	stdout, perr := tarCmd.StdoutPipe()
+	if perr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "tar_pipe", "detail": perr.Error()})
+		return
+	}
+	if serr := tarCmd.Start(); serr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "tar_start", "detail": serr.Error()})
+		return
+	}
+	// GH #462: read the first chunk BEFORE sending the download headers. If tar
+	// produces no output (missing binary, unreadable materialized path,
+	// permission denied), return a real JSON error instead of committing the
+	// browser to a silent 0-byte download + "Network Failed".
+	head := make([]byte, 64*1024)
+	n, rerr := io.ReadFull(stdout, head)
+	if n == 0 {
+		_ = tarCmd.Wait()
+		logErr("tar download produced no output", rerr, "job_id", job.ID, "stderr", strings.TrimSpace(tarErr.String()))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error", "error": "archive_empty",
+			"detail": "could not build the download archive: " + strings.TrimSpace(tarErr.String()),
+		})
+		return
+	}
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	if _, werr := c.Writer.Write(head[:n]); werr != nil {
+		logErr("tar download write head", werr, "job_id", job.ID)
+	}
+	if rerr == nil { // more than the first chunk remains
+		_, _ = io.Copy(c.Writer, stdout)
+	}
+	if werr := tarCmd.Wait(); werr != nil {
+		logErr("tar download", werr, "job_id", job.ID, "stderr", strings.TrimSpace(tarErr.String()))
 	}
 }
 
