@@ -9,6 +9,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"strings"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -97,4 +100,76 @@ func foldRequestIntoPolicy(ctx context.Context, deps Deps, req *models.UserEgres
 		policy.UpdatedBy = &reviewedBy
 	}
 	return deps.Policies.Upsert(ctx, policy)
+}
+
+
+// DefaultPinPath is the operator pin file for the per-user egress LEARNING
+// hold. When it contains the literal "learning", FlipMature is a no-op — an
+// operator-controlled hold for hosts where the soak needs to run longer.
+// Shared by the CLI (per-user-egress flip-mature) and the admin API so the two
+// paths honor the same pin (verify_wire_contract scar).
+const DefaultPinPath = "/etc/jabali/per-user-egress.mode"
+
+// ReadEgressPin reports whether the operator pin at path holds the LEARNING
+// hold and returns the trimmed file contents for display. A missing/unreadable
+// file is "not pinned" (the common case).
+func ReadEgressPin(path string) (pinned bool, value string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, ""
+	}
+	value = strings.TrimSpace(string(b))
+	return value == models.UserEgressStateLearning, value
+}
+
+// FlipMatureResult is the outcome of a FlipMature run — the same shape whether
+// dry-run (preview) or a real promotion, so the CLI and the admin GUI render
+// from one struct.
+type FlipMatureResult struct {
+	SoakDays int                        // soak window applied (days)
+	DryRun   bool                       // true = preview only, nothing written
+	Pinned   bool                       // operator pin active → no rows flipped
+	PinValue string                     // trimmed pin file contents, for display
+	Eligible []models.UserEgressPolicy  // mature LEARNING rows (would flip / did flip)
+	Flipped  []string                   // user IDs actually flipped (empty on dry-run/pin)
+	Failed   map[string]string          // user ID → upsert error, for the rows that failed
+}
+
+// FlipMature finds user_egress_policies rows in LEARNING older than soakDays and
+// flips them to ENFORCED — the graduate-from-soak decision. Honors the operator
+// pin at pinPath (no-op when "learning"). With dryRun it lists eligible rows
+// without writing. Errors only on bad input or the mature-list query; per-row
+// upsert failures are collected in Failed so one bad row doesn't abort the rest.
+func FlipMature(ctx context.Context, policies repository.UserEgressPolicyRepository, soakDays int, pinPath string, dryRun bool) (*FlipMatureResult, error) {
+	if soakDays <= 0 {
+		return nil, errors.New("soak-days must be > 0")
+	}
+	res := &FlipMatureResult{SoakDays: soakDays, DryRun: dryRun, Failed: map[string]string{}}
+
+	if pinned, val := ReadEgressPin(pinPath); pinned {
+		res.Pinned = true
+		res.PinValue = val
+		return res, nil
+	}
+
+	soak := time.Duration(soakDays) * 24 * time.Hour
+	rows, err := policies.ListMatureLearning(ctx, soak)
+	if err != nil {
+		return nil, err
+	}
+	res.Eligible = rows
+	if dryRun {
+		return res, nil
+	}
+
+	for _, r := range rows {
+		next := r
+		next.State = models.UserEgressStateEnforced
+		if err := policies.Upsert(ctx, &next); err != nil {
+			res.Failed[r.UserID] = err.Error()
+			continue
+		}
+		res.Flipped = append(res.Flipped, r.UserID)
+	}
+	return res, nil
 }

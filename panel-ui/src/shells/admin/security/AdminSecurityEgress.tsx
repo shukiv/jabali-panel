@@ -27,6 +27,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+import { EgressMaturePromotion } from "./EgressMaturePromotion";
 import { Sparkline } from "../../../components/Sparkline";
 import { useListQuery } from "../../../hooks/useQueries";
 import {
@@ -118,6 +119,8 @@ export const AdminSecurityEgress = () => {
           />
         </Space>
       </Card>
+
+      <EgressMaturePromotion />
 
       <Card size="small" title="Per-user policy">
         <Table<UserRow>

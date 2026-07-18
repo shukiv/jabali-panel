@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,9 @@ type UserEgressHandlerConfig struct {
 	DropSamples repository.UserEgressDropSampleRepository
 	// Agent (GH #713) backs the drop-events drill-down (reads the nft drop log).
 	Agent agent.AgentInterface
+	// PinPath overrides the operator-pin file for the mature-soak promotion
+	// endpoints (JAB-13). Empty → egressops.DefaultPinPath. Injectable for tests.
+	PinPath string
 }
 
 // RegisterAdminUserEgressRoutes mounts the admin-side egress endpoints.
@@ -51,6 +55,9 @@ func RegisterAdminUserEgressRoutes(g *gin.RouterGroup, cfg UserEgressHandlerConf
 	g.GET("/egress-summary", h.summary)
 	g.GET("/users/:id/egress/drops-24h", h.adminDrops24h)
 	g.GET("/users/:id/egress/drop-events", h.adminDropEvents) // GH #713
+	// JAB-13: mature-soak promotion — preview (dry-run) + confirm-gated flip.
+	g.GET("/egress/mature-preview", h.maturePreview)
+	g.POST("/egress/flip-mature", h.flipMature)
 }
 
 // RegisterMeEgressRoutes mounts the user-facing /me/egress endpoints.
@@ -484,4 +491,109 @@ func (h *userEgressHandler) adminDropEvents(c *gin.Context) {
 		return
 	}
 	c.Data(http.StatusOK, "application/json", raw)
+}
+
+
+// pinPath resolves the operator-pin file, defaulting to the shared constant.
+func (h *userEgressHandler) pinPath() string {
+	if h.cfg.PinPath != "" {
+		return h.cfg.PinPath
+	}
+	return egressops.DefaultPinPath
+}
+
+// flipMatureEligible is one LEARNING policy that is (or would be) promoted,
+// with the soak-decision signals the GUI shows: how long it has been learning
+// and how many drops it saw in the last 24h.
+type flipMatureEligible struct {
+	UserID            string     `json:"user_id"`
+	LearningStartedAt *time.Time `json:"learning_started_at,omitempty"`
+	AgeDays           int        `json:"age_days"`
+	DropCount24h      uint64     `json:"drop_count_24h"`
+}
+
+// flipMatureResponse is the shared shape for the preview + flip endpoints so the
+// GUI renders both from one type. flipped/failed are empty on a dry-run preview.
+type flipMatureResponse struct {
+	SoakDays      int                  `json:"soak_days"`
+	DryRun        bool                 `json:"dry_run"`
+	Pinned        bool                 `json:"pinned"`
+	PinValue      string               `json:"pin_value,omitempty"`
+	EligibleCount int                  `json:"eligible_count"`
+	Eligible      []flipMatureEligible `json:"eligible"`
+	Flipped       []string             `json:"flipped,omitempty"`
+	FlippedCount  int                  `json:"flipped_count"`
+	Failed        map[string]string    `json:"failed,omitempty"`
+}
+
+func newFlipMatureResponse(res *egressops.FlipMatureResult) flipMatureResponse {
+	out := flipMatureResponse{
+		SoakDays:      res.SoakDays,
+		DryRun:        res.DryRun,
+		Pinned:        res.Pinned,
+		PinValue:      res.PinValue,
+		EligibleCount: len(res.Eligible),
+		Eligible:      make([]flipMatureEligible, 0, len(res.Eligible)),
+		Flipped:       res.Flipped,
+		FlippedCount:  len(res.Flipped),
+	}
+	now := time.Now().UTC()
+	for _, r := range res.Eligible {
+		e := flipMatureEligible{
+			UserID:            r.UserID,
+			LearningStartedAt: r.LearningStartedAt,
+			DropCount24h:      r.DropCount24h,
+		}
+		if r.LearningStartedAt != nil {
+			e.AgeDays = int(now.Sub(r.LearningStartedAt.UTC()).Hours() / 24)
+		}
+		out.Eligible = append(out.Eligible, e)
+	}
+	if len(res.Failed) > 0 {
+		out.Failed = res.Failed
+	}
+	return out
+}
+
+// soakDaysFromQuery parses ?soak_days=N, defaulting to 7 and clamping the lower
+// bound so egressops.FlipMature's >0 guard is never the failure path for a GET.
+func soakDaysFromQuery(c *gin.Context) int {
+	v := c.DefaultQuery("soak_days", "7")
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 7
+	}
+	return n
+}
+
+// maturePreview (GET /egress/mature-preview) is the dry-run: which LEARNING
+// policies are mature enough to flip, and whether the operator pin blocks it.
+func (h *userEgressHandler) maturePreview(c *gin.Context) {
+	res, err := egressops.FlipMature(c.Request.Context(), h.cfg.Policies, soakDaysFromQuery(c), h.pinPath(), true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "mature_preview", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, newFlipMatureResponse(res))
+}
+
+// flipMature (POST /egress/flip-mature) promotes mature LEARNING policies to
+// ENFORCED. Confirm-gated in the GUI; the admin-route audit middleware records
+// the actor + request. No-op when the operator pin holds.
+func (h *userEgressHandler) flipMature(c *gin.Context) {
+	var body struct {
+		SoakDays int `json:"soak_days"`
+	}
+	// Body is optional; default the soak window when omitted.
+	_ = c.ShouldBindJSON(&body)
+	soakDays := body.SoakDays
+	if soakDays <= 0 {
+		soakDays = 7
+	}
+	res, err := egressops.FlipMature(c.Request.Context(), h.cfg.Policies, soakDays, h.pinPath(), false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "flip_mature", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, newFlipMatureResponse(res))
 }

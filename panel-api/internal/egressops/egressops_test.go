@@ -45,6 +45,7 @@ type fakePolicyRepo struct {
 	getErr      error
 	upserted    *models.UserEgressPolicy
 	upsertCalls int
+	mature      []models.UserEgressPolicy // JAB-13: rows ListMatureLearning returns
 }
 
 func (f *fakePolicyRepo) Get(context.Context, string) (*models.UserEgressPolicy, error) {
@@ -65,7 +66,7 @@ func (f *fakePolicyRepo) ListAllForReconcile(context.Context) ([]repository.Poli
 func (f *fakePolicyRepo) SetDropCount(context.Context, string, uint64, time.Time) error { return nil }
 func (f *fakePolicyRepo) StateCounts(context.Context) (map[string]uint, error)          { return nil, nil }
 func (f *fakePolicyRepo) ListMatureLearning(context.Context, time.Duration) ([]models.UserEgressPolicy, error) {
-	return nil, nil
+	return f.mature, nil
 }
 
 // --- tests -----------------------------------------------------------------
