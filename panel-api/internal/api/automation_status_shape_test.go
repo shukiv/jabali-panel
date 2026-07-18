@@ -47,6 +47,14 @@ func TestAutomationStatus_NormalizedServiceHealthAndNet(t *testing.T) {
 		}
 	}
 
+	// JAB-141: orderable release identity — version (SHA), commit (full SHA),
+	// and build_time (RFC3339, sortable) must all be present for Sounder.
+	for _, k := range []string{"version", "commit", "build_time"} {
+		if _, ok := body[k]; !ok {
+			t.Errorf("expected release field %q in payload", k)
+		}
+	}
+
 	var health []automationServiceHealth
 	if err := json.Unmarshal(body["service_health"], &health); err != nil {
 		t.Fatalf("decode service_health: %v", err)

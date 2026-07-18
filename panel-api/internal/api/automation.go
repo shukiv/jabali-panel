@@ -321,6 +321,12 @@ func (m *automationMetrics) handle(c *gin.Context) {
 		"healthy": len(errs) == 0,
 		"time":    time.Now().UTC(),
 		"version": Version,
+		// JAB-141: Sounder needs an ORDERABLE release identifier, not just the
+		// short SHA (which can't be compared/sorted). build_time is the RFC3339
+		// link time — lexically sortable, so the monitor can tell which managed
+		// panel is running a newer build. commit is the full SHA for provenance.
+		"commit":     Commit,
+		"build_time": BuildTime,
 	}
 	if info != nil {
 		out["system"] = info
