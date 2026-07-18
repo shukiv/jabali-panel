@@ -23,6 +23,17 @@ func respondAgentErr(c *gin.Context, code string, err error) {
 // respondAgentErrorStatus is respondAgentError for the handlers whose error
 // envelope also carries a top-level "status":"error" field (e.g. the backups
 // endpoints). Same logging + leak-suppression, preserved wire shape.
+// respondMigrateConnectErr surfaces a migration SSH-connect failure WITH its
+// detail. Unlike respondAgentErr, the error here is the panel's OWN migrate
+// connector talking to the SOURCE host over SSH (not the local root agent), so
+// the message is an actionable SSH error (auth rejected, host key, dial) the
+// admin needs to fix their credentials, not root daemon stderr. Mirrors the
+// tenant pull-source path which already returns the detail. (GH #327)
+func respondMigrateConnectErr(c *gin.Context, err error) {
+	logAgentError(c, "connect_failed", err)
+	c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+}
+
 func respondAgentErrStatus(c *gin.Context, code string, err error) {
 	logAgentError(c, code, err)
 	c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": code})

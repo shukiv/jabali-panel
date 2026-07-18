@@ -115,7 +115,7 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 		// means we offered something (e.g. password) but the
 		// server didn't accept that method — usually source has
 		// PasswordAuthentication=no. Surface a concrete hint.
-		if strings.Contains(err.Error(), "attempted methods [none]") {
+		if strings.Contains(err.Error(), "unable to authenticate") || strings.Contains(err.Error(), "no supported methods remain") {
 			return nil, fmt.Errorf("directadmin.Connect: source SSH server rejected the supplied auth method (likely PasswordAuthentication=no — upload an SSH PRIVATE KEY in the wizard's Connection step instead): %w", err)
 		}
 		return nil, fmt.Errorf("directadmin.Connect: ssh handshake: %w", err)

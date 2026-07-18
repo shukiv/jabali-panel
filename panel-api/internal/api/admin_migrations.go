@@ -1224,7 +1224,7 @@ func (h *adminMigrationsHandler) discoverAccounts(c *gin.Context) {
 
 	sess, err := disc.Connect(ctx, job.SourceHost, job.SourceUser, migrate.SecretRef{Path: secretPath, ExpectedHostKey: job.ExpectedHostKey})
 	if err != nil {
-		respondAgentErr(c, "connect_failed", err)
+		respondMigrateConnectErr(c, err)
 		return
 	}
 	defer func() { _ = disc.Close(ctx, sess) }()
@@ -1387,7 +1387,7 @@ func (h *adminMigrationsHandler) accountSizeProbe(c *gin.Context) {
 
 	sess, err := disc.Connect(ctx, job.SourceHost, job.SourceUser, migrate.SecretRef{Path: secretPath, ExpectedHostKey: job.ExpectedHostKey})
 	if err != nil {
-		respondAgentErr(c, "connect_failed", err)
+		respondMigrateConnectErr(c, err)
 		return
 	}
 	defer func() { _ = disc.Close(ctx, sess) }()

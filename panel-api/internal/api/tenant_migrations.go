@@ -310,7 +310,7 @@ func (h *tenantMigrationsHandler) scanWP(c *gin.Context) {
 	secret := migrate.SecretRef{Path: filepath.Join(migrate.SecretsDir, job.ID+".env")}
 	sess, err := wordpressssh.Connect(ctx, job.SourceHost, 0, sshUser, secret, allowPrivate)
 	if err != nil {
-		respondAgentErr(c, "connect_failed", err)
+		respondMigrateConnectErr(c, err)
 		return
 	}
 	defer sess.Close()
