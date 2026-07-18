@@ -4404,6 +4404,18 @@ jabali repair [flags]
 - `--uploads-dir` — Fix only: /var/lib/jabali-uploads missing or wrong perms
 - `--yes` — Skip interactive confirmation for destructive repairs
 
+### `jabali retention-sweep`
+
+Prune expired rows from unbounded log/report tables
+
+```
+jabali retention-sweep [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — count would-delete rows without removing them
+
 ### `jabali serve`
 
 Start the Jabali Panel HTTP(S) server

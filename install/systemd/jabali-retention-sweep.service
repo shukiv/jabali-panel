@@ -1,0 +1,13 @@
+[Unit]
+Description=Jabali retention sweep (prune expired log/report table rows)
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/panel-api/cmd/server/retention_sweep_cmd.go
+After=jabali-panel.service
+# No Requires=: the sweep talks to the panel DB directly; a transient failure
+# during boot/restart is tolerated (next daily firing retries).
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jabali retention-sweep
+StandardOutput=journal
+StandardError=journal
+Restart=no

@@ -590,6 +590,8 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-user.slice /etc/systemd/s
 install -m 0644 ` + repoDir + `/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.service /etc/systemd/system/jabali-sso-reaper.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer
+install -m 0644 ` + repoDir + `/install/systemd/jabali-retention-sweep.service /etc/systemd/system/jabali-retention-sweep.service
+install -m 0644 ` + repoDir + `/install/systemd/jabali-retention-sweep.timer /etc/systemd/system/jabali-retention-sweep.timer
 install -m 0644 ` + repoDir + `/install/systemd/jabali-notify@.service /etc/systemd/system/jabali-notify@.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/systemd/system/jabali-stalwart.service
 # JAB-158 journald cap + JAB-153/157 disk-maintenance timer. install.sh drops
@@ -627,6 +629,7 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-kratos.service /etc/syste
 systemctl daemon-reload
 systemctl enable --now jabali-sso-reaper.timer
 systemctl enable --now jabali-disk-maintenance.timer
+systemctl enable --now jabali-retention-sweep.timer
 systemctl restart systemd-journald 2>/dev/null || true
 sha_after_k=$(sha256sum /etc/systemd/system/jabali-kratos.service 2>/dev/null | awk '{print $1}' || echo "")
 if [ "$sha_before_k" != "$sha_after_k" ]; then

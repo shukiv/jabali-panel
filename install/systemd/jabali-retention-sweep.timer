@@ -1,0 +1,15 @@
+[Unit]
+Description=Run jabali-retention-sweep.service daily
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/panel-api/cmd/server/retention_sweep_cmd.go
+
+[Timer]
+# Daily at 03:40 + jitter, offset from the other jabali timers (sso-reap 30s,
+# migration-secrets-reap 04:30, disk-maintenance 00:07) so they don't all fire
+# at once. Persistent fires a missed run after the host wakes.
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=jabali-retention-sweep.service
+
+[Install]
+WantedBy=timers.target

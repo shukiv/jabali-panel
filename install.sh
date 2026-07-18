@@ -7162,6 +7162,33 @@ install_disk_maintenance_timer() {
   _ok "disk maintenance timer enabled (daily)"
 }
 
+# ---------- retention sweep (JAB-100/101/103/122/123/125) ------------------
+#
+# install_retention_sweep_timer wires the daily oneshot that prunes expired
+# rows from the log/report tables that had no retention. Same install shape
+# as install_sso_reaper_timer.
+install_retention_sweep_timer() {
+  local svc_src="${REPO_DIR}/install/systemd/jabali-retention-sweep.service"
+  local timer_src="${REPO_DIR}/install/systemd/jabali-retention-sweep.timer"
+  local svc_dst="/etc/systemd/system/jabali-retention-sweep.service"
+  local timer_dst="/etc/systemd/system/jabali-retention-sweep.timer"
+
+  if [[ ! -f "$svc_src" || ! -f "$timer_src" ]]; then
+    _err "retention-sweep units missing at $svc_src / $timer_src"
+    exit 1
+  fi
+
+  install -m 0644 -o root -g root "$svc_src" "$svc_dst"
+  install -m 0644 -o root -g root "$timer_src" "$timer_dst"
+
+  _log "retention sweep: systemctl daemon-reload"
+  systemctl daemon-reload
+  _log "retention sweep: enable --now jabali-retention-sweep.timer"
+  systemctl enable --now jabali-retention-sweep.timer
+
+  _ok "retention sweep timer enabled (daily)"
+}
+
 # ---------- M35 migration-secrets reaper (ADR-0094) ----------------------
 #
 # install_migration_secrets_reaper writes the daily timer + service
@@ -13330,6 +13357,7 @@ main() {
   install_migration_secrets_reaper
   install_journald_cap
   install_disk_maintenance_timer
+  install_retention_sweep_timer
   install_ssh_sandbox_prereqs
   install_backup_foundation
   # Order matters: install_phpmyadmin extracts the tarball to
