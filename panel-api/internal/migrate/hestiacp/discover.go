@@ -164,6 +164,22 @@ func zero(b []byte) {
 	}
 }
 
+// hestiaBinDir is Hestia's standard install path; its v-* control-panel
+// helpers live here. A non-interactive `ssh host "cmd"` runs a non-login shell
+// whose PATH omits this dir on some distros (notably Ubuntu, where the error is
+// `v-list-users: command not found` / exit 127 even though root can run it in an
+// interactive login shell) — GH #327. Debian's non-interactive PATH happens to
+// include it, which is why it only broke on Ubuntu.
+const hestiaBinDir = "/usr/local/hestia/bin"
+
+// withHestiaPath prepends the Hestia bin dir to PATH for a remote command so the
+// v-* helpers resolve regardless of the SSH session's default PATH. Uses
+// `export …;` (not a var-assignment prefix) so it also covers piped/compound
+// commands. Harmless for non-Hestia commands (date/rm/find stay resolvable).
+func withHestiaPath(cmd string) string {
+	return `export PATH="` + hestiaBinDir + `:$PATH"; ` + cmd
+}
+
 func (s *session) run(ctx context.Context, timeout time.Duration, cmd string) ([]byte, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -182,7 +198,7 @@ func (s *session) run(ctx context.Context, timeout time.Duration, cmd string) ([
 	sess.Stderr = &stderr
 
 	done := make(chan error, 1)
-	go func() { done <- sess.Run(cmd) }()
+	go func() { done <- sess.Run(withHestiaPath(cmd)) }()
 
 	select {
 	case err := <-done:
