@@ -4574,6 +4574,14 @@ build_frontend() {
     NODE_OPTIONS="--max-old-space-size=2048" \
     bash -c "cd '$REPO_DIR/panel-ui' && nice -n 19 ionice -c 3 npm run build"
   _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
+
+  # JAB-156: cap the npm cache. `npm ci` leaves every downloaded tarball in
+  # $HOME/.npm/_cacache (HOME=$REPO_DIR here → /opt/jabali-panel/.npm), which
+  # grows unbounded across updates as deps churn (630 MB on a 16-day host).
+  # The build is already done, so purge it — the next update's npm ci
+  # re-populates only what that build needs. Best-effort; never fail the build.
+  sudo -u "$SERVICE_USER" -H env HOME="$REPO_DIR" PATH="/usr/bin:/bin" \
+    bash -c "npm cache clean --force" >/dev/null 2>&1 || true
 }
 
 build_backend() {
@@ -7100,6 +7108,58 @@ install_sso_reaper_timer() {
   systemctl enable --now jabali-sso-reaper.timer
 
   _ok "sso reaper timer enabled (every 30s)"
+}
+
+# ---------- JAB-158: journald size cap ------------------------------------
+#
+# install_journald_cap drops a bounded SystemMaxUse/retention config so the
+# persistent journal can never balloon to ~10% of the root filesystem (the
+# systemd default) and fill a small VM's disk. Idempotent file copy; a
+# restart of systemd-journald applies it live.
+install_journald_cap() {
+  _log "installing journald size cap"
+  local src="${REPO_DIR}/install/systemd/journald-jabali.conf"
+  local dst="/etc/systemd/journald.conf.d/jabali.conf"
+  if [[ ! -f "$src" ]]; then
+    _warn "journald cap template missing at $src — skipping"
+    return 0
+  fi
+  install -d -m 0755 /etc/systemd/journald.conf.d
+  install -m 0644 -o root -g root "$src" "$dst"
+  # Apply live; a failed restart must not abort the install (journald is
+  # socket-activated and comes back on next log write regardless).
+  systemctl restart systemd-journald 2>/dev/null || true
+  _ok "journald capped (SystemMaxUse=400M, 1 month retention)"
+}
+
+# ---------- JAB-153 + JAB-157: daily disk maintenance ---------------------
+#
+# install_disk_maintenance_timer wires a daily oneshot that prunes Stalwart's
+# dated tracer logs and stale nspawn sandbox images (see install/systemd/
+# disk-maintenance for the sweep). Same install shape as install_sso_reaper_timer.
+install_disk_maintenance_timer() {
+  local script_src="${REPO_DIR}/install/systemd/disk-maintenance"
+  local svc_src="${REPO_DIR}/install/systemd/jabali-disk-maintenance.service"
+  local timer_src="${REPO_DIR}/install/systemd/jabali-disk-maintenance.timer"
+  local svc_dst="/etc/systemd/system/jabali-disk-maintenance.service"
+  local timer_dst="/etc/systemd/system/jabali-disk-maintenance.timer"
+
+  if [[ ! -f "$script_src" || ! -f "$svc_src" || ! -f "$timer_src" ]]; then
+    _err "disk-maintenance units missing at $script_src / $svc_src / $timer_src"
+    exit 1
+  fi
+
+  install -d -m 0755 /usr/local/libexec/jabali
+  install -m 0755 -o root -g root "$script_src" /usr/local/libexec/jabali/disk-maintenance
+  install -m 0644 -o root -g root "$svc_src" "$svc_dst"
+  install -m 0644 -o root -g root "$timer_src" "$timer_dst"
+
+  _log "disk maintenance: systemctl daemon-reload"
+  systemctl daemon-reload
+  _log "disk maintenance: enable --now jabali-disk-maintenance.timer"
+  systemctl enable --now jabali-disk-maintenance.timer
+
+  _ok "disk maintenance timer enabled (daily)"
 }
 
 # ---------- M35 migration-secrets reaper (ADR-0094) ----------------------
@@ -13268,6 +13328,8 @@ main() {
   install_sso_reaper_timer
   install_cache_doctor_timer
   install_migration_secrets_reaper
+  install_journald_cap
+  install_disk_maintenance_timer
   install_ssh_sandbox_prereqs
   install_backup_foundation
   # Order matters: install_phpmyadmin extracts the tarball to

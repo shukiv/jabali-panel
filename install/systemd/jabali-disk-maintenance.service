@@ -1,0 +1,15 @@
+[Unit]
+Description=Jabali disk maintenance (prune dated Stalwart logs + stale nspawn images)
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/install/systemd/disk-maintenance
+# No hard Requires=: the sweep is best-effort and each step no-ops when its
+# target is absent, so it must never fail the boot or wedge on a missing unit.
+After=jabali-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/jabali/disk-maintenance
+StandardOutput=journal
+StandardError=journal
+# The script tolerates its own sub-failures (set -uo pipefail, no -e); a
+# non-zero exit here would only mean the script itself could not start.
+Restart=no

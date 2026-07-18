@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Jabali disk maintenance — daily sweep that keeps unbounded-by-design dirs
+# in check. Runs from jabali-disk-maintenance.service (oneshot, daily timer).
+#
+# Deliberately NOT `set -e`: each prune is independent, and one failing
+# (e.g. nspawn never provisioned) must not skip the rest. Everything here is
+# idempotent and a no-op when its target dir is absent, so it is safe to run
+# on every host regardless of which modules are installed.
+set -uo pipefail
+
+# ---- JAB-153: Stalwart dated tracer logs -------------------------------
+# Stalwart writes a fresh /var/log/stalwart/stalwart.log.<DATE> (and
+# delivery.<DATE>) every day and never prunes them. logrotate can't glob a
+# name that is already date-suffixed, so age-prune with find. 14 days keeps
+# a fortnight for incident response, matching the logrotate `rotate 14`
+# convention used elsewhere. (delivery.<DATE> is JAB-99's file set — pruning
+# it here bounds it too.)
+if [ -d /var/log/stalwart ]; then
+  find /var/log/stalwart -maxdepth 1 -type f \
+    \( -name 'stalwart.log.*' -o -name 'delivery.*' \) \
+    -mtime +14 -delete 2>/dev/null || true
+fi
+
+# ---- JAB-157: sealed nspawn SSH-sandbox images -------------------------
+# `jabali nspawn prune --yes` removes only sealed images that no user is
+# pinned to and that are not the current default — safe to run unattended.
+# No-op when nspawn mode was never provisioned (images dir absent).
+if command -v jabali >/dev/null 2>&1 && [ -d /var/lib/jabali-nspawn/images ]; then
+  jabali nspawn prune --yes >/dev/null 2>&1 || true
+fi
+
+exit 0

@@ -592,6 +592,14 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.service /etc/s
 install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer
 install -m 0644 ` + repoDir + `/install/systemd/jabali-notify@.service /etc/systemd/system/jabali-notify@.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/systemd/system/jabali-stalwart.service
+# JAB-158 journald cap + JAB-153/157 disk-maintenance timer. install.sh drops
+# these on first install (install_journald_cap + install_disk_maintenance_timer);
+# the update path MUST re-copy them or existing hosts never get the caps.
+install -d -m 0755 /etc/systemd/journald.conf.d
+install -m 0644 ` + repoDir + `/install/systemd/journald-jabali.conf /etc/systemd/journald.conf.d/jabali.conf
+install -m 0755 ` + repoDir + `/install/systemd/disk-maintenance /usr/local/libexec/jabali/disk-maintenance
+install -m 0644 ` + repoDir + `/install/systemd/jabali-disk-maintenance.service /etc/systemd/system/jabali-disk-maintenance.service
+install -m 0644 ` + repoDir + `/install/systemd/jabali-disk-maintenance.timer /etc/systemd/system/jabali-disk-maintenance.timer
 # certbot panel-cert deploy-hook. install.sh drops this on first
 # install; the update path MUST re-copy it or hook changes never
 # reach existing hosts. This gap shipped a stale pre-ADR-0105 hook
@@ -618,6 +626,8 @@ sha_before_k=$(sha256sum /etc/systemd/system/jabali-kratos.service 2>/dev/null |
 install -m 0644 ` + repoDir + `/install/systemd/jabali-kratos.service /etc/systemd/system/jabali-kratos.service
 systemctl daemon-reload
 systemctl enable --now jabali-sso-reaper.timer
+systemctl enable --now jabali-disk-maintenance.timer
+systemctl restart systemd-journald 2>/dev/null || true
 sha_after_k=$(sha256sum /etc/systemd/system/jabali-kratos.service 2>/dev/null | awk '{print $1}' || echo "")
 if [ "$sha_before_k" != "$sha_after_k" ]; then
   echo "  (jabali-kratos.service changed — restarting)"
@@ -1090,6 +1100,21 @@ test -x node_modules/.bin/tsc || {
 				return nil
 			}
 			return buildErr
+		}},
+		{"prune npm cache", func() error {
+			// JAB-156: npm ci leaves every downloaded tarball in the
+			// service user's ~/.npm/_cacache (/opt/jabali-panel/.npm),
+			// which grows unbounded across updates as deps churn. The
+			// build is already done, so purge it — the next update's
+			// npm ci re-populates only what it needs. Best-effort: a
+			// clean failure must never fail the update.
+			if installedFromRelease {
+				return nil
+			}
+			if err := asUser(repoDir+"/panel-ui", "bash", "-c", "npm cache clean --force >/dev/null 2>&1 || true"); err != nil {
+				fmt.Printf("  (npm cache clean skipped: %v)\n", err)
+			}
+			return nil
 		}},
 		{"build panel-api + panel-agent (parallel)", func() error {
 			if installedFromRelease {

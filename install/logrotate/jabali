@@ -80,7 +80,12 @@
     endscript
 }
 
-/var/log/maldet/*.log {
+# inotify_log has no .log suffix so the *.log glob misses it (JAB-154); the
+# maldet real-time monitor (M33) appends to it while running, so name it
+# explicitly here — copytruncate keeps the monitor's open fd writing across
+# the rotation.
+/var/log/maldet/*.log
+/var/log/maldet/inotify_log {
     daily
     rotate 30
     compress
