@@ -12,7 +12,7 @@
 <p>
   <a href="https://jabali-panel.com/">Website</a>
   &nbsp;|&nbsp;
-  <a href="https://jabali-panel.com/demo/">Live demo</a>
+  <a href="https://demo.jabali-panel.com">Live demo</a>
   &nbsp;|&nbsp;
   <a href="#installation">Install</a>
   &nbsp;|&nbsp;
@@ -46,11 +46,11 @@
 ## Demo and Website
 
 - Website: https://jabali-panel.com/
-- Demo: https://jabali-panel.com/demo/
+- Demo: https://demo.jabali-panel.com
 
 ### Demo mode (the `feat/demo-mode` branch)
 
-The public demo at `https://jabali-panel.com/demo/` runs **demo mode**, which
+The public demo at `https://demo.jabali-panel.com` runs **demo mode**, which
 lives on the long-lived **`feat/demo-mode`** branch (open PR, e.g. #103) and is
 **intentionally never merged to `main`**.
 
