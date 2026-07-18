@@ -17,6 +17,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -370,7 +371,8 @@ func (h *wordPressHandler) setCacheCore(ctx context.Context, installID string, e
 			time.Sleep(75 * time.Second)
 			wctx, wcancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer wcancel()
-			_, _ = agent.Call(wctx, "nginx.cache_warmup", map[string]any{"host": host, "max_urls": 100})
+			raw, werr := agent.Call(wctx, "nginx.cache_warmup", map[string]any{"host": host, "max_urls": 100})
+			logCacheWarmupResult(wctx, host, raw, werr)
 		}()
 	}
 
@@ -403,9 +405,8 @@ func (h *wordPressHandler) setCacheCore(ctx context.Context, installID string, e
 			time.Sleep(20 * time.Second) // let the vhost reconcile land
 			wctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
-			if _, werr := h.cfg.Agent.Call(wctx, "nginx.cache_warmup", map[string]any{"host": host}); werr != nil {
-				slog.WarnContext(wctx, "cache: warmup", "err", werr, "host", host)
-			}
+			raw, werr := h.cfg.Agent.Call(wctx, "nginx.cache_warmup", map[string]any{"host": host})
+			logCacheWarmupResult(wctx, host, raw, werr)
 		}()
 	}
 
@@ -500,4 +501,40 @@ func (h *wordPressHandler) provisionInstallACL(ctx context.Context, osUser, inst
 	}
 	// Persist to the aclfile so it survives a redis restart.
 	return h.cfg.Redis.Do(ctx, "ACL", "SAVE").Err()
+}
+
+// cacheWarmupResult mirrors the agent's nginx.cache_warmup response (JAB-95
+// Phase 1). Logged so an operator can see what warmup actually did and whether
+// the requested URL limit was clamped, instead of the old silent fire-and-forget.
+type cacheWarmupResult struct {
+	Requested  int    `json:"requested"`
+	ClampedTo  int    `json:"clamped_to"`
+	Attempted  int    `json:"attempted"`
+	Warmed     int    `json:"warmed"`
+	Skipped    int    `json:"skipped"`
+	Failed     int    `json:"failed"`
+	FirstError string `json:"first_error"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+func logCacheWarmupResult(ctx context.Context, host string, raw json.RawMessage, err error) {
+	if err != nil {
+		slog.WarnContext(ctx, "cache: warmup", "err", err, "host", host)
+		return
+	}
+	var r cacheWarmupResult
+	if json.Unmarshal(raw, &r) != nil {
+		return
+	}
+	attrs := []any{
+		"host", host, "warmed", r.Warmed, "attempted", r.Attempted, "failed", r.Failed,
+		"requested", r.Requested, "clamped_to", r.ClampedTo, "duration_ms", r.DurationMs,
+	}
+	if r.Requested > r.ClampedTo && r.ClampedTo > 0 {
+		attrs = append(attrs, "clamped", true)
+	}
+	if r.FirstError != "" {
+		attrs = append(attrs, "first_error", r.FirstError)
+	}
+	slog.InfoContext(ctx, "cache: warmup done", attrs...)
 }

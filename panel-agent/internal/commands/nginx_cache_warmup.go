@@ -142,6 +142,21 @@ func toSameHostPath(host, u string) string {
 	return ""
 }
 
+// effectiveWarmupMax resolves the URL budget: a non-positive request falls back
+// to the default, anything over the hard cap is clamped to it. The caller reports
+// this as clamped_to so the panel can show when the requested limit was reduced
+// (JAB-95 Phase 1).
+func effectiveWarmupMax(requested int) int {
+	m := requested
+	if m <= 0 {
+		m = cacheWarmupDefaultMax
+	}
+	if m > cacheWarmupHardMax {
+		m = cacheWarmupHardMax
+	}
+	return m
+}
+
 func nginxCacheWarmupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p cacheWarmupParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -151,29 +166,46 @@ func nginxCacheWarmupHandler(ctx context.Context, params json.RawMessage) (any, 
 	if !probeDomainRe.MatchString(host) {
 		return nil, csInvalidArg(fmt.Sprintf("invalid host %q", p.Host))
 	}
-	max := p.MaxURLs
-	if max <= 0 {
-		max = cacheWarmupDefaultMax
-	}
-	if max > cacheWarmupHardMax {
-		max = cacheWarmupHardMax
-	}
+	// JAB-95 Phase 1: report the effective limit instead of silently clamping,
+	// and return rich stats so the panel/UI can show what actually happened.
+	requested := p.MaxURLs
+	max := effectiveWarmupMax(requested)
+	clampedTo := max
 
-	warmed := 0
-	// Homepage first.
-	if code := warmupFetch(ctx, host, "/"); code >= 200 && code < 400 {
-		warmed++
+	start := time.Now()
+	var attempted, warmed, failed int
+	var firstError string
+	note := func(path string, code int) {
+		attempted++
+		if code >= 200 && code < 400 {
+			warmed++
+			return
+		}
+		failed++
+		if firstError == "" {
+			firstError = fmt.Sprintf("%s -> %d", path, code)
+		}
 	}
-	// Then bounded sitemap URLs.
+	// Homepage first, then bounded sitemap URLs.
+	note("/", warmupFetch(ctx, host, "/"))
 	for _, path := range sitemapPaths(ctx, host, max-1) {
 		if ctx.Err() != nil {
 			break
 		}
-		if code := warmupFetch(ctx, host, path); code >= 200 && code < 400 {
-			warmed++
-		}
+		note(path, warmupFetch(ctx, host, path))
 	}
-	return map[string]any{"ok": true, "host": host, "warmed": warmed}, nil
+	return map[string]any{
+		"ok":          true,
+		"host":        host,
+		"requested":   requested,
+		"clamped_to":  clampedTo,
+		"attempted":   attempted,
+		"warmed":      warmed,
+		"skipped":     0, // freshness detection lands in a later phase.
+		"failed":      failed,
+		"first_error": firstError,
+		"duration_ms": time.Since(start).Milliseconds(),
+	}, nil
 }
 
 func init() {
