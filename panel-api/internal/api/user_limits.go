@@ -88,10 +88,29 @@ type userLimitsHandler struct{ cfg UserLimitsHandlerConfig }
 // usageResponse is the shape returned by GET /users/:id/usage. `effective`
 // is the resolved limits (never null). `current` may be nil if the agent
 // is unavailable or the slice has no live processes yet.
+// limitFieldsView is the flat six-field limit shape in snake_case, used for
+// the resolved package limits so the admin Limits card can show "inherited
+// from package" values distinctly from the per-user override and the final
+// effective bundle. Zero means unlimited (same convention as EffectiveLimits).
+type limitFieldsView struct {
+	DiskQuotaMB     uint32 `json:"disk_quota_mb"`
+	CPUQuotaPercent uint32 `json:"cpu_quota_percent"`
+	MemoryLimitMB   uint32 `json:"memory_limit_mb"`
+	IOReadMbps      uint32 `json:"io_read_mbps"`
+	IOWriteMbps     uint32 `json:"io_write_mbps"`
+	MaxTasks        uint32 `json:"max_tasks"`
+}
+
 type usageResponse struct {
 	UserID    string                 `json:"user_id"`
 	Effective limits.EffectiveLimits `json:"effective"`
-	Current   json.RawMessage        `json:"current,omitempty"`
+	// Package is the resolved package-level limits (nil when the user has no
+	// package). Override is the raw per-user override row (nil when none) —
+	// its per-field omitempty distinguishes NULL=inherit from &0=explicit
+	// unlimited, which the GUI needs to label each field's source.
+	Package  *limitFieldsView         `json:"package,omitempty"`
+	Override *models.UserLimitOverride `json:"override,omitempty"`
+	Current  json.RawMessage          `json:"current,omitempty"`
 }
 
 func (h *userLimitsHandler) usage(c *gin.Context) {
@@ -110,11 +129,13 @@ func (h *userLimitsHandler) usage(c *gin.Context) {
 		return
 	}
 
-	effective, _ := h.resolveEffective(c.Request.Context(), user)
+	effective, pkgView, override := h.resolveEffective(c.Request.Context(), user)
 
 	resp := usageResponse{
 		UserID:    userID,
 		Effective: effective,
+		Package:   pkgView,
+		Override:  override,
 	}
 
 	// Call the agent for live usage. Failure is non-fatal — we want
@@ -150,8 +171,9 @@ func (h *userLimitsHandler) usage(c *gin.Context) {
 // passes both through the pure resolver. Returns the zero-value
 // EffectiveLimits on lookup errors — the caller falls back to
 // "unlimited everywhere" which is the safe default.
-func (h *userLimitsHandler) resolveEffective(ctx context.Context, user *models.User) (limits.EffectiveLimits, error) {
+func (h *userLimitsHandler) resolveEffective(ctx context.Context, user *models.User) (limits.EffectiveLimits, *limitFieldsView, *models.UserLimitOverride) {
 	var pkgL *limits.PackageLimits
+	var pkgView *limitFieldsView
 	if user.PackageID != nil && *user.PackageID != "" {
 		pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
 		if err == nil {
@@ -163,11 +185,21 @@ func (h *userLimitsHandler) resolveEffective(ctx context.Context, user *models.U
 				IOWriteMbps:     pkg.IOWriteMbps,
 				MaxTasks:        pkg.MaxTasks,
 			}
+			pkgView = &limitFieldsView{
+				DiskQuotaMB:     pkg.DiskQuotaMB,
+				CPUQuotaPercent: pkg.CPUQuotaPercent,
+				MemoryLimitMB:   pkg.MemoryLimitMB,
+				IOReadMbps:      pkg.IOReadMbps,
+				IOWriteMbps:     pkg.IOWriteMbps,
+				MaxTasks:        pkg.MaxTasks,
+			}
 		}
 	}
 
 	var ovL *limits.OverrideLimits
-	if ov, err := h.cfg.LimitOverrides.FindByUserID(ctx, user.ID); err == nil {
+	var ovRow *models.UserLimitOverride
+	if ov, err := h.cfg.LimitOverrides.FindByUserID(ctx, user.ID); err == nil && ov != nil {
+		ovRow = ov
 		ovL = &limits.OverrideLimits{
 			DiskQuotaMB:     ov.DiskQuotaMB,
 			CPUQuotaPercent: ov.CPUQuotaPercent,
@@ -177,7 +209,7 @@ func (h *userLimitsHandler) resolveEffective(ctx context.Context, user *models.U
 			MaxTasks:        ov.MaxTasks,
 		}
 	}
-	return limits.Resolve(pkgL, ovL), nil
+	return limits.Resolve(pkgL, ovL), pkgView, ovRow
 }
 
 type overrideRequest struct {
