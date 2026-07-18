@@ -139,6 +139,28 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0126](0126-per-user-cli-php-version.md) | Per-user CLI PHP version follows the FPM version pin | Accepted |
 | [0127](0127-ssh-sandbox-userns-apparmor-profile.md) | AppArmor userns profile for the M13 SSH sandbox (Ubuntu 24.04+) | Accepted |
 | [0128](0128-admin-impersonation-act-as.md) | Admin act-as impersonation via effective-user override | Accepted |
+| [0129](0129-ssh-classic-listener-mask-socket.md) | Normalize SSH to a single classic ssh.service listener (mask ssh.socket) | Accepted |
+| [0130](0130-htaccess-to-rule-builder-converter.md) | `.htaccess` → Rule Builder converter (typed rules, not raw nginx) | Accepted |
+| [0131](0131-python-app-manager.md) | Python Application Manager via native per-user systemd + nginx proxy (not Passenger) | Proposed |
+| [0132](0132-m51-mailbox-groups.md) | M51 Mailbox User Groups — DB-as-truth groups, Stalwart registry projection, native resource sharing | Accepted |
+| [0141](0141-ssl-cert-modes.md) | Per-domain SSL certificate modes | Accepted |
+| [0142](0142-stalwart-webadmin-reverse-proxy.md) | Stalwart WebAdmin reverse-proxy (opt-in, default-off) | Accepted |
+| [0143](0143-disclaimer-mtahook.md) | Disclaimer via MTA Hook (lossless HTML) | Proposed |
+| [0144](0144-api-token-scopes.md) | Scope-restricted user API tokens (RBAC) | Accepted |
+| [0145](0145-cron-http-trigger-allowlist.md) | Constrained curl/wget self-domain cron http-triggers | Accepted |
+| [0146](0146-tenant-php-exec-and-metadata-hardening.md) | Tenant PHP command-exec lockdown + always-on cloud-metadata egress floor | Accepted |
+| [0147](0147-appsec-wordpress-builder-exemption.md) | AppSec exemption for WordPress page-builder endpoints (scoped CRS rule drop) | Accepted |
+| [0148](0148-wp-cache-redis-multitenant-acl.md) | Multi-tenant Redis ACL model for the WordPress cache | Proposed |
+| [0149](0149-pty-broker-peercred-authz.md) | Agent-side SO_PEERCRED authorization on the root PTY broker | Accepted |
+| [0150](0150-dns-record-type-permissions.md) | Admin-controlled DNS record-type permissions for tenants | Accepted |
+| [0151](0151-migration-ssh-host-key-pinning.md) | SSH host-key pinning for migration connectors and rsync restore | Accepted |
+| [0152](0152-admin-breadcrumbs-cross-entity-links.md) | Admin breadcrumbs + cross-entity navigation | Accepted |
+| [0153](0153-login-ip-crowdsec-allowlist.md) | Auto-allowlist successful panel + SSH login IPs in CrowdSec | Accepted |
+| [0154](0154-panel-daemon-apparmor-confinement.md) | Panel daemon AppArmor confinement via aa-exec | Accepted |
+| [0155](0155-php-fpm-performance-tiers.md) | PHP-FPM performance tiers (package-gated) | Accepted |
+| [0156](0156-send-as-delegation.md) | Send-as delegation (mustMatchSender expression) | Accepted |
+| [0157](0157-automation-write-endpoints.md) | Write-automation endpoints + write scopes (JAB-140) | Accepted |
+<!-- 0133-0140: numbers reserved during planning, no ADR file was ever written (JAB-161). -->
 <!-- /AUTO-GENERATED -->
 
 ## Decision Categories
