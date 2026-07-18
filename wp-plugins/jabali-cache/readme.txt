@@ -4,7 +4,7 @@ Tags: redis, object cache, cache, performance, page cache
 Requires at least: 5.6
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.0.5
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -127,6 +127,16 @@ Only if your host does not already have one. On Jabali, nginx serves a FastCGI m
 Deactivating removes the `object-cache.php` drop-in cleanly, so WordPress reverts to its built-in non-persistent cache. Uninstalling removes the plugin's options. Your Redis data is just a cache and is safe to discard.
 
 == Changelog ==
+
+= 1.1.0 =
+* Bypass the full-page cache for authenticated requests and honor a response `Cache-Control: no-cache/private` so logged-in / no-store pages are never served from cache (JAB-60, JAB-61).
+* Fail-fast circuit breaker: after repeated Redis errors the plugin short-circuits to the origin for a cool-off window instead of stalling every request on a dead socket (JAB-89).
+* Stampede protection for the Redis full-page cache: concurrent misses no longer all regenerate the same page (JAB-90).
+* Targeted page-cache purge on post edit (the post URL + home) instead of a whole-site flush (JAB-91).
+* gzip large page-cache payloads and skip oversize bodies, cutting Redis memory for big pages (JAB-92).
+* Bound + cache the object-cache key-count scans behind the budget trim so a large keyspace no longer does an unbounded SCAN each tick (JAB-94).
+* Keep phpredis persistent connections across requests via a per-(ACL-user, DB) persistent id (JAB-96).
+* Atomic INCRBY/DECRBY for raw integer counters instead of get-modify-set, removing a lost-update race under concurrency (JAB-97).
 
 = 1.0.5 =
 * Redis object-cache socket failures (`Permission denied`) now include an actionable hint that the site's PHP-FPM user was missing from the `jabali-redis-clients` group; the panel self-heals that membership every reconcile and restarts the pool (GH #410 follow-up).

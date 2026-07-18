@@ -8,6 +8,24 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 Nothing yet.
 
+## [1.1.0] — 2026-07-19
+
+### Security
+- Authenticated requests bypass the full-page cache, and a response `Cache-Control: no-cache`/`private`/`no-store` is honored, so logged-in or explicitly non-cacheable pages are never served to another visitor from cache (JAB-60, JAB-61).
+
+### Added
+- Fail-fast circuit breaker for Redis outages: after repeated errors the plugin short-circuits to the origin for a cool-off window instead of stalling every request on a dead socket (JAB-89).
+- Stampede protection for the Redis full-page cache so concurrent misses don't all regenerate the same page (JAB-90).
+- gzip compression for large page-cache payloads, with oversize bodies skipped, reducing Redis memory for big pages (JAB-92).
+- phpredis persistent connections kept across requests via a per-(ACL-user, DB) `persistent_id` (JAB-96).
+
+### Changed
+- Post-edit page-cache purge is now targeted (the post's own URL + the home page) instead of a whole-site flush (JAB-91).
+- Object-cache key-count scans are bounded + cached behind the budget trim, avoiding an unbounded `SCAN` each tick on a large keyspace (JAB-94).
+
+### Fixed
+- Raw integer counters use atomic `INCRBY`/`DECRBY` instead of get-modify-set, removing a lost-update race under concurrency (JAB-97).
+
 ## [1.0.5] — 2026-07-07
 
 ### Fixed

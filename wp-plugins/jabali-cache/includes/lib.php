@@ -33,7 +33,7 @@ if ( defined( 'JABALI_CACHE_LIB_LOADED' ) ) {
 define( 'JABALI_CACHE_LIB_LOADED', true );
 
 if ( ! defined( 'JABALI_CACHE_VERSION' ) ) {
-	define( 'JABALI_CACHE_VERSION', '1.0.5' );
+	define( 'JABALI_CACHE_VERSION', '1.1.0' );
 }
 
 /**
