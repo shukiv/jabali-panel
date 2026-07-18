@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -60,6 +61,10 @@ daily cadence; operator can also invoke directly.`,
 			page := 1
 			deleted := 0
 			scanned := 0
+			// JAB-155: track every job ID that still has a row so the orphan
+			// sweep below can tell a stranded (row-deleted) staging dir from
+			// a live one.
+			live := map[string]struct{}{}
 			for {
 				rows, total, err := repo.List(ctx, page, pageSize)
 				if err != nil {
@@ -67,6 +72,7 @@ daily cadence; operator can also invoke directly.`,
 				}
 				for _, row := range rows {
 					scanned++
+					live[row.ID] = struct{}{}
 					if !isTerminal(row.State) {
 						continue
 					}
@@ -112,6 +118,15 @@ daily cadence; operator can also invoke directly.`,
 				}
 				page++
 			}
+
+			// JAB-155: orphan sweep. The row-driven pass above only reaps
+			// staging for jobs that still have a migration_jobs row. When a
+			// row is hard-deleted (admin removed the job, or a wizard draft
+			// was cleaned), its /var/lib/jabali-migrations/<id>/ tree is left
+			// stranded and invisible to that pass — on a test host this
+			// stranded ~6GB across 5 dirs and pushed / to 95% full.
+			deleted += reapOrphanStaging(migrationStagingDir, live, stagingMaxAge, dryRun, cmd.OutOrStdout(), cmd.ErrOrStderr())
+
 			fmt.Fprintf(cmd.OutOrStdout(), "scanned=%d deleted=%d (dry-run=%v)\n", scanned, deleted, dryRun)
 			// ADR-0095 decision 5 — also reap draft migration_jobs
 			// older than 24h. Drafts are created by the wizard at Step
@@ -136,6 +151,51 @@ daily cadence; operator can also invoke directly.`,
 	cmd.Flags().DurationVar(&stagingMaxAge, "staging-max-age", migrationStagingMaxAge,
 		"Reap /var/lib/jabali-migrations/<id>/ only when the job has been terminal at least this long (default 168h = 7d; pass 0 to wipe immediately)")
 	return cmd
+}
+
+// reapOrphanStaging removes per-job staging dirs under stagingDir whose ID has
+// no entry in live (the set of job IDs that still have a migration_jobs row)
+// and whose mtime is older than maxAge. The mtime guard protects an in-flight
+// extraction whose job row is not committed yet. Returns the number of dirs
+// removed (or, under dryRun, that would be removed). Missing stagingDir is not
+// an error. Split out from the command for direct testing. (JAB-155)
+func reapOrphanStaging(stagingDir string, live map[string]struct{}, maxAge time.Duration, dryRun bool, out, errw io.Writer) int {
+	entries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(errw, "readdir %s: %v\n", stagingDir, err)
+		}
+		return 0
+	}
+	deleted := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, ok := live[e.Name()]; ok {
+			continue // job row still exists — handled by the row-driven pass
+		}
+		p := filepath.Join(stagingDir, e.Name())
+		info, iErr := e.Info()
+		if iErr != nil {
+			continue
+		}
+		age := time.Since(info.ModTime())
+		if age < maxAge {
+			continue
+		}
+		if dryRun {
+			fmt.Fprintf(out, "[dry-run] would rm -rf %s (orphan: no job row, age=%s)\n", p, age.Truncate(time.Hour))
+			deleted++
+			continue
+		}
+		if rmErr := os.RemoveAll(p); rmErr != nil {
+			fmt.Fprintf(errw, "rm -rf %s: %v\n", p, rmErr)
+			continue
+		}
+		deleted++
+	}
+	return deleted
 }
 
 func isTerminal(state string) bool {
