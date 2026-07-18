@@ -6,28 +6,33 @@ import (
 	"testing"
 )
 
-// normalizeBcryptHash strips a {SCHEME} tag and accepts only bcrypt variants
-// Stalwart verifies — a non-bcrypt hash must be dropped (storing it would re-
-// create the silent-lockout bug with a new value).
-func TestNormalizeBcryptHash(t *testing.T) {
+// normalizeSourceMailHash strips a {SCHEME} tag and keeps any crypt string
+// Stalwart verifies (bcrypt, SHA-512/256/MD5-crypt, Argon2, PBKDF2, scrypt).
+// Only unknown/plaintext hashes are dropped (JAB-149).
+func TestNormalizeSourceMailHash(t *testing.T) {
 	cases := map[string]string{
 		"{BLF-CRYPT}$2y$05$abcdefghijklmnopqrstuv": "$2y$05$abcdefghijklmnopqrstuv",
 		"$2a$10$abcdefghijklmnopqrstuv":            "$2a$10$abcdefghijklmnopqrstuv",
 		"$2b$12$abcdefghijklmnopqrstuv":            "$2b$12$abcdefghijklmnopqrstuv",
-		"{SHA512-CRYPT}$6$rounds=5000$salt$hash":   "", // not bcrypt → drop
-		"{PLAIN}hunter2":                           "",
-		"plaintextnope":                            "",
-		"":                                         "",
+		// JAB-149: Stalwart verifies these natively — preserve, don't drop.
+		"{SHA512-CRYPT}$6$rounds=5000$salt$hash": "$6$rounds=5000$salt$hash",
+		"{SHA256-CRYPT}$5$rounds=5000$salt$hash": "$5$rounds=5000$salt$hash",
+		"$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA": "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
+		"{MD5-CRYPT}$1$salt$hash":                "$1$salt$hash",
+		// No Stalwart-recognised prefix → still dropped.
+		"{PLAIN}hunter2": "",
+		"plaintextnope":  "",
+		"":               "",
 	}
 	for in, want := range cases {
-		if got := normalizeBcryptHash(in); got != want {
-			t.Errorf("normalizeBcryptHash(%q) = %q, want %q", in, got, want)
+		if got := normalizeSourceMailHash(in); got != want {
+			t.Errorf("normalizeSourceMailHash(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
 
 // loadSourceMailPasswords parses a Hestia dovecot passwd-file into local→hash,
-// keeping only Stalwart-verifiable bcrypt; missing file → empty.
+// keeping every Stalwart-verifiable scheme (JAB-149); missing file → empty.
 func TestLoadSourceMailPasswords(t *testing.T) {
 	dir := t.TempDir()
 	confDir := filepath.Join(dir, "conf")
@@ -51,11 +56,11 @@ func TestLoadSourceMailPasswords(t *testing.T) {
 	if got["admin"] != "$2b$10$anotheranotheranotherx" {
 		t.Errorf("admin hash = %q", got["admin"])
 	}
-	if _, ok := got["legacy"]; ok {
-		t.Error("legacy (SHA-CRYPT) must be dropped, not stored")
+	if got["legacy"] != "$6$rounds=5000$s$h" {
+		t.Errorf("legacy (SHA512-CRYPT) must be preserved (JAB-149), got %q", got["legacy"])
 	}
-	if len(got) != 2 {
-		t.Errorf("want 2 usable hashes, got %d: %v", len(got), got)
+	if len(got) != 3 {
+		t.Errorf("want 3 usable hashes (JAB-149 keeps SHA512), got %d: %v", len(got), got)
 	}
 
 	// Missing file → empty map, no error.

@@ -386,7 +386,7 @@ func loadSourceMailPasswords(domainDir string) map[string]string {
 		if len(parts) < 2 || parts[0] == "" {
 			continue
 		}
-		if h := normalizeBcryptHash(parts[1]); h != "" {
+		if h := normalizeSourceMailHash(parts[1]); h != "" {
 			out[parts[0]] = h
 		}
 	}
@@ -426,19 +426,41 @@ func listSourceMailAccounts(domainDir string) []string {
 	return out
 }
 
-// normalizeBcryptHash strips a leading {SCHEME} tag and returns the hash only if
-// it is a bcrypt variant Stalwart verifies ($2a/$2b/$2y). Empty otherwise — a
-// non-bcrypt source hash must not be stored (it would never authenticate, re-
-// creating the silent-lockout bug with a different value).
-func normalizeBcryptHash(field string) string {
+// stalwartHashPrefixes are the crypt-string prefixes Stalwart verifies for a
+// stored account password (per stalw.art/docs/auth/authentication/password):
+// bcrypt, SHA-512/256/MD5-crypt, Argon2, PBKDF2, scrypt, SHA-1-crypt. Source
+// panels (cPanel/HestiaCP dovecot) export these as {SCHEME}$crypt strings; once
+// the dovecot {SCHEME} tag is stripped, the bare $-prefixed crypt is exactly
+// what Stalwart recognises by prefix.
+var stalwartHashPrefixes = []string{
+	"$2a$", "$2b$", "$2y$", // bcrypt
+	"$6$",      // SHA-512 crypt
+	"$5$",      // SHA-256 crypt
+	"$1$",      // MD5 crypt
+	"$argon2",  // $argon2id / $argon2i / $argon2d
+	"$pbkdf2",  // PBKDF2 variants
+	"$scrypt",  // scrypt
+	"$sha1",    // SHA-1 crypt
+}
+
+// normalizeSourceMailHash strips a leading dovecot {SCHEME} tag and returns the
+// bare crypt string if Stalwart can verify it (JAB-149). Previously this kept
+// bcrypt only and dropped SHA-512/Argon2/etc., forcing a password reset on every
+// non-bcrypt mailbox even though Stalwart verifies those schemes natively —
+// which needlessly locked migrated users out of their existing password. A hash
+// with no Stalwart-recognised prefix (e.g. {PLAIN} plaintext, unknown scheme) is
+// still dropped: storing it would never authenticate.
+func normalizeSourceMailHash(field string) string {
 	h := field
 	if strings.HasPrefix(h, "{") {
 		if i := strings.IndexByte(h, '}'); i >= 0 {
 			h = h[i+1:]
 		}
 	}
-	if strings.HasPrefix(h, "$2a$") || strings.HasPrefix(h, "$2b$") || strings.HasPrefix(h, "$2y$") {
-		return h
+	for _, pfx := range stalwartHashPrefixes {
+		if strings.HasPrefix(h, pfx) {
+			return h
+		}
 	}
 	return ""
 }
