@@ -16,11 +16,13 @@ import (
 func withSpool(t *testing.T) (string, *int) {
 	t.Helper()
 	dir := t.TempDir()
-	origDir, origHandler := wpPurgeSpoolDir, handleWpPurgeFile
+	origDir, origCollect := wpPurgeSpoolDir, collectWpPurgeFile
 	wpPurgeSpoolDir = dir
 	var processed int
-	handleWpPurgeFile = func(_ context.Context, _ string, _ *slog.Logger) { processed++ }
-	t.Cleanup(func() { wpPurgeSpoolDir = origDir; handleWpPurgeFile = origHandler })
+	// Stub the per-file collector so the fairness caps (applied before
+	// coalescing) are what these tests measure.
+	collectWpPurgeFile = func(_ string, _ *slog.Logger) *wpPurgeItem { processed++; return nil }
+	t.Cleanup(func() { wpPurgeSpoolDir = origDir; collectWpPurgeFile = origCollect })
 	return dir, &processed
 }
 

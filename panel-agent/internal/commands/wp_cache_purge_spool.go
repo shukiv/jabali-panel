@@ -88,6 +88,7 @@ func runWpPurgeTick(ctx context.Context, log *slog.Logger) {
 	deferred := map[uint64]int{}
 	now := time.Now()
 	processed, scanned := 0, 0
+	var items []*wpPurgeItem
 	for _, e := range entries {
 		if processed >= wpPurgeMaxPerTick || scanned >= wpPurgeMaxScan {
 			break
@@ -122,7 +123,9 @@ func runWpPurgeTick(ctx context.Context, log *slog.Logger) {
 		}
 		perUID[uid]++
 		processed++
-		handleWpPurgeFile(ctx, path, log)
+		if it := collectWpPurgeFile(path, log); it != nil {
+			items = append(items, it)
+		}
 	}
 	for uid, d := range deferred {
 		log.WarnContext(ctx, "wp-purge: per-UID tick cap exceeded (possible flood)",
@@ -131,6 +134,10 @@ func runWpPurgeTick(ctx context.Context, log *slog.Logger) {
 	if scanned >= wpPurgeMaxScan {
 		log.WarnContext(ctx, "wp-purge: scan cap hit; spool backlog deferred to next tick", "scanned", scanned)
 	}
+	// JAB-93: collapse the collected files into one nginx purge per (uid, host)
+	// so a bulk edit / import / WooCommerce sweep is one host purge, not one
+	// per spool file.
+	coalesceAndPurge(ctx, items, log)
 }
 
 // nginxVhostDocroot returns the server docroot from the host's nginx vhost
@@ -150,69 +157,147 @@ func nginxVhostDocroot(vhostPath string) (string, error) {
 
 var nginxRootRE = regexp.MustCompile(`(?m)^\s*root\s+([^;]+);`)
 
-// handleWpPurgeFile validates and processes one spool request, then removes it.
-// Every exit path removes the file so a bad/forged request can't accumulate.
-var handleWpPurgeFile = func(ctx context.Context, path string, log *slog.Logger) {
-	defer func() { _ = os.Remove(path) }()
+// wpPurgeItem is one well-formed spool request collected in a tick, before the
+// per-(uid, host) coalescing pass. Ownership is confirmed later, once per group.
+type wpPurgeItem struct {
+	path     string
+	uid      uint64
+	username string
+	host     string
+	paths    []string
+}
 
+// collectWpPurgeFile parses one spool file into a wpPurgeItem, or removes it and
+// returns nil when it is malformed (bad size, unreadable owner, bad JSON, or a
+// host that fails the domain regex). A well-formed request is NOT removed here —
+// coalesceAndPurge removes it after the grouped purge. A var so the fairness
+// test can stub it.
+var collectWpPurgeFile = func(path string, log *slog.Logger) *wpPurgeItem {
 	fi, err := os.Stat(path)
 	if err != nil || fi.Size() == 0 || fi.Size() > wpPurgeMaxFileBytes {
-		return
+		_ = os.Remove(path)
+		return nil
 	}
-	// Owner uid → username: the request is only trusted for the tenant that
-	// wrote it (sticky dir preserves the writer's uid).
+	// Owner uid: the request is only trusted for the tenant that wrote it (the
+	// sticky spool dir preserves the writer's uid).
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
-		return
+		_ = os.Remove(path)
+		return nil
 	}
 	usr, err := user.LookupId(strconv.FormatUint(uint64(st.Uid), 10))
 	if err != nil || usr.Username == "" {
-		return
+		_ = os.Remove(path)
+		return nil
 	}
-
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return
+		_ = os.Remove(path)
+		return nil
 	}
 	var req wpPurgeRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
-		return
+		_ = os.Remove(path)
+		return nil
 	}
 	if !domainRegex.MatchString(req.Host) {
-		return
+		_ = os.Remove(path)
+		return nil
 	}
-	// OWNERSHIP (GH #630): validate against PANEL STATE — the root-owned nginx
-	// vhost for this host — not a tenant-controllable /home path. The old check
-	// stat'd /home/<requester>/domains/<host>/public_html, which a tenant could
-	// mkdir to spoof ownership of ANOTHER tenant's host and evict its cache. A
-	// tenant cannot forge /etc/nginx/sites-available/<host>.conf, so the vhost's
-	// own `root` directive is the authoritative docroot; the requester must own
-	// THAT. (req.Host already passed domainRegex above — no path traversal.)
-	realDocroot, drerr := nginxVhostDocroot(filepath.Join("/etc/nginx/sites-available", req.Host+".conf"))
-	if drerr != nil || realDocroot == "" {
-		log.Warn("wp-purge: no nginx vhost for host, ignored", "user", usr.Username, "host", req.Host)
-		return
-	}
-	dst, derr := os.Stat(realDocroot)
-	if derr != nil || !dst.IsDir() {
-		log.Warn("wp-purge: vhost docroot missing, ignored", "host", req.Host)
-		return
-	}
-	if dstat, ok2 := dst.Sys().(*syscall.Stat_t); !ok2 || dstat.Uid != st.Uid {
-		log.Warn("wp-purge: requester does not own the vhost docroot, ignored", "user", usr.Username, "host", req.Host)
-		return
-	}
-
 	paths := req.Paths
 	if len(paths) > wpPurgeMaxPaths {
 		paths = paths[:wpPurgeMaxPaths]
 	}
-	body, _ := json.Marshal(map[string]any{"domain": req.Host, "paths": paths})
-	pctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	if _, perr := nginxCachePurgeHandler(pctx, body); perr != nil {
-		log.Warn("wp-purge: nginx.cache.purge failed", "host", req.Host, "err", perr)
-		return
+	return &wpPurgeItem{path: path, uid: uint64(st.Uid), username: usr.Username, host: req.Host, paths: paths}
+}
+
+// mergeGroupPaths merges the path lists of one (uid, host) group. A whole-domain
+// purge (empty paths) anywhere in the group collapses it to a single whole-domain
+// purge; otherwise the paths are de-duplicated and capped. Pure — unit tested.
+func mergeGroupPaths(grp []*wpPurgeItem) (outPaths []string, wholeDomain bool) {
+	seen := map[string]struct{}{}
+	merged := []string{}
+	for _, it := range grp {
+		if len(it.paths) == 0 {
+			return []string{}, true // whole-domain wins.
+		}
+		for _, pth := range it.paths {
+			if _, dup := seen[pth]; dup {
+				continue
+			}
+			seen[pth] = struct{}{}
+			merged = append(merged, pth)
+		}
 	}
-	log.Info("wp-purge: purged nginx cache", "user", usr.Username, "host", req.Host, "paths", len(paths))
+	if len(merged) > wpPurgeMaxPaths {
+		merged = merged[:wpPurgeMaxPaths]
+	}
+	return merged, false
+}
+
+// coalesceAndPurge groups the collected requests by (uid, host), validates host
+// ownership ONCE per group against the root-owned nginx vhost docroot, merges the
+// path lists, and issues a single nginx cache purge per group. Every consumed
+// file is removed. All files in a group share uid+host, so a single ownership
+// check (GH #630 semantics) covers the whole group. (JAB-93)
+func coalesceAndPurge(ctx context.Context, items []*wpPurgeItem, log *slog.Logger) {
+	type groupKey struct {
+		uid  uint64
+		host string
+	}
+	groups := map[groupKey][]*wpPurgeItem{}
+	order := []groupKey{}
+	for _, it := range items {
+		k := groupKey{it.uid, it.host}
+		if _, seen := groups[k]; !seen {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], it)
+	}
+	for _, k := range order {
+		grp := groups[k]
+		removeAll := func() {
+			for _, it := range grp {
+				_ = os.Remove(it.path)
+			}
+		}
+		username := grp[0].username
+
+		// OWNERSHIP (GH #630): validate against PANEL STATE — the root-owned
+		// nginx vhost docroot uid — not a tenant-controllable /home path. A
+		// tenant cannot forge /etc/nginx/sites-available/<host>.conf, so the
+		// vhost's own root directive is the authoritative docroot; the requester
+		// must own it.
+		realDocroot, drerr := nginxVhostDocroot(filepath.Join("/etc/nginx/sites-available", k.host+".conf"))
+		if drerr != nil || realDocroot == "" {
+			log.Warn("wp-purge: no nginx vhost for host, ignored", "user", username, "host", k.host, "files", len(grp))
+			removeAll()
+			continue
+		}
+		dst, derr := os.Stat(realDocroot)
+		if derr != nil || !dst.IsDir() {
+			log.Warn("wp-purge: vhost docroot missing, ignored", "host", k.host)
+			removeAll()
+			continue
+		}
+		if dstat, ok := dst.Sys().(*syscall.Stat_t); !ok || uint64(dstat.Uid) != k.uid {
+			log.Warn("wp-purge: requester does not own the vhost docroot, ignored", "user", username, "host", k.host)
+			removeAll()
+			continue
+		}
+
+		outPaths, wholeDomain := mergeGroupPaths(grp)
+		body, _ := json.Marshal(map[string]any{"domain": k.host, "paths": outPaths})
+		pctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		_, perr := nginxCachePurgeHandler(pctx, body)
+		cancel()
+		if perr != nil {
+			log.Warn("wp-purge: nginx.cache.purge failed", "host", k.host, "err", perr)
+			removeAll()
+			continue
+		}
+		log.Info("wp-purge: purged nginx cache (coalesced)", "user", username, "host", k.host,
+			"files_coalesced", len(grp), "paths_merged", len(outPaths), "whole_domain", wholeDomain)
+		removeAll()
+	}
 }
