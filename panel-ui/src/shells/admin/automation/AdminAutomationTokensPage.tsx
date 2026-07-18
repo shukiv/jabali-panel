@@ -79,6 +79,9 @@ export const AdminAutomationTokensPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [revealSecret, setRevealSecret] = useState<string | null>(null);
   const [revealName, setRevealName] = useState<string | null>(null);
+  // JAB-86: surface the token ID alongside the secret at mint time so the
+  // operator can wire both into automation config without reopening the list.
+  const [revealId, setRevealId] = useState<string | null>(null);
   const [form] = Form.useForm<{ name: string; scopes: string[]; writes_enabled: boolean }>();
   const scopeVals = (Form.useWatch("scopes", form) as string[] | undefined) ?? [];
   const hasWriteScope = scopeVals.some((s) => s.startsWith("write:"));
@@ -124,6 +127,7 @@ export const AdminAutomationTokensPage = () => {
       setDrawerOpen(false);
       form.resetFields();
       setRevealName(resp.name);
+      setRevealId(resp.id);
       setRevealSecret(resp.secret);
     },
   });
@@ -332,6 +336,7 @@ export const AdminAutomationTokensPage = () => {
             onClick={() => {
               setRevealSecret(null);
               setRevealName(null);
+              setRevealId(null);
             }}
           >
             I've saved it
@@ -339,6 +344,14 @@ export const AdminAutomationTokensPage = () => {
         ]}
         width={600}
       >
+        <Typography.Paragraph style={{ marginBottom: 12 }}>
+          <Typography.Text type="secondary">Token ID</Typography.Text>
+          <Typography.Paragraph copyable={{ text: revealId ?? "", tooltips: ["Copy", "Copied"] }} style={{ marginBottom: 0 }}>
+            <code style={{ wordBreak: "break-all", display: "block", padding: 12, background: token.colorBgLayout, border: `1px solid ${token.colorBorder}`, borderRadius: token.borderRadius }}>
+              {revealId}
+            </code>
+          </Typography.Paragraph>
+        </Typography.Paragraph>
         <Alert
           type="warning"
           showIcon
@@ -346,6 +359,7 @@ export const AdminAutomationTokensPage = () => {
           description="Copy it now and store it in your automation's secret manager. The server only keeps an encrypted copy. If you lose it, revoke this token and mint a new one."
           style={{ marginBottom: 16 }}
         />
+        <Typography.Text type="secondary">Secret</Typography.Text>
         <Typography.Paragraph copyable={{ text: revealSecret ?? "", tooltips: ["Copy", "Copied"] }}>
           <code style={{ wordBreak: "break-all", display: "block", padding: 12, background: token.colorBgLayout, border: `1px solid ${token.colorBorder}`, borderRadius: token.borderRadius }}>
             {revealSecret}
