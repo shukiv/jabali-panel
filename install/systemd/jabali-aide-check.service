@@ -1,6 +1,6 @@
 [Unit]
 Description=Jabali AIDE file integrity check (M42 — daily)
-Documentation=https://codeberg.org/shukivaknin/jabali2/src/branch/main/docs/adr/0087-aide-system-fim.md
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0087-aide-system-fim.md
 After=network-online.target
 
 [Service]

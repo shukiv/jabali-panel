@@ -1,6 +1,6 @@
 [Unit]
 Description=Jabali WordPress cache health drift auto-repair (GH #605)
-Documentation=https://codeberg.org/shukivaknin/jabali2
+Documentation=https://github.com/shukiv/jabali-panel
 After=jabali-panel.service jabali-agent.service
 # No Requires= — same rationale as jabali-sso-reaper.service: this timer is
 # enabled before the panel/agent units are written on first install. After=

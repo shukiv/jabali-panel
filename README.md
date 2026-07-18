@@ -93,7 +93,7 @@ even piped through `curl | bash`). Add args after `-s --`, e.g. `--dry-run`.
 Classic / scripted install (no TUI — the proven bash installer directly):
 
 ```
-curl -fsSL https://codeberg.org/shukivaknin/jabali2/raw/branch/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh | sudo bash
 ```
 
 Both run the same engine. `install.sh` fetches Go 1.25, builds the panel + agent

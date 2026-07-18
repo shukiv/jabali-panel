@@ -24,7 +24,7 @@ func infoHandler(c *gin.Context) {
 			"api":    "/api/v1/",
 			"ui":     "/ (SPA)",
 		},
-		"docs": "https://codeberg.org/shukivaknin/jabali2",
+		"docs": "https://github.com/shukiv/jabali-panel",
 	})
 }
 

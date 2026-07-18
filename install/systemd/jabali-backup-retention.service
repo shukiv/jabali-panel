@@ -1,6 +1,6 @@
 [Unit]
 Description=Jabali backup retention sweep (M30 — restic forget + prune)
-Documentation=https://codeberg.org/shukivaknin/jabali2/src/branch/main/docs/adr/0075-backup-restore-restic.md
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0075-backup-restore-restic.md
 After=jabali-panel.service network-online.target
 # No Requires=jabali-panel.service. The CLI reads server_settings to pick
 # up keep-daily/weekly/monthly knobs but the panel may be transiently down

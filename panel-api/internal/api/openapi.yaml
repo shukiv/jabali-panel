@@ -32,7 +32,7 @@ info:
     a category (e.g. 401 may be `missing_credentials` vs `invalid_token`).
   contact:
     name: Jabali Panel
-    url: https://codeberg.org/shukivaknin/jabali2
+    url: https://github.com/shukiv/jabali-panel
 servers:
   - url: https://{panel-hostname}:8443/api/v1
     description: Self-hosted panel

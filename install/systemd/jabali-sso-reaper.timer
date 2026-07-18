@@ -1,6 +1,6 @@
 [Unit]
 Description=Run jabali-sso-reaper.service every 30s
-Documentation=https://codeberg.org/shukivaknin/jabali2/src/branch/main/docs/adr/0040-m22-sso-file.md
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0040-m22-sso-file.md
 
 [Timer]
 # OnBootSec gives the panel + agent a head start before the first sweep.

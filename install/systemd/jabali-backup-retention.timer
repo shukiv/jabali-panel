@@ -1,6 +1,6 @@
 [Unit]
 Description=Daily restic forget+prune for Jabali backup repo
-Documentation=https://codeberg.org/shukivaknin/jabali2/src/branch/main/docs/adr/0075-backup-restore-restic.md
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0075-backup-restore-restic.md
 
 [Timer]
 # 04:30 host-local time. Off-peak; long enough after 03:00 maldet

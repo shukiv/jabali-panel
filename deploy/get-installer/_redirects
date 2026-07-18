@@ -1,4 +1,4 @@
 # Cloudflare Pages (or any host honoring _redirects): serve the TUI bootstrap at
 # the short URL so `curl -fsSL https://get.jabali-panel.com | bash` launches the
-# installer. Source of truth = CODEBERG. 200 = rewrite (proxy body, no hop).
-/*  https://codeberg.org/shukivaknin/jabali2/raw/branch/main/bootstrap.sh  200
+# installer. Source of truth = GITHUB. 200 = rewrite (proxy body, no hop).
+/*  https://raw.githubusercontent.com/shukiv/jabali-panel/main/bootstrap.sh  200

@@ -1,6 +1,6 @@
 [Unit]
 Description=Jabali AIDE daily integrity check (04:30 UTC + 15m jitter)
-Documentation=https://codeberg.org/shukivaknin/jabali2/src/branch/main/docs/adr/0087-aide-system-fim.md
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0087-aide-system-fim.md
 
 [Timer]
 OnCalendar=*-*-* 04:30:00 UTC

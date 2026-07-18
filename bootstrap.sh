@@ -12,11 +12,11 @@
 # JABALI_MODULES and the installer skips the TUI and runs install.sh directly.
 # Any args after `bash -s --` are forwarded to the installer (e.g. --dry-run).
 #
-# Overrides: JABALI_RELEASE_API_BASE (default codeberg), JABALI_REF (unused here;
+# Overrides: JABALI_RELEASE_API_BASE (default GitHub), JABALI_REF (unused here;
 # the tarball is always the latest published release).
 set -euo pipefail
 
-API_BASE="${JABALI_RELEASE_API_BASE:-https://codeberg.org/api/v1/repos/shukivaknin/jabali2}"
+API_BASE="${JABALI_RELEASE_API_BASE:-https://api.github.com/repos/shukiv/jabali-panel}"
 
 die() { printf '\033[1;31m[bootstrap] %s\033[0m\n' "$*" >&2; exit 1; }
 log() { printf '\033[1;34m[bootstrap]\033[0m %s\n' "$*"; }
@@ -33,7 +33,7 @@ log "resolving latest release with a verified tarball from ${API_BASE}"
 # are already newest-first; the matching .sha256 sidecar is ALWAYS derived from
 # the same tarball URL (same release, same path) so we never pair a tarball with
 # a different release's checksum. Walk candidates until one downloads + verifies.
-rel="$(curl -fsSL "${API_BASE}/releases?limit=30")" || die "could not reach the release API"
+rel="$(curl -fsSL "${API_BASE}/releases?per_page=30")" || die "could not reach the release API"
 tar_urls="$(printf '%s' "$rel" \
   | grep -oE '"browser_download_url": *"[^"]+"' \
   | sed 's/.*"\(https[^"]*\)"/\1/' \

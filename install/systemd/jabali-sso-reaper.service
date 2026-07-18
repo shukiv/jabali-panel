@@ -1,6 +1,6 @@
 [Unit]
 Description=Jabali SSO file reaper (M22 — sweeps stale jabali-sso-*.php)
-Documentation=https://codeberg.org/shukivaknin/jabali2/src/branch/main/docs/adr/0040-m22-sso-file.md
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0040-m22-sso-file.md
 After=jabali-panel.service jabali-agent.service
 # No Requires= on jabali-agent.service: install.sh enables this timer
 # (install_sso_reaper_timer at step 7) BEFORE it writes the panel +

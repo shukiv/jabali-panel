@@ -26,6 +26,6 @@ script body directly with no hop.
 ## Notes
 
 - The canonical raw URL stays valid as a fallback:
-  `https://codeberg.org/shukivaknin/jabali2/raw/branch/main/install.sh`
+  `https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh`
 - Channel-aware later (GH #445): point `get.` at a small bootstrapper that picks
   the stable vs development installer once channels exist.
