@@ -404,6 +404,72 @@ func recommendCacheProfile(plugins []string) (profile string, note string) {
 }
 
 // cacheAdvise (GH #620) probes the install and recommends a profile + settings.
+// cacheHealth (JAB-11) runs the agent's per-install drift check
+// (`wp jabali-cache verify` as the tenant, which fails if the plugin is
+// inactive, the drop-in / JABALI_CACHE_* constants are gone, or the Redis ACL /
+// socket is unreachable). Read-only: it detects the drift the DB's
+// cache_enabled=true flag silently lies about; repair stays on the operator
+// cache-doctor path. Bounded to 45s so a single slow install can't hang the
+// request past the proxy timeout (long-agent-call scar).
+func (h *wordPressHandler) cacheHealth(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	inst := h.loadOwnedInstall(c, claims)
+	if inst == nil {
+		return
+	}
+	if inst.AppType != "wordpress" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "not_wordpress"})
+		return
+	}
+	dom, err := h.cfg.Domains.FindByID(c.Request.Context(), inst.DomainID)
+	if err != nil || dom == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain_not_found"})
+		return
+	}
+	osUser := ""
+	if u, uErr := h.cfg.Users.FindByID(c.Request.Context(), inst.UserID); uErr == nil && u != nil && u.Username != nil {
+		osUser = *u.Username
+	}
+	if osUser == "" || h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "unavailable"})
+		return
+	}
+	installPath := dom.DocRoot
+	if inst.Subdirectory != "" {
+		installPath = path.Join(dom.DocRoot, inst.Subdirectory)
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+	defer cancel()
+	res, err := h.cfg.Agent.Call(ctx, "wordpress.cache_health", map[string]any{
+		"os_user": osUser, "install_path": installPath, "host": dom.Name,
+	})
+	if err != nil {
+		respondAgentErr(c, "agent_error", err)
+		return
+	}
+	var health struct {
+		Healthy bool   `json:"healthy"`
+		Detail  string `json:"detail"`
+	}
+	if uErr := json.Unmarshal(res, &health); uErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "unparseable_health"})
+		return
+	}
+	// cache_enabled is the DB's claim; healthy is the live truth. When they
+	// disagree the site is drifted — the field the GUI badges.
+	c.JSON(http.StatusOK, gin.H{
+		"install_id":    inst.ID,
+		"cache_enabled": inst.CacheEnabled,
+		"healthy":       health.Healthy,
+		"drifted":       inst.CacheEnabled && !health.Healthy,
+		"detail":        health.Detail,
+	})
+}
+
 func (h *wordPressHandler) cacheAdvise(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {

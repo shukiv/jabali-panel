@@ -77,6 +77,10 @@ export function CacheSettingsDrawer({
   };
   const [warmRun, setWarmRun] = useState<WarmRun | null>(null);
   const [warming, setWarming] = useState(false);
+  // JAB-11: per-install cache drift check.
+  type CacheHealth = { healthy: boolean; drifted: boolean; detail: string };
+  const [health, setHealth] = useState<CacheHealth | null>(null);
+  const [checkingHealth, setCheckingHealth] = useState(false);
 
   useEffect(() => {
     if (!install) return;
@@ -111,6 +115,7 @@ export function CacheSettingsDrawer({
       .get<{ run: WarmRun | null }>(`/applications/${install.id}/cache-warmup`)
       .then((res) => setWarmRun(res.data.run ?? null))
       .catch(() => setWarmRun(null));
+    setHealth(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [install]);
 
@@ -131,6 +136,23 @@ export function CacheSettingsDrawer({
       message.error(extractApiError(e) ?? "Failed to start warmup");
     } finally {
       setWarming(false);
+    }
+  };
+
+  // JAB-11: run the agent's drift check for this one install. Read-only; repair
+  // stays on the operator `jabali app cache-doctor` path.
+  const checkHealth = async () => {
+    if (!install) return;
+    setCheckingHealth(true);
+    try {
+      const res = await apiClient.get<CacheHealth>(
+        `/applications/${install.id}/cache-health`,
+      );
+      setHealth(res.data);
+    } catch (e) {
+      message.error(extractApiError(e) ?? "Failed to check cache health");
+    } finally {
+      setCheckingHealth(false);
     }
   };
 
@@ -281,6 +303,30 @@ export function CacheSettingsDrawer({
               {warmRun.first_error ? (
                 <div style={{ color: "#c0392b", fontSize: 12, marginTop: 4 }}>
                   {warmRun.first_error}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </Form.Item>
+        <Form.Item label="Cache health" help="Verify the cache stack live (plugin active, drop-in + constants present, Redis reachable).">
+          <Button size="small" onClick={() => void checkHealth()} loading={checkingHealth}>
+            Check now
+          </Button>
+          {health ? (
+            <div style={{ marginTop: 8 }}>
+              <Tag color={health.drifted ? "red" : health.healthy ? "green" : "orange"}>
+                {health.drifted ? "DRIFTED" : health.healthy ? "Healthy" : "Unhealthy"}
+              </Tag>
+              {health.detail ? (
+                <span style={{ color: health.drifted ? "#c0392b" : "#888", fontSize: 12 }}>
+                  {health.detail}
+                </span>
+              ) : null}
+              {health.drifted ? (
+                <div style={{ color: "#c0392b", fontSize: 12, marginTop: 4 }}>
+                  Cache is enabled but the live stack failed verification. Toggle
+                  cache off and on to re-provision, or ask an operator to run
+                  <code> jabali app cache-doctor --repair</code>.
                 </div>
               ) : null}
             </div>

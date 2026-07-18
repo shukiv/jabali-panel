@@ -88,6 +88,7 @@ func RegisterApplicationRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig)
 	apps.GET("/:id/cache-warmup", wp.getCacheWarmup)   // JAB-95 Phase 3: last warmup run
 	apps.GET("/cache-profiles", wp.cacheProfiles) // GH #618
 	apps.GET("/:id/cache-stats", wp.cacheStats) // GH #617
+	apps.GET("/:id/cache-health", wp.cacheHealth) // JAB-11: per-install drift check
 	// GH #617: admin cache overview — cache-enabled domains ranked by page-cache
 	// hit ratio so low-hit/noisy sites are visible.
 	adminCache := g.Group("/admin/cache")
