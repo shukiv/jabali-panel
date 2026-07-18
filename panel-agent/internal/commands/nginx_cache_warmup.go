@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,19 +72,70 @@ var warmupFetchBody = func(ctx context.Context, host, path string) string {
 	return string(out)
 }
 
-// sitemapPaths fetches the site's sitemap and returns up to max same-host URL
-// paths. Tries the WP core sitemap first, then a generic sitemap.xml. One level
-// of sitemap-index expansion (WP core's wp-sitemap.xml is an index).
-func sitemapPaths(ctx context.Context, host string, max int) []string {
-	seen := map[string]bool{}
-	var paths []string
-	add := func(u string) {
-		p := toSameHostPath(host, u)
-		if p == "" || seen[p] {
-			return
+// sitemapEntry is one URL discovered in a sitemap, with the optional priority
+// and lastmod hints SEO plugins (Yoast/RankMath) emit. WP core sitemaps omit
+// both, so they default to priority 0.5 / empty lastmod and ranking falls back
+// to the URL value tier.
+type sitemapEntry struct {
+	path     string
+	priority float64
+	lastmod  string
+}
+
+var (
+	urlBlockRe  = regexp.MustCompile(`(?is)<url>(.*?)</url>`)
+	priorityRe  = regexp.MustCompile(`(?i)<priority>\s*([0-9.]+)\s*</priority>`)
+	lastmodRe   = regexp.MustCompile(`(?i)<lastmod>\s*([^<\s]+)\s*</lastmod>`)
+	dateArchive = regexp.MustCompile(`^/(19|20)\d\d/`)
+)
+
+// sitemapMaxEntries bounds how many URLs we parse+rank. Parsing is cheap (just
+// the XML), and the caller only warms `max-1` of the ranked result, so a
+// generous ceiling costs little while giving ranking enough to work with.
+const sitemapMaxEntries = 2000
+
+// parseUrlset extracts <url> entries (loc + optional priority/lastmod) from a
+// urlset sitemap body, resolved to same-host paths.
+func parseUrlset(host, body string) []sitemapEntry {
+	var out []sitemapEntry
+	for _, m := range urlBlockRe.FindAllStringSubmatch(body, -1) {
+		block := m[1]
+		loc := locRe.FindStringSubmatch(block)
+		if loc == nil {
+			continue
 		}
-		seen[p] = true
-		paths = append(paths, p)
+		path := toSameHostPath(host, loc[1])
+		if path == "" {
+			continue
+		}
+		e := sitemapEntry{path: path, priority: 0.5}
+		if pr := priorityRe.FindStringSubmatch(block); pr != nil {
+			if f, err := strconv.ParseFloat(pr[1], 64); err == nil {
+				e.priority = f
+			}
+		}
+		if lm := lastmodRe.FindStringSubmatch(block); lm != nil {
+			e.lastmod = lm[1]
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// sitemapEntries fetches the site's sitemap and returns the same-host URL
+// entries. Tries the WP core sitemap first, then generic sitemap.xml. One level
+// of sitemap-index expansion (WP core's wp-sitemap.xml is an index).
+func sitemapEntries(ctx context.Context, host string) []sitemapEntry {
+	seen := map[string]bool{}
+	var entries []sitemapEntry
+	addUrlset := func(body string) {
+		for _, e := range parseUrlset(host, body) {
+			if seen[e.path] {
+				continue
+			}
+			seen[e.path] = true
+			entries = append(entries, e)
+		}
 	}
 	for _, entry := range []string{"/wp-sitemap.xml", "/sitemap.xml", "/sitemap_index.xml"} {
 		body := warmupFetchBody(ctx, host, entry)
@@ -90,30 +143,70 @@ func sitemapPaths(ctx context.Context, host string, max int) []string {
 		if len(locs) == 0 {
 			continue
 		}
-		// If these are sub-sitemaps (contain "sitemap" in the path), expand one
-		// level; otherwise treat them as page URLs.
+		// Sub-<loc> that are .xml sitemaps → index; expand one level. Otherwise
+		// this body is itself a urlset.
+		isIndex := false
 		for _, m := range locs {
-			u := m[1]
-			if strings.Contains(strings.ToLower(u), "sitemap") && strings.HasSuffix(strings.ToLower(u), ".xml") {
-				sub := warmupFetchBody(ctx, host, toSameHostPath(host, u))
-				for _, sm := range locRe.FindAllStringSubmatch(sub, -1) {
-					add(sm[1])
-					if len(paths) >= max {
-						return paths
-					}
+			u := strings.ToLower(m[1])
+			if strings.Contains(u, "sitemap") && strings.HasSuffix(u, ".xml") {
+				isIndex = true
+				addUrlset(warmupFetchBody(ctx, host, toSameHostPath(host, m[1])))
+				if len(entries) >= sitemapMaxEntries {
+					return entries
 				}
-			} else {
-				add(u)
-			}
-			if len(paths) >= max {
-				return paths
 			}
 		}
-		if len(paths) > 0 {
+		if !isIndex {
+			addUrlset(body)
+		}
+		if len(entries) > 0 {
 			break
 		}
 	}
-	return paths
+	return entries
+}
+
+// warmValueTier ranks a path by how much it benefits from a warm cache. Higher
+// warms first. Homepage/shop + WooCommerce product & category pages are hottest;
+// tag/author/date/paged archives are low value and warm last.
+func warmValueTier(path string) int {
+	lp := strings.ToLower(path)
+	switch {
+	case lp == "/":
+		return 4
+	case strings.HasPrefix(lp, "/shop") ||
+		strings.Contains(lp, "/product/") ||
+		strings.Contains(lp, "/product-category/"):
+		return 3
+	case strings.Contains(lp, "/tag/") ||
+		strings.Contains(lp, "/author/") ||
+		strings.Contains(lp, "/page/") ||
+		dateArchive.MatchString(lp):
+		return 1
+	default:
+		return 2 // pages + posts
+	}
+}
+
+// prioritizeWarmPaths orders sitemap entries: value tier first, then the
+// sitemap priority hint, then most-recently-modified. Stable so equal entries
+// keep sitemap order. Returns the ordered paths. (JAB-95 Phase 2)
+func prioritizeWarmPaths(entries []sitemapEntry) []string {
+	sort.SliceStable(entries, func(i, j int) bool {
+		ti, tj := warmValueTier(entries[i].path), warmValueTier(entries[j].path)
+		if ti != tj {
+			return ti > tj
+		}
+		if entries[i].priority != entries[j].priority {
+			return entries[i].priority > entries[j].priority
+		}
+		return entries[i].lastmod > entries[j].lastmod // ISO dates sort lexically; recent first
+	})
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.path)
+	}
+	return out
 }
 
 // toSameHostPath returns the absolute path of u only if u is on host (defends
@@ -186,13 +279,20 @@ func nginxCacheWarmupHandler(ctx context.Context, params json.RawMessage) (any, 
 			firstError = fmt.Sprintf("%s -> %d", path, code)
 		}
 	}
-	// Homepage first, then bounded sitemap URLs.
+	// JAB-95 Phase 2: homepage first, then sitemap URLs in priority order
+	// (high-value pages before low-value archives) so a small budget warms the
+	// pages most likely to be hit, not just the first sitemap entries.
 	note("/", warmupFetch(ctx, host, "/"))
-	for _, path := range sitemapPaths(ctx, host, max-1) {
-		if ctx.Err() != nil {
+	warmed2 := 0
+	for _, path := range prioritizeWarmPaths(sitemapEntries(ctx, host)) {
+		if ctx.Err() != nil || warmed2 >= max-1 {
 			break
 		}
+		if path == "/" {
+			continue // homepage already warmed above
+		}
 		note(path, warmupFetch(ctx, host, path))
+		warmed2++
 	}
 	return map[string]any{
 		"ok":          true,
