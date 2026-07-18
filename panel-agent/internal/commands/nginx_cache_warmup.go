@@ -30,6 +30,10 @@ const (
 	cacheWarmupDefaultMax = 20
 	cacheWarmupHardMax    = 50
 	cacheWarmupPerURL     = 12 * time.Second
+	// JAB-95 Phase 4: pace requests so warmup can't spike PHP-FPM, and stop
+	// after too many consecutive failures so a struggling site isn't hammered.
+	cacheWarmupPaceDelay     = 150 * time.Millisecond
+	cacheWarmupMaxConsecFail = 5
 )
 
 // locRe pulls URLs out of a sitemap (both urlset <loc> and sitemapindex <loc>).
@@ -266,15 +270,17 @@ func nginxCacheWarmupHandler(ctx context.Context, params json.RawMessage) (any, 
 	clampedTo := max
 
 	start := time.Now()
-	var attempted, warmed, failed int
+	var attempted, warmed, failed, consecFail int
 	var firstError string
 	note := func(path string, code int) {
 		attempted++
 		if code >= 200 && code < 400 {
 			warmed++
+			consecFail = 0
 			return
 		}
 		failed++
+		consecFail++
 		if firstError == "" {
 			firstError = fmt.Sprintf("%s -> %d", path, code)
 		}
@@ -284,6 +290,7 @@ func nginxCacheWarmupHandler(ctx context.Context, params json.RawMessage) (any, 
 	// pages most likely to be hit, not just the first sitemap entries.
 	note("/", warmupFetch(ctx, host, "/"))
 	warmed2 := 0
+	circuitBroken := false
 	for _, path := range prioritizeWarmPaths(sitemapEntries(ctx, host)) {
 		if ctx.Err() != nil || warmed2 >= max-1 {
 			break
@@ -291,20 +298,33 @@ func nginxCacheWarmupHandler(ctx context.Context, params json.RawMessage) (any, 
 		if path == "/" {
 			continue // homepage already warmed above
 		}
+		// JAB-95 Phase 4: stop early if the site keeps failing, so warmup
+		// doesn't pound a struggling backend through the whole list.
+		if consecFail >= cacheWarmupMaxConsecFail {
+			circuitBroken = true
+			firstError = fmt.Sprintf("circuit-broken after %d consecutive failures (first: %s)", consecFail, firstError)
+			break
+		}
+		// Pace so warmup never spikes PHP-FPM.
+		select {
+		case <-time.After(cacheWarmupPaceDelay):
+		case <-ctx.Done():
+		}
 		note(path, warmupFetch(ctx, host, path))
 		warmed2++
 	}
 	return map[string]any{
-		"ok":          true,
-		"host":        host,
-		"requested":   requested,
-		"clamped_to":  clampedTo,
-		"attempted":   attempted,
-		"warmed":      warmed,
-		"skipped":     0, // freshness detection lands in a later phase.
-		"failed":      failed,
-		"first_error": firstError,
-		"duration_ms": time.Since(start).Milliseconds(),
+		"ok":             true,
+		"host":           host,
+		"requested":      requested,
+		"clamped_to":     clampedTo,
+		"attempted":      attempted,
+		"warmed":         warmed,
+		"skipped":        0, // freshness detection lands in a later phase.
+		"failed":         failed,
+		"first_error":    firstError,
+		"circuit_broken": circuitBroken,
+		"duration_ms":    time.Since(start).Milliseconds(),
 	}, nil
 }
 
