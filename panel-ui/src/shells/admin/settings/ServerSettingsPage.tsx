@@ -66,6 +66,7 @@ import { WebmailToggleCard } from "./WebmailToggleCard";
 import { ModulesCard } from "./ModulesCard";
 import { StalwartWebadminCard } from "./StalwartWebadminCard";
 import { PageTemplatesCard } from "./PageTemplatesCard";
+import { AccountSkeletonCard } from "./AccountSkeletonCard";
 import { PanelSSLCard } from "./PanelSSLCard";
 import { NspawnImagesCard } from "./NspawnImagesCard";
 import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
@@ -694,6 +695,7 @@ const BrandingSettingsTab = () => (
     <BrandingCard />
       <LookAndFeelCard />
     <PageTemplatesCard />
+    <AccountSkeletonCard />
   </>
 );
 
