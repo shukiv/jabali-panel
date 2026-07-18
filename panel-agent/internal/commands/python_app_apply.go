@@ -137,6 +137,13 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 
 	// 1) venv (as the user), idempotent.
 	if _, err := os.Stat(filepath.Join(venv, "bin", "python")); err != nil {
+		// GH #357: `python<ver> -m venv` needs the version-specific
+		// python<ver>-venv package on Debian/Ubuntu — the interpreter binary can
+		// be present without it, and venv then dies with "ensurepip is not
+		// available", leaving the app stuck pending->failed. Ensure it first.
+		if verr := ensurePythonVenvPackage(ctx, p.PythonVersion); verr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("python venv prerequisite: %v", verr)}
+		}
 		if out, err := runAsUser(ctx, p.Username, pyBin, "-m", "venv", venv); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create venv: %v: %s", err, out)}
 		}
@@ -295,4 +302,31 @@ func lastLines(s string, n int) string {
 
 func init() {
 	Default.Register("app.python.apply", pythonAppApplyHandler)
+}
+
+// ensurePythonVenvPackage makes `python<ver> -m venv` usable. On Debian/Ubuntu
+// that requires the version-specific python<ver>-venv package, and the
+// interpreter binary can be installed without it — venv then fails with
+// "ensurepip is not available" (GH #357). Probe ensurepip first so this is a
+// no-op on a healthy box; only apt-install when it is actually missing. The apt
+// call runs root-side via systemd-run to escape the agent's PrivateTmp mount ns
+// (same pattern as install_python_apps_runtime). Idempotent.
+func ensurePythonVenvPackage(ctx context.Context, ver string) error {
+	pyBin := "python" + ver
+	if err := exec.CommandContext(ctx, pyBin, "-c", "import ensurepip").Run(); err == nil {
+		return nil // venv already works for this interpreter.
+	}
+	pkg := "python" + ver + "-venv"
+	cmd := exec.CommandContext(ctx, "systemd-run",
+		"--pipe", "--wait", "--quiet", "--collect",
+		"--unit=jabali-python-venv-install",
+		"--service-type=oneshot", "--",
+		"bash", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -q "+pkg)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("install %s: %v: %s", pkg, err, strings.TrimSpace(string(out)))
+	}
+	if err := exec.CommandContext(ctx, pyBin, "-c", "import ensurepip").Run(); err != nil {
+		return fmt.Errorf("%s still cannot create virtualenvs after installing %s (ensurepip unavailable)", pyBin, pkg)
+	}
+	return nil
 }
