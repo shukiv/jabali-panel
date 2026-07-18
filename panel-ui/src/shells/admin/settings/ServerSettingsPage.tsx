@@ -6,6 +6,7 @@ import {
   CodeOutlined,
   CloseOutlined,
   DatabaseOutlined,
+  FileTextOutlined,
   GlobalOutlined,
   HddOutlined,
   MailOutlined,
@@ -72,6 +73,7 @@ import { NspawnImagesCard } from "./NspawnImagesCard";
 import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
 import { TenantDomainOptionsCard } from "./TenantDomainOptionsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
+import { LogRetentionCard } from "./LogRetentionCard";
 
 type ServerSettings = {
   id: number;
@@ -688,7 +690,8 @@ type SettingsTabKey =
   | "databases"
   | "apps"
   | "nginx"
-  | "branding";
+  | "branding"
+  | "logs";
 
 const BrandingSettingsTab = () => (
   <>
@@ -1037,6 +1040,15 @@ export const ServerSettingsPage = () => {
               </span>
             ),
           },
+          {
+            key: "logs",
+            tab: (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <FileTextOutlined />
+                Logs
+              </span>
+            ),
+          },
         ]}
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as SettingsTabKey)}
@@ -1072,6 +1084,7 @@ export const ServerSettingsPage = () => {
           </>
         )}
         {activeTab === "branding" && <BrandingSettingsTab />}
+        {activeTab === "logs" && <LogRetentionCard />}
       </Card>
     </div>
   );

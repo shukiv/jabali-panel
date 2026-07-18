@@ -21,6 +21,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"gorm.io/gorm"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 const retentionDay = 24 * time.Hour
@@ -32,6 +34,11 @@ const retentionDay = 24 * time.Hour
 type retentionTarget struct {
 	table    string
 	tsColumn string
+	// category ties this target to a Server Settings -> Logs retention window
+	// (models.RetentionCat*). Empty = a FIXED cleanup not operator-configurable
+	// (e.g. expiry-based stream keys). window is the fallback used when category
+	// is empty; for a categorized target the window comes from server_settings.
+	category string
 	window   time.Duration
 	why      string
 }
@@ -41,16 +48,19 @@ type retentionTarget struct {
 // tables (malware, WAF incidents, db-admin audit) get a generous 1-year window
 // so forensics survive while disk stays bounded.
 var retentionTargets = []retentionTarget{
-	{"log_access_streams", "expires_at", 1 * retentionDay, "expired log-view stream keys (JAB-103)"},
-	{"terminal_sessions", "created_at", 90 * retentionDay, "root-terminal session rows; .cast files rotate via logrotate (JAB-103)"},
-	{"notification_history", "created_at", 90 * retentionDay, "delivered-notification log (JAB-100)"},
-	{"update_history", "started_at", 180 * retentionDay, "update-center run history + stored log excerpts (JAB-101)"},
-	{"dmarc_aggregate", "created_at", 180 * retentionDay, "DMARC aggregate reports (JAB-125)"},
-	{"tlsrpt_aggregate", "created_at", 180 * retentionDay, "TLS-RPT aggregate reports (JAB-125)"},
-	{"arf_report", "received_at", 180 * retentionDay, "ARF failure reports (JAB-125)"},
-	{"malware_events", "created_at", 365 * retentionDay, "malware raw event log — security, 1y window (JAB-123)"},
-	{"snuffleupagus_incidents", "ts", 365 * retentionDay, "Snuffleupagus WAF incidents — security, 1y window (JAB-122)"},
-	{"db_admin_audit", "ts", 365 * retentionDay, "legacy DB-admin audit — 1y window (JAB-105; hash-chained audit_events excluded)"},
+	// Fixed (not operator-configurable): expiry-based cleanup of temporary
+	// stream credentials — keeping these 90d would defeat their purpose.
+	{"log_access_streams", "expires_at", "", 1 * retentionDay, "expired log-view stream keys (JAB-103)"},
+	// Operator-configurable via Server Settings -> Logs (default 90d, security 365d).
+	{"terminal_sessions", "created_at", models.RetentionCatSessions, 90 * retentionDay, "root-terminal session rows; .cast files rotate via logrotate (JAB-103)"},
+	{"notification_history", "created_at", models.RetentionCatNotifications, 90 * retentionDay, "delivered-notification log (JAB-100)"},
+	{"update_history", "started_at", models.RetentionCatUpdates, 90 * retentionDay, "update-center run history + stored log excerpts (JAB-101)"},
+	{"dmarc_aggregate", "created_at", models.RetentionCatMailReports, 90 * retentionDay, "DMARC aggregate reports (JAB-125)"},
+	{"tlsrpt_aggregate", "created_at", models.RetentionCatMailReports, 90 * retentionDay, "TLS-RPT aggregate reports (JAB-125)"},
+	{"arf_report", "received_at", models.RetentionCatMailReports, 90 * retentionDay, "ARF failure reports (JAB-125)"},
+	{"malware_events", "created_at", models.RetentionCatSecurityEvents, 365 * retentionDay, "malware raw event log — security (JAB-123)"},
+	{"snuffleupagus_incidents", "ts", models.RetentionCatSecurityEvents, 365 * retentionDay, "Snuffleupagus WAF incidents — security (JAB-122)"},
+	{"db_admin_audit", "ts", models.RetentionCatDBAdminAudit, 365 * retentionDay, "legacy DB-admin audit — security (JAB-105)"},
 }
 
 // retentionBatchSize bounds each DELETE so a large backlog can't hold a long
@@ -109,9 +119,24 @@ blind delete), bw_daily (billing rollup decision), migration_jobs/stages
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
 			defer cancel()
+			// Load the single settings row once so every categorized target
+			// resolves its window from the operator's config (default on error).
+			var settings models.ServerSettings
+			if err := sharedDB.WithContext(ctx).First(&settings, "id = ?", 1).Error; err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "retention-sweep: server_settings unreadable (%v) — using code defaults\n", err)
+			}
 			var grand int64
 			for _, t := range retentionTargets {
-				n, err := pruneRetentionTarget(ctx, sharedDB, t, dryRun, cmd.OutOrStdout())
+				eff := t
+				if t.category != "" {
+					days := settings.RetentionDays(t.category)
+					if days <= 0 {
+						fmt.Fprintf(cmd.OutOrStdout(), "%s: retention disabled (keep forever) — skipped\n", t.table)
+						continue
+					}
+					eff.window = time.Duration(days) * retentionDay
+				}
+				n, err := pruneRetentionTarget(ctx, sharedDB, eff, dryRun, cmd.OutOrStdout())
 				if err != nil {
 					// One table failing (e.g. absent on an older schema) must
 					// not skip the rest — log and continue.

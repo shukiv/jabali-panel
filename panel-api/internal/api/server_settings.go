@@ -91,6 +91,7 @@ type updateServerSettingsRequest struct {
 	NS2Name                  *string `json:"ns2_name,omitempty"`
 	NS2IPv4                  *string `json:"ns2_ipv4,omitempty"`
 	AdminEmail               *string `json:"admin_email,omitempty"`
+	LogRetention             *json.RawMessage `json:"log_retention,omitempty"`
 	Timezone                 *string `json:"timezone,omitempty"`
 	SSHPort                  *uint16 `json:"ssh_port,omitempty"`
 	SSHPasswordAuth          *bool   `json:"ssh_password_auth,omitempty"`
@@ -288,6 +289,14 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.Timezone != nil {
 		current.Timezone = strings.TrimSpace(*req.Timezone)
+	}
+	if req.LogRetention != nil {
+		if err := validateLogRetention(*req.LogRetention); err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
+			return
+		}
+		lr := *req.LogRetention
+		current.LogRetention = &lr
 	}
 	if req.SSHPort != nil {
 		current.SSHPort = *req.SSHPort
@@ -1315,4 +1324,27 @@ func (h *serverSettingsHandler) moduleInstall(c *gin.Context) {
 	}
 	h.dispatchModuleInstall(req.Key)
 	c.JSON(http.StatusAccepted, gin.H{"status": "installing", "key": req.Key})
+}
+
+
+// validateLogRetention checks a Server Settings -> Logs retention map: every key
+// must be a known category and every value an int in [0, 3650] days (0 = keep
+// forever). Rejects unknown keys so a typo can't silently no-op.
+func validateLogRetention(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var m map[string]int
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fmt.Errorf("log_retention must be a { category: days } object: %w", err)
+	}
+	for k, v := range m {
+		if _, ok := models.DefaultLogRetentionDays[k]; !ok {
+			return fmt.Errorf("unknown log-retention category %q", k)
+		}
+		if v < 0 || v > 3650 {
+			return fmt.Errorf("log-retention days for %q must be 0..3650, got %d", k, v)
+		}
+	}
+	return nil
 }

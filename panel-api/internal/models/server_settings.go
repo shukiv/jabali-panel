@@ -325,7 +325,65 @@ type ServerSettings struct {
 	NginxCacheKeyzoneMB   int `gorm:"column:nginx_cache_keyzone_mb;type:int;not null;default:64"    json:"nginx_cache_keyzone_mb"`
 	NginxCacheInactiveMin int `gorm:"column:nginx_cache_inactive_min;type:int;not null;default:60"  json:"nginx_cache_inactive_min"`
 
+	// LogRetention holds operator-configured retention windows for the log/report
+	// tables, as a { category: days } JSON map (Server Settings -> Logs). An
+	// absent/invalid category falls back to DefaultLogRetentionDays. Read via
+	// RetentionDays(); never index into the raw map directly.
+	LogRetention *json.RawMessage `gorm:"column:log_retention;type:json" json:"log_retention,omitempty"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 
 func (ServerSettings) TableName() string { return "server_settings" }
+
+
+// Log-retention category keys (Server Settings -> Logs). Each groups one or more
+// log/report tables the retention sweep prunes.
+const (
+	RetentionCatNotifications  = "notifications"
+	RetentionCatUpdates        = "updates"
+	RetentionCatMailReports    = "mail_reports"
+	RetentionCatSecurityEvents = "security_events"
+	RetentionCatDBAdminAudit   = "db_admin_audit"
+	RetentionCatSessions       = "sessions"
+	RetentionCatMigrations     = "migrations"
+	RetentionCatBandwidth      = "bandwidth"
+	RetentionCatAudit          = "audit"
+)
+
+// DefaultLogRetentionDays is the fallback window per category when the operator
+// hasn't set one. 90d baseline; 365d for forensic security tables; 0 (keep
+// forever) for the hash-chained audit log (a security audit must not silently
+// self-delete — it prunes with a chain re-anchor only when explicitly set).
+var DefaultLogRetentionDays = map[string]int{
+	RetentionCatNotifications:  90,
+	RetentionCatUpdates:        90,
+	RetentionCatMailReports:    90,
+	RetentionCatSecurityEvents: 365,
+	RetentionCatDBAdminAudit:   365,
+	RetentionCatSessions:       90,
+	RetentionCatMigrations:     90,
+	RetentionCatBandwidth:      90,
+	RetentionCatAudit:          0,
+}
+
+// RetentionDays returns the configured retention window (in days) for a log
+// category: the operator override when present + valid, else the code default
+// (90 for an unknown category). 0 means keep forever (pruning disabled).
+func (s ServerSettings) RetentionDays(category string) int {
+	def, ok := DefaultLogRetentionDays[category]
+	if !ok {
+		def = 90
+	}
+	if s.LogRetention == nil || len(*s.LogRetention) == 0 {
+		return def
+	}
+	var m map[string]int
+	if err := json.Unmarshal(*s.LogRetention, &m); err != nil {
+		return def
+	}
+	if v, present := m[category]; present && v >= 0 && v <= 3650 {
+		return v
+	}
+	return def
+}
