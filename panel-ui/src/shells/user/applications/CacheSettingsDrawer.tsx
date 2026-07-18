@@ -9,7 +9,7 @@
 //
 // A cookie bypass/allowlist was rejected: it would re-open the #416/#419
 // fail-open class (cross-visitor content bleed on the shared microcache).
-import { Alert, App, Button, Descriptions, Drawer, Form, InputNumber, Select, Switch } from "antd";
+import { Alert, App, Button, Descriptions, Drawer, Form, InputNumber, Select, Switch, Tag } from "antd";
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
@@ -65,6 +65,18 @@ export function CacheSettingsDrawer({
   const [pageOn, setPageOn] = useState(true);
   const [autoWarm, setAutoWarm] = useState(true);
   const [lastWarm, setLastWarm] = useState<{ at?: string; urls?: number; note?: string } | null>(null);
+  // JAB-95 Phase 5: rich warmup run status.
+  type WarmRun = {
+    state: string;
+    warmed: number;
+    attempted: number;
+    clamped_to: number;
+    failed: number;
+    first_error: string;
+    finished_at?: string | null;
+  };
+  const [warmRun, setWarmRun] = useState<WarmRun | null>(null);
+  const [warming, setWarming] = useState(false);
 
   useEffect(() => {
     if (!install) return;
@@ -95,8 +107,32 @@ export function CacheSettingsDrawer({
       .get<{ stats: CacheStats }>(`/applications/${install.id}/cache-stats`)
       .then((res) => setStats(res.data.stats ?? null))
       .catch(() => setStats(null));
+    apiClient
+      .get<{ run: WarmRun | null }>(`/applications/${install.id}/cache-warmup`)
+      .then((res) => setWarmRun(res.data.run ?? null))
+      .catch(() => setWarmRun(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [install]);
+
+  const warmNow = async () => {
+    if (!install) return;
+    setWarming(true);
+    try {
+      await apiClient.post(`/applications/${install.id}/cache-warmup`);
+      message.success("Warming started — refresh status in a moment.");
+      // Poll the run a few seconds later so the fresh result shows.
+      setTimeout(() => {
+        apiClient
+          .get<{ run: WarmRun | null }>(`/applications/${install.id}/cache-warmup`)
+          .then((res) => setWarmRun(res.data.run ?? null))
+          .catch(() => {});
+      }, 4000);
+    } catch (e) {
+      message.error(extractApiError(e) ?? "Failed to start warmup");
+    } finally {
+      setWarming(false);
+    }
+  };
 
   const advise = async () => {
     if (!install) return;
@@ -218,6 +254,36 @@ export function CacheSettingsDrawer({
               Last warmed {new Date(lastWarm.at).toLocaleString()}
               {lastWarm.urls ? ` (${lastWarm.urls} URLs)` : ""}
             </span>
+          ) : null}
+        </Form.Item>
+        <Form.Item label="Warmup" help="Crawl the site now and show the result.">
+          <Button size="small" onClick={() => void warmNow()} loading={warming}>
+            Warm now
+          </Button>
+          {warmRun ? (
+            <div style={{ marginTop: 8 }}>
+              <Tag
+                color={
+                  warmRun.state === "done"
+                    ? "green"
+                    : warmRun.state === "failed"
+                      ? "red"
+                      : "blue"
+                }
+              >
+                {warmRun.state}
+              </Tag>
+              <span style={{ color: "#888" }}>
+                warmed {warmRun.warmed}/{warmRun.attempted}
+                {warmRun.clamped_to ? ` (limit ${warmRun.clamped_to})` : ""}
+                {warmRun.failed ? `, ${warmRun.failed} failed` : ""}
+              </span>
+              {warmRun.first_error ? (
+                <div style={{ color: "#c0392b", fontSize: 12, marginTop: 4 }}>
+                  {warmRun.first_error}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </Form.Item>
         <Form.Item label="Advisor">
