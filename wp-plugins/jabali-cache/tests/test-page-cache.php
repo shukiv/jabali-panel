@@ -54,5 +54,25 @@ jc_assert( Jabali_Cache_Page_Cache::response_opts_out( array( 'Expires: Thu, 01 
 jc_assert( ! Jabali_Cache_Page_Cache::response_opts_out( array( 'Cache-Control: public, max-age=300' ) ), 'public max-age=300 still cacheable' );
 jc_assert( ! Jabali_Cache_Page_Cache::response_opts_out( array( 'Content-Type: text/html' ) ), 'plain response still cacheable' );
 
+echo "JAB-92 — page-cache payload compression:\n";
+$big = str_repeat( "<p>hello world</p>", 2000 ); // ~36 KiB, well over COMPRESS_MIN_BYTES
+$pc  = Jabali_Cache_Page_Cache::compress_payload_body( array( 'body' => $big, 'type' => 'text/html' ) );
+jc_assert( isset( $pc['compressed'] ) && 'gzip' === $pc['compressed'], 'large body is marked gzip' );
+jc_assert( strlen( $pc['body'] ) < strlen( $big ), 'compressed body is smaller' );
+jc_assert( isset( $pc['body_len'] ) && (int) $pc['body_len'] === strlen( $big ), 'original length is recorded' );
+$round = Jabali_Cache_Page_Cache::decompress_payload_body( $pc );
+jc_assert( is_array( $round ) && $round['body'] === $big, 'decompress round-trips to the original body' );
+jc_assert( ! isset( $round['compressed'] ), 'decompressed payload drops the gzip marker' );
+
+$small = '<p>tiny</p>';
+$sp    = Jabali_Cache_Page_Cache::compress_payload_body( array( 'body' => $small ) );
+jc_assert( ! isset( $sp['compressed'] ), 'small body is left uncompressed' );
+jc_assert( $sp['body'] === $small, 'small body is unchanged' );
+$sr = Jabali_Cache_Page_Cache::decompress_payload_body( $sp );
+jc_assert( is_array( $sr ) && $sr['body'] === $small, 'uncompressed payload passes through decompress' );
+
+$corrupt = array( 'body' => 'not-actually-gzip', 'compressed' => 'gzip' );
+jc_assert( false === Jabali_Cache_Page_Cache::decompress_payload_body( $corrupt ), 'corrupt gzip payload decodes to false (miss)' );
+
 echo "\n{$tests} tests, {$failed} failed\n";
 exit( $failed > 0 ? 1 : 0 );

@@ -64,6 +64,14 @@ class Jabali_Cache_Page_Cache {
 	const LOCK_TTL       = 20;
 	const TTL_JITTER_PCT = 10;
 
+	/**
+	 * JAB-92: gzip the stored HTML body above COMPRESS_MIN_BYTES to cut shared
+	 * Redis memory. Bodies larger than MAX_BODY_BYTES are not cached at all so a
+	 * single huge response can't evict useful object-cache keys.
+	 */
+	const COMPRESS_MIN_BYTES = 8192;
+	const MAX_BODY_BYTES     = 2097152;
+
 	public function __construct() {
 		$this->cfg    = Jabali_Cache_Config::load();
 		$this->ttl    = max( 1, (int) $this->cfg['page_ttl'] );
@@ -124,6 +132,70 @@ class Jabali_Cache_Page_Cache {
 	}
 
 	/**
+	 * JAB-92: true when a body is small enough to be worth caching. Very large
+	 * responses are skipped so they don't evict useful keys from shared Redis.
+	 *
+	 * @param string $body
+	 * @return bool
+	 */
+	private static function is_storable_size( $body ) {
+		return strlen( (string) $body ) <= self::MAX_BODY_BYTES;
+	}
+
+	/**
+	 * JAB-92: gzip-compress the payload body when zlib is available and the
+	 * body clears COMPRESS_MIN_BYTES and actually shrinks. Marks the payload
+	 * with compressed=gzip + the original length. No-op otherwise.
+	 *
+	 * @param array<string,mixed> $payload
+	 * @return array<string,mixed>
+	 */
+	public static function compress_payload_body( array $payload ) {
+		if ( ! isset( $payload['body'] ) || ! is_string( $payload['body'] ) ) {
+			return $payload;
+		}
+		if ( ! function_exists( 'gzencode' ) ) {
+			return $payload;
+		}
+		$body = $payload['body'];
+		if ( strlen( $body ) <= self::COMPRESS_MIN_BYTES ) {
+			return $payload;
+		}
+		$gz = @gzencode( $body, 6 ); // phpcs:ignore
+		if ( false === $gz || strlen( $gz ) >= strlen( $body ) ) {
+			return $payload; // incompressible — keep the plain body.
+		}
+		$payload['body']       = $gz;
+		$payload['compressed'] = 'gzip';
+		$payload['body_len']   = strlen( $body );
+		return $payload;
+	}
+
+	/**
+	 * JAB-92: reverse compress_payload_body(). Returns the payload with a plain
+	 * body, or FALSE when a gzip payload can't be decoded (corrupt / zlib gone)
+	 * so the caller can treat it as a miss and delete the bad key.
+	 *
+	 * @param array<string,mixed> $payload
+	 * @return array<string,mixed>|false
+	 */
+	public static function decompress_payload_body( array $payload ) {
+		if ( empty( $payload['compressed'] ) ) {
+			return $payload;
+		}
+		if ( 'gzip' !== $payload['compressed'] || ! function_exists( 'gzdecode' ) ) {
+			return false;
+		}
+		$plain = @gzdecode( $payload['body'] ); // phpcs:ignore
+		if ( false === $plain ) {
+			return false;
+		}
+		$payload['body'] = $plain;
+		unset( $payload['compressed'], $payload['body_len'] );
+		return $payload;
+	}
+
+	/**
 	 * Decode a stored page payload, or null when absent/corrupt.
 	 *
 	 * @param string|false $raw
@@ -134,7 +206,19 @@ class Jabali_Cache_Page_Cache {
 			return null;
 		}
 		$payload = @unserialize( $raw, array( 'allowed_classes' => false ) ); // phpcs:ignore
-		return ( is_array( $payload ) && isset( $payload['body'] ) ) ? $payload : null;
+		if ( ! is_array( $payload ) || ! isset( $payload['body'] ) ) {
+			return null;
+		}
+		// JAB-92: transparently inflate a gzip payload. A corrupt one is a miss —
+		// drop the bad key so the next request regenerates it.
+		$decoded = self::decompress_payload_body( $payload );
+		if ( false === $decoded ) {
+			if ( '' !== $this->key ) {
+				$this->client->del( $this->key );
+			}
+			return null;
+		}
+		return $decoded;
 	}
 
 	/**
@@ -203,6 +287,10 @@ class Jabali_Cache_Page_Cache {
 		if ( ! $this->is_cacheable_response( $body ) ) {
 			return $body;
 		}
+		// JAB-92: don't cache an oversized body — it would evict useful keys.
+		if ( ! self::is_storable_size( $body ) ) {
+			return $body;
+		}
 
 		// JAB-90: freshness window is jittered; the Redis key lives STALE_WINDOW
 		// seconds beyond that so a stale copy can be served during regeneration.
@@ -214,6 +302,8 @@ class Jabali_Cache_Page_Cache {
 			'expires_at' => time() + $fresh_ttl,
 			'gen'        => defined( 'JABALI_CACHE_VERSION' ) ? JABALI_CACHE_VERSION : '1',
 		);
+		// JAB-92: gzip large bodies before storing.
+		$payload = self::compress_payload_body( $payload );
 		// Best-effort store; failure just means no caching this time.
 		$this->client->set( $this->key, serialize( $payload ), $fresh_ttl + self::STALE_WINDOW ); // phpcs:ignore
 		// Release the single-flight lock now that the fresh copy is in place.
