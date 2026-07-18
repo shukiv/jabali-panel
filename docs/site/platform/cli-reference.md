@@ -5075,6 +5075,19 @@ jabali user password <email|username|user-id> [flags]
 - `--password` — explicit new password (omit to auto-generate)
 - `--password-stdin` — read new password from stdin (no prompt, no echo)
 
+#### `jabali user reprovision`
+
+Re-run OS provisioning for a user + sync the panel password
+
+```
+jabali user reprovision <email|username|user-id> [flags]
+```
+
+**Flags:**
+
+- `--password` — new password (min 10 chars; omit to auto-generate)
+- `--password-stdin` — read password from stdin (no prompt, no echo)
+
 #### `jabali user suspend`
 
 Suspend a user (same cascade as the admin GUI/API)
