@@ -436,27 +436,72 @@ class Jabali_Cache_Object_Cache {
 			return $cur;
 		}
 
-		// Current value: prefer runtime, else read from Redis.
+		// Existence + stored form. WordPress incr/decr return false on a missing
+		// persistent key, so we confirm the key exists first (a bare native
+		// INCRBY would auto-create it at $delta). $raw is the runtime value when
+		// cached, else the raw Redis string.
 		if ( isset( $this->cache[ $group ] ) && array_key_exists( $id, $this->cache[ $group ] ) ) {
-			$cur = (int) $this->cache[ $group ][ $id ];
+			$raw = $this->cache[ $group ][ $id ];
 		} else {
 			$this->redis_calls++;
 			$raw = $this->client->get( $id );
 			if ( false === $raw ) {
 				return false; // core returns false when the key does not exist.
 			}
-			$cur = (int) $this->unserialize( $raw );
 		}
 
+		// JAB-97: native atomic INCRBY/DECRBY when the stored value is a raw
+		// integer counter (untagged — our own counter format). This makes
+		// concurrent incr/decr lossless: no read-modify-write lost-update
+		// window. INCRBY reads the live Redis value, so a stale runtime copy
+		// can't skew it.
+		if ( $this->is_raw_counter( $raw ) ) {
+			$this->redis_calls++;
+			$new = $this->client->incr( $id, $delta ); // INCRBY handles a negative delta.
+			if ( false !== $new ) {
+				$new = (int) $new;
+				if ( $new < 0 ) {
+					// WordPress clamps at zero. Reset the raw counter (no
+					// serialize, so it stays a native counter). The reset race
+					// is no worse than the pre-JAB-97 non-atomic path.
+					$this->redis_calls++;
+					$this->client->set( $id, '0', 0, true );
+					$new = 0;
+				}
+				$this->cache[ $group ][ $id ] = $new;
+				return $new;
+			}
+			// Native op failed unexpectedly — fall through to read-modify-write.
+		}
+
+		// Read-modify-write fallback for serialized / legacy / non-integer
+		// values. Store the result as a RAW integer (no serialize) so the next
+		// step() goes native, migrating the counter lazily. KEEPTTL preserves
+		// any existing expiry (GH #604).
+		$cur = (int) $this->unserialize( $raw );
 		$new = max( 0, $cur + $delta );
 		$this->redis_calls++;
-		// KEEPTTL: preserve any existing expiry on the counter (GH #604) —
-		// a plain SET would drop the TTL and immortalise the key.
-		if ( ! $this->client->set( $id, $this->serialize( $new ), 0, true ) ) {
+		if ( ! $this->client->set( $id, (string) $new, 0, true ) ) {
 			return false;
 		}
 		$this->cache[ $group ][ $id ] = $new;
 		return $new;
+	}
+
+	/**
+	 * JAB-97: true when $v is one of our raw integer counters. Every value
+	 * written through set() carries a ph:/ig: serializer tag, so a bare integer
+	 * (runtime int, or an untagged all-digit Redis string) can only be a native
+	 * counter — safe to drive INCRBY/DECRBY against.
+	 *
+	 * @param mixed $v
+	 * @return bool
+	 */
+	private function is_raw_counter( $v ) {
+		if ( is_int( $v ) ) {
+			return true;
+		}
+		return is_string( $v ) && '' !== $v && (bool) preg_match( '/^-?\\d+$/', $v );
 	}
 
 	/**
@@ -635,6 +680,12 @@ class Jabali_Cache_Object_Cache {
 	}
 
 	private function unserialize( $raw ) {
+		// JAB-97: a bare untagged integer string is a native counter (INCRBY
+		// storage). Every serialized value carries a ph:/ig: tag, so an all-digit
+		// string can only be one of our atomic counters — return a real int.
+		if ( is_string( $raw ) && '' !== $raw && preg_match( '/^-?\\d+$/', $raw ) ) {
+			return (int) $raw;
+		}
 		if ( ! is_string( $raw ) || strlen( $raw ) < 3 ) {
 			return $raw;
 		}
