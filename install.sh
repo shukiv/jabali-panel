@@ -5809,11 +5809,15 @@ install_nginx_panel_vhost() {
   # via sed. envsubst would be cleaner but isn't a dependency we want to
   # add solely for two substitutions.
   _nginx_http2_form
+  # JAB-144: /assets/ is served from the on-disk build output (panel-ui/dist),
+  # the same tree the panel-api binary embedded, with a proxy fallback.
+  local panel_dist_dir="${REPO_DIR}/panel-ui/dist"
   sed \
     -e "s|\${SSL_CERT_PATH}|${tls_cert}|g" \
     -e "s|\${SSL_KEY_PATH}|${tls_key}|g" \
     -e "s|\${NGX_H2_PARAM}|${_NGX_H2_PARAM}|g" \
     -e "s|\${NGX_H2_DIR}|${_NGX_H2_DIR}|g" \
+    -e "s|\${PANEL_DIST_DIR}|${panel_dist_dir}|g" \
     "$tmpl" > "$panel_vhost_file"
 
   if grep -q '\${' "$panel_vhost_file"; then

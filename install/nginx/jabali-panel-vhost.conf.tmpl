@@ -133,13 +133,27 @@ server {
     proxy_hide_header X-Frame-Options;
   }
 
-  # JAB-143: content-hashed build assets (index-<hash>.js / .css) are
-  # immutable — every build emits a new filename — so cache them for a year
-  # instead of re-fetching the ~3 MB bundle each session. Proxies to the same
-  # panel-api upstream (the SPA is embedded there). A per-location add_header
-  # suppresses the server-scope add_headers, so the security headers relevant
-  # to a static asset response are re-declared here.
+  # JAB-143/144: content-hashed build assets (index-<hash>.js / .css) are
+  # immutable — every build emits a new filename — so cache them for a year.
+  # JAB-144: serve them straight from disk (the on-disk panel-ui/dist that the
+  # panel-api binary was built from) instead of proxying every static file
+  # through the Go process. `root` (not `alias`) keeps try_files sane: a request
+  # /assets/x maps to ${PANEL_DIST_DIR}/assets/x. If a hashed file isn't on disk
+  # yet (e.g. mid-update, before the rebuilt dist lands), fall back to the
+  # panel-api go:embed copy so the asset still resolves — no white-screen.
   location ^~ /assets/ {
+    root ${PANEL_DIST_DIR};
+    try_files $uri @panel_assets_embed;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  }
+
+  # Fallback for /assets/* not present on disk: serve from the panel-api
+  # embedded SPA. Same immutable cache + security headers as the disk path.
+  location @panel_assets_embed {
     proxy_pass http://jabali_panel_api;
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -148,7 +162,6 @@ server {
     proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Port $server_port;
     proxy_http_version 1.1;
-    # Exactly one Cache-Control: drop any the upstream might set, then add ours.
     proxy_hide_header Cache-Control;
     add_header Cache-Control "public, max-age=31536000, immutable" always;
     add_header Strict-Transport-Security "max-age=31536000" always;
