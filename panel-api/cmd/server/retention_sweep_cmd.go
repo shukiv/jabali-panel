@@ -160,6 +160,23 @@ blind delete), bw_daily (billing rollup decision), migration_jobs/stages
 				}
 				grand += n
 			}
+			// JAB-105: audit_events is hash-chained and excluded from the generic
+			// targets. Prune it only when the operator opts in (audit window > 0),
+			// via the chain-safe prune that re-anchors so `audit verify` still
+			// passes. Default is keep-forever (0) → skipped.
+			if auditDays := settings.RetentionDays(models.RetentionCatAudit); auditDays > 0 {
+				cutoff := time.Now().Add(-time.Duration(auditDays) * retentionDay)
+				if dryRun {
+					fmt.Fprintf(cmd.OutOrStdout(), "audit_events: would prune rows older than %s (%dd) with chain re-anchor\n", cutoff.Format(time.RFC3339), auditDays)
+				} else if n, err := auditRepoFromDB().PruneOlderThanWithAnchor(ctx, cutoff); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "audit_events: prune failed: %v\n", err)
+				} else {
+					grand += n
+					if n > 0 {
+						fmt.Fprintf(cmd.OutOrStdout(), "audit_events: pruned %d rows older than %s (chain re-anchored)\n", n, cutoff.Format(time.RFC3339))
+					}
+				}
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "retention-sweep: %d rows (dry-run=%v)\n", grand, dryRun)
 			return nil
 		},

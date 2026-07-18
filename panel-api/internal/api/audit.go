@@ -77,7 +77,8 @@ func (h *auditHandler) verify(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	brokenID, checked, ok := audit.VerifyChain(rows)
+	anchor, _ := h.cfg.Repo.ChainAnchor(c.Request.Context())
+	brokenID, checked, ok := audit.VerifyChain(rows, anchor)
 	c.JSON(http.StatusOK, gin.H{
 		"ok":        ok,
 		"checked":   checked,
@@ -99,7 +100,7 @@ func (h *auditHandler) prune(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	cutoff := time.Now().UTC().AddDate(0, 0, -req.Days)
-	n, err := h.cfg.Repo.PruneOlderThan(ctx, cutoff)
+	n, err := h.cfg.Repo.PruneOlderThanWithAnchor(ctx, cutoff)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

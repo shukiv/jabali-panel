@@ -80,6 +80,17 @@ type AuditEventRepository interface {
 	// is the honest v1. The prune itself is recorded as an audit
 	// event by the caller (never a silent selective delete).
 	PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+
+	// PruneOlderThanWithAnchor is the JAB-105 chain-safe prune: it captures the
+	// row_hash of the newest SEALED row being deleted, deletes rows with
+	// ts < cutoff, and persists that hash as server_settings.audit_chain_anchor
+	// (all in one transaction) so `audit verify` can resume the chain from the
+	// anchor instead of genesis. Returns the deleted count.
+	PruneOlderThanWithAnchor(ctx context.Context, cutoff time.Time) (int64, error)
+
+	// ChainAnchor returns server_settings.audit_chain_anchor ("" when never
+	// pruned) — the prev_hash VerifyChain should start from.
+	ChainAnchor(ctx context.Context) (string, error)
 }
 
 // Column allowlists for the audit_events list views. Empty-key-proof
@@ -260,3 +271,49 @@ func (r *auditEventRepo) PruneOlderThan(ctx context.Context, cutoff time.Time) (
 	}
 	return res.RowsAffected, nil
 }
+
+func (r *auditEventRepo) PruneOlderThanWithAnchor(ctx context.Context, cutoff time.Time) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Anchor = row_hash of the newest sealed row in the to-be-deleted tail.
+		// That hash is exactly the prev_hash of the first sealed survivor, so
+		// verify can resume from it. If the deleted range has no sealed row,
+		// leave the anchor unchanged.
+		var newest models.AuditEvent
+		e := tx.Where("ts < ? AND row_hash IS NOT NULL", cutoff).
+			Order("ts DESC, id DESC").Limit(1).First(&newest).Error
+		anchor := ""
+		if e == nil && newest.RowHash != nil {
+			anchor = *newest.RowHash
+		} else if e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
+			return e
+		}
+		res := tx.Where("ts < ?", cutoff).Delete(&models.AuditEvent{})
+		if res.Error != nil {
+			return res.Error
+		}
+		n = res.RowsAffected
+		if anchor != "" {
+			if e := tx.Table("server_settings").Where("id = ?", 1).
+				Update("audit_chain_anchor", anchor).Error; e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	return n, err
+}
+
+func (r *auditEventRepo) ChainAnchor(ctx context.Context) (string, error) {
+	var row struct{ AuditChainAnchor *string }
+	err := r.db.WithContext(ctx).Table("server_settings").
+		Select("audit_chain_anchor").Where("id = ?", 1).Scan(&row).Error
+	if err != nil {
+		return "", err
+	}
+	if row.AuditChainAnchor == nil {
+		return "", nil
+	}
+	return *row.AuditChainAnchor, nil
+}
+

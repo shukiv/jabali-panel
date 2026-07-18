@@ -331,6 +331,12 @@ type ServerSettings struct {
 	// RetentionDays(); never index into the raw map directly.
 	LogRetention *json.RawMessage `gorm:"column:log_retention;type:json" json:"log_retention,omitempty"`
 
+	// AuditChainAnchor is the row_hash of the newest sealed audit_events row that
+	// retention pruning removed (JAB-105). audit verify starts the chain
+	// recomputation from this anchor instead of genesis so the surviving chain
+	// stays verifiable after a prune. NULL/empty = never pruned (root at "").
+	AuditChainAnchor *string `gorm:"column:audit_chain_anchor;type:char(64)" json:"audit_chain_anchor,omitempty"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

@@ -81,11 +81,13 @@ func newAuditVerifyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
-			rows, err := auditRepoFromDB().AllForVerify(ctx)
+			repo := auditRepoFromDB()
+			rows, err := repo.AllForVerify(ctx)
 			if err != nil {
 				return err
 			}
-			brokenID, checked, ok := audit.VerifyChain(rows)
+			anchor, _ := repo.ChainAnchor(ctx)
+			brokenID, checked, ok := audit.VerifyChain(rows, anchor)
 			if ok {
 				fmt.Printf("chain OK — %d sealed rows verified (%d total rows)\n", checked, len(rows))
 				return nil
@@ -110,7 +112,7 @@ func newAuditPruneCmd() *cobra.Command {
 			}
 			repo := auditRepoFromDB()
 			cutoff := time.Now().UTC().AddDate(0, 0, -days)
-			n, err := repo.PruneOlderThan(ctx, cutoff)
+			n, err := repo.PruneOlderThanWithAnchor(ctx, cutoff)
 			if err != nil {
 				return err
 			}

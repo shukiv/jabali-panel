@@ -19,8 +19,12 @@ import "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 // guarantee is only as good as that function staying stable; a
 // deliberate change to canonical()/computeRowHash is itself a chain
 // break by design (old rows will fail verify) and must be versioned.
-func VerifyChain(rows []models.AuditEvent) (brokenID string, checked int, ok bool) {
-	prev := ""
+// startPrev is the chain root the recomputation begins from: "" for a full
+// (never-pruned) log, or server_settings.audit_chain_anchor after a retention
+// prune (JAB-105), so the surviving chain verifies against the pruned tail's
+// last sealed hash.
+func VerifyChain(rows []models.AuditEvent, startPrev string) (brokenID string, checked int, ok bool) {
+	prev := startPrev
 	for i := range rows {
 		r := &rows[i]
 		if r.RowHash == nil {
