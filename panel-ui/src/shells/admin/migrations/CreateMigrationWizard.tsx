@@ -420,7 +420,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             message="Pick the source panel type"
             description="WHM enables bulk migration of every cPanel account. Single-account migrations are still available via the 'New migration' button."
           />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
             {SOURCE_OPTIONS.map((o) => {
               const disabled = "disabled" in o ? Boolean(o.disabled) : false;
               const active = sourceKind === o.value;
@@ -431,6 +431,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
                   size="small"
                   onClick={() => !disabled && setSourceKind(o.value)}
                   style={{
+                    minHeight: 72,
                     opacity: disabled ? 0.5 : 1,
                     cursor: disabled ? "not-allowed" : "pointer",
                     borderColor: active ? "#1677ff" : undefined,

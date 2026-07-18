@@ -18,6 +18,7 @@ import {
   Button,
   Card,
   Empty,
+  List,
   Popconfirm,
   Space,
   Switch,
@@ -249,6 +250,90 @@ export const AdminMigrationsPage = () => {
           </Space>
   );
 
+  const renderRowActions = (r: MigrationJob) => {
+  const terminal =
+    r.state === "done" ||
+    r.state === "failed" ||
+    r.state === "cancelled";
+  return (
+    <RowActions
+      actions={[
+        { key: "view", label: "View", icon: <SwapOutlined />, onClick: () => navigate(`/jabali-admin/migrations/${r.id}`) },
+        {
+          key: "rekick",
+          label: "Re-kick",
+          icon: <RedoOutlined />,
+          hidden: r.state !== "pending",
+          onClick: () => reKick.mutate({ id: r.id }),
+          confirm: { title: `Re-kick pull-source for ${r.source_user}?`, description: "Re-dispatches the agent's pull-source runner. Use for rows that landed pending before auto-kick existed, or after a transient SSH/network blip.", okText: "Re-kick" },
+        },
+        {
+          key: "cancel",
+          label: "Cancel",
+          icon: <DeleteOutlined />,
+          danger: true,
+          hidden: terminal,
+          onClick: () => cancel.mutate({ id: r.id }),
+          confirm: { title: `Cancel migration ${r.source_user}?`, description: "Stamps the DB row as cancelled. Does NOT kill an in-flight CLI process — Ctrl-C the cobra cmd separately.", okText: "Cancel job" },
+        },
+        {
+          key: "destroy",
+          label: "Destroy",
+          icon: <DeleteOutlined />,
+          danger: true,
+          hidden: !terminal,
+          onClick: () => destroy.mutate({ id: r.id }),
+          confirm: { title: `Destroy migration ${r.source_user}?`, description: "Removes the DB row, secrets file, and /var/lib/jabali-migrations/<id>/ extracted dir. Operator-irreversible.", okText: "Destroy" },
+        },
+      ]}
+    />
+  );
+  };
+
+  // JAB-34: below the md breakpoint the 8-column Table needs horizontal
+  // scroll, which hides State/Started/Ended/actions on a phone. Render each
+  // job as a stacked card instead so every field + the row actions are
+  // reachable in one tap. Desktop keeps the Table unchanged.
+  const renderMobileJobCard = (r: MigrationJob) => {
+    const badge = SOURCE_BADGE[r.source_kind] ?? { color: "default", label: r.source_kind };
+    const st = STATE_TAG[r.state] ?? { color: "default", label: r.state };
+    return (
+      <List.Item key={r.id} style={{ paddingInline: 0 }}>
+        <Card size="small" style={{ width: "100%" }}>
+          <Space direction="vertical" size={6} style={{ width: "100%" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <Space size={6} wrap>
+                <Tag color={badge.color}>{badge.label}</Tag>
+                <Tag color={st.color}>{st.label}</Tag>
+              </Space>
+              {renderRowActions(r)}
+            </div>
+            <Typography.Text code style={{ fontSize: 12, wordBreak: "break-all" }}>
+              {r.source_user}@{r.source_host}
+            </Typography.Text>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
+              <Typography.Text type="secondary">Started {shortDateTime(r.started_at)}</Typography.Text>
+              <Typography.Text type="secondary">Ended {r.ended_at ? shortDateTime(r.ended_at) : "\u2014"}</Typography.Text>
+            </div>
+            {r.batch_id ? (
+              <Popconfirm
+                title={`Cancel entire batch ${r.batch_id.slice(-6)}?`}
+                description="Cancels every non-terminal job sharing this batch_id."
+                okText="Cancel batch"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => cancelBatch.mutate({ batchId: r.batch_id! })}
+              >
+                <Tag color="purple" style={{ fontFamily: "monospace", fontSize: 11, cursor: "pointer", width: "fit-content" }}>
+                  batch {r.batch_id.slice(-6)}
+                </Tag>
+              </Popconfirm>
+            ) : null}
+          </Space>
+        </Card>
+      </List.Item>
+    );
+  };
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Alert
@@ -291,6 +376,7 @@ export const AdminMigrationsPage = () => {
         {!screens.md ? (
           <div style={{ width: "100%", marginBottom: 12 }}>{migrationsToolbar}</div>
         ) : null}
+        {screens.md ? (
         <Table<MigrationJob>
           dataSource={rows}
           rowKey="id"
@@ -388,47 +474,17 @@ export const AdminMigrationsPage = () => {
           <Table.Column<MigrationJob>
             title=""
             width={200}
-            render={(_, r) => {
-              const terminal =
-                r.state === "done" ||
-                r.state === "failed" ||
-                r.state === "cancelled";
-              return (
-                <RowActions
-                  actions={[
-                    { key: "view", label: "View", icon: <SwapOutlined />, onClick: () => navigate(`/jabali-admin/migrations/${r.id}`) },
-                    {
-                      key: "rekick",
-                      label: "Re-kick",
-                      icon: <RedoOutlined />,
-                      hidden: r.state !== "pending",
-                      onClick: () => reKick.mutate({ id: r.id }),
-                      confirm: { title: `Re-kick pull-source for ${r.source_user}?`, description: "Re-dispatches the agent's pull-source runner. Use for rows that landed pending before auto-kick existed, or after a transient SSH/network blip.", okText: "Re-kick" },
-                    },
-                    {
-                      key: "cancel",
-                      label: "Cancel",
-                      icon: <DeleteOutlined />,
-                      danger: true,
-                      hidden: terminal,
-                      onClick: () => cancel.mutate({ id: r.id }),
-                      confirm: { title: `Cancel migration ${r.source_user}?`, description: "Stamps the DB row as cancelled. Does NOT kill an in-flight CLI process — Ctrl-C the cobra cmd separately.", okText: "Cancel job" },
-                    },
-                    {
-                      key: "destroy",
-                      label: "Destroy",
-                      icon: <DeleteOutlined />,
-                      danger: true,
-                      hidden: !terminal,
-                      onClick: () => destroy.mutate({ id: r.id }),
-                      confirm: { title: `Destroy migration ${r.source_user}?`, description: "Removes the DB row, secrets file, and /var/lib/jabali-migrations/<id>/ extracted dir. Operator-irreversible.", okText: "Destroy" },
-                    },
-                  ]}
-                />
-              );
-            }}
+            render={(_, r) => renderRowActions(r)}
           />
         </Table>
+        ) : (
+          <List
+            dataSource={rows}
+            loading={list.isLoading}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No migrations yet" /> }}
+            renderItem={renderMobileJobCard}
+          />
+        )}
       </Card>
 
       <Card size="small" title="Per-source-kind support">

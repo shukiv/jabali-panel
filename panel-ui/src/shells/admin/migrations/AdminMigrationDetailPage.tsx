@@ -176,7 +176,7 @@ export const AdminMigrationDetailPage = () => {
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Card>
-        <Space style={{ marginBottom: 16 }}>
+        <Space wrap style={{ marginBottom: 16, rowGap: 4 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>
             Migration {job.source_user}@{job.source_host}
           </Typography.Title>
@@ -188,7 +188,7 @@ export const AdminMigrationDetailPage = () => {
           </Typography.Link>
         </Space>
 
-        <Descriptions size="small" column={2} bordered>
+        <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
           <Descriptions.Item label="Job ID">
             <Typography.Text code>{job.id}</Typography.Text>
           </Descriptions.Item>
@@ -234,7 +234,7 @@ export const AdminMigrationDetailPage = () => {
         })()}
         <Steps
           direction="horizontal"
-          responsive={false}
+          responsive
           current={STAGE_ORDER.findIndex(
             (n) => stagesByName.get(n)?.state === "running",
           )}
@@ -285,7 +285,7 @@ export const AdminMigrationDetailPage = () => {
                       {s.state.toUpperCase()}
                     </Tag>
                   </Space>
-                  <Descriptions size="small" column={2}>
+                  <Descriptions size="small" column={{ xs: 1, sm: 2 }}>
                     <Descriptions.Item label="Started">
                       {s.started_at
                         ? new Date(s.started_at).toLocaleString()
