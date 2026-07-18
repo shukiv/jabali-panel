@@ -51,3 +51,32 @@ func TestUploadStagingDirHasAppArmorRule(t *testing.T) {
 		}
 	}
 }
+
+// TestBackupDownloadHasAppArmorRules guards GH #462: the backup-artifact
+// download tars the agent-materialized snapshot, so the panel-api profile must
+// (a) allow exec of tar and (b) grant read on the downloads staging dir — or the
+// daemon fails "fork/exec /usr/bin/tar: permission denied", then EACCESes the
+// files, once the profile is in enforce mode.
+func TestBackupDownloadHasAppArmorRules(t *testing.T) {
+	const profilePath = "../../../install/apparmor/usr.local.bin.jabali-panel-api"
+	raw, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatalf("read AppArmor profile: %v", err)
+	}
+	profile := string(raw)
+
+	// tar must be exec'able (ix/rix) — it's the download's transport.
+	if !regexp.MustCompile(`(?m)^\s*/usr/bin/tar\s+r?ix\s*,`).MatchString(profile) {
+		t.Error("AppArmor profile missing an exec rule for /usr/bin/tar (GH #462) — backup download fails 'fork/exec /usr/bin/tar: permission denied' under enforce")
+	}
+
+	// The agent-materialized snapshot dir must be readable so tar can read it.
+	for _, g := range []string{
+		regexp.QuoteMeta("/var/lib/jabali-backups/downloads/"),
+		regexp.QuoteMeta("/var/lib/jabali-backups/downloads/") + `\*\*`,
+	} {
+		if !regexp.MustCompile(`(?m)^\s*` + g + `\s+[a-z]*r[a-z]*\s*,`).MatchString(profile) {
+			t.Errorf("AppArmor profile missing a read rule for %q (GH #462) — tar EACCESes the backup files under enforce", g)
+		}
+	}
+}

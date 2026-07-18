@@ -112,9 +112,14 @@ profile jabali-panel flags=(attach_disconnected) {
   # panel-api's full DIRECT exec surface (exec.CommandContext): most heavy
   # flows are delegated to the agent (its own profile); the daemon itself
   # only shells out to these. zstd = hestia migration decompress;
-  # goaccess = web-stats (M13, websocket_logs.go).
+  # goaccess = web-stats (M13, websocket_logs.go); tar = backup-artifact
+  # download streams the materialized backup as a tar[.zst] (GH #462, backups.go
+  # streamBackupArtifact) — without an exec rule the download fails
+  # "fork/exec /usr/bin/tar: permission denied" under enforce.
   /usr/bin/zstd               rix,
   /usr/bin/goaccess           rix,
+  /usr/bin/tar                rix,
+  /bin/tar                    rix,
   /var/log/nginx/             r,
   /var/log/nginx/**           r,
   /usr/share/goaccess/**      r,
@@ -214,6 +219,13 @@ profile jabali-panel flags=(attach_disconnected) {
   # /etc/jabali-panel/** r above.)
   /var/lib/jabali-migrations/     rw,
   /var/lib/jabali-migrations/**   rwk,
+
+  # GH #462: the backup-artifact download tars the agent-materialized snapshot
+  # under /var/lib/jabali-backups/downloads/<job>/ (backups.go streamBackupArtifact).
+  # Read-only + downloads/ only — the agent writes + cleans it, and the restic
+  # repo (/var/lib/jabali-backups/repo, 0600 root:root) must stay off-limits.
+  /var/lib/jabali-backups/downloads/     r,
+  /var/lib/jabali-backups/downloads/**   r,
   /var/log/jabali-panel/       rw,
   /var/log/jabali-panel/**     rwk,
 
