@@ -15,6 +15,7 @@ import {
 
 import { SUPPORT_LINKS } from "../../../config/support-links";
 import { DiagnosticReportModal } from "./DiagnosticReportModal";
+import { CliOnlyRunbooks } from "./CliOnlyRunbooks";
 
 interface CardSpec {
   key: string;
@@ -99,6 +100,8 @@ export const SupportPage = () => {
           </Col>
         ))}
       </Row>
+
+      <CliOnlyRunbooks />
 
       <DiagnosticReportModal
         open={modalOpen}
