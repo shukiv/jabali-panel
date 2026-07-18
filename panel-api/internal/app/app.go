@@ -56,6 +56,7 @@ type Deps struct {
 	Reconciler                *reconciler.Reconciler
 	ServerSettings            repository.ServerSettingsRepository
 	PageTemplates             repository.PageTemplateRepository
+	AccountSkeleton           repository.AccountSkeletonRepository
 	NotificationEventSettings repository.NotificationEventSettingRepository
 	DNSZones                  repository.DNSZoneRepository
 	DNSRecords                repository.DNSRecordRepository
@@ -857,6 +858,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.PageTemplates != nil {
 			api.RegisterPageTemplatesRoutes(v1, api.PageTemplatesHandlerConfig{
 				Repo: deps.PageTemplates,
+				Log:  deps.Log,
+			})
+		}
+		if deps.AccountSkeleton != nil {
+			api.RegisterAccountSkeletonRoutes(v1, api.AccountSkeletonHandlerConfig{
+				Repo: deps.AccountSkeleton,
 				Log:  deps.Log,
 			})
 		}

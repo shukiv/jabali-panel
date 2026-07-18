@@ -256,6 +256,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		deps.ServerSettings = serverSettingsRepo
 		deps.PageTemplates = pageTemplateRepo
+		deps.AccountSkeleton = repository.NewAccountSkeletonRepository(sharedDB)
 		deps.NotificationEventSettings = notificationEventSettingRepo
 		deps.DBAdmin = dbAdminRepo
 		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
