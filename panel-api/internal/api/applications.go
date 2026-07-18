@@ -94,6 +94,10 @@ func RegisterApplicationRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig)
 	adminCache := g.Group("/admin/cache")
 	adminCache.Use(middleware.RequireAdmin())
 	adminCache.GET("/overview", wp.cacheOverview)
+	// JAB-11: fleet cache-doctor/repair/refresh runs (async — poll by id).
+	adminCache.POST("/doctor-runs", wp.startCacheDoctorRun)
+	adminCache.GET("/doctor-runs", wp.listCacheDoctorRuns)
+	adminCache.GET("/doctor-runs/:id", wp.getCacheDoctorRun)
 	apps.POST("/:id/cache-advise", wp.cacheAdvise) // GH #620
 }
 

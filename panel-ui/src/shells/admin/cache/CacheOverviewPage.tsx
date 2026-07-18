@@ -5,6 +5,7 @@ import { App, Card, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { FleetCacheDoctor } from "./FleetCacheDoctor";
 import { extractApiError } from "../../../apiErrors";
 
 type Row = {
@@ -32,7 +33,9 @@ export function CacheOverviewPage() {
   }, []);
 
   return (
-    <Card title="Cache overview — page-cache hit ratio by domain">
+    <>
+      <FleetCacheDoctor />
+      <Card title="Cache overview — page-cache hit ratio by domain">
       <Typography.Paragraph type="secondary">
         Cache-enabled WordPress domains, ranked with the lowest hit ratio (most in
         need of attention) first. A low ratio with high traffic suggests a
@@ -68,6 +71,7 @@ export function CacheOverviewPage() {
           { title: "Bypass", dataIndex: "bypass" },
         ]}
       />
-    </Card>
+      </Card>
+    </>
   );
 }

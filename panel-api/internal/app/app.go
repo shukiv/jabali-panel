@@ -1112,6 +1112,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				CacheTokenSecret:    cacheHMACSecret(),
 				CacheTokenSalts:     repository.NewCacheTokenSaltRepository(deps.DB),
 				CacheWarmupRuns:     repository.NewCacheWarmupRunRepository(deps.DB),
+				CacheDoctorRuns:     repository.NewCacheDoctorRunRepository(deps.DB),
 			}
 			api.RegisterApplicationRoutes(v1, appCfg)
 

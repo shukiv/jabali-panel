@@ -49,6 +49,9 @@ type ApplicationHandlerConfig struct {
 	// CacheWarmupRuns persists warmup run records (JAB-95 Phase 3). Optional;
 	// nil disables run recording (warmup still runs).
 	CacheWarmupRuns repository.CacheWarmupRunRepository
+	// CacheDoctorRuns persists fleet cache-doctor/repair/refresh run records
+	// (JAB-11). Optional; nil → the admin fleet endpoints return 503.
+	CacheDoctorRuns repository.CacheDoctorRunRepository
 	// Reconciler re-renders the domain vhost after the nginx page-cache flag
 	// flips (mirrors DomainCacheHandlerConfig.Reconciler). Optional.
 	Reconciler DNSScheduler
