@@ -85,6 +85,19 @@ by install_backup_foundation in install.sh.`,
 				return err
 			}
 
+			// JAB-98: prune per-job backup log files under
+			// /var/lib/jabali-backups/logs older than the retention window.
+			// Age-based (mtime) so an in-flight job's log is never removed,
+			// and independent of restic policy — manual/one-off jobs write
+			// logs too. Runs on every retention pass; skipped under --dry-run.
+			if dryRun {
+				fmt.Fprintln(cmd.OutOrStdout(), "[dry-run] would prune backup job logs older than 90d")
+			} else if n, perr := internalbackup.PruneJobLogs(internalbackup.DefaultJobLogRetention); perr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "prune job logs failed: %v\n", perr)
+			} else if n > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "pruned %d expired backup job log(s)\n", n)
+			}
+
 			schedRepo := repository.NewBackupScheduleRepository(sharedDB)
 			destRepo := repository.NewBackupDestinationRepository(sharedDB)
 			scheds, err := schedRepo.List(ctx)

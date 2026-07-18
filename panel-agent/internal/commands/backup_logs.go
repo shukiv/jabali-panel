@@ -85,6 +85,13 @@ func backupLogsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		logText = string(out)
 	}
 
+	if strings.TrimSpace(logText) == "" {
+		// JAB-98: the per-job log file was pruned by backup retention (or
+		// the orchestrator died before writing it) and the journal fallback
+		// is empty. Return a clear message instead of a blank modal.
+		logText = "(no log available \u2014 it may have expired by retention or the job predates per-job logging)"
+	}
+
 	resp := backupLogsResponse{
 		Unit:      unit,
 		Status:    status,

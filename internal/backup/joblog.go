@@ -70,3 +70,42 @@ func (l *JobLogger) Close() {
 func JobLogPath(jobID string) string {
 	return filepath.Join(JobLogDir, jobID+".log")
 }
+
+// DefaultJobLogRetention is how long a per-job backup log file is kept after
+// its last write. A running job's log has a fresh mtime, so an mtime-based
+// prune at this age never removes an active job's log. 90 days matches the
+// fixed-window policy in JAB-98.
+const DefaultJobLogRetention = 90 * 24 * time.Hour
+
+// PruneJobLogs removes per-job log files under JobLogDir whose last
+// modification is older than maxAge, returning the count removed. A missing
+// dir is not an error (no backups have run yet). Age-based, so an in-flight
+// job — still appending to its log — is never pruned. (JAB-98)
+func PruneJobLogs(maxAge time.Duration) (int, error) {
+	return pruneJobLogsIn(JobLogDir, maxAge)
+}
+
+func pruneJobLogsIn(dir string, maxAge time.Duration) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	removed := 0
+	cutoff := time.Now().Add(-maxAge)
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".log" {
+			continue
+		}
+		info, ierr := e.Info()
+		if ierr != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, e.Name())) == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
