@@ -750,7 +750,7 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 		return
 	}
 	c.Header("Content-Type", contentType)
-	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	c.Header("Content-Disposition", contentDisposition("attachment", filename))
 	if _, werr := c.Writer.Write(head[:n]); werr != nil {
 		logErr("tar download write head", werr, "job_id", job.ID)
 	}
