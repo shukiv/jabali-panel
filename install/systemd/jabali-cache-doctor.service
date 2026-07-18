@@ -11,7 +11,10 @@ Type=oneshot
 # Sweeps every cache-enabled WordPress install, runs `wp jabali-cache verify`
 # via the agent, and re-provisions (re-stamps constants, re-provisions the ACL,
 # re-verifies) any that have drifted. Idempotent: a healthy site is a no-op.
-ExecStart=/usr/local/bin/jabali app cache-doctor --repair
+# cache-doctor-run records the sweep as a cache_doctor_runs row (JAB-11) so the
+# result shows in the admin Cache page's history — same repair behavior as the
+# older `cache-doctor --repair`, now visible in the GUI.
+ExecStart=/usr/local/bin/jabali app cache-doctor-run --kind repair
 StandardOutput=journal
 StandardError=journal
 Restart=no

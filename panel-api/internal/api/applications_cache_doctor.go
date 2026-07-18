@@ -115,10 +115,8 @@ func (h *wordPressHandler) getCacheDoctorRun(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"run": run})
 }
 
-// runCacheDoctorSweep is the background worker. It sweeps every cache-enabled,
-// ready WordPress install, runs the health check, and (per kind) re-provisions
-// drifted installs or refreshes the plugin, updating the run row as it goes so
-// the poller sees live progress.
+// runCacheDoctorSweep is the background worker for the HTTP trigger. It owns the
+// deadline and delegates to SweepCacheDoctor.
 func (h *wordPressHandler) runCacheDoctorSweep(runID, kind, actorUserID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), cacheDoctorSweepTimeout)
 	defer cancel()
@@ -128,15 +126,26 @@ func (h *wordPressHandler) runCacheDoctorSweep(runID, kind, actorUserID string) 
 		slog.ErrorContext(ctx, "cache-doctor: run vanished before sweep", "run", runID, "err", err)
 		return
 	}
+	_ = SweepCacheDoctor(ctx, h.cfg, run, actorUserID)
+}
+
+// SweepCacheDoctor runs a fleet cache-maintenance sweep synchronously against
+// cfg, updating the (already-Created) run row as it progresses. Exported so the
+// nightly CLI timer (`jabali app cache-doctor-run`) runs the exact same executor
+// as the HTTP trigger — no second sweep implementation to drift. The caller owns
+// the context deadline.
+func SweepCacheDoctor(ctx context.Context, cfg ApplicationHandlerConfig, run *models.CacheDoctorRun, actorUserID string) error {
+	h := &wordPressHandler{cfg: cfg}
+	kind := run.Kind
 	now := time.Now().UTC()
 	run.State = models.CacheDoctorStateRunning
 	run.StartedAt = &now
-	_ = h.cfg.CacheDoctorRuns.Update(ctx, run)
+	_ = cfg.CacheDoctorRuns.Update(ctx, run)
 
-	installs, _, lErr := h.cfg.ApplicationInstalls.List(ctx, repository.ListOptions{Limit: 100000})
+	installs, _, lErr := cfg.ApplicationInstalls.List(ctx, repository.ListOptions{Limit: 100000})
 	if lErr != nil {
 		h.failCacheDoctorRun(ctx, run, "list installs: "+lErr.Error())
-		return
+		return lErr
 	}
 
 	items := make([]models.CacheDoctorItem, 0)
@@ -171,13 +180,14 @@ func (h *wordPressHandler) runCacheDoctorSweep(runID, kind, actorUserID string) 
 		if raw, mErr := json.Marshal(items); mErr == nil {
 			run.Results = raw
 		}
-		_ = h.cfg.CacheDoctorRuns.Update(ctx, run)
+		_ = cfg.CacheDoctorRuns.Update(ctx, run)
 	}
 
 	fin := time.Now().UTC()
 	run.FinishedAt = &fin
 	run.State = models.CacheDoctorStateDone
-	_ = h.cfg.CacheDoctorRuns.Update(ctx, run)
+	_ = cfg.CacheDoctorRuns.Update(ctx, run)
+	return nil
 }
 
 // doctorOneInstall health-checks one install and, per kind, repairs drift or

@@ -592,6 +592,8 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.service /etc/s
 install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer
 install -m 0644 ` + repoDir + `/install/systemd/jabali-retention-sweep.service /etc/systemd/system/jabali-retention-sweep.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-retention-sweep.timer /etc/systemd/system/jabali-retention-sweep.timer
+install -m 0644 ` + repoDir + `/install/systemd/jabali-cache-doctor.service /etc/systemd/system/jabali-cache-doctor.service
+install -m 0644 ` + repoDir + `/install/systemd/jabali-cache-doctor.timer /etc/systemd/system/jabali-cache-doctor.timer
 install -m 0644 ` + repoDir + `/install/systemd/jabali-notify@.service /etc/systemd/system/jabali-notify@.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/systemd/system/jabali-stalwart.service
 # JAB-158 journald cap + JAB-153/157 disk-maintenance timer. install.sh drops

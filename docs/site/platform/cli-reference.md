@@ -169,6 +169,18 @@ jabali app cache-doctor [flags]
 - `--migrate-acl` — JAB-62: re-provision every cache-enabled install to a per-install Redis ACL user, then reap orphaned legacy shared users (safe/idempotent)
 - `--repair` — re-provision drifted installs (re-stamp constants, re-provision ACL, re-verify)
 
+#### `jabali app cache-doctor-run`
+
+Run a recorded fleet cache-doctor sweep (persists a run for the admin GUI history)
+
+```
+jabali app cache-doctor-run [flags]
+```
+
+**Flags:**
+
+- `--kind` — sweep kind: doctor | repair | refresh (default `doctor`)
+
 #### `jabali app clone`
 
 Clone a WordPress app install onto another domain (files + DB)
