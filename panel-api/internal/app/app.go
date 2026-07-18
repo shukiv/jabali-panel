@@ -1111,6 +1111,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Reconciler:          deps.Reconciler,
 				CacheTokenSecret:    cacheHMACSecret(),
 				CacheTokenSalts:     repository.NewCacheTokenSaltRepository(deps.DB),
+				CacheWarmupRuns:     repository.NewCacheWarmupRunRepository(deps.DB),
 			}
 			api.RegisterApplicationRoutes(v1, appCfg)
 

@@ -9,6 +9,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math"
 	"net/http"
@@ -24,7 +25,9 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 const (
@@ -189,10 +192,22 @@ func (h *wordPressHandler) cacheWarmup(c *gin.Context) {
 		trimPath = path.Join(dom.DocRoot, inst.Subdirectory)
 	}
 	repo := h.cfg.ApplicationInstalls
+	runsRepo := h.cfg.CacheWarmupRuns
 	go func() {
 		wctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
+		// JAB-95 Phase 3: record a durable run (running -> done/failed).
+		var run *models.CacheWarmupRun
+		if runsRepo != nil {
+			started := time.Now().UTC()
+			run = &models.CacheWarmupRun{ID: ids.NewULID(), InstallID: installID, Host: host, State: models.CacheWarmupStateRunning, Requested: 100, StartedAt: &started}
+			_ = runsRepo.Create(context.Background(), run)
+		}
 		res, err := agent.Call(wctx, "nginx.cache_warmup", map[string]any{"host": host, "max_urls": 100})
+		if run != nil {
+			finalizeCacheWarmupRun(run, res, err)
+			_ = runsRepo.Update(context.Background(), run)
+		}
 		// GH #612: enforce the object-cache budget after warmup (which adds keys).
 		if osUser != "" {
 			// JAB-59: surface trim failures instead of swallowing them — the
@@ -223,6 +238,67 @@ func (h *wordPressHandler) cacheWarmup(c *gin.Context) {
 		}
 	}()
 	c.JSON(http.StatusAccepted, gin.H{"ok": true, "warming": host})
+}
+
+// finalizeCacheWarmupRun stamps a run from the agent's nginx.cache_warmup
+// response (JAB-95 Phase 1 stats). A transport error -> failed; otherwise done
+// with the warmed/attempted/failed counts. (JAB-95 Phase 3)
+func finalizeCacheWarmupRun(run *models.CacheWarmupRun, raw json.RawMessage, callErr error) {
+	now := time.Now().UTC()
+	run.FinishedAt = &now
+	if callErr != nil {
+		run.State = models.CacheWarmupStateFailed
+		run.FirstError = truncateWarmupErr(callErr.Error())
+		return
+	}
+	var r cacheWarmupResult
+	if json.Unmarshal(raw, &r) == nil {
+		run.Requested = r.Requested
+		run.ClampedTo = r.ClampedTo
+		run.Total = r.Attempted
+		run.CursorPos = r.Attempted
+		run.Attempted = r.Attempted
+		run.Warmed = r.Warmed
+		run.Skipped = r.Skipped
+		run.Failed = r.Failed
+		run.FirstError = truncateWarmupErr(r.FirstError)
+	}
+	run.State = models.CacheWarmupStateDone
+}
+
+func truncateWarmupErr(s string) string {
+	if len(s) > 1024 {
+		return s[:1024]
+	}
+	return s
+}
+
+// getCacheWarmup returns the install's most recent warmup run for the UI
+// (JAB-95 Phase 3). Null run when none has ever run.
+func (h *wordPressHandler) getCacheWarmup(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	inst := h.loadOwnedInstall(c, claims)
+	if inst == nil {
+		return
+	}
+	if h.cfg.CacheWarmupRuns == nil {
+		c.JSON(http.StatusOK, gin.H{"run": nil})
+		return
+	}
+	run, err := h.cfg.CacheWarmupRuns.LatestForInstall(c.Request.Context(), inst.ID)
+	if errors.Is(err, repository.ErrNotFound) {
+		c.JSON(http.StatusOK, gin.H{"run": nil})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "warmup_lookup_failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"run": run})
 }
 
 // cacheProfiles returns the static cache-profile registry for the UI (GH #618).

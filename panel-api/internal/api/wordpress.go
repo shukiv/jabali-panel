@@ -46,6 +46,9 @@ type ApplicationHandlerConfig struct {
 	CacheTokenSecret string
 	// CacheTokenSalts persists the per-tenant token salt (Gitea #415).
 	CacheTokenSalts repository.CacheTokenSaltRepository
+	// CacheWarmupRuns persists warmup run records (JAB-95 Phase 3). Optional;
+	// nil disables run recording (warmup still runs).
+	CacheWarmupRuns repository.CacheWarmupRunRepository
 	// Reconciler re-renders the domain vhost after the nginx page-cache flag
 	// flips (mirrors DomainCacheHandlerConfig.Reconciler). Optional.
 	Reconciler DNSScheduler
