@@ -40,7 +40,10 @@ type retentionTarget struct {
 	// is empty; for a categorized target the window comes from server_settings.
 	category string
 	window   time.Duration
-	why      string
+	// extraWhere is an optional additional predicate ANDed into the prune (e.g.
+	// only terminal migration jobs). Empty = age cutoff only.
+	extraWhere string
+	why        string
 }
 
 // retentionTargets — every entry is a leaf log/report table with no hash chain
@@ -50,17 +53,23 @@ type retentionTarget struct {
 var retentionTargets = []retentionTarget{
 	// Fixed (not operator-configurable): expiry-based cleanup of temporary
 	// stream credentials — keeping these 90d would defeat their purpose.
-	{"log_access_streams", "expires_at", "", 1 * retentionDay, "expired log-view stream keys (JAB-103)"},
+	{"log_access_streams", "expires_at", "", 1 * retentionDay, "", "expired log-view stream keys (JAB-103)"},
 	// Operator-configurable via Server Settings -> Logs (default 90d, security 365d).
-	{"terminal_sessions", "created_at", models.RetentionCatSessions, 90 * retentionDay, "root-terminal session rows; .cast files rotate via logrotate (JAB-103)"},
-	{"notification_history", "created_at", models.RetentionCatNotifications, 90 * retentionDay, "delivered-notification log (JAB-100)"},
-	{"update_history", "started_at", models.RetentionCatUpdates, 90 * retentionDay, "update-center run history + stored log excerpts (JAB-101)"},
-	{"dmarc_aggregate", "created_at", models.RetentionCatMailReports, 90 * retentionDay, "DMARC aggregate reports (JAB-125)"},
-	{"tlsrpt_aggregate", "created_at", models.RetentionCatMailReports, 90 * retentionDay, "TLS-RPT aggregate reports (JAB-125)"},
-	{"arf_report", "received_at", models.RetentionCatMailReports, 90 * retentionDay, "ARF failure reports (JAB-125)"},
-	{"malware_events", "created_at", models.RetentionCatSecurityEvents, 365 * retentionDay, "malware raw event log — security (JAB-123)"},
-	{"snuffleupagus_incidents", "ts", models.RetentionCatSecurityEvents, 365 * retentionDay, "Snuffleupagus WAF incidents — security (JAB-122)"},
-	{"db_admin_audit", "ts", models.RetentionCatDBAdminAudit, 365 * retentionDay, "legacy DB-admin audit — security (JAB-105)"},
+	{"terminal_sessions", "created_at", models.RetentionCatSessions, 90 * retentionDay, "", "root-terminal session rows; .cast files rotate via logrotate (JAB-103)"},
+	{"notification_history", "created_at", models.RetentionCatNotifications, 90 * retentionDay, "", "delivered-notification log (JAB-100)"},
+	{"update_history", "started_at", models.RetentionCatUpdates, 90 * retentionDay, "", "update-center run history + stored log excerpts (JAB-101)"},
+	{"dmarc_aggregate", "created_at", models.RetentionCatMailReports, 90 * retentionDay, "", "DMARC aggregate reports (JAB-125)"},
+	{"tlsrpt_aggregate", "created_at", models.RetentionCatMailReports, 90 * retentionDay, "", "TLS-RPT aggregate reports (JAB-125)"},
+	{"arf_report", "received_at", models.RetentionCatMailReports, 90 * retentionDay, "", "ARF failure reports (JAB-125)"},
+	{"malware_events", "created_at", models.RetentionCatSecurityEvents, 365 * retentionDay, "", "malware raw event log — security (JAB-123)"},
+	{"snuffleupagus_incidents", "ts", models.RetentionCatSecurityEvents, 365 * retentionDay, "", "Snuffleupagus WAF incidents — security (JAB-122)"},
+	{"db_admin_audit", "ts", models.RetentionCatDBAdminAudit, 365 * retentionDay, "", "legacy DB-admin audit — security (JAB-105)"},
+	// JAB-124: per-domain daily bandwidth ledger. Plain age-prune on the date.
+	{"bw_daily", "day", models.RetentionCatBandwidth, 90 * retentionDay, "", "per-domain daily bandwidth ledger (JAB-124)"},
+	// JAB-102: terminal migration jobs (stages cascade via ON DELETE CASCADE).
+	// Only terminal states + rows with ended_at set — never touches an in-flight
+	// job. reap-secrets already wiped their secrets/staging.
+	{"migration_jobs", "ended_at", models.RetentionCatMigrations, 90 * retentionDay, "state IN ('done','failed','degraded','cancelled')", "terminal migration job + stage rows (JAB-102)"},
 }
 
 // retentionBatchSize bounds each DELETE so a large backlog can't hold a long
@@ -71,9 +80,15 @@ const retentionBatchSize = 5000
 // now-window. Returns the number removed / would-remove.
 func pruneRetentionTarget(ctx context.Context, db *gorm.DB, t retentionTarget, dryRun bool, out io.Writer) (int64, error) {
 	cutoff := time.Now().Add(-t.window)
+	// Optional extra predicate (e.g. only terminal migration jobs), ANDed in.
+	andWhere := ""
+	if t.extraWhere != "" {
+		andWhere = " AND " + t.extraWhere
+	}
 	if dryRun {
 		var n int64
-		if err := db.WithContext(ctx).Table(t.table).Where(t.tsColumn+" < ?", cutoff).Count(&n).Error; err != nil {
+		q := db.WithContext(ctx).Table(t.table).Where(t.tsColumn+" < ?"+andWhere, cutoff)
+		if err := q.Count(&n).Error; err != nil {
 			return 0, err
 		}
 		if n > 0 {
@@ -84,7 +99,7 @@ func pruneRetentionTarget(ctx context.Context, db *gorm.DB, t retentionTarget, d
 	var total int64
 	for {
 		res := db.WithContext(ctx).Exec(
-			"DELETE FROM "+t.table+" WHERE "+t.tsColumn+" < ? LIMIT ?", cutoff, retentionBatchSize)
+			"DELETE FROM "+t.table+" WHERE "+t.tsColumn+" < ?"+andWhere+" LIMIT ?", cutoff, retentionBatchSize)
 		if res.Error != nil {
 			return total, res.Error
 		}

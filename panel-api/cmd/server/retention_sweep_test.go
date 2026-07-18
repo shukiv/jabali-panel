@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,5 +66,38 @@ func TestRetentionTargets_SecurityTablesKeptLong(t *testing.T) {
 		if security[tgt.table] && tgt.window < minSecurity {
 			t.Errorf("%s is security-sensitive; window %s is under the 1y forensics floor", tgt.table, tgt.window)
 		}
+	}
+}
+
+// JAB-102: the migration_jobs prune must be gated to TERMINAL states — never
+// delete an in-flight job. JAB-124: bw_daily is a configurable target.
+func TestRetentionTargets_P2MigrationAndBandwidth(t *testing.T) {
+	byTable := map[string]retentionTarget{}
+	for _, tgt := range retentionTargets {
+		byTable[tgt.table] = tgt
+	}
+
+	mj, ok := byTable["migration_jobs"]
+	if !ok {
+		t.Fatal("migration_jobs must be a retention target (JAB-102)")
+	}
+	if !strings.Contains(mj.extraWhere, "state IN") {
+		t.Errorf("migration_jobs prune must filter on terminal state, got extraWhere=%q", mj.extraWhere)
+	}
+	for _, s := range []string{"pending", "analyzing", "restoring"} {
+		if strings.Contains(mj.extraWhere, s) {
+			t.Errorf("migration_jobs prune must NOT include the in-flight state %q", s)
+		}
+	}
+	if mj.tsColumn != "ended_at" {
+		t.Errorf("migration_jobs must prune on ended_at (NULL for in-flight), got %q", mj.tsColumn)
+	}
+
+	bw, ok := byTable["bw_daily"]
+	if !ok {
+		t.Fatal("bw_daily must be a retention target (JAB-124)")
+	}
+	if bw.category != "bandwidth" {
+		t.Errorf("bw_daily category = %q, want bandwidth", bw.category)
 	}
 }
