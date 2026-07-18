@@ -105,6 +105,13 @@ type Reconciler struct {
 	// so a fresh docroot gets the customised welcome page rather than
 	// the agent's baked-in default.
 	pageTemplates repository.PageTemplateRepository
+
+	// accountSkeleton (GH #465) + a short cache so the full skeleton is read
+	// from the DB at most ~once per reconcile pass, not once per domain.
+	accountSkeleton repository.AccountSkeletonRepository
+	skelMu          sync.Mutex
+	skelWire        []map[string]any
+	skelAt          time.Time
 	// errorPagesHash caches the last content hash synced to
 	// /var/www/jabali-errors so the per-tick reconcile only calls the
 	// agent when an admin actually edits an error template.
@@ -233,6 +240,38 @@ func (r *Reconciler) WithDomainDirectoryPrivacy(repo repository.DomainDirectoryP
 func (r *Reconciler) WithPageTemplates(repo repository.PageTemplateRepository) *Reconciler {
 	r.pageTemplates = repo
 	return r
+}
+
+// WithAccountSkeleton injects the GH #465 docroot-skeleton repo. Nil (tests)
+// means domain.create carries no skeleton and the agent lays only the default
+// index.
+func (r *Reconciler) WithAccountSkeleton(repo repository.AccountSkeletonRepository) *Reconciler {
+	r.accountSkeleton = repo
+	return r
+}
+
+// skeletonWire returns the skeleton files as the domain.create wire shape,
+// cached ~30s so a busy pass reads the (potentially large) blob once. The
+// agent no-clobbers, so re-sending an unchanged skeleton is harmless.
+func (r *Reconciler) skeletonWire(ctx context.Context) []map[string]any {
+	if r.accountSkeleton == nil {
+		return nil
+	}
+	r.skelMu.Lock()
+	defer r.skelMu.Unlock()
+	if !r.skelAt.IsZero() && time.Since(r.skelAt) < 30*time.Second {
+		return r.skelWire
+	}
+	files, err := r.accountSkeleton.List(ctx)
+	if err != nil {
+		return r.skelWire // keep the last good set on a transient error
+	}
+	wire := make([]map[string]any, 0, len(files))
+	for _, f := range files {
+		wire = append(wire, map[string]any{"rel_path": f.RelPath, "content": f.Content})
+	}
+	r.skelWire, r.skelAt = wire, time.Now()
+	return wire
 }
 
 // WithMailThrottles wires the M47 Wave 3 outbound-throttle reconciler.
@@ -1556,6 +1595,13 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			params["default_index_template"] = row.Content
 		}
 		tplCancel()
+	}
+
+	// GH #465 — account docroot skeleton. The agent lays these into a fresh
+	// docroot before the default index (so a skeleton index.html wins) and
+	// never clobbers an existing path, so re-sending on every converge is safe.
+	if wire := r.skeletonWire(ctx); len(wire) > 0 {
+		params["skeleton"] = wire
 	}
 
 	// Fetch SSL certificate paths for the vhost. We serve any cert whose

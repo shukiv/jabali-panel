@@ -17,6 +17,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/skelpath"
 )
 
 // domainCreateParams is the input shape for domain.create.
@@ -85,6 +86,11 @@ type domainCreateParams struct {
 	// back to defaultIndexTemplate below. Go text/template syntax with
 	// {{.Domain}}, {{.Username}}, {{.DocRoot}} placeholders.
 	DefaultIndexTemplate string `json:"default_index_template,omitempty"`
+
+	// GH #465 — the account docroot skeleton: operator-defined starter files
+	// laid into a fresh docroot on create. Each file's RelPath is validated
+	// again here (defense in depth) and never overwrites an existing path.
+	Skeleton []skeletonFileParam `json:"skeleton,omitempty"`
 
 	// M36 per-domain IP allow/deny rules. Already sorted by the panel
 	// (priority ASC, created_at ASC). Each rule renders as one nginx
@@ -910,6 +916,16 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// Without this check, the reconciler periodically re-creates the
 	// placeholder ~30s after a WP install, and nginx (with `index
 	// index.html index.php`) serves the placeholder instead of WP.
+	// GH #465: lay the operator's account skeleton into the fresh docroot
+	// BEFORE the default index, so a skeleton-provided index.html wins (the
+	// default-index block below skips when index.html already exists). Never
+	// clobbers an existing path; a bad file warns but doesn't fail create.
+	if len(p.Skeleton) > 0 {
+		for _, w := range writeSkeleton(docScope, p.DocRoot, p.Username, docUID, wwwGID, p.Skeleton) {
+			log.Printf("domain.create: skeleton %s: %s", p.Domain, w)
+		}
+	}
+
 	indexPath := filepath.Join(p.DocRoot, "index.html")
 	indexPHPPath := filepath.Join(p.DocRoot, "index.php")
 	_, htmlErr := os.Stat(indexPath)
@@ -957,6 +973,70 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		DocRoot:    p.DocRoot,
 		ConfigPath: configPath,
 	}, nil
+}
+
+// skeletonFileParam is one account-skeleton file on the domain.create wire.
+// Content marshals as base64 (Go's []byte JSON encoding).
+type skeletonFileParam struct {
+	RelPath string `json:"rel_path"`
+	Content []byte `json:"content"`
+}
+
+// writeSkeleton lays each skeleton file into the fresh docroot through the
+// symlink-safe scope: re-validate the path (defense in depth — a poisoned DB
+// row must not escape the docroot), create parent dirs chowned <user>:www-data
+// + setgid, and write the file with O_EXCL|O_NOFOLLOW so it NEVER clobbers an
+// existing path or follows a planted symlink, then chown <user>:www-data 0644.
+// A bad file is collected as a warning; it must not fail the whole
+// domain.create.
+func writeSkeleton(scope *filesafe.Scope, docRoot, username string, docUID, wwwGID int, files []skeletonFileParam) []string {
+	var warns []string
+	for _, f := range files {
+		if err := skelpath.Validate(f.RelPath); err != nil {
+			warns = append(warns, fmt.Sprintf("%q rejected: %v", f.RelPath, err))
+			continue
+		}
+		target := filepath.Join(docRoot, f.RelPath)
+		if rel, rerr := filepath.Rel(docRoot, target); rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			warns = append(warns, fmt.Sprintf("%q escapes docroot", f.RelPath))
+			continue
+		}
+		// No clobber: skip a path that already exists (real content, a re-run).
+		if _, err := os.Lstat(target); err == nil {
+			continue
+		}
+		// Create parent dirs symlink-safely, then chown/setgid every dir on the
+		// chain (idempotent for ones that already existed).
+		if _, err := scope.MkdirInScope(filepath.Dir(target), true, 0o755); err != nil {
+			warns = append(warns, fmt.Sprintf("mkdir for %q: %v", f.RelPath, err))
+			continue
+		}
+		for _, dir := range pathsUnderHome(username, filepath.Dir(target)) {
+			df, derr := scope.OpenDirInScope(dir)
+			if derr != nil {
+				continue
+			}
+			_ = df.Chown(docUID, wwwGID)
+			_ = df.Chmod(os.ModeSetgid | 0o750)
+			_ = df.Close()
+		}
+		fh, oerr := scope.Open(target, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+		if oerr != nil {
+			warns = append(warns, fmt.Sprintf("create %q: %v", f.RelPath, oerr))
+			continue
+		}
+		if _, werr := fh.Write(f.Content); werr != nil {
+			_ = fh.Close()
+			warns = append(warns, fmt.Sprintf("write %q: %v", f.RelPath, werr))
+			continue
+		}
+		_ = fh.Chmod(0o644) // O_CREATE perm is umask-masked; force 0644
+		_ = fh.Close()
+		if cerr := scope.ChownToUser(target, docUID, wwwGID); cerr != nil {
+			warns = append(warns, fmt.Sprintf("chown %q: %v", f.RelPath, cerr))
+		}
+	}
+	return warns
 }
 
 func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot, customTmpl string) error {

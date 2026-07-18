@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/skelpath"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -76,7 +77,7 @@ func (h *accountSkeletonHandler) list(c *gin.Context) {
 
 func (h *accountSkeletonHandler) getFile(c *gin.Context) {
 	p := c.Query("path")
-	if err := models.ValidateSkeletonPath(p); err != nil {
+	if err := skelpath.Validate(p); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_path", "detail": err.Error()})
 		return
 	}
@@ -107,7 +108,7 @@ func (h *accountSkeletonHandler) putFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_json", "detail": err.Error()})
 		return
 	}
-	if err := models.ValidateSkeletonPath(req.RelPath); err != nil {
+	if err := skelpath.Validate(req.RelPath); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_path", "detail": err.Error()})
 		return
 	}
@@ -157,7 +158,7 @@ func (h *accountSkeletonHandler) putFile(c *gin.Context) {
 
 func (h *accountSkeletonHandler) deleteFile(c *gin.Context) {
 	p := c.Query("path")
-	if err := models.ValidateSkeletonPath(p); err != nil {
+	if err := skelpath.Validate(p); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_path", "detail": err.Error()})
 		return
 	}
