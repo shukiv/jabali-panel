@@ -254,6 +254,9 @@ class Jabali_Cache_Client {
 	/** @var string 'phpredis' | 'pure-php' | '' */
 	private $driver = '';
 
+	/** @var bool true when the phpredis connection was opened via pconnect (JAB-96). */
+	private $persistent = false;
+
 	/**
 	 * @var bool When true, ignore the cross-request circuit breaker and always
 	 * attempt a live Redis connection. Set by diagnostics (wp jabali-cache
@@ -512,15 +515,24 @@ class Jabali_Cache_Client {
 			// pooled connection is never reused across tenants or logical DBs
 			// (jabali runs per-user FPM pools, so this is same-tenant already —
 			// the id is belt-and-braces).
+			// JAB-96: persistent (pconnect) by default so PHP-FPM keeps the
+			// socket across requests; operators can disable it with the
+			// persistent_connections config flag (then close() severs normally).
+			$persistent = ! isset( $this->cfg['persistent_connections'] ) || $this->cfg['persistent_connections'];
 			$pid = 'jc:' . ( ! empty( $this->cfg['username'] ) ? $this->cfg['username'] : 'default' ) . ':' . (int) $this->cfg['database'];
 			if ( 'unix' === $this->cfg['scheme'] ) {
-				$ok = $redis->pconnect( $this->cfg['socket'], 0, $timeout, $pid );
+				$ok = $persistent
+					? $redis->pconnect( $this->cfg['socket'], 0, $timeout, $pid )
+					: $redis->connect( $this->cfg['socket'], 0, $timeout );
 			} else {
-				$ok = $redis->pconnect( $this->cfg['host'], (int) $this->cfg['port'], $timeout, $pid );
+				$ok = $persistent
+					? $redis->pconnect( $this->cfg['host'], (int) $this->cfg['port'], $timeout, $pid )
+					: $redis->connect( $this->cfg['host'], (int) $this->cfg['port'], $timeout );
 			}
 			if ( ! $ok ) {
 				return false;
 			}
+			$this->persistent = $persistent;
 			if ( ! empty( $this->cfg['password'] ) ) {
 				// Redis 6+ ACL needs AUTH <user> <pass>; fall back to legacy single-arg.
 				if ( ! empty( $this->cfg['username'] ) ) {
@@ -535,6 +547,16 @@ class Jabali_Cache_Client {
 			$this->connected = true;
 			return true;
 		} catch ( \Throwable $e ) {
+			// JAB-96: an auth/select failure after pconnect leaves a bad socket
+			// in the persistent pool — force-close it so the next request never
+			// reuses a half-open / unauthed connection.
+			if ( isset( $redis ) && $redis instanceof \Redis ) {
+				try {
+					$redis->close();
+				} catch ( \Throwable $e2 ) { // phpcs:ignore
+					unset( $e2 );
+				}
+			}
 			$m                = $e->getMessage();
 			$this->last_error = 'phpredis: ' . $m;
 			if ( false !== stripos( $m, 'permission denied' ) ) {
@@ -1194,20 +1216,26 @@ class Jabali_Cache_Client {
 		return (int) $this->del( $excess );
 	}
 
-	public function close() {
+	public function close( $force = false ) {
 		if ( 'phpredis' === $this->driver && $this->redis ) {
-			try {
-				$this->redis->close();
-			} catch ( \Throwable $e ) {
-				// ignore.
+			// JAB-96: don't sever a persistent (pconnect) socket on a normal
+			// wp_cache_close() — that would defeat pooling across FPM requests.
+			// Only close when non-persistent or forced (e.g. a bad connection).
+			if ( ! $this->persistent || $force ) {
+				try {
+					$this->redis->close();
+				} catch ( \Throwable $e ) {
+					// ignore.
+				}
 			}
 		}
 		if ( is_resource( $this->stream ) ) {
 			@fclose( $this->stream ); // phpcs:ignore
 		}
-		$this->stream    = null;
-		$this->redis     = null;
-		$this->connected = false;
+		$this->stream     = null;
+		$this->redis      = null;
+		$this->connected  = false;
+		$this->persistent = false;
 	}
 
 	// ---------------------------------------------------------------------
