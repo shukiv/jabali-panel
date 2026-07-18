@@ -78,3 +78,5 @@ flagged for sign-off.
 - **P3** JAB-105 audit_events anchor-prune + verify.
 
 Ship P1 first (the "configurable in Server Settings" ask), then 102/124/105.
+
+**STATUS 2026-07-19: all phases implemented in PR #503** (P1 config+UI, P2 102/124, P3 105 audit anchor). Flip JAB-102/105/124 to Done when #503 merges.
