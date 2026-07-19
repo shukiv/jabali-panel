@@ -4,7 +4,6 @@
 import {
   App,
   Button,
-  Card,
   Form,
   Input,
   Modal,
@@ -23,6 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+import { CatalogCard, CategoryFilter } from "../../../components/catalog";
 import type { CreatePythonAppInput, Framework, PythonApp } from "./usePythonApps";
 import {
   fetchPythonAppLogs,
@@ -75,6 +75,19 @@ export function PythonAppsPage() {
   }, [domains.data]);
 
   const frameworks = useFrameworks();
+  const [catTags, setCatTags] = useState<string[]>([]);
+  const allFrameworkTags = useMemo(() => {
+    const s = new Set<string>();
+    (frameworks.data ?? []).forEach((f) => (f.tags ?? []).forEach((t) => s.add(t)));
+    return [...s].sort();
+  }, [frameworks.data]);
+  const visibleFrameworks = useMemo(
+    () =>
+      (frameworks.data ?? []).filter(
+        (f) => catTags.length === 0 || (f.tags ?? []).some((t) => catTags.includes(t)),
+      ),
+    [frameworks.data, catTags],
+  );
   const [createOpen, setCreateOpen] = useState(false);
   // When set, the create modal is a framework install: app_type + entrypoint
   // are derived from the catalog entry, so those fields are hidden (JAB-164).
@@ -227,27 +240,26 @@ export function PythonAppsPage() {
             key: "catalog",
             label: "Catalog",
             children: (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                  gap: 16,
-                }}
-              >
-                {(frameworks.data ?? []).map((fw) => (
-                  <Card
-                    key={fw.slug}
-                    size="small"
-                    title={
-                      <Space size={8}>
-                        {fw.icon ? (
+              <>
+                <CategoryFilter
+                  tags={allFrameworkTags}
+                  selected={catTags}
+                  onChange={setCatTags}
+                />
+                <Space wrap size={[16, 16]}>
+                  {visibleFrameworks.map((fw) => (
+                    <CatalogCard
+                      key={fw.slug}
+                      name={fw.name}
+                      iconNode={
+                        fw.icon ? (
                           <span
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
                               justifyContent: "center",
-                              width: 28,
-                              height: 28,
+                              width: 32,
+                              height: 32,
                               borderRadius: 6,
                               background: "#1f1f1f",
                               padding: 4,
@@ -259,40 +271,20 @@ export function PythonAppsPage() {
                               style={{ maxWidth: "100%", maxHeight: "100%" }}
                             />
                           </span>
-                        ) : null}
-                        <span>{fw.name}</span>
-                      </Space>
-                    }
-                    extra={<Tag color="blue">{fw.app_type.toUpperCase()}</Tag>}
-                    actions={[
-                      <Button
-                        key="install"
-                        type="link"
-                        onClick={() => openCreate(fw)}
-                      >
-                        Install
-                      </Button>,
-                    ]}
-                  >
-                    <Typography.Paragraph
-                      type="secondary"
-                      style={{ minHeight: 44, marginBottom: 8 }}
-                    >
-                      {fw.description}
-                    </Typography.Paragraph>
-                    <Space size={4} wrap>
-                      {(fw.tags ?? []).map((t) => (
-                        <Tag key={t}>{t}</Tag>
-                      ))}
-                    </Space>
-                  </Card>
-                ))}
-                {frameworks.data && frameworks.data.length === 0 ? (
-                  <Typography.Text type="secondary">
-                    No frameworks available.
-                  </Typography.Text>
-                ) : null}
-              </div>
+                        ) : undefined
+                      }
+                      meta={fw.app_type.toUpperCase()}
+                      description={fw.description}
+                      onInstall={() => openCreate(fw)}
+                    />
+                  ))}
+                  {frameworks.data && frameworks.data.length === 0 ? (
+                    <Typography.Text type="secondary">
+                      No frameworks available.
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+              </>
             ),
           },
         ]}

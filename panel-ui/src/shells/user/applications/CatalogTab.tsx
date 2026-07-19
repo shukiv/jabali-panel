@@ -2,10 +2,11 @@
 // modelled on the admin Docker-Apps catalog: a masonry of cards, one per
 // registered app descriptor (GET /applications/registry). Clicking a card
 // opens the Install drawer pre-targeted to that app_type.
-import { Alert, Button, Card, Empty, Space, Spin, Tag } from "antd";
+import { Alert, Empty, Space, Spin, Tag } from "antd";
 import { useMemo, useState } from "react";
 import { DatabaseOutlined } from "@icons";
 
+import { CatalogCard, CategoryFilter } from "../../../components/catalog";
 import { useAppRegistry } from "./appRegistry";
 import { CmsIcon } from "./CmsIcon";
 
@@ -29,11 +30,6 @@ export const CatalogTab = ({ onInstall }: Props) => {
     if (selectedTags.length === 0) return apps;
     return apps.filter((a) => (a.tags ?? []).some((t) => selectedTags.includes(t)));
   }, [apps, selectedTags]);
-
-  const toggleTag = (t: string) =>
-    setSelectedTags((cur) =>
-      cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t],
-    );
 
   if (isLoading) {
     return (
@@ -65,99 +61,31 @@ export const CatalogTab = ({ onInstall }: Props) => {
 
   return (
     <>
-      {allTags.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <Space size={[8, 8]} wrap>
-            {allTags.map((t) => (
-              <Tag.CheckableTag
-                key={t}
-                checked={selectedTags.includes(t)}
-                onChange={() => toggleTag(t)}
-              >
-                {t}
-              </Tag.CheckableTag>
-            ))}
-            {selectedTags.length > 0 && (
-              <Button type="link" size="small" onClick={() => setSelectedTags([])}>
-                Clear
-              </Button>
-            )}
-          </Space>
-        </div>
-      )}
+      <CategoryFilter tags={allTags} selected={selectedTags} onChange={setSelectedTags} />
       {visibleApps.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description="No applications match the selected tags"
         />
       ) : (
-        <div
-          style={{
-            columnGap: 16,
-            // As many >=320px columns as the viewport fits: 1 col mobile,
-            // 2 tablet, 3+ desktop, no media queries. Same trick as the
-            // docker-apps catalog masonry.
-            columns: "320px",
-          }}
-        >
+        <Space wrap size={[16, 16]}>
           {visibleApps.map((app) => (
-        <div
-          key={app.name}
-          style={{
-            breakInside: "avoid",
-            marginBottom: 16,
-            display: "inline-block",
-            width: "100%",
-          }}
-        >
-          <Card
-            hoverable
-            onClick={() => onInstall(app.name)}
-            styles={{ body: { padding: 16 } }}
-            actions={[
-              <Button type="link" key="install">
-                Install
-              </Button>,
-            ]}
-          >
-            <Card.Meta
-              avatar={
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 10,
-                    background: "rgba(0, 0, 0, 0.03)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <CmsIcon appType={app.name} size={26} />
-                </div>
+            <CatalogCard
+              key={app.name}
+              name={app.display_name}
+              iconNode={<CmsIcon appType={app.name} size={32} />}
+              meta={
+                app.requires_db ? (
+                  <Tag icon={<DatabaseOutlined />} style={{ marginInlineEnd: 0 }}>
+                    Database
+                  </Tag>
+                ) : undefined
               }
-              title={
-                <Space size={6} wrap>
-                  <span>{app.display_name}</span>
-                  {app.requires_db && (
-                    <Tag
-                      icon={<DatabaseOutlined />}
-                      style={{ marginInlineEnd: 0 }}
-                    >
-                      Database
-                    </Tag>
-                  )}
-                </Space>
-              }
-              description={
-                <div style={{ whiteSpace: "pre-line" }}>{app.description}</div>
-              }
+              description={app.description}
+              onInstall={() => onInstall(app.name)}
             />
-          </Card>
-            </div>
           ))}
-        </div>
+        </Space>
       )}
     </>
   );

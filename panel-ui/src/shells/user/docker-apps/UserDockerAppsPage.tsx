@@ -5,12 +5,12 @@
 // backend 403s docker_tenant_not_enabled).
 import { useMemo, useState } from "react";
 import { RowActions } from "../../../components/RowActions";
+import { CatalogCard, CategoryFilter } from "../../../components/catalog";
 import {
   Alert,
   Avatar,
   Button,
   AutoComplete,
-  Card,
   Col,
   Descriptions,
   Empty,
@@ -370,57 +370,21 @@ export const UserDockerAppsPage = () => {
             label: "Catalog",
             children: (
               <>
-                {allCatalogTags.length > 0 && (
-                  <Space size={[8, 8]} wrap style={{ marginBottom: 16 }}>
-                    {allCatalogTags.map((t) => (
-                      <Tag.CheckableTag
-                        key={t}
-                        checked={catalogTags.includes(t)}
-                        onChange={() =>
-                          setCatalogTags((cur) =>
-                            cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t],
-                          )
-                        }
-                      >
-                        {t}
-                      </Tag.CheckableTag>
-                    ))}
-                    {catalogTags.length > 0 && (
-                      <Button type="link" size="small" onClick={() => setCatalogTags([])}>
-                        Clear
-                      </Button>
-                    )}
-                  </Space>
-                )}
+                <CategoryFilter
+                  tags={allCatalogTags}
+                  selected={catalogTags}
+                  onChange={setCatalogTags}
+                />
                 <Space wrap size={[16, 16]}>
                   {visibleCatalog.map((e) => (
-                    <Card
+                    <CatalogCard
                       key={e.slug}
-                      size="small"
-                      style={{ width: 240 }}
-                      styles={{ body: { display: "flex", flexDirection: "column", gap: 8 } }}
-                    >
-                      <Space>
-                        <img src={catalogIconUrl(e.slug)} alt="" width={32} height={32} />
-                        <div>
-                          <Typography.Text strong>{e.name}</Typography.Text>
-                          <br />
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            v{e.version}
-                          </Typography.Text>
-                        </div>
-                      </Space>
-                      <Typography.Paragraph
-                        type="secondary"
-                        ellipsis={{ rows: 3 }}
-                        style={{ fontSize: 12, margin: 0, minHeight: 48 }}
-                      >
-                        {e.description}
-                      </Typography.Paragraph>
-                      <Button type="primary" size="small" block onClick={() => setInstallFor(e)}>
-                        Install
-                      </Button>
-                    </Card>
+                      name={e.name}
+                      iconUrl={catalogIconUrl(e.slug)}
+                      meta={`v${e.version}`}
+                      description={e.description}
+                      onInstall={() => setInstallFor(e)}
+                    />
                   ))}
                   {catalog.data?.length === 0 && (
                     <Typography.Text type="secondary">No apps available to install.</Typography.Text>

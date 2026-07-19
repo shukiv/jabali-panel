@@ -1,6 +1,6 @@
 // AdminDockerAppsPage — landing page for the M48 marketplace.
 // Two tabs: Catalog (browse + install) and Installed (lifecycle).
-import { App, Avatar, Button, Card, Col, Drawer, Empty, Input, Modal, Row, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { App, Avatar, Button, Col, Drawer, Empty, Input, Modal, Row, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { humanBytes } from "../../../utils/bytes";
@@ -29,6 +29,7 @@ import { useOneQuery } from "../../../hooks/useQueries";
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, ownerLabel } from "../../../components/admin/entityLinks";
 import { InstallDrawer } from "./InstallDrawer";
+import { CatalogCard, CategoryFilter } from "../../../components/catalog";
 import { LogsDrawer } from "./LogsDrawer";
 import { ExecDrawer } from "./ExecDrawer";
 import { BackupsDrawer } from "./BackupsDrawer";
@@ -402,76 +403,23 @@ export const AdminDockerAppsPage = () => {
             label: "Catalog",
             children: (
               <>
-              {allCatalogTags.length > 0 && (
-                <Space size={[8, 8]} wrap style={{ marginBottom: 16 }}>
-                  {allCatalogTags.map((t) => (
-                    <Tag.CheckableTag
-                      key={t}
-                      checked={catalogTags.includes(t)}
-                      onChange={() =>
-                        setCatalogTags((cur) =>
-                          cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t],
-                        )
-                      }
-                    >
-                      {t}
-                    </Tag.CheckableTag>
-                  ))}
-                  {catalogTags.length > 0 && (
-                    <Button type="link" size="small" onClick={() => setCatalogTags([])}>
-                      Clear
-                    </Button>
-                  )}
-                </Space>
-              )}
-              <div
-                style={{
-                  columnGap: 16,
-                  // CSS shorthand: as many columns of >=320px as the
-                  // viewport fits. Works at mobile (1 col), tablet (2),
-                  // desktop (3+) without media queries.
-                  columns: "320px",
-                }}
-                className="docker-apps-catalog-masonry"
-              >
+              <CategoryFilter
+                tags={allCatalogTags}
+                selected={catalogTags}
+                onChange={setCatalogTags}
+              />
+              <Space wrap size={[16, 16]}>
                 {visibleCatalog.map((e) => (
-                  <div
+                  <CatalogCard
                     key={e.slug}
-                    style={{ breakInside: "avoid", marginBottom: 16, display: "inline-block", width: "100%" }}
-                  >
-                    <Card
-                      hoverable
-                      onClick={() => setInstallEntry(e)}
-                      styles={{ body: { padding: 16 } }}
-                      actions={[<Button type="link" key="install">Install</Button>]}
-                    >
-                      <Card.Meta
-                        avatar={
-                          <Avatar
-                            shape="square"
-                            size={40}
-                            src={`/api/v1/admin/docker-apps/catalog/${e.slug}/icon?theme=${mode}`}
-                            style={{ backgroundColor: "transparent", color: "#1f1f1f" }}
-                          >
-                            {e.name[0]}
-                          </Avatar>
-                        }
-                        title={
-                          <Space size={6} wrap>
-                            <span>{e.name}</span>
-                            <Tag style={{ marginInlineEnd: 0 }}>{e.version}</Tag>
-                          </Space>
-                        }
-                        description={
-                          <div style={{ whiteSpace: "pre-line" }}>
-                            {e.description}
-                          </div>
-                        }
-                      />
-                    </Card>
-                  </div>
+                    name={e.name}
+                    iconUrl={`/api/v1/admin/docker-apps/catalog/${e.slug}/icon?theme=${mode}`}
+                    meta={`v${e.version}`}
+                    description={e.description}
+                    onInstall={() => setInstallEntry(e)}
+                  />
                 ))}
-              </div>
+              </Space>
               </>
             ),
           },
