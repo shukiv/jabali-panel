@@ -333,6 +333,50 @@ components:
         charset: { type: string }
         collation: { type: string }
         created_at: { type: string, format: date-time }
+    BackupJob:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        user_id: { type: string, format: ulid, nullable: true }
+        destination_id: { type: string, format: ulid }
+        schedule_id: { type: string, format: ulid, nullable: true }
+        run_id: { type: string, nullable: true }
+        kind: { type: string, example: user }
+        status: { type: string, enum: [queued, running, success, failed, cancelled] }
+        snapshot_id: { type: string, nullable: true }
+        bytes_added: { type: integer }
+        bytes_total: { type: integer }
+        error_text: { type: string, nullable: true }
+        source_hostname: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+    BackupDestination:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        name: { type: string }
+        kind: { type: string, enum: [sftp, s3, b2, local] }
+        url: { type: string }
+        enabled: { type: boolean }
+        password_rotated_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BackupSchedule:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        kind: { type: string }
+        user_id: { type: string, format: ulid, nullable: true }
+        cron_expr: { type: string, example: "0 3 * * *" }
+        enabled: { type: boolean }
+        keep_daily: { type: integer }
+        keep_weekly: { type: integer }
+        keep_monthly: { type: integer }
+        last_run_at: { type: string, format: date-time, nullable: true }
+        next_run_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     Error:
       type: object
       properties:
@@ -1975,7 +2019,10 @@ paths:
       tags: [Backup Destinations]
       summary: List backup destinations
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupDestination" } } } }
     post:
       tags: [Backup Destinations]
       summary: Create backup destination
@@ -1994,7 +2041,9 @@ paths:
       summary: Get backup destination
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/BackupDestination" } } } }
+        "404": { description: Not found }
     patch:
       tags: [Backup Destinations]
       summary: Update backup destination
@@ -2044,7 +2093,10 @@ paths:
       summary: Jobs backup runs
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: run_id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupJob" } } } }
 
 
   # --- Backup Schedules (auto) ---
@@ -2054,7 +2106,10 @@ paths:
       tags: [Backup Schedules]
       summary: List backup schedules
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupSchedule" } } } }
     post:
       tags: [Backup Schedules]
       summary: Create backup schedule
@@ -2073,7 +2128,9 @@ paths:
       summary: Get backup schedule
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/BackupSchedule" } } } }
+        "404": { description: Not found }
     patch:
       tags: [Backup Schedules]
       summary: Update backup schedule
@@ -2097,7 +2154,10 @@ paths:
       tags: [Backups]
       summary: List backups
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupJob" } } } }
 
   /admin/backups/restore:
     post:
@@ -2118,7 +2178,9 @@ paths:
       summary: Get backup
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/BackupJob" } } } }
+        "404": { description: Not found }
 
   /admin/backups/{job_id}/cancel:
     post:
@@ -2150,7 +2212,9 @@ paths:
       summary: Status backups
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/BackupJob" } } } }
+        "404": { description: Not found }
 
 
   # --- Bandwidth (auto) ---
