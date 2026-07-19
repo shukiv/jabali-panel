@@ -52,6 +52,12 @@ tags:
     description: Admin Docker-compose app catalog installs (M48) — lifecycle, env, backups.
   - name: Python Apps
     description: Per-user Python (WSGI/ASGI) app installs — lifecycle, env, logs.
+  - name: Mail Groups
+    description: Distribution lists / shared mailboxes on owned mail domains.
+  - name: Malware
+    description: Admin malware scanning (M33) — scans, quarantine, events, YARA rules, signatures.
+  - name: CrowdSec
+    description: Admin CrowdSec engine — alerts, decisions, allow/block lists, bouncers, AppSec, hub.
   - name: DDNS
     description: Dynamic-DNS shim — DynDNS v2 protocol-compatible.
   - name: Domains
@@ -1201,3 +1207,371 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { action: { type: string, enum: [start, stop, restart] } } } } } }
       responses: { "200": { description: Applied } }
+
+
+
+  # --- Mail Groups ---
+
+  /admin/mailgroups:
+    get:
+      tags: [Mail Groups]
+      summary: List all mail groups (admin)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/mailgroups:
+    get:
+      tags: [Mail Groups]
+      summary: List a domain's mail groups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Mail Groups]
+      summary: Create a mail group
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
+  /mailgroups/{gid}:
+    get:
+      tags: [Mail Groups]
+      summary: Get a mail group
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: gid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Mail Groups]
+      summary: Update a mail group
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: gid, required: true, schema: { type: string } } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [Mail Groups]
+      summary: Delete a mail group
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: gid, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /mailgroups/{gid}/members:
+    put:
+      tags: [Mail Groups]
+      summary: Set a mail group's members
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: gid, required: true, schema: { type: string } } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
+  /mailgroups/{gid}/members/{mbid}:
+    post:
+      tags: [Mail Groups]
+      summary: Add a member
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: gid, required: true, schema: { type: string } }, { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [Mail Groups]
+      summary: Remove a member
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: gid, required: true, schema: { type: string } }, { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+
+  # --- Malware ---
+
+  /admin/security/malware/status:
+    get:
+      tags: [Malware]
+      summary: Malware subsystem status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/settings:
+    get:
+      tags: [Malware]
+      summary: Get malware settings
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Malware]
+      summary: Update malware settings
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/scan:
+    post:
+      tags: [Malware]
+      summary: Start a malware scan
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "202": { description: OK } }
+
+  /admin/security/malware/scan/users:
+    get:
+      tags: [Malware]
+      summary: List users with scans
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/scan/{id}/status:
+    get:
+      tags: [Malware]
+      summary: Scan status
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/events:
+    get:
+      tags: [Malware]
+      summary: List malware events
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/event:
+    post:
+      tags: [Malware]
+      summary: Record a malware event
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/audit/recent:
+    get:
+      tags: [Malware]
+      summary: Recent scan audit
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/quarantine:
+    get:
+      tags: [Malware]
+      summary: List quarantined files
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/quarantine/{id}/restore:
+    post:
+      tags: [Malware]
+      summary: Restore a quarantined file
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/malware/quarantine/{id}:
+    delete:
+      tags: [Malware]
+      summary: Delete a quarantined file
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/security/malware/yara:
+    get:
+      tags: [Malware]
+      summary: List custom YARA rules
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Malware]
+      summary: Add a custom YARA rule
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "201": { description: OK } }
+
+  /admin/security/malware/yara/{filename}:
+    patch:
+      tags: [Malware]
+      summary: Update a YARA rule
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: filename, required: true, schema: { type: string } } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [Malware]
+      summary: Delete a YARA rule
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: filename, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/security/malware/update-signatures:
+    post:
+      tags: [Malware]
+      summary: Update malware signatures
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "202": { description: OK } }
+
+
+  # --- CrowdSec ---
+
+  /admin/security/crowdsec/status:
+    get:
+      tags: [CrowdSec]
+      summary: Engine status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/metrics:
+    get:
+      tags: [CrowdSec]
+      summary: Engine metrics
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/alerts:
+    get:
+      tags: [CrowdSec]
+      summary: List alerts
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/alerts/{id}:
+    get:
+      tags: [CrowdSec]
+      summary: Get an alert
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/alerts/timeseries:
+    get:
+      tags: [CrowdSec]
+      summary: Alerts time series
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/alerts/top-sources:
+    get:
+      tags: [CrowdSec]
+      summary: Top alert sources
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/decisions:
+    get:
+      tags: [CrowdSec]
+      summary: List decisions (bans)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [CrowdSec]
+      summary: Add a decision
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "201": { description: OK } }
+    delete:
+      tags: [CrowdSec]
+      summary: Delete all decisions
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/decisions/{id}:
+    delete:
+      tags: [CrowdSec]
+      summary: Delete a decision
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/security/crowdsec/allowlists:
+    get:
+      tags: [CrowdSec]
+      summary: List allowlist entries
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [CrowdSec]
+      summary: Add an allowlist entry
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "201": { description: OK } }
+    delete:
+      tags: [CrowdSec]
+      summary: Delete an allowlist entry
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/blocklists:
+    get:
+      tags: [CrowdSec]
+      summary: List blocklists
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/blocklists/refresh:
+    post:
+      tags: [CrowdSec]
+      summary: Refresh blocklists
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "202": { description: OK } }
+
+  /admin/security/crowdsec/bouncers:
+    get:
+      tags: [CrowdSec]
+      summary: List bouncers
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/profiles:
+    get:
+      tags: [CrowdSec]
+      summary: Get profiles
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [CrowdSec]
+      summary: Update profiles
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/hub:
+    get:
+      tags: [CrowdSec]
+      summary: Hub collections status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [CrowdSec]
+      summary: Remove a hub item
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/hub/install:
+    post:
+      tags: [CrowdSec]
+      summary: Install a hub item
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "202": { description: OK } }
+
+  /admin/security/crowdsec/captcha:
+    get:
+      tags: [CrowdSec]
+      summary: Get captcha config
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [CrowdSec]
+      summary: Update captcha config
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
+  /admin/security/crowdsec/appsec/geoblock:
+    get:
+      tags: [CrowdSec]
+      summary: Get AppSec geoblock config
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [CrowdSec]
+      summary: Update AppSec geoblock
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
