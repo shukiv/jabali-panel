@@ -144,3 +144,54 @@ func TestScaffoldPythonApp_DoesNotClobberOperatorEnv(t *testing.T) {
 		t.Errorf("operator ALLOWED_HOSTS clobbered: %q", got["DJANGO_ALLOWED_HOSTS"])
 	}
 }
+
+// TestScaffoldPythonApp_PatchScript covers the JAB-164 patch-script path
+// (Wagtail/Channels): an entry that ships a patch.py must dispatch patch_script
+// + env + generate (NOT harden_django), with the settings module, static root
+// and domain-defaulted ALLOWED_HOSTS in the env, and mint the secret.
+func TestScaffoldPythonApp_PatchScript(t *testing.T) {
+	cat, errs := pyframeworks.LoadDir("../../../install/py-frameworks")
+	if len(errs) != 0 {
+		t.Fatalf("catalog load errors: %v", errs)
+	}
+	ag := &scaffoldStubAgent{}
+	repo := &stubPyRepo{}
+	r := &Reconciler{
+		agent:        ag,
+		pythonApps:   repo,
+		pyFrameworks: cat,
+		domains:      &stubDomainRepo{name: "cms.example.com"},
+		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	app := &models.PythonApp{
+		ID: "01APPWAG", UserID: "01U", DomainID: "01D",
+		Framework: "wagtail", AppRoot: "/home/t/wag", PythonVersion: "3.12",
+	}
+	if ok := r.scaffoldPythonApp(context.Background(), app, "t"); !ok {
+		t.Fatal("scaffoldPythonApp returned false")
+	}
+
+	if _, ok := ag.params["patch_script"].(string); !ok || ag.params["patch_script"].(string) == "" {
+		t.Fatalf("patch_script must be sent for a patch-script framework")
+	}
+	if ag.params["harden_django"] != nil {
+		t.Errorf("harden_django must NOT be sent when a patch script is used")
+	}
+	gen, _ := ag.params["generate"].([]string)
+	if len(gen) != 1 || gen[0] != "DJANGO_SECRET_KEY" {
+		t.Errorf("generate = %v, want [DJANGO_SECRET_KEY]", ag.params["generate"])
+	}
+	env, _ := ag.params["env"].(map[string]string)
+	if env["DJANGO_SETTINGS_MODULE"] != "config.settings.production" {
+		t.Errorf("env DJANGO_SETTINGS_MODULE = %q, want config.settings.production", env["DJANGO_SETTINGS_MODULE"])
+	}
+	if env["DJANGO_ALLOWED_HOSTS"] != "cms.example.com" {
+		t.Errorf("env DJANGO_ALLOWED_HOSTS = %q, want the mounted domain", env["DJANGO_ALLOWED_HOSTS"])
+	}
+	if env["JAB_STATIC_ROOT"] == "" {
+		t.Errorf("env JAB_STATIC_ROOT must be set for the patch to place STATIC_ROOT")
+	}
+	if repo.marked != app.ID {
+		t.Errorf("app not marked scaffolded")
+	}
+}
