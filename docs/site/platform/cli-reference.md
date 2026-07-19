@@ -4283,8 +4283,9 @@ jabali python-app create [flags]
 - `--base-uri` — mount path on the domain (default `/`)
 - `--domain` — domain name to mount on (resolved to its id)
 - `--domain-id` — domain id to mount on (or use --domain)
-- `--entrypoint` — module:callable, e.g. myapp.wsgi:application (required)
+- `--entrypoint` — module:callable, e.g. myapp.wsgi:application (required unless --framework)
 - `--env` — KEY=VALUE (repeatable) (default `[]`)
+- `--framework` — marketplace slug (e.g. django, flask, fastapi); derives app-type/entrypoint and scaffolds the starter
 - `--name` — app name (required)
 - `--python-version` — Python version, e.g. 3.12 (required)
 
@@ -4323,6 +4324,14 @@ jabali python-app env set <app-id> <KEY=VALUE> [<KEY=VALUE>...] [flags]
 **Flags:**
 
 - `--replace` — replace the entire env set instead of merging
+
+#### `jabali python-app frameworks`
+
+List the Python frameworks installable via --framework
+
+```
+jabali python-app frameworks
+```
 
 #### `jabali python-app list`
 
