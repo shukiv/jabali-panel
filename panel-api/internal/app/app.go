@@ -22,6 +22,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
@@ -104,6 +105,7 @@ type Deps struct {
 	DockerApps     repository.DockerAppRepository
 	PythonApps     repository.PythonAppRepository
 	DockerCatalog  *dockerapp.Catalog
+	PyFrameworks   *pyframeworks.Catalog
 	SSHKeys        repository.SSHKeyRepository
 	LimitOverrides repository.UserLimitOverrideRepository
 	// M6.5 email feature repositories. Autoresponders/Forwarders/MailboxShares
@@ -1193,6 +1195,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Settings:   deps.ServerSettings,
 				Agent:      deps.Agent,
 				Reconciler: deps.Reconciler,
+				Catalog:    deps.PyFrameworks,
 			})
 		}
 

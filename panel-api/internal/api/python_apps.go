@@ -14,6 +14,7 @@ import (
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -27,6 +28,9 @@ type PythonAppHandlerConfig struct {
 	Settings   repository.ServerSettingsRepository
 	Agent      agent.AgentInterface
 	Reconciler interface{ Schedule(id string) }
+	// Catalog is the JAB-164 framework marketplace (optional). Drives
+	// GET /frameworks and the framework-driven create path.
+	Catalog *pyframeworks.Catalog
 }
 
 type pythonAppHandler struct{ cfg PythonAppHandlerConfig }
@@ -39,6 +43,7 @@ func RegisterPythonAppRoutes(g *gin.RouterGroup, cfg PythonAppHandlerConfig) {
 	grp.Use(h.requireEnabled)
 	grp.GET("", h.list)
 	grp.GET("/versions", h.versions)
+	grp.GET("/frameworks", h.frameworks)
 	grp.POST("", h.create)
 	grp.GET("/:id", h.get)
 	grp.DELETE("/:id", h.delete)
@@ -126,9 +131,12 @@ type createPythonAppRequest struct {
 	PythonVersion string            `json:"python_version" binding:"required"`
 	AppRoot       string            `json:"app_root" binding:"required"`
 	AppType       string            `json:"app_type"`
-	Entrypoint    string            `json:"entrypoint" binding:"required"`
+	Entrypoint    string            `json:"entrypoint"` // required unless Framework is set
 	BaseURI       string            `json:"base_uri"`
 	Env           map[string]string `json:"env,omitempty"`
+	// Framework, when set, is a marketplace slug (JAB-164). It derives
+	// app_type + entrypoint from the catalog and drives the one-shot scaffold.
+	Framework string `json:"framework,omitempty"`
 }
 
 func (h *pythonAppHandler) create(c *gin.Context) {
@@ -141,6 +149,28 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
+	}
+	// JAB-164: a framework install derives app_type + entrypoint from the
+	// catalog entry and carries the static split for the nginx alias.
+	var fwStaticURL, fwStaticRoot string
+	if req.Framework != "" {
+		if h.cfg.Catalog == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "framework_catalog_unavailable"})
+			return
+		}
+		fe, ok := h.cfg.Catalog.Get(req.Framework)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_framework", "detail": req.Framework})
+			return
+		}
+		spec, serr := fe.ResolveCreate()
+		if serr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "resolve_framework", "detail": serr.Error()})
+			return
+		}
+		req.AppType = spec.AppType
+		req.Entrypoint = spec.Entrypoint
+		fwStaticURL, fwStaticRoot = spec.StaticURL, spec.StaticRoot
 	}
 	if req.AppType == "" {
 		req.AppType = "wsgi"
@@ -237,6 +267,7 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		Entrypoint:    req.Entrypoint,
 		BaseURI:       req.BaseURI,
 		LoopbackPort:  &port,
+		Framework:     req.Framework,
 		Status:        models.PythonAppStatusPending,
 	}
 	if err := h.cfg.Apps.Create(ctx, app); err != nil {
@@ -251,8 +282,8 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		_ = h.cfg.Apps.ReplaceEnv(ctx, app.ID, envMapToRows(req.Env))
 	}
 
-	// Attach the nginx proxy to the domain (reuses the proxy_pass rule path).
-	h.attachProxyRule(ctx, domain, app)
+	// Attach the nginx proxy (+ framework static_alias) to the domain.
+	h.attachProxyRule(ctx, domain, app, fwStaticURL, fwStaticRoot)
 	if h.cfg.Reconciler != nil {
 		h.cfg.Reconciler.Schedule(domain.ID)
 	}
@@ -339,25 +370,60 @@ func (h *pythonAppHandler) putEnv(c *gin.Context) {
 
 // attachProxyRule appends a proxy_pass nginx rule (base_uri -> loopback port)
 // to the domain so the existing reconciler renders the vhost.
-func (h *pythonAppHandler) attachProxyRule(ctx context.Context, domain *models.Domain, app *models.PythonApp) {
-	target := proxyTargetFor(app)
-	ws := true
-	rule := models.NginxRule{Type: "proxy_pass", Path: app.BaseURI, Target: target, Websocket: &ws}
+func (h *pythonAppHandler) attachProxyRule(ctx context.Context, domain *models.Domain, app *models.PythonApp, staticURL, staticRoot string) {
 	rules := append(models.NginxRules{}, domain.NginxRules...)
-	// Replace any existing rule for the same path, else append.
-	replaced := false
-	for i := range rules {
-		if rules[i].Type == "proxy_pass" && rules[i].Path == app.BaseURI {
-			rules[i] = rule
-			replaced = true
-			break
+	upsert := func(rule models.NginxRule) {
+		for i := range rules {
+			if rules[i].Type == rule.Type && rules[i].Path == rule.Path {
+				rules[i] = rule
+				return
+			}
 		}
-	}
-	if !replaced {
 		rules = append(rules, rule)
+	}
+	ws := true
+	upsert(models.NginxRule{Type: "proxy_pass", Path: app.BaseURI, Target: proxyTargetFor(app), Websocket: &ws})
+	// Framework static split (Django STATIC_ROOT): serve <base><static_url> from
+	// <app_root>/<static_root>. Django prefixes STATIC_URL with SCRIPT_NAME
+	// (=base_uri), so the location is base_uri + static_url.
+	if staticURL != "" && staticRoot != "" {
+		loc := strings.TrimSuffix(app.BaseURI, "/") + staticURL
+		alias := strings.TrimSuffix(app.AppRoot, "/") + "/" + strings.Trim(staticRoot, "/") + "/"
+		upsert(models.NginxRule{Type: "static_alias", Path: loc, Target: alias})
 	}
 	domain.NginxRules = rules
 	_ = h.cfg.Domains.Update(ctx, domain)
+}
+
+// frameworkDTO is the catalog projection the UI needs — no template bytes, and
+// snake_case keys consistent with the rest of the API.
+type frameworkDTO struct {
+	Slug        string   `json:"slug"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags,omitempty"`
+	Icon        string   `json:"icon,omitempty"`
+	Docs        string   `json:"docs,omitempty"`
+	AppType     string   `json:"app_type"`
+	Server      string   `json:"server"`
+	PythonMin   string   `json:"python_min,omitempty"`
+	NeedsDB     string   `json:"needs_db,omitempty"`
+}
+
+// frameworks lists the JAB-164 marketplace entries for the Catalog tab.
+func (h *pythonAppHandler) frameworks(c *gin.Context) {
+	out := []frameworkDTO{}
+	if h.cfg.Catalog != nil {
+		for _, e := range h.cfg.Catalog.All() {
+			out = append(out, frameworkDTO{
+				Slug: e.Slug, Name: e.Name, Version: e.Version, Description: e.Description,
+				Tags: e.Tags, Icon: e.Icon, Docs: e.Docs, AppType: e.AppType,
+				Server: e.Server, PythonMin: e.PythonMin, NeedsDB: e.NeedsDB,
+			})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"frameworks": out})
 }
 
 func (h *pythonAppHandler) detachProxyRule(ctx context.Context, domain *models.Domain, app *models.PythonApp) {

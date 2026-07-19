@@ -516,6 +516,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DockerApps = dockerAppRepo
 		deps.PythonApps = pythonAppRepo
 		deps.DockerCatalog = dockerCatalog
+		deps.PyFrameworks = pyCatalog
 		deps.LimitOverrides = limitOverridesRepo
 
 		// M18: resolve the /home mount once at startup. Passed to every

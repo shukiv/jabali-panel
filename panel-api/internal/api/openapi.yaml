@@ -1407,6 +1407,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: "[{ version, path }]" } }
 
+  /python-apps/frameworks:
+    get:
+      tags: [Python Apps]
+      summary: Framework marketplace catalog (one-click installs)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "{ frameworks: [{ slug, name, version, description, tags, app_type, server, python_min, needs_db }] }" } }
+
   /python-apps/{id}:
     get:
       tags: [Python Apps]
