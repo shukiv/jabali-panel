@@ -31,8 +31,31 @@ func newPythonAppCmd() *cobra.Command {
 		newPythonAppDeleteCmd(),
 		newPythonAppCreateCmd(),
 		newPythonAppEnvCmd(),
+		newPythonAppFrameworksCmd(),
 	)
 	return cmd
+}
+
+// newPythonAppFrameworksCmd lists the JAB-164 framework marketplace entries
+// usable with `python-app create --framework <slug>`.
+func newPythonAppFrameworksCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "frameworks",
+		Short: "List the Python frameworks installable via --framework",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cat := loadPyFrameworkCatalogCLI()
+			if jsonOutput {
+				return printJSON(cat.All())
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "%-12s %-8s %-9s %s\n", "SLUG", "TYPE", "SERVER", "DESCRIPTION")
+			for _, e := range cat.All() {
+				fmt.Fprintf(out, "%-12s %-8s %-9s %s\n", e.Slug, e.AppType, e.Server, e.Description)
+			}
+			return nil
+		},
+	}
 }
 
 func pythonAppRepoFromDB() repository.PythonAppRepository {

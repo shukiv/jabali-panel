@@ -4653,6 +4653,18 @@ build_backend() {
     _ok "synced docker-app catalog -> /usr/local/share/jabali/docker-apps/"
   fi
 
+  # JAB-164: sync the Python framework marketplace catalog (framework.yaml +
+  # template/ starters) into the production path panel-api + the CLI read at
+  # startup. Same rationale as the docker-app catalog above.
+  if [[ -d "$REPO_DIR/install/py-frameworks" ]]; then
+    install -d -m 0755 /usr/local/share/jabali/py-frameworks
+    rsync -a --delete \
+      --exclude=".git" \
+      "$REPO_DIR/install/py-frameworks/" \
+      /usr/local/share/jabali/py-frameworks/
+    _ok "synced py-framework catalog -> /usr/local/share/jabali/py-frameworks/"
+  fi
+
   # #406: bundle the jabali-cache WordPress plugin read-only into the
   # production path the agent installs FROM (wordpress.cache_set). Tenants
   # never supply plugin code; re-synced on every `jabali update`.

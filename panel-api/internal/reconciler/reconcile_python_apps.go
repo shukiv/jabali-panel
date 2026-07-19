@@ -4,13 +4,23 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/oklog/ulid/v2"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // WithPythonApps wires the python-app repository into the reconciler (ADR-0131).
 func (r *Reconciler) WithPythonApps(repo repository.PythonAppRepository) *Reconciler {
 	r.pythonApps = repo
+	return r
+}
+
+// WithPyFrameworks wires the JAB-164 framework marketplace catalog so the
+// reconciler can run one-shot framework scaffolds. Optional.
+func (r *Reconciler) WithPyFrameworks(cat *pyframeworks.Catalog) *Reconciler {
+	r.pyFrameworks = cat
 	return r
 }
 
@@ -46,6 +56,15 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 	if err != nil || user == nil || user.Username == nil || *user.Username == "" || user.IsAdmin {
 		r.failPythonApp(ctx, app.ID, "owner has no linux username")
 		return
+	}
+
+	// JAB-164: one-shot framework scaffold (starter project + pinned deps +
+	// generated secrets) before the first apply. Gated on scaffolded_at so it
+	// never re-runs over the tenant's code.
+	if app.Framework != "" && app.ScaffoldedAt == nil {
+		if !r.scaffoldPythonApp(ctx, app, *user.Username) {
+			return // scaffold failed; status already set to failed
+		}
 	}
 
 	envRows, _ := r.pythonApps.ListEnv(ctx, app.ID)
@@ -115,5 +134,106 @@ func (r *Reconciler) failPythonApp(ctx context.Context, id, msg string) {
 	r.log.Warn("pyapp: apply failed", "id", id, "reason", msg)
 	if err := r.pythonApps.UpdateStatus(ctx, id, models.PythonAppStatusFailed, &msg); err != nil {
 		r.log.Warn("pyapp: fail status update failed", "id", id, "err", err)
+	}
+}
+
+// scaffoldPythonApp lays down the framework starter (venv + pinned deps +
+// starter project + optional Django hardening) via app.python.scaffold, persists
+// generated secrets + framework default env, and stamps scaffolded_at. Returns
+// false and marks the app failed on any error. Runs once per app.
+func (r *Reconciler) scaffoldPythonApp(ctx context.Context, app *models.PythonApp, username string) bool {
+	if r.pyFrameworks == nil {
+		r.failPythonApp(ctx, app.ID, "framework catalog unavailable")
+		return false
+	}
+	entry, ok := r.pyFrameworks.Get(app.Framework)
+	if !ok {
+		r.failPythonApp(ctx, app.ID, "unknown framework "+app.Framework)
+		return false
+	}
+	spec, err := entry.ResolveCreate()
+	if err != nil {
+		r.failPythonApp(ctx, app.ID, "resolve framework: "+err.Error())
+		return false
+	}
+
+	var domainName string
+	if r.domains != nil {
+		if d, derr := r.domains.FindByID(ctx, app.DomainID); derr == nil && d != nil {
+			domainName = d.Name
+		}
+	}
+
+	params := map[string]any{
+		"app_id":         app.ID,
+		"username":       username,
+		"app_root":       app.AppRoot,
+		"python_version": app.PythonVersion,
+		"server":         spec.Server,
+		"requirements":   spec.Requirements,
+		"scaffold_kind":  spec.ScaffoldKind,
+	}
+	if spec.ScaffoldKind == "cmd" {
+		params["scaffold_argv"] = spec.ScaffoldCommand
+		params["project"] = spec.Project
+	} else {
+		params["template_files"] = spec.TemplateFiles
+	}
+	if spec.HardenSettings {
+		params["harden_django"] = true
+		params["static_root"] = spec.StaticRoot
+		params["allowed_hosts"] = domainName
+	}
+	if len(spec.PostInstall) > 0 {
+		params["post_install"] = spec.PostInstall
+	}
+
+	raw, err := r.agent.Call(ctx, "app.python.scaffold", params)
+	if err != nil {
+		r.failPythonApp(ctx, app.ID, "scaffold: "+err.Error())
+		return false
+	}
+	var res struct {
+		GeneratedEnv map[string]string `json:"generated_env"`
+		Skipped      bool              `json:"skipped"`
+	}
+	_ = json.Unmarshal(raw, &res)
+
+	r.persistFrameworkEnv(ctx, app, spec, res.GeneratedEnv, domainName)
+	if err := r.pythonApps.MarkScaffolded(ctx, app.ID); err != nil {
+		r.log.Warn("pyapp: mark scaffolded failed", "id", app.ID, "err", err)
+	}
+	return true
+}
+
+// persistFrameworkEnv merges the framework's default + generated env into the
+// app's env set WITHOUT clobbering values the operator already set. Generated
+// secrets (e.g. Django SECRET_KEY) come from the agent's scaffold result;
+// DJANGO_ALLOWED_HOSTS defaults to the mounted domain when the catalog leaves it
+// blank. Secrets live only in the app env (never in source), per ADR-0131.
+func (r *Reconciler) persistFrameworkEnv(ctx context.Context, app *models.PythonApp, spec pyframeworks.CreateSpec, generated map[string]string, domainName string) {
+	existing, _ := r.pythonApps.ListEnv(ctx, app.ID)
+	have := make(map[string]bool, len(existing))
+	merged := make([]models.PythonAppEnv, 0, len(existing)+len(spec.Env))
+	for _, e := range existing {
+		have[e.Key] = true
+		merged = append(merged, models.PythonAppEnv{ID: e.ID, AppID: app.ID, Key: e.Key, Value: e.Value})
+	}
+	for _, v := range spec.Env {
+		if v.Key == "" || have[v.Key] {
+			continue // never overwrite an operator-set value
+		}
+		val := v.Default
+		if v.Generate != "" {
+			val = generated[v.Key]
+		}
+		if v.Key == "DJANGO_ALLOWED_HOSTS" && val == "" {
+			val = domainName
+		}
+		have[v.Key] = true
+		merged = append(merged, models.PythonAppEnv{ID: ulid.Make().String(), AppID: app.ID, Key: v.Key, Value: val})
+	}
+	if err := r.pythonApps.ReplaceEnv(ctx, app.ID, merged); err != nil {
+		r.log.Warn("pyapp: persist framework env failed", "id", app.ID, "err", err)
 	}
 }

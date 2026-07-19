@@ -23,6 +23,9 @@ type PythonAppRepository interface {
 	ListByDomain(ctx context.Context, domainID string) ([]*models.PythonApp, error)
 	Update(ctx context.Context, app *models.PythonApp) error
 	UpdateStatus(ctx context.Context, id, status string, lastError *string) error
+	// MarkScaffolded stamps scaffolded_at=now so the reconciler's one-shot
+	// framework scaffold never re-runs over the tenant's code.
+	MarkScaffolded(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
 
 	// env
@@ -85,6 +88,12 @@ func (r *pythonAppRepo) UpdateStatus(ctx context.Context, id, status string, las
 	return translate(r.db.WithContext(ctx).Model(&models.PythonApp{}).
 		Where("id = ?", id).
 		Updates(map[string]any{"status": status, "last_error": lastError}).Error)
+}
+
+func (r *pythonAppRepo) MarkScaffolded(ctx context.Context, id string) error {
+	return translate(r.db.WithContext(ctx).Model(&models.PythonApp{}).
+		Where("id = ?", id).
+		Update("scaffolded_at", gorm.Expr("CURRENT_TIMESTAMP")).Error)
 }
 
 func (r *pythonAppRepo) Delete(ctx context.Context, id string) error {

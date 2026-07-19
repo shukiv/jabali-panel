@@ -12,6 +12,7 @@ package pyframeworks
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -83,6 +84,12 @@ type Entry struct {
 	// PostInstall are ordered steps run after pip install (e.g. migrate,
 	// collectstatic). Free-form tokens the scaffolder maps to framework actions.
 	PostInstall []string `yaml:"post_install,omitempty"`
+
+	// TemplateFiles is relpath->content for a kind=template scaffold, loaded from
+	// <slug>/template/** by LoadDir (NOT the YAML). Kept in-memory on the entry so
+	// the reconciler can ship the starter over agentwire without touching disk,
+	// mirroring the docker-app catalog's inline templates.
+	TemplateFiles map[string]string `yaml:"-"`
 }
 
 // Scaffold is how a starter project is generated.
@@ -138,6 +145,9 @@ func (e Entry) validate() error {
 			return errors.New("scaffold.command is required for kind=cmd")
 		}
 	case "template":
+		if len(e.TemplateFiles) == 0 {
+			return errors.New("scaffold.kind=template requires a non-empty template/ dir")
+		}
 	default:
 		return fmt.Errorf("scaffold.kind %q: must be cmd or template", e.Scaffold.Kind)
 	}
@@ -163,6 +173,41 @@ func (e Entry) validate() error {
 		}
 	}
 	return nil
+}
+
+// readTemplateDir reads every regular file under dir into a relpath->content
+// map (forward-slash keys). The agent re-validates each relpath before writing
+// (no traversal, not absolute), so this only needs to reject the unreadable.
+func readTemplateDir(dir string) (map[string]string, error) {
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return fmt.Errorf("template/%s is not a regular file", d.Name())
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			return rerr
+		}
+		body, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		out[filepath.ToSlash(rel)] = string(body)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read template dir: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("template/ dir is empty")
+	}
+	return out, nil
 }
 
 // Catalog is the loaded, immutable set of framework entries.
@@ -218,6 +263,15 @@ func LoadDir(root string) (*Catalog, []EntryError) {
 		if e.Slug != slug {
 			errs = append(errs, EntryError{Slug: slug, Err: fmt.Errorf("slug %q does not match dir %q", e.Slug, slug)})
 			continue
+		}
+		// Load the starter files for a template scaffold (validated below).
+		if e.Scaffold.Kind == "template" {
+			tf, terr := readTemplateDir(filepath.Join(root, slug, "template"))
+			if terr != nil {
+				errs = append(errs, EntryError{Slug: slug, Err: terr})
+				continue
+			}
+			e.TemplateFiles = tf
 		}
 		if verr := e.validate(); verr != nil {
 			errs = append(errs, EntryError{Slug: slug, Err: verr})

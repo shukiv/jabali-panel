@@ -17,8 +17,13 @@ type CreateSpec struct {
 	Requirements []string // pinned pip deps written to requirements.txt
 	Project      string   // scaffold project name (cmd scaffolds)
 
-	ScaffoldKind    string   // cmd | template
-	ScaffoldCommand []string // argv for a cmd scaffold (rendered); nil for template
+	ScaffoldKind    string            // cmd | template
+	ScaffoldCommand []string          // argv for a cmd scaffold (rendered); nil for template
+	TemplateFiles   map[string]string // relpath->content for a template scaffold; nil for cmd
+
+	// HardenSettings requests the Django-style settings.py rewrite (SECRET_KEY +
+	// ALLOWED_HOSTS from env, STATIC_ROOT). Derived from a secret_key generator.
+	HardenSettings bool
 
 	NeedsDB     string
 	StaticURL   string
@@ -28,6 +33,10 @@ type CreateSpec struct {
 	// generators) — kept separate so the caller writes them to the app's env,
 	// never to source.
 	GenerateEnv []EnvVar
+	// Env is the full declared default env (generated + static). The create flow
+	// merges these into the app's env after scaffolding, filling generated keys
+	// from the scaffolder's output.
+	Env []EnvVar
 }
 
 var (
@@ -80,10 +89,16 @@ func (e Entry) ResolveCreate() (CreateSpec, error) {
 		if len(spec.ScaffoldCommand) == 0 {
 			return CreateSpec{}, fmt.Errorf("scaffold.command rendered empty")
 		}
+	} else {
+		spec.TemplateFiles = e.TemplateFiles
 	}
+	spec.Env = append([]EnvVar(nil), e.DefaultEnv...)
 	for _, v := range e.DefaultEnv {
 		if v.Generate != "" {
 			spec.GenerateEnv = append(spec.GenerateEnv, v)
+		}
+		if v.Generate == "secret_key" {
+			spec.HardenSettings = true
 		}
 	}
 	return spec, nil

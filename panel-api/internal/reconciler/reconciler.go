@@ -23,6 +23,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -66,6 +67,11 @@ type Reconciler struct {
 	cronJobs repository.CronJobRepository
 	// pythonApps holds the python_apps repository (ADR-0131).
 	pythonApps repository.PythonAppRepository
+	// pyFrameworks is the loaded JAB-164 framework marketplace catalog. When a
+	// python_apps row carries a framework slug and hasn't been scaffolded, the
+	// reconciler resolves the entry here and dispatches app.python.scaffold
+	// before app.python.apply. Optional (nil = framework installs unavailable).
+	pyFrameworks *pyframeworks.Catalog
 
 	// dockerApps holds reference to the docker_apps repository (M48 Phase 1).
 	// Nil-safe: when unwired the docker-app tick is a no-op.

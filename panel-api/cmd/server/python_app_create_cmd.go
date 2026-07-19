@@ -19,7 +19,20 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 )
+
+// loadPyFrameworkCatalogCLI loads the JAB-164 framework catalog with the same
+// deployed-path + dev-fallback used by the server.
+func loadPyFrameworkCatalogCLI() *pyframeworks.Catalog {
+	cat, _ := pyframeworks.LoadDir("/usr/local/share/jabali/py-frameworks")
+	if cat.Len() == 0 {
+		if c2, _ := pyframeworks.LoadDir("install/py-frameworks"); c2.Len() > 0 {
+			return c2
+		}
+	}
+	return cat
+}
 
 // Validation regexes mirror api/python_apps.go.
 var (
@@ -39,6 +52,7 @@ func newPythonAppCreateCmd() *cobra.Command {
 		appRoot   string
 		baseURI   string
 		envPairs  []string
+		framework string
 	)
 	cmd := &cobra.Command{
 		Use:     "create",
@@ -48,6 +62,24 @@ func newPythonAppCreateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
+			}
+			// JAB-164: a framework install derives app_type/entrypoint (and a
+			// default python version) from the catalog entry; the reconciler then
+			// scaffolds the starter + deps + generated secrets before first apply.
+			if framework != "" {
+				fe, ok := loadPyFrameworkCatalogCLI().Get(framework)
+				if !ok {
+					return fmt.Errorf("unknown --framework %q (run `python-app frameworks` to list)", framework)
+				}
+				spec, serr := fe.ResolveCreate()
+				if serr != nil {
+					return fmt.Errorf("resolve framework %q: %w", framework, serr)
+				}
+				appType = spec.AppType
+				entry = spec.Entrypoint
+				if pyVersion == "" && fe.PythonMin != "" {
+					pyVersion = fe.PythonMin
+				}
 			}
 			if appType == "" {
 				appType = "wsgi"
@@ -105,6 +137,7 @@ func newPythonAppCreateCmd() *cobra.Command {
 				Entrypoint:    entry,
 				BaseURI:       baseURI,
 				LoopbackPort:  &port,
+				Framework:     framework,
 				Status:        models.PythonAppStatusPending,
 			}
 			if err := repo.Create(ctx, app); err != nil {
@@ -134,7 +167,8 @@ func newPythonAppCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&domain, "domain", "", "domain name to mount on (resolved to its id)")
 	cmd.Flags().StringVar(&pyVersion, "python-version", "", "Python version, e.g. 3.12 (required)")
 	cmd.Flags().StringVar(&appType, "app-type", "wsgi", "wsgi|asgi")
-	cmd.Flags().StringVar(&entry, "entrypoint", "", "module:callable, e.g. myapp.wsgi:application (required)")
+	cmd.Flags().StringVar(&entry, "entrypoint", "", "module:callable, e.g. myapp.wsgi:application (required unless --framework)")
+	cmd.Flags().StringVar(&framework, "framework", "", "marketplace slug (e.g. django, flask, fastapi); derives app-type/entrypoint and scaffolds the starter")
 	cmd.Flags().StringVar(&appRoot, "app-root", "", "app root under the owner's home (required)")
 	cmd.Flags().StringVar(&baseURI, "base-uri", "/", "mount path on the domain")
 	cmd.Flags().StringArrayVar(&envPairs, "env", nil, "KEY=VALUE (repeatable)")

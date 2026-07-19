@@ -48,6 +48,7 @@ func TestValidate_RejectsServerTypeMismatch(t *testing.T) {
 			AppType: AppTypeWSGI, Server: "gunicorn",
 			PipRequirements:    []string{"x==1"},
 			Scaffold:           Scaffold{Kind: "template"},
+			TemplateFiles:      map[string]string{"app.py": "app = object()\n"},
 			EntrypointTemplate: "app:app",
 		}
 	}

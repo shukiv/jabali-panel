@@ -30,6 +30,16 @@ type PythonApp struct {
 	// StartCommand overrides the derived gunicorn/uvicorn command when set.
 	StartCommand *string `gorm:"column:start_command;type:varchar(1024);null" json:"start_command,omitempty"`
 
+	// Framework is the marketplace slug this app was provisioned from (JAB-164),
+	// empty for hand-configured apps. When set and ScaffoldedAt is nil, the
+	// reconciler runs app.python.scaffold (starter project + pinned deps) before
+	// the first app.python.apply.
+	Framework string `gorm:"column:framework;type:varchar(32);null" json:"framework,omitempty"`
+	// ScaffoldedAt records when the framework starter was laid down. nil means the
+	// one-shot scaffold still needs to run; once set the reconciler never
+	// re-scaffolds over the tenant's code.
+	ScaffoldedAt *time.Time `gorm:"column:scaffolded_at;type:timestamp;null" json:"scaffolded_at,omitempty"`
+
 	Status      string  `gorm:"type:varchar(32);not null;default:'pending'" json:"status"`
 	CPULimit    *string `gorm:"column:cpu_limit;type:varchar(16);null" json:"cpu_limit,omitempty"`
 	MemoryLimit *string `gorm:"column:memory_limit;type:varchar(16);null" json:"memory_limit,omitempty"`

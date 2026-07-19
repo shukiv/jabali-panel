@@ -33,6 +33,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications/senders"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -224,6 +225,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 		for _, e := range dockerCatalogErrs {
 			slog.Default().Warn("docker-app catalog entry failed to load", "err", e.Error())
 		}
+		// JAB-164: load the Python framework marketplace catalog (same
+		// deployed-path + dev-fallback pattern as docker-apps). Non-fatal.
+		pyCatalog, pyCatalogErrs := pyframeworks.LoadDir("/usr/local/share/jabali/py-frameworks")
+		if pyCatalog.Len() == 0 {
+			if pc2, _ := pyframeworks.LoadDir("install/py-frameworks"); pc2.Len() > 0 {
+				pyCatalog = pc2
+			}
+		}
+		for _, e := range pyCatalogErrs {
+			slog.Default().Warn("py-framework catalog entry failed to load", "err", e.Error())
+		}
 		limitOverridesRepo := repository.NewUserLimitOverrideRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
@@ -320,6 +332,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithCronJobs(cronJobsRepo)
 		rec.WithDockerApps(dockerAppRepo)
 		rec.WithPythonApps(pythonAppRepo)
+		rec.WithPyFrameworks(pyCatalog)
 		rec.WithDockerCatalog(dockerCatalog)
 		// M18 wiring — packages + overrides + /home mount path so
 		// ReconcileUserLimits and ReconcileNginxRateLimits have every
