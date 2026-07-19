@@ -143,13 +143,19 @@ mail._domainkey IN TXT "v=DKIM1; k=rsa; p=abc"
 		t.Fatalf("ImportDNS: %v", err)
 	}
 	got := createdNames(recs)
-	for _, want := range []string{"digibandit/A", "pizza/A", "mail._domainkey/TXT"} {
+	for _, want := range []string{"digibandit/A", "pizza/A"} {
 		if !got[want] {
 			t.Errorf("expected %s imported; created=%v", want, recs.created)
 		}
 	}
 	if got["@/MX"] {
 		t.Errorf("source apex MX must be skipped (jabali bootstrap MX wins)")
+	}
+	// #327: source mail-infrastructure records (DKIM here) are NOT imported —
+	// jabali regenerates DKIM/SPF/DMARC for THIS server, so importing the
+	// source's would duplicate them and pin the old server's selector/IP.
+	if got["mail._domainkey/TXT"] {
+		t.Errorf("source DKIM must be dropped as mail-infra (jabali owns DKIM)")
 	}
 }
 

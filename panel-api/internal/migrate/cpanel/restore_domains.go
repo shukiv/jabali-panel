@@ -129,6 +129,16 @@ func ImportDomains(
 			CreatedAt:     now,
 			UpdatedAt:     now,
 		}
+		// #327: a source domain with NO mail must not inherit jabali's
+		// mail-by-default. MailProvider "none" makes the reconciler's
+		// includeMail=false (no MX/SPF/DMARC/mail-A bootstrap); email_enabled
+		// off keeps the DKIM + mail-cert reconcilers away. Mail domains fall
+		// through to domain.email_enable below (provider stays the "jabali"
+		// default).
+		if !mailDomains[domainName] {
+			d.MailProvider = models.MailProviderNone
+			d.EmailEnabled = false
+		}
 
 		// .htaccess -> typed Rule Builder entries (ADR-0130). The source
 		// docroot was rsynced into docRoot by the home-split step that runs
