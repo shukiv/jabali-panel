@@ -707,32 +707,56 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 
 	// GH #462: choose the compressor by what's actually installed. A box that
 	// lacks the zstd binary (installed before zstd became a dependency, then
-	// only ever `jabali update`d) fails `tar -I zstd` and hands the browser a
-	// 0-byte file. Fall back to an uncompressed tar so the download always works.
+	// only ever `jabali update`d) falls back to an uncompressed tar so the
+	// download always works.
 	useZstd := false
 	if _, lerr := exec.LookPath("zstd"); lerr == nil {
 		useZstd = true
 	}
-	tarArgs := []string{"-cf", "-"}
 	filename := job.ID + ".tar"
 	contentType := "application/x-tar"
+
+	// GH #462 round 3: build the archive as a Go pipeline (tar -> zstd), NOT
+	// `tar -I zstd` / `tar --zstd`. Those run the compressor through /bin/sh,
+	// which the panel's AppArmor profile deliberately does not grant (no shell),
+	// so under enforce the download died with "zstd: Cannot exec". Two direct
+	// execs stay on the profile's tar + zstd allowlist and never touch a shell.
+	tarCmd := exec.CommandContext(c.Request.Context(), "tar", "-cf", "-",
+		"-C", filepath.Dir(mat.Path), filepath.Base(mat.Path))
+	var tarErr, zstdErr bytes.Buffer
+	tarCmd.Stderr = &tarErr
+
+	streamCmd := tarCmd // the process whose stdout is streamed to the client
 	if useZstd {
-		tarArgs = []string{"-I", "zstd", "-cf", "-"}
 		filename = job.ID + ".tar.zst"
 		contentType = "application/zstd"
+		zstdCmd := exec.CommandContext(c.Request.Context(), "zstd", "-c", "-")
+		zstdCmd.Stderr = &zstdErr
+		tarOut, perr := tarCmd.StdoutPipe()
+		if perr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "tar_pipe", "detail": perr.Error()})
+			return
+		}
+		zstdCmd.Stdin = tarOut
+		streamCmd = zstdCmd
 	}
-	tarArgs = append(tarArgs, "-C", filepath.Dir(mat.Path), filepath.Base(mat.Path))
-	tarCmd := exec.CommandContext(c.Request.Context(), "tar", tarArgs...)
-	var tarErr bytes.Buffer
-	tarCmd.Stderr = &tarErr
-	stdout, perr := tarCmd.StdoutPipe()
+	stdout, perr := streamCmd.StdoutPipe()
 	if perr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "tar_pipe", "detail": perr.Error()})
 		return
 	}
+	// Start tar first so its stdout is flowing before zstd reads it.
 	if serr := tarCmd.Start(); serr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "tar_start", "detail": serr.Error()})
 		return
+	}
+	if useZstd {
+		if serr := streamCmd.Start(); serr != nil {
+			_ = tarCmd.Process.Kill()
+			_ = tarCmd.Wait()
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "zstd_start", "detail": serr.Error()})
+			return
+		}
 	}
 	// GH #462: read the first chunk BEFORE sending the download headers. If tar
 	// produces no output (missing binary, unreadable materialized path,
@@ -741,11 +765,15 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 	head := make([]byte, 64*1024)
 	n, rerr := io.ReadFull(stdout, head)
 	if n == 0 {
-		_ = tarCmd.Wait()
-		logErr("tar download produced no output", rerr, "job_id", job.ID, "stderr", strings.TrimSpace(tarErr.String()))
+		_ = streamCmd.Wait()
+		if useZstd {
+			_ = tarCmd.Wait()
+		}
+		detail := strings.TrimSpace(tarErr.String() + " " + zstdErr.String())
+		logErr("tar download produced no output", rerr, "job_id", job.ID, "stderr", detail)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error", "error": "archive_empty",
-			"detail": "could not build the download archive: " + strings.TrimSpace(tarErr.String()),
+			"detail": "could not build the download archive: " + detail,
 		})
 		return
 	}
@@ -757,8 +785,13 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 	if rerr == nil { // more than the first chunk remains
 		_, _ = io.Copy(c.Writer, stdout)
 	}
-	if werr := tarCmd.Wait(); werr != nil {
-		logErr("tar download", werr, "job_id", job.ID, "stderr", strings.TrimSpace(tarErr.String()))
+	if werr := streamCmd.Wait(); werr != nil {
+		logErr("archive download", werr, "job_id", job.ID, "stderr", strings.TrimSpace(tarErr.String()+" "+zstdErr.String()))
+	}
+	if useZstd {
+		if werr := tarCmd.Wait(); werr != nil {
+			logErr("archive download (tar)", werr, "job_id", job.ID, "stderr", strings.TrimSpace(tarErr.String()))
+		}
 	}
 }
 

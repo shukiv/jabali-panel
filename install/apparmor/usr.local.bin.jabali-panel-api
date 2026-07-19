@@ -116,7 +116,12 @@ profile jabali-panel flags=(attach_disconnected) {
   # download streams the materialized backup as a tar[.zst] (GH #462, backups.go
   # streamBackupArtifact) — without an exec rule the download fails
   # "fork/exec /usr/bin/tar: permission denied" under enforce.
+  # zstd (both merged-usr paths). Backup download no longer runs `tar -I zstd`
+  # (that shells out via /bin/sh to run the filter, which this profile does NOT
+  # grant — GH #462 round 3); the panel now pipes `tar` -> `zstd` itself, so both
+  # are direct execs matched here.
   /usr/bin/zstd               rix,
+  /bin/zstd                   rix,
   /usr/bin/goaccess           rix,
   /usr/bin/tar                rix,
   /bin/tar                    rix,
@@ -224,8 +229,14 @@ profile jabali-panel flags=(attach_disconnected) {
   # under /var/lib/jabali-backups/downloads/<job>/ (backups.go streamBackupArtifact).
   # Read-only + downloads/ only — the agent writes + cleans it, and the restic
   # repo (/var/lib/jabali-backups/repo, 0600 root:root) must stay off-limits.
+  # /var/lib/jabali-backups is a SYMLINK to /var/lib/jabali/backups; AppArmor
+  # matches the RESOLVED path, so the rule MUST use the real target (round 3 of
+  # GH #462: the symlink-path rules never matched → every read denied in
+  # enforce). Both spellings kept so it works whether or not the box symlinks.
   /var/lib/jabali-backups/downloads/     r,
   /var/lib/jabali-backups/downloads/**   r,
+  /var/lib/jabali/backups/downloads/     r,
+  /var/lib/jabali/backups/downloads/**   r,
   /var/log/jabali-panel/       rw,
   /var/log/jabali-panel/**     rwk,
 
