@@ -1,0 +1,18 @@
+slug: litestar
+name: Litestar
+version: "2.24"
+description: A batteries-included ASGI framework with fast routing, dependency injection, and OpenAPI, served by uvicorn.
+tags: [asgi, async, api]
+popularity: 55
+upstream: https://litestar.dev/
+docs: https://docs.litestar.dev/
+app_type: asgi
+server: uvicorn
+python_min: "3.9"
+pip_requirements:
+  - litestar==2.24.0
+  - "uvicorn[standard]==0.51.0"
+scaffold:
+  kind: template
+entrypoint_template: app:app
+needs_db: none

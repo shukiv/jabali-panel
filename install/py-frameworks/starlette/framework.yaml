@@ -1,0 +1,18 @@
+slug: starlette
+name: Starlette
+version: "1.3"
+description: A lightweight ASGI framework and toolkit — the async foundation under FastAPI — with a single-file starter served by uvicorn.
+tags: [asgi, async, micro]
+popularity: 60
+upstream: https://www.starlette.io/
+docs: https://www.starlette.io/
+app_type: asgi
+server: uvicorn
+python_min: "3.9"
+pip_requirements:
+  - starlette==1.3.1
+  - "uvicorn[standard]==0.51.0"
+scaffold:
+  kind: template
+entrypoint_template: main:app
+needs_db: none

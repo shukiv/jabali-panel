@@ -1,0 +1,18 @@
+slug: bottle
+name: Bottle
+version: "0.13"
+description: A fast, dependency-free single-file WSGI micro-framework, served by gunicorn.
+tags: [wsgi, micro]
+popularity: 40
+upstream: https://bottlepy.org/
+docs: https://bottlepy.org/docs/dev/
+app_type: wsgi
+server: gunicorn
+python_min: "3.9"
+pip_requirements:
+  - bottle==0.13.4
+  - gunicorn==23.0.0
+scaffold:
+  kind: template
+entrypoint_template: app:app
+needs_db: none

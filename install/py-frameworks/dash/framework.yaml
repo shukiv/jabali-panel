@@ -1,0 +1,18 @@
+slug: dash
+name: Dash
+version: "4.4"
+description: A Python framework for building analytical web apps and dashboards on Flask (WSGI), served by gunicorn.
+tags: [wsgi, dashboard, data]
+popularity: 65
+upstream: https://dash.plotly.com/
+docs: https://dash.plotly.com/
+app_type: wsgi
+server: gunicorn
+python_min: "3.9"
+pip_requirements:
+  - dash==4.4.0
+  - gunicorn==23.0.0
+scaffold:
+  kind: template
+entrypoint_template: app:server
+needs_db: none
