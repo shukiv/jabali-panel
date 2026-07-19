@@ -844,6 +844,15 @@ func cpanelRestoreCallback(
 			}
 			warnings = append(warnings, fmt.Sprintf("ssh: created=%d", sshRes.Created))
 			warnings = append(warnings, sshRes.Skipped...)
+			// #327: when keys were found but none imported, say WHY prominently —
+			// the per-key skip lines above are easy to miss. Two common reasons:
+			// migrations reset SSH access by default (JAB-53), and keys weaker than
+			// RSA-2048 are rejected.
+			if sshRes.Created == 0 && len(sshRes.Skipped) > 0 && !preserve.SSH {
+				warnings = append(warnings, "ssh: NO keys imported — SSH access is RESET on migration by default; re-add trusted keys in the SSH Keys page, or re-run with --preserve-source-state. (Keys weaker than RSA-2048 are always rejected as too weak — regenerate as ed25519 or RSA>=2048.)")
+			} else if sshRes.Created == 0 && len(sshRes.Skipped) > 0 {
+				warnings = append(warnings, "ssh: keys were found but none imported — see the ssh: lines above (a common cause is a key weaker than RSA-2048, which is rejected; regenerate as ed25519 or RSA>=2048).")
+			}
 		} else {
 			warnings = append(warnings, "ssh: skipped (websites disabled in plan)")
 		}
@@ -1129,7 +1138,13 @@ func cpanelRestoreCallback(
 		// overlay the bootstrapped zone instead of being clobbered by it. Apex
 		// NS + apex A/AAAA are filtered in ImportDNS (jabali owns the apex).
 		if plan.DNS {
-			dnsRes, derr := cpanel.ImportDNS(ctx, dnsZonesRepo, dnsRecordsRepo, domainsRepo, p.parsed)
+			// #327: pass this server's public IPv4 so ImportDNS can repoint any
+			// record that pointed at the source box (mail A, custom subdomains).
+			var serverIPv4 string
+			if s, serr := repository.NewServerSettingsRepository(sharedDB).Get(ctx); serr == nil && s != nil {
+				serverIPv4 = s.PublicIPv4
+			}
+			dnsRes, derr := cpanel.ImportDNS(ctx, dnsZonesRepo, dnsRecordsRepo, domainsRepo, p.parsed, serverIPv4)
 			if derr != nil {
 				return bytes, warnings, fmt.Errorf("dns: %w", derr)
 			}

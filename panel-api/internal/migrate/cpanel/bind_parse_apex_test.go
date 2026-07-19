@@ -104,7 +104,7 @@ www     IN  A   192.0.2.10
 `)
 	zones := &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{"example.com": {ID: "z1", Name: "example.com"}}}
 	recs := &fakeDNSRecordRepo{}
-	res, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed)
+	res, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed, "203.0.113.9")
 	if err != nil {
 		t.Fatalf("ImportDNS: %v", err)
 	}
@@ -139,7 +139,7 @@ mail._domainkey IN TXT "v=DKIM1; k=rsa; p=abc"
 `)
 	zones := &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{"example.com": {ID: "z1", Name: "example.com"}}}
 	recs := &fakeDNSRecordRepo{existing: []models.DNSRecord{{Name: "@", Type: "MX", Content: "10 mail.example.com"}}}
-	if _, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed); err != nil {
+	if _, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed, "203.0.113.9"); err != nil {
 		t.Fatalf("ImportDNS: %v", err)
 	}
 	got := createdNames(recs)
@@ -167,7 +167,7 @@ www IN A 192.0.2.1
 	zones := &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{}}
 	recs := &fakeDNSRecordRepo{}
 	// Neither the zone nor the domain exist -> domain_not_found, nothing created.
-	res, _ := ImportDNS(context.Background(), zones, recs, &fakeDomainRepo{byName: map[string]*models.Domain{}}, parsed)
+	res, _ := ImportDNS(context.Background(), zones, recs, &fakeDomainRepo{byName: map[string]*models.Domain{}}, parsed, "203.0.113.9")
 	if len(recs.created) != 0 {
 		t.Errorf("no records should be created when the domain is missing")
 	}
@@ -183,7 +183,7 @@ www IN A 192.0.2.1
 
 	// Zone missing but the domain EXISTS -> the zone is created + records land.
 	recs2 := &fakeDNSRecordRepo{}
-	res2, _ := ImportDNS(context.Background(), &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{}}, recs2, domains("example.com"), writeZone(t, "$ORIGIN example.com.\nwww IN A 192.0.2.1\n"))
+	res2, _ := ImportDNS(context.Background(), &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{}}, recs2, domains("example.com"), writeZone(t, "$ORIGIN example.com.\nwww IN A 192.0.2.1\n"), "203.0.113.9")
 	if !createdNames(recs2)["www/A"] {
 		t.Errorf("zone should be auto-created and www A imported; created=%v skipped=%v", recs2.created, res2.Skipped)
 	}
