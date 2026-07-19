@@ -15,14 +15,15 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"os/user"
+	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -223,21 +224,30 @@ if "STATIC_ROOT" not in s:
 open(path,"w").write(s)
 `
 
-// writeAsUser writes a file inside the tenant's app tree and chowns it to the
-// tenant. The agent runs as root so it can write anywhere; chowning keeps the
-// app tree owned by the user (the venv + code must be user-owned for the
-// loopback service unit that runs as that user).
+// writeAsUser writes a file inside the tenant's app tree AS THE TENANT.
+//
+// The agent runs as root, so a plain root os.WriteFile into the tenant-owned
+// app tree is a privilege-escalation primitive: the tenant can pre-plant a
+// symlink at `path` pointing anywhere on the host, and the root write follows
+// it (symlink-following TOCTOU). Streaming the content through `sudo -u <user>
+// tee` performs the open+write under the tenant uid, so the kernel enforces DAC
+// on the (possibly symlinked) target — a tenant can only ever redirect the
+// write to a path the tenant could already write, which is not an escalation.
+// It also lands the file owned by the tenant with no separate chown (the venv +
+// code must be user-owned for the loopback unit that runs as that user).
+//
+// `--` guards a path beginning with '-'; app_root is always absolute so this is
+// belt-and-suspenders. No shell is involved.
 func writeAsUser(ctx context.Context, username, path, content string) error {
-	u, err := user.Lookup(username)
-	if err != nil {
-		return err
+	cmd := exec.CommandContext(ctx, "sudo", "-u", username, "-H", "tee", "--", path)
+	cmd.Stdin = strings.NewReader(content)
+	cmd.Stdout = io.Discard // tee echoes stdin to stdout; we don't need it
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("write as %s: %w: %s", username, err, strings.TrimSpace(errb.String()))
 	}
-	uid, _ := strconv.Atoi(u.Uid)
-	gid, _ := strconv.Atoi(u.Gid)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return err
-	}
-	return os.Chown(path, uid, gid)
+	return nil
 }
 
 func init() { Default.Register("app.python.scaffold", pythonAppScaffoldHandler) }
