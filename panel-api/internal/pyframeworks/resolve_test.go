@@ -15,10 +15,10 @@ func TestResolveCreate_DjangoCmdScaffold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve django: %v", err)
 	}
-	if spec.Entrypoint != "site.wsgi:application" {
-		t.Errorf("entrypoint = %q, want site.wsgi:application", spec.Entrypoint)
+	if spec.Entrypoint != "config.wsgi:application" {
+		t.Errorf("entrypoint = %q, want config.wsgi:application", spec.Entrypoint)
 	}
-	if want := []string{"django-admin", "startproject", "site", "."}; !reflect.DeepEqual(spec.ScaffoldCommand, want) {
+	if want := []string{"django-admin", "startproject", "config", "."}; !reflect.DeepEqual(spec.ScaffoldCommand, want) {
 		t.Errorf("scaffold cmd = %v, want %v", spec.ScaffoldCommand, want)
 	}
 	if spec.NeedsDB != "sqlite" || spec.StaticURL != "/static/" {

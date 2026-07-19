@@ -15,7 +15,7 @@ pip_requirements:
 scaffold:
   kind: cmd
   command: "django-admin startproject {{.Project}} ."
-  project: site
+  project: config
 entrypoint_template: "{{.Project}}.wsgi:application"
 needs_db: sqlite
 static_url: /static/
