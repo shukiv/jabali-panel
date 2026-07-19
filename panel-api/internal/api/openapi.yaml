@@ -297,6 +297,42 @@ components:
         name: { type: string }
         runtime_version: { type: string, example: "3.12" }
         status: { type: string, enum: [installing, running, stopped, failed] }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        email: { type: string, format: email }
+        username: { type: string, nullable: true }
+        name_first: { type: string }
+        name_last: { type: string }
+        is_admin: { type: boolean }
+        package_id: { type: string, nullable: true }
+        linux_uid: { type: integer, nullable: true }
+        suspended: { type: boolean }
+        webmail_enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    UserCreate:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        username: { type: string }
+        password: { type: string, format: password }
+        name_first: { type: string }
+        name_last: { type: string }
+        is_admin: { type: boolean }
+        package_id: { type: string }
+    Database:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        user_id: { type: string, format: ulid }
+        name: { type: string, example: myapp_db }
+        engine: { type: string, enum: [mariadb, postgres] }
+        charset: { type: string }
+        collation: { type: string }
+        created_at: { type: string, format: date-time }
     Error:
       type: object
       properties:
@@ -763,7 +799,12 @@ paths:
   /databases:
     get:
       tags: [Databases]
-      responses: { "200": { description: OK } }
+      summary: List my databases
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200":
+          description: The databases
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Database" } } } }
     post:
       tags: [Databases]
       summary: Create a database
@@ -4771,12 +4812,18 @@ paths:
       tags: [Users]
       summary: List users
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: The users
+          content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/User" } }, total: { type: integer } } } } }
     post:
       tags: [Users]
       summary: Create user
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UserCreate" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "422": { description: Validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /users/{id}:
     delete:
@@ -4790,7 +4837,12 @@ paths:
       summary: Get user
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      summary: Get user
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: The user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "404": { description: Not found }
     patch:
       tags: [Users]
       summary: Update user
