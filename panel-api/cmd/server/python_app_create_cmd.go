@@ -77,9 +77,11 @@ func newPythonAppCreateCmd() *cobra.Command {
 				}
 				appType = spec.AppType
 				entry = spec.Entrypoint
-				if pyVersion == "" && fe.PythonMin != "" {
-					pyVersion = fe.PythonMin
-				}
+				// Do NOT default to fe.PythonMin: that is the framework's *minimum*,
+				// not a version guaranteed installed on this host (GH#357 scar —
+				// never provision against an uninstalled runtime). The CLI has no
+				// agent handle to probe installed versions, so require an explicit
+				// --python-version and let the validation below enforce it.
 			}
 			if appType == "" {
 				appType = "wsgi"

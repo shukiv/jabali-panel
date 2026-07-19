@@ -131,7 +131,9 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		// Resolve argv[0] inside the venv (django-admin ships with django).
 		bin := filepath.Join(venv, "bin", filepath.Base(p.ScaffoldArgv[0]))
 		args := append([]string{bin}, p.ScaffoldArgv[1:]...)
-		if out, err := runAsUser(ctx, p.Username, args...); err != nil {
+		// Run IN app_root: scaffolders use relative targets (e.g. `startproject
+		// config .`), so cwd must be the app tree or files land in the agent's cwd.
+		if out, err := runAsUserInDir(ctx, p.Username, p.AppRoot, args...); err != nil {
 			return nil, scaffoldErr("scaffold: %v: %s", err, lastLines(out, 8))
 		}
 	case "template":
@@ -192,7 +194,7 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 				continue // ignore unknown tokens; the catalog validates the set
 			}
 			args := append(append([]string(nil), envArgs...), vpy, manage, sub, "--noinput")
-			if out, err := runAsUser(ctx, p.Username, args...); err != nil {
+			if out, err := runAsUserInDir(ctx, p.Username, p.AppRoot, args...); err != nil {
 				return nil, scaffoldErr("%s: %v: %s", step, err, lastLines(out, 8))
 			}
 		}

@@ -259,8 +259,18 @@ func renderPythonUnit(p pythonAppApplyParams, appRoot, envPath, start string) st
 
 // runAsUser runs a command as the hosting user via sudo, capturing output.
 func runAsUser(ctx context.Context, username string, args ...string) (string, error) {
+	return runAsUserInDir(ctx, username, "", args...)
+}
+
+// runAsUserInDir is runAsUser with an explicit working directory. Needed by
+// scaffolds whose commands resolve relative paths (e.g. `django-admin
+// startproject config .` writes manage.py into the cwd) — without it the child
+// inherits the agent's cwd and writes to the wrong place. dir="" keeps the
+// inherited cwd. dir must be a tenant-owned path the user can chdir into.
+func runAsUserInDir(ctx context.Context, username, dir string, args ...string) (string, error) {
 	full := append([]string{"-u", username, "-H"}, args...)
 	cmd := exec.CommandContext(ctx, "sudo", full...)
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "PIP_DISABLE_PIP_VERSION_CHECK=1")
 	var out bytes.Buffer
 	cmd.Stdout = &out
