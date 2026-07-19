@@ -2,6 +2,7 @@ slug: flask
 name: Flask
 version: "3.1"
 description: A lightweight WSGI micro-framework — a single-file starter served by gunicorn.
+icon: /framework-icons/flask.svg
 tags: [wsgi, micro, api]
 popularity: 90
 upstream: https://flask.palletsprojects.com/

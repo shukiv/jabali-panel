@@ -2,6 +2,7 @@ slug: django
 name: Django
 version: "5.1"
 description: The batteries-included WSGI web framework — full project scaffold with admin, ORM, and static handling.
+icon: /framework-icons/django.svg
 tags: [wsgi, full-stack, orm, cms]
 popularity: 95
 upstream: https://www.djangoproject.com/

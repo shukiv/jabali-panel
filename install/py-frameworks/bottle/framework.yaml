@@ -2,6 +2,7 @@ slug: bottle
 name: Bottle
 version: "0.13"
 description: A fast, dependency-free single-file WSGI micro-framework, served by gunicorn.
+icon: /framework-icons/bottle.png
 tags: [wsgi, micro]
 popularity: 40
 upstream: https://bottlepy.org/

@@ -41,6 +41,7 @@ export type Framework = {
   version: string;
   description: string;
   tags?: string[];
+  icon?: string;
   app_type: "wsgi" | "asgi";
   server: string;
   python_min?: string;

@@ -2,6 +2,7 @@ slug: litestar
 name: Litestar
 version: "2.24"
 description: A batteries-included ASGI framework with fast routing, dependency injection, and OpenAPI, served by uvicorn.
+icon: /framework-icons/litestar.svg
 tags: [asgi, async, api]
 popularity: 55
 upstream: https://litestar.dev/

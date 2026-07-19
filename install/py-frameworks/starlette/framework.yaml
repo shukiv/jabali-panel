@@ -2,6 +2,7 @@ slug: starlette
 name: Starlette
 version: "1.3"
 description: A lightweight ASGI framework and toolkit — the async foundation under FastAPI — with a single-file starter served by uvicorn.
+icon: /framework-icons/starlette.svg
 tags: [asgi, async, micro]
 popularity: 60
 upstream: https://www.starlette.io/

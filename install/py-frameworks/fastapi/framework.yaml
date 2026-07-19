@@ -2,6 +2,7 @@ slug: fastapi
 name: FastAPI
 version: "0.115"
 description: A modern high-performance ASGI framework with automatic OpenAPI docs, served by uvicorn.
+icon: /framework-icons/fastapi.svg
 tags: [asgi, api, async]
 popularity: 88
 upstream: https://fastapi.tiangolo.com/

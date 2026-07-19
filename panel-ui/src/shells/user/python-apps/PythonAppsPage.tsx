@@ -238,7 +238,31 @@ export function PythonAppsPage() {
                   <Card
                     key={fw.slug}
                     size="small"
-                    title={fw.name}
+                    title={
+                      <Space size={8}>
+                        {fw.icon ? (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 28,
+                              height: 28,
+                              borderRadius: 6,
+                              background: "#1f1f1f",
+                              padding: 4,
+                            }}
+                          >
+                            <img
+                              src={fw.icon}
+                              alt=""
+                              style={{ maxWidth: "100%", maxHeight: "100%" }}
+                            />
+                          </span>
+                        ) : null}
+                        <span>{fw.name}</span>
+                      </Space>
+                    }
                     extra={<Tag color="blue">{fw.app_type.toUpperCase()}</Tag>}
                     actions={[
                       <Button

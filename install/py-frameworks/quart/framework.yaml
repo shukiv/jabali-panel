@@ -2,6 +2,7 @@ slug: quart
 name: Quart
 version: "0.20"
 description: An async, Flask-compatible ASGI framework — the same API as Flask with async/await — served by uvicorn.
+icon: /framework-icons/quart.svg
 tags: [asgi, async, flask-compatible]
 popularity: 45
 upstream: https://quart.palletsprojects.com/
