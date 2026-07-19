@@ -152,6 +152,7 @@ func newPythonAppDeleteCmd() *cobra.Command {
 			if _, err := sharedAgent.Call(callCtx, "app.python.remove", map[string]any{"app_id": app.ID}); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: agent remove failed: %v\n", err)
 			}
+			detachPythonRulesCLI(ctx, app)
 			if err := repo.Delete(ctx, app.ID); err != nil {
 				return err
 			}

@@ -111,6 +111,20 @@ func Compile(d *models.Domain) string {
 				"    fastcgi_param PHP_VALUE %s;\n",
 				quoteNginxString(r.Name+"="+r.Value))
 
+		case "static_alias":
+			// Serve a filesystem dir (framework STATIC_ROOT) directly from nginx.
+			// ^~ so it beats the template's regex asset-cache block; the alias +
+			// target are constrained to /home/ by the validator (no traversal /
+			// system paths). Long-cache immutable static assets.
+			fmt.Fprintf(&b,
+				"    location ^~ %s {\n"+
+					"        alias %s;\n"+
+					"        access_log off;\n"+
+					"        expires 30d;\n"+
+					"        add_header Cache-Control \"public\";\n"+
+					"    }\n",
+				quoteNginxLocation(r.Path), r.Target)
+
 		case "max_upload_size":
 			fmt.Fprintf(&b, "    client_max_body_size %s;\n", r.Size)
 		}

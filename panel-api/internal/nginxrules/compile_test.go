@@ -396,3 +396,19 @@ func TestCompileProxyPassWebsocket(t *testing.T) {
 		t.Errorf("websocket proxy should not emit empty Connection header:\n%s", got)
 	}
 }
+
+func TestCompile_StaticAlias(t *testing.T) {
+	d := &models.Domain{NginxRules: models.NginxRules{
+		{Type: "static_alias", Path: "/dj/static/", Target: "/home/u/djtest/staticfiles/"},
+	}}
+	got := Compile(d)
+	for _, want := range []string{
+		"location ^~ /dj/static/ {",
+		"alias /home/u/djtest/staticfiles/;",
+		"expires 30d;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("compiled output missing %q:\n%s", want, got)
+		}
+	}
+}

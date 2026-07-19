@@ -1213,21 +1213,21 @@ var allowedNginxDirectives = map[string]struct{}{
 	"autoindex_localtime":  {},
 	// sub_filter{,_once,_types} removed (JAB-66): arbitrary content injection /
 	// response splitting into proxied responses.
-	"charset":              {},
-	"default_type":         {},
-	"types":                {},
-	"log_not_found":        {},
+	"charset":       {},
+	"default_type":  {},
+	"types":         {},
+	"log_not_found": {},
 	// Access
-	"allow":                {},
-	"deny":                 {},
-	"satisfy":              {},
+	"allow":   {},
+	"deny":    {},
+	"satisfy": {},
 	// auth_basic{,_user_file} removed (JAB-66): auth_basic_user_file is an
 	// arbitrary-file read / existence oracle (point it at /etc/shadow). Use the
 	// structured Directory Privacy feature, which manages the htpasswd file.
-	"limit_except":         {},
-	"limit_req":            {},
-	"limit_req_zone":       {},
-	"limit_conn":           {},
+	"limit_except":   {},
+	"limit_req":      {},
+	"limit_req_zone": {},
+	"limit_conn":     {},
 	// Gzip
 	"gzip":            {},
 	"gzip_types":      {},
@@ -1424,7 +1424,7 @@ func validatePageRedirects(prs models.PageRedirects) error {
 
 func isValidNginxRuleType(s string) bool {
 	switch s {
-	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size":
+	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size", "static_alias":
 		return true
 	}
 	return false
@@ -1508,6 +1508,21 @@ func validateNginxRules(rules models.NginxRules) error {
 		case "max_upload_size":
 			if r.Size == "" {
 				return fmt.Errorf("rule %d: size required", i)
+			}
+		case "static_alias":
+			// Serves a filesystem dir (Path=location, Target=alias dir). Used by
+			// framework apps (Django STATIC_ROOT). Admin-only (not in the tenant
+			// safe set). Constrain the alias to under /home/ so it can never be
+			// pointed at /etc or another system path (file disclosure), even by
+			// an admin PATCH; static aliases are always a tenant app dir.
+			if r.Path == "" || r.Target == "" {
+				return fmt.Errorf("rule %d: path and target required", i)
+			}
+			if !strings.HasPrefix(r.Target, "/home/") || strings.Contains(r.Target, "..") {
+				return fmt.Errorf("rule %d: static_alias target must be an absolute path under /home/ with no ..", i)
+			}
+			if strings.ContainsAny(r.Target, " \t\n\r;{}") {
+				return fmt.Errorf("rule %d: invalid chars in static_alias target", i)
 			}
 		}
 		// Forbid control characters everywhere to prevent newline injection into vhost

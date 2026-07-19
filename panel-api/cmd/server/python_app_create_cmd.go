@@ -54,6 +54,9 @@ func newPythonAppCreateCmd() *cobra.Command {
 		envPairs  []string
 		framework string
 	)
+	// Framework-derived static split (Django STATIC_ROOT), attached as an nginx
+	// static_alias rule alongside the proxy_pass so /static/ is served from disk.
+	var fwStaticURL, fwStaticRoot string
 	cmd := &cobra.Command{
 		Use:     "create",
 		Short:   "Create a Python app (same validation + port/proxy allocation as the UI)",
@@ -77,6 +80,7 @@ func newPythonAppCreateCmd() *cobra.Command {
 				}
 				appType = spec.AppType
 				entry = spec.Entrypoint
+				fwStaticURL, fwStaticRoot = spec.StaticURL, spec.StaticRoot
 				// Do NOT default to fe.PythonMin: that is the framework's *minimum*,
 				// not a version guaranteed installed on this host (GH#357 scar —
 				// never provision against an uninstalled runtime). The CLI has no
@@ -153,7 +157,7 @@ func newPythonAppCreateCmd() *cobra.Command {
 				}
 				_ = repo.ReplaceEnv(ctx, app.ID, rows)
 			}
-			attachPythonProxyRuleCLI(ctx, dom, app)
+			attachPythonProxyRuleCLI(ctx, dom, app, fwStaticURL, fwStaticRoot)
 
 			cliAuditOK(ctx, "python_app.create", "python_app", app.ID, &dom.UserID)
 			if jsonOutput {
@@ -192,26 +196,67 @@ func parsePythonEnvPairs(pairs []string) ([]models.PythonAppEnv, error) {
 // attachPythonProxyRuleCLI mirrors api.attachProxyRule: proxy_pass base_uri ->
 // loopback port, replacing any same-path rule, then persists the domain so the
 // reconciler renders the vhost.
-func attachPythonProxyRuleCLI(ctx context.Context, dom *models.Domain, app *models.PythonApp) {
+func attachPythonProxyRuleCLI(ctx context.Context, dom *models.Domain, app *models.PythonApp, staticURL, staticRoot string) {
 	port := 0
 	if app.LoopbackPort != nil {
 		port = *app.LoopbackPort
 	}
 	ws := true
-	rule := models.NginxRule{Type: "proxy_pass", Path: app.BaseURI, Target: "http://127.0.0.1:" + strconv.Itoa(port), Websocket: &ws}
 	rules := append(models.NginxRules{}, dom.NginxRules...)
-	replaced := false
-	for i := range rules {
-		if rules[i].Type == "proxy_pass" && rules[i].Path == app.BaseURI {
-			rules[i] = rule
-			replaced = true
-			break
+
+	upsert := func(rule models.NginxRule) {
+		for i := range rules {
+			if rules[i].Type == rule.Type && rules[i].Path == rule.Path {
+				rules[i] = rule
+				return
+			}
 		}
-	}
-	if !replaced {
 		rules = append(rules, rule)
 	}
+
+	upsert(models.NginxRule{Type: "proxy_pass", Path: app.BaseURI, Target: "http://127.0.0.1:" + strconv.Itoa(port), Websocket: &ws})
+
+	// Framework static split (Django STATIC_ROOT): serve <base><static_url> from
+	// <app_root>/<static_root> so admin/site static loads without hitting gunicorn.
+	// Django prefixes STATIC_URL with SCRIPT_NAME (=base_uri), so the location is
+	// base_uri + static_url; matches what the app requests.
+	if staticURL != "" && staticRoot != "" {
+		loc := strings.TrimSuffix(app.BaseURI, "/") + staticURL
+		alias := strings.TrimSuffix(app.AppRoot, "/") + "/" + strings.Trim(staticRoot, "/") + "/"
+		upsert(models.NginxRule{Type: "static_alias", Path: loc, Target: alias})
+	}
+
 	dom.NginxRules = rules
+	_ = domainRepoFromDB().Update(ctx, dom)
+}
+
+// detachPythonRulesCLI removes the app's proxy_pass + framework static_alias
+// rules from its domain on delete (mirrors the API handler's detach; the CLI
+// delete previously left them orphaned on the domain vhost).
+func detachPythonRulesCLI(ctx context.Context, app *models.PythonApp) {
+	if app.DomainID == "" {
+		return
+	}
+	dom, err := domainRepoFromDB().FindByID(ctx, app.DomainID)
+	if err != nil || dom == nil {
+		return
+	}
+	target := "http://127.0.0.1:"
+	if app.LoopbackPort != nil {
+		target += strconv.Itoa(*app.LoopbackPort)
+	}
+	aliasPrefix := strings.TrimSuffix(app.AppRoot, "/") + "/"
+	var kept models.NginxRules
+	for _, r := range dom.NginxRules {
+		if r.Type == "proxy_pass" && r.Path == app.BaseURI && r.Target == target {
+			continue
+		}
+		if r.Type == "static_alias" && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	dom.NginxRules = kept
 	_ = domainRepoFromDB().Update(ctx, dom)
 }
 
