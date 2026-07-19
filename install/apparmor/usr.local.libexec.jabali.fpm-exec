@@ -47,6 +47,19 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   /etc/jabali/snuffleupagus/ r,
   /etc/jabali/snuffleupagus/** r,
 
+  # Microsoft ODBC Driver for SQL Server (sqlsrv / pdo_sqlsrv). The extension
+  # dlopen()s the driver at connect time, so the profile — not open_basedir —
+  # gates it. Without these the load fails and sqlsrv reports IMSSP -49
+  # "This extension requires the Microsoft ODBC Driver for SQL Server" even
+  # though the driver is installed, which reads as a missing-package problem
+  # and sends operators down a reinstall rabbit hole (newzaps 2026-07-19:
+  # denial was on /opt/microsoft/ while msodbcsql18 had been installed for a
+  # month). Read-only; drivers are root-owned so this grants no tenant write.
+  /opt/microsoft/ r,
+  /opt/microsoft/** mr,
+  /etc/odbcinst.ini r,
+  /etc/odbc.ini r,
+
   # Tenant docroots (POSIX perms enforce per-user isolation; this layer bounds
   # escape to system files, not cross-tenant). Two layouts: native jabali +
   # cPanel/DA use domains/<dom>/public_html; HestiaCP-migrated accounts use
