@@ -44,6 +44,8 @@ tags:
     description: Per-user Bearer-token CRUD. Manageable only via browser session.
   - name: DNS
     description: Zones + records for owned domains.
+  - name: Egress
+    description: Per-user PHP-FPM egress firewall (M34) — policy, request queue, mature-soak promotion.
   - name: DDNS
     description: Dynamic-DNS shim — DynDNS v2 protocol-compatible.
   - name: Domains
@@ -91,6 +93,59 @@ components:
       name: ory_kratos_session
       description: Browser cookie from /login. Same-origin only.
   schemas:
+    EgressDestination:
+      type: object
+      properties:
+        cidr: { type: string, example: 203.0.113.0/24 }
+        port: { type: integer, nullable: true, example: 443 }
+        protocol: { type: string, enum: [tcp, udp], example: tcp }
+        comment: { type: string }
+    EgressPolicy:
+      type: object
+      properties:
+        user_id: { type: string, format: ulid }
+        state: { type: string, enum: [off, learning, enforced] }
+        allowed_extra:
+          type: array
+          items: { $ref: "#/components/schemas/EgressDestination" }
+        drop_count_24h: { type: integer }
+    EgressPolicyInput:
+      type: object
+      required: [state]
+      properties:
+        state: { type: string, enum: [off, learning, enforced] }
+        allowed_extra:
+          type: array
+          items: { $ref: "#/components/schemas/EgressDestination" }
+    EgressRequestInput:
+      type: object
+      required: [cidr]
+      properties:
+        cidr: { type: string, example: 203.0.113.10/32 }
+        port: { type: integer, nullable: true }
+        protocol: { type: string, enum: [tcp, udp] }
+        reason: { type: string }
+    EgressMatureResult:
+      type: object
+      properties:
+        soak_days: { type: integer }
+        dry_run: { type: boolean }
+        pinned: { type: boolean }
+        pin_value: { type: string }
+        eligible_count: { type: integer }
+        eligible:
+          type: array
+          items:
+            type: object
+            properties:
+              user_id: { type: string, format: ulid }
+              learning_started_at: { type: string, format: date-time, nullable: true }
+              age_days: { type: integer }
+              drop_count_24h: { type: integer }
+        flipped:
+          type: array
+          items: { type: string, format: ulid }
+        flipped_count: { type: integer }
     Error:
       type: object
       properties:
@@ -637,3 +692,211 @@ paths:
         restart services). Returns immediately with a job handle.
       responses: { "202": { description: Job queued — stream logs via WebSocket } }
 
+
+  # -------------------------------------------------------------- Egress ---
+
+  /me/egress:
+    get:
+      tags: [Egress]
+      summary: Get my egress policy
+      description: |
+        The caller's per-user egress firewall policy: state (off / learning /
+        enforced), allowed-extra destinations, and 24h drop count.
+
+        **Auth:** browser session.
+      security:
+        - KratosSession: []
+      responses:
+        "200":
+          description: The policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressPolicy" }
+
+  /me/egress/requests:
+    get:
+      tags: [Egress]
+      summary: List my pending egress requests
+      description: "Destinations the caller has requested be allowed. **Auth:** browser session."
+      security:
+        - KratosSession: []
+      responses:
+        "200": { description: "{ data: [EgressRequest], total }" }
+
+  /me/egress/request:
+    post:
+      tags: [Egress]
+      summary: Request a destination be allowed
+      description: "Files a request for an admin to approve (CIDR + optional port/protocol + reason). **Auth:** browser session."
+      security:
+        - KratosSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EgressRequestInput" }
+      responses:
+        "201": { description: Request filed }
+        "422": { description: Validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /me/egress/requests/{id}:
+    delete:
+      tags: [Egress]
+      summary: Cancel my pending egress request
+      description: "Cancels a still-pending request the caller filed. **Auth:** browser session."
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "204": { description: Cancelled }
+        "404": { description: No such pending request owned by the caller }
+
+  /admin/users/{id}/egress:
+    get:
+      tags: [Egress]
+      summary: Get a user's egress policy (admin)
+      description: "**Auth:** admin browser session."
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200":
+          description: The policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressPolicy" }
+    put:
+      tags: [Egress]
+      summary: Set a user's egress policy (admin)
+      description: |
+        Sets the state (off / learning / enforced) and allowed-extra list. The
+        reconciler re-renders nftables on its next tick. **Auth:** admin session.
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EgressPolicyInput" }
+      responses:
+        "200": { description: Updated }
+        "422": { description: Validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /admin/egress-requests:
+    get:
+      tags: [Egress]
+      summary: List pending egress requests (admin queue)
+      description: "**Auth:** admin browser session."
+      security:
+        - KratosSession: []
+      responses:
+        "200": { description: "{ data: [EgressRequest], total }" }
+
+  /admin/egress-requests/{id}/approve:
+    post:
+      tags: [Egress]
+      summary: Approve an egress request (admin)
+      description: "Approves the request and folds its destination into the user's policy. **Auth:** admin session."
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200": { description: Approved }
+        "409": { description: Already decided }
+
+  /admin/egress-requests/{id}/deny:
+    post:
+      tags: [Egress]
+      summary: Deny an egress request (admin)
+      description: "**Auth:** admin browser session."
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200": { description: Denied }
+        "409": { description: Already decided }
+
+  /admin/egress-summary:
+    get:
+      tags: [Egress]
+      summary: Egress fleet summary (admin)
+      description: "Per-state user counts + total 24h drops, for the admin dashboard. **Auth:** admin session."
+      security:
+        - KratosSession: []
+      responses:
+        "200": { description: "{ state_counts, total_drops, policy_total }" }
+
+  /admin/users/{id}/egress/drops-24h:
+    get:
+      tags: [Egress]
+      summary: A user's 24h drop sparkline (admin)
+      description: "Hourly egress-drop buckets over the last 24h. **Auth:** admin session."
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200": { description: "{ buckets: [{ at, drops }] }" }
+        "503": { description: Drop-sample store unavailable }
+
+  /admin/users/{id}/egress/drop-events:
+    get:
+      tags: [Egress]
+      summary: A user's recent drop events (admin drill-down)
+      description: "Recent per-drop events read from the nft drop log via the agent. **Auth:** admin session."
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200": { description: "{ source, events: [...] }" }
+
+  /admin/egress/mature-preview:
+    get:
+      tags: [Egress]
+      summary: Dry-run mature-soak promotion (admin)
+      description: |
+        Lists LEARNING policies mature enough to graduate to ENFORCED at the given
+        soak window, with each user's soak age + 24h drop count, plus whether the
+        operator pin blocks promotion. Read-only. **Auth:** admin session.
+      security:
+        - KratosSession: []
+      parameters:
+        - { in: query, name: soak_days, required: false, schema: { type: integer, default: 7, minimum: 1 } }
+      responses:
+        "200":
+          description: Preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressMatureResult" }
+
+  /admin/egress/flip-mature:
+    post:
+      tags: [Egress]
+      summary: Promote mature LEARNING policies to ENFORCED (admin)
+      description: |
+        Flips every LEARNING policy past the soak window to ENFORCED. No-op when
+        the operator pin (/etc/jabali/per-user-egress.mode = learning) is set.
+        **Auth:** admin session.
+      security:
+        - KratosSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                soak_days: { type: integer, default: 7, minimum: 1 }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressMatureResult" }

@@ -49,7 +49,6 @@ DELETE /mailboxes/{mbid}/shares/{shareId}
 DELETE /mailgroups/{gid}
 DELETE /mailgroups/{gid}/members/{mbid}
 DELETE /me/backups/{id}
-DELETE /me/egress/requests/{id}
 DELETE /notifications/inbox
 DELETE /notifications/webpush/subscribe
 DELETE /packages/{id}
@@ -93,9 +92,6 @@ GET /admin/docker-apps/{id}
 GET /admin/docker-apps/{id}/backups
 GET /admin/docker-apps/{id}/env
 GET /admin/docker-apps/{id}/logs
-GET /admin/egress-requests
-GET /admin/egress-summary
-GET /admin/egress/mature-preview
 GET /admin/impersonation
 GET /admin/ips
 GET /admin/mail/deliverability
@@ -172,9 +168,6 @@ GET /admin/updates/repair/domain/orphans
 GET /admin/updates/repair/status
 GET /admin/updates/state
 GET /admin/users/{id}/backups
-GET /admin/users/{id}/egress
-GET /admin/users/{id}/egress/drop-events
-GET /admin/users/{id}/egress/drops-24h
 GET /admin/users/{id}/slice-status
 GET /applications/cache-profiles
 GET /applications/registry
@@ -241,8 +234,6 @@ GET /me/backups/{id}/download
 GET /me/backups/{id}/manifest
 GET /me/disk-usage
 GET /me/disk-usage/files
-GET /me/egress
-GET /me/egress/requests
 GET /me/php-cli-version
 GET /me/php-fpm-policy
 GET /me/server-capabilities
@@ -322,9 +313,6 @@ POST /admin/docker-apps/{id}/restart
 POST /admin/docker-apps/{id}/start
 POST /admin/docker-apps/{id}/stop
 POST /admin/docker-apps/{id}/update
-POST /admin/egress-requests/{id}/approve
-POST /admin/egress-requests/{id}/deny
-POST /admin/egress/flip-mature
 POST /admin/impersonation
 POST /admin/ips
 POST /admin/mail/queue/{id}/retry
@@ -445,7 +433,6 @@ POST /mailboxes/{mbid}/shares
 POST /mailboxes/{mbid}/sso
 POST /mailgroups/{gid}/members/{mbid}
 POST /me/disk-usage/refresh
-POST /me/egress/request
 POST /migrations/wordpress
 POST /migrations/{id}/import-wp
 POST /migrations/{id}/pull-source
@@ -482,7 +469,6 @@ PUT /admin/security/malware/settings
 PUT /admin/security/ufw/default
 PUT /admin/settings/account-skeleton/file
 PUT /admin/updates/autoupdate
-PUT /admin/users/{id}/egress
 PUT /applications/{id}/cache
 PUT /applications/{id}/cache-settings
 PUT /domains/{id}/cache
