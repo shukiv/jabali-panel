@@ -2,5 +2,6 @@
 // Docker Apps, Python Apps, and PHP Applications catalogs.
 export { CatalogCard } from "./CatalogCard";
 export type { CatalogCardProps } from "./CatalogCard";
+export { CatalogGrid } from "./CatalogGrid";
 export { CategoryFilter } from "./CategoryFilter";
 export type { CategoryFilterProps } from "./CategoryFilter";

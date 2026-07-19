@@ -5,7 +5,7 @@
 // backend 403s docker_tenant_not_enabled).
 import { useMemo, useState } from "react";
 import { RowActions } from "../../../components/RowActions";
-import { CatalogCard, CategoryFilter } from "../../../components/catalog";
+import { CatalogCard, CatalogGrid, CategoryFilter } from "../../../components/catalog";
 import {
   Alert,
   Avatar,
@@ -375,13 +375,13 @@ export const UserDockerAppsPage = () => {
                   selected={catalogTags}
                   onChange={setCatalogTags}
                 />
-                <Space wrap size={[16, 16]}>
+                <CatalogGrid>
                   {visibleCatalog.map((e) => (
                     <CatalogCard
                       key={e.slug}
                       name={e.name}
                       iconUrl={catalogIconUrl(e.slug)}
-                      meta={`v${e.version}`}
+                      meta={<Tag style={{ marginInlineEnd: 0 }}>v{e.version}</Tag>}
                       description={e.description}
                       onInstall={() => setInstallFor(e)}
                     />
@@ -389,7 +389,7 @@ export const UserDockerAppsPage = () => {
                   {catalog.data?.length === 0 && (
                     <Typography.Text type="secondary">No apps available to install.</Typography.Text>
                   )}
-                </Space>
+                </CatalogGrid>
               </>
             ),
           },

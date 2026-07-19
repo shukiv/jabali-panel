@@ -2,11 +2,11 @@
 // modelled on the admin Docker-Apps catalog: a masonry of cards, one per
 // registered app descriptor (GET /applications/registry). Clicking a card
 // opens the Install drawer pre-targeted to that app_type.
-import { Alert, Empty, Space, Spin, Tag } from "antd";
+import { Alert, Empty, Spin, Tag } from "antd";
 import { useMemo, useState } from "react";
 import { DatabaseOutlined } from "@icons";
 
-import { CatalogCard, CategoryFilter } from "../../../components/catalog";
+import { CatalogCard, CatalogGrid, CategoryFilter } from "../../../components/catalog";
 import { useAppRegistry } from "./appRegistry";
 import { CmsIcon } from "./CmsIcon";
 
@@ -68,12 +68,27 @@ export const CatalogTab = ({ onInstall }: Props) => {
           description="No applications match the selected tags"
         />
       ) : (
-        <Space wrap size={[16, 16]}>
+        <CatalogGrid>
           {visibleApps.map((app) => (
             <CatalogCard
               key={app.name}
               name={app.display_name}
-              iconNode={<CmsIcon appType={app.name} size={32} />}
+              iconNode={
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 10,
+                    background: "rgba(0, 0, 0, 0.03)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <CmsIcon appType={app.name} size={28} />
+                </div>
+              }
               meta={
                 app.requires_db ? (
                   <Tag icon={<DatabaseOutlined />} style={{ marginInlineEnd: 0 }}>
@@ -85,7 +100,7 @@ export const CatalogTab = ({ onInstall }: Props) => {
               onInstall={() => onInstall(app.name)}
             />
           ))}
-        </Space>
+        </CatalogGrid>
       )}
     </>
   );

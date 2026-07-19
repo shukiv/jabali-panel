@@ -29,7 +29,7 @@ import { useOneQuery } from "../../../hooks/useQueries";
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, ownerLabel } from "../../../components/admin/entityLinks";
 import { InstallDrawer } from "./InstallDrawer";
-import { CatalogCard, CategoryFilter } from "../../../components/catalog";
+import { CatalogCard, CatalogGrid, CategoryFilter } from "../../../components/catalog";
 import { LogsDrawer } from "./LogsDrawer";
 import { ExecDrawer } from "./ExecDrawer";
 import { BackupsDrawer } from "./BackupsDrawer";
@@ -408,18 +408,18 @@ export const AdminDockerAppsPage = () => {
                 selected={catalogTags}
                 onChange={setCatalogTags}
               />
-              <Space wrap size={[16, 16]}>
+              <CatalogGrid>
                 {visibleCatalog.map((e) => (
                   <CatalogCard
                     key={e.slug}
                     name={e.name}
                     iconUrl={`/api/v1/admin/docker-apps/catalog/${e.slug}/icon?theme=${mode}`}
-                    meta={`v${e.version}`}
+                    meta={<Tag style={{ marginInlineEnd: 0 }}>v{e.version}</Tag>}
                     description={e.description}
                     onInstall={() => setInstallEntry(e)}
                   />
                 ))}
-              </Space>
+              </CatalogGrid>
               </>
             ),
           },

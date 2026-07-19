@@ -22,7 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
-import { CatalogCard, CategoryFilter } from "../../../components/catalog";
+import { CatalogCard, CatalogGrid, CategoryFilter } from "../../../components/catalog";
 import type { CreatePythonAppInput, Framework, PythonApp } from "./usePythonApps";
 import {
   fetchPythonAppLogs,
@@ -246,34 +246,35 @@ export function PythonAppsPage() {
                   selected={catTags}
                   onChange={setCatTags}
                 />
-                <Space wrap size={[16, 16]}>
+                <CatalogGrid>
                   {visibleFrameworks.map((fw) => (
                     <CatalogCard
                       key={fw.slug}
                       name={fw.name}
                       iconNode={
-                        fw.icon ? (
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              width: 32,
-                              height: 32,
-                              borderRadius: 6,
-                              background: "#1f1f1f",
-                              padding: 4,
-                            }}
-                          >
+                        <div
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 10,
+                            background: "#1f1f1f",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                            padding: 8,
+                          }}
+                        >
+                          {fw.icon ? (
                             <img
                               src={fw.icon}
                               alt=""
                               style={{ maxWidth: "100%", maxHeight: "100%" }}
                             />
-                          </span>
-                        ) : undefined
+                          ) : null}
+                        </div>
                       }
-                      meta={fw.app_type.toUpperCase()}
+                      meta={<Tag color="blue">{fw.app_type.toUpperCase()}</Tag>}
                       description={fw.description}
                       onInstall={() => openCreate(fw)}
                     />
@@ -283,7 +284,7 @@ export function PythonAppsPage() {
                       No frameworks available.
                     </Typography.Text>
                   ) : null}
-                </Space>
+                </CatalogGrid>
               </>
             ),
           },
