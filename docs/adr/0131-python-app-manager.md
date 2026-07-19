@@ -79,3 +79,37 @@ Blueprint `plans/m-python-app-manager.md`. Migration `000168`
 `app.python.*` agent commands; `jabali-app@<id>.service` template;
 `reconcilePythonApps`; Application Manager UI + Server Settings → Apps tab.
 Waves A–F; live-verify a Flask + a FastAPI app before Accepted.
+
+## Addendum — Framework marketplace (JAB-164, 2026-07)
+
+A one-click framework marketplace layered on the runtime. Each entry is
+`install/py-frameworks/<slug>/framework.yaml` plus a `template/` starter or a
+`patch.py` (Flask, FastAPI, Django, Starlette, Litestar, Quart, Dash, Bottle,
+Django Channels, Wagtail). `pyframeworks.LoadDir` loads the catalog from
+`/usr/local/share/jabali/py-frameworks` (dev fallback `install/py-frameworks`).
+
+The create flow — CLI `python-app create --framework <slug>` and
+`POST /python-apps {framework}` — derives `app_type` + `entrypoint` from the
+entry and stamps `python_apps.framework` (+ `scaffolded_at`, migration
+`000229`). Before the first `apply`, the reconciler runs a one-shot
+`app.python.scaffold`: venv + pinned deps + starter (`django-admin` /
+`wagtail start`, or template files) + settings hardening + `migrate` /
+`collectstatic`, all AS THE TENANT. Generated secrets (Django `SECRET_KEY`,
+minted with stdlib `secrets`) go to the app env, never to source.
+
+Settings hardening is either the generic in-agent patch (a plain
+`config/settings.py`: `SECRET_KEY`/`ALLOWED_HOSTS` from env, `STATIC_ROOT`) or,
+for frameworks whose layout differs, a per-entry `patch.py` run as the tenant
+(Wagtail's `config/settings/{base,production}.py` package; Channels'
+`INSTALLED_APPS`/`ASGI_APPLICATION` + a `ProtocolTypeRouter` asgi.py). Django
+static is served by an admin-only nginx `static_alias` rule (alias constrained
+under `/home/`) attached alongside `proxy_pass`. Scaffold file writes go through
+`sudo -u <tenant> tee` (symlink-TOCTOU-safe). UI: the Python Apps page gains a
+Catalog tab (framework cards + one-click install); brand icons are vendored
+under `panel-ui/public/framework-icons`.
+
+Known limit: an ASGI framework mounted at a sub-path `base_uri` relies on
+`uvicorn --root-path`, which the framework may not strip before routing (Django
+ASGI/Channels, Starlette, Litestar, Quart); root (`/`) mounts are unaffected.
+WSGI apps (gunicorn `SCRIPT_NAME`: Flask, Django, Wagtail, Dash, Bottle) handle
+sub-paths cleanly.

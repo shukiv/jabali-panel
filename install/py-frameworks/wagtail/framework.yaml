@@ -1,0 +1,35 @@
+slug: wagtail
+name: Wagtail CMS
+version: "7.4"
+description: A batteries-included Django content management system with a rich page editor, served by gunicorn.
+icon: /framework-icons/wagtail.svg
+tags: [wsgi, cms, django]
+popularity: 70
+upstream: https://wagtail.org/
+docs: https://docs.wagtail.org/
+app_type: wsgi
+server: gunicorn
+python_min: "3.10"
+pip_requirements:
+  - wagtail==7.4.2
+  - gunicorn==23.0.0
+scaffold:
+  kind: cmd
+  command: wagtail start {{.Project}} .
+  project: config
+entrypoint_template: "{{.Project}}.wsgi:application"
+needs_db: sqlite
+static_url: /static/
+static_root: staticfiles
+default_env:
+  - key: DJANGO_SECRET_KEY
+    generate: secret_key
+    required: true
+  - key: DJANGO_ALLOWED_HOSTS
+    description: Comma-separated hostnames Wagtail serves.
+  - key: DJANGO_SETTINGS_MODULE
+    default: config.settings.production
+    description: Wagtail runs under its production settings module.
+post_install:
+  - migrate
+  - collectstatic

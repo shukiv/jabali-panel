@@ -24,6 +24,9 @@ type CreateSpec struct {
 	// HardenSettings requests the Django-style settings.py rewrite (SECRET_KEY +
 	// ALLOWED_HOSTS from env, STATIC_ROOT). Derived from a secret_key generator.
 	HardenSettings bool
+	// PatchScript, when set, is the framework's own python settings surgery run
+	// in place of the generic hardener (Wagtail/Channels). Takes precedence.
+	PatchScript string
 
 	NeedsDB     string
 	StaticURL   string
@@ -92,6 +95,7 @@ func (e Entry) ResolveCreate() (CreateSpec, error) {
 	} else {
 		spec.TemplateFiles = e.TemplateFiles
 	}
+	spec.PatchScript = e.PatchScript
 	spec.Env = append([]EnvVar(nil), e.DefaultEnv...)
 	for _, v := range e.DefaultEnv {
 		if v.Generate != "" {

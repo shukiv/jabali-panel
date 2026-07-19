@@ -179,7 +179,32 @@ func (r *Reconciler) scaffoldPythonApp(ctx context.Context, app *models.PythonAp
 	} else {
 		params["template_files"] = spec.TemplateFiles
 	}
-	if spec.HardenSettings {
+	if spec.PatchScript != "" {
+		// Framework-specific settings surgery (Wagtail/Channels): the agent runs
+		// the entry's patch as the tenant with this env + minted secrets.
+		params["patch_script"] = spec.PatchScript
+		env := map[string]string{}
+		for _, v := range spec.Env {
+			if v.Generate == "" {
+				env[v.Key] = v.Default
+			}
+		}
+		if domainName != "" {
+			env["DJANGO_ALLOWED_HOSTS"] = domainName
+		}
+		if spec.StaticRoot != "" {
+			env["JAB_STATIC_ROOT"] = spec.StaticRoot
+		}
+		if spec.Project != "" {
+			env["JAB_PROJECT"] = spec.Project
+		}
+		params["env"] = env
+		gen := make([]string, 0, len(spec.GenerateEnv))
+		for _, v := range spec.GenerateEnv {
+			gen = append(gen, v.Key)
+		}
+		params["generate"] = gen
+	} else if spec.HardenSettings {
 		params["harden_django"] = true
 		params["static_root"] = spec.StaticRoot
 		params["allowed_hosts"] = domainName

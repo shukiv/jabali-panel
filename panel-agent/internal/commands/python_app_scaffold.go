@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -47,10 +48,22 @@ type pythonScaffoldParams struct {
 	Project string `json:"project,omitempty"`
 	// HardenDjango patches <project>/settings.py to read SECRET_KEY + ALLOWED_HOSTS
 	// from env and set STATIC_ROOT, then generates a SECRET_KEY into GeneratedEnv.
-	HardenDjango bool     `json:"harden_django,omitempty"`
-	StaticRoot   string   `json:"static_root,omitempty"`
-	AllowedHosts string   `json:"allowed_hosts,omitempty"`
-	PostInstall  []string `json:"post_install,omitempty"` // migrate, collectstatic
+	HardenDjango bool   `json:"harden_django,omitempty"`
+	StaticRoot   string `json:"static_root,omitempty"`
+	AllowedHosts string `json:"allowed_hosts,omitempty"`
+	// PatchScript is python run AS TENANT in app_root after scaffold + deps and
+	// before post-install, with Env + generated secrets exported. Frameworks
+	// whose settings layout differs from a plain config/settings.py (Wagtail's
+	// settings package, Channels' asgi router) use it for their own surgery,
+	// keeping framework specifics in the catalog instead of the agent.
+	PatchScript string `json:"patch_script,omitempty"`
+	// Env is the resolved non-secret environment exposed to the patch script +
+	// post-install (DJANGO_SETTINGS_MODULE, DJANGO_ALLOWED_HOSTS, JAB_STATIC_ROOT…).
+	Env map[string]string `json:"env,omitempty"`
+	// Generate lists env keys the agent mints a strong random secret for
+	// (returned in GeneratedEnv to persist; never written to source).
+	Generate    []string `json:"generate,omitempty"`
+	PostInstall []string `json:"post_install,omitempty"` // migrate, collectstatic
 }
 
 type pythonScaffoldResult struct {
@@ -113,12 +126,13 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 	}
 	pip := filepath.Join(venv, "bin", "pip")
 
-	// 2) requirements.txt (framework + server), written by the tenant.
-	reqBody := strings.Join(append(append([]string(nil), p.Requirements...), p.Server), "\n") + "\n"
-	if werr := writeAsUser(ctx, p.Username, filepath.Join(p.AppRoot, "requirements.txt"), reqBody); werr != nil {
-		return nil, scaffoldErr("write requirements.txt: %v", werr)
-	}
-	if out, err := runAsUser(ctx, p.Username, pip, "install", "-q", "-r", filepath.Join(p.AppRoot, "requirements.txt")); err != nil {
+	// 2) install the pinned deps (framework + server) BY NAME, not via a
+	//    requirements.txt file: some scaffolders (`wagtail start`) refuse to run
+	//    in a directory that already contains requirements.txt. We write the file
+	//    after scaffolding (step 3b) so app.python.apply still has it.
+	pipArgs := append([]string{pip, "install", "-q"}, p.Requirements...)
+	pipArgs = append(pipArgs, p.Server)
+	if out, err := runAsUser(ctx, p.Username, pipArgs...); err != nil {
 		return nil, scaffoldErr("pip install: %v: %s", err, lastLines(out, 12))
 	}
 
@@ -153,6 +167,14 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
+	// 3b) record the pinned deps now that the scaffolder has run — app.python.apply
+	//     reinstalls from this file. Overwrites any requirements.txt a scaffolder
+	//     generated (e.g. wagtail's) with our exact pins.
+	reqBody := strings.Join(append(append([]string(nil), p.Requirements...), p.Server), "\n") + "\n"
+	if werr := writeAsUser(ctx, p.Username, filepath.Join(p.AppRoot, "requirements.txt"), reqBody); werr != nil {
+		return nil, scaffoldErr("write requirements.txt: %v", werr)
+	}
+
 	result := pythonScaffoldResult{Scaffolded: true, GeneratedEnv: map[string]string{}}
 
 	// 4) Django hardening: patch settings, generate SECRET_KEY.
@@ -172,15 +194,41 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		result.GeneratedEnv["DJANGO_SECRET_KEY"] = strings.TrimSpace(key)
 	}
 
-	// 5) post-install (with the generated env in scope for migrate/collectstatic).
+	// 4b) Generic patch-script hardening for frameworks whose settings layout
+	// isn't a plain config/settings.py (Wagtail's package, Channels' asgi router).
+	// The agent mints the secrets generically (stdlib, no framework dependency)
+	// and runs the entry's own python patch AS TENANT with the full env exported.
+	if strings.TrimSpace(p.PatchScript) != "" {
+		vpy := filepath.Join(venv, "bin", "python")
+		for _, key := range p.Generate {
+			if key == "" {
+				continue
+			}
+			v, err := runAsUser(ctx, p.Username, vpy, "-c", "import secrets;print(secrets.token_urlsafe(50))")
+			if err != nil {
+				return nil, scaffoldErr("generate %s: %v: %s", key, err, v)
+			}
+			result.GeneratedEnv[key] = strings.TrimSpace(v)
+		}
+		patchPath := filepath.Join(p.AppRoot, ".jabali-patch.py")
+		if err := writeAsUser(ctx, p.Username, patchPath, p.PatchScript); err != nil {
+			return nil, scaffoldErr("write patch: %v", err)
+		}
+		args := append(envPrefix(mergeScaffoldEnv(p.Env, result.GeneratedEnv)), vpy, patchPath)
+		if out, err := runAsUserInDir(ctx, p.Username, p.AppRoot, args...); err != nil {
+			return nil, scaffoldErr("patch: %v: %s", err, lastLines(out, 10))
+		}
+		_, _ = runAsUser(ctx, p.Username, "rm", "-f", patchPath)
+	}
+
+	// 5) post-install (with the generated + resolved env in scope for
+	// migrate/collectstatic — e.g. DJANGO_SETTINGS_MODULE for Wagtail).
 	if len(p.PostInstall) > 0 {
-		envArgs := []string{"env"}
-		for k, v := range result.GeneratedEnv {
-			envArgs = append(envArgs, k+"="+v)
-		}
+		penv := mergeScaffoldEnv(p.Env, result.GeneratedEnv)
 		if p.AllowedHosts != "" {
-			envArgs = append(envArgs, "DJANGO_ALLOWED_HOSTS="+p.AllowedHosts)
+			penv["DJANGO_ALLOWED_HOSTS"] = p.AllowedHosts
 		}
+		envArgs := envPrefix(penv)
 		vpy := filepath.Join(venv, "bin", "python")
 		manage := filepath.Join(p.AppRoot, "manage.py")
 		for _, step := range p.PostInstall {
@@ -250,6 +298,35 @@ func writeAsUser(ctx context.Context, username, path, content string) error {
 		return fmt.Errorf("write as %s: %w: %s", username, err, strings.TrimSpace(errb.String()))
 	}
 	return nil
+}
+
+// mergeScaffoldEnv returns a new map of the resolved env overlaid with generated
+// secrets (secrets win). Never mutates its inputs.
+func mergeScaffoldEnv(env, generated map[string]string) map[string]string {
+	out := make(map[string]string, len(env)+len(generated))
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range generated {
+		out[k] = v
+	}
+	return out
+}
+
+// envPrefix builds a deterministic `env K=V …` argv prefix (sorted keys) for a
+// no-shell `sudo -u <user> env …` invocation.
+func envPrefix(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys)+1)
+	out = append(out, "env")
+	for _, k := range keys {
+		out = append(out, k+"="+env[k])
+	}
+	return out
 }
 
 func init() { Default.Register("app.python.scaffold", pythonAppScaffoldHandler) }

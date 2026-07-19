@@ -1,0 +1,33 @@
+slug: channels
+name: Django Channels
+version: "4.3"
+description: Django extended for WebSockets and async protocols over ASGI, served by uvicorn.
+icon: /framework-icons/django.svg
+tags: [asgi, async, websockets, django]
+popularity: 50
+upstream: https://channels.readthedocs.io/
+docs: https://channels.readthedocs.io/
+app_type: asgi
+server: uvicorn
+python_min: "3.10"
+pip_requirements:
+  - django==5.1.4
+  - channels==4.3.2
+  - "uvicorn[standard]==0.51.0"
+scaffold:
+  kind: cmd
+  command: django-admin startproject {{.Project}} .
+  project: config
+entrypoint_template: "{{.Project}}.asgi:application"
+needs_db: sqlite
+static_url: /static/
+static_root: staticfiles
+default_env:
+  - key: DJANGO_SECRET_KEY
+    generate: secret_key
+    required: true
+  - key: DJANGO_ALLOWED_HOSTS
+    description: Comma-separated hostnames Django serves.
+post_install:
+  - migrate
+  - collectstatic

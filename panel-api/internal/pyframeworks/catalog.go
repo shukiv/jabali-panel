@@ -90,6 +90,11 @@ type Entry struct {
 	// the reconciler can ship the starter over agentwire without touching disk,
 	// mirroring the docker-app catalog's inline templates.
 	TemplateFiles map[string]string `yaml:"-"`
+	// PatchScript is the python at <slug>/patch.py (loaded by LoadDir, NOT the
+	// YAML). It runs as the tenant after scaffolding to do framework-specific
+	// settings surgery whose layout the generic Django hardener can't express
+	// (Wagtail's settings package, Channels' asgi router). Empty when absent.
+	PatchScript string `yaml:"-"`
 }
 
 // Scaffold is how a starter project is generated.
@@ -272,6 +277,10 @@ func LoadDir(root string) (*Catalog, []EntryError) {
 				continue
 			}
 			e.TemplateFiles = tf
+		}
+		// Optional per-entry patch script (framework-specific settings surgery).
+		if body, perr := os.ReadFile(filepath.Join(root, slug, "patch.py")); perr == nil {
+			e.PatchScript = string(body)
 		}
 		if verr := e.validate(); verr != nil {
 			errs = append(errs, EntryError{Slug: slug, Err: verr})
