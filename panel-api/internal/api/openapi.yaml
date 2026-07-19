@@ -60,6 +60,128 @@ tags:
     description: Admin CrowdSec engine — alerts, decisions, allow/block lists, bouncers, AppSec, hub.
   - name: Directory Privacy
     description: Password-protected directories (htpasswd) on owned domains.
+  - name: Acls
+    description: Acls endpoints.
+  - name: Active Tasks
+    description: Active Tasks endpoints.
+  - name: Autoresponders
+    description: Autoresponders endpoints.
+  - name: Backup Destinations
+    description: Backup Destinations endpoints.
+  - name: Backup Encryption Key
+    description: Backup Encryption Key endpoints.
+  - name: Backup Runs
+    description: Backup Runs endpoints.
+  - name: Backup Schedules
+    description: Backup Schedules endpoints.
+  - name: Bandwidth
+    description: Bandwidth endpoints.
+  - name: Branding
+    description: Branding endpoints.
+  - name: Browse
+    description: Browse endpoints.
+  - name: Cache
+    description: Cache endpoints.
+  - name: Catchall
+    description: Catchall endpoints.
+  - name: Counts
+    description: Counts endpoints.
+  - name: Database User Grants
+    description: Database User Grants endpoints.
+  - name: Database Users
+    description: Database Users endpoints.
+  - name: Disclaimer
+    description: Disclaimer endpoints.
+  - name: Dns
+    description: Dns endpoints.
+  - name: Dnssec
+    description: Dnssec endpoints.
+  - name: Email
+    description: Email endpoints.
+  - name: Forwarders
+    description: Forwarders endpoints.
+  - name: Htaccess
+    description: Htaccess endpoints.
+  - name: Impersonation
+    description: Impersonation endpoints.
+  - name: Internal
+    description: Internal endpoints.
+  - name: Ips
+    description: Ips endpoints.
+  - name: Logs
+    description: Logs endpoints.
+  - name: Mail
+    description: Mail endpoints.
+  - name: Mail Certificate
+    description: Mail Certificate endpoints.
+  - name: Mailbox Group Memberships
+    description: Mailbox Group Memberships endpoints.
+  - name: Me
+    description: Me endpoints.
+  - name: Migrations
+    description: Migrations endpoints.
+  - name: Mta Sts
+    description: Mta Sts endpoints.
+  - name: Notifications
+    description: Notifications endpoints.
+  - name: Packages
+    description: Packages endpoints.
+  - name: Panel Certificate
+    description: Panel Certificate endpoints.
+  - name: Php
+    description: Php endpoints.
+  - name: Php Performance Modes
+    description: Php Performance Modes endpoints.
+  - name: Php Pool
+    description: Php Pool endpoints.
+  - name: Php Pools
+    description: Php Pools endpoints.
+  - name: Php Settings
+    description: Php Settings endpoints.
+  - name: Processes
+    description: Processes endpoints.
+  - name: Reconcile
+    description: Reconcile endpoints.
+  - name: Security Aide
+    description: Security Aide endpoints.
+  - name: Security Apparmor
+    description: Security Apparmor endpoints.
+  - name: Security Snuffleupagus
+    description: Security Snuffleupagus endpoints.
+  - name: Security Trust
+    description: Security Trust endpoints.
+  - name: Security Ufw
+    description: Security Ufw endpoints.
+  - name: Server Status
+    description: Server Status endpoints.
+  - name: Sessions
+    description: Sessions endpoints.
+  - name: Settings
+    description: Settings endpoints.
+  - name: Shared Resources
+    description: Shared Resources endpoints.
+  - name: Skip Auto San
+    description: Skip Auto San endpoints.
+  - name: Speedtest
+    description: Speedtest endpoints.
+  - name: Ssh Keys
+    description: Ssh Keys endpoints.
+  - name: Ssl
+    description: Ssl endpoints.
+  - name: Ssl Certificates
+    description: Ssl Certificates endpoints.
+  - name: Sso
+    description: Sso endpoints.
+  - name: Support
+    description: Support endpoints.
+  - name: System
+    description: System endpoints.
+  - name: Terminal
+    description: Terminal endpoints.
+  - name: User
+    description: User endpoints.
+  - name: Whois
+    description: Whois endpoints.
   - name: DDNS
     description: Dynamic-DNS shim — DynDNS v2 protocol-compatible.
   - name: Domains
@@ -1642,3 +1764,3077 @@ paths:
         - { in: path, name: rule_id, required: true, schema: { type: string } }
         - { in: path, name: cred_id, required: true, schema: { type: string } }
       responses: { "204": { description: Removed } }
+
+
+
+  # --- Acls (auto) ---
+
+  /domains/{id}/acls:
+    get:
+      tags: [Acls]
+      summary: Acls domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Acls]
+      summary: Acls domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/acls/{acl_id}:
+    delete:
+      tags: [Acls]
+      summary: Delete acl
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: acl_id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+
+  # --- Active Tasks (auto) ---
+
+  /admin/active-tasks:
+    get:
+      tags: [Active Tasks]
+      summary: List active tasks
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Applications (auto) ---
+
+  /applications/cache-profiles:
+    get:
+      tags: [Applications]
+      summary: List cache profiles
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /applications/registry:
+    get:
+      tags: [Applications]
+      summary: List registry
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /applications/scan:
+    post:
+      tags: [Applications]
+      summary: Create scan
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}:
+    delete:
+      tags: [Applications]
+      summary: Delete application
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Applications]
+      summary: Get application
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/cache:
+    put:
+      tags: [Applications]
+      summary: Cache applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/cache-advise:
+    post:
+      tags: [Applications]
+      summary: Cache Advise applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/cache-health:
+    get:
+      tags: [Applications]
+      summary: Cache Health applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/cache-settings:
+    get:
+      tags: [Applications]
+      summary: Cache Settings applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Applications]
+      summary: Cache Settings applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/cache-stats:
+    get:
+      tags: [Applications]
+      summary: Cache Stats applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/cache-warmup:
+    get:
+      tags: [Applications]
+      summary: Cache Warmup applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Applications]
+      summary: Cache Warmup applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/clone:
+    post:
+      tags: [Applications]
+      summary: Clone applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /applications/{id}/magic-link:
+    post:
+      tags: [Applications]
+      summary: Magic Link applications
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Autoresponders (auto) ---
+
+  /domains/{id}/autoresponders:
+    get:
+      tags: [Autoresponders]
+      summary: Autoresponders domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Backup Destinations (auto) ---
+
+  /admin/backup-destinations:
+    get:
+      tags: [Backup Destinations]
+      summary: List backup destinations
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Backup Destinations]
+      summary: Create backup destination
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backup-destinations/{id}:
+    delete:
+      tags: [Backup Destinations]
+      summary: Delete backup destination
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Backup Destinations]
+      summary: Get backup destination
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Backup Destinations]
+      summary: Update backup destination
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backup-destinations/{id}/rotate-password:
+    post:
+      tags: [Backup Destinations]
+      summary: Rotate Password backup destinations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backup-destinations/{id}/test:
+    post:
+      tags: [Backup Destinations]
+      summary: Test backup destinations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Backup Encryption Key (auto) ---
+
+  /admin/backup-encryption-key:
+    get:
+      tags: [Backup Encryption Key]
+      summary: List backup encryption key
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Backup Runs (auto) ---
+
+  /admin/backup-runs:
+    get:
+      tags: [Backup Runs]
+      summary: List backup runs
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backup-runs/{run_id}/jobs:
+    get:
+      tags: [Backup Runs]
+      summary: Jobs backup runs
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: run_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Backup Schedules (auto) ---
+
+  /admin/backup-schedules:
+    get:
+      tags: [Backup Schedules]
+      summary: List backup schedules
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Backup Schedules]
+      summary: Create backup schedule
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backup-schedules/{id}:
+    delete:
+      tags: [Backup Schedules]
+      summary: Delete backup schedule
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Backup Schedules]
+      summary: Get backup schedule
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Backup Schedules]
+      summary: Update backup schedule
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backup-schedules/{id}/run-now:
+    post:
+      tags: [Backup Schedules]
+      summary: Run Now backup schedules
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Backups (auto) ---
+
+  /admin/backups:
+    get:
+      tags: [Backups]
+      summary: List backups
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/restore:
+    post:
+      tags: [Backups]
+      summary: Create restore
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/{job_id}:
+    delete:
+      tags: [Backups]
+      summary: Delete backup
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Backups]
+      summary: Get backup
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/{job_id}/cancel:
+    post:
+      tags: [Backups]
+      summary: Cancel backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/{job_id}/download:
+    get:
+      tags: [Backups]
+      summary: Download backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/{job_id}/logs:
+    get:
+      tags: [Backups]
+      summary: Logs backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/{job_id}/status:
+    get:
+      tags: [Backups]
+      summary: Status backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Bandwidth (auto) ---
+
+  /domains/{id}/bandwidth:
+    get:
+      tags: [Bandwidth]
+      summary: Bandwidth domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Branding (auto) ---
+
+  /branding:
+    get:
+      tags: [Branding]
+      summary: List branding
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /branding/logo/{variant}:
+    get:
+      tags: [Branding]
+      summary: Get logo
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: variant, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Browse (auto) ---
+
+  /domains/{id}/browse:
+    get:
+      tags: [Browse]
+      summary: Browse domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Cache (auto) ---
+
+  /admin/cache/doctor-runs:
+    get:
+      tags: [Cache]
+      summary: List doctor runs
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Cache]
+      summary: Create doctor run
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/cache/doctor-runs/{id}:
+    get:
+      tags: [Cache]
+      summary: Get doctor run
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/cache/overview:
+    get:
+      tags: [Cache]
+      summary: List overview
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/cache:
+    get:
+      tags: [Cache]
+      summary: Cache domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Cache]
+      summary: Cache domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/cache/purge:
+    post:
+      tags: [Cache]
+      summary: Purge cache
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Catchall (auto) ---
+
+  /domains/{id}/catchall:
+    delete:
+      tags: [Catchall]
+      summary: Catchall domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Catchall]
+      summary: Catchall domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Catchall]
+      summary: Catchall domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Counts (auto) ---
+
+  /admin/counts:
+    get:
+      tags: [Counts]
+      summary: List counts
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Cron (auto) ---
+
+  /admin/cron:
+    get:
+      tags: [Cron]
+      summary: List cron
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /cron:
+    get:
+      tags: [Cron]
+      summary: List cron
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Cron]
+      summary: Create cron
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /cron/{id}:
+    delete:
+      tags: [Cron]
+      summary: Delete cron
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Cron]
+      summary: Get cron
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Cron]
+      summary: Update cron
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /cron/{id}/log:
+    get:
+      tags: [Cron]
+      summary: Log cron
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /cron/{id}/run-now:
+    post:
+      tags: [Cron]
+      summary: Run Now cron
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Database User Grants (auto) ---
+
+  /database-user-grants/{id}:
+    delete:
+      tags: [Database User Grants]
+      summary: Delete database user grant
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    patch:
+      tags: [Database User Grants]
+      summary: Update database user grant
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Database Users (auto) ---
+
+  /database-users:
+    get:
+      tags: [Database Users]
+      summary: List database users
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Database Users]
+      summary: Create database user
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /database-users/{id}:
+    delete:
+      tags: [Database Users]
+      summary: Delete database user
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /database-users/{id}/grants:
+    post:
+      tags: [Database Users]
+      summary: Grants database users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /database-users/{id}/rotate-password:
+    post:
+      tags: [Database Users]
+      summary: Rotate Password database users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Databases (auto) ---
+
+  /admin/databases/config:
+    get:
+      tags: [Databases]
+      summary: List config
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Databases]
+      summary: Update config
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/maintenance:
+    post:
+      tags: [Databases]
+      summary: Create maintenance
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/maintenance/{id}:
+    get:
+      tags: [Databases]
+      summary: Get maintenance
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/postgres/status:
+    get:
+      tags: [Databases]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/postgres/uninstall:
+    post:
+      tags: [Databases]
+      summary: Create uninstall
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/processes:
+    get:
+      tags: [Databases]
+      summary: List processes
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/processes/kill:
+    post:
+      tags: [Databases]
+      summary: Create kill
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/root-password:
+    post:
+      tags: [Databases]
+      summary: Create root password
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/sso/adminer:
+    post:
+      tags: [Databases]
+      summary: Create adminer
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/databases/sso/phpmyadmin:
+    post:
+      tags: [Databases]
+      summary: Create phpmyadmin
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /databases/{id}:
+    delete:
+      tags: [Databases]
+      summary: Delete database
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Databases]
+      summary: Get database
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /databases/{id}/backup:
+    get:
+      tags: [Databases]
+      summary: Backup databases
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /databases/{id}/restore:
+    post:
+      tags: [Databases]
+      summary: Restore databases
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Disclaimer (auto) ---
+
+  /domains/{id}/disclaimer:
+    delete:
+      tags: [Disclaimer]
+      summary: Disclaimer domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Disclaimer]
+      summary: Disclaimer domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Disclaimer]
+      summary: Disclaimer domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Dns (auto) ---
+
+  /dns/policy:
+    get:
+      tags: [Dns]
+      summary: List policy
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /dns/records/{recordId}:
+    delete:
+      tags: [Dns]
+      summary: Delete record
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: recordId, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    patch:
+      tags: [Dns]
+      summary: Update record
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: recordId, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/dns/system-records:
+    get:
+      tags: [Dns]
+      summary: System Records dns
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/dns/zone:
+    get:
+      tags: [Dns]
+      summary: Zone dns
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Dns]
+      summary: Zone dns
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Dnssec (auto) ---
+
+  /domains/{id}/dnssec:
+    get:
+      tags: [Dnssec]
+      summary: Dnssec domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Dnssec]
+      summary: Dnssec domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/dnssec/ds:
+    get:
+      tags: [Dnssec]
+      summary: Ds dnssec
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Email (auto) ---
+
+  /domains/{id}/email:
+    delete:
+      tags: [Email]
+      summary: Email domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Email]
+      summary: Email domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Email]
+      summary: Email domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/email/dkim-rotate:
+    post:
+      tags: [Email]
+      summary: Dkim Rotate email
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Files (auto) ---
+
+  /files:
+    delete:
+      tags: [Files]
+      summary: Delete files
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Files]
+      summary: List files
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/archive:
+    post:
+      tags: [Files]
+      summary: Create archive
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/chmod:
+    post:
+      tags: [Files]
+      summary: Create chmod
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/copy:
+    post:
+      tags: [Files]
+      summary: Create copy
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/download:
+    get:
+      tags: [Files]
+      summary: List download
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/extract:
+    post:
+      tags: [Files]
+      summary: Create extract
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/home:
+    get:
+      tags: [Files]
+      summary: List home
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/mkdir:
+    post:
+      tags: [Files]
+      summary: Create mkdir
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/move:
+    post:
+      tags: [Files]
+      summary: Create move
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/preview:
+    get:
+      tags: [Files]
+      summary: List preview
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/rename:
+    post:
+      tags: [Files]
+      summary: Create rename
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/tree:
+    get:
+      tags: [Files]
+      summary: List tree
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/upload:
+    post:
+      tags: [Files]
+      summary: Create upload
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/upload-chunk:
+    post:
+      tags: [Files]
+      summary: Create upload chunk
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/upload-chunk-status:
+    get:
+      tags: [Files]
+      summary: List upload chunk status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/write:
+    post:
+      tags: [Files]
+      summary: Create write
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Forwarders (auto) ---
+
+  /forwarders/{id}:
+    delete:
+      tags: [Forwarders]
+      summary: Delete forwarder
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+
+  # --- Htaccess (auto) ---
+
+  /domains/{id}/htaccess/preview:
+    post:
+      tags: [Htaccess]
+      summary: Preview htaccess
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Impersonation (auto) ---
+
+  /admin/impersonation:
+    get:
+      tags: [Impersonation]
+      summary: List impersonation
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Impersonation]
+      summary: Create impersonation
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/impersonation/{id}:
+    delete:
+      tags: [Impersonation]
+      summary: Delete impersonation
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+
+  # --- Internal (auto) ---
+
+  /internal/agent/managed-ips:
+    get:
+      tags: [Internal]
+      summary: List managed ips
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /internal/agent/managed-ips/{id}:
+    patch:
+      tags: [Internal]
+      summary: Update managed ip
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /internal/notifications/enqueue:
+    post:
+      tags: [Internal]
+      summary: Create enqueue
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Ips (auto) ---
+
+  /admin/ips:
+    get:
+      tags: [Ips]
+      summary: List ips
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Ips]
+      summary: Create ip
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/ips/{id}:
+    delete:
+      tags: [Ips]
+      summary: Delete ip
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    patch:
+      tags: [Ips]
+      summary: Update ip
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Logs (auto) ---
+
+  /logs/access:
+    post:
+      tags: [Logs]
+      summary: Create acces
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /logs/access/{stream_key}:
+    delete:
+      tags: [Logs]
+      summary: Delete acces
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: stream_key, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /logs/stream/{stream_key}:
+    get:
+      tags: [Logs]
+      summary: Get stream
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: stream_key, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /logs/stream/{stream_key}/goaccess.html:
+    get:
+      tags: [Logs]
+      summary: Goaccess.Html stream
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: stream_key, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /logs/types:
+    get:
+      tags: [Logs]
+      summary: List types
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Mail (auto) ---
+
+  /admin/mail/deliverability:
+    get:
+      tags: [Mail]
+      summary: List deliverability
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/mail/queue:
+    get:
+      tags: [Mail]
+      summary: List queue
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/mail/queue/{id}:
+    delete:
+      tags: [Mail]
+      summary: Delete queue
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/mail/queue/{id}/retry:
+    post:
+      tags: [Mail]
+      summary: Retry queue
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/mail/throttles:
+    get:
+      tags: [Mail]
+      summary: List throttles
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Mail]
+      summary: Create throttle
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/mail/throttles/{id}:
+    delete:
+      tags: [Mail]
+      summary: Delete throttle
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    put:
+      tags: [Mail]
+      summary: Update throttle
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /mail/forwarders:
+    get:
+      tags: [Mail]
+      summary: List forwarders
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /mail/forwarders/domain-scoped:
+    get:
+      tags: [Mail]
+      summary: List domain scoped
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /mail/logs:
+    get:
+      tags: [Mail]
+      summary: List logs
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /mail/logs/detail:
+    get:
+      tags: [Mail]
+      summary: List detail
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /mail/shares:
+    get:
+      tags: [Mail]
+      summary: List shares
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Mail Certificate (auto) ---
+
+  /domains/{id}/mail-certificate:
+    get:
+      tags: [Mail Certificate]
+      summary: Mail Certificate domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/mail-certificate/disable:
+    post:
+      tags: [Mail Certificate]
+      summary: Disable mail certificate
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/mail-certificate/enable:
+    post:
+      tags: [Mail Certificate]
+      summary: Enable mail certificate
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/mail-certificate/reissue:
+    post:
+      tags: [Mail Certificate]
+      summary: Reissue mail certificate
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Mailbox Group Memberships (auto) ---
+
+  /domains/{id}/mailbox-group-memberships:
+    get:
+      tags: [Mailbox Group Memberships]
+      summary: Mailbox Group Memberships domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Mailboxes (auto) ---
+
+  /admin/mailboxes:
+    get:
+      tags: [Mailboxes]
+      summary: List mailboxes
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /mailboxes/{mbid}:
+    delete:
+      tags: [Mailboxes]
+      summary: Delete mailboxe
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Mailboxes]
+      summary: Get mailboxe
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Mailboxes]
+      summary: Update mailboxe
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /mailboxes/{mbid}/autoresponder:
+    delete:
+      tags: [Mailboxes]
+      summary: Autoresponder mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Mailboxes]
+      summary: Autoresponder mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Mailboxes]
+      summary: Autoresponder mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /mailboxes/{mbid}/forwarders:
+    post:
+      tags: [Mailboxes]
+      summary: Forwarders mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /mailboxes/{mbid}/rotate-password:
+    post:
+      tags: [Mailboxes]
+      summary: Rotate Password mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /mailboxes/{mbid}/send-as:
+    get:
+      tags: [Mailboxes]
+      summary: Send As mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Mailboxes]
+      summary: Send As mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /mailboxes/{mbid}/send-as/{grantorId}:
+    delete:
+      tags: [Mailboxes]
+      summary: Delete send a
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } }, { in: path, name: grantorId, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /mailboxes/{mbid}/shares:
+    get:
+      tags: [Mailboxes]
+      summary: Shares mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Mailboxes]
+      summary: Shares mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /mailboxes/{mbid}/shares/{shareId}:
+    delete:
+      tags: [Mailboxes]
+      summary: Delete share
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } }, { in: path, name: shareId, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /mailboxes/{mbid}/sso:
+    post:
+      tags: [Mailboxes]
+      summary: Sso mailboxes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Me (auto) ---
+
+  /me:
+    get:
+      tags: [Me]
+      summary: List me
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/activity:
+    get:
+      tags: [Me]
+      summary: List activity
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/{id}:
+    delete:
+      tags: [Me]
+      summary: Delete backup
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /me/backups/{id}/download:
+    get:
+      tags: [Me]
+      summary: Download backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/{id}/manifest:
+    get:
+      tags: [Me]
+      summary: Manifest backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /me/disk-usage:
+    get:
+      tags: [Me]
+      summary: List disk usage
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/disk-usage/files:
+    get:
+      tags: [Me]
+      summary: List files
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/disk-usage/refresh:
+    post:
+      tags: [Me]
+      summary: Create refresh
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/php-cli-version:
+    get:
+      tags: [Me]
+      summary: List php cli version
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Me]
+      summary: Update php cli version
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/php-fpm-policy:
+    get:
+      tags: [Me]
+      summary: List php fpm policy
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/php-performance-mode:
+    put:
+      tags: [Me]
+      summary: Update php performance mode
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/php-pool-tuning:
+    put:
+      tags: [Me]
+      summary: Update php pool tuning
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/server-capabilities:
+    get:
+      tags: [Me]
+      summary: List server capabilities
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/ssh-connection:
+    get:
+      tags: [Me]
+      summary: List ssh connection
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/ui-prefs:
+    get:
+      tags: [Me]
+      summary: List ui prefs
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/ui-prefs/{key}:
+    put:
+      tags: [Me]
+      summary: Update ui pref
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: key, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Migrations (auto) ---
+
+  /admin/migrations:
+    get:
+      tags: [Migrations]
+      summary: List migrations
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Migrations]
+      summary: Create migration
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/batches/{id}:
+    delete:
+      tags: [Migrations]
+      summary: Delete batche
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/migrations/bulk:
+    post:
+      tags: [Migrations]
+      summary: Create bulk
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/discover-accounts/{host}/{user}/size:
+    get:
+      tags: [Migrations]
+      summary: Size discover accounts
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: host, required: true, schema: { type: string } }, { in: path, name: user, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/imap:
+    post:
+      tags: [Migrations]
+      summary: Create imap
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/imap/probe:
+    post:
+      tags: [Migrations]
+      summary: Create probe
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/refresh:
+    post:
+      tags: [Migrations]
+      summary: Create refresh
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}:
+    delete:
+      tags: [Migrations]
+      summary: Delete migration
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Migrations]
+      summary: Get migration
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Migrations]
+      summary: Update migration
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/account-size/{user}:
+    get:
+      tags: [Migrations]
+      summary: Get account size
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: user, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/describe-account:
+    post:
+      tags: [Migrations]
+      summary: Describe Account migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/destroy:
+    post:
+      tags: [Migrations]
+      summary: Destroy migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/discover-accounts:
+    get:
+      tags: [Migrations]
+      summary: Discover Accounts migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/import:
+    post:
+      tags: [Migrations]
+      summary: Import migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/import-wp:
+    post:
+      tags: [Migrations]
+      summary: Import Wp migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/plan:
+    put:
+      tags: [Migrations]
+      summary: Plan migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/pull-source:
+    post:
+      tags: [Migrations]
+      summary: Pull Source migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/retry:
+    post:
+      tags: [Migrations]
+      summary: Retry migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/secrets:
+    post:
+      tags: [Migrations]
+      summary: Secrets migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/stages:
+    get:
+      tags: [Migrations]
+      summary: Stages migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/stream:
+    get:
+      tags: [Migrations]
+      summary: Stream migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/submit:
+    post:
+      tags: [Migrations]
+      summary: Submit migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/tarball:
+    get:
+      tags: [Migrations]
+      summary: Tarball migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Migrations]
+      summary: Tarball migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/migrations/{id}/test-connection:
+    post:
+      tags: [Migrations]
+      summary: Test Connection migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/wordpress:
+    post:
+      tags: [Migrations]
+      summary: Create wordpres
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/{id}:
+    get:
+      tags: [Migrations]
+      summary: Get migration
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/{id}/import-wp:
+    post:
+      tags: [Migrations]
+      summary: Import Wp migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/{id}/pull-source:
+    post:
+      tags: [Migrations]
+      summary: Pull Source migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/{id}/scan-wp:
+    post:
+      tags: [Migrations]
+      summary: Scan Wp migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/{id}/secrets:
+    post:
+      tags: [Migrations]
+      summary: Secrets migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/{id}/source-path:
+    post:
+      tags: [Migrations]
+      summary: Source Path migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /migrations/{id}/verify:
+    post:
+      tags: [Migrations]
+      summary: Verify migrations
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Mta Sts (auto) ---
+
+  /domains/{id}/mta-sts:
+    get:
+      tags: [Mta Sts]
+      summary: Mta Sts domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Mta Sts]
+      summary: Mta Sts domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Notifications (auto) ---
+
+  /admin/notifications/broadcast:
+    post:
+      tags: [Notifications]
+      summary: Create broadcast
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/notifications/channels:
+    get:
+      tags: [Notifications]
+      summary: List channels
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Notifications]
+      summary: Create channel
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/notifications/channels/{id}:
+    delete:
+      tags: [Notifications]
+      summary: Delete channel
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    patch:
+      tags: [Notifications]
+      summary: Update channel
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/notifications/channels/{id}/test:
+    post:
+      tags: [Notifications]
+      summary: Test channels
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/notifications/dlq:
+    delete:
+      tags: [Notifications]
+      summary: Delete dlq
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Notifications]
+      summary: List dlq
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/notifications/dlq/replay-all:
+    post:
+      tags: [Notifications]
+      summary: Create replay all
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/notifications/dlq/{id}:
+    delete:
+      tags: [Notifications]
+      summary: Delete dlq
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/notifications/dlq/{id}/replay:
+    post:
+      tags: [Notifications]
+      summary: Replay dlq
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /notifications/inbox:
+    delete:
+      tags: [Notifications]
+      summary: Delete inbox
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Notifications]
+      summary: List inbox
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /notifications/inbox/read-all:
+    post:
+      tags: [Notifications]
+      summary: Create read all
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /notifications/inbox/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Read inbox
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /notifications/webpush/subscribe:
+    delete:
+      tags: [Notifications]
+      summary: Delete subscribe
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+    post:
+      tags: [Notifications]
+      summary: Create subscribe
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /notifications/webpush/vapid-public-key:
+    get:
+      tags: [Notifications]
+      summary: List vapid public key
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Packages (auto) ---
+
+  /packages:
+    get:
+      tags: [Packages]
+      summary: List packages
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Packages]
+      summary: Create package
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /packages/{id}:
+    delete:
+      tags: [Packages]
+      summary: Delete package
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Packages]
+      summary: Get package
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Packages]
+      summary: Update package
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Panel Certificate (auto) ---
+
+  /admin/panel-certificate:
+    get:
+      tags: [Panel Certificate]
+      summary: List panel certificate
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/panel-certificate/issue:
+    post:
+      tags: [Panel Certificate]
+      summary: Create issue
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/panel-certificate/toggle:
+    post:
+      tags: [Panel Certificate]
+      summary: Create toggle
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Php (auto) ---
+
+  /admin/php/versions/status:
+    get:
+      tags: [Php]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/php/versions/{version}:
+    delete:
+      tags: [Php]
+      summary: Delete version
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/php/versions/{version}/default:
+    post:
+      tags: [Php]
+      summary: Default versions
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/php/versions/{version}/extensions:
+    get:
+      tags: [Php]
+      summary: Extensions versions
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/php/versions/{version}/extensions/{ext}/apply:
+    post:
+      tags: [Php]
+      summary: Apply extensions
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: version, required: true, schema: { type: string } }, { in: path, name: ext, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/php/versions/{version}/install:
+    post:
+      tags: [Php]
+      summary: Install versions
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/php/versions/{version}/reload:
+    post:
+      tags: [Php]
+      summary: Reload versions
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /php/versions:
+    get:
+      tags: [Php]
+      summary: List versions
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Php Performance Modes (auto) ---
+
+  /php-performance-modes:
+    get:
+      tags: [Php Performance Modes]
+      summary: List php performance modes
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /php-performance-modes/{mode}:
+    put:
+      tags: [Php Performance Modes]
+      summary: Update php performance mode
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: mode, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Php Pool (auto) ---
+
+  /domains/{id}/php-pool:
+    delete:
+      tags: [Php Pool]
+      summary: Php Pool domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    post:
+      tags: [Php Pool]
+      summary: Php Pool domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Php Pools (auto) ---
+
+  /php-pools:
+    get:
+      tags: [Php Pools]
+      summary: List php pools
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Php Pools]
+      summary: Create php pool
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /php-pools/{id}:
+    delete:
+      tags: [Php Pools]
+      summary: Delete php pool
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Php Pools]
+      summary: Get php pool
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Php Pools]
+      summary: Update php pool
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Php Pools]
+      summary: Update php pool
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /php-pools/{id}/ini-overrides:
+    get:
+      tags: [Php Pools]
+      summary: Ini Overrides php pools
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Php Pools]
+      summary: Ini Overrides php pools
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /php-pools/{id}/ini-overrides/{override_id}:
+    delete:
+      tags: [Php Pools]
+      summary: Delete ini override
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: override_id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    put:
+      tags: [Php Pools]
+      summary: Update ini override
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: override_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Php Settings (auto) ---
+
+  /domains/{id}/php-settings:
+    get:
+      tags: [Php Settings]
+      summary: Php Settings domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Php Settings]
+      summary: Php Settings domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Processes (auto) ---
+
+  /admin/processes/{pid}/kill:
+    post:
+      tags: [Processes]
+      summary: Kill processes
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: pid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Reconcile (auto) ---
+
+  /admin/reconcile:
+    post:
+      tags: [Reconcile]
+      summary: Create reconcile
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/reconcile/php-pools:
+    post:
+      tags: [Reconcile]
+      summary: Create php pool
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Security Aide (auto) ---
+
+  /admin/security/aide/check:
+    post:
+      tags: [Security Aide]
+      summary: Create check
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/aide/rebuild:
+    post:
+      tags: [Security Aide]
+      summary: Create rebuild
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/aide/report:
+    get:
+      tags: [Security Aide]
+      summary: List report
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/aide/status:
+    get:
+      tags: [Security Aide]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Security Apparmor (auto) ---
+
+  /admin/security/apparmor/profiles/{name}/mode:
+    post:
+      tags: [Security Apparmor]
+      summary: Mode profiles
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/apparmor/status:
+    get:
+      tags: [Security Apparmor]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Security Snuffleupagus (auto) ---
+
+  /admin/security/snuffleupagus/incidents:
+    get:
+      tags: [Security Snuffleupagus]
+      summary: List incidents
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/snuffleupagus/mode:
+    post:
+      tags: [Security Snuffleupagus]
+      summary: Create mode
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/snuffleupagus/rules:
+    get:
+      tags: [Security Snuffleupagus]
+      summary: List rules
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/snuffleupagus/rules/{name}/toggle:
+    post:
+      tags: [Security Snuffleupagus]
+      summary: Toggle rules
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/snuffleupagus/status:
+    get:
+      tags: [Security Snuffleupagus]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Security Trust (auto) ---
+
+  /admin/security/trust/test:
+    post:
+      tags: [Security Trust]
+      summary: Create test
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Security Ufw (auto) ---
+
+  /admin/security/ufw/default:
+    put:
+      tags: [Security Ufw]
+      summary: Update default
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/ufw/disable:
+    post:
+      tags: [Security Ufw]
+      summary: Create disable
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/ufw/enable:
+    post:
+      tags: [Security Ufw]
+      summary: Create enable
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/ufw/rules:
+    post:
+      tags: [Security Ufw]
+      summary: Create rule
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/security/ufw/rules/{num}:
+    delete:
+      tags: [Security Ufw]
+      summary: Delete rule
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: num, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+  /admin/security/ufw/status:
+    get:
+      tags: [Security Ufw]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Server Status (auto) ---
+
+  /admin/server-status:
+    get:
+      tags: [Server Status]
+      summary: List server status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Services (auto) ---
+
+  /admin/services/{name}/{action}:
+    post:
+      tags: [Services]
+      summary: POST service
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } }, { in: path, name: action, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Sessions (auto) ---
+
+  /admin/sessions:
+    get:
+      tags: [Sessions]
+      summary: List sessions
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/sessions/{id}:
+    delete:
+      tags: [Sessions]
+      summary: Delete session
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+
+  # --- Settings (auto) ---
+
+  /admin/settings/account-skeleton:
+    get:
+      tags: [Settings]
+      summary: List account skeleton
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/account-skeleton/file:
+    delete:
+      tags: [Settings]
+      summary: Delete file
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Settings]
+      summary: List file
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Settings]
+      summary: Update file
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/branding/logo/{variant}:
+    delete:
+      tags: [Settings]
+      summary: Delete logo
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: variant, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    post:
+      tags: [Settings]
+      summary: POST logo
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: variant, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/email:
+    get:
+      tags: [Settings]
+      summary: List email
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/modules/install:
+    post:
+      tags: [Settings]
+      summary: Create install
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/modules/status:
+    get:
+      tags: [Settings]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/notification-events:
+    get:
+      tags: [Settings]
+      summary: List notification events
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/notification-events/{kind}:
+    patch:
+      tags: [Settings]
+      summary: Update notification event
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: kind, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/page-templates:
+    get:
+      tags: [Settings]
+      summary: List page templates
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/page-templates/{key}:
+    get:
+      tags: [Settings]
+      summary: Get page template
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: key, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Settings]
+      summary: Update page template
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: key, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/page-templates/{key}/reset:
+    post:
+      tags: [Settings]
+      summary: Reset page templates
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: key, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/python-runtime:
+    get:
+      tags: [Settings]
+      summary: List python runtime
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/settings/stalwart-admin-credential:
+    post:
+      tags: [Settings]
+      summary: Create stalwart admin credential
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Shared Resources (auto) ---
+
+  /domains/{id}/shared-resources:
+    get:
+      tags: [Shared Resources]
+      summary: Shared Resources domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Shared Resources]
+      summary: Shared Resources domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /shared-resources/{rid}:
+    delete:
+      tags: [Shared Resources]
+      summary: Delete shared resource
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Shared Resources]
+      summary: Get shared resource
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Shared Resources]
+      summary: Update shared resource
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /shared-resources/{rid}/grants:
+    put:
+      tags: [Shared Resources]
+      summary: Grants shared resources
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Skip Auto San (auto) ---
+
+  /domains/{id}/skip-auto-san:
+    get:
+      tags: [Skip Auto San]
+      summary: Skip Auto San domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Skip Auto San]
+      summary: Skip Auto San domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Speedtest (auto) ---
+
+  /admin/speedtest/download:
+    get:
+      tags: [Speedtest]
+      summary: List download
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/speedtest/ping:
+    get:
+      tags: [Speedtest]
+      summary: List ping
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/speedtest/upload:
+    post:
+      tags: [Speedtest]
+      summary: Create upload
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Ssh Keys (auto) ---
+
+  /ssh-keys:
+    get:
+      tags: [Ssh Keys]
+      summary: List ssh keys
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Ssh Keys]
+      summary: Create ssh key
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /ssh-keys/{id}:
+    delete:
+      tags: [Ssh Keys]
+      summary: Delete ssh key
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+
+
+  # --- Ssl (auto) ---
+
+  /domains/{id}/ssl:
+    delete:
+      tags: [Ssl]
+      summary: Ssl domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Ssl]
+      summary: Ssl domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Ssl]
+      summary: Ssl domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/ssl/custom:
+    put:
+      tags: [Ssl]
+      summary: Custom ssl
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/ssl/renew:
+    post:
+      tags: [Ssl]
+      summary: Renew ssl
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/ssl/retry:
+    post:
+      tags: [Ssl]
+      summary: Retry ssl
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Ssl Certificates (auto) ---
+
+  /admin/ssl-certificates:
+    get:
+      tags: [Ssl Certificates]
+      summary: List ssl certificates
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /ssl-certificates:
+    get:
+      tags: [Ssl Certificates]
+      summary: List ssl certificates
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Sso (auto) ---
+
+  /admin/sso/prune-tokens:
+    post:
+      tags: [Sso]
+      summary: Create prune token
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Support (auto) ---
+
+  /admin/support/diagnostic:
+    post:
+      tags: [Support]
+      summary: Create diagnostic
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- System (auto) ---
+
+  /admin/system/backups:
+    get:
+      tags: [System]
+      summary: List backups
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [System]
+      summary: Create backup
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/system/backups/{job_id}/cancel:
+    post:
+      tags: [System]
+      summary: Cancel backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/system/backups/{job_id}/logs:
+    get:
+      tags: [System]
+      summary: Logs backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/system/ssh-keys:
+    get:
+      tags: [System]
+      summary: List ssh keys
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [System]
+      summary: Create ssh key
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/info:
+    get:
+      tags: [System]
+      summary: List info
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/nspawn-images:
+    get:
+      tags: [System]
+      summary: List nspawn images
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/nspawn-images/build:
+    delete:
+      tags: [System]
+      summary: Delete build
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+    post:
+      tags: [System]
+      summary: Create build
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/nspawn-images/build/status:
+    get:
+      tags: [System]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/nspawn-images/prune:
+    post:
+      tags: [System]
+      summary: Create prune
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/resolvers:
+    get:
+      tags: [System]
+      summary: List resolvers
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [System]
+      summary: Update resolvers
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/services:
+    get:
+      tags: [System]
+      summary: List services
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /system/services/{name}/disable:
+    post:
+      tags: [System]
+      summary: Disable services
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /system/services/{name}/enable:
+    post:
+      tags: [System]
+      summary: Enable services
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /system/services/{name}/restart:
+    post:
+      tags: [System]
+      summary: Restart services
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /system/services/{name}/start:
+    post:
+      tags: [System]
+      summary: Start services
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /system/services/{name}/stop:
+    post:
+      tags: [System]
+      summary: Stop services
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Terminal (auto) ---
+
+  /admin/terminal/session:
+    post:
+      tags: [Terminal]
+      summary: Create session
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/terminal/ws/{token}:
+    get:
+      tags: [Terminal]
+      summary: Get w
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: token, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Updates (auto) ---
+
+  /admin/updates/apt:
+    delete:
+      tags: [Updates]
+      summary: Delete apt
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+
+  /admin/updates/apt/check:
+    get:
+      tags: [Updates]
+      summary: List check
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/apt/run:
+    post:
+      tags: [Updates]
+      summary: Create run
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/apt/status:
+    get:
+      tags: [Updates]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/autoupdate:
+    get:
+      tags: [Updates]
+      summary: List autoupdate
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Updates]
+      summary: Update autoupdate
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/history:
+    get:
+      tags: [Updates]
+      summary: List history
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/jabali:
+    delete:
+      tags: [Updates]
+      summary: Delete jabali
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+
+  /admin/updates/jabali/check:
+    get:
+      tags: [Updates]
+      summary: List check
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/jabali/run:
+    post:
+      tags: [Updates]
+      summary: Create run
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/jabali/status:
+    get:
+      tags: [Updates]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/repair:
+    delete:
+      tags: [Updates]
+      summary: Delete repair
+      security: [ { KratosSession: [] } ]
+      responses: { "204": { description: OK } }
+
+  /admin/updates/repair/diagnose:
+    post:
+      tags: [Updates]
+      summary: Create diagnose
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/repair/domain/fix-perms:
+    post:
+      tags: [Updates]
+      summary: Create fix perm
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/repair/domain/orphans:
+    get:
+      tags: [Updates]
+      summary: List orphans
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/repair/domain/orphans/prune:
+    post:
+      tags: [Updates]
+      summary: Create prune
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/repair/run:
+    post:
+      tags: [Updates]
+      summary: Create run
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/repair/status:
+    get:
+      tags: [Updates]
+      summary: List status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/updates/state:
+    get:
+      tags: [Updates]
+      summary: List state
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- User (auto) ---
+
+  /user/ips:
+    get:
+      tags: [User]
+      summary: List ips
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Users (auto) ---
+
+  /admin/users/{id}/2fa/reset:
+    post:
+      tags: [Users]
+      summary: Reset 2fa
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/users/{id}/backups:
+    get:
+      tags: [Users]
+      summary: Backups users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Users]
+      summary: Backups users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/users/{id}/password/reset:
+    post:
+      tags: [Users]
+      summary: Reset password
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/users/{id}/slice-status:
+    get:
+      tags: [Users]
+      summary: Slice Status users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/users/{id}/suspend:
+    post:
+      tags: [Users]
+      summary: Suspend users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/users/{id}/unsuspend:
+    post:
+      tags: [Users]
+      summary: Unsuspend users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List users
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Users]
+      summary: Create user
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /users/{id}:
+    delete:
+      tags: [Users]
+      summary: Delete user
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    get:
+      tags: [Users]
+      summary: Get user
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Users]
+      summary: Update user
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /users/{id}/limit-overrides:
+    delete:
+      tags: [Users]
+      summary: Limit Overrides users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: OK } }
+    put:
+      tags: [Users]
+      summary: Limit Overrides users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /users/{id}/reprovision:
+    post:
+      tags: [Users]
+      summary: Reprovision users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /users/{id}/usage:
+    get:
+      tags: [Users]
+      summary: Usage users
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- Whois (auto) ---
+
+  /domains/{id}/whois:
+    get:
+      tags: [Whois]
+      summary: Whois domains
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
