@@ -58,6 +58,8 @@ tags:
     description: Admin malware scanning (M33) — scans, quarantine, events, YARA rules, signatures.
   - name: CrowdSec
     description: Admin CrowdSec engine — alerts, decisions, allow/block lists, bouncers, AppSec, hub.
+  - name: Directory Privacy
+    description: Password-protected directories (htpasswd) on owned domains.
   - name: DDNS
     description: Dynamic-DNS shim — DynDNS v2 protocol-compatible.
   - name: Domains
@@ -1575,3 +1577,68 @@ paths:
       security: [ { KratosSession: [] } ]
       requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
+
+  # --- Directory Privacy ---
+
+  /domains/{id}/directory-privacy:
+    get:
+      tags: [Directory Privacy]
+      summary: List protected directories for a domain
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Rules } }
+    post:
+      tags: [Directory Privacy]
+      summary: Protect a directory
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { path: { type: string }, label: { type: string } } } } } }
+      responses: { "201": { description: Created }, "422": { description: Validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } } }
+
+  /domains/{id}/directory-privacy/{rule_id}:
+    put:
+      tags: [Directory Privacy]
+      summary: Update a protection rule
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: path, name: rule_id, required: true, schema: { type: string } }
+      responses: { "200": { description: Updated } }
+    delete:
+      tags: [Directory Privacy]
+      summary: Remove protection from a directory
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: path, name: rule_id, required: true, schema: { type: string } }
+      responses: { "204": { description: Removed } }
+
+  /domains/{id}/directory-privacy/{rule_id}/credentials:
+    get:
+      tags: [Directory Privacy]
+      summary: List users for a protected directory
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: path, name: rule_id, required: true, schema: { type: string } }
+      responses: { "200": { description: Credentials } }
+    post:
+      tags: [Directory Privacy]
+      summary: Add a user to a protected directory
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: path, name: rule_id, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { username: { type: string }, password: { type: string } } } } } }
+      responses: { "201": { description: Added } }
+
+  /domains/{id}/directory-privacy/{rule_id}/credentials/{cred_id}:
+    delete:
+      tags: [Directory Privacy]
+      summary: Remove a user from a protected directory
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: path, name: rule_id, required: true, schema: { type: string } }
+        - { in: path, name: cred_id, required: true, schema: { type: string } }
+      responses: { "204": { description: Removed } }

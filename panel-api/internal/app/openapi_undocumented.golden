@@ -26,8 +26,6 @@ DELETE /databases/{id}
 DELETE /dns/records/{recordId}
 DELETE /domains/{id}/acls/{acl_id}
 DELETE /domains/{id}/catchall
-DELETE /domains/{id}/directory-privacy/{rule_id}
-DELETE /domains/{id}/directory-privacy/{rule_id}/credentials/{cred_id}
 DELETE /domains/{id}/disclaimer
 DELETE /domains/{id}/email
 DELETE /domains/{id}/php-pool
@@ -148,8 +146,6 @@ GET /domains/{id}/bandwidth
 GET /domains/{id}/browse
 GET /domains/{id}/cache
 GET /domains/{id}/catchall
-GET /domains/{id}/directory-privacy
-GET /domains/{id}/directory-privacy/{rule_id}/credentials
 GET /domains/{id}/disclaimer
 GET /domains/{id}/dns/system-records
 GET /domains/{id}/dns/zone
@@ -326,8 +322,6 @@ POST /database-users/{id}/rotate-password
 POST /databases/{id}/restore
 POST /domains/{id}/acls
 POST /domains/{id}/cache/purge
-POST /domains/{id}/directory-privacy
-POST /domains/{id}/directory-privacy/{rule_id}/credentials
 POST /domains/{id}/email
 POST /domains/{id}/email/dkim-rotate
 POST /domains/{id}/htaccess/preview
@@ -390,7 +384,6 @@ PUT /applications/{id}/cache
 PUT /applications/{id}/cache-settings
 PUT /domains/{id}/cache
 PUT /domains/{id}/catchall
-PUT /domains/{id}/directory-privacy/{rule_id}
 PUT /domains/{id}/disclaimer
 PUT /domains/{id}/dnssec
 PUT /domains/{id}/mta-sts
