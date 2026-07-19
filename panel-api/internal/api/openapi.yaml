@@ -46,6 +46,12 @@ tags:
     description: Zones + records for owned domains.
   - name: Egress
     description: Per-user PHP-FPM egress firewall (M34) — policy, request queue, mature-soak promotion.
+  - name: Audit
+    description: Tamper-evident audit log — query, verify the hash chain, prune.
+  - name: Docker Apps
+    description: Admin Docker-compose app catalog installs (M48) — lifecycle, env, backups.
+  - name: Python Apps
+    description: Per-user Python (WSGI/ASGI) app installs — lifecycle, env, logs.
   - name: DDNS
     description: Dynamic-DNS shim — DynDNS v2 protocol-compatible.
   - name: Domains
@@ -146,6 +152,21 @@ components:
           type: array
           items: { type: string, format: ulid }
         flipped_count: { type: integer }
+    DockerApp:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        slug: { type: string, example: onlyoffice }
+        name: { type: string }
+        status: { type: string, enum: [installing, running, stopped, failed] }
+        domain_id: { type: string, format: ulid, nullable: true }
+    PythonApp:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        name: { type: string }
+        runtime_version: { type: string, example: "3.12" }
+        status: { type: string, enum: [installing, running, stopped, failed] }
     Error:
       type: object
       properties:
@@ -900,3 +921,283 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EgressMatureResult" }
+
+  # --------------------------------------------------------------- Audit ---
+
+  /admin/audit:
+    get:
+      tags: [Audit]
+      summary: Query the audit log (admin)
+      description: "Filterable, paginated audit events. **Auth:** admin browser session."
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: "{ data: [AuditEvent], total }" }
+
+  /admin/audit/verify:
+    post:
+      tags: [Audit]
+      summary: Verify the audit hash chain (admin)
+      description: "Recomputes the tamper-evidence chain (from the retention anchor, JAB-105). **Auth:** admin session."
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: "{ ok, checked, total, broken_id }" }
+
+  /admin/audit/prune:
+    post:
+      tags: [Audit]
+      summary: Prune old audit rows (admin)
+      description: |
+        Deletes rows older than --days and re-anchors the chain so verify still
+        passes (JAB-105). The prune is itself audited. **Auth:** admin session.
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { days: { type: integer, default: 365, minimum: 1 } } }
+      responses:
+        "200": { description: "{ pruned, cutoff }" }
+
+  # ---------------------------------------------------------- Docker Apps ---
+
+  /admin/docker-apps:
+    get:
+      tags: [Docker Apps]
+      summary: List installed Docker apps (admin)
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200":
+          description: The installs
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DockerApp" } } } }
+    post:
+      tags: [Docker Apps]
+      summary: Install a catalog Docker app (admin)
+      description: "Provisions a compose app from the catalog. Long-running → 202 + job. **Auth:** admin session."
+      security: [ { KratosSession: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { slug: { type: string }, domain_id: { type: string } } } } } }
+      responses:
+        "202": { description: Install queued }
+
+  /admin/docker-apps/catalog:
+    get:
+      tags: [Docker Apps]
+      summary: List the Docker app catalog (admin)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: Catalog entries } }
+
+  /admin/docker-apps/catalog/{slug}/icon:
+    get:
+      tags: [Docker Apps]
+      summary: Catalog app icon (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: slug, required: true, schema: { type: string } } ]
+      responses: { "200": { description: SVG/PNG icon }, "404": { description: No icon } }
+
+  /admin/docker-apps/engine/status:
+    get:
+      tags: [Docker Apps]
+      summary: Docker engine status (admin)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "{ installed, running }" } }
+
+  /admin/docker-apps/maintenance/disk-usage:
+    get:
+      tags: [Docker Apps]
+      summary: Docker disk usage (admin)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: Disk usage breakdown } }
+
+  /admin/docker-apps/maintenance/prune:
+    post:
+      tags: [Docker Apps]
+      summary: Prune dangling Docker images/volumes (admin)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: Reclaimed space } }
+
+  /admin/docker-apps/{id}:
+    get:
+      tags: [Docker Apps]
+      summary: Get a Docker app (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: The install, content: { application/json: { schema: { $ref: "#/components/schemas/DockerApp" } } } }, "404": { description: Not found } }
+    patch:
+      tags: [Docker Apps]
+      summary: Update a Docker app's config (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Updated } }
+    delete:
+      tags: [Docker Apps]
+      summary: Uninstall a Docker app (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "204": { description: Removed } }
+
+  /admin/docker-apps/{id}/logs:
+    get:
+      tags: [Docker Apps]
+      summary: Docker app logs (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Log snapshot } }
+
+  /admin/docker-apps/{id}/env:
+    get:
+      tags: [Docker Apps]
+      summary: Get a Docker app's env (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Env map } }
+    put:
+      tags: [Docker Apps]
+      summary: Set a Docker app's env (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Saved } }
+
+  /admin/docker-apps/{id}/env/regenerate:
+    post:
+      tags: [Docker Apps]
+      summary: Regenerate secrets in a Docker app's env (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Regenerated } }
+
+  /admin/docker-apps/{id}/backups:
+    get:
+      tags: [Docker Apps]
+      summary: List a Docker app's backups (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Backups } }
+
+  /admin/docker-apps/{id}/backup:
+    post:
+      tags: [Docker Apps]
+      summary: Back up a Docker app now (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "202": { description: Backup queued } }
+
+  /admin/docker-apps/{id}/backups/{bid}/restore:
+    post:
+      tags: [Docker Apps]
+      summary: Restore a Docker app backup (admin)
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: path, name: bid, required: true, schema: { type: string } }
+      responses: { "202": { description: Restore queued } }
+
+  /admin/docker-apps/{id}/exec:
+    post:
+      tags: [Docker Apps]
+      summary: Exec a command in a Docker app (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Command output } }
+
+  /admin/docker-apps/{id}/start:
+    post:
+      tags: [Docker Apps]
+      summary: Start a Docker app (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Started } }
+
+  /admin/docker-apps/{id}/stop:
+    post:
+      tags: [Docker Apps]
+      summary: Stop a Docker app (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Stopped } }
+
+  /admin/docker-apps/{id}/restart:
+    post:
+      tags: [Docker Apps]
+      summary: Restart a Docker app (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Restarted } }
+
+  /admin/docker-apps/{id}/rebuild:
+    post:
+      tags: [Docker Apps]
+      summary: Rebuild a Docker app (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "202": { description: Rebuild queued } }
+
+  /admin/docker-apps/{id}/update:
+    post:
+      tags: [Docker Apps]
+      summary: Update a Docker app image (admin)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "202": { description: Update queued } }
+
+  # ---------------------------------------------------------- Python Apps ---
+
+  /python-apps:
+    get:
+      tags: [Python Apps]
+      summary: List my Python apps
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200":
+          description: The apps
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PythonApp" } } } }
+    post:
+      tags: [Python Apps]
+      summary: Create a Python app
+      description: "Provisions a WSGI/ASGI app under the chosen runtime. **Auth:** browser session."
+      security: [ { KratosSession: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string }, runtime_version: { type: string } } } } } }
+      responses: { "201": { description: Created }, "422": { description: Validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } } }
+
+  /python-apps/versions:
+    get:
+      tags: [Python Apps]
+      summary: Installed Python runtimes available for apps
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "[{ version, path }]" } }
+
+  /python-apps/{id}:
+    get:
+      tags: [Python Apps]
+      summary: Get a Python app
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: The app, content: { application/json: { schema: { $ref: "#/components/schemas/PythonApp" } } } }, "404": { description: Not found } }
+    delete:
+      tags: [Python Apps]
+      summary: Delete a Python app
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "204": { description: Removed } }
+
+  /python-apps/{id}/logs:
+    get:
+      tags: [Python Apps]
+      summary: Python app logs
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Log snapshot } }
+
+  /python-apps/{id}/env:
+    put:
+      tags: [Python Apps]
+      summary: Set a Python app's env
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses: { "200": { description: Saved } }
+
+  /python-apps/{id}/control:
+    post:
+      tags: [Python Apps]
+      summary: Start / stop / restart a Python app
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { action: { type: string, enum: [start, stop, restart] } } } } } }
+      responses: { "200": { description: Applied } }
