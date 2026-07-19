@@ -1,0 +1,32 @@
+slug: django
+name: Django
+version: "5.1"
+description: The batteries-included WSGI web framework — full project scaffold with admin, ORM, and static handling.
+tags: [wsgi, full-stack, orm, cms]
+popularity: 95
+upstream: https://www.djangoproject.com/
+docs: https://docs.djangoproject.com/
+app_type: wsgi
+server: gunicorn
+python_min: "3.10"
+pip_requirements:
+  - django==5.1.4
+  - gunicorn==23.0.0
+scaffold:
+  kind: cmd
+  command: "django-admin startproject {{.Project}} ."
+  project: site
+entrypoint_template: "{{.Project}}.wsgi:application"
+needs_db: sqlite
+static_url: /static/
+static_root: staticfiles
+post_install:
+  - migrate
+  - collectstatic
+default_env:
+  - key: DJANGO_SECRET_KEY
+    generate: secret_key
+    required: true
+    description: Generated at install; stored in app env, never in source.
+  - key: DJANGO_ALLOWED_HOSTS
+    description: Set from the mounted domain at install.

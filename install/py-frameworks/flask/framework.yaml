@@ -1,0 +1,18 @@
+slug: flask
+name: Flask
+version: "3.1"
+description: A lightweight WSGI micro-framework — a single-file starter served by gunicorn.
+tags: [wsgi, micro, api]
+popularity: 90
+upstream: https://flask.palletsprojects.com/
+docs: https://flask.palletsprojects.com/
+app_type: wsgi
+server: gunicorn
+python_min: "3.9"
+pip_requirements:
+  - flask==3.1.0
+  - gunicorn==23.0.0
+scaffold:
+  kind: template
+entrypoint_template: app:app
+needs_db: none
