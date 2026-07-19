@@ -24,11 +24,41 @@ export type CreatePythonAppInput = {
   name: string;
   python_version: string;
   app_root: string;
-  app_type: "wsgi" | "asgi";
-  entrypoint: string;
+  // app_type + entrypoint are derived from the catalog when `framework` is set,
+  // so they are optional on a framework install (JAB-164).
+  app_type?: "wsgi" | "asgi";
+  entrypoint?: string;
   base_uri: string;
   env?: Record<string, string>;
+  framework?: string;
 };
+
+// Framework is a marketplace catalog entry (JAB-164), from GET
+// /python-apps/frameworks.
+export type Framework = {
+  slug: string;
+  name: string;
+  version: string;
+  description: string;
+  tags?: string[];
+  app_type: "wsgi" | "asgi";
+  server: string;
+  python_min?: string;
+  needs_db?: string;
+  docs?: string;
+};
+
+export function useFrameworks() {
+  return useQuery({
+    queryKey: ["python-app-frameworks"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ frameworks: Framework[] }>(
+        "/python-apps/frameworks",
+      );
+      return data.frameworks ?? [];
+    },
+  });
+}
 
 const KEY = ["python-apps"];
 

@@ -4,12 +4,14 @@
 import {
   App,
   Button,
+  Card,
   Form,
   Input,
   Modal,
   Select,
   Space,
   Table,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -21,12 +23,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
-import type { CreatePythonAppInput, PythonApp } from "./usePythonApps";
+import type { CreatePythonAppInput, Framework, PythonApp } from "./usePythonApps";
 import {
   fetchPythonAppLogs,
   useControlPythonApp,
   useCreatePythonApp,
   useDeletePythonApp,
+  useFrameworks,
   usePythonApps,
   usePythonVersions,
 } from "./usePythonApps";
@@ -71,8 +74,17 @@ export function PythonAppsPage() {
     return m;
   }, [domains.data]);
 
+  const frameworks = useFrameworks();
   const [createOpen, setCreateOpen] = useState(false);
+  // When set, the create modal is a framework install: app_type + entrypoint
+  // are derived from the catalog entry, so those fields are hidden (JAB-164).
+  const [installFw, setInstallFw] = useState<Framework | null>(null);
   const [form] = Form.useForm<CreatePythonAppInput>();
+  const openCreate = (fw?: Framework) => {
+    form.resetFields();
+    setInstallFw(fw ?? null);
+    setCreateOpen(true);
+  };
   // When the create dialog opens, default the Python version to the newest
   // interpreter actually installed on this host.
   useEffect(() => {
@@ -90,8 +102,16 @@ export function PythonAppsPage() {
   const submit = async () => {
     const values = await form.validateFields();
     try {
-      await create.mutateAsync({ ...values, base_uri: values.base_uri || "/" });
-      message.success("App created — building…");
+      await create.mutateAsync({
+        ...values,
+        base_uri: values.base_uri || "/",
+        // Framework install: send the slug; the server derives app_type +
+        // entrypoint and scaffolds the starter.
+        ...(installFw ? { framework: installFw.slug } : {}),
+      });
+      message.success(
+        installFw ? `Installing ${installFw.name}…` : "App created — building…",
+      );
       setCreateOpen(false);
       form.resetFields();
     } catch (e) {
@@ -126,12 +146,19 @@ export function PythonAppsPage() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Python Apps
         </Typography.Title>
-        <Button type="primary" onClick={() => setCreateOpen(true)}>
+        <Button type="primary" onClick={() => openCreate()}>
           Create app
         </Button>
       </Space>
 
-      <Table<PythonApp>
+      <Tabs
+        defaultActiveKey="installed"
+        items={[
+          {
+            key: "installed",
+            label: "Installed",
+            children: (
+              <Table<PythonApp>
         rowKey="id"
         dataSource={apps.data ?? []}
         loading={apps.isLoading}
@@ -193,10 +220,62 @@ export function PythonAppsPage() {
             />
           )}
         />
-      </Table>
+              </Table>
+            ),
+          },
+          {
+            key: "catalog",
+            label: "Catalog",
+            children: (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                  gap: 16,
+                }}
+              >
+                {(frameworks.data ?? []).map((fw) => (
+                  <Card
+                    key={fw.slug}
+                    size="small"
+                    title={fw.name}
+                    extra={<Tag color="blue">{fw.app_type.toUpperCase()}</Tag>}
+                    actions={[
+                      <Button
+                        key="install"
+                        type="link"
+                        onClick={() => openCreate(fw)}
+                      >
+                        Install
+                      </Button>,
+                    ]}
+                  >
+                    <Typography.Paragraph
+                      type="secondary"
+                      style={{ minHeight: 44, marginBottom: 8 }}
+                    >
+                      {fw.description}
+                    </Typography.Paragraph>
+                    <Space size={4} wrap>
+                      {(fw.tags ?? []).map((t) => (
+                        <Tag key={t}>{t}</Tag>
+                      ))}
+                    </Space>
+                  </Card>
+                ))}
+                {frameworks.data && frameworks.data.length === 0 ? (
+                  <Typography.Text type="secondary">
+                    No frameworks available.
+                  </Typography.Text>
+                ) : null}
+              </div>
+            ),
+          },
+        ]}
+      />
 
       <Modal
-        title="Create Python app"
+        title={installFw ? `Install ${installFw.name}` : "Create Python app"}
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={() => void submit()}
@@ -226,24 +305,38 @@ export function PythonAppsPage() {
                 notFoundContent="No Python runtime installed on this server"
               />
             </Form.Item>
-            <Form.Item name="app_type" label="Type" rules={[{ required: true }]}>
-              <Select
-                style={{ width: 160 }}
-                options={[
-                  { value: "wsgi", label: "WSGI (gunicorn)" },
-                  { value: "asgi", label: "ASGI (uvicorn)" },
-                ]}
-              />
-            </Form.Item>
+            {!installFw && (
+              <Form.Item name="app_type" label="Type" rules={[{ required: true }]}>
+                <Select
+                  style={{ width: 160 }}
+                  options={[
+                    { value: "wsgi", label: "WSGI (gunicorn)" },
+                    { value: "asgi", label: "ASGI (uvicorn)" },
+                  ]}
+                />
+              </Form.Item>
+            )}
           </Space>
-          <Form.Item
-            name="entrypoint"
-            label="Entrypoint"
-            tooltip="module:callable, e.g. myapp.wsgi:application or main:app"
-            rules={[{ required: true }, { pattern: /^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$/, message: "Expected module:callable" }]}
-          >
-            <Input placeholder="main:app" />
-          </Form.Item>
+          {installFw ? (
+            <Typography.Paragraph type="secondary">
+              {installFw.name} ({installFw.app_type.toUpperCase()} via{" "}
+              {installFw.server}) will be scaffolded into the app directory —
+              starter project, pinned dependencies
+              {installFw.needs_db && installFw.needs_db !== "none"
+                ? `, and a ${installFw.needs_db} database`
+                : ""}
+              .
+            </Typography.Paragraph>
+          ) : (
+            <Form.Item
+              name="entrypoint"
+              label="Entrypoint"
+              tooltip="module:callable, e.g. myapp.wsgi:application or main:app"
+              rules={[{ required: true }, { pattern: /^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$/, message: "Expected module:callable" }]}
+            >
+              <Input placeholder="main:app" />
+            </Form.Item>
+          )}
           <Form.Item name="app_root" label="App directory" tooltip="Path under your home, e.g. domains/example.com/app" rules={[{ required: true }]}>
             <Input placeholder="domains/example.com/app" />
           </Form.Item>
