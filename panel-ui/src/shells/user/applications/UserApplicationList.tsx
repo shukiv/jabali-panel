@@ -8,7 +8,7 @@ import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
 import {
   Button,
-  Card,
+  Tabs,
   Col,
   Empty,
   Row,
@@ -447,17 +447,17 @@ export const UserApplicationList = () => {
         onClose={() => setCacheSettingsFor(null)}
       />
 
-      {/* Card.tabList = tabs inside the card, matching the admin Users
-          reference layout (Gitea #524). */}
-      <Card
-        tabList={[
-          { key: "installed", tab: "Installed" },
-          { key: "catalog", tab: "Catalog" },
-        ]}
-        activeTabKey={activeTab}
-        onTabChange={setActiveTab}
-      >
-        {activeTab === "installed" && (
+      {/* JAB-167: plain <Tabs>, matching the Docker Apps + Python Apps
+          marketplaces (was a Card.tabList, which rendered a heavier card-header
+          tab bar unlike the rest and a flat card container in dark). */}
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: "installed",
+            label: "Installed",
+            children: (
               <div>
                 {(() => {
                   const rows = tableQuery.items;
@@ -680,16 +680,22 @@ export const UserApplicationList = () => {
           />
         </SearchableTableStringQ>
               </div>
-        )}
-        {activeTab === "catalog" && (
+            ),
+          },
+          {
+            key: "catalog",
+            label: "Catalog",
+            children: (
               <CatalogTab
                 onInstall={(appType) => {
                   setPresetAppType(appType);
                   setInstallOpen(true);
                 }}
               />
-        )}
-      </Card>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 };
