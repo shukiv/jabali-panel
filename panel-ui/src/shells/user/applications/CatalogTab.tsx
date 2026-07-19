@@ -79,7 +79,7 @@ export const CatalogTab = ({ onInstall }: Props) => {
                     width: 44,
                     height: 44,
                     borderRadius: 10,
-                    background: "rgba(0, 0, 0, 0.03)",
+                    background: "rgba(127, 127, 127, 0.12)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
