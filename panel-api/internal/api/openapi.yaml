@@ -377,6 +377,35 @@ components:
         next_run_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    MigrationJob:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        batch_id: { type: string, format: ulid, nullable: true }
+        source_kind: { type: string, enum: [cpanel, whm_pkgacct, directadmin, hestiacp, plesk, imap] }
+        mode: { type: string, enum: [live, offline] }
+        source_host: { type: string }
+        source_user: { type: string }
+        dest_user: { type: string, nullable: true }
+        dest_domain: { type: string, nullable: true }
+        target_user_id: { type: string, format: ulid, nullable: true }
+        state: { type: string, enum: [draft, pending, analyzing, fix_perms, validating, restoring, done, degraded, failed, cancelled] }
+        last_error: { type: string, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        ended_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MigrationStage:
+      type: object
+      properties:
+        id: { type: string, format: ulid }
+        job_id: { type: string, format: ulid }
+        stage_name: { type: string }
+        state: { type: string }
+        bytes_processed: { type: integer }
+        last_error: { type: string, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        ended_at: { type: string, format: date-time, nullable: true }
     Error:
       type: object
       properties:
@@ -3339,7 +3368,10 @@ paths:
       tags: [Migrations]
       summary: List migrations
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MigrationJob" } } } }
     post:
       tags: [Migrations]
       summary: Create migration
@@ -3402,7 +3434,9 @@ paths:
       summary: Get migration
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/MigrationJob" } } } }
+        "404": { description: Not found }
     patch:
       tags: [Migrations]
       summary: Update migration
@@ -3549,7 +3583,9 @@ paths:
       summary: Get migration
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/MigrationJob" } } } }
+        "404": { description: Not found }
 
   /migrations/{id}/import-wp:
     post:
