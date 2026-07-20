@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -216,6 +217,32 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 	if !claims.IsAdmin && domain.UserID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
+	}
+
+	// Resolve app_root under the OWNER's home. The "App directory" field is
+	// documented as a path under your home, so a bare "test" (or a rooted
+	// "/test") must land at /home/<user>/test — NOT at the filesystem root,
+	// where the tenant venv build failed with "Permission denied: '/test'". A
+	// leading slash is treated as home-relative; anything escaping the home is
+	// rejected up front instead of dying pending->failed at the venv step.
+	if h.cfg.Users != nil {
+		owner, oerr := h.cfg.Users.FindByID(ctx, domain.UserID)
+		if oerr != nil || owner == nil || owner.Username == nil || *owner.Username == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "owner_no_username"})
+			return
+		}
+		home := "/home/" + *owner.Username
+		in := strings.TrimSpace(req.AppRoot)
+		if in == home || strings.HasPrefix(in, home+"/") {
+			req.AppRoot = filepath.Clean(in) // already an absolute path under home
+		} else {
+			// bare "test" or rooted "/test" -> treat as home-relative
+			req.AppRoot = filepath.Join(home, strings.TrimPrefix(in, "/"))
+		}
+		if req.AppRoot != home && !strings.HasPrefix(req.AppRoot, home+"/") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "app_root_outside_home", "detail": "app directory must be under your home"})
+			return
+		}
 	}
 
 	// Package entitlement + per-user quota (Gitea #491). Mirrors the tenant

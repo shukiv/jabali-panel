@@ -128,8 +128,15 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("app_root validation failed: %v", err)}
 	}
-	if fi, err := os.Stat(appRoot); err != nil || !fi.IsDir() {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "app_root is not a directory"}
+	if fi, err := os.Stat(appRoot); err != nil {
+		// Fresh plain app: the dir doesn't exist yet and there is no framework
+		// scaffold to create it. Make it AS THE TENANT so the venv + code land
+		// tenant-owned, inside the scope-validated path under the owner's home.
+		if out, mkerr := runAsUser(ctx, p.Username, "mkdir", "-p", appRoot); mkerr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("create app_root: %v: %s", mkerr, out)}
+		}
+	} else if !fi.IsDir() {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "app_root exists but is not a directory"}
 	}
 
 	venv := filepath.Join(appRoot, "venv")

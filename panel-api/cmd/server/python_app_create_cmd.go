@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // loadPyFrameworkCatalogCLI loads the JAB-164 framework catalog with the same
@@ -124,6 +126,24 @@ func newPythonAppCreateCmd() *cobra.Command {
 			}
 			if derr != nil || dom == nil {
 				return fmt.Errorf("domain not found (check --domain/--domain-id)")
+			}
+
+			// Resolve --app-root under the owner's home so a bare "test" (or a
+			// rooted "/test") lands at /home/<user>/test, not at the filesystem
+			// root where the tenant venv build fails "Permission denied".
+			owner, uerr := repository.NewUserRepository(sharedDB).FindByID(ctx, dom.UserID)
+			if uerr != nil || owner == nil || owner.Username == nil || *owner.Username == "" {
+				return fmt.Errorf("domain owner has no linux username")
+			}
+			home := "/home/" + *owner.Username
+			in := strings.TrimSpace(appRoot)
+			if in == home || strings.HasPrefix(in, home+"/") {
+				appRoot = filepath.Clean(in) // already an absolute path under home
+			} else {
+				appRoot = filepath.Join(home, strings.TrimPrefix(in, "/"))
+			}
+			if appRoot != home && !strings.HasPrefix(appRoot, home+"/") {
+				return fmt.Errorf("--app-root must be under the owner's home (%s)", home)
 			}
 
 			repo := pythonAppRepoFromDB()

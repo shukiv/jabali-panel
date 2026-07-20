@@ -4665,6 +4665,17 @@ build_backend() {
     _ok "synced py-framework catalog -> /usr/local/share/jabali/py-frameworks/"
   fi
 
+  # panel-api loads BOTH app catalogs (docker-apps + py-frameworks) into memory
+  # at startup. The syncs above run AFTER the buildSteps panel-api restart, so
+  # without a reload the panel keeps serving the pre-sync catalog — the Python
+  # marketplace showed only the 3 original frameworks + blank icons until a
+  # manual restart. Reload now that the catalog dirs are current (idempotent,
+  # ~2s; try-restart is a no-op if the unit isn't running yet).
+  if [[ -d /usr/local/share/jabali/py-frameworks || -d /usr/local/share/jabali/docker-apps ]]; then
+    systemctl try-restart jabali-panel 2>/dev/null || true
+    _ok "reloaded panel-api so the app catalogs pick up the sync"
+  fi
+
   # #406: bundle the jabali-cache WordPress plugin read-only into the
   # production path the agent installs FROM (wordpress.cache_set). Tenants
   # never supply plugin code; re-synced on every `jabali update`.
