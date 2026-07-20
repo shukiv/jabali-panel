@@ -269,6 +269,15 @@ export function CacheSettingsDrawer({
         <Form.Item label="Page cache (nginx)" help="Full-page micro-cache for anonymous visitors. Independent of the object cache.">
           <Switch checked={pageOn} onChange={setPageOn} />
         </Form.Item>
+        {enabled && !pageOn && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Object cache only — page cache is off"
+            description="Caching is on, but only the Redis object cache is active. The nginx page cache is off, so the Domains → Caching panel and the site's cache status will report page caching as off. Turn this on and Save to enable it."
+          />
+        )}
         <Form.Item label="Auto-warm" help="Crawl the site to pre-populate the cache after enabling or purging.">
           <Switch checked={autoWarm} onChange={setAutoWarm} />
           {lastWarm?.at ? (
