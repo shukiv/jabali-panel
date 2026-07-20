@@ -8,6 +8,7 @@ import {
   Button,
   InputNumber,
   Popconfirm,
+  Select,
   Skeleton,
   Space,
   Switch,
@@ -22,12 +23,20 @@ type CacheState = {
   domain_name: string;
   enabled: boolean;
   ttl_seconds: number;
+  cache_query_allowlist?: string[];
 };
 
 type Props = { domainId: string };
 
 const TTL_MIN = 10;
 const TTL_MAX = 86400;
+const QALLOW_MAX = 8;
+const QALLOW_NAME_RE = /^[a-z0-9_]{1,32}$/;
+
+// arraysEqual — order-insensitive compare so the Save button only lights up on a
+// real change (the API stores the list sorted).
+const sameSet = (a: string[], b: string[]) =>
+  a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
 
 export const DomainCacheSection = ({ domainId }: Props) => {
   const [state, setState] = useState<CacheState | null>(null);
@@ -36,6 +45,8 @@ export const DomainCacheSection = ({ domainId }: Props) => {
   const [purging, setPurging] = useState(false);
   const [ttl, setTtl] = useState<number>(600);
   const [savingTtl, setSavingTtl] = useState(false);
+  const [qAllow, setQAllow] = useState<string[]>([]);
+  const [savingQAllow, setSavingQAllow] = useState(false);
 
   const fetchState = useCallback(async () => {
     setLoading(true);
@@ -43,6 +54,7 @@ export const DomainCacheSection = ({ domainId }: Props) => {
       const res = await apiClient.get<CacheState>(`/domains/${domainId}/cache`);
       setState(res.data);
       setTtl(res.data.ttl_seconds ?? 600);
+      setQAllow(res.data.cache_query_allowlist ?? []);
     } catch {
       message.error("Failed to load cache status");
     } finally {
@@ -93,6 +105,40 @@ export const DomainCacheSection = ({ domainId }: Props) => {
     }
   };
 
+  const onSaveQAllow = async () => {
+    const cleaned = Array.from(
+      new Set(qAllow.map((s) => s.trim().toLowerCase()).filter(Boolean)),
+    );
+    const bad = cleaned.find((n) => !QALLOW_NAME_RE.test(n));
+    if (bad) {
+      message.error(`Invalid param "${bad}": use lower-case letters, digits, underscore (max 32 chars)`);
+      return;
+    }
+    if (cleaned.length > QALLOW_MAX) {
+      message.error(`Too many params (${cleaned.length}); max ${QALLOW_MAX}`);
+      return;
+    }
+    setSavingQAllow(true);
+    try {
+      const res = await apiClient.put<CacheState>(`/domains/${domainId}/cache`, {
+        enabled: !!state?.enabled,
+        cache_query_allowlist: cleaned,
+      });
+      setState(res.data);
+      setQAllow(res.data.cache_query_allowlist ?? []);
+      message.success(
+        cleaned.length
+          ? "Cacheable query params saved — re-rendering nginx"
+          : "Query-param caching disabled",
+      );
+    } catch {
+      message.error("Failed to save cacheable query params");
+      await fetchState();
+    } finally {
+      setSavingQAllow(false);
+    }
+  };
+
   const onPurge = async () => {
     setPurging(true);
     try {
@@ -109,6 +155,7 @@ export const DomainCacheSection = ({ domainId }: Props) => {
 
   const enabled = !!state?.enabled;
   const ttlDirty = enabled && ttl !== (state?.ttl_seconds ?? 600);
+  const qAllowDirty = enabled && !sameSet(qAllow, state?.cache_query_allowlist ?? []);
 
   return (
     <Space direction="vertical" style={{ width: "100%" }}>
@@ -159,6 +206,37 @@ export const DomainCacheSection = ({ domainId }: Props) => {
           Save TTL
         </Button>
       </Space>
+
+      <Space size="small" align="start" wrap>
+        <span style={{ lineHeight: "32px" }}>Cacheable query params:</span>
+        <Select
+          mode="tags"
+          value={qAllow}
+          onChange={(v) => setQAllow(v as string[])}
+          disabled={!enabled || savingQAllow}
+          placeholder="e.g. paged"
+          tokenSeparators={[",", " "]}
+          style={{ minWidth: 220 }}
+          open={false}
+          suffixIcon={null}
+        />
+        <Button
+          type="primary"
+          size="small"
+          loading={savingQAllow}
+          disabled={!qAllowDirty}
+          onClick={onSaveQAllow}
+        >
+          Save params
+        </Button>
+      </Space>
+
+      <Alert
+        type="info"
+        showIcon
+        title="Cacheable query parameters"
+        description="Query-string params that get their own cache entry (e.g. paged for pagination). Everything else with a query string still bypasses. This does NOT cache JetEngine AJAX filters — those are admin-ajax POST requests and always bypass. Keep the list tight: faceted params multiply cache entries. Names are lower-case letters, digits, and underscores."
+      />
 
       <Alert
         type="info"
