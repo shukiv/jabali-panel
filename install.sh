@@ -3301,8 +3301,15 @@ converge_pdns_masking() {
   # install where the settings row doesn't exist yet.
   local dns_on=1 db_val=""
   if command -v mariadb >/dev/null 2>&1; then
+    # `|| true` is load-bearing: on a FRESH install the server_settings table
+    # doesn't exist yet (panel migrations run much later), so this query exits
+    # non-zero. Under `set -e` + the __on_err trap a bare command-substitution
+    # assignment would kill the installer silently right after the Redis step
+    # (GH #545/#544: "Install failed, exit status 1", log ending at Redis). The
+    # `|| true` makes the substitution succeed with empty output → the
+    # fresh-install fallback (is_module_enabled) below takes over.
     db_val="$(mariadb jabali_panel -N -B -e \
-      "SELECT dns_enabled FROM server_settings WHERE id=1;" 2>/dev/null)"
+      "SELECT dns_enabled FROM server_settings WHERE id=1;" 2>/dev/null || true)"
   fi
   if [[ -n "$db_val" ]]; then
     [[ "$db_val" == "0" ]] && dns_on=0
