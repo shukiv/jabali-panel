@@ -22,6 +22,7 @@ type FormValues = {
   display_name: string;
   quota_mib: number;
   enabled: boolean;
+  send_only: boolean;
 };
 
 export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalProps) {
@@ -35,6 +36,7 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
         display_name: mailbox.display_name ?? "",
         quota_mib: Math.round(mailbox.quota_bytes / MIB),
         enabled: !mailbox.is_disabled,
+        send_only: mailbox.send_only ?? false,
       });
     }
   }, [open, mailbox, form]);
@@ -48,6 +50,7 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
       display_name?: string;
       quota_bytes?: number;
       is_disabled?: boolean;
+      send_only?: boolean;
     } = { id: mailbox.id, domainId: mailbox.domain_id };
 
     const nextName = (v.display_name ?? "").trim();
@@ -59,10 +62,14 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
     const nextDisabled = !v.enabled;
     if (nextDisabled !== mailbox.is_disabled) patch.is_disabled = nextDisabled;
 
+    const nextSendOnly = !!v.send_only;
+    if (nextSendOnly !== mailbox.send_only) patch.send_only = nextSendOnly;
+
     if (
       patch.display_name === undefined &&
       patch.quota_bytes === undefined &&
-      patch.is_disabled === undefined
+      patch.is_disabled === undefined &&
+      patch.send_only === undefined
     ) {
       onClose();
       return;
@@ -107,6 +114,14 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
           <InputNumber min={QUOTA_MIN_MIB} max={1024 * 1024} step={256} style={{ width: 200 }} />
         </Form.Item>
         <Form.Item label="Enabled" name="enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          label="Send-only (SMTP submission, no inbox)"
+          name="send_only"
+          valuePropName="checked"
+          tooltip="A send-only mailbox can authenticate for SMTP submission (sending) but never receives or stores mail — inbound is rejected. Ideal for per-service or per-appliance notification credentials. Toggling this on discards inbound delivery; existing stored mail is not deleted."
+        >
           <Switch />
         </Form.Item>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>

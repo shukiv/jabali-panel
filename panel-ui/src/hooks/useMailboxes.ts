@@ -300,15 +300,17 @@ export function useUpdateMailbox(): UseMutationResult<
     display_name?: string;
     quota_bytes?: number;
     is_disabled?: boolean;
+    send_only?: boolean;
   }
 > {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, display_name, quota_bytes, is_disabled }) => {
+    mutationFn: async ({ id, display_name, quota_bytes, is_disabled, send_only }) => {
       const body: Record<string, unknown> = {};
       if (display_name !== undefined) body.display_name = display_name;
       if (quota_bytes !== undefined) body.quota_bytes = quota_bytes;
       if (is_disabled !== undefined) body.is_disabled = is_disabled;
+      if (send_only !== undefined) body.send_only = send_only;
       const { data } = await apiClient.patch<Mailbox>(`/mailboxes/${id}`, body);
       return data;
     },
