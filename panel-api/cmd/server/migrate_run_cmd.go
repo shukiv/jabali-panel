@@ -1434,6 +1434,11 @@ func cpanelAnalyzeCallback(jobsRepo repository.MigrationJobRepository) migrate.S
 		if s, sErr := settingsRepo.Get(ctx); sErr == nil && s != nil {
 			migrate.ApplyAllowPrivate(disc, s.MigrationAllowPrivateHosts)
 		}
+		// GH #429: honor the custom source SSH port in the analyze stage.
+		// The API test-connection + size probe already apply it, but this
+		// stage dialed the default 22 regardless (lxsdevcode: "stage
+		// analyze: connect: plesk.Connect: tcp dial remote_ip:22").
+		migrate.ApplyPort(disc, job.SourcePort)
 		s, err := disc.Connect(ctx, job.SourceHost, migrationSSHUser(job), migrate.SecretRef{Path: secretPath})
 		if err != nil {
 			return 0, nil, fmt.Errorf("connect: %w", err)
@@ -1538,6 +1543,8 @@ func preflightDAPivot(ctx context.Context, job *models.MigrationJob) (string, er
 	if s, sErr := settingsRepo.Get(ctx); sErr == nil && s != nil {
 		migrate.ApplyAllowPrivate(disc, s.MigrationAllowPrivateHosts)
 	}
+	// GH #429: DA single-account auto-pick also honors the custom SSH port.
+	migrate.ApplyPort(disc, job.SourcePort)
 	subctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s, err := disc.Connect(subctx, job.SourceHost, migrationSSHUser(job), migrate.SecretRef{Path: secretPath})
