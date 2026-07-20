@@ -5126,6 +5126,16 @@ write_agent_systemd_unit() {
   jabali_gid="$(getent group "$SERVICE_USER" | cut -d: -f3)"
   [[ -n "$jabali_gid" ]] || _die "can't resolve gid of $SERVICE_USER"
 
+  # GH #515 / JAB-169: the PTY broker's SO_PEERCRED gate must match panel-api's
+  # PRIMARY gid, which is jabali-sockets (panel-api unit sets Group=jabali-sockets
+  # so nginx can reach its listen socket). -gid above is the jabali gid for the
+  # MAIN agent socket; -pty-gid is jabali-sockets for the terminal broker. One
+  # -gid for both refused panel-api and left the web terminal with no keyboard
+  # input on every install.
+  local jabali_sockets_gid
+  jabali_sockets_gid="$(getent group jabali-sockets | cut -d: -f3)"
+  [[ -n "$jabali_sockets_gid" ]] || _die "can't resolve gid of jabali-sockets"
+
   cat >"/etc/systemd/system/${AGENT_SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=Jabali Agent (privileged host operations)
@@ -5145,7 +5155,7 @@ Group=$SERVICE_USER
 RuntimeDirectory=jabali
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=no
-ExecStart=$AGENT_BIN_PATH -socket $AGENT_SOCKET -gid $jabali_gid
+ExecStart=$AGENT_BIN_PATH -socket $AGENT_SOCKET -gid $jabali_gid -pty-gid $jabali_sockets_gid
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10

@@ -18,6 +18,8 @@ export interface ServerCapabilities {
   security_enabled: boolean;
   quota_enabled: boolean;
   api_enabled: boolean;
+  /** GH #515: admin web terminal (root_terminal_enabled). Gates the Terminal nav entry. */
+  root_terminal_enabled: boolean;
   /** GH #361: the server's public IPv4, for the dashboard. "" when unset. */
   public_ipv4: string;
   /** GH #361: the server's public IPv6, for the dashboard. "" when unset. */
@@ -40,6 +42,7 @@ export function useServerCapabilities() {
         security_enabled: data.security_enabled !== false,
         quota_enabled: data.quota_enabled !== false,
         api_enabled: data.api_enabled !== false,
+        root_terminal_enabled: !!data.root_terminal_enabled,
         public_ipv4: data.public_ipv4 ?? "",
         public_ipv6: data.public_ipv6 ?? "",
       };

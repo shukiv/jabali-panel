@@ -159,7 +159,7 @@ func handleTerminalConn(raw net.Conn, recordDir string, gid int, log *slog.Logge
 			log.Warn("terminal: refusing connection: cannot read peer credentials")
 			return
 		}
-		if uid != 0 && pgid != gid {
+		if !terminalPeerAllowed(uid, pgid, gid) {
 			log.Warn("terminal: refusing connection: peer is not panel-api", "peer_uid", uid, "peer_gid", pgid, "want_gid", gid)
 			return
 		}
@@ -339,6 +339,21 @@ func sanitizeSessionID(s string) string {
 // terminalPeerCred reads the connecting peer's uid + primary gid via
 // SO_PEERCRED (Gitea #469). ok=false when the conn is not a unix socket or the
 // credentials cannot be read, so callers fail closed.
+// terminalPeerAllowed decides whether a broker peer may spawn a root shell
+// (Gitea #469 / GH #515). root (uid 0) is always allowed. Everyone else must
+// present the expected PRIMARY gid: panel-api runs with systemd
+// Group=jabali-sockets, so its SO_PEERCRED primary gid is the jabali-sockets
+// gid — which is what the broker is handed via -pty-gid. Matching the
+// jabali-sockets gid (NOT the jabali gid of the main agent socket) is what
+// #515 got wrong: one -gid conflated two groups and refused panel-api on every
+// install. Fails closed for any other primary gid.
+func terminalPeerAllowed(uid, pgid, wantGID int) bool {
+	if uid == 0 {
+		return true
+	}
+	return pgid == wantGID
+}
+
 func terminalPeerCred(c net.Conn) (uid, gid int, ok bool) {
 	uc, isUnix := c.(*net.UnixConn)
 	if !isUnix {

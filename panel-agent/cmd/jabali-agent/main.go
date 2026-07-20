@@ -49,6 +49,13 @@ func main() {
 	var (
 		socketPath = flag.String("socket", envOr("JABALI_AGENT_SOCKET", defaultSocketPath), "path to the unix socket to listen on")
 		socketGID  = flag.Int("gid", envInt("JABALI_AGENT_GID", -1), "chown socket to root:<gid> after bind; -1 to skip")
+		// GH #515 / JAB-169: the PTY broker's SO_PEERCRED gate must match
+		// panel-api's PRIMARY gid, which is jabali-sockets (systemd
+		// Group=jabali-sockets), NOT the jabali gid used for the main
+		// agent socket. Passing one -gid for both refused panel-api on
+		// every install. -pty-gid overrides it for the broker; falls back
+		// to -gid when unset so old units keep their prior behaviour.
+		ptyGID = flag.Int("pty-gid", envInt("JABALI_AGENT_PTY_GID", -1), "PTY broker socket gid + SO_PEERCRED gate (panel-api primary gid = jabali-sockets); -1 falls back to -gid")
 		timeout    = flag.Duration("timeout", defaultTimeout, "per-request wall-clock timeout (when caller sets no deadline)")
 		logFormat  = flag.String("log-format", envOr("JABALI_AGENT_LOG_FORMAT", "json"), "json|text")
 		logLevel   = flag.String("log-level", envOr("JABALI_AGENT_LOG_LEVEL", "info"), "debug|info|warn|error")
@@ -119,7 +126,11 @@ func main() {
 	// default panel-api-side; unreachable except by the jabali-group
 	// panel-api process.
 	ptySock := filepath.Join(filepath.Dir(*socketPath), "agent-pty.sock")
-	commands.StartTerminalPTYBroker(ctx, ptySock, *socketGID, "/var/log/jabali/terminal", log)
+	brokerGID := *ptyGID
+	if brokerGID < 0 {
+		brokerGID = *socketGID
+	}
+	commands.StartTerminalPTYBroker(ctx, ptySock, brokerGID, "/var/log/jabali/terminal", log)
 
 	// GH #184: backfill per-user CLI php wrappers for existing pinned users
 	// (reconciler only applies pending/error pools, so a restart converges
