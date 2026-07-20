@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -280,16 +281,16 @@ type Domain struct {
 	// GORM-zero-value scar as the cron default:1 fix). The DB column keeps
 	// its `DEFAULT 1` from migration 000123 for any non-API insert; the
 	// API always sets this field explicitly via DeriveMailFlags.
-	EmailEnabled    bool       `gorm:"type:tinyint(1);not null" json:"email_enabled"`
+	EmailEnabled bool `gorm:"type:tinyint(1);not null" json:"email_enabled"`
 	// WebmailEnabled (GH #316) gates the per-domain Bulwark webmail vhost,
 	// AND-ed with server_settings.webmail_enabled. Default ON.
-	WebmailEnabled  bool       `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"webmail_enabled"`
+	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"webmail_enabled"`
 	// SkipAutoSAN opts the domain out of ADR-0070 auto-added mail/
 	// autoconfig SAN entries on the LE cert. Set when the tenant runs
 	// mail elsewhere (or has no mail subdomain DNS) — without this the
 	// LE challenge fails for the missing subdomain and the WHOLE cert
 	// stays pending.
-	SkipAutoSAN     bool       `gorm:"column:skip_auto_san;type:tinyint(1);not null;default:0" json:"skip_auto_san"`
+	SkipAutoSAN bool `gorm:"column:skip_auto_san;type:tinyint(1);not null;default:0" json:"skip_auto_san"`
 	// MailProvider (GH#181 / ADR-0120, migration 000166) is the single
 	// source of truth for where this domain's mail lives. EmailEnabled +
 	// SkipAutoSAN are DERIVED from it on create/edit (see
@@ -300,8 +301,8 @@ type Domain struct {
 	// M365Onmicrosoft / GoogleDKIM are optional per-provider DKIM tokens
 	// the operator pastes from the provider's admin console. Empty ->
 	// the provider's DKIM records are simply not published.
-	M365Onmicrosoft *string `gorm:"column:m365_onmicrosoft;type:varchar(255)" json:"m365_onmicrosoft,omitempty"`
-	GoogleDKIM      *string `gorm:"column:google_dkim;type:text" json:"google_dkim,omitempty"`
+	M365Onmicrosoft *string    `gorm:"column:m365_onmicrosoft;type:varchar(255)" json:"m365_onmicrosoft,omitempty"`
+	GoogleDKIM      *string    `gorm:"column:google_dkim;type:text" json:"google_dkim,omitempty"`
 	DkimSelector    *string    `gorm:"type:varchar(64)" json:"dkim_selector,omitempty"`
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`
@@ -355,6 +356,11 @@ type Domain struct {
 	// CacheTTLSeconds (migration 000204, Gitea #596) is the per-domain page-cache
 	// validity in seconds. Default 600; the agent clamps to [10, 86400].
 	CacheTTLSeconds int `gorm:"column:cache_ttl_seconds;type:int;not null;default:600" json:"cache_ttl_seconds"`
+	// CacheQueryAllowlist (migration 000230) is the comma-joined, lower-cased,
+	// sorted set of query-param names that get their own page-cache entry
+	// (e.g. "paged" for pagination). Empty = feature off (default): every real
+	// query param bypasses, exactly as before. See CacheQueryAllowlistNames.
+	CacheQueryAllowlist string `gorm:"column:cache_query_allowlist;type:varchar(255);not null;default:''" json:"cache_query_allowlist"`
 
 	// MTA-STS per-domain opt-in (migration 000141, ADR-0109). When
 	// flipped on, the reconciler ensures:
@@ -422,3 +428,21 @@ const (
 )
 
 func (Domain) TableName() string { return "domains" }
+
+// CacheQueryAllowlistNames splits the stored comma-joined allowlist into
+// individual param names, dropping blanks. The stored value is already
+// normalized (lower-cased, de-duped, sorted) by the API on write, so this is a
+// plain split; nil/empty when the feature is off.
+func (d Domain) CacheQueryAllowlistNames() []string {
+	raw := strings.TrimSpace(d.CacheQueryAllowlist)
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

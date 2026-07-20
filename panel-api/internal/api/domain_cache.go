@@ -2,7 +2,11 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,12 +46,18 @@ type cacheResponse struct {
 	DomainName string `json:"domain_name"`
 	Enabled    bool   `json:"enabled"`
 	TTLSeconds int    `json:"ttl_seconds"`
+	// QueryAllowlist (migration 000230): param names that get their own cache
+	// entry. Empty/omitted = off. Always a JSON array (never null) for the SPA.
+	QueryAllowlist []string `json:"cache_query_allowlist"`
 }
 
 type cacheUpdateRequest struct {
 	Enabled bool `json:"enabled"`
 	// TTLSeconds (Gitea #596) optional; nil = leave the per-domain TTL unchanged.
 	TTLSeconds *int `json:"ttl_seconds,omitempty"`
+	// QueryAllowlist (migration 000230) optional; nil = leave unchanged, empty
+	// slice = clear (feature off). Names normalized + validated server-side.
+	QueryAllowlist *[]string `json:"cache_query_allowlist,omitempty"`
 }
 
 // loadAndAuth returns the domain after owner-or-admin authz; writes the
@@ -82,6 +92,7 @@ func (h *domainCacheHandler) get(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, cacheResponse{
 		DomainID: dom.ID, DomainName: dom.Name, Enabled: dom.CacheEnabled, TTLSeconds: dom.CacheTTLSeconds,
+		QueryAllowlist: dom.CacheQueryAllowlistNames(),
 	})
 }
 
@@ -130,12 +141,73 @@ func (h *domainCacheHandler) update(c *gin.Context) {
 		_, _ = h.cfg.Agent.Call(pctx, "nginx.cache.purge", map[string]any{"domain": dom.Name})
 		cancel()
 	}
+	// Query-param allowlist (migration 000230). nil = unchanged; a supplied
+	// list (incl. empty = clear) is normalized + validated, then persisted.
+	allowNames := dom.CacheQueryAllowlistNames()
+	if req.QueryAllowlist != nil {
+		csv, err := normalizeCacheQueryAllowlist(*req.QueryAllowlist)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_query_allowlist", "details": err.Error()})
+			return
+		}
+		if err := h.cfg.Domains.UpdateCacheQueryAllowlist(ctx, dom.ID, csv); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "update_failed", "details": err.Error()})
+			return
+		}
+		allowNames = splitAllowlistCSV(csv)
+	}
 	if h.cfg.Reconciler != nil {
 		h.cfg.Reconciler.Schedule(dom.ID)
 	}
 	c.JSON(http.StatusOK, cacheResponse{
 		DomainID: dom.ID, DomainName: dom.Name, Enabled: req.Enabled, TTLSeconds: ttl,
+		QueryAllowlist: allowNames,
 	})
+}
+
+// cacheQueryParamRe bounds an allowlist entry to a safe query-param name:
+// lower-case alnum + underscore, 1-32 chars. This is ALSO the guard that keeps
+// the name safe to interpolate into the nginx regex + $arg_<name> in Step 2
+// (no regex metacharacters can appear), so do not loosen it without revisiting
+// the render.
+var cacheQueryParamRe = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+const cacheQueryAllowlistMax = 8
+
+// normalizeCacheQueryAllowlist lower-cases, validates, de-dups, sorts, and caps
+// the supplied param names, returning the comma-joined storage form ("" = off).
+// Faceted/combinatorial params multiply cache entries, so the set is
+// deliberately bounded.
+func normalizeCacheQueryAllowlist(in []string) (string, error) {
+	seen := make(map[string]struct{}, len(in))
+	var names []string
+	for _, raw := range in {
+		n := strings.ToLower(strings.TrimSpace(raw))
+		if n == "" {
+			continue
+		}
+		if !cacheQueryParamRe.MatchString(n) {
+			return "", fmt.Errorf("invalid param name %q (allowed: lower-case letters, digits, underscore, 1-32 chars)", raw)
+		}
+		if _, dup := seen[n]; dup {
+			continue
+		}
+		seen[n] = struct{}{}
+		names = append(names, n)
+	}
+	if len(names) > cacheQueryAllowlistMax {
+		return "", fmt.Errorf("too many query params: %d (max %d)", len(names), cacheQueryAllowlistMax)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ","), nil
+}
+
+// splitAllowlistCSV mirrors Domain.CacheQueryAllowlistNames for a raw csv.
+func splitAllowlistCSV(csv string) []string {
+	if csv = strings.TrimSpace(csv); csv == "" {
+		return nil
+	}
+	return strings.Split(csv, ",")
 }
 
 // purge clears this domain's cached pages. v1: host-key grep-unlink in

@@ -116,6 +116,10 @@ func (f *fakeDomainRepo) UpdateCacheTTL(_ context.Context, _ string, _ int) erro
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateCacheQueryAllowlist(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func (f *fakeDomainRepo) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) {
 	return 0, nil
 }

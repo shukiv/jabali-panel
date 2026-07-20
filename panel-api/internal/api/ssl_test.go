@@ -251,6 +251,9 @@ func (m *MockDomainRepository) UpdateCacheEnabled(ctx context.Context, id string
 
 func (m *MockDomainRepository) UpdateCachePath(_ context.Context, _, _ string) error { return nil }
 func (m *MockDomainRepository) UpdateCacheTTL(_ context.Context, _ string, _ int) error { return nil }
+func (m *MockDomainRepository) UpdateCacheQueryAllowlist(_ context.Context, _, _ string) error {
+	return nil
+}
 
 func (m *MockDomainRepository) UpdateSkipAutoSAN(ctx context.Context, id string, enabled bool) error {
 	return nil

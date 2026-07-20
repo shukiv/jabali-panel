@@ -93,7 +93,9 @@ func (*fakeDomainRepo) List(context.Context, repository.ListOptions) ([]models.D
 func (*fakeDomainRepo) ListByUserID(context.Context, string, repository.ListOptions) ([]models.Domain, int64, error) {
 	return nil, 0, nil
 }
-func (*fakeDomainRepo) BulkSetEnabledByUserID(context.Context, string, bool) (int64, error) { return 0, nil }
+func (*fakeDomainRepo) BulkSetEnabledByUserID(context.Context, string, bool) (int64, error) {
+	return 0, nil
+}
 func (*fakeDomainRepo) Update(context.Context, *models.Domain) error { return nil }
 func (*fakeDomainRepo) Delete(context.Context, string) error         { return nil }
 func (*fakeDomainRepo) ListForRegistrarRefresh(context.Context, time.Time, int) ([]models.Domain, error) {
@@ -131,8 +133,9 @@ func (*fakeDomainRepo) UpdateDisclaimer(context.Context, string, bool, *string) 
 func (*fakeDomainRepo) UpdateCacheEnabled(context.Context, string, bool) error {
 	return nil
 }
-func (*fakeDomainRepo) UpdateCachePath(context.Context, string, string) error { return nil }
-func (*fakeDomainRepo) UpdateCacheTTL(context.Context, string, int) error { return nil }
+func (*fakeDomainRepo) UpdateCachePath(context.Context, string, string) error           { return nil }
+func (*fakeDomainRepo) UpdateCacheTTL(context.Context, string, int) error               { return nil }
+func (*fakeDomainRepo) UpdateCacheQueryAllowlist(context.Context, string, string) error { return nil }
 
 func (*fakeDomainRepo) UpdateSkipAutoSAN(context.Context, string, bool) error {
 	return nil

@@ -115,6 +115,9 @@ type DomainRepository interface {
 	// UpdateCachePath writes domains.cache_path (Gitea #420).
 	UpdateCachePath(ctx context.Context, id, path string) error
 	UpdateCacheTTL(ctx context.Context, id string, seconds int) error
+	// UpdateCacheQueryAllowlist writes domains.cache_query_allowlist (migration
+	// 000230). csv is the normalized comma-joined param names ("" = off).
+	UpdateCacheQueryAllowlist(ctx context.Context, id, csv string) error
 	// UpdateSkipAutoSAN writes domains.skip_auto_san (M50 SAN opt-out).
 	// Dedicated method per [[feedback_domain_update_allowlist_silent_drop]].
 	UpdateSkipAutoSAN(ctx context.Context, id string, enabled bool) error
@@ -680,6 +683,21 @@ func (r *domainRepo) UpdateCacheTTL(ctx context.Context, id string, seconds int)
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Update("cache_ttl_seconds", seconds)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateCacheQueryAllowlist writes domains.cache_query_allowlist (migration
+// 000230). Dedicated method (no Select allowlist) per the same lesson.
+func (r *domainRepo) UpdateCacheQueryAllowlist(ctx context.Context, id, csv string) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("cache_query_allowlist", csv)
 	if res.Error != nil {
 		return translate(res.Error)
 	}
