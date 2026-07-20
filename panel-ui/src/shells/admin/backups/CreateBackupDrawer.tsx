@@ -16,7 +16,7 @@ type User = {
   is_admin: boolean;
 };
 
-type Kind = "account_backup" | "system_backup";
+type Kind = "account_backup" | "system_backup" | "full_server";
 
 interface CreateBackupDrawerProps {
   open: boolean;
@@ -71,12 +71,16 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         message.error("Pick a destination");
         return;
       }
-      if (values.kind === "system_backup") {
+      if (values.kind === "system_backup" || values.kind === "full_server") {
+        // Full Server = a system backup that also walks every account (#502).
+        // The agent's system.backup already supports include_accounts, so this
+        // is one job covering the system/panel + all accounts' files/DBs/mail.
+        const full = values.kind === "full_server";
         await apiClient.post(`/admin/system/backups`, {
-          include_accounts: false,
+          include_accounts: full,
           destination_id: values.destination_id,
         });
-        message.success("System backup queued");
+        message.success(full ? "Full server backup queued" : "System backup queued");
         onCreated();
         return;
       }
@@ -130,9 +134,11 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         showIcon
         message="Backups run as a goroutine inside panel-agent."
         description={
-          kind === "system_backup"
-            ? "Stages: panel_db (per system DB) → panel_config → service_config → mail_state → tls → security → os_users → data_state → manifest."
-            : "Stages: home → databases → mailboxes → metadata → manifest. Each stage produces a separate restic snapshot tagged with the job-id."
+          kind === "full_server"
+            ? "Full Server: the complete system/panel backup PLUS every account (each account's home, databases, and mailboxes) in one run. Best for disaster recovery."
+            : kind === "system_backup"
+              ? "Stages: panel_db (per system DB) → panel_config → service_config → mail_state → tls → security → os_users → data_state → manifest."
+              : "Stages: home → databases → mailboxes → metadata → manifest. Each stage produces a separate restic snapshot tagged with the job-id."
         }
         style={{ marginBottom: 16 }}
       />
@@ -146,6 +152,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
           <Radio.Group>
             <Radio.Button value="account_backup">Account</Radio.Button>
             <Radio.Button value="system_backup">System</Radio.Button>
+            <Radio.Button value="full_server">Full Server</Radio.Button>
           </Radio.Group>
         </Form.Item>
 
