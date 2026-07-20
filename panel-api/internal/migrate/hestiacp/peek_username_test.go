@@ -87,3 +87,19 @@ func TestPeekUserNameFromStaging(t *testing.T) {
 		t.Errorf("empty staging should yield empty, got (%q,%q)", f, l)
 	}
 }
+
+// GH #516: the account's contact email (CONTACT=) must carry over from
+// user.conf instead of being synthesized as <user>@<host>.
+func TestParseHestiaContactEmail(t *testing.T) {
+	cases := map[string]string{
+		"NAME='ITFlow Support'\nCONTACT='support@itflow.org'\nPACKAGE='default'\n": "support@itflow.org",
+		"CONTACT=\"user@example.com\"\n":                                          "user@example.com",
+		"CONTACT=bare@nodots.co\n":                                                "bare@nodots.co",
+		"NAME='x'\nPACKAGE='default'\n":                                           "", // no CONTACT
+	}
+	for body, want := range cases {
+		if got := parseHestiaContactEmail([]byte(body)); got != want {
+			t.Errorf("parseHestiaContactEmail(%q) = %q, want %q", body, got, want)
+		}
+	}
+}

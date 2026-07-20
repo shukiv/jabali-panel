@@ -159,6 +159,21 @@ failed stage. Already-done stages are skipped.`,
 				targetEmail = meta.Email
 				fmt.Printf("  → target-email detected from cpmove: %s\n", targetEmail)
 			}
+			if targetEmail == "" && job.SourceKind == models.MigrationSourceHestia {
+				// GH #516: HestiaCP stores the account's contact email as
+				// CONTACT='addr' in hestia/user.conf. The offline path hasn't
+				// extracted yet, so read it from the staged tarball (mirrors the
+				// contact-NAME peek below) — carry the real email instead of a
+				// synthetic <user>@<host>.
+				staging := filepath.Join("/var/lib/jabali-migrations", jobID)
+				if e := hestiacp.PeekUserEmailFromStaging(staging, job.SourceUser); e != "" {
+					targetEmail = e
+					fmt.Printf("  → target-email from Hestia user.conf CONTACT: %s\n", targetEmail)
+				} else if e := hestiacp.PeekUserEmail(extractDir); e != "" {
+					targetEmail = e
+					fmt.Printf("  → target-email from Hestia user.conf CONTACT: %s\n", targetEmail)
+				}
+			}
 			if targetEmail == "" {
 				// No contactemail file in the tarball (older pkgacct
 				// versions or pre-extracted blob) — synthesize

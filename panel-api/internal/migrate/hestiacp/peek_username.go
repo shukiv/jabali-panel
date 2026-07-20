@@ -24,10 +24,21 @@ import (
 //     extracted dir at create time saw nothing. PeekUserNameFromStaging reads
 //     the name straight out of the staged tarball, before extraction.
 var (
-	hestiaNameRe  = regexp.MustCompile(`(?m)^\s*NAME=['"]?([^'"\n]*)['"]?`)
-	hestiaFNameRe = regexp.MustCompile(`(?m)^\s*FNAME=['"]?([^'"\n]*)['"]?`)
-	hestiaLNameRe = regexp.MustCompile(`(?m)^\s*LNAME=['"]?([^'"\n]*)['"]?`)
+	hestiaNameRe    = regexp.MustCompile(`(?m)^\s*NAME=['"]?([^'"\n]*)['"]?`)
+	hestiaFNameRe   = regexp.MustCompile(`(?m)^\s*FNAME=['"]?([^'"\n]*)['"]?`)
+	hestiaLNameRe   = regexp.MustCompile(`(?m)^\s*LNAME=['"]?([^'"\n]*)['"]?`)
+	hestiaContactRe = regexp.MustCompile(`(?m)^\s*CONTACT=['"]?([^'"\n]*)['"]?`)
 )
+
+// parseHestiaContactEmail pulls the account contact email (CONTACT='addr') out
+// of a user.conf body (GH #516: the panel-user email must carry over instead of
+// being synthesized as <user>@<host>).
+func parseHestiaContactEmail(b []byte) string {
+	if m := hestiaContactRe.FindSubmatch(b); m != nil {
+		return strings.TrimSpace(string(m[1]))
+	}
+	return ""
+}
 
 // parseHestiaContactName pulls the contact name out of a user.conf body.
 // Prefers explicit FNAME/LNAME; else splits the single NAME field on the
@@ -91,6 +102,47 @@ func PeekUserNameFromStaging(stagingDir, sourceUser string) (first, last string)
 		}
 	}
 	return "", ""
+}
+
+// PeekUserEmail reads CONTACT from an already-extracted user.conf tree.
+func PeekUserEmail(extractDir string) string {
+	if extractDir == "" {
+		return ""
+	}
+	for _, p := range []string{
+		filepath.Join(extractDir, "hestia", "user.conf"),
+		filepath.Join(extractDir, "user.conf"),
+	} {
+		if b, err := os.ReadFile(p); err == nil {
+			if e := parseHestiaContactEmail(b); e != "" {
+				return e
+			}
+		}
+	}
+	return ""
+}
+
+// PeekUserEmailFromStaging reads CONTACT straight out of the staged tarball,
+// used at auto-create time before the offline import extracts it (GH #516).
+func PeekUserEmailFromStaging(stagingDir, sourceUser string) string {
+	if stagingDir == "" {
+		return ""
+	}
+	var cands []string
+	cands = append(cands, filepath.Join(stagingDir, "user."+sourceUser+".tar.gz"))
+	for _, pat := range []string{"*.tar.gz", "*.tar"} {
+		if m, _ := filepath.Glob(filepath.Join(stagingDir, pat)); len(m) > 0 {
+			cands = append(cands, m...)
+		}
+	}
+	for _, tarPath := range cands {
+		if b, ok := readTarMember(tarPath, "hestia/user.conf"); ok {
+			if e := parseHestiaContactEmail(b); e != "" {
+				return e
+			}
+		}
+	}
+	return ""
 }
 
 // readTarMember returns the bytes of one member (matched by suffix, with or
