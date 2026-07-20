@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -55,9 +56,14 @@ type domainCreateParams struct {
 	CacheBypassPaths []string `json:"cache_bypass_paths,omitempty"`
 	// CacheTTLSeconds (Gitea #596) — per-domain page-cache validity. 0 = use
 	// the default. Drives fastcgi_cache_valid; background_update keeps it fresh.
-	CacheTTLSeconds int    `json:"cache_ttl_seconds,omitempty"`
-	SSLCertPath     string `json:"ssl_cert_path"`
-	SSLKeyPath      string `json:"ssl_key_path"`
+	CacheTTLSeconds int `json:"cache_ttl_seconds,omitempty"`
+	// CacheQueryAllowlist (migration 000230): query-param names that get their
+	// own page-cache entry (e.g. "paged"). Empty ⇒ vhost byte-identical (feature
+	// off). The agent RE-sanitizes before rendering (config-injection boundary,
+	// like CacheBypassPaths).
+	CacheQueryAllowlist []string `json:"cache_query_allowlist,omitempty"`
+	SSLCertPath         string   `json:"ssl_cert_path"`
+	SSLKeyPath          string   `json:"ssl_key_path"`
 	// PHP INI overrides: omitted if not set on the domain.
 	PHPMemoryLimit       string `json:"php_memory_limit,omitempty"`
 	PHPUploadMaxFilesize string `json:"php_upload_max_filesize,omitempty"`
@@ -282,7 +288,15 @@ server {
         # strings are cacheable; $jabali_qs_kind is set by the strict map in
         # jabali-fastcgi-cache.conf. The path-only cache_key below collapses all
         # tracking variants onto the clean-URL entry.
-        if ($jabali_qs_kind = other) { set $jabali_skip 1; }
+{{if .CacheQAllowRegex}}        # cache-query-allowlist (migration 000230): only queries made ENTIRELY of
+        # allowlisted params (non-empty values) cache; any other query param
+        # bypasses. Replaces the shared qs_kind=other line for this domain. Only
+        # ever SETS skip=1 — an allowlisted page relies on the earlier no-cookie
+        # rule for skip=0, so logged-in users stay bypassed.
+        set $jabali_qs_dirty 1;
+        if ($query_string ~ "{{.CacheQAllowRegex}}") { set $jabali_qs_dirty 0; }
+        if ($query_string = "") { set $jabali_qs_dirty 0; }
+        if ($jabali_qs_dirty) { set $jabali_skip 1; }{{else}}        if ($jabali_qs_kind = other) { set $jabali_skip 1; }{{end}}
         if ($request_uri ~* "/wp-admin/|/wp-login|/xmlrpc\.php|/wp-cron\.php|/wp-json/|/cart|/checkout|/my-account|/wc-api/|/edd-api/{{.CacheExtraBypass}}") { set $jabali_skip 1; }
 {{ if ne .CacheGate "" }}        # Gitea #420/#601: cache only within the cache-enabled install path(s) on
         # this domain (union of every cached install's prefix); other (non-WP,
@@ -297,7 +311,12 @@ server {
         # Gitea #610: path-only key (no query) so tracking-param variants
         # collapse onto one entry. Safe because only empty/tracking-only queries
         # reach caching (others bypass via $jabali_qs_kind above).
-        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";
+{{if .CacheQAllowNames}}        # cache-query-allowlist: fold allowlisted args into the key in a fixed
+        # (panel-sorted) order so ?a=1&b=2 and ?b=2&a=1 collapse; non-allowlisted
+        # args never enter the key.
+        set $jabali_qkey "";
+{{range .CacheQAllowNames}}        if ($arg_{{.}}) { set $jabali_qkey "${jabali_qkey}{{.}}=$arg_{{.}}&"; }
+{{end}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path?$jabali_qkey";{{else}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";{{end}}
         fastcgi_cache_valid 200 301 {{.CacheTTL}};
         fastcgi_cache_bypass $jabali_skip $http_authorization;
         # GH #637: also skip STORING when the backend opted out via Cache-Control
@@ -349,7 +368,15 @@ server {
         # strings are cacheable; $jabali_qs_kind is set by the strict map in
         # jabali-fastcgi-cache.conf. The path-only cache_key below collapses all
         # tracking variants onto the clean-URL entry.
-        if ($jabali_qs_kind = other) { set $jabali_skip 1; }
+{{if .CacheQAllowRegex}}        # cache-query-allowlist (migration 000230): only queries made ENTIRELY of
+        # allowlisted params (non-empty values) cache; any other query param
+        # bypasses. Replaces the shared qs_kind=other line for this domain. Only
+        # ever SETS skip=1 — an allowlisted page relies on the earlier no-cookie
+        # rule for skip=0, so logged-in users stay bypassed.
+        set $jabali_qs_dirty 1;
+        if ($query_string ~ "{{.CacheQAllowRegex}}") { set $jabali_qs_dirty 0; }
+        if ($query_string = "") { set $jabali_qs_dirty 0; }
+        if ($jabali_qs_dirty) { set $jabali_skip 1; }{{else}}        if ($jabali_qs_kind = other) { set $jabali_skip 1; }{{end}}
         if ($request_uri ~* "/wp-admin/|/wp-login|/xmlrpc\.php|/wp-cron\.php|/wp-json/|/cart|/checkout|/my-account|/wc-api/|/edd-api/{{.CacheExtraBypass}}") { set $jabali_skip 1; }
 {{ if ne .CacheGate "" }}        # Gitea #420/#601: cache only within the cache-enabled install path(s) on
         # this domain (union of every cached install's prefix); other (non-WP,
@@ -364,7 +391,12 @@ server {
         # Gitea #610: path-only key (no query) so tracking-param variants
         # collapse onto one entry. Safe because only empty/tracking-only queries
         # reach caching (others bypass via $jabali_qs_kind above).
-        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";
+{{if .CacheQAllowNames}}        # cache-query-allowlist: fold allowlisted args into the key in a fixed
+        # (panel-sorted) order so ?a=1&b=2 and ?b=2&a=1 collapse; non-allowlisted
+        # args never enter the key.
+        set $jabali_qkey "";
+{{range .CacheQAllowNames}}        if ($arg_{{.}}) { set $jabali_qkey "${jabali_qkey}{{.}}=$arg_{{.}}&"; }
+{{end}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path?$jabali_qkey";{{else}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";{{end}}
         fastcgi_cache_valid 200 301 {{.CacheTTL}};
         fastcgi_cache_bypass $jabali_skip $http_authorization;
         # GH #637: also skip STORING when the backend opted out via Cache-Control
@@ -466,10 +498,15 @@ type vhostData struct {
 	// ADR-0108 FastCGI micro-cache. All three are panel/agent-controlled
 	// (never user data). When CacheEnabled is false the template emits
 	// none of the cache/static directives → byte-identical to pre-0108.
-	CacheEnabled      bool
-	CachePath         string // Gitea #420: page-cache path prefix ("/" = whole domain)
-	CacheGate         string // Gitea #601: regex body for the multi-path gate ("" = whole domain, no gate)
-	CacheExtraBypass  string // Gitea #616: "|/path|..." suffix appended to the built-in bypass regex ("" = none)
+	CacheEnabled     bool
+	CachePath        string // Gitea #420: page-cache path prefix ("/" = whole domain)
+	CacheGate        string // Gitea #601: regex body for the multi-path gate ("" = whole domain, no gate)
+	CacheExtraBypass string // Gitea #616: "|/path|..." suffix appended to the built-in bypass regex ("" = none)
+	// CacheQAllowRegex ("" = feature off ⇒ byte-identical): anchored $query_string
+	// match for allowlist-only queries. CacheQAllowNames: sorted allowlisted
+	// param names driving the canonical $arg_<name> key builder (migration 000230).
+	CacheQAllowRegex  string
+	CacheQAllowNames  []string
 	CacheKeyZone      string
 	CacheTTL          string
 	CacheTTLSeconds   int // numeric form of CacheTTL for Cache-Control max-age
@@ -626,6 +663,48 @@ func sanitizeBypassPaths(paths []string) string {
 	return "|" + strings.Join(parts, "|")
 }
 
+// cacheQueryParamRE bounds an allowlist entry at the agent trust boundary:
+// lower-case alnum + underscore, 1-32 chars — the same guard the panel applies,
+// re-checked here so a name can never carry regex metacharacters into the
+// rendered config. Mirrors the sanitizeBypassPaths fail-safe.
+var cacheQueryParamRE = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+// sanitizeCacheQueryAllowlist re-validates, lower-cases, de-dups, and sorts the
+// panel-supplied allowlist. Invalid entries are dropped fail-safe. Returns the
+// surviving sorted names (nil = feature off).
+func sanitizeCacheQueryAllowlist(names []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		n = strings.ToLower(strings.TrimSpace(n))
+		if !cacheQueryParamRE.MatchString(n) || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
+// cacheQueryAllowRegex builds the anchored nginx regex that matches a query
+// string composed ONLY of allowlisted params with NON-EMPTY values, e.g.
+// `^(?:(?:paged|s)=[^&]+)(?:&(?:paged|s)=[^&]+)*$`. The value class is `[^&]+`
+// (non-empty) so it agrees with `if ($arg_<name>)` in the key builder — an
+// empty value (`?paged=`) is treated as dirty and bypasses, never colliding
+// with the base path. "" when no names (feature off). names must already be
+// sanitized (no regex metachars).
+func cacheQueryAllowRegex(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	alt := strings.Join(names, "|")
+	return `^(?:(?:` + alt + `)=[^&]+)(?:&(?:` + alt + `)=[^&]+)*$`
+}
+
 // buildCacheGate returns the regex BODY for the page-cache path gate
 // `^<body>(/|$)`, or "" meaning "no gate → cache the whole domain".
 //
@@ -667,9 +746,11 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, fpmSocket string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
+	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
+	cacheQAllowRegex := cacheQueryAllowRegex(cacheQAllowNames)
 	cachePath = sanitizeCachePath(cachePath)
 	cacheTTLSeconds = clampCacheTTL(cacheTTLSeconds)
 	// GH #329: default to the legacy per-user socket when the caller didn't
@@ -733,6 +814,8 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		CachePath:                  cachePath,
 		CacheGate:                  cacheGate,
 		CacheExtraBypass:           cacheExtraBypass,
+		CacheQAllowRegex:           cacheQAllowRegex,
+		CacheQAllowNames:           cacheQAllowNames,
 		CacheKeyZone:               "jabali_fcgi",
 		CacheTTL:                   fmt.Sprintf("%ds", cacheTTLSeconds),
 		CacheTTLSeconds:            cacheTTLSeconds,
@@ -955,7 +1038,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 	dirPrivacyDirectives := buildDirectoryPrivacyDirectives(p.DirectoryPrivacyRules)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.FPMSocket)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

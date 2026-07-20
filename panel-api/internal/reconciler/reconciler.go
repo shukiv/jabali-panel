@@ -1451,6 +1451,13 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		"cache_ttl_seconds": domain.CacheTTLSeconds,
 	}
 
+	// cache-query-allowlist: param names that get their own cache entry
+	// (e.g. "paged"). Omitted when empty so opt-out domains send a
+	// byte-identical payload and the agent renders the unchanged vhost.
+	if names := domain.CacheQueryAllowlistNames(); len(names) > 0 {
+		params["cache_query_allowlist"] = names
+	}
+
 	// GH #601: a domain can host several cache-enabled installs (e.g. / and
 	// /blog); the page-cache gate must allow EVERY one's path prefix, not just
 	// the single denormalized cache_path. Gather them and pass cache_paths;

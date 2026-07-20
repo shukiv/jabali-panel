@@ -1,0 +1,235 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    # ACME HTTP-01 webroot. Must be a location block — a server-level
+    # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
+    # so a server-scoped redirect short-circuits every request
+    # including /.well-known/acme-challenge/, and Let's Encrypt's
+    # challenge fetch bounces to https where LE refuses to follow.
+    # Scoping the redirect to a location block instead pushes it into
+    # the per-location REWRITE phase, after FIND_CONFIG has had a
+    # chance to pick the ^~ ACME match. Webroot mirrors
+    # panel-api/internal/reconciler.IssueDomainCert (-w domain.DocRoot).
+    # Incident 2026-04-26: jabali.site stuck in pending_acme_retry on
+    # first VPS install — first under the no-ACME-location vhost, then
+    # again after we added the location but kept the server-scoped
+    # redirect that won the rewrite race.
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        root /home/u/public_html/example.com;
+        try_files $uri =404;
+        # M50: if Directory Privacy with path "/" applied auth_basic at
+        # server scope, override here so the ACME validator can reach
+        # the challenge token without a 401.
+        auth_basic off;
+    }
+
+
+
+    root /home/u/public_html/example.com;
+    
+
+    
+    
+
+
+    location / {
+
+        try_files $uri $uri/ /index.php?$query_string;
+
+    }
+
+    # Branded error pages (M28 page templates). error_page fires ONLY on
+    # NATIVE nginx errors: a missing static file (try_files =404), a denied
+    # directory (403), or an upstream 50x. fastcgi_intercept_errors is
+    # deliberately OFF, so a real app (WordPress, etc.) keeps its own 404
+    # — its index.php runs and owns the response. A no-app PHP domain hits
+    # the index.php existence guard below, which yields a
+    # native 404 that lands here. Files are converged from the editable
+    # page_template rows into /var/www/jabali-errors by the reconciler.
+    error_page 404 /jabali-err-404.html;
+    error_page 403 /jabali-err-403.html;
+    error_page 500 502 503 504 /jabali-err-500.html;
+    location = /jabali-err-404.html { internal; root /var/www/jabali-errors; }
+    location = /jabali-err-403.html { internal; root /var/www/jabali-errors; }
+    location = /jabali-err-500.html { internal; root /var/www/jabali-errors; }
+
+
+    # Long-cache static assets (immutable content; 30 days).
+    location ~* \.(?:css|js|jpe?g|png|gif|ico|svg|webp|woff2?|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+    # Short-cache static HTML (300s / 5 min). Long enough to satisfy
+    # third-party freshness audits, short enough that edits surface
+    # within minutes; ETag + Last-Modified still give instant 304
+    # revalidation on unchanged content. PHP responses use the
+    # separate FastCGI micro-cache (60s) below, not this block.
+    # Without this, a domain with cache_enabled=true but a static
+    # site (no PHP) responds with no Cache-Control header at all —
+    # third-party caching audits (e.g. requestmetrics.com) flag
+    # "no Cache-Control" + "heuristic freshness" warnings even
+    # though caching IS enabled on the domain. PHP responses still
+    # get the server-side FastCGI cache via the location ~ \.php$
+    # block below (with X-Jabali-Cache header). Plain HTML hits
+    # only this; it does not enable server-side caching.
+    location ~* \.html?$ {
+        expires 5m;
+        add_header Cache-Control "public, max-age=300" always;
+    }
+
+
+    # Front-controller with an existence guard: when index.php is absent
+    # (domain has no app installed) try_files yields a native 404 instead
+    # of PHP-FPM's bare "File not found", so the branded error_page shows.
+    # When it exists the app runs and owns its own error pages.
+    location = /index.php {
+        try_files $uri =404;
+        fastcgi_pass unix:/run/php/jabali-u/fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+
+
+        # Fail-CLOSED page-cache gate (Gitea #416/#419): cache ONLY genuinely
+        # anonymous GETs. Default to skip; allow only when there is NO cookie or
+        # the cookie is exclusively known-benign analytics/consent. Auth, session,
+        # language, currency, membership, A/B, and any unknown cookie therefore
+        # bypass — so a member/paywall page or the wrong i18n/device variant is
+        # never stored and served cross-visitor (the old denylist was fail-open).
+        set $jabali_skip 1;
+        if ($http_cookie = "") { set $jabali_skip 0; }
+        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
+        if ($request_method = POST) { set $jabali_skip 1; }
+        # Gitea #610: bypass only when the query has a non-tracking (content-
+        # affecting) param. Tracking-only (utm_*/gclid/fbclid/…) and empty query
+        # strings are cacheable; $jabali_qs_kind is set by the strict map in
+        # jabali-fastcgi-cache.conf. The path-only cache_key below collapses all
+        # tracking variants onto the clean-URL entry.
+        if ($jabali_qs_kind = other) { set $jabali_skip 1; }
+        if ($request_uri ~* "/wp-admin/|/wp-login|/xmlrpc\.php|/wp-cron\.php|/wp-json/|/cart|/checkout|/my-account|/wc-api/|/edd-api/") { set $jabali_skip 1; }
+        # Gitea #420/#601: cache only within the cache-enabled install path(s) on
+        # this domain (union of every cached install's prefix); other (non-WP,
+        # differently-authed) apps on the same domain are never cached.
+        # Gate on $jabali_cache_path — the ORIGINAL request path with the query
+        # stripped (Codeberg #5). $uri would be /index.php after the try_files
+        # rewrite (collapsing every permalink); $request_uri keeps the query which
+        # broke the subdir homepage anchor (GH #629). $jabali_cache_path fixes both
+        # and mirrors the cache_key below.
+        if ($jabali_cache_path !~ "^/blog(/|$)") { set $jabali_skip 1; }
+        fastcgi_cache jabali_fcgi;
+        # Gitea #610: path-only key (no query) so tracking-param variants
+        # collapse onto one entry. Safe because only empty/tracking-only queries
+        # reach caching (others bypass via $jabali_qs_kind above).
+        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";
+        fastcgi_cache_valid 200 301 600s;
+        fastcgi_cache_bypass $jabali_skip $http_authorization;
+        # GH #637: also skip STORING when the backend opted out via Cache-Control
+        # (no-cache/no-store/private). $jabali_upstream_nocache is set by the map
+        # in jabali-fastcgi-cache.conf from $upstream_http_cache_control.
+        fastcgi_no_cache $jabali_skip $jabali_upstream_nocache $http_authorization $jabali_vary_nocache;
+        fastcgi_cache_use_stale error timeout updating http_500 http_503;
+        fastcgi_cache_lock on;
+        # Gitea #596: serve the stale copy instantly (~100ms) on expiry and
+        # refresh in the background, instead of blocking the visitor on the
+        # full synchronous PHP regen. Pairs with use_stale ... updating above.
+        fastcgi_cache_background_update on;
+        fastcgi_cache_revalidate on;
+        access_log /var/log/nginx/jcache-example.com.log jcache buffer=8k flush=5s;
+        add_header X-Jabali-Cache $upstream_cache_status always;
+        # JAB-70: re-declare security headers (a location's add_header suppresses
+        # server-scope ones).
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        # Do NOT advertise public/CDN caching for dynamic PHP responses (Gitea
+        # #417): the origin micro-cache is purgeable but browser/CDN copies are
+        # not, and a skip-miss must never be amplified to Cloudflare scale. The
+        # speedup is the server-side micro-cache only; clients always revalidate.
+        fastcgi_hide_header Cache-Control;
+        add_header Cache-Control "private, no-cache, max-age=0" always;
+
+    }
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/jabali-u/fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+
+
+        # Fail-CLOSED page-cache gate (Gitea #416/#419): cache ONLY genuinely
+        # anonymous GETs. Default to skip; allow only when there is NO cookie or
+        # the cookie is exclusively known-benign analytics/consent. Auth, session,
+        # language, currency, membership, A/B, and any unknown cookie therefore
+        # bypass — so a member/paywall page or the wrong i18n/device variant is
+        # never stored and served cross-visitor (the old denylist was fail-open).
+        set $jabali_skip 1;
+        if ($http_cookie = "") { set $jabali_skip 0; }
+        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
+        if ($request_method = POST) { set $jabali_skip 1; }
+        # Gitea #610: bypass only when the query has a non-tracking (content-
+        # affecting) param. Tracking-only (utm_*/gclid/fbclid/…) and empty query
+        # strings are cacheable; $jabali_qs_kind is set by the strict map in
+        # jabali-fastcgi-cache.conf. The path-only cache_key below collapses all
+        # tracking variants onto the clean-URL entry.
+        if ($jabali_qs_kind = other) { set $jabali_skip 1; }
+        if ($request_uri ~* "/wp-admin/|/wp-login|/xmlrpc\.php|/wp-cron\.php|/wp-json/|/cart|/checkout|/my-account|/wc-api/|/edd-api/") { set $jabali_skip 1; }
+        # Gitea #420/#601: cache only within the cache-enabled install path(s) on
+        # this domain (union of every cached install's prefix); other (non-WP,
+        # differently-authed) apps on the same domain are never cached.
+        # Gate on $jabali_cache_path — the ORIGINAL request path with the query
+        # stripped (Codeberg #5). $uri would be /index.php after the try_files
+        # rewrite (collapsing every permalink); $request_uri keeps the query which
+        # broke the subdir homepage anchor (GH #629). $jabali_cache_path fixes both
+        # and mirrors the cache_key below.
+        if ($jabali_cache_path !~ "^/blog(/|$)") { set $jabali_skip 1; }
+        fastcgi_cache jabali_fcgi;
+        # Gitea #610: path-only key (no query) so tracking-param variants
+        # collapse onto one entry. Safe because only empty/tracking-only queries
+        # reach caching (others bypass via $jabali_qs_kind above).
+        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";
+        fastcgi_cache_valid 200 301 600s;
+        fastcgi_cache_bypass $jabali_skip $http_authorization;
+        # GH #637: also skip STORING when the backend opted out via Cache-Control
+        # (no-cache/no-store/private). $jabali_upstream_nocache is set by the map
+        # in jabali-fastcgi-cache.conf from $upstream_http_cache_control.
+        fastcgi_no_cache $jabali_skip $jabali_upstream_nocache $http_authorization $jabali_vary_nocache;
+        fastcgi_cache_use_stale error timeout updating http_500 http_503;
+        fastcgi_cache_lock on;
+        # Gitea #596: serve the stale copy instantly (~100ms) on expiry and
+        # refresh in the background, instead of blocking the visitor on the
+        # full synchronous PHP regen. Pairs with use_stale ... updating above.
+        fastcgi_cache_background_update on;
+        fastcgi_cache_revalidate on;
+        access_log /var/log/nginx/jcache-example.com.log jcache buffer=8k flush=5s;
+        add_header X-Jabali-Cache $upstream_cache_status always;
+        # JAB-70: re-declare security headers (a location's add_header suppresses
+        # server-scope ones).
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        # Do NOT advertise public/CDN caching for dynamic PHP responses (Gitea
+        # #417): the origin micro-cache is purgeable but browser/CDN copies are
+        # not, and a skip-miss must never be amplified to Cloudflare scale. The
+        # speedup is the server-side micro-cache only; clients always revalidate.
+        fastcgi_hide_header Cache-Control;
+        add_header Cache-Control "private, no-cache, max-age=0" always;
+
+    }
+
+
+    access_log /var/log/nginx/example.com-access.log;
+    error_log /var/log/nginx/example.com-error.log;
+
+    # Per-install rewrites (e.g. Drupal/Joomla subdir pretty-URL routing).
+    # Written by the per-CMS install handler; reloaded on install/delete.
+    # nginx tolerates a missing directory here — no file = no include.
+    include /etc/nginx/jabali/example.com/*.conf;
+
+    
+    
+    
+    
+
+}
