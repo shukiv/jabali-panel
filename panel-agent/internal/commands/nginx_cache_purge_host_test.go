@@ -7,10 +7,14 @@ func TestKeyLineHost(t *testing.T) {
 	cases := []struct{ line, want string }{
 		{"KEY: httpsGETa.com/path", "a.com"},
 		{"KEY: httpGETa.com/", "a.com"},
-		{"KEY: httpsHEADsub.a.com/x", "sub.a.com"},   // must NOT be "a.com"
-		{"KEY: httpsGETmya.com/", "mya.com"},          // must NOT be "a.com"
+		{"KEY: httpsHEADsub.a.com/x", "sub.a.com"},         // must NOT be "a.com"
+		{"KEY: httpsGETmya.com/", "mya.com"},               // must NOT be "a.com"
 		{"KEY: httpsGETvictim.com/go/a.com", "victim.com"}, // path contains a.com
 		{"KEY: httpsPOSTa.com/cart", "a.com"},
+		// cache-query-allowlist: query-variant entries carry a "?paged=2&" suffix
+		// after the path — whole-domain purge must still extract the host so those
+		// variants are evicted alongside the base page.
+		{"KEY: httpsGETa.com/blog?paged=2&", "a.com"},
 	}
 	for _, c := range cases {
 		if got := keyLineHost([]byte(c.line)); got != c.want {

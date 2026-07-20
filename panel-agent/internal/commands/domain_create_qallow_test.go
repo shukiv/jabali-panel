@@ -81,8 +81,13 @@ func TestVhostRender_Allowlist_Paged(t *testing.T) {
 	if !strings.Contains(out, `if ($arg_paged) { set $jabali_qkey "${jabali_qkey}paged=$arg_paged&"; }`) {
 		t.Error("missing canonical $arg_paged key line")
 	}
-	if !strings.Contains(out, `fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path?$jabali_qkey"`) {
-		t.Error("cache key must append the allowlisted-query suffix")
+	if !strings.Contains(out, `fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path$jabali_qsep$jabali_qkey"`) {
+		t.Error("cache key must append the allowlisted-query suffix via $jabali_qsep")
+	}
+	// The "?" separator is conditional so a query-less page keys as plain
+	// $jabali_cache_path — targeted-purge-safe + byte-identical base key.
+	if !strings.Contains(out, `if ($jabali_qkey != "") { set $jabali_qsep "?"; }`) {
+		t.Error("missing conditional query separator (base page must stay purge-safe)")
 	}
 	if strings.Contains(out, "if ($jabali_qs_kind = other) { set $jabali_skip 1; }") {
 		t.Error("allowlist mode must REPLACE the shared qs_kind=other bypass line")

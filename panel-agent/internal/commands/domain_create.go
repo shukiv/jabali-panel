@@ -316,7 +316,14 @@ server {
         # args never enter the key.
         set $jabali_qkey "";
 {{range .CacheQAllowNames}}        if ($arg_{{.}}) { set $jabali_qkey "${jabali_qkey}{{.}}=$arg_{{.}}&"; }
-{{end}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path?$jabali_qkey";{{else}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";{{end}}
+{{end}}        # Only add the "?" separator when an allowlisted arg is actually present,
+        # so a query-less page keys as plain $jabali_cache_path (byte-identical to
+        # the non-allowlist key AND targeted-purge-safe — post-edit purge computes
+        # md5(scheme+method+host+path) with no trailing "?"). Query variants are
+        # cleared by whole-domain purge (host-match) or TTL, not targeted purge.
+        set $jabali_qsep "";
+        if ($jabali_qkey != "") { set $jabali_qsep "?"; }
+        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path$jabali_qsep$jabali_qkey";{{else}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";{{end}}
         fastcgi_cache_valid 200 301 {{.CacheTTL}};
         fastcgi_cache_bypass $jabali_skip $http_authorization;
         # GH #637: also skip STORING when the backend opted out via Cache-Control
@@ -396,7 +403,14 @@ server {
         # args never enter the key.
         set $jabali_qkey "";
 {{range .CacheQAllowNames}}        if ($arg_{{.}}) { set $jabali_qkey "${jabali_qkey}{{.}}=$arg_{{.}}&"; }
-{{end}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path?$jabali_qkey";{{else}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";{{end}}
+{{end}}        # Only add the "?" separator when an allowlisted arg is actually present,
+        # so a query-less page keys as plain $jabali_cache_path (byte-identical to
+        # the non-allowlist key AND targeted-purge-safe — post-edit purge computes
+        # md5(scheme+method+host+path) with no trailing "?"). Query variants are
+        # cleared by whole-domain purge (host-match) or TTL, not targeted purge.
+        set $jabali_qsep "";
+        if ($jabali_qkey != "") { set $jabali_qsep "?"; }
+        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path$jabali_qsep$jabali_qkey";{{else}}        fastcgi_cache_key "$scheme$request_method$host$jabali_cache_path";{{end}}
         fastcgi_cache_valid 200 301 {{.CacheTTL}};
         fastcgi_cache_bypass $jabali_skip $http_authorization;
         # GH #637: also skip STORING when the backend opted out via Cache-Control
