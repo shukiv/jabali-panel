@@ -4584,6 +4584,40 @@ build_frontend() {
     bash -c "npm cache clean --force" >/dev/null 2>&1 || true
 }
 
+# sync_app_catalogs rsyncs the docker-app + py-framework marketplace catalogs
+# from the repo into the production paths the panel-api + CLI read at startup,
+# then reloads panel-api so the in-memory catalogs pick up the change. Called
+# from build_backend (full install) AND provision_new_software (jabali update),
+# so new entries reach every box, not just fresh installs.
+sync_app_catalogs() {
+  # M48: docker-app catalog.
+  if [[ -d "$REPO_DIR/install/docker-apps" ]]; then
+    install -d -m 0755 /usr/local/share/jabali/docker-apps
+    rsync -a --delete --exclude=".git" \
+      "$REPO_DIR/install/docker-apps/" \
+      /usr/local/share/jabali/docker-apps/
+    _ok "synced docker-app catalog -> /usr/local/share/jabali/docker-apps/"
+  fi
+
+  # JAB-164: Python framework marketplace catalog (framework.yaml + template/
+  # starters + patch.py).
+  if [[ -d "$REPO_DIR/install/py-frameworks" ]]; then
+    install -d -m 0755 /usr/local/share/jabali/py-frameworks
+    rsync -a --delete --exclude=".git" \
+      "$REPO_DIR/install/py-frameworks/" \
+      /usr/local/share/jabali/py-frameworks/
+    _ok "synced py-framework catalog -> /usr/local/share/jabali/py-frameworks/"
+  fi
+
+  # panel-api loads both catalogs into memory at startup; reload so a running
+  # panel picks up the just-synced entries (idempotent; try-restart no-ops if
+  # the unit isn't up yet).
+  if [[ -d /usr/local/share/jabali/py-frameworks || -d /usr/local/share/jabali/docker-apps ]]; then
+    systemctl try-restart jabali-panel 2>/dev/null || true
+    _ok "reloaded panel-api so the app catalogs pick up the sync"
+  fi
+}
+
 build_backend() {
   _log "building panel-api + jabali-agent"
   local version full_sha btime
@@ -4640,41 +4674,13 @@ build_backend() {
   install -m 0755 "$tmp_mailhook" /usr/local/bin/jabali-mailhook
   rm -f "$tmp_panel" "$tmp_agent" "$tmp_sshshell" "$tmp_mailhook"
 
-  # M48: sync the docker-app catalog tree into the production path
-  # the panel-api reads at startup. Without this the marketplace
-  # page is empty until the operator manually runs install.sh again
-  # (or jabali update, which calls back into install.sh).
-  if [[ -d "$REPO_DIR/install/docker-apps" ]]; then
-    install -d -m 0755 /usr/local/share/jabali/docker-apps
-    rsync -a --delete \
-      --exclude=".git" \
-      "$REPO_DIR/install/docker-apps/" \
-      /usr/local/share/jabali/docker-apps/
-    _ok "synced docker-app catalog -> /usr/local/share/jabali/docker-apps/"
-  fi
-
-  # JAB-164: sync the Python framework marketplace catalog (framework.yaml +
-  # template/ starters) into the production path panel-api + the CLI read at
-  # startup. Same rationale as the docker-app catalog above.
-  if [[ -d "$REPO_DIR/install/py-frameworks" ]]; then
-    install -d -m 0755 /usr/local/share/jabali/py-frameworks
-    rsync -a --delete \
-      --exclude=".git" \
-      "$REPO_DIR/install/py-frameworks/" \
-      /usr/local/share/jabali/py-frameworks/
-    _ok "synced py-framework catalog -> /usr/local/share/jabali/py-frameworks/"
-  fi
-
-  # panel-api loads BOTH app catalogs (docker-apps + py-frameworks) into memory
-  # at startup. The syncs above run AFTER the buildSteps panel-api restart, so
-  # without a reload the panel keeps serving the pre-sync catalog — the Python
-  # marketplace showed only the 3 original frameworks + blank icons until a
-  # manual restart. Reload now that the catalog dirs are current (idempotent,
-  # ~2s; try-restart is a no-op if the unit isn't running yet).
-  if [[ -d /usr/local/share/jabali/py-frameworks || -d /usr/local/share/jabali/docker-apps ]]; then
-    systemctl try-restart jabali-panel 2>/dev/null || true
-    _ok "reloaded panel-api so the app catalogs pick up the sync"
-  fi
+  # Sync the docker-app + py-framework catalogs into the production paths the
+  # panel reads at startup, then reload it. Also runs from provision_new_software
+  # so `jabali update` (which does NOT call build_backend) keeps the catalogs
+  # current — otherwise new marketplace entries never reach a box that only ever
+  # runs `jabali update` (JAB-164: the Python catalog showed just the 3 original
+  # frameworks + blank icons on such boxes).
+  sync_app_catalogs
 
   # #406: bundle the jabali-cache WordPress plugin read-only into the
   # production path the agent installs FROM (wordpress.cache_set). Tenants
@@ -12720,6 +12726,11 @@ provision_new_software() {
   # anything else in the provision chain touches PHP.
   ensure_jabali_panel_dir_traversable
   ensure_snuffleupagus_loadable
+
+  # Keep the app-marketplace catalogs current on `jabali update` (build_backend,
+  # which also calls this, is NOT in the update path). New docker-app /
+  # py-framework entries otherwise never reach an update-only box.
+  sync_app_catalogs
 
   # GH #447: converge pdns/pdns-recursor masking to the DB's dns_enabled on
   # every update, so a host that has the DNS module off stops reporting the
