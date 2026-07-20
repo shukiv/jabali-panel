@@ -34,6 +34,10 @@ import (
 //     the local stalwart over the apex bind.
 func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew func() string, includeMail, includeWWW bool) []models.DNSRecord {
 	now := time.Now().UTC()
+	// GH #527: honor server_settings.default_dns_ttl for bootstrap records
+	// instead of a hardcoded value, so the operator's configured default
+	// actually applies to the apex / mail / NS rows a new zone starts with.
+	defTTL := models.EffectiveDNSTTL(srv)
 	mk := func(name, typ, content string, priority int) models.DNSRecord {
 		return models.DNSRecord{
 			ID:        idNew(),
@@ -41,7 +45,7 @@ func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew
 			Name:      name,
 			Type:      typ,
 			Content:   content,
-			TTL:       300,
+			TTL:       defTTL,
 			Priority:  priority,
 			Managed:   true,
 			IsEnabled: true,

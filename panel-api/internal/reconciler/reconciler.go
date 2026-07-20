@@ -2627,8 +2627,15 @@ func (r *Reconciler) convergeApexAddrRecords(ctx context.Context, zone *models.D
 		r.log.Error("converge apex addrs: list records failed", "zone", zone.Name, "err", err)
 		return
 	}
-	r.ensureApexAddrRow(ctx, zone.ID, existing, "A", v4)
-	r.ensureApexAddrRow(ctx, zone.ID, existing, "AAAA", v6)
+	// GH #527: apex A/AAAA rows use the configured default TTL, not a
+	// hardcoded value, so operator changes to default_dns_ttl take effect.
+	var srv *models.ServerSettings
+	if r.serverSettings != nil {
+		srv, _ = r.serverSettings.Get(ctx)
+	}
+	ttl := models.EffectiveDNSTTL(srv)
+	r.ensureApexAddrRow(ctx, zone.ID, existing, "A", v4, ttl)
+	r.ensureApexAddrRow(ctx, zone.ID, existing, "AAAA", v6, ttl)
 }
 
 // ensureApexAddrRow finds the `@` record of the given type in the
@@ -2642,7 +2649,7 @@ func (r *Reconciler) convergeApexAddrRecords(ctx context.Context, zone *models.D
 // v6 configured and no v6 binding). In that case we DON'T create a row
 // and DON'T blank an existing managed row — the operator may intend to
 // add v6 later; clobbering the row would drop a working record.
-func (r *Reconciler) ensureApexAddrRow(ctx context.Context, zoneID string, existing []models.DNSRecord, recType, content string) {
+func (r *Reconciler) ensureApexAddrRow(ctx context.Context, zoneID string, existing []models.DNSRecord, recType, content string, ttl int) {
 	var existingRow *models.DNSRecord
 	for i := range existing {
 		if existing[i].Name == "@" && existing[i].Type == recType {
@@ -2681,7 +2688,7 @@ func (r *Reconciler) ensureApexAddrRow(ctx context.Context, zoneID string, exist
 		Name:      "@",
 		Type:      recType,
 		Content:   content,
-		TTL:       3600,
+		TTL:       ttl,
 		Managed:   true,
 		IsEnabled: true,
 		CreatedAt: time.Now().UTC(),
@@ -2746,7 +2753,7 @@ func (r *Reconciler) migrateBootstrapShape(ctx context.Context, zone *models.DNS
 				Name:      "www",
 				Type:      "CNAME",
 				Content:   zone.Name,
-				TTL:       3600,
+				TTL:       models.EffectiveDNSTTL(srv), // GH #527
 				Managed:   true,
 				IsEnabled: true,
 				CreatedAt: now,
@@ -2864,7 +2871,7 @@ func (r *Reconciler) migrateBootstrapShape(ctx context.Context, zone *models.DNS
 				Name:      label,
 				Type:      "A",
 				Content:   ns.ipv4,
-				TTL:       3600,
+				TTL:       models.EffectiveDNSTTL(srv), // GH #527
 				Managed:   true,
 				IsEnabled: true,
 				CreatedAt: now,

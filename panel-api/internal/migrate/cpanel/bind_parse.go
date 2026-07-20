@@ -349,6 +349,7 @@ func ImportDNS(
 	domainsRepo repository.DomainRepository,
 	parsed *ParsedTarball,
 	serverIPv4 string,
+	defaultTTL int,
 ) (*ImportDNSResult, error) {
 	if zonesRepo == nil || recordsRepo == nil || domainsRepo == nil {
 		return nil, fmt.Errorf("ImportDNS: dns repos nil")
@@ -503,7 +504,11 @@ func ImportDNS(
 				Name:      pname,
 				Type:      r.Type,
 				Content:   r.Content,
-				TTL:       r.TTL,
+				// GH #527: normalize migrated records to the panel's default
+				// TTL (fallback to the parsed source TTL only when no default
+				// is supplied) so a migrated zone is consistent with what the
+				// panel creates, instead of carrying the source's mixed TTLs.
+				TTL:       ttlOrDefault(r.TTL, defaultTTL),
 				Priority:  r.Prio,
 				IsEnabled: true,
 			}
@@ -517,6 +522,16 @@ func ImportDNS(
 		res.Records += inserted
 	}
 	return res, nil
+}
+
+// ttlOrDefault returns the panel default TTL when one is supplied (>0),
+// otherwise falls back to the source record's TTL. GH #527: migrated records
+// adopt the panel's default_dns_ttl so the zone isn't a mix of source TTLs.
+func ttlOrDefault(sourceTTL, defaultTTL int) int {
+	if defaultTTL > 0 {
+		return defaultTTL
+	}
+	return sourceTTL
 }
 
 // toPanelRecordName converts a parsed FQDN record name into the panel's

@@ -1156,10 +1156,12 @@ func cpanelRestoreCallback(
 			// #327: pass this server's public IPv4 so ImportDNS can repoint any
 			// record that pointed at the source box (mail A, custom subdomains).
 			var serverIPv4 string
+			var dnsTTL int
 			if s, serr := repository.NewServerSettingsRepository(sharedDB).Get(ctx); serr == nil && s != nil {
 				serverIPv4 = s.PublicIPv4
+				dnsTTL = models.EffectiveDNSTTL(s) // GH #527: normalize migrated TTLs
 			}
-			dnsRes, derr := cpanel.ImportDNS(ctx, dnsZonesRepo, dnsRecordsRepo, domainsRepo, p.parsed, serverIPv4)
+			dnsRes, derr := cpanel.ImportDNS(ctx, dnsZonesRepo, dnsRecordsRepo, domainsRepo, p.parsed, serverIPv4, dnsTTL)
 			if derr != nil {
 				return bytes, warnings, fmt.Errorf("dns: %w", derr)
 			}

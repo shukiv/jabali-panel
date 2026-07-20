@@ -342,6 +342,17 @@ type ServerSettings struct {
 
 func (ServerSettings) TableName() string { return "server_settings" }
 
+// EffectiveDNSTTL returns the operator-configured default DNS record TTL, or
+// 300s when unset/nil. GH #527: apply the default consistently to auto-created
+// zone records (apex/www/NS) and migrated records, not just hand-made ones —
+// mirrors the API create path's fallback (dns.go defaultRecordTTL).
+func EffectiveDNSTTL(s *ServerSettings) int {
+	if s != nil && s.DefaultDNSTTL != 0 {
+		return int(s.DefaultDNSTTL)
+	}
+	return 300
+}
+
 
 // Log-retention category keys (Server Settings -> Logs). Each groups one or more
 // log/report tables the retention sweep prunes.

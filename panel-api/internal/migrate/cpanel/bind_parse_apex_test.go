@@ -104,7 +104,7 @@ www     IN  A   192.0.2.10
 `)
 	zones := &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{"example.com": {ID: "z1", Name: "example.com"}}}
 	recs := &fakeDNSRecordRepo{}
-	res, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed, "203.0.113.9")
+	res, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed, "203.0.113.9", 0)
 	if err != nil {
 		t.Fatalf("ImportDNS: %v", err)
 	}
@@ -139,7 +139,7 @@ mail._domainkey IN TXT "v=DKIM1; k=rsa; p=abc"
 `)
 	zones := &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{"example.com": {ID: "z1", Name: "example.com"}}}
 	recs := &fakeDNSRecordRepo{existing: []models.DNSRecord{{Name: "@", Type: "MX", Content: "10 mail.example.com"}}}
-	if _, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed, "203.0.113.9"); err != nil {
+	if _, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed, "203.0.113.9", 0); err != nil {
 		t.Fatalf("ImportDNS: %v", err)
 	}
 	got := createdNames(recs)
@@ -167,7 +167,7 @@ www IN A 192.0.2.1
 	zones := &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{}}
 	recs := &fakeDNSRecordRepo{}
 	// Neither the zone nor the domain exist -> domain_not_found, nothing created.
-	res, _ := ImportDNS(context.Background(), zones, recs, &fakeDomainRepo{byName: map[string]*models.Domain{}}, parsed, "203.0.113.9")
+	res, _ := ImportDNS(context.Background(), zones, recs, &fakeDomainRepo{byName: map[string]*models.Domain{}}, parsed, "203.0.113.9", 0)
 	if len(recs.created) != 0 {
 		t.Errorf("no records should be created when the domain is missing")
 	}
@@ -183,7 +183,7 @@ www IN A 192.0.2.1
 
 	// Zone missing but the domain EXISTS -> the zone is created + records land.
 	recs2 := &fakeDNSRecordRepo{}
-	res2, _ := ImportDNS(context.Background(), &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{}}, recs2, domains("example.com"), writeZone(t, "$ORIGIN example.com.\nwww IN A 192.0.2.1\n"), "203.0.113.9")
+	res2, _ := ImportDNS(context.Background(), &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{}}, recs2, domains("example.com"), writeZone(t, "$ORIGIN example.com.\nwww IN A 192.0.2.1\n"), "203.0.113.9", 0)
 	if !createdNames(recs2)["www/A"] {
 		t.Errorf("zone should be auto-created and www A imported; created=%v skipped=%v", recs2.created, res2.Skipped)
 	}
@@ -252,5 +252,38 @@ func TestParseBINDZone_CAA(t *testing.T) {
 	}
 	if caa.Content != "0 issue \"letsencrypt.org\"" {
 		t.Errorf("CAA content = %q, want verbatim rdata", caa.Content)
+	}
+}
+
+// GH #527: migrated records adopt the panel's default TTL instead of the
+// source zone's, so a migrated zone isn't a mix of source TTLs.
+func TestImportDNS_NormalizesTTLToDefault(t *testing.T) {
+	parsed := writeZone(t, `$ORIGIN example.com.
+$TTL 14400
+@   IN  SOA ns1.example.com. admin.example.com. ( 1 3600 1800 1209600 86400 )
+www     IN  A   192.0.2.10
+shop    IN  A   192.0.2.11
+`)
+	zones := &fakeDNSZoneRepo{byName: map[string]*models.DNSZone{"example.com": {ID: "z1", Name: "example.com"}}}
+	recs := &fakeDNSRecordRepo{}
+	if _, err := ImportDNS(context.Background(), zones, recs, domains("example.com"), parsed, "203.0.113.9", 300); err != nil {
+		t.Fatalf("ImportDNS: %v", err)
+	}
+	if len(recs.created) == 0 {
+		t.Fatal("no records imported")
+	}
+	for _, r := range recs.created {
+		if r.TTL != 300 {
+			t.Errorf("%s/%s TTL = %d, want 300 (normalized from source 14400)", r.Name, r.Type, r.TTL)
+		}
+	}
+}
+
+func TestTTLOrDefault(t *testing.T) {
+	if got := ttlOrDefault(14400, 300); got != 300 {
+		t.Errorf("ttlOrDefault(14400,300) = %d, want 300", got)
+	}
+	if got := ttlOrDefault(14400, 0); got != 14400 {
+		t.Errorf("ttlOrDefault(14400,0) = %d, want 14400 (no default keeps source)", got)
 	}
 }
