@@ -166,6 +166,20 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		res.Skipped = append(res.Skipped, "mailbox_skip:no_job_id_for_agent_dispatch")
 		return res, nil
 	}
+
+	// GH #530: create the panel mailbox rows BEFORE the JMAP push. Stalwart
+	// resolves accounts live from the mailboxes table, so the per-message
+	// Email/import must target accounts that ALREADY exist — otherwise every
+	// message lands on a not-yet-created account and silently drops
+	// (messages_found>0 but messages_pushed=0). Rows first, then import into
+	// them. (Re-running the migration used to "fix" it precisely because the
+	// prior run had by then created the rows.)
+	if mbRepo != nil && domainsRepo != nil {
+		res.Skipped = append(res.Skipped, insertMailboxPanelRows(ctx, mailRoot, parsed.OwnerEmail, preserveCreds, mbRepo, domainsRepo, res)...)
+	}
+
+	// Agent path: hand the mail subtree to migration.import_mailboxes
+	// which handles per-message Blob/upload + Email/import via JMAP.
 	raw, err := agentCli.Call(ctx, "migration.import_mailboxes", map[string]any{
 		"job_id":       jobID,
 		"src_mail_dir": mailRoot,
@@ -188,13 +202,6 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 	res.BytesPushed = ag.BytesImported
 	if len(ag.Skipped) > 0 {
 		res.Skipped = append(res.Skipped, ag.Skipped...)
-	}
-
-	// Insert panel mailboxes rows for every Maildir the agent imported.
-	// Without these rows the UI and API are blind to the mailboxes even
-	// though Stalwart holds the actual data.
-	if mbRepo != nil && domainsRepo != nil {
-		res.Skipped = append(res.Skipped, insertMailboxPanelRows(ctx, mailRoot, parsed.OwnerEmail, preserveCreds, mbRepo, domainsRepo, res)...)
 	}
 
 	return res, nil
