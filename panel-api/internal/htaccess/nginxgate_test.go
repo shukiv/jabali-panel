@@ -40,10 +40,20 @@ Allow from 203.0.113.0/24`
 		t.Fatalf("compiler produced empty output for %d rules", len(r.Rules))
 	}
 
-	conf := "events {}\nhttp {\n  server {\n    listen 8081;\n    server_name _;\n" +
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "nginx.pid")
+
+	// Point error_log at stderr, pid into the test's temp dir, and turn
+	// access_log off. Without these, `nginx -t` falls back to the compiled
+	// defaults (/var/log/nginx/error.log, /run/nginx.pid, /var/log/nginx/
+	// access.log), which an unprivileged CI runner cannot open -- nginx then
+	// prints "syntax is ok" but still exits 1, false-failing this gate. The
+	// config being validated is fine; this only isolates the test from the
+	// runner's filesystem permissions (chronic self-hosted-runner flake).
+	conf := "error_log stderr;\npid " + pidPath + ";\n" +
+		"events {}\nhttp {\n  access_log off;\n  server {\n    listen 8081;\n    server_name _;\n" +
 		directives + "  }\n}\n"
 
-	dir := t.TempDir()
 	confPath := filepath.Join(dir, "nginx.conf")
 	if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
 		t.Fatal(err)
