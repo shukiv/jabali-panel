@@ -4313,8 +4313,10 @@ install_go() {
 
   _log "installing Go $GO_VERSION ($GO_ARCH)"
   local tarball="/tmp/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-  curl -fsSL -o "$tarball" \
-    "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 -o "$tarball" \
+    "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"; then
+    _die "failed to download Go $GO_VERSION from go.dev — check egress to go.dev from this host"
+  fi
   tar -C /usr/local -xzf "$tarball"
   rm -f "$tarball"
 
@@ -11361,7 +11363,7 @@ _install_stalwart_binary() {
   local sha_file="${REPO_DIR}/install/stalwart.sha256"
 
   _log "downloading Stalwart $version from GitHub"
-  if ! curl -fsSL "$url" -o "$tarball_path"; then
+  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
     _die "failed to download Stalwart from $url"
   fi
 
@@ -11470,7 +11472,7 @@ _install_stalwart_cli() {
   fi
 
   _log "downloading stalwart-cli $cli_version"
-  if ! curl -fsSL "$url" -o "$tarball_path"; then
+  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
     _die "failed to download stalwart-cli from $url"
   fi
 
@@ -11656,7 +11658,7 @@ install_bulwark() {
 
   local tarball_path="/tmp/${tarball}"
   _log "downloading $tarball"
-  if ! curl -fsSL "$url" -o "$tarball_path"; then
+  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
     _die "failed to download Bulwark from $url"
   fi
 
