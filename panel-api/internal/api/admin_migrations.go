@@ -281,7 +281,8 @@ func isKnownSourceKind(s string) bool {
 		models.MigrationSourceWordPressSSH,    // GH #647
 		models.MigrationSourceWordPressPlugin, // GH #648
 		models.MigrationSourceIMAP,            // GH #390/#374
-		models.MigrationSourcePlesk:           // GH #429
+		models.MigrationSourcePlesk,           // GH #429
+		models.MigrationSourceCloudPanel:      // GH #522
 		return true
 	}
 	return false

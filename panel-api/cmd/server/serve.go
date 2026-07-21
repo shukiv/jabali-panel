@@ -47,6 +47,7 @@ import (
 	// importer's init() so the source-kind → Discoverer factory
 	// is available before the first admin REST call. Adding a
 	// new source kind = adding one line here.
+	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cloudpanel"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"

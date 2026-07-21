@@ -33,6 +33,15 @@ const (
 	// synthesising a cpmove-shaped tarball and reusing the cpanel restore
 	// writers. See plans/gh429-plesk-migration.md.
 	MigrationSourcePlesk = "plesk"
+	// MigrationSourceCloudPanel (GH #522) — full web-hosting migration from a
+	// CloudPanel source over SSH. CloudPanel stores its whole inventory in a
+	// SQLite database (/home/clp/htdocs/app/data/db.sq3), so discovery reads
+	// sites / databases / PHP versions with plain read-only SELECTs; `clpctl`
+	// + `mysqldump` handle DB creds + dumps. CloudPanel has NO mail server, so
+	// the manifest's Mailboxes area is always empty. Restore reuses the cpanel
+	// writers via cpmove synthesis (DirectAdmin strategy). See
+	// plans/gh522-cloudpanel-migration.md.
+	MigrationSourceCloudPanel = "cloudpanel"
 )
 
 // MigrationState is the per-job lifecycle. Stage transitions are
