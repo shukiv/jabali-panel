@@ -1,6 +1,6 @@
 // AdminDockerAppsPage — landing page for the M48 marketplace.
 // Two tabs: Catalog (browse + install) and Installed (lifecycle).
-import { App, Avatar, Button, Col, Drawer, Empty, Input, Modal, Row, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { Alert, App, Avatar, Button, Col, Drawer, Empty, Input, Modal, Row, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { humanBytes } from "../../../utils/bytes";
@@ -267,6 +267,18 @@ export const AdminDockerAppsPage = () => {
                             >
                               {r.domain}
                             </Typography.Link>
+                          )}
+                          {r.post_install_note && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              style={{ marginTop: 6, padding: "4px 8px", maxWidth: 320 }}
+                              message={
+                                <Typography.Text style={{ fontSize: 11, whiteSpace: "normal" }}>
+                                  {r.post_install_note}
+                                </Typography.Text>
+                              }
+                            />
                           )}
                         </Space>
                       </Space>

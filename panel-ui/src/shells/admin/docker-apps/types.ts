@@ -87,6 +87,11 @@ export interface InstalledApp {
   created_at: string;
   updated_at: string;
   domain?: string;
+  // First-run guidance from the catalog entry (GH #521), with {{domain}}
+  // already substituted server-side. Shown as a "Setup" hint on the card so
+  // operators know the first-run step (e.g. Pocket ID: create the admin at
+  // https://<domain>/setup). Absent when the catalog entry has no note.
+  post_install_note?: string;
   ports: InstalledPort[];
 }
 

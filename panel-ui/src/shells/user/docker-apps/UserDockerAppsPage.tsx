@@ -255,6 +255,18 @@ export const UserDockerAppsPage = () => {
                                 {r.domain}
                               </Typography.Link>
                             )}
+                            {r.post_install_note && (
+                              <Alert
+                                type="info"
+                                showIcon
+                                style={{ marginTop: 6, padding: "4px 8px", maxWidth: 320 }}
+                                message={
+                                  <Typography.Text style={{ fontSize: 11, whiteSpace: "normal" }}>
+                                    {r.post_install_note}
+                                  </Typography.Text>
+                                }
+                              />
+                            )}
                           </Space>
                         </Space>
                       ),

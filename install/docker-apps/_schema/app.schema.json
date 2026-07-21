@@ -53,6 +53,10 @@
       "type": "string",
       "format": "uri"
     },
+    "post_install_note": {
+      "type": "string",
+      "description": "Optional first-run guidance shown to the operator in the panel AFTER a successful install (e.g. Pocket ID: create the first admin at https://<domain>/setup). Plain text; the {{domain}} placeholder is substituted with the app's assigned domain at display time."
+    },
     "image_channel": {
       "type": "string",
       "description": "Docker image reference. Use a stable tag (e.g. 'vaultwarden/server:latest') not a digest; the panel pins the digest at install time and tracks updates separately.",

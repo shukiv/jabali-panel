@@ -124,6 +124,7 @@ type catalogEntryResponse struct {
 	Icon              string                  `json:"icon"`
 	Upstream          string                  `json:"upstream,omitempty"`
 	Documentation     string                  `json:"documentation,omitempty"`
+	PostInstallNote   string                  `json:"post_install_note,omitempty"`
 	UpdateMode        string                  `json:"update_mode"`
 	Resources         dockerapp.Resources     `json:"resources"`
 	Volumes           []dockerapp.Volume      `json:"volumes"`
@@ -235,6 +236,7 @@ func catalogEntryToResponse(e dockerapp.Entry) catalogEntryResponse {
 		Icon:              e.Icon,
 		Upstream:          e.Upstream,
 		Documentation:     e.Documentation,
+		PostInstallNote:   e.PostInstallNote,
 		UpdateMode:        e.UpdateMode,
 		Resources:         e.Resources,
 		Volumes:           e.Volumes,
@@ -250,6 +252,30 @@ type installedResponse struct {
 	models.DockerApp
 	Ports  []*models.DockerAppPublishedPort `json:"ports"`
 	Domain string                           `json:"domain,omitempty"`
+	// PostInstallNote is the catalog entry's first-run guidance (GH #521) with
+	// its "{{domain}}" token substituted for the app's assigned domain. Empty
+	// when the catalog entry has no note. The UI shows it as a dismissible
+	// hint on the installed-app card so operators know the first-run step
+	// (e.g. Pocket ID: create the first admin at https://<domain>/setup).
+	PostInstallNote string `json:"post_install_note,omitempty"`
+}
+
+// postInstallNoteFor returns the catalog entry's post-install note with the
+// "{{domain}}" token replaced by the app's assigned domain. Returns "" when the
+// catalog is unavailable, the entry is unknown, or it declares no note.
+func (h *dockerAppHandler) postInstallNoteFor(slug, domain string) string {
+	if h.cfg.Catalog == nil {
+		return ""
+	}
+	entry, ok := h.cfg.Catalog.Get(slug)
+	if !ok || entry.PostInstallNote == "" {
+		return ""
+	}
+	d := domain
+	if d == "" {
+		d = "<your app's domain>"
+	}
+	return strings.ReplaceAll(entry.PostInstallNote, "{{domain}}", d)
 }
 
 func (h *dockerAppHandler) list(c *gin.Context) {
@@ -285,6 +311,7 @@ func (h *dockerAppHandler) list(c *gin.Context) {
 				break
 			}
 		}
+		resp.PostInstallNote = h.postInstallNoteFor(a.Slug, resp.Domain)
 		out = append(out, resp)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
@@ -935,7 +962,19 @@ func (h *dockerAppHandler) get(c *gin.Context) {
 		return
 	}
 	ports, _ := h.cfg.Repo.ListPortsForApp(ctx, id)
-	c.JSON(http.StatusOK, installedResponse{DockerApp: *app, Ports: ports})
+	resp := installedResponse{DockerApp: *app, Ports: ports}
+	if h.cfg.Domains != nil {
+		if domList, _, derr := h.cfg.Domains.List(ctx, repository.ListOptions{}); derr == nil {
+			for _, d := range domList {
+				if d.DockerAppID != nil && *d.DockerAppID == app.ID {
+					resp.Domain = d.Name
+					break
+				}
+			}
+		}
+	}
+	resp.PostInstallNote = h.postInstallNoteFor(app.Slug, resp.Domain)
+	c.JSON(http.StatusOK, resp)
 }
 
 type updateRequest struct {

@@ -13,11 +13,11 @@ package dockerapp
 
 import (
 	"errors"
-	"regexp"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -26,24 +26,29 @@ import (
 
 // Entry is the parsed shape of <slug>/app.yaml.
 type Entry struct {
-	Slug          string     `yaml:"slug"`
-	Name          string     `yaml:"name"`
-	Version       string     `yaml:"version"`
-	Description   string     `yaml:"description"`
-	Tags          []string   `yaml:"tags,omitempty" json:"tags,omitempty"`
+	Slug        string   `yaml:"slug"`
+	Name        string   `yaml:"name"`
+	Version     string   `yaml:"version"`
+	Description string   `yaml:"description"`
+	Tags        []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	// Popularity orders the catalog: higher floats to the top of the listing,
 	// ties break alphabetically by slug. Optional (default 0). Operator-tunable
 	// per app.yaml so the most-installed apps surface first.
-	Popularity    int        `yaml:"popularity,omitempty" json:"popularity,omitempty"`
-	Icon          string     `yaml:"icon,omitempty"`
-	Upstream      string     `yaml:"upstream,omitempty"`
-	Documentation string     `yaml:"documentation,omitempty"`
-	ImageChannel  string     `yaml:"image_channel"`
-	UpdateMode    string     `yaml:"update_mode,omitempty"`
-	Resources     Resources  `yaml:"resources,omitempty"`
-	Volumes       []Volume   `yaml:"volumes"`
-	Ports         []PortSpec `yaml:"ports"`
-	Env           []EnvVar   `yaml:"env,omitempty"`
+	Popularity    int    `yaml:"popularity,omitempty" json:"popularity,omitempty"`
+	Icon          string `yaml:"icon,omitempty"`
+	Upstream      string `yaml:"upstream,omitempty"`
+	Documentation string `yaml:"documentation,omitempty"`
+	// PostInstallNote is optional first-run guidance shown in the panel AFTER a
+	// successful install (GH #521, e.g. Pocket ID: create the first admin at
+	// https://<domain>/setup). Plain text; a literal "{{domain}}" token is
+	// substituted with the app's assigned domain when the note is served.
+	PostInstallNote string     `yaml:"post_install_note,omitempty" json:"post_install_note,omitempty"`
+	ImageChannel    string     `yaml:"image_channel"`
+	UpdateMode      string     `yaml:"update_mode,omitempty"`
+	Resources       Resources  `yaml:"resources,omitempty"`
+	Volumes         []Volume   `yaml:"volumes"`
+	Ports           []PortSpec `yaml:"ports"`
+	Env             []EnvVar   `yaml:"env,omitempty"`
 	// SMTP (GH #322), when true, auto-injects the standard SMTP_* env vars
 	// (host/port/user/password/from/from_name/tls) as optional, operator-
 	// supplied install fields. The app's compose.yml.tmpl maps them to its own

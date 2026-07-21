@@ -10,6 +10,11 @@ description: |
 icon: icon.svg
 upstream: https://github.com/pocket-id/pocket-id
 documentation: https://pocket-id.org/docs
+post_install_note: |
+  Create the first admin at https://{{domain}}/setup and register a passkey
+  (Pocket ID is passwordless — no password or email needed for the initial
+  admin). Open it over HTTPS at that domain: passkeys will not work over
+  plain HTTP or via an IP address.
 
 image_channel: pocketid/pocket-id:v2.11.0@sha256:b7c37ab3044e53fd29b5f7295eebff5fdc0367dc043f36b41bcbe1815fcd965d
 update_mode: manual
