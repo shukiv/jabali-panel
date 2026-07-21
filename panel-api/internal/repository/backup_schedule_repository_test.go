@@ -74,3 +74,31 @@ func TestBackupSchedule_ReplaceDestinations_AtomicReplace(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #454: the Update column allowlist must include `content` — it was added to
+// the model (#570) after this method was written, and an omitted column is a
+// SILENT drop (the map-based Updates only writes listed columns). Regression
+// guard: a tenant changing their scheduled-backup content must persist.
+func TestBackupSchedule_Update_PersistsContent(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupScheduleRepository(db)
+
+	mock.ExpectBegin()
+	// Fails if `content` is missing from the SET clause (the bug).
+	mock.ExpectExec("UPDATE .backup_schedules. SET .content.=").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	uid := "01J5USER0000000000000000001"
+	s := &models.BackupSchedule{
+		ID:       "01J5SCHED0000000000000000A",
+		Kind:     models.BackupScheduleKindAccount,
+		UserID:   &uid,
+		CronExpr: "0 3 * * *",
+		Content:  models.BackupContentFiles,
+		Enabled:  true,
+	}
+	require.NoError(t, repo.Update(context.Background(), s))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
