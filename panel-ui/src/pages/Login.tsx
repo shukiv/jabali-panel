@@ -387,6 +387,10 @@ function renderField(f: RenderableField) {
       rules={[{ required: f.required, message: "Required" }]}
       help={f.errors.length ? f.errors.join("; ") : undefined}
       validateStatus={f.errors.length ? "error" : undefined}
+      // GH #545: operators keep entering their email here and get "invalid
+      // credentials" — login is by username (the email is contact-only in the
+      // identity schema). Nudge them on the identifier field.
+      extra={f.name === "identifier" ? "Use your username, not your email." : undefined}
     >
       {Control}
     </Form.Item>
