@@ -24,6 +24,10 @@ func (f *fakeBackupJobs) Delete(context.Context, string) error            { retu
 func (f *fakeBackupJobs) Get(context.Context, string) (*models.BackupJob, error) {
 	return nil, nil
 }
+func (f *fakeBackupJobs) OldestAccountBackupForUser(context.Context, string) (*models.BackupJob, error) {
+	return nil, nil
+}
+
 func (f *fakeBackupJobs) ListForUser(context.Context, string, int, int) ([]models.BackupJob, int64, error) {
 	return nil, 0, nil
 }
