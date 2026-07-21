@@ -10634,6 +10634,27 @@ install_stalwart() {
   local stalwart_version="0.16.12"
   _log "installing Stalwart Mail Server (v${stalwart_version})"
 
+  # M353 / GH #545 concurrency guard. install_stalwart runs from TWO paths
+  # that overlap on a fresh install: install.sh's own inline call, and the
+  # panel agent re-entering via `source install.sh && install_stalwart` to
+  # provision the mail module once the panel is up. Both race on the shared
+  # /tmp tarball, the /opt/stalwart atomic swap, and the service restart --
+  # the losing racer dies at `sha256sum` when the winner's cleanup deletes
+  # the tarball out from under it (observed on a fresh Debian 13 install,
+  # GH #545 repro: install-<A>.log died at _install_stalwart_binary while
+  # install-<B>.log completed the module 3s earlier). Serialize the whole
+  # function behind an flock so the second caller waits, then the version /
+  # dir / config idempotency below turns it into a fast no-op. Best-effort:
+  # if flock is unavailable we proceed unlocked rather than block the install.
+  local _sw_lockfd=""
+  if command -v flock >/dev/null 2>&1; then
+    exec {_sw_lockfd}>/run/lock/jabali-stalwart-install.lock 2>/dev/null || _sw_lockfd=""
+    if [[ -n "$_sw_lockfd" ]]; then
+      flock -w 600 "$_sw_lockfd" \
+        || _warn "waited 600s for the Stalwart install lock -- proceeding without exclusion"
+    fi
+  fi
+
   # Purge any preinstalled MTA that would conflict with Stalwart on
   # port 25 (postfix, exim4, sendmail). Proxmox's Debian LXC template
   # ships postfix; Hetzner and OVH bare-metal Debian / Ubuntu commonly
@@ -10840,6 +10861,11 @@ EOF
   systemctl enable --now jabali-spam-rules-update.timer >/dev/null 2>&1 || \
     _warn "could not enable jabali-spam-rules-update.timer — re-run install.sh or 'systemctl enable --now jabali-spam-rules-update.timer'"
   _ok "jabali-stalwart.service installed (apply deferred to install_stalwart_apply); spam-rules weekly refresh timer armed"
+
+  # Release the concurrency lock (see the flock at the top of the function).
+  # _die paths exit the process, so the kernel drops the fd there; this only
+  # covers the normal fall-through so a later legitimate caller can proceed.
+  [[ -n "$_sw_lockfd" ]] && exec {_sw_lockfd}>&- || true
 }
 
 # install_stalwart_apply — second phase of Stalwart bootstrap. Runs AFTER
