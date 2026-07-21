@@ -7,6 +7,8 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -30,6 +32,41 @@ var AllBackupDestinationKinds = []string{
 	BackupDestinationKindAzure,
 	BackupDestinationKindGCS,
 	BackupDestinationKindREST,
+}
+
+// IsValidBackupDestinationKind reports whether kind is a known destination kind.
+func IsValidBackupDestinationKind(kind string) bool {
+	for _, k := range AllBackupDestinationKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeBackupKindsCSV validates + canonicalises a comma-separated list of
+// backup destination kinds (GH #454, hosting_packages.allowed_backup_destination
+// _kinds): lower-cased, trimmed, deduped, order-preserving. Returns an error on
+// any unknown kind so the API rejects bad input rather than silently storing it.
+// The empty string is valid (no kinds allowed).
+func NormalizeBackupKindsCSV(csv string) (string, error) {
+	seen := map[string]struct{}{}
+	out := make([]string, 0)
+	for _, part := range strings.Split(csv, ",") {
+		k := strings.ToLower(strings.TrimSpace(part))
+		if k == "" {
+			continue
+		}
+		if !IsValidBackupDestinationKind(k) {
+			return "", fmt.Errorf("unknown backup destination kind %q (valid: %s)", k, strings.Join(AllBackupDestinationKinds, ", "))
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	return strings.Join(out, ","), nil
 }
 
 // SFTPAuthKey + SFTPAuthPassword are the values BackupDestinationExtraOptions.SFTP.Auth
@@ -62,21 +99,21 @@ type SFTPOptions struct {
 }
 
 type BackupDestination struct {
-	ID             string          `gorm:"type:char(26);primaryKey" json:"id"`
-	Name           string          `gorm:"type:varchar(64);not null;uniqueIndex:uniq_backup_dest_name" json:"name"`
-	Kind           string          `gorm:"type:enum('local','sftp','s3','b2','azure','gcs','rest');not null" json:"kind"`
-	URL            string          `gorm:"type:varchar(512);not null" json:"url"`
-	CredentialsRef *string         `gorm:"type:varchar(255)" json:"credentials_ref,omitempty"`
+	ID             string  `gorm:"type:char(26);primaryKey" json:"id"`
+	Name           string  `gorm:"type:varchar(64);not null;uniqueIndex:uniq_backup_dest_name" json:"name"`
+	Kind           string  `gorm:"type:enum('local','sftp','s3','b2','azure','gcs','rest');not null" json:"kind"`
+	URL            string  `gorm:"type:varchar(512);not null" json:"url"`
+	CredentialsRef *string `gorm:"type:varchar(255)" json:"credentials_ref,omitempty"`
 	// PasswordEnc is the AES-256-GCM-sealed restic repository password
 	// (M30.2 — per-destination encryption rotation, ADR-pending). NULL
 	// rows fall back to the legacy shared password file. Field is
 	// stripped from JSON; the password is never read by the SPA.
-	PasswordEnc       []byte     `gorm:"type:varbinary(512)" json:"-"`
-	PasswordRotatedAt *time.Time `gorm:"type:datetime(6)" json:"password_rotated_at,omitempty"`
+	PasswordEnc       []byte          `gorm:"type:varbinary(512)" json:"-"`
+	PasswordRotatedAt *time.Time      `gorm:"type:datetime(6)" json:"password_rotated_at,omitempty"`
 	ExtraOptions      json.RawMessage `gorm:"type:json" json:"extra_options,omitempty"`
-	Enabled        bool            `gorm:"not null;default:1" json:"enabled"`
-	CreatedAt      time.Time       `gorm:"type:datetime(6);not null" json:"created_at"`
-	UpdatedAt      time.Time       `gorm:"type:datetime(6);not null" json:"updated_at"`
+	Enabled           bool            `gorm:"not null;default:1" json:"enabled"`
+	CreatedAt         time.Time       `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt         time.Time       `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 func (BackupDestination) TableName() string { return "backup_destinations" }

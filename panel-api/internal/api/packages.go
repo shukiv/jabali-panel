@@ -71,54 +71,62 @@ type createPackageRequest struct {
 	Name        string `json:"name"               binding:"required"`
 	DiskQuotaMB uint32 `json:"disk_quota_mb"`
 	// M18 resource limits. Zero = unlimited on every field.
-	CPUQuotaPercent    uint32 `json:"cpu_quota_percent"`
-	MemoryLimitMB      uint32 `json:"memory_limit_mb"`
-	IOReadMbps         uint32 `json:"io_read_mbps"`
-	IOWriteMbps        uint32 `json:"io_write_mbps"`
-	MaxTasks           uint32 `json:"max_tasks"`
-	BandwidthQuotaMB   uint32 `json:"bandwidth_quota_mb"`
-	MaxDomains         uint32 `json:"max_domains"`
-	MaxEmailAccounts   uint32 `json:"max_email_accounts"`
-	MaxDatabases       uint32 `json:"max_databases"`
-	MaxDockerApps      uint32 `json:"max_docker_apps"`
-	MaxPythonApps      uint32 `json:"max_python_apps"`
-	SSHEnabled         bool   `json:"ssh_enabled"`
-	CGIEnabled         bool   `json:"cgi_enabled"`
-	PHPExecEnabled     bool   `json:"php_exec_enabled"`
-	FpmMaxChildrenCap  uint32 `json:"fpm_max_children_cap"`
-	FpmWorkerMemMb     uint32 `json:"fpm_worker_mem_mb"`
-	FpmUserCanEdit     bool   `json:"fpm_user_can_edit"`
-	FpmAdvancedMode    bool   `json:"fpm_advanced_mode"`
-	FpmVersionDefaults string `json:"fpm_version_defaults"`
-	DockerAppSlugs     string `json:"docker_app_slugs"`
+	CPUQuotaPercent  uint32 `json:"cpu_quota_percent"`
+	MemoryLimitMB    uint32 `json:"memory_limit_mb"`
+	IOReadMbps       uint32 `json:"io_read_mbps"`
+	IOWriteMbps      uint32 `json:"io_write_mbps"`
+	MaxTasks         uint32 `json:"max_tasks"`
+	BandwidthQuotaMB uint32 `json:"bandwidth_quota_mb"`
+	MaxDomains       uint32 `json:"max_domains"`
+	MaxEmailAccounts uint32 `json:"max_email_accounts"`
+	MaxDatabases     uint32 `json:"max_databases"`
+	MaxDockerApps    uint32 `json:"max_docker_apps"`
+	MaxPythonApps    uint32 `json:"max_python_apps"`
+	// Tenant backup limits (GH #454). 0 = backups not included on this plan.
+	MaxBackups                    uint32 `json:"max_backups"`
+	ScheduledBackupsEnabled       bool   `json:"scheduled_backups_enabled"`
+	AllowedBackupDestinationKinds string `json:"allowed_backup_destination_kinds"`
+	SSHEnabled                    bool   `json:"ssh_enabled"`
+	CGIEnabled                    bool   `json:"cgi_enabled"`
+	PHPExecEnabled                bool   `json:"php_exec_enabled"`
+	FpmMaxChildrenCap             uint32 `json:"fpm_max_children_cap"`
+	FpmWorkerMemMb                uint32 `json:"fpm_worker_mem_mb"`
+	FpmUserCanEdit                bool   `json:"fpm_user_can_edit"`
+	FpmAdvancedMode               bool   `json:"fpm_advanced_mode"`
+	FpmVersionDefaults            string `json:"fpm_version_defaults"`
+	DockerAppSlugs                string `json:"docker_app_slugs"`
 	// M13: nspawn image pin (empty = use server default).
 	NspawnImageVersion string `json:"nspawn_image_version"`
 }
 
 type updatePackageRequest struct {
-	Name               *string `json:"name"`
-	DiskQuotaMB        *uint32 `json:"disk_quota_mb"`
-	CPUQuotaPercent    *uint32 `json:"cpu_quota_percent"`
-	MemoryLimitMB      *uint32 `json:"memory_limit_mb"`
-	IOReadMbps         *uint32 `json:"io_read_mbps"`
-	IOWriteMbps        *uint32 `json:"io_write_mbps"`
-	MaxTasks           *uint32 `json:"max_tasks"`
-	BandwidthQuotaMB   *uint32 `json:"bandwidth_quota_mb"`
-	MaxDomains         *uint32 `json:"max_domains"`
-	MaxEmailAccounts   *uint32 `json:"max_email_accounts"`
-	MaxDatabases       *uint32 `json:"max_databases"`
-	MaxDockerApps      *uint32 `json:"max_docker_apps"`
-	MaxPythonApps      *uint32 `json:"max_python_apps"`
-	SSHEnabled         *bool   `json:"ssh_enabled"`
-	CGIEnabled         *bool   `json:"cgi_enabled"`
-	PHPExecEnabled     *bool   `json:"php_exec_enabled"`
-	FpmMaxChildrenCap  *uint32 `json:"fpm_max_children_cap"`
-	FpmWorkerMemMb     *uint32 `json:"fpm_worker_mem_mb"`
-	FpmUserCanEdit     *bool   `json:"fpm_user_can_edit"`
-	FpmAdvancedMode    *bool   `json:"fpm_advanced_mode"`
-	FpmVersionDefaults *string `json:"fpm_version_defaults"`
-	DockerAppSlugs     *string `json:"docker_app_slugs"`
-	NspawnImageVersion *string `json:"nspawn_image_version"`
+	Name             *string `json:"name"`
+	DiskQuotaMB      *uint32 `json:"disk_quota_mb"`
+	CPUQuotaPercent  *uint32 `json:"cpu_quota_percent"`
+	MemoryLimitMB    *uint32 `json:"memory_limit_mb"`
+	IOReadMbps       *uint32 `json:"io_read_mbps"`
+	IOWriteMbps      *uint32 `json:"io_write_mbps"`
+	MaxTasks         *uint32 `json:"max_tasks"`
+	BandwidthQuotaMB *uint32 `json:"bandwidth_quota_mb"`
+	MaxDomains       *uint32 `json:"max_domains"`
+	MaxEmailAccounts *uint32 `json:"max_email_accounts"`
+	MaxDatabases     *uint32 `json:"max_databases"`
+	MaxDockerApps    *uint32 `json:"max_docker_apps"`
+	MaxPythonApps    *uint32 `json:"max_python_apps"`
+	// Tenant backup limits (GH #454).
+	MaxBackups                    *uint32 `json:"max_backups"`
+	ScheduledBackupsEnabled       *bool   `json:"scheduled_backups_enabled"`
+	AllowedBackupDestinationKinds *string `json:"allowed_backup_destination_kinds"`
+	SSHEnabled                    *bool   `json:"ssh_enabled"`
+	CGIEnabled                    *bool   `json:"cgi_enabled"`
+	PHPExecEnabled                *bool   `json:"php_exec_enabled"`
+	FpmMaxChildrenCap             *uint32 `json:"fpm_max_children_cap"`
+	FpmWorkerMemMb                *uint32 `json:"fpm_worker_mem_mb"`
+	FpmUserCanEdit                *bool   `json:"fpm_user_can_edit"`
+	FpmAdvancedMode               *bool   `json:"fpm_advanced_mode"`
+	FpmVersionDefaults            *string `json:"fpm_version_defaults"`
+	DockerAppSlugs                *string `json:"docker_app_slugs"`
+	NspawnImageVersion            *string `json:"nspawn_image_version"`
 }
 
 // ---- handlers ----
@@ -164,21 +172,33 @@ func (h *packageHandler) create(c *gin.Context) {
 	if req.FpmAdvancedMode {
 		req.FpmUserCanEdit = true // advanced implies can-edit
 	}
+	// GH #454: validate + canonicalise the allowed backup destination kinds.
+	normKinds, nkErr := models.NormalizeBackupKindsCSV(req.AllowedBackupDestinationKinds)
+	if nkErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_backup_kinds", "detail": nkErr.Error()})
+		return
+	}
+	req.AllowedBackupDestinationKinds = normKinds
 	pkg := &models.HostingPackage{
-		ID:                 ids.NewULID(),
-		Name:               req.Name,
-		DiskQuotaMB:        req.DiskQuotaMB,
-		CPUQuotaPercent:    req.CPUQuotaPercent,
-		MemoryLimitMB:      req.MemoryLimitMB,
-		IOReadMbps:         req.IOReadMbps,
-		IOWriteMbps:        req.IOWriteMbps,
-		MaxTasks:           req.MaxTasks,
-		BandwidthQuotaMB:   req.BandwidthQuotaMB,
-		MaxDomains:         req.MaxDomains,
-		MaxEmailAccounts:   req.MaxEmailAccounts,
-		MaxDatabases:       req.MaxDatabases,
-		MaxDockerApps:      req.MaxDockerApps,
-		MaxPythonApps:      req.MaxPythonApps,
+		ID:               ids.NewULID(),
+		Name:             req.Name,
+		DiskQuotaMB:      req.DiskQuotaMB,
+		CPUQuotaPercent:  req.CPUQuotaPercent,
+		MemoryLimitMB:    req.MemoryLimitMB,
+		IOReadMbps:       req.IOReadMbps,
+		IOWriteMbps:      req.IOWriteMbps,
+		MaxTasks:         req.MaxTasks,
+		BandwidthQuotaMB: req.BandwidthQuotaMB,
+		MaxDomains:       req.MaxDomains,
+		MaxEmailAccounts: req.MaxEmailAccounts,
+		MaxDatabases:     req.MaxDatabases,
+		MaxDockerApps:    req.MaxDockerApps,
+		MaxPythonApps:    req.MaxPythonApps,
+
+		MaxBackups:                    req.MaxBackups,
+		ScheduledBackupsEnabled:       req.ScheduledBackupsEnabled,
+		AllowedBackupDestinationKinds: req.AllowedBackupDestinationKinds,
+
 		SSHEnabled:         req.SSHEnabled,
 		CGIEnabled:         req.CGIEnabled,
 		PHPExecEnabled:     req.PHPExecEnabled,
@@ -308,6 +328,20 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.MaxPythonApps != nil {
 		pkg.MaxPythonApps = *req.MaxPythonApps
+	}
+	if req.MaxBackups != nil {
+		pkg.MaxBackups = *req.MaxBackups
+	}
+	if req.ScheduledBackupsEnabled != nil {
+		pkg.ScheduledBackupsEnabled = *req.ScheduledBackupsEnabled
+	}
+	if req.AllowedBackupDestinationKinds != nil {
+		normKinds, nkErr := models.NormalizeBackupKindsCSV(*req.AllowedBackupDestinationKinds)
+		if nkErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_backup_kinds", "detail": nkErr.Error()})
+			return
+		}
+		pkg.AllowedBackupDestinationKinds = normKinds
 	}
 	if req.SSHEnabled != nil {
 		pkg.SSHEnabled = *req.SSHEnabled

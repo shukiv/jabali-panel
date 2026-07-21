@@ -26,6 +26,9 @@ import { useDiskQuotaEnabled } from "../../../hooks/useDiskQuotaEnabled";
 
 type NspawnImage = { name: string };
 
+// Mirrors models.AllBackupDestinationKinds (GH #454).
+const BACKUP_DESTINATION_KINDS = ["local", "sftp", "s3", "b2", "azure", "gcs", "rest"] as const;
+
 type PackageCreateInput = {
   name: string;
   disk_quota_mb: number;
@@ -40,6 +43,10 @@ type PackageCreateInput = {
   max_databases: number;
   max_docker_apps: number;
   max_python_apps: number;
+  // Tenant backup limits (GH #454).
+  max_backups: number;
+  scheduled_backups_enabled: boolean;
+  allowed_backup_destination_kinds: string | string[];
   ssh_enabled: boolean;
   cgi_enabled: boolean;
   php_exec_enabled: boolean;
@@ -100,6 +107,9 @@ export const PackageCreate = () => {
       const payload = {
         ...values,
         docker_app_slugs: Array.isArray(values.docker_app_slugs) ? values.docker_app_slugs.join(",") : "",
+        allowed_backup_destination_kinds: Array.isArray(values.allowed_backup_destination_kinds)
+          ? values.allowed_backup_destination_kinds.join(",")
+          : (values.allowed_backup_destination_kinds ?? ""),
       } as unknown as PackageCreateInput;
       await createMutation.mutateAsync(payload);
       message.success("Package created");
@@ -139,6 +149,9 @@ export const PackageCreate = () => {
           max_databases: 0,
           max_docker_apps: 0,
           max_python_apps: 0,
+          max_backups: 0,
+          scheduled_backups_enabled: false,
+          allowed_backup_destination_kinds: [],
         }}
         onFinish={handleFinish}
       >
@@ -284,6 +297,49 @@ export const PackageCreate = () => {
               tooltip="0 = Python apps not included in this package"
             >
               <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Divider titlePlacement="left">Backups</Divider>
+        <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+          Tenant self-service backups (GH #454). The admin owns the schedule time;
+          tenants choose what to back up and which allowed destination, within these
+          limits. Max backups = 0 disables tenant backups entirely.
+        </Typography.Paragraph>
+        <Row gutter={16}>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Max Backups"
+              name="max_backups"
+              tooltip="Retention cap — most snapshots a tenant on this plan may keep. 0 = tenant backups not included."
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Scheduled Backups"
+              name="scheduled_backups_enabled"
+              valuePropName="checked"
+              tooltip="Allow tenants on this plan to enable a scheduled backup. The schedule time is admin-controlled."
+            >
+              <Switch />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Allowed Backup Destinations"
+              name="allowed_backup_destination_kinds"
+              tooltip="Destination kinds a tenant may back up to. Empty = none allowed."
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="e.g. local, s3"
+                options={BACKUP_DESTINATION_KINDS.map((k) => ({ value: k, label: k }))}
+                style={{ width: "100%" }}
+              />
             </Form.Item>
           </Col>
         </Row>

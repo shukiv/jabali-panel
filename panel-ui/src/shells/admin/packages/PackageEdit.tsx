@@ -27,6 +27,10 @@ import { useDiskQuotaEnabled } from "../../../hooks/useDiskQuotaEnabled";
 
 type NspawnImage = { name: string };
 
+// Mirrors models.AllBackupDestinationKinds (GH #454). Keep in sync with the
+// backend enum in backup_destination.go.
+const BACKUP_DESTINATION_KINDS = ["local", "sftp", "s3", "b2", "azure", "gcs", "rest"] as const;
+
 type PackageEditInput = {
   name: string;
   disk_quota_mb: number;
@@ -42,6 +46,12 @@ type PackageEditInput = {
   max_databases: number;
   max_docker_apps: number;
   max_python_apps: number;
+  // Tenant backup limits (GH #454). allowed_backup_destination_kinds is a CSV
+  // string on the wire; the multi-Select binds an array (converted on load/save,
+  // like docker_app_slugs).
+  max_backups: number;
+  scheduled_backups_enabled: boolean;
+  allowed_backup_destination_kinds: string | string[];
   ssh_enabled: boolean;
   cgi_enabled: boolean;
   php_exec_enabled: boolean;
@@ -109,7 +119,13 @@ export const PackageEdit = () => {
       void _id;
       // docker_app_slugs is a CSV string on the wire; the Select needs an array.
       const csv = typeof rest.docker_app_slugs === "string" ? rest.docker_app_slugs : "";
-      form.setFieldsValue({ ...rest, docker_app_slugs: csv ? csv.split(",").filter(Boolean) : [] });
+      // allowed_backup_destination_kinds (GH #454) is CSV too.
+      const bkCsv = typeof rest.allowed_backup_destination_kinds === "string" ? rest.allowed_backup_destination_kinds : "";
+      form.setFieldsValue({
+        ...rest,
+        docker_app_slugs: csv ? csv.split(",").filter(Boolean) : [],
+        allowed_backup_destination_kinds: bkCsv ? bkCsv.split(",").filter(Boolean) : [],
+      });
     }
   }, [data, form]);
 
@@ -119,6 +135,9 @@ export const PackageEdit = () => {
       const input = {
         ...values,
         docker_app_slugs: Array.isArray(values.docker_app_slugs) ? values.docker_app_slugs.join(",") : (values.docker_app_slugs ?? ""),
+        allowed_backup_destination_kinds: Array.isArray(values.allowed_backup_destination_kinds)
+          ? values.allowed_backup_destination_kinds.join(",")
+          : (values.allowed_backup_destination_kinds ?? ""),
       } as unknown as PackageEditInput;
       await updateMutation.mutateAsync({ id, input });
       message.success("Package updated");
@@ -297,6 +316,49 @@ export const PackageEdit = () => {
               tooltip="0 = Python apps not included in this package"
             >
               <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Divider titlePlacement="left">Backups</Divider>
+        <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+          Tenant self-service backups (GH #454). The admin owns the schedule time;
+          tenants choose what to back up and which allowed destination, within these
+          limits. Max backups = 0 disables tenant backups entirely.
+        </Typography.Paragraph>
+        <Row gutter={16}>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Max Backups"
+              name="max_backups"
+              tooltip="Retention cap — most snapshots a tenant on this plan may keep. 0 = tenant backups not included."
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Scheduled Backups"
+              name="scheduled_backups_enabled"
+              valuePropName="checked"
+              tooltip="Allow tenants on this plan to enable a scheduled backup. The schedule time is admin-controlled."
+            >
+              <Switch />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Allowed Backup Destinations"
+              name="allowed_backup_destination_kinds"
+              tooltip="Destination kinds a tenant may back up to. Empty = none allowed."
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="e.g. local, s3"
+                options={BACKUP_DESTINATION_KINDS.map((k) => ({ value: k, label: k }))}
+                style={{ width: "100%" }}
+              />
             </Form.Item>
           </Col>
         </Row>

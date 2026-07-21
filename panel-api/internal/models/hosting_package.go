@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,18 @@ type HostingPackage struct {
 	// tenant_installable.
 	DockerAppSlugs string `gorm:"column:docker_app_slugs;type:varchar(2000);not null;default:''" json:"docker_app_slugs"`
 
+	// Backup entitlement (GH #454). MaxBackups is the tenant retention cap
+	// (max snapshots kept); 0 = tenant backups NOT included on this plan (safe
+	// default, opt-in per plan, mirrors MaxDockerApps). The whole tenant backup
+	// UI is gated on MaxBackups > 0. ScheduledBackupsEnabled gates the tenant
+	// scheduled-backup toggle — the admin owns the schedule TIME, the tenant
+	// owns the content within these limits. AllowedBackupDestinationKinds is a
+	// CSV of BackupDestinationKind* a tenant on this package may target; empty
+	// = none allowed.
+	MaxBackups                    uint32 `gorm:"column:max_backups;type:int unsigned;not null;default:0" json:"max_backups"`
+	ScheduledBackupsEnabled       bool   `gorm:"column:scheduled_backups_enabled;type:tinyint(1);not null;default:0" json:"scheduled_backups_enabled"`
+	AllowedBackupDestinationKinds string `gorm:"column:allowed_backup_destination_kinds;type:varchar(255);not null;default:''" json:"allowed_backup_destination_kinds"`
+
 	// Feature toggles.
 	SSHEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"ssh_enabled"`
 	CGIEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"cgi_enabled"`
@@ -77,3 +90,44 @@ type HostingPackage struct {
 }
 
 func (HostingPackage) TableName() string { return "hosting_packages" }
+
+// BackupsEnabled reports whether tenants on this package may use backups at all
+// (MaxBackups > 0). The tenant backup UI + API are gated on this (GH #454).
+func (p HostingPackage) BackupsEnabled() bool { return p.MaxBackups > 0 }
+
+// AllowedBackupKinds parses AllowedBackupDestinationKinds (CSV) into a deduped,
+// lower-cased, order-preserving slice. Empty when none are allowed.
+func (p HostingPackage) AllowedBackupKinds() []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, part := range strings.Split(p.AllowedBackupDestinationKinds, ",") {
+		k := strings.ToLower(strings.TrimSpace(part))
+		if k == "" {
+			continue
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	return out
+}
+
+// AllowsBackupKind reports whether a tenant on this package may target the given
+// backup destination kind. Always false when backups are disabled.
+func (p HostingPackage) AllowsBackupKind(kind string) bool {
+	if !p.BackupsEnabled() {
+		return false
+	}
+	k := strings.ToLower(strings.TrimSpace(kind))
+	if k == "" {
+		return false
+	}
+	for _, a := range p.AllowedBackupKinds() {
+		if a == k {
+			return true
+		}
+	}
+	return false
+}
