@@ -115,6 +115,28 @@ jobs:
           upload_asset "$TARBALL"
           upload_asset "$CHECKSUM"
 
+      - name: Publish to R2 CDN (installer resolver)
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_PUBLIC_BASE: ${{ vars.R2_PUBLIC_BASE }}
+          SHORT_SHA: ${{ steps.build.outputs.short_sha }}
+          FULL_SHA: ${{ steps.build.outputs.full_sha }}
+        run: |
+          set -euo pipefail
+          # The R2 CDN is what lets `curl get.jabali-panel.com | bash` resolve a
+          # release without the GitHub API 60/hr rate limit. Skip cleanly if the
+          # R2 secrets are not configured yet — the GitHub release stays
+          # authoritative and the bootstrap falls back to it.
+          if [[ -z "${R2_ACCOUNT_ID:-}" || -z "${R2_ACCESS_KEY_ID:-}" ]]; then
+            echo "R2 secrets not configured — skipping CDN publish (GitHub release still authoritative)"
+            exit 0
+          fi
+          chmod +x tools/publish-release-r2.sh
+          tools/publish-release-r2.sh
+
       # Authoritative gate: the release is GOOD iff both assets are fetchable
       # for this commit's tag. Runs even if publish reported a transient blip.
       - name: Confirm assets published
