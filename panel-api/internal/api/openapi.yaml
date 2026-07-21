@@ -4960,9 +4960,6 @@ paths:
       summary: Get user
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      summary: Get user
-      security: [ { KratosSession: [] } ]
-      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses:
         "200": { description: The user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
         "404": { description: Not found }
