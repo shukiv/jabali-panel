@@ -1066,6 +1066,9 @@ type MeBackupsHandlerConfig struct {
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
+	// Packages resolves the caller's hosting-package backup limits (GH #454).
+	// Nil-safe: when unset the gate is skipped (dev/test wiring).
+	Packages repository.PackageRepository
 
 	Log *slog.Logger
 }
@@ -1191,6 +1194,23 @@ func (h *meBackupHandler) create(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "user_not_found"})
 		return
+	}
+	// GH #454: gate tenant self-backups on the hosting-package limit. Admins are
+	// exempt (unlimited, they use the admin backup surface). A non-admin tenant
+	// needs a package with max_backups > 0, and must be under that retention cap.
+	if !user.IsAdmin && h.cfg.Packages != nil {
+		var pkg *models.HostingPackage
+		if user.PackageID != nil {
+			pkg, _ = h.cfg.Packages.FindByID(c.Request.Context(), *user.PackageID)
+		}
+		if pkg == nil || !pkg.BackupsEnabled() {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backups_not_included", "detail": "your hosting plan does not include self-service backups"})
+			return
+		}
+		if _, total, terr := h.cfg.Jobs.ListForUser(c.Request.Context(), user.ID, 1, 0); terr == nil && total >= int64(pkg.MaxBackups) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backup_limit_reached", "detail": fmt.Sprintf("your plan allows %d backups; delete an old one before creating another", pkg.MaxBackups)})
+			return
+		}
 	}
 	var req createBackupRequest // reuse: content/folders/compression (destination ignored for me-backups)
 	_ = c.ShouldBindJSON(&req)

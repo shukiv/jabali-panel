@@ -993,6 +993,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Jobs:           deps.BackupJobs,
 				Destinations:   deps.BackupDestinations,
 				Users:          deps.Users,
+				Packages:       deps.Packages,
 				Databases:      deps.Databases,
 				DatabaseUsers:  deps.DatabaseUsers,
 				DatabaseGrants: deps.DatabaseUserGrants,
