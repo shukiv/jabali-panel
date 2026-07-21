@@ -220,6 +220,11 @@ type ServerSettings struct {
 	BackupKeepMonthly          uint32 `gorm:"column:backup_keep_monthly;type:int unsigned;not null;default:6"   json:"backup_keep_monthly"`
 	BackupRemoteURL            string `gorm:"column:backup_remote_url;type:varchar(512);not null;default:''"    json:"backup_remote_url"`
 	BackupRemoteCredentialsRef string `gorm:"column:backup_remote_credentials_ref;type:varchar(128);not null;default:''" json:"backup_remote_credentials_ref"`
+	// TenantBackupCron (GH #454) is the admin-owned cron time that TENANT
+	// scheduled backups run at. Tenants choose the content + destination of
+	// their own scheduled backup; the admin owns the timing (resource
+	// planning). Default 03:00 daily.
+	TenantBackupCron string `gorm:"column:tenant_backup_cron;type:varchar(64);not null;default:'0 3 * * *'" json:"tenant_backup_cron"`
 
 	// BackupMaxConcurrentJobs caps how many backup_jobs the in-process
 	// dispatcher will keep in status=running at once. Scheduler ticks
@@ -352,7 +357,6 @@ func EffectiveDNSTTL(s *ServerSettings) int {
 	}
 	return 300
 }
-
 
 // Log-retention category keys (Server Settings -> Logs). Each groups one or more
 // log/report tables the retention sweep prunes.
