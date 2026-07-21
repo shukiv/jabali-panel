@@ -6627,6 +6627,24 @@ install_phpmyadmin() {
   local pma_link="${pma_root}/current"
   local pma_archive="/tmp/phpMyAdmin-${pma_version}-all-languages.tar.gz"
 
+  # Serialize the whole function behind an flock (GH #545/#574 concurrent
+  # re-entry class): install.sh's own call and the panel agent re-entering via
+  # provision_new_software both reach install_phpmyadmin, and race on the shared
+  # /tmp/phpMyAdmin-*.tar.gz download + the /opt/phpmyadmin extract. The losing
+  # racer's `tar -xzf` reads a tarball the winner's `rm -f "$pma_archive"` has
+  # already removed -> `tar` exit 2 -> `set -e` kills the install (same failure
+  # as install_bulwark #574 / install_stalwart #555). The idempotency check
+  # below then makes the second caller a fast no-op. Best-effort: proceed
+  # unlocked if flock is unavailable.
+  local _pma_lockfd=""
+  if command -v flock >/dev/null 2>&1; then
+    exec {_pma_lockfd}>/run/lock/jabali-phpmyadmin-install.lock 2>/dev/null || _pma_lockfd=""
+    if [[ -n "$_pma_lockfd" ]]; then
+      flock -w 600 "$_pma_lockfd" \
+        || _warn "waited 600s for the phpMyAdmin install lock -- proceeding without exclusion"
+    fi
+  fi
+
   # Idempotency: if already extracted, skip the download + extract.
   if [[ -d "$pma_extract" && -L "$pma_link" ]]; then
     _ok "phpMyAdmin $pma_version already installed at $pma_root"
@@ -6655,6 +6673,7 @@ install_phpmyadmin() {
       _warn "failed to download phpMyAdmin $pma_version after 5 retries — skipping (panel works without it; re-run 'jabali update' once https://www.phpmyadmin.net/downloads/ is reachable)"
       mkdir -p /etc/nginx/sites-available/includes
       [[ -f /etc/nginx/sites-available/includes/phpmyadmin.conf ]] || : > /etc/nginx/sites-available/includes/phpmyadmin.conf
+      [[ -n "$_pma_lockfd" ]] && exec {_pma_lockfd}>&- || true
       return 0
     fi
 
@@ -6956,6 +6975,11 @@ NGINXEOF
   chown www-data:www-data /var/log/nginx/jabali-pma.{access,error}.log
 
   _ok "phpMyAdmin installed and configured"
+
+  # Release the concurrency lock (see the flock at the top of the function).
+  # _die paths exit the process so the kernel drops the fd; this covers the
+  # normal fall-through so a later legitimate caller can proceed.
+  [[ -n "$_pma_lockfd" ]] && exec {_pma_lockfd}>&- || true
 }
 
 install_sftp_group() {
