@@ -28,6 +28,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
@@ -66,6 +67,12 @@ type Deps struct {
 	Mailboxes      repository.MailboxRepository
 	AppInstalls    repository.ApplicationInstallRepository
 	Settings       repository.ServerSettingsRepository
+	// Packages + Notify (GH #454) enforce the per-package retention cap on
+	// SCHEDULED backups too — the on-demand path already does. Both OPTIONAL:
+	// nil Packages skips the cap check entirely (pre-#454 behaviour); nil Notify
+	// just omits the tenant/admin notice.
+	Packages repository.PackageRepository
+	Notify   *notifications.Queue
 
 	// Schema-v2 metadata producer fan-out — every nullable repo here is
 	// queried by buildScheduleMetadata so scheduled backups carry the
@@ -328,6 +335,21 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 // is a first-class field on backup_jobs.
 func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, dest *models.BackupDestination, runID string) bool {
 	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID, "destination_id", dest.ID, "run_id", runID)
+	// Retention cap (GH #454): honour the tenant's package policy on scheduled
+	// backups, matching the on-demand path. Only enforced when the package repo
+	// is wired AND the plan actually caps backups; otherwise the scheduled
+	// backup proceeds unchanged (no regression for uncapped/unresolvable plans).
+	if s.deps.Packages != nil {
+		if pkg := s.userPackage(ctx, user); pkg != nil && pkg.BackupsEnabled() && s.atOrOverCap(ctx, user.ID, int(pkg.MaxBackups)) {
+			if pkg.BackupRetentionPrunes() && s.pruneOldestForUser(ctx, user, int(pkg.MaxBackups)) {
+				s.notifyBackupLimit(ctx, user, "prune", pkg.MaxBackups)
+			} else {
+				s.notifyBackupLimit(ctx, user, "reject", pkg.MaxBackups)
+				logger.Warn("scheduled backup skipped: retention cap reached", "policy", pkg.BackupRetentionPolicy, "max_backups", pkg.MaxBackups)
+				return false
+			}
+		}
+	}
 	schedID := sched.ID
 	rid := runID
 	dID := dest.ID
@@ -354,6 +376,87 @@ func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.Backu
 
 // enqueueSystemBackup creates one backup_jobs row in status=queued
 // for a system backup against the given destination.
+// userPackage resolves the tenant's hosting package for the retention cap
+// check, or nil (no package / lookup error -> the caller treats it as uncapped,
+// so a transient error never blocks a scheduled run) (GH #454).
+func (s *Scheduler) userPackage(ctx context.Context, user *models.User) *models.HostingPackage {
+	if user.PackageID == nil || s.deps.Packages == nil {
+		return nil
+	}
+	pkg, err := s.deps.Packages.FindByID(ctx, *user.PackageID)
+	if err != nil {
+		return nil
+	}
+	return pkg
+}
+
+// atOrOverCap reports whether the user already holds >= maxBackups jobs.
+func (s *Scheduler) atOrOverCap(ctx context.Context, userID string, maxBackups int) bool {
+	_, total, err := s.deps.Jobs.ListForUser(ctx, userID, 1, 0)
+	if err != nil {
+		return false
+	}
+	return total >= int64(maxBackups)
+}
+
+// pruneOldestForUser forgets the user's OLDEST OWNED account_backup(s) until
+// under maxBackups. Owner-scoped: OldestAccountBackupForUser filters by
+// user_id, so a scheduled prune only ever touches the target tenant's own
+// backups. Returns true once under the cap (GH #454).
+func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, maxBackups int) bool {
+	for i := 0; i < 1000; i++ {
+		if !s.atOrOverCap(ctx, user.ID, maxBackups) {
+			return true
+		}
+		oldest, err := s.deps.Jobs.OldestAccountBackupForUser(ctx, user.ID)
+		if err != nil || oldest == nil {
+			return false
+		}
+		if s.deps.Agent != nil {
+			fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			_, _ = s.deps.Agent.Call(fctx, "backup.forget", map[string]any{
+				"job_id": oldest.ID, "user_id": oldest.UserID, "kind": oldest.Kind,
+			})
+			cancel()
+		}
+		if derr := s.deps.Jobs.Delete(ctx, oldest.ID); derr != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// notifyBackupLimit fires backup.limit.reached to the tenant's inbox
+// (Envelope.UserID) and broadcasts to admins (UserID empty), tailored to the
+// outcome. Best-effort (GH #454).
+func (s *Scheduler) notifyBackupLimit(ctx context.Context, user *models.User, outcome string, limit uint32) {
+	if s.deps.Notify == nil {
+		return
+	}
+	who := user.ID
+	if user.Username != nil && *user.Username != "" {
+		who = *user.Username
+	}
+	var tenantBody, adminBody string
+	if outcome == "prune" {
+		tenantBody = fmt.Sprintf("Your scheduled backup reached your plan's limit (%d); the oldest backup was automatically removed to make room.", limit)
+		adminBody = fmt.Sprintf("Scheduled backup for tenant %s hit the backup limit (%d); the oldest was auto-pruned per the package retention policy.", who, limit)
+	} else {
+		tenantBody = fmt.Sprintf("Your scheduled backup was skipped: you reached your plan's backup limit (%d). Delete an old backup or ask your host to raise the limit.", limit)
+		adminBody = fmt.Sprintf("Scheduled backup for tenant %s was skipped — backup limit (%d) reached (reject policy).", who, limit)
+	}
+	nctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, _ = s.deps.Notify.Publish(nctx, notifications.Envelope{
+		EventKind: "backup.limit.reached", Severity: "warning",
+		Title: "Scheduled backup limit reached", Body: tenantBody, UserID: user.ID,
+	})
+	_, _ = s.deps.Notify.Publish(nctx, notifications.Envelope{
+		EventKind: "backup.limit.reached", Severity: "warning",
+		Title: "Tenant scheduled backup limit reached", Body: adminBody,
+	})
+}
+
 func (s *Scheduler) enqueueSystemBackup(ctx context.Context, sched models.BackupSchedule, dest *models.BackupDestination, runID string) bool {
 	logger := s.deps.Log.With("schedule_id", sched.ID, "kind", "system_backup", "destination_id", dest.ID, "run_id", runID)
 	schedID := sched.ID

@@ -904,6 +904,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Mailboxes:      deps.Mailboxes,
 		AppInstalls:    deps.WordPressInstalls,
 		Settings:       deps.ServerSettings,
+		Packages:       deps.Packages,
+		Notify:         deps.NotificationQueue,
 		SSLCerts:       deps.SSLCerts,
 		PHPPools:       deps.PHPPools,
 		PHPPoolIni:     deps.PHPPoolIniOverrides,

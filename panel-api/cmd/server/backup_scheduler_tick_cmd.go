@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupscheduler"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -49,6 +50,13 @@ inFlight map dedupe duplicate dispatches.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
+			// Best-effort: wire the notification queue so a manual tick notifies
+			// tenants + admins on a retention-cap event too (GH #454). If Redis is
+			// unavailable the tick still runs; Notify just stays nil.
+			var notify *notifications.Queue
+			if requireRedis(cmd, args) == nil && sharedRedis != nil {
+				notify = notifications.NewQueue(sharedRedis)
+			}
 			s := backupscheduler.New(backupscheduler.Deps{
 				Schedules:      repository.NewBackupScheduleRepository(sharedDB),
 				Jobs:           repository.NewBackupJobRepository(sharedDB),
@@ -61,6 +69,8 @@ inFlight map dedupe duplicate dispatches.`,
 				Mailboxes:      repository.NewMailboxRepository(sharedDB),
 				AppInstalls:    repository.NewWordPressInstallRepository(sharedDB),
 				Settings:       repository.NewServerSettingsRepository(sharedDB),
+				Packages:       repository.NewPackageRepository(sharedDB),
+				Notify:         notify,
 				SSLCerts:       repository.NewSSLCertificateRepository(sharedDB),
 				PHPPools:       repository.NewPHPPoolRepository(sharedDB),
 				PHPPoolIni:     repository.NewPHPPoolIniOverrideRepository(sharedDB),
@@ -77,8 +87,8 @@ inFlight map dedupe duplicate dispatches.`,
 				// TickOnce dispatches too, and dispatch unseals per-destination restic
 				// passwords — wire the same SSO key the production scheduler uses, else
 				// sealed-password destinations fail before the agent call (Gitea #538).
-				SSOKey:         ssoKeyForCLI(),
-				Log:            sharedLog,
+				SSOKey: ssoKeyForCLI(),
+				Log:    sharedLog,
 			})
 			if s == nil {
 				return fmt.Errorf("scheduler.New returned nil — required deps missing (check serve.go's Deps assembly)")
