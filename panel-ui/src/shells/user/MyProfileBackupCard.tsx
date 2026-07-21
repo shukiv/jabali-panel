@@ -8,6 +8,7 @@ import { shortDateTime } from "../../utils/datetime";
 import { RowActions } from "../../components/RowActions";
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SaveOutlined } from "@icons";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../apiClient";
 import { useListQuery } from "../../hooks/useQueries";
@@ -44,12 +45,32 @@ export const MyProfileBackupCard = () => {
   const [restoreId, setRestoreId] = useState<string | null>(null);
   const [content, setContent] = useState<string>("full");
   const [compression, setCompression] = useState<string>("");
+  const [destinationId, setDestinationId] = useState<string>("");
   const query = useListQuery<MyBackup>({ resource: "me/backups" });
+
+  // Destinations this tenant may target (GH #454). The backend returns only
+  // the kinds allowed by the hosting package (id/name/kind — no secrets), plus
+  // allow_local for the plain local default.
+  const destQuery = useQuery({
+    queryKey: ["me-backup-destinations"],
+    queryFn: async () =>
+      (
+        await apiClient.get<{ data: { id: string; name: string; kind: string }[]; allow_local: boolean }>(
+          "/me/backups/destinations",
+        )
+      ).data,
+  });
+  const dests = destQuery.data?.data ?? [];
+  const allowLocal = destQuery.data?.allow_local ?? false;
+  const destOptions = [
+    ...(allowLocal ? [{ value: "", label: "Local (default)" }] : []),
+    ...dests.map((d) => ({ value: d.id, label: `${d.name} (${d.kind})` })),
+  ];
 
   const handleCreate = async () => {
     setSubmitting(true);
     try {
-      await apiClient.post("/me/backups", { content, compression });
+      await apiClient.post("/me/backups", { content, compression, destination_id: destinationId });
       message.success("Backup queued");
       query.refetch();
     } catch (err) {
@@ -91,7 +112,21 @@ export const MyProfileBackupCard = () => {
               { value: "off", label: "No compression" },
             ]}
           />
-          <Button type="primary" loading={submitting} onClick={handleCreate}>
+          {destOptions.length > 0 && (
+            <Select
+              value={destinationId}
+              onChange={setDestinationId}
+              style={{ minWidth: 180 }}
+              placeholder="Destination"
+              options={destOptions}
+            />
+          )}
+          <Button
+            type="primary"
+            loading={submitting}
+            disabled={destOptions.length === 0}
+            onClick={handleCreate}
+          >
             Generate backup
           </Button>
         </Space>

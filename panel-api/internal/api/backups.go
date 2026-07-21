@@ -1149,6 +1149,66 @@ func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
 	g.DELETE("/:id", h.delete)
 	g.GET("/:id/manifest", h.manifest)
 	g.POST("/:id/restore", h.restoreSelective)
+	g.GET("/destinations", h.destinations)
+}
+
+// meDestView is the SAFE tenant-facing projection of a backup destination
+// (GH #454): id/name/kind only. It deliberately omits URL, credentials_ref,
+// and extra_options (bucket names, SFTP hosts) so a tenant picker never leaks
+// the admin's infrastructure details.
+type meDestView struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// destinations lists the backup destinations the caller may target — those
+// whose kind is in the caller's hosting-package allow-list (GH #454). Admins
+// see every enabled destination. allow_local flags whether the plain local
+// default (no destination row) is permitted, so the UI can offer it. Fails
+// closed: a non-admin whose package can't be resolved sees nothing.
+func (h *meBackupHandler) destinations(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthenticated"})
+		return
+	}
+	user, err := h.cfg.Users.FindByID(c.Request.Context(), claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "user_not_found"})
+		return
+	}
+	var pkg *models.HostingPackage
+	if !user.IsAdmin {
+		if h.cfg.Packages == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable"})
+			return
+		}
+		if user.PackageID != nil {
+			pkg, _ = h.cfg.Packages.FindByID(c.Request.Context(), *user.PackageID)
+		}
+	}
+	allowKind := func(kind string) bool {
+		if user.IsAdmin {
+			return true
+		}
+		return pkg != nil && pkg.AllowsBackupKind(kind)
+	}
+	out := make([]meDestView, 0)
+	if h.cfg.Destinations != nil {
+		all, lerr := h.cfg.Destinations.ListEnabled(c.Request.Context())
+		if lerr == nil {
+			for _, d := range all {
+				if allowKind(d.Kind) {
+					out = append(out, meDestView{ID: d.ID, Name: d.Name, Kind: d.Kind})
+				}
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":        out,
+		"allow_local": allowKind(models.BackupDestinationKindLocal),
+	})
 }
 
 type meBackupHandler struct{ cfg MeBackupsHandlerConfig }
