@@ -1067,7 +1067,8 @@ type MeBackupsHandlerConfig struct {
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
 	// Packages resolves the caller's hosting-package backup limits (GH #454).
-	// Nil-safe: when unset the gate is skipped (dev/test wiring).
+	// REQUIRED — RegisterMeBackupRoutes panics if nil, and the create gate fails
+	// CLOSED (denies) rather than skipping when the entitlement can't be resolved.
 	Packages repository.PackageRepository
 
 	Log *slog.Logger
@@ -1137,7 +1138,7 @@ func (cfg MeBackupsHandlerConfig) allUserMailboxes(ctx context.Context, userID s
 // under /me/backups. Route registers off the v1 group; auth comes from
 // the Kratos session middleware already on `rg`.
 func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
-	if cfg.Jobs == nil || cfg.Users == nil {
+	if cfg.Jobs == nil || cfg.Users == nil || cfg.Packages == nil {
 		panic("api.RegisterMeBackupRoutes: nil dep")
 	}
 	h := &meBackupHandler{cfg: cfg}
@@ -1198,16 +1199,36 @@ func (h *meBackupHandler) create(c *gin.Context) {
 	// GH #454: gate tenant self-backups on the hosting-package limit. Admins are
 	// exempt (unlimited, they use the admin backup surface). A non-admin tenant
 	// needs a package with max_backups > 0, and must be under that retention cap.
-	if !user.IsAdmin && h.cfg.Packages != nil {
-		var pkg *models.HostingPackage
-		if user.PackageID != nil {
-			pkg, _ = h.cfg.Packages.FindByID(c.Request.Context(), *user.PackageID)
+	// This gate FAILS CLOSED: any inability to resolve the limit (missing package
+	// repo, package load error, no package) denies the backup — a limit gate must
+	// never silently allow an ungated tenant backup on a misconfiguration.
+	if !user.IsAdmin {
+		if h.cfg.Packages == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable", "detail": "backup entitlement cannot be resolved right now"})
+			return
 		}
-		if pkg == nil || !pkg.BackupsEnabled() {
+		if user.PackageID == nil {
 			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backups_not_included", "detail": "your hosting plan does not include self-service backups"})
 			return
 		}
-		if _, total, terr := h.cfg.Jobs.ListForUser(c.Request.Context(), user.ID, 1, 0); terr == nil && total >= int64(pkg.MaxBackups) {
+		pkg, perr := h.cfg.Packages.FindByID(c.Request.Context(), *user.PackageID)
+		if perr != nil || pkg == nil {
+			// Fail closed: cannot confirm the entitlement -> deny.
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable", "detail": "backup entitlement cannot be resolved right now"})
+			return
+		}
+		if !pkg.BackupsEnabled() {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backups_not_included", "detail": "your hosting plan does not include self-service backups"})
+			return
+		}
+		// Retention cap. On a count error, fail closed (deny) rather than risk
+		// letting a tenant exceed max_backups.
+		_, total, terr := h.cfg.Jobs.ListForUser(c.Request.Context(), user.ID, 1, 0)
+		if terr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable", "detail": "backup count cannot be resolved right now"})
+			return
+		}
+		if total >= int64(pkg.MaxBackups) {
 			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backup_limit_reached", "detail": fmt.Sprintf("your plan allows %d backups; delete an old one before creating another", pkg.MaxBackups)})
 			return
 		}
