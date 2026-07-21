@@ -86,6 +86,7 @@ type createPackageRequest struct {
 	MaxBackups                    uint32 `json:"max_backups"`
 	ScheduledBackupsEnabled       bool   `json:"scheduled_backups_enabled"`
 	AllowedBackupDestinationKinds string `json:"allowed_backup_destination_kinds"`
+	BackupRetentionPolicy         string `json:"backup_retention_policy"`
 	SSHEnabled                    bool   `json:"ssh_enabled"`
 	CGIEnabled                    bool   `json:"cgi_enabled"`
 	PHPExecEnabled                bool   `json:"php_exec_enabled"`
@@ -117,6 +118,7 @@ type updatePackageRequest struct {
 	MaxBackups                    *uint32 `json:"max_backups"`
 	ScheduledBackupsEnabled       *bool   `json:"scheduled_backups_enabled"`
 	AllowedBackupDestinationKinds *string `json:"allowed_backup_destination_kinds"`
+	BackupRetentionPolicy         *string `json:"backup_retention_policy"`
 	SSHEnabled                    *bool   `json:"ssh_enabled"`
 	CGIEnabled                    *bool   `json:"cgi_enabled"`
 	PHPExecEnabled                *bool   `json:"php_exec_enabled"`
@@ -179,6 +181,13 @@ func (h *packageHandler) create(c *gin.Context) {
 		return
 	}
 	req.AllowedBackupDestinationKinds = normKinds
+	if !models.IsValidBackupRetentionPolicy(req.BackupRetentionPolicy) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_backup_retention_policy", "detail": "must be reject or prune"})
+		return
+	}
+	if req.BackupRetentionPolicy == "" {
+		req.BackupRetentionPolicy = models.BackupRetentionReject
+	}
 	pkg := &models.HostingPackage{
 		ID:               ids.NewULID(),
 		Name:             req.Name,
@@ -198,6 +207,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		MaxBackups:                    req.MaxBackups,
 		ScheduledBackupsEnabled:       req.ScheduledBackupsEnabled,
 		AllowedBackupDestinationKinds: req.AllowedBackupDestinationKinds,
+		BackupRetentionPolicy:         req.BackupRetentionPolicy,
 
 		SSHEnabled:         req.SSHEnabled,
 		CGIEnabled:         req.CGIEnabled,
@@ -342,6 +352,17 @@ func (h *packageHandler) update(c *gin.Context) {
 			return
 		}
 		pkg.AllowedBackupDestinationKinds = normKinds
+	}
+	if req.BackupRetentionPolicy != nil {
+		if !models.IsValidBackupRetentionPolicy(*req.BackupRetentionPolicy) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_backup_retention_policy", "detail": "must be reject or prune"})
+			return
+		}
+		v := *req.BackupRetentionPolicy
+		if v == "" {
+			v = models.BackupRetentionReject
+		}
+		pkg.BackupRetentionPolicy = v
 	}
 	if req.SSHEnabled != nil {
 		pkg.SSHEnabled = *req.SSHEnabled

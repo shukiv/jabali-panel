@@ -1007,6 +1007,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// routes; absent, the card's endpoints simply aren't mounted.
 				Schedules: deps.BackupSchedules,
 				Settings:  deps.ServerSettings,
+				Notify:    deps.NotificationQueue,
 				Log:       deps.Log,
 			})
 		}

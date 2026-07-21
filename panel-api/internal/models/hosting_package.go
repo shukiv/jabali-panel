@@ -54,6 +54,11 @@ type HostingPackage struct {
 	MaxBackups                    uint32 `gorm:"column:max_backups;type:int unsigned;not null;default:0" json:"max_backups"`
 	ScheduledBackupsEnabled       bool   `gorm:"column:scheduled_backups_enabled;type:tinyint(1);not null;default:0" json:"scheduled_backups_enabled"`
 	AllowedBackupDestinationKinds string `gorm:"column:allowed_backup_destination_kinds;type:varchar(255);not null;default:''" json:"allowed_backup_destination_kinds"`
+	// BackupRetentionPolicy (GH #454) chooses the behaviour when a tenant hits
+	// MaxBackups: "reject" (default, safe) blocks the new backup and notifies;
+	// "prune" auto-forgets the oldest OWNED backup to make room, then creates,
+	// and notifies. Admin-owned, per package.
+	BackupRetentionPolicy string `gorm:"column:backup_retention_policy;type:varchar(16);not null;default:'reject'" json:"backup_retention_policy"`
 
 	// Feature toggles.
 	SSHEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"ssh_enabled"`
@@ -130,4 +135,29 @@ func (p HostingPackage) AllowsBackupKind(kind string) bool {
 		}
 	}
 	return false
+}
+
+// Backup retention policies (GH #454).
+const (
+	BackupRetentionReject = "reject"
+	BackupRetentionPrune  = "prune"
+)
+
+// IsValidBackupRetentionPolicy validates the admin-supplied policy so a bad
+// value can't reach the DB / the create gate. The empty string is accepted and
+// treated as the safe "reject" default.
+func IsValidBackupRetentionPolicy(s string) bool {
+	switch s {
+	case "", BackupRetentionReject, BackupRetentionPrune:
+		return true
+	}
+	return false
+}
+
+// BackupRetentionPrunes reports whether this package auto-prunes the oldest
+// backup at the cap. Anything other than an explicit "prune" (including the
+// empty string / an unknown value) means reject — fail safe, never auto-delete
+// tenant data on a misconfiguration.
+func (p HostingPackage) BackupRetentionPrunes() bool {
+	return p.BackupRetentionPolicy == BackupRetentionPrune
 }

@@ -122,6 +122,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		DefaultOn:   true,
 	},
 	{
+		Kind:        "backup.limit.reached",
+		Label:       "Tenant backup limit reached",
+		Description: "A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins (GH #454).",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
 		Kind:        "admin.login",
 		Label:       "Admin signed in",
 		Description: "First request of a new Kratos admin session.",

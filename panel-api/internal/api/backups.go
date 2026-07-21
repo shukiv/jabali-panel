@@ -27,6 +27,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
@@ -1058,6 +1059,10 @@ type MeBackupsHandlerConfig struct {
 	// CLOSED (denies) rather than skipping when the entitlement can't be resolved.
 	Packages repository.PackageRepository
 
+	// Notify publishes the backup.limit.reached event to the tenant + admins when
+	// the retention cap is hit (GH #454). Optional — nil just skips the notice.
+	Notify *notifications.Queue
+
 	// Schedules + Settings power the tenant scheduled-backup card (GH #454
 	// Step 4): the tenant owns content/destination/on-off within their package
 	// limits, the admin owns the cron TIME (server_settings.tenant_backup_cron).
@@ -1292,8 +1297,17 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			return
 		}
 		if total >= int64(pkg.MaxBackups) {
-			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backup_limit_reached", "detail": fmt.Sprintf("your plan allows %d backups; delete an old one before creating another", pkg.MaxBackups)})
-			return
+			// Retention policy (GH #454): the admin picks reject (default, safe) or
+			// prune. Prune auto-forgets the tenant's OLDEST OWNED backup(s) to make
+			// room; if it can't free enough (e.g. only running jobs remain) it falls
+			// back to reject. Either way, the tenant + admins are notified.
+			if pkg.BackupRetentionPrunes() && h.pruneOldestOwned(c.Request.Context(), user, int(pkg.MaxBackups)) {
+				h.notifyBackupLimit(c.Request.Context(), user, "prune", pkg.MaxBackups)
+			} else {
+				h.notifyBackupLimit(c.Request.Context(), user, "reject", pkg.MaxBackups)
+				c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backup_limit_reached", "detail": fmt.Sprintf("your plan allows %d backups; delete an old one before creating another", pkg.MaxBackups)})
+				return
+			}
 		}
 	}
 	var req createBackupRequest // content/folders/compression + optional destination_id
@@ -1623,6 +1637,72 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// pruneOldestOwned auto-forgets the caller's OLDEST owned account_backup(s)
+// until they are under maxBackups, for the "prune" retention policy (GH #454).
+// Owner-scoped: OldestAccountBackupForUser filters by user_id, so a tenant can
+// only ever prune their OWN backups. Returns true once under the cap; false if
+// it can't free enough (e.g. only running/restore jobs remain) -> caller falls
+// back to reject. The forget is best-effort (an orphaned snapshot is reclaimed
+// by the retention sweep); the row delete is what guarantees loop progress.
+func (h *meBackupHandler) pruneOldestOwned(ctx context.Context, user *models.User, maxBackups int) bool {
+	for i := 0; i < 1000; i++ { // bounded so an odd repo state can't spin forever
+		_, total, err := h.cfg.Jobs.ListForUser(ctx, user.ID, 1, 0)
+		if err != nil {
+			return false
+		}
+		if total < int64(maxBackups) {
+			return true
+		}
+		oldest, oerr := h.cfg.Jobs.OldestAccountBackupForUser(ctx, user.ID)
+		if oerr != nil || oldest == nil {
+			return false
+		}
+		if h.cfg.Agent != nil {
+			fctx, cancel := context.WithTimeout(ctx, backupCallTimeout)
+			_, _ = h.cfg.Agent.Call(fctx, "backup.forget", map[string]any{
+				"job_id": oldest.ID, "user_id": oldest.UserID, "kind": oldest.Kind,
+			})
+			cancel()
+		}
+		if derr := h.cfg.Jobs.Delete(ctx, oldest.ID); derr != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// notifyBackupLimit fires the backup.limit.reached event to the tenant's own
+// inbox (UserID set) AND broadcasts it to every admin bell (UserID empty), with
+// bodies tailored to the outcome ("reject" blocked / "prune" auto-removed).
+// Best-effort — a notify failure never blocks the backup path (GH #454).
+func (h *meBackupHandler) notifyBackupLimit(ctx context.Context, user *models.User, outcome string, limit uint32) {
+	if h.cfg.Notify == nil {
+		return
+	}
+	who := user.ID
+	if user.Username != nil && *user.Username != "" {
+		who = *user.Username
+	}
+	var tenantBody, adminBody string
+	if outcome == "prune" {
+		tenantBody = fmt.Sprintf("You reached your plan's backup limit (%d). Your oldest backup was automatically removed to make room for the new one.", limit)
+		adminBody = fmt.Sprintf("Tenant %s reached their backup limit (%d); the oldest backup was auto-pruned per the package retention policy.", who, limit)
+	} else {
+		tenantBody = fmt.Sprintf("You reached your plan's backup limit (%d). Delete an old backup before creating another, or ask your host to raise the limit.", limit)
+		adminBody = fmt.Sprintf("Tenant %s reached their backup limit (%d); the new backup was blocked (reject policy).", who, limit)
+	}
+	nctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, _ = h.cfg.Notify.Publish(nctx, notifications.Envelope{
+		EventKind: "backup.limit.reached", Severity: "warning",
+		Title: "Backup limit reached", Body: tenantBody, UserID: user.ID,
+	})
+	_, _ = h.cfg.Notify.Publish(nctx, notifications.Envelope{
+		EventKind: "backup.limit.reached", Severity: "warning",
+		Title: "Tenant backup limit reached", Body: adminBody,
+	})
 }
 
 func (h *meBackupHandler) list(c *gin.Context) {

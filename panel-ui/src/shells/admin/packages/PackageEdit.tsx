@@ -52,6 +52,7 @@ type PackageEditInput = {
   max_backups: number;
   scheduled_backups_enabled: boolean;
   allowed_backup_destination_kinds: string | string[];
+  backup_retention_policy: string;
   ssh_enabled: boolean;
   cgi_enabled: boolean;
   php_exec_enabled: boolean;
@@ -357,6 +358,21 @@ export const PackageEdit = () => {
                 allowClear
                 placeholder="e.g. local, s3"
                 options={BACKUP_DESTINATION_KINDS.map((k) => ({ value: k, label: k }))}
+                style={{ width: "100%" }}
+              />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Backup Retention Policy"
+              name="backup_retention_policy"
+              tooltip="What happens when a tenant reaches Max Backups: Reject (safe — block the new backup) or Auto-prune (delete the tenant's oldest backup to make room). Both notify the tenant and admins."
+            >
+              <Select
+                options={[
+                  { value: "reject", label: "Reject at cap (safe)" },
+                  { value: "prune", label: "Auto-prune oldest" },
+                ]}
                 style={{ width: "100%" }}
               />
             </Form.Item>

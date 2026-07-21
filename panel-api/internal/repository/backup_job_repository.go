@@ -25,6 +25,11 @@ type BackupJobRepository interface {
 	Delete(ctx context.Context, id string) error
 	Get(ctx context.Context, id string) (*models.BackupJob, error)
 	ListForUser(ctx context.Context, userID string, limit, offset int) ([]models.BackupJob, int64, error)
+	// OldestAccountBackupForUser returns the caller's OLDEST account_backup job
+	// (created_at ASC) for auto-prune retention (GH #454), or ErrNotFound when
+	// they have none. Owner-scoped by user_id; the prune caller never passes a
+	// body id.
+	OldestAccountBackupForUser(ctx context.Context, userID string) (*models.BackupJob, error)
 	ListAll(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error)
 	MarkStarted(ctx context.Context, id string) error
 	MarkFinished(ctx context.Context, id, status string, snapshotID, parentSnapshot string, bytesAdded, bytesTotal uint64, manifest, warnings json.RawMessage, errText string) error
@@ -108,6 +113,18 @@ func (r *backupJobRepo) Delete(ctx context.Context, id string) error {
 
 func (r *backupJobRepo) ListForUser(ctx context.Context, userID string, limit, offset int) ([]models.BackupJob, int64, error) {
 	return r.list(ctx, "user_id = ?", []any{userID}, limit, offset)
+}
+
+func (r *backupJobRepo) OldestAccountBackupForUser(ctx context.Context, userID string) (*models.BackupJob, error) {
+	var out models.BackupJob
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND kind = ?", userID, models.BackupJobKindAccountBackup).
+		Order("created_at ASC").
+		First(&out).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	return &out, nil
 }
 
 func (r *backupJobRepo) ListAll(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error) {
