@@ -8,26 +8,27 @@
 # The installer collects a deploy profile + modules + config, then runs
 # install.sh (JABALI_MODULES=…) with a live progress pane.
 #
-# Release resolution is served from jabali's OWN CDN (Cloudflare R2) via a tiny
-# latest.json manifest — NOT the GitHub API. The unauthenticated GitHub API is
-# capped at 60 requests/hour/IP, and cloud VMs behind shared-egress IPs hit that
-# ceiling constantly ("403 API rate limit exceeded"). The manifest has no such
-# limit. GitHub's releases API is kept only as a fallback for the window right
-# after a release, before the manifest is published.
+# Release resolution uses GitHub's releases/latest/download REDIRECT — served by
+# github.com, NOT api.github.com — so it does NOT consume the API's 60 req/hr/IP
+# unauthenticated limit that made `curl … | bash` fail with "403 API rate limit
+# exceeded" on cloud VMs behind shared-egress IPs. No hosting, no token, no cost.
+# The GitHub releases API is kept only as a fallback for the brief window right
+# after a release, before the fixed-name asset is attached.
 #
 # Non-interactive parity: pipe with no TTY, pass --unattended, or preset
 # JABALI_MODULES and the installer skips the TUI and runs install.sh directly.
 # Any args after `bash -s --` are forwarded to the installer (e.g. --dry-run).
 #
 # Overrides:
-#   JABALI_MANIFEST_URL      default https://dl.jabali-panel.com/latest.json
-#   JABALI_RELEASE_API_BASE  GitHub fallback repo API (used only if the manifest
-#                            is unreachable)
+#   JABALI_RELEASE_DOWNLOAD_BASE  default
+#       https://github.com/shukiv/jabali-panel/releases/latest/download
+#   JABALI_RELEASE_API_BASE       GitHub fallback repo API (used only if the
+#                                 fixed-name latest asset isn't attached yet)
 #   JABALI_GITHUB_TOKEN / GITHUB_TOKEN  auth for the GitHub fallback (raises the
-#                            60/hr unauthenticated limit to 5000/hr)
+#                                 60/hr unauthenticated limit to 5000/hr)
 set -euo pipefail
 
-MANIFEST_URL="${JABALI_MANIFEST_URL:-https://dl.jabali-panel.com/latest.json}"
+DL_BASE="${JABALI_RELEASE_DOWNLOAD_BASE:-https://github.com/shukiv/jabali-panel/releases/latest/download}"
 API_BASE="${JABALI_RELEASE_API_BASE:-https://api.github.com/repos/shukiv/jabali-panel}"
 
 die() { printf '\033[1;31m[bootstrap] %s\033[0m\n' "$*" >&2; exit 1; }
@@ -41,24 +42,22 @@ done
 tmp="$(mktemp -d /tmp/jabali-bootstrap.XXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Extract one string field from flat JSON with grep/sed — no jq on a fresh box.
-json_str() { grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/" | head -1; }
-
 tar_url=""      # resolved release tarball URL
-sum_url=""      # optional .sha256 sidecar URL (GitHub fallback path)
-expected=""     # expected sha256 (from the manifest, or the sidecar)
+sum_url=""      # its .sha256 sidecar URL
 
-# ---- primary: jabali CDN manifest (Cloudflare R2, no rate limit) ----------
-log "resolving latest release from ${MANIFEST_URL}"
-if manifest="$(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 "$MANIFEST_URL" 2>/dev/null)"; then
-  tar_url="$(printf '%s' "$manifest" | json_str tarball)"
-  expected="$(printf '%s' "$manifest" | json_str sha256)"
-  if [[ -z "$tar_url" || -z "$expected" ]]; then
-    log "manifest is missing tarball/sha256 — falling back to GitHub releases"
-    tar_url="" expected=""
-  fi
+# ---- primary: releases/latest/download (github.com redirect, no API) -------
+# The fixed-name asset "jabali-release.tar.gz" is (re)attached to every release,
+# so /releases/latest/download/jabali-release.tar.gz always points at the newest
+# published release. -f makes curl fail if the redirect target 404s (the asset
+# isn't attached yet), which drops us to the API fallback.
+cand="${DL_BASE}/jabali-release.tar.gz"
+log "resolving latest release via ${cand}"
+if curl -fsIL --connect-timeout 15 "$cand" >/dev/null 2>&1 \
+   && curl -fsIL --connect-timeout 15 "${cand}.sha256" >/dev/null 2>&1; then
+  tar_url="$cand"
+  sum_url="${cand}.sha256"
 else
-  log "jabali CDN unreachable — falling back to GitHub releases"
+  log "fixed-name latest asset not found — falling back to the GitHub API"
 fi
 
 # ---- fallback: GitHub releases API (rate-limited; optional token) ----------
@@ -73,7 +72,7 @@ if [[ -z "$tar_url" ]]; then
   if ! rel="$(curl -fsSL "${auth[@]}" "${API_BASE}/releases?per_page=30" 2>/dev/null)"; then
     code="$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "${API_BASE}/releases?per_page=30" 2>/dev/null || true)"
     if [[ "$code" == "403" ]]; then
-      die "GitHub API rate limit hit (60/hr per IP, unauthenticated). Retry within the hour, set JABALI_GITHUB_TOKEN=<token> for 5000/hr, or point JABALI_MANIFEST_URL at the jabali CDN."
+      die "GitHub API rate limit hit (60/hr per IP, unauthenticated). Retry within the hour, or set JABALI_GITHUB_TOKEN=<token> for 5000/hr. (The primary releases/latest/download path is not rate-limited — this fallback only runs when the latest asset isn't attached yet.)"
     fi
     die "could not reach the release API (HTTP ${code:-?})"
   fi
@@ -97,11 +96,10 @@ fi
 log "downloading $(basename "$tar_url")"
 curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 3 "$tar_url" -o "$tmp/release.tar.gz" \
   || die "tarball download failed: $tar_url"
-if [[ -z "$expected" && -n "$sum_url" ]]; then
-  curl -fsSL "$sum_url" -o "$tmp/release.sha256" || die "checksum download failed: $sum_url"
-  expected="$(awk '{print $1}' "$tmp/release.sha256")"
-fi
-[[ -n "$expected" ]] || die "no expected sha256 for the release (manifest and sidecar both absent)"
+curl -fsSL --connect-timeout 20 --retry 3 "$sum_url" -o "$tmp/release.sha256" \
+  || die "checksum download failed: $sum_url"
+expected="$(awk '{print $1}' "$tmp/release.sha256")"
+[[ -n "$expected" ]] || die "empty checksum in $sum_url"
 actual="$(sha256sum "$tmp/release.tar.gz" | awk '{print $1}')"
 [[ "$expected" == "$actual" ]] || die "checksum mismatch (expected $expected, got $actual)"
 log "checksum verified"
