@@ -11596,6 +11596,27 @@ install_bulwark() {
   local url="https://github.com/bulwarkmail/webmail/releases/download/${bulwark_version}/${tarball}"
   _log "installing Bulwark webmail (standalone tarball ${bulwark_version})"
 
+  # Serialize the whole function behind an flock (GH #545/#555 concurrent
+  # re-entry class): two install.sh invocations overlap on a fresh install --
+  # install.sh's own inline call, and the panel agent re-entering via
+  # `source install.sh && install_bulwark` to provision the mail module once
+  # the panel is up. Both race on the shared /tmp/${tarball} download, the
+  # /opt/jabali-webmail.stage extract, and the atomic swap; the losing racer
+  # dies with `tar` exit 2 when the winner's cleanup removes the tarball / stage
+  # out from under its extract (observed on 10.0.3.14: install-<A>.log died
+  # right after "downloading" while install-<B>.log completed the module 3s
+  # later). The version/dir idempotency below then turns the second caller into
+  # a fast no-op. Best-effort: if flock is unavailable proceed unlocked rather
+  # than block the install. Mirrors the install_stalwart guard.
+  local _bw_lockfd=""
+  if command -v flock >/dev/null 2>&1; then
+    exec {_bw_lockfd}>/run/lock/jabali-bulwark-install.lock 2>/dev/null || _bw_lockfd=""
+    if [[ -n "$_bw_lockfd" ]]; then
+      flock -w 600 "$_bw_lockfd" \
+        || _warn "waited 600s for the Bulwark install lock -- proceeding without exclusion"
+    fi
+  fi
+
   if ! getent passwd jabali-webmail >/dev/null 2>&1; then
     _log "creating jabali-webmail service user"
     useradd --system --no-create-home --shell /usr/sbin/nologin \
@@ -11638,6 +11659,8 @@ install_bulwark() {
     _install_bulwark_env
     _install_bulwark_libravatar_plugin
     _install_bulwark_impersonate_secrets
+    # Release the concurrency lock on the idempotent fast-path return too.
+    [[ -n "$_bw_lockfd" ]] && exec {_bw_lockfd}>&- || true
     return
   fi
 
@@ -11719,6 +11742,11 @@ install_bulwark() {
   _ok "Bulwark $bulwark_version installed at /opt/jabali-webmail"
 
   _install_bulwark_systemd
+
+  # Release the concurrency lock (see the flock at the top of the function).
+  # _die paths exit the process, so the kernel drops the fd there; this only
+  # covers the normal fall-through so a later legitimate caller can proceed.
+  [[ -n "$_bw_lockfd" ]] && exec {_bw_lockfd}>&- || true
 }
 
 # _install_bulwark_systemd installs the unit file. Env file is rendered
