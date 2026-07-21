@@ -860,6 +860,12 @@ paths:
       summary: Trigger an on-demand backup
       responses: { "202": { description: Job queued } }
 
+  /me/backups/destinations:
+    get:
+      tags: [Backups]
+      summary: List backup destinations your hosting plan allows
+      responses: { "200": { description: OK } }
+
   /me/backups/{id}/restore:
     post:
       tags: [Backups]
