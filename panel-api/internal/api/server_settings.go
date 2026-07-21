@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -83,37 +84,37 @@ func (h *serverSettingsHandler) get(c *gin.Context) {
 }
 
 type updateServerSettingsRequest struct {
-	Hostname                 *string `json:"hostname,omitempty"`
-	PublicIPv4               *string `json:"public_ipv4,omitempty"`
-	PublicIPv6               *string `json:"public_ipv6,omitempty"`
-	NS1Name                  *string `json:"ns1_name,omitempty"`
-	NS1IPv4                  *string `json:"ns1_ipv4,omitempty"`
-	NS2Name                  *string `json:"ns2_name,omitempty"`
-	NS2IPv4                  *string `json:"ns2_ipv4,omitempty"`
-	AdminEmail               *string `json:"admin_email,omitempty"`
+	Hostname                 *string          `json:"hostname,omitempty"`
+	PublicIPv4               *string          `json:"public_ipv4,omitempty"`
+	PublicIPv6               *string          `json:"public_ipv6,omitempty"`
+	NS1Name                  *string          `json:"ns1_name,omitempty"`
+	NS1IPv4                  *string          `json:"ns1_ipv4,omitempty"`
+	NS2Name                  *string          `json:"ns2_name,omitempty"`
+	NS2IPv4                  *string          `json:"ns2_ipv4,omitempty"`
+	AdminEmail               *string          `json:"admin_email,omitempty"`
 	LogRetention             *json.RawMessage `json:"log_retention,omitempty"`
-	Timezone                 *string `json:"timezone,omitempty"`
-	SSHPort                  *uint16 `json:"ssh_port,omitempty"`
-	SSHPasswordAuth          *bool   `json:"ssh_password_auth,omitempty"`
-	SSHUserPasswordAuth      *bool   `json:"ssh_user_password_auth,omitempty"`
-	PanelBrandText           *string `json:"panel_brand_text,omitempty"`
-	PanelFontSize            *string `json:"panel_font_size,omitempty"`
-	PanelPrimaryColor        *string `json:"panel_primary_color,omitempty"`
-	PanelAccentColor         *string `json:"panel_accent_color,omitempty"`
-	PanelSuccessColor        *string `json:"panel_success_color,omitempty"`
-	PanelWarningColor        *string `json:"panel_warning_color,omitempty"`
-	PanelErrorColor          *string `json:"panel_error_color,omitempty"`
-	PanelInfoColor           *string `json:"panel_info_color,omitempty"`
-	PanelLinkColor           *string `json:"panel_link_color,omitempty"`
-	PanelLightTopbarColor    *string `json:"panel_light_topbar_color,omitempty"`
-	PanelDarkTopbarColor     *string `json:"panel_dark_topbar_color,omitempty"`
-	PanelLightBgColor        *string `json:"panel_light_bg_color,omitempty"`
-	PanelDarkBgColor         *string `json:"panel_dark_bg_color,omitempty"`
-	PanelLightContainerColor *string `json:"panel_light_container_color,omitempty"`
-	PanelDarkContainerColor  *string `json:"panel_dark_container_color,omitempty"`
-	PanelLightTextColor      *string `json:"panel_light_text_color,omitempty"`
-	PanelDarkTextColor       *string `json:"panel_dark_text_color,omitempty"`
-	ReleaseChannel           *string `json:"release_channel,omitempty"`
+	Timezone                 *string          `json:"timezone,omitempty"`
+	SSHPort                  *uint16          `json:"ssh_port,omitempty"`
+	SSHPasswordAuth          *bool            `json:"ssh_password_auth,omitempty"`
+	SSHUserPasswordAuth      *bool            `json:"ssh_user_password_auth,omitempty"`
+	PanelBrandText           *string          `json:"panel_brand_text,omitempty"`
+	PanelFontSize            *string          `json:"panel_font_size,omitempty"`
+	PanelPrimaryColor        *string          `json:"panel_primary_color,omitempty"`
+	PanelAccentColor         *string          `json:"panel_accent_color,omitempty"`
+	PanelSuccessColor        *string          `json:"panel_success_color,omitempty"`
+	PanelWarningColor        *string          `json:"panel_warning_color,omitempty"`
+	PanelErrorColor          *string          `json:"panel_error_color,omitempty"`
+	PanelInfoColor           *string          `json:"panel_info_color,omitempty"`
+	PanelLinkColor           *string          `json:"panel_link_color,omitempty"`
+	PanelLightTopbarColor    *string          `json:"panel_light_topbar_color,omitempty"`
+	PanelDarkTopbarColor     *string          `json:"panel_dark_topbar_color,omitempty"`
+	PanelLightBgColor        *string          `json:"panel_light_bg_color,omitempty"`
+	PanelDarkBgColor         *string          `json:"panel_dark_bg_color,omitempty"`
+	PanelLightContainerColor *string          `json:"panel_light_container_color,omitempty"`
+	PanelDarkContainerColor  *string          `json:"panel_dark_container_color,omitempty"`
+	PanelLightTextColor      *string          `json:"panel_light_text_color,omitempty"`
+	PanelDarkTextColor       *string          `json:"panel_dark_text_color,omitempty"`
+	ReleaseChannel           *string          `json:"release_channel,omitempty"`
 	// DNS record-type permissions (GH #466): supply either a named preset
 	// (permissive | hosting-safe | locked-down) or the full per-type matrix.
 	DNSUserRecordPolicy       *models.DNSUserRecordPolicy `json:"dns_user_record_policy,omitempty"`
@@ -131,6 +132,10 @@ type updateServerSettingsRequest struct {
 	RootTerminalEnabled          *bool   `json:"root_terminal_enabled,omitempty"`
 	BandwidthQuotaEnforceEnabled *bool   `json:"bandwidth_quota_enforce_enabled,omitempty"`
 	UploadMaxSizeMB              *uint32 `json:"upload_max_size_mb,omitempty"`
+	// TenantBackupCron (GH #454): the admin-owned cron time tenant scheduled
+	// backups run at. Tenants choose content + destination; only the admin sets
+	// the timing. Validated server-side via internalbackup.ParseCron.
+	TenantBackupCron *string `json:"tenant_backup_cron,omitempty"`
 
 	// M13 SSH shell sandbox.
 	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
@@ -485,6 +490,14 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.UploadMaxSizeMB != nil {
 		current.UploadMaxSizeMB = *req.UploadMaxSizeMB
+	}
+	if req.TenantBackupCron != nil {
+		cronExpr := strings.TrimSpace(*req.TenantBackupCron)
+		if _, err := internalbackup.ParseCron(cronExpr); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cron", "detail": err.Error()})
+			return
+		}
+		current.TenantBackupCron = cronExpr
 	}
 	if req.SSHSandboxMode != nil {
 		current.SSHSandboxMode = strings.TrimSpace(*req.SSHSandboxMode)
@@ -1325,7 +1338,6 @@ func (h *serverSettingsHandler) moduleInstall(c *gin.Context) {
 	h.dispatchModuleInstall(req.Key)
 	c.JSON(http.StatusAccepted, gin.H{"status": "installing", "key": req.Key})
 }
-
 
 // validateLogRetention checks a Server Settings -> Logs retention map: every key
 // must be a known category and every value an int in [0, 3650] days (0 = keep

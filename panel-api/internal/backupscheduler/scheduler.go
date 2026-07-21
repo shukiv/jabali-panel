@@ -90,7 +90,7 @@ type Deps struct {
 	// M30.2.x — sso key for unsealing per-destination restic
 	// passwords. Optional; nil falls back to the legacy shared file.
 	SSOKey *ssokey.Key
-	Log   *slog.Logger
+	Log    *slog.Logger
 }
 
 // Scheduler is the goroutine wrapper. Construct via New, start with
@@ -339,7 +339,11 @@ func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.Backu
 		RunID:         &rid,
 		Kind:          models.BackupJobKindAccountBackup,
 		Status:        models.BackupJobStatusQueued,
-		CreatedAt:     time.Now().UTC(),
+		// Denormalise the schedule's content onto the job so the dispatcher
+		// trims the db/mailbox lists to match without re-loading the schedule
+		// (GH #454). "" normalises to "full" = the pre-feature behaviour.
+		Content:   models.NormalizeBackupContent(sched.Content),
+		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.deps.Jobs.Create(ctx, job); err != nil {
 		logger.Error("create backup_job failed", "err", err)
@@ -408,6 +412,12 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 	dbs := userDatabases(callCtx, s.deps, user.ID, logger)
 	pgDbs := userPostgresDatabases(callCtx, s.deps, user.ID, logger)
 	mbs := userMailboxes(callCtx, s.deps, user.ID, logger)
+	// Honour the schedule's content selection (GH #454): the agent skips the
+	// home stage only for content=database but backs up whatever db/mailbox
+	// lists it is handed, so trim the lists the content excludes here and pass
+	// the selector through. Empty content -> "full" -> everything (unchanged).
+	content := models.NormalizeBackupContent(j.Content)
+	dbs, mbs, pgDbs = models.ApplyBackupContent(content, dbs, mbs, pgDbs)
 	meta := buildScheduleMetadata(callCtx, s.deps, user, logger)
 	scheduleID := ""
 	if j.ScheduleID != nil {
@@ -422,6 +432,7 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		"databases":          dbs,
 		"databases_postgres": pgDbs,
 		"mailboxes":          mbs,
+		"content":            content,
 		"metadata":           meta,
 		"schedule_id":        scheduleID,
 	}

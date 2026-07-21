@@ -1002,7 +1002,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				AppInstalls:    deps.WordPressInstalls,
 				DNSZones:       deps.DNSZones,
 				DNSRecords:     deps.DNSRecords,
-				Log:            deps.Log,
+				// GH #454 Step 4: tenant scheduled-backup card. Schedules +
+				// Settings (the admin-owned cron time) gate the /me/backup-schedule
+				// routes; absent, the card's endpoints simply aren't mounted.
+				Schedules: deps.BackupSchedules,
+				Settings:  deps.ServerSettings,
+				Log:       deps.Log,
 			})
 		}
 		// M30.1 (ADR-0078): backup destinations + schedules.

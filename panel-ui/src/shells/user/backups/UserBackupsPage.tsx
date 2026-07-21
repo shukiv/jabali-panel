@@ -7,6 +7,7 @@ import { Typography } from "antd";
 import { SaveOutlined } from "@icons";
 
 import { MyProfileBackupCard } from "../MyProfileBackupCard";
+import { MyProfileScheduleCard } from "../MyProfileScheduleCard";
 
 export const UserBackupsPage = () => {
   return (
@@ -15,6 +16,7 @@ export const UserBackupsPage = () => {
         <SaveOutlined /> Backup / Restore
       </Typography.Title>
       <MyProfileBackupCard />
+      <MyProfileScheduleCard />
     </div>
   );
 };

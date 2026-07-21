@@ -571,3 +571,56 @@ func TestServerSettingsPatch_DatabaseError(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
 	assert.Equal(t, "internal", respBody["error"])
 }
+
+// GH #454: the admin owns the tenant scheduled-backup time via
+// server_settings.tenant_backup_cron. A valid cron is stored; an invalid one is
+// rejected 400 before it can strand the tenant scheduler with an unparseable time.
+func TestServerSettingsPatch_TenantBackupCron_Valid(t *testing.T) {
+	t.Parallel()
+
+	existing := &models.ServerSettings{
+		ID: 1, Hostname: "h.example.com", PublicIPv4: "192.0.2.1",
+		NS1Name: "ns1.example.com", NS1IPv4: "192.0.2.1",
+		NS2Name: "ns2.example.com", NS2IPv4: "192.0.2.2",
+		AdminEmail: "admin@example.com", SSHPort: 22,
+		TenantBackupCron: "0 3 * * *",
+	}
+	mockRepo := &mockServerSettingsRepo{getResult: existing}
+	r := settingsRouter(true, mockRepo, agent.NewMockClient())
+
+	body, _ := json.Marshal(map[string]any{"tenant_backup_cron": "30 2 * * *"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var respBody models.ServerSettings
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "30 2 * * *", respBody.TenantBackupCron)
+}
+
+func TestServerSettingsPatch_TenantBackupCron_Invalid(t *testing.T) {
+	t.Parallel()
+
+	existing := &models.ServerSettings{
+		ID: 1, Hostname: "h.example.com", PublicIPv4: "192.0.2.1",
+		NS1Name: "ns1.example.com", NS1IPv4: "192.0.2.1",
+		NS2Name: "ns2.example.com", NS2IPv4: "192.0.2.2",
+		AdminEmail: "admin@example.com", SSHPort: 22,
+		TenantBackupCron: "0 3 * * *",
+	}
+	mockRepo := &mockServerSettingsRepo{getResult: existing}
+	r := settingsRouter(true, mockRepo, agent.NewMockClient())
+
+	body, _ := json.Marshal(map[string]any{"tenant_backup_cron": "not a cron"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var respBody map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "invalid_cron", respBody["error"])
+}

@@ -866,6 +866,16 @@ paths:
       summary: List backup destinations your hosting plan allows
       responses: { "200": { description: OK } }
 
+  /me/backup-schedule:
+    get:
+      tags: [Backups]
+      summary: Your scheduled-backup settings (admin owns the time)
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Backups]
+      summary: Set your scheduled-backup content, destination, and on/off
+      responses: { "200": { description: OK } }
+
   /me/backups/{id}/restore:
     post:
       tags: [Backups]

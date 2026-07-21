@@ -329,13 +329,7 @@ type createBackupRequest struct {
 
 // validBackupContent / validBackupCompression whitelist the GH #294 options so a
 // bad value can't reach the agent (restic has only off/auto/max — never gzip/xz).
-func validBackupContent(c string) bool {
-	switch c {
-	case "", "full", "files", "database", "folders":
-		return true
-	}
-	return false
-}
+func validBackupContent(c string) bool { return models.ValidBackupContent(c) }
 
 func validBackupCompression(c string) bool {
 	switch c {
@@ -348,14 +342,7 @@ func validBackupCompression(c string) bool {
 // applyBackupContent zeroes the db/mail selections a content mode excludes:
 // "files"/"folders" -> home only; "database" -> dbs only; else (full) unchanged.
 func applyBackupContent(content string, dbs, mbs, pgDbs []string) ([]string, []string, []string) {
-	switch content {
-	case "files", "folders":
-		return nil, nil, nil
-	case "database":
-		return dbs, nil, pgDbs
-	default:
-		return dbs, mbs, pgDbs
-	}
+	return models.ApplyBackupContent(content, dbs, mbs, pgDbs)
 }
 
 func (h *backupHandler) createForUser(c *gin.Context) {
@@ -1071,6 +1058,14 @@ type MeBackupsHandlerConfig struct {
 	// CLOSED (denies) rather than skipping when the entitlement can't be resolved.
 	Packages repository.PackageRepository
 
+	// Schedules + Settings power the tenant scheduled-backup card (GH #454
+	// Step 4): the tenant owns content/destination/on-off within their package
+	// limits, the admin owns the cron TIME (server_settings.tenant_backup_cron).
+	// Both are OPTIONAL — the /me/backup-schedule routes mount only when both
+	// are non-nil, so a deployment without them simply lacks tenant scheduling.
+	Schedules repository.BackupScheduleRepository
+	Settings  repository.ServerSettingsRepository
+
 	Log *slog.Logger
 }
 
@@ -1150,6 +1145,12 @@ func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
 	g.GET("/:id/manifest", h.manifest)
 	g.POST("/:id/restore", h.restoreSelective)
 	g.GET("/destinations", h.destinations)
+	// Tenant scheduled-backup card (GH #454 Step 4). Mounted only when the
+	// schedule repo + server settings (the admin-owned cron time) are wired.
+	if cfg.Schedules != nil && cfg.Settings != nil {
+		rg.GET("/me/backup-schedule", h.getSchedule)
+		rg.PUT("/me/backup-schedule", h.putSchedule)
+	}
 }
 
 // meDestView is the SAFE tenant-facing projection of a backup destination
@@ -1381,6 +1382,247 @@ func (h *meBackupHandler) create(c *gin.Context) {
 		_ = h.cfg.Jobs.MarkStarted(c.Request.Context(), job.ID)
 	}
 	c.JSON(http.StatusCreated, gin.H{"status": "ok", "job_id": job.ID})
+}
+
+// meScheduleView is the tenant's own scheduled-backup state plus the
+// admin-owned knobs the card needs to render (GH #454 Step 4). CronExpr and the
+// firing times are READ-ONLY to the tenant (the admin owns the timing via
+// server_settings.tenant_backup_cron); ScheduledBackupsEnabled + MaxBackups
+// come from the hosting package and cap what the tenant may set.
+type meScheduleView struct {
+	Exists                  bool     `json:"exists"`
+	Enabled                 bool     `json:"enabled"`
+	Content                 string   `json:"content"`
+	DestinationID           string   `json:"destination_id,omitempty"`
+	KeepDaily               *int     `json:"keep_daily,omitempty"`
+	KeepWeekly              *int     `json:"keep_weekly,omitempty"`
+	KeepMonthly             *int     `json:"keep_monthly,omitempty"`
+	CronExpr                string   `json:"cron_expr"`
+	NextFirings             []string `json:"next_firings,omitempty"`
+	ScheduledBackupsEnabled bool     `json:"scheduled_backups_enabled"`
+	MaxBackups              uint32   `json:"max_backups"`
+}
+
+// meScheduleGate resolves the caller + hosting package for the tenant
+// scheduled-backup endpoints, failing CLOSED exactly like the on-demand create
+// gate: any inability to resolve the package entitlement denies (it writes the
+// error and returns ok=false). Admins pass with a nil package — they manage
+// schedules through the admin surface, so PUT still denies them (nil package
+// fails the scheduled_backups_enabled check), while GET renders a disabled card.
+func (h *meBackupHandler) meScheduleGate(c *gin.Context) (*models.User, *models.HostingPackage, bool) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthenticated"})
+		return nil, nil, false
+	}
+	user, err := h.cfg.Users.FindByID(c.Request.Context(), claims.UserID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "user_not_found"})
+		return nil, nil, false
+	}
+	if user.IsAdmin {
+		return user, nil, true
+	}
+	if h.cfg.Packages == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable"})
+		return nil, nil, false
+	}
+	if user.PackageID == nil {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backups_not_included", "detail": "your hosting plan does not include self-service backups"})
+		return nil, nil, false
+	}
+	pkg, perr := h.cfg.Packages.FindByID(c.Request.Context(), *user.PackageID)
+	if perr != nil || pkg == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable"})
+		return nil, nil, false
+	}
+	return user, pkg, true
+}
+
+// findMeSchedule returns the caller's OWN account_backup schedule, or nil. A
+// tenant-owned schedule is marked by a non-null user_id == the tenant (admin
+// schedules always leave user_id NULL and target users via the join table), so
+// ListForUser(userID) returns only the tenant's own rows — a tenant can never
+// reach an admin-created fan-out schedule through this path.
+func (h *meBackupHandler) findMeSchedule(ctx context.Context, userID string) *models.BackupSchedule {
+	rows, err := h.cfg.Schedules.ListForUser(ctx, userID)
+	if err != nil {
+		return nil
+	}
+	for i := range rows {
+		if rows[i].Kind == models.BackupScheduleKindAccount {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
+func (h *meBackupHandler) getSchedule(c *gin.Context) {
+	user, pkg, ok := h.meScheduleGate(c)
+	if !ok {
+		return
+	}
+	settings, serr := h.cfg.Settings.Get(c.Request.Context())
+	if serr != nil || settings == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "settings_unavailable"})
+		return
+	}
+	view := meScheduleView{
+		Content:  models.BackupContentFull,
+		CronExpr: settings.TenantBackupCron,
+	}
+	if pkg != nil {
+		view.ScheduledBackupsEnabled = pkg.BackupsEnabled() && pkg.ScheduledBackupsEnabled
+		view.MaxBackups = pkg.MaxBackups
+	}
+	if fires, ferr := internalbackup.PreviewFires(settings.TenantBackupCron, time.Now().UTC(), 3); ferr == nil {
+		for _, f := range fires {
+			view.NextFirings = append(view.NextFirings, f.Format(time.RFC3339))
+		}
+	}
+	if sched := h.findMeSchedule(c.Request.Context(), user.ID); sched != nil {
+		view.Exists = true
+		view.Enabled = sched.Enabled
+		view.Content = models.NormalizeBackupContent(sched.Content)
+		view.KeepDaily, view.KeepWeekly, view.KeepMonthly = sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly
+		if dests, derr := h.cfg.Schedules.GetDestinations(c.Request.Context(), sched.ID); derr == nil && len(dests) > 0 {
+			view.DestinationID = dests[0].ID
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": view})
+}
+
+// meScheduleRequest is the tenant-editable schedule payload. cron_expr is NOT a
+// field — the tenant can never set the timing; it is always forced from the
+// admin-owned server_settings.tenant_backup_cron.
+type meScheduleRequest struct {
+	Enabled       bool   `json:"enabled"`
+	Content       string `json:"content"`
+	DestinationID string `json:"destination_id"`
+	KeepDaily     *int   `json:"keep_daily"`
+	KeepWeekly    *int   `json:"keep_weekly"`
+	KeepMonthly   *int   `json:"keep_monthly"`
+}
+
+func (h *meBackupHandler) putSchedule(c *gin.Context) {
+	user, pkg, ok := h.meScheduleGate(c)
+	if !ok {
+		return
+	}
+	// Admins and plans without scheduled backups cannot use the tenant card.
+	if pkg == nil || !pkg.BackupsEnabled() || !pkg.ScheduledBackupsEnabled {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "scheduled_backups_not_enabled", "detail": "your hosting plan does not allow scheduled backups"})
+		return
+	}
+	var req meScheduleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
+		return
+	}
+	if !validBackupContent(req.Content) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_option", "detail": "content must be full/files/database/folders"})
+		return
+	}
+	content := models.NormalizeBackupContent(req.Content)
+	// A schedule with no destination is inert (the fan-out skips it), so an
+	// enabled schedule MUST carry an allowed, enabled destination. When disabled
+	// the tenant may still save their content/destination choice for later.
+	destID := strings.TrimSpace(req.DestinationID)
+	if destID != "" {
+		if h.cfg.Destinations == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "destination_lookup_unavailable"})
+			return
+		}
+		d, derr := h.cfg.Destinations.Get(c.Request.Context(), destID)
+		if derr != nil || d == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "unknown_destination", "detail": "no such backup destination"})
+			return
+		}
+		if !d.Enabled {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_disabled", "detail": "that backup destination is disabled"})
+			return
+		}
+		if !pkg.AllowsBackupKind(d.Kind) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "destination_not_allowed", "detail": fmt.Sprintf("your hosting plan does not allow the %q backup destination", d.Kind)})
+			return
+		}
+	}
+	if req.Enabled && destID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_required", "detail": "pick a backup destination to enable scheduled backups"})
+		return
+	}
+	// Retention: no keep_* may exceed the package's max_backups cap.
+	maxKeep := int(pkg.MaxBackups)
+	clamp := func(v *int) *int {
+		if v == nil {
+			return nil
+		}
+		n := *v
+		if n < 0 {
+			n = 0
+		}
+		if n > maxKeep {
+			n = maxKeep
+		}
+		return &n
+	}
+	keepDaily, keepWeekly, keepMonthly := clamp(req.KeepDaily), clamp(req.KeepWeekly), clamp(req.KeepMonthly)
+	// cron_expr is ALWAYS the admin-owned time — never anything from the body.
+	settings, serr := h.cfg.Settings.Get(c.Request.Context())
+	if serr != nil || settings == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "settings_unavailable"})
+		return
+	}
+	next, ferr := internalbackup.NextFire(settings.TenantBackupCron, time.Now().UTC())
+	if ferr != nil {
+		// A misconfigured admin cron shouldn't 500 the tenant; surface it.
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "schedule_time_invalid", "detail": "the scheduled-backup time set by your host is invalid; contact support"})
+		return
+	}
+	uid := user.ID
+	sched := h.findMeSchedule(c.Request.Context(), user.ID)
+	if sched == nil {
+		sched = &models.BackupSchedule{
+			ID:     ids.NewULID(),
+			Kind:   models.BackupScheduleKindAccount,
+			UserID: &uid,
+		}
+		sched.CronExpr = settings.TenantBackupCron
+		sched.Content = content
+		sched.Enabled = req.Enabled
+		sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
+		sched.NextRunAt = &next
+		if err := h.cfg.Schedules.Create(c.Request.Context(), sched); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
+			return
+		}
+	} else {
+		sched.UserID = &uid
+		sched.CronExpr = settings.TenantBackupCron
+		sched.Content = content
+		sched.Enabled = req.Enabled
+		sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
+		sched.NextRunAt = &next
+		if err := h.cfg.Schedules.Update(c.Request.Context(), sched); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update"})
+			return
+		}
+	}
+	// Scope the fan-out to THIS tenant only (empty user list would fan out to
+	// every non-admin user at tick time — never for a tenant-owned schedule).
+	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), sched.ID, []string{uid}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
+		return
+	}
+	dests := []string{}
+	if destID != "" {
+		dests = append(dests, destID)
+	}
+	if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), sched.ID, dests); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (h *meBackupHandler) list(c *gin.Context) {
