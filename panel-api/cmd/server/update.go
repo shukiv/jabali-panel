@@ -1407,6 +1407,26 @@ test -x node_modules/.bin/tsc || {
 			}
 			return nil
 		}},
+		{"sync stalwart binary", func() error {
+			// install.sh installs the Stalwart SERVER binary only on a fresh
+			// install; the update path re-copies the unit + push-cert (above)
+			// but never re-downloaded the binary, so a version bump (GH #525)
+			// never reached existing hosts — they stayed on the originally-
+			// installed version. upgrade_stalwart_binary is idempotent: a no-op
+			// when already at the pinned STALWART_VERSION, else it downloads +
+			// checksum-verifies + atomically swaps the binary and restarts
+			// jabali-stalwart. Non-fatal — a host that can't upgrade keeps
+			// running the old binary rather than failing the whole update.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && upgrade_stalwart_binary"); err != nil {
+				fmt.Printf("  (stalwart binary upgrade failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync stalwart spam-filter rules", func() error {
 			// Vendor the pinned spam-filter rules bundle + (re-)install
 			// the weekly auto-refresh timer + script. Existing hosts

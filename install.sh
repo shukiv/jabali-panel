@@ -10630,8 +10630,44 @@ install_notify_template() {
 #   /etc/jabali-panel/bulwark.env       — Bulwark runtime env (jabali-webmail:jabali-webmail, 0640)
 #   /etc/jabali-panel/bulwark-session.key — Bulwark SESSION_SECRET (jabali-webmail:jabali-webmail, 0640)
 
+# STALWART_VERSION is the single pin for the Stalwart Mail server binary,
+# consumed by both install_stalwart (fresh install) and upgrade_stalwart_binary
+# (the jabali update path). Bump here + install/stalwart.sha256 together.
+STALWART_VERSION="0.16.14"
+
+# upgrade_stalwart_binary is the jabali-update entry point for the Stalwart
+# server binary (GH #525). install.sh's full install_stalwart runs on fresh
+# installs only; the update path re-copies the unit + push-cert but never
+# re-downloads the SERVER binary, so a version bump never reached existing
+# hosts (they stayed on the originally-installed version). This narrow function
+# does JUST the binary: compare the installed version to the pinned target and,
+# on mismatch, download + checksum-verify + atomically swap it (via the shared
+# _install_stalwart_binary), then restart jabali-stalwart so the new binary goes
+# live. Idempotent — a no-op when already at STALWART_VERSION. Mirrors how
+# install_kratos / _install_bulwark self-upgrade on update.
+upgrade_stalwart_binary() {
+  local stalwart_binary="/usr/local/bin/stalwart"
+  if [[ -x "$stalwart_binary" ]]; then
+    local installed
+    installed=$("$stalwart_binary" --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "unknown")
+    if [[ "$installed" == "$STALWART_VERSION" ]]; then
+      _ok "Stalwart already at $STALWART_VERSION"
+      return 0
+    fi
+    _log "upgrading Stalwart $installed -> $STALWART_VERSION"
+  else
+    _log "installing Stalwart $STALWART_VERSION (binary absent)"
+  fi
+  _install_stalwart_binary "$STALWART_VERSION"
+  if systemctl is-active --quiet jabali-stalwart 2>/dev/null; then
+    systemctl restart jabali-stalwart \
+      || _warn "jabali-stalwart restart failed after binary upgrade — check 'journalctl -u jabali-stalwart'"
+    _ok "jabali-stalwart restarted on Stalwart $STALWART_VERSION"
+  fi
+}
+
 install_stalwart() {
-  local stalwart_version="0.16.14"
+  local stalwart_version="$STALWART_VERSION"
   _log "installing Stalwart Mail Server (v${stalwart_version})"
 
   # M353 / GH #545 concurrency guard. install_stalwart runs from TWO paths
