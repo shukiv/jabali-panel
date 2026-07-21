@@ -71,6 +71,11 @@ type pythonAppApplyParams struct {
 type pythonAppApplyResult struct {
 	Active bool   `json:"active"`
 	Unit   string `json:"unit"`
+	// Detail carries the unit's recent journal when the app started but isn't
+	// active, so the panel surfaces the real startup error (e.g. gunicorn
+	// failing to import the entrypoint) instead of a generic "not active" — the
+	// exact "nothing in logs" wall from GH #357.
+	Detail string `json:"detail,omitempty"`
 }
 
 func pythonAppUnitName(appID string) string { return "jabali-app-" + appID + ".service" }
@@ -199,7 +204,16 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	}
 
 	active := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run() == nil
-	return pythonAppApplyResult{Active: active, Unit: unit}, nil
+	res := pythonAppApplyResult{Active: active, Unit: unit}
+	if !active {
+		// Capture WHY it isn't active so the panel shows the real startup error
+		// instead of only "not active — check journalctl" (GH #357).
+		// --output=cat drops syslog metadata; last 15 lines keep it bounded.
+		if out, jerr := exec.CommandContext(ctx, "journalctl", "-u", unit, "-n", "20", "--no-pager", "--output=cat").CombinedOutput(); jerr == nil {
+			res.Detail = lastLines(strings.TrimSpace(string(out)), 15)
+		}
+	}
+	return res, nil
 }
 
 // derivePythonStart builds the gunicorn (WSGI) / uvicorn (ASGI) command bound

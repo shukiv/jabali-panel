@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/oklog/ulid/v2"
 
@@ -106,6 +107,7 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 	var res struct {
 		Active bool   `json:"active"`
 		Unit   string `json:"unit"`
+		Detail string `json:"detail"`
 	}
 	_ = json.Unmarshal(raw, &res)
 	status := models.PythonAppStatusFailed
@@ -113,11 +115,16 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 	if res.Active {
 		status = models.PythonAppStatusRunning
 	} else {
+		// GH #357: surface the ACTUAL startup error (the unit's journal tail the
+		// agent captured), not just "not active" — that opaque message was the
+		// reporter's "nothing in logs" wall. Fall back to the pointer when the
+		// agent couldn't read the journal.
 		m := "app started but is not active — check the app logs (journalctl -u " + res.Unit + ")"
+		if d := strings.TrimSpace(res.Detail); d != "" {
+			m = "app started but is not active. Recent logs (journalctl -u " + res.Unit + "):\n" + d
+		}
 		lastErr = &m
-		// GH #357: surface the failure server-side, not just in the DB row —
-		// otherwise an app that goes pending→failed leaves "nothing in logs".
-		r.log.Warn("pyapp: app applied but not active", "id", app.ID, "unit", res.Unit)
+		r.log.Warn("pyapp: app applied but not active", "id", app.ID, "unit", res.Unit, "detail", res.Detail)
 	}
 	if app.Status != status {
 		if err := r.pythonApps.UpdateStatus(ctx, app.ID, status, lastErr); err != nil {
