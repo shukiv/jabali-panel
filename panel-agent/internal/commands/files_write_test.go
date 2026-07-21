@@ -3,7 +3,13 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -119,5 +125,55 @@ func TestFilesWriteHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFilesWriteHandler_NewFileGroupWwwData is an integration gate for GH #533:
+// a file created via files.write must land group www-data (so nginx, running as
+// www-data, can serve it through the 0640 group-read bit) — NOT the user's own
+// primary group, which shows up to operators as "User:User". Chowning to
+// www-data needs privilege and a real /home/<user>, so this is gated on
+// root + JABALI_FMTEST_USER=<an existing hosting user>; it skips in the
+// unprivileged CI job (the error-case unit tests above still run there).
+func TestFilesWriteHandler_NewFileGroupWwwData(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown a new file to www-data; set JABALI_FMTEST_USER and run as root")
+	}
+	username := os.Getenv("JABALI_FMTEST_USER")
+	if username == "" {
+		t.Skip("set JABALI_FMTEST_USER=<existing hosting user> to run this integration gate")
+	}
+	if _, err := user.Lookup(username); err != nil {
+		t.Skipf("JABALI_FMTEST_USER %q not found: %v", username, err)
+	}
+	wg, err := user.LookupGroup("www-data")
+	if err != nil {
+		t.Skip("www-data group not present; skipping")
+	}
+	wantGid, _ := strconv.Atoi(wg.Gid)
+
+	abs := filepath.Join("/home", username, fmt.Sprintf("gh533-fmtest-%d.txt", os.Getpid()))
+	defer os.Remove(abs)
+
+	params, _ := json.Marshal(filesWriteParams{
+		UserID:   "fmtest",
+		Username: username,
+		Path:     abs,
+		Content:  "gh533",
+	})
+	if _, err := filesWriteHandler(context.Background(), params); err != nil {
+		t.Fatalf("files.write failed: %v", err)
+	}
+
+	fi, err := os.Stat(abs)
+	if err != nil {
+		t.Fatalf("stat %s: %v", abs, err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("stat_t unavailable")
+	}
+	if int(st.Gid) != wantGid {
+		t.Errorf("new file group = %d, want www-data (%d) — GH #533 regression", st.Gid, wantGid)
 	}
 }

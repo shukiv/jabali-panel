@@ -131,6 +131,17 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 		uid, _ := strconv.Atoi(u.Uid)
 		gid, _ := strconv.Atoi(u.Gid)
+		// New files under the docroot must be group www-data so nginx (running
+		// as www-data) can serve them via the 0640 group-read bit set below; the
+		// user's own primary group would leave them unreadable AND surface to the
+		// operator as "User:User" instead of "User:www-data" (GH #533). Mirror
+		// files.mkdir / files.extract (hostingIDs): keep the user's gid only if
+		// www-data is somehow absent.
+		if g, gerr := user.LookupGroup("www-data"); gerr == nil {
+			if wgid, werr := strconv.Atoi(g.Gid); werr == nil {
+				gid = wgid
+			}
+		}
 
 		// Generate temp filename with random suffix
 		randBytes := make([]byte, 8)
