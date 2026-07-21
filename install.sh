@@ -10631,7 +10631,7 @@ install_notify_template() {
 #   /etc/jabali-panel/bulwark-session.key — Bulwark SESSION_SECRET (jabali-webmail:jabali-webmail, 0640)
 
 install_stalwart() {
-  local stalwart_version="0.16.12"
+  local stalwart_version="0.16.14"
   _log "installing Stalwart Mail Server (v${stalwart_version})"
 
   # M353 / GH #545 concurrency guard. install_stalwart runs from TWO paths
@@ -10707,7 +10707,7 @@ install_stalwart() {
   # across 0.14.x-0.16.x ("Stalwart Mail Server v0.16.0").
   if [[ -x "$stalwart_binary" ]]; then
     local installed_version
-    # `stalwart --version` prints a bare semver ("0.16.12", no `v` prefix), so
+    # `stalwart --version` prints a bare semver ("0.16.14", no `v` prefix), so
     # match the plain version — an anchored `v\K` matched nothing here, leaving
     # installed_version="unknown" and re-downloading the binary on EVERY run
     # (every `jabali update` / `--install-module mail`). (M353 idempotency fix.)
