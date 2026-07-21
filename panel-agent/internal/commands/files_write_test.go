@@ -176,4 +176,30 @@ func TestFilesWriteHandler_NewFileGroupWwwData(t *testing.T) {
 	if int(st.Gid) != wantGid {
 		t.Errorf("new file group = %d, want www-data (%d) — GH #533 regression", st.Gid, wantGid)
 	}
+
+	// Append mode that CREATES a brand-new file must also land group www-data
+	// (GH #533 follow-up: previously left root-owned, no chown).
+	absAppend := filepath.Join("/home", username, fmt.Sprintf("gh533-fmtest-append-%d.txt", os.Getpid()))
+	defer os.Remove(absAppend)
+	appendParams, _ := json.Marshal(filesWriteParams{
+		UserID:   "fmtest",
+		Username: username,
+		Path:     absAppend,
+		Content:  "gh533-append",
+		Mode:     "append",
+	})
+	if _, err := filesWriteHandler(context.Background(), appendParams); err != nil {
+		t.Fatalf("files.write (append create) failed: %v", err)
+	}
+	afi, err := os.Stat(absAppend)
+	if err != nil {
+		t.Fatalf("stat %s: %v", absAppend, err)
+	}
+	ast, ok := afi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("stat_t unavailable (append)")
+	}
+	if int(ast.Gid) != wantGid {
+		t.Errorf("append-created file group = %d, want www-data (%d) — GH #533 regression", ast.Gid, wantGid)
+	}
 }

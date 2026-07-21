@@ -209,7 +209,16 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}, nil
 	}
 
-	// Append mode: open existing file or create new one, escape-proof.
+	// Append mode: open existing file or create new one, escape-proof. Record
+	// whether the file already existed BEFORE opening: if O_CREATE makes a new
+	// one, the agent (root) would leave it root-owned, so it must be chowned to
+	// <user>:www-data afterwards — the same invariant the overwrite path applies
+	// (GH #533 follow-up). An existing file's ownership is left untouched.
+	preExisting, existErr := scope.ExistsInScope(cleanPath)
+	if existErr != nil {
+		return nil, classifyFSWriteErr("stat_append", existErr)
+	}
+
 	file, err := scope.OpenInScope(cleanPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, sensitiveFileMode(cleanPath, 0640))
 	if err != nil {
 		return nil, classifyFSWriteErr("open_append", err)
@@ -220,6 +229,29 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	n, err := file.WriteString(p.Content)
 	if err != nil {
 		return nil, classifyFSWriteErr("write_append", err)
+	}
+
+	// Newly created via O_CREATE: normalize ownership to <user>:www-data through
+	// the open fd (no path re-resolve). Chown after the write so an over-quota
+	// target surfaces EDQUOT here, classified like the overwrite path.
+	if preExisting == nil {
+		u, uerr := user.Lookup(p.Username)
+		if uerr != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("failed to lookup user %q: %v", p.Username, uerr),
+			}
+		}
+		uid, _ := strconv.Atoi(u.Uid)
+		gid, _ := strconv.Atoi(u.Gid)
+		if g, gerr := user.LookupGroup("www-data"); gerr == nil {
+			if wgid, werr := strconv.Atoi(g.Gid); werr == nil {
+				gid = wgid
+			}
+		}
+		if err := file.Chown(uid, gid); err != nil {
+			return nil, classifyFSWriteErr("chown_append", err)
+		}
 	}
 
 	return &filesWriteResponse{
