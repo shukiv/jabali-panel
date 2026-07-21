@@ -4,9 +4,10 @@
 //   1. Source kind (cPanel | DirectAdmin | HestiaCP | WHM pkgacct)
 //   2. Connection: host + admin user + ingest (live SSH vs cpmove upload
 //      for cpanel; live only for the others). Secrets POSTed to /:id/secrets.
-//   3. (WHM only) Account discovery + multi-select picker. Other source
-//      kinds skip this step.
-//   4. Review + submit. For WHM the picker → POST /bulk creates one
+//   3. (multi-account kinds: WHM / DirectAdmin / HestiaCP / Plesk) Account
+//      discovery + multi-select picker. Single-account kinds (cpanel, imap,
+//      wordpress_*) skip this step.
+//   4. Review + submit. For the picker kinds → POST /bulk creates one
 //      job per selected account; the wizard's own draft row stays as
 //      the "configuration template" and is destroyed at success.
 //
@@ -69,7 +70,7 @@ const SOURCE_OPTIONS = [
   // migrate_run_cmd.go.
   { value: "directadmin", label: "DirectAdmin (single account)" },
   { value: "hestiacp", label: "HestiaCP (single account)" },
-  { value: "plesk", label: "Plesk (single subscription)" },
+  { value: "plesk", label: "Plesk (subscriptions)" },
 ];
 
 const SOURCE_DESC: Record<string, string> = {
@@ -91,6 +92,12 @@ const MULTI_ACCOUNT_KINDS = new Set([
   "whm_pkgacct",
   "directadmin",
   "hestiacp",
+  // GH #429: Plesk enumerates subscriptions via `plesk bin subscription --list`
+  // (Discoverer.ListAccounts), so it MUST go through the account picker. Without
+  // this it skipped selection, kept the SSH principal (root) as the account, and
+  // created a bogus `root` user importing nothing. The picker lets the operator
+  // choose the real subscription(s); a reseller can select several at once.
+  "plesk",
 ]);
 function isMultiAccount(kind: string) {
   return MULTI_ACCOUNT_KINDS.has(kind);
