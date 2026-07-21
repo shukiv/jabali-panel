@@ -3588,6 +3588,14 @@ harvest_reachable_upstream() {
   fi
   # 2) any non-loopback nameserver still visible in /etc/resolv.conf.
   candidates+=" $(awk '/^[[:space:]]*nameserver[[:space:]]/{print $2}' /etc/resolv.conf 2>/dev/null)"
+  # 3) the upstream we harvested EARLY into resolved's drop-in, BEFORE flipping
+  #    resolv.conf at the recursor. GH #545: on a masked-resolved / LXC host the
+  #    provider resolver is gone from resolvectl + resolv.conf by probe-time
+  #    (both now point at the loopback recursor), but this drop-in still records
+  #    it — this is what makes the auto-heal actually recover on a locked-down box.
+  candidates+=" $(awk -F= '/^[[:space:]]*DNS=/{print $2}' /etc/systemd/resolved.conf.d/jabali.conf 2>/dev/null)"
+  # 4) systemd-networkd per-interface DNS= (DHCP/static provider resolver).
+  candidates+=" $(awk -F= '/^[[:space:]]*DNS=/{print $2}' /etc/systemd/network/*.network 2>/dev/null)"
   local seen=" "
   for ns in $candidates; do
     case "$ns" in 127.*|::1|"") continue ;; esac
@@ -3610,6 +3618,28 @@ repoint_recursor_forward() {
   sed -i -E "s|^forward-zones-recurse=\\.=.*|forward-zones-recurse=.=${up}|" "$conf"
   timeout 30 systemctl restart pdns-recursor || return 1
   systemctl is-active --quiet pdns-recursor || return 1
+  return 0
+}
+
+# mark_dns_degraded <reason> — GH #545. The resolved→recursor→public DNS chain is
+# broken and auto-heal (harvest_reachable_upstream + repoint) could not recover
+# it. Historically this called _die and aborted the whole install right at the DNS
+# step — the single most-reported fresh-install blocker on locked-down VPS. Per
+# operator decision we DO NOT abort: record a marker the panel surfaces as a
+# persistent warning, log the fix, and let the install finish so the user gets a
+# working panel to repair DNS from (Admin → DNS / JABALI_DNS_FORWARDER, ADR-0047).
+# Downstream steps that need DNS may still fail on a truly-offline box, but a
+# recoverable DNS hiccup must never cost the entire install.
+mark_dns_degraded() {
+  local reason="$1"
+  mkdir -p /etc/jabali 2>/dev/null || true
+  {
+    printf 'reason=%s\n' "$reason"
+    printf 'hint=re-run with JABALI_DNS_FORWARDER=<a resolver this box can reach>, or fix the recursor forward in Admin -> DNS (ADR-0047)\n'
+    printf 'since=install\n'
+  } > /etc/jabali/dns-degraded 2>/dev/null || true
+  chmod 0644 /etc/jabali/dns-degraded 2>/dev/null || true
+  _warn "DNS chain unresolved (${reason}). CONTINUING the install so you get a working panel — DNS is DEGRADED. Marker: /etc/jabali/dns-degraded. Fix: re-run with JABALI_DNS_FORWARDER=<a reachable resolver> (ADR-0047) or repair from Admin -> DNS. The panel shows a warning until this resolves."
   return 0
 }
 
@@ -3995,16 +4025,19 @@ RESOLVEDEOF
       if repoint_recursor_forward "$_hu_heal" && _probe_dns 127.0.0.53 deb.debian.org; then
         _ok "DNS chain recovered: recursor now forwards through ${_hu_heal}"
       else
-        _die "resolved→recursor→public chain broken and auto-heal via ${_hu_heal} did not recover it. Set JABALI_DNS_FORWARDER=<a resolver this box can reach> and re-run (ADR-0047). Logs: 'journalctl -u pdns-recursor -u systemd-resolved'."
+        mark_dns_degraded "resolved->recursor->public chain broken and auto-heal via ${_hu_heal} did not recover it"
+        return 0
       fi
     else
-      _die "resolved→recursor→public chain broken (dig @127.0.0.53 deb.debian.org failed after 8 retries) and no reachable upstream resolver was found to auto-heal with. This host cannot reach public DNS — common on locked-down VPS (provider blocks outbound 53 or only allows its own resolver). Fix: re-run with JABALI_DNS_FORWARDER=<a resolver this box CAN reach, e.g. your provider's resolver or 1.1.1.1> so the recursor FORWARDS to it instead of recursing (ADR-0047). Diagnose: 'dig +short @1.1.1.1 deb.debian.org' and 'dig +short @<provider-resolver> deb.debian.org'. Logs: 'journalctl -u pdns-recursor -u systemd-resolved'."
+      mark_dns_degraded "resolved->recursor->public chain broken and no reachable upstream resolver was found to auto-heal with (this host cannot reach public DNS -- common on locked-down VPS that block outbound 53 or only allow the provider's own resolver)"
+      return 0
     fi
   fi
 
   # Probe 2: recursor → public directly. Isolates recursor from stub.
   if ! _probe_dns 127.0.0.1 deb.debian.org; then
-    _die "recursor→public chain broken (dig @127.0.0.1 deb.debian.org failed after 8 retries) — the recursor can't reach public DNS from this host. Fix: re-run with JABALI_DNS_FORWARDER=<a reachable resolver, e.g. 1.1.1.1 or your provider's resolver> so the recursor forwards over TCP instead of recursing (ADR-0047). Check recursor logs: 'journalctl -u pdns-recursor'."
+    mark_dns_degraded "recursor->public chain broken (dig @127.0.0.1 deb.debian.org failed after retries) -- the recursor cannot reach public DNS from this host"
+    return 0
   fi
 
   # Probe 3: drop-in merge sanity (ADVISORY, non-fatal). resolvectl SHOULD
