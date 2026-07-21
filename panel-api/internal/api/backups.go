@@ -1202,6 +1202,7 @@ func (h *meBackupHandler) create(c *gin.Context) {
 	// This gate FAILS CLOSED: any inability to resolve the limit (missing package
 	// repo, package load error, no package) denies the backup — a limit gate must
 	// never silently allow an ungated tenant backup on a misconfiguration.
+	var pkg *models.HostingPackage
 	if !user.IsAdmin {
 		if h.cfg.Packages == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable", "detail": "backup entitlement cannot be resolved right now"})
@@ -1211,7 +1212,8 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "backups_not_included", "detail": "your hosting plan does not include self-service backups"})
 			return
 		}
-		pkg, perr := h.cfg.Packages.FindByID(c.Request.Context(), *user.PackageID)
+		var perr error
+		pkg, perr = h.cfg.Packages.FindByID(c.Request.Context(), *user.PackageID)
 		if perr != nil || pkg == nil {
 			// Fail closed: cannot confirm the entitlement -> deny.
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable", "detail": "backup entitlement cannot be resolved right now"})
@@ -1233,10 +1235,37 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			return
 		}
 	}
-	var req createBackupRequest // reuse: content/folders/compression (destination ignored for me-backups)
+	var req createBackupRequest // content/folders/compression + optional destination_id
 	_ = c.ShouldBindJSON(&req)
 	if !validBackupContent(req.Content) || !validBackupCompression(req.Compression) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_option", "detail": "content must be full/files/database/folders; compression must be off/auto/max"})
+		return
+	}
+	// GH #454: resolve + gate the backup destination. The package's allowed
+	// destination kinds gate which destinations a tenant may target, INCLUDING
+	// the implicit "local" default (a tenant whose plan doesn't allow "local"
+	// must pick an allowed remote). Admins are unrestricted.
+	var dest *models.BackupDestination
+	destKind := models.BackupDestinationKindLocal
+	if strings.TrimSpace(req.DestinationID) != "" {
+		if h.cfg.Destinations == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "destination_lookup_unavailable"})
+			return
+		}
+		d, derr := h.cfg.Destinations.Get(c.Request.Context(), strings.TrimSpace(req.DestinationID))
+		if derr != nil || d == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "unknown_destination", "detail": "no such backup destination"})
+			return
+		}
+		if !d.Enabled {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_disabled", "detail": "that backup destination is disabled"})
+			return
+		}
+		dest = d
+		destKind = d.Kind
+	}
+	if !user.IsAdmin && (pkg == nil || !pkg.AllowsBackupKind(destKind)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "destination_not_allowed", "detail": fmt.Sprintf("your hosting plan does not allow the %q backup destination", destKind)})
 		return
 	}
 	job := &models.BackupJob{
@@ -1245,6 +1274,10 @@ func (h *meBackupHandler) create(c *gin.Context) {
 		Kind:      models.BackupJobKindAccountBackup,
 		CreatedAt: time.Now().UTC(),
 		Status:    models.BackupJobStatusQueued,
+	}
+	if dest != nil {
+		did := dest.ID
+		job.DestinationID = &did
 	}
 	if err := h.cfg.Jobs.Create(c.Request.Context(), job); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
@@ -1270,6 +1303,14 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			"folders":            req.Folders,
 			"compression":        req.Compression,
 			"metadata":           h.cfg.buildAccountMetadata(c.Request.Context(), user),
+		}
+		// Route to the chosen destination (GH #454). destWireParams supplies
+		// repo_url + credentials_ref + destination_kind (+ sftp); absent = the
+		// agent's local repo default, unchanged.
+		if dest != nil {
+			for k, v := range destWireParams(dest) {
+				params[k] = v
+			}
 		}
 		if _, err := h.cfg.Agent.Call(ctx, "backup.create", params); err != nil {
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,
