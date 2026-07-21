@@ -155,6 +155,15 @@ failed stage. Already-done stages are skipped.`,
 				targetUser = job.SourceUser
 				fmt.Printf("  → target-user defaulted from source: %s\n", targetUser)
 			}
+			// GH #429: never create / target a reserved system user (root,
+			// admin, ...). This happens when a migration runs as the SSH
+			// principal `root` and the source never resolves it to a real
+			// hosting account, so SourceUser (and thus targetUser) stays
+			// "root" — the old behaviour auto-created a bogus `root` jabali
+			// user and imported nothing. Fail loudly instead.
+			if migrate.IsReservedAccount(targetUser) {
+				return failJob(fmt.Errorf("refusing to migrate into reserved system user %q (GH #429): the source account did not resolve to a real hosting account (a run as SSH `root` with no subscription/account selected). Re-run selecting a real source account, or pass an explicit --target-username", targetUser))
+			}
 			if targetEmail == "" && meta != nil && meta.Email != "" {
 				targetEmail = meta.Email
 				fmt.Printf("  → target-email detected from cpmove: %s\n", targetEmail)
@@ -1460,6 +1469,14 @@ func cpanelAnalyzeCallback(jobsRepo repository.MigrationJobRepository) migrate.S
 			if uErr := jobsRepo.UpdateSourceUser(ctx, job.ID, mf.Source.User); uErr == nil {
 				job.SourceUser = mf.Source.User
 			}
+		}
+		// GH #429: an account that resolves to nothing (0 domains, databases,
+		// mailboxes and apps) must NOT proceed to restore and report "done" —
+		// that produced the misleading "finished, 0 imported" result and, via
+		// the target-user default, a bogus destination user. Fail analyze with
+		// a clear message so the operator picks a real account instead.
+		if len(mf.Domains) == 0 && len(mf.Databases) == 0 && len(mf.Mailboxes) == 0 && len(mf.Apps) == 0 {
+			return 0, nil, fmt.Errorf("no migratable objects found for account %q on the source (0 domains, databases, mailboxes and apps) — nothing to import; re-check the source account/subscription selection", job.SourceUser)
 		}
 		// Persist manifest to migration_jobs.manifest_json so resume
 		// + validate + restore can read without re-doing discovery.

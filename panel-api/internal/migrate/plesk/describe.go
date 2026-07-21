@@ -40,9 +40,21 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	// subscription. When the operator supplied an SSH principal rather
 	// than a subscription name, auto-pivot to the sole subscription on a
 	// single-tenant source; a multi-tenant source errors with the list.
-	probe := fmt.Sprintf("plesk bin subscription --info '%s'",
-		strings.ReplaceAll(accountID, "'", `'\''`))
-	if _, err := s.run(ctx, d.CommandTimeout, probe); err != nil {
+	// A system / service login (root, admin, ...) is never a subscription, so
+	// skip the --info probe entirely and resolve to the real subscription via
+	// ListAccounts. GH #429: a migration run as the SSH principal `root` kept
+	// SourceUser="root" (no subscription-select step), and `plesk bin
+	// subscription --info root` can exit 0 on some builds, so the probe accepted
+	// it — the run then created a bogus `root` jabali user and imported nothing.
+	needResolve := migrate.IsReservedAccount(accountID)
+	if !needResolve {
+		probe := fmt.Sprintf("plesk bin subscription --info '%s'",
+			strings.ReplaceAll(accountID, "'", `'\''`))
+		if _, err := s.run(ctx, d.CommandTimeout, probe); err != nil {
+			needResolve = true
+		}
+	}
+	if needResolve {
 		accounts, listErr := d.ListAccounts(ctx, s)
 		if listErr != nil {
 			return nil, fmt.Errorf("subscription %q not found on source and auto-detect failed: %w", accountID, listErr)

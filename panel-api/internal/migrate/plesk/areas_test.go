@@ -150,3 +150,31 @@ func TestAccountSize_UnreadableIsZeroNotError(t *testing.T) {
 		t.Errorf("unparseable du → (0,nil), got (%d,%v)", n, err)
 	}
 }
+
+// TestDescribeAccount_ReservedRootResolvesToSubscription pins the GH #429 fix:
+// a migration run as the SSH principal `root` must NOT be accepted as a
+// subscription (the fixture's --info probe returns nil error, which the old
+// code treated as "root is a valid subscription"). With the reserved-account
+// guard, `root` resolves to the sole real subscription instead.
+func TestDescribeAccount_ReservedRootResolvesToSubscription(t *testing.T) {
+	d := New()
+	s := fixtureSession(map[string]string{
+		"subscription --list": "example.com\n",
+	})
+	m, err := d.DescribeAccount(context.Background(), s, "root")
+	if err != nil {
+		// Acceptable outcome too (resolved away from root, then a load-bearing
+		// area had no fixture) — the one thing that must never happen is a
+		// manifest built for "root".
+		if strings.Contains(err.Error(), `"root"`) && strings.Contains(err.Error(), "not a subscription") {
+			t.Fatalf("root was rejected outright instead of resolving to the sole subscription: %v", err)
+		}
+		return
+	}
+	if m.Source.User == "root" {
+		t.Fatalf("GH #429 regression: DescribeAccount(root) built a manifest for user=root")
+	}
+	if m.Source.User != "example.com" {
+		t.Errorf("root should resolve to the sole subscription example.com, got %q", m.Source.User)
+	}
+}
