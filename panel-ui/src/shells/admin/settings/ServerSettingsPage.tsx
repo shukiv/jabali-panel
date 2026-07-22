@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
 import {
@@ -123,6 +124,7 @@ function notifyError(notify: NotifyFn, title: string, err: unknown) {
 // form + Save button; PATCH /admin/settings supports partial updates so
 // sending only this tab's fields doesn't disturb DNS settings.
 const GeneralSettingsTab = () => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<ServerSettings>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -193,7 +195,7 @@ const GeneralSettingsTab = () => {
               type="warning"
               showIcon
               icon={<WarningOutlined />}
-              title="Hostname change"
+              title={t("settings.hostname_change")}
               description={
                 <>
                   Changing the hostname updates the OS hostname and the
@@ -210,11 +212,11 @@ const GeneralSettingsTab = () => {
         }}
       </Form.Item>
 
-      <Card title="Identity" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.identity")} style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Hostname"
+              label={t("settings.hostname")}
               name="hostname"
               rules={[
                 { required: true, message: "Hostname required" },
@@ -231,7 +233,7 @@ const GeneralSettingsTab = () => {
           </Col>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Admin email"
+              label={t("settings.admin_email")}
               name="admin_email"
               rules={[{ type: "email", message: "Invalid email" }]}
               extra="Used as the registration email for Let's Encrypt / ACME. Required before issuing SSL certificates."
@@ -244,7 +246,7 @@ const GeneralSettingsTab = () => {
         <Row gutter={16}>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Public IPv4"
+              label={t("settings.public_ipv4")}
               name="public_ipv4"
               rules={[
                 { required: true, message: "IPv4 required" },
@@ -259,7 +261,7 @@ const GeneralSettingsTab = () => {
           </Col>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Public IPv6 (optional)"
+              label={t("settings.public_ipv6_optional")}
               name="public_ipv6"
               rules={[
                 {
@@ -274,15 +276,15 @@ const GeneralSettingsTab = () => {
         </Row>
       </Card>
 
-      <Card title="Server Time" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.server_time")} style={{ marginBottom: 16 }}>
         <Form.Item
-          label="Timezone"
+          label={t("settings.timezone")}
           name="timezone"
           rules={[{ required: false }]}
           extra="Select your server's timezone. Changes take effect immediately."
         >
           <Select
-            placeholder="Select timezone"
+            placeholder={t("settings.select_timezone")}
             allowClear
             showSearch
             optionFilterProp="children"
@@ -299,7 +301,7 @@ const GeneralSettingsTab = () => {
 
       <SSOMaintenanceCard />
       <PanelSSLCard />
-      <Card title="Root Terminal (M45)" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.root_terminal_m45")} style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col xs={24}>
             <div style={{ marginBottom: 16 }}>
@@ -320,7 +322,7 @@ const GeneralSettingsTab = () => {
                 style={{ marginTop: 12 }}
                 type="warning"
                 showIcon
-                message="This is the highest-risk feature in the panel. Leave off unless actively needed."
+                message={t("settings.this_is_the_highest_risk_feature_in_the_panel_le")}
               />
             </div>
           </Col>
@@ -347,6 +349,7 @@ const GeneralSettingsTab = () => {
 // PATCH /admin/settings only writes the ns* fields it sends so this
 // doesn't clobber identity/SSH/timezone settings.
 const DNSSettingsTab = () => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<ServerSettings>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -400,7 +403,7 @@ const DNSSettingsTab = () => {
         onFinish={handleSubmit}
         disabled={loading}
       >
-        <Card title="DNS Nameservers" style={{ marginBottom: 16 }}>
+        <Card title={t("settings.dns_nameservers")} style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           These are the names and addresses your customers will set at their
           registrar. You typically run ns1 on this server and ns2 on a
@@ -439,7 +442,7 @@ const DNSSettingsTab = () => {
         </Row>
       </Card>
 
-      <Card title="DNS Record Defaults" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.dns_record_defaults")} style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           Default TTL (in seconds) applied to newly-created DNS records
           when the API caller does not specify one. Range 60–86400 (1
@@ -449,7 +452,7 @@ const DNSSettingsTab = () => {
         <Row gutter={16}>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Default record TTL (seconds)"
+              label={t("settings.default_record_ttl_seconds")}
               name="default_dns_ttl"
               rules={[
                 { required: true, message: "Required" },
@@ -488,6 +491,7 @@ const DNSSettingsTab = () => {
 // and the partial PATCH only ships the two storage fields so a Save here
 // can't clobber identity/SSH/timezone settings.
 const StorageSettingsTab = () => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<ServerSettings>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -537,11 +541,11 @@ const StorageSettingsTab = () => {
       onFinish={handleSubmit}
       disabled={loading}
     >
-      <Card title="File Manager" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.file_manager")} style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Maximum Upload Size (MB)"
+              label={t("settings.maximum_upload_size_mb")}
               name="upload_max_size_mb"
               rules={[
                 { required: true, message: "Required" },
@@ -566,11 +570,11 @@ const StorageSettingsTab = () => {
         </Row>
       </Card>
 
-      <Card title="Working Folder" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.working_folder")} style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col xs={24}>
             <Form.Item
-              label="Working Folder"
+              label={t("settings.working_folder")}
               name="working_folder"
               rules={[
                 { required: true, message: "Required" },
@@ -589,7 +593,7 @@ const StorageSettingsTab = () => {
             <Alert
               type="info"
               showIcon
-              message="Disk size matters"
+              message={t("settings.disk_size_matters")}
               description={
                 <>
                   Migrations can stage 5+ GB per account; backups grow without bound until
@@ -603,7 +607,7 @@ const StorageSettingsTab = () => {
         </Row>
       </Card>
 
-      <Card title="Disk Quotas" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.disk_quotas")} style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col xs={24}>
             <div style={{ marginBottom: 16 }}>
@@ -621,7 +625,7 @@ const StorageSettingsTab = () => {
                 style={{ marginTop: 12 }}
                 type="info"
                 showIcon
-                message="Kernel POSIX quota must be active on the filesystem holding /home"
+                message={t("settings.kernel_posix_quota_must_be_active_on_the_filesys")}
                 description={
                   <>
                     install.sh wires this up automatically (works on dedicated <code>/home</code> partitions
@@ -651,7 +655,7 @@ const StorageSettingsTab = () => {
                 style={{ marginTop: 12 }}
                 type="warning"
                 showIcon
-                message="Off by default — opt-in feature"
+                message={t("settings.off_by_default_opt_in_feature")}
                 description={
                   <>
                     Bandwidth data flows from the M13.1 daily goaccess scan; on a fresh install
@@ -707,6 +711,7 @@ const BrandingSettingsTab = () => (
 // Own form + Save; PATCH /admin/settings is partial so this tab sends only its
 // SSH-related fields and never disturbs General/DNS/etc.
 const SSHSettingsTab = () => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<ServerSettings>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -777,7 +782,7 @@ const SSHSettingsTab = () => {
       onFinish={handleSubmit}
       disabled={loading}
     >
-      <Card title="SSH Access" style={{ marginBottom: 16 }}>
+      <Card title={t("settings.ssh_access")} style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           Configure SSH port and authentication method. Changes are applied
           immediately and are reversible.
@@ -786,7 +791,7 @@ const SSHSettingsTab = () => {
         <Row gutter={16}>
           <Col span={24}>
             <Form.Item
-              label="SSH Port"
+              label={t("settings.ssh_port")}
               name="ssh_port"
               rules={[
                 { required: true, message: "SSH port required" },
@@ -844,7 +849,7 @@ const SSHSettingsTab = () => {
         <Row gutter={16}>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Sandbox Mode"
+              label={t("settings.sandbox_mode")}
               name="ssh_sandbox_mode"
               rules={[{ required: true }]}
               extra="Bubblewrap = no rootfs needed. nspawn = build an image first via 'jabali nspawn build'."
@@ -860,7 +865,7 @@ const SSHSettingsTab = () => {
           </Col>
           <Col xs={24} md={12}>
             <Form.Item
-              label="Default nspawn Image"
+              label={t("settings.default_nspawn_image")}
               name="default_nspawn_image_version"
               extra={
                 nspawnImages.length === 0
@@ -910,7 +915,7 @@ const SSHSettingsTab = () => {
                   <Alert
                     type="warning"
                     showIcon
-                    title="Potential Lockout Risk"
+                    title={t("settings.potential_lockout_risk")}
                     description={
                       <>
                         Changing SSH settings may affect your ability to

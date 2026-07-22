@@ -1627,5 +1627,33 @@
     "show_last_error": "Show last error",
     "status": "Status",
     "yes": "Yes"
+  },
+  "settings": {
+    "admin_email": "Admin email",
+    "default_nspawn_image": "Default nspawn Image",
+    "default_record_ttl_seconds": "Default record TTL (seconds)",
+    "disk_quotas": "Disk Quotas",
+    "disk_size_matters": "Disk size matters",
+    "dns_nameservers": "DNS Nameservers",
+    "dns_record_defaults": "DNS Record Defaults",
+    "file_manager": "File Manager",
+    "hostname": "Hostname",
+    "hostname_change": "Hostname change",
+    "identity": "Identity",
+    "kernel_posix_quota_must_be_active_on_the_filesys": "Kernel POSIX quota must be active on the filesystem holding /home",
+    "maximum_upload_size_mb": "Maximum Upload Size (MB)",
+    "off_by_default_opt_in_feature": "Off by default — opt-in feature",
+    "potential_lockout_risk": "Potential Lockout Risk",
+    "public_ipv4": "Public IPv4",
+    "public_ipv6_optional": "Public IPv6 (optional)",
+    "root_terminal_m45": "Root Terminal (M45)",
+    "sandbox_mode": "Sandbox Mode",
+    "select_timezone": "Select timezone",
+    "server_time": "Server Time",
+    "ssh_access": "SSH Access",
+    "ssh_port": "SSH Port",
+    "this_is_the_highest_risk_feature_in_the_panel_le": "This is the highest-risk feature in the panel. Leave off unless actively needed.",
+    "timezone": "Timezone",
+    "working_folder": "Working Folder"
   }
 }
