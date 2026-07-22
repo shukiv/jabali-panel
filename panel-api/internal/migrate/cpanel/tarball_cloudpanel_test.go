@@ -90,3 +90,27 @@ func TestParseTarball_CloudPanelSynthesizedLayout(t *testing.T) {
 		t.Errorf("domains-paths.txt not extracted for the import stage: %v", err)
 	}
 }
+
+// CyberPanel's account id is a domain (dotted), so the cpmove wrapper is
+// cpmove-<domain>/ and cp/<domain> carries dots. Assert ParseTarball detects
+// the wrapper + SourceUser correctly with a dotted account (GH #522 CyberPanel).
+func TestParseTarball_CyberPanelDottedDomainAccount(t *testing.T) {
+	dir := t.TempDir()
+	tarPath := filepath.Join(dir, "cpmove-smoke.jabalitest.com.tar.gz")
+	writeGzTar(t, tarPath, []tarEntry{
+		{"cpmove-smoke.jabalitest.com/cp/smoke.jabalitest.com", "USER=smoke.jabalitest.com\nDNS=smoke.jabalitest.com\nCONTACTEMAIL=admin@smoke.jabalitest.com\n"},
+		{"cpmove-smoke.jabalitest.com/mysql/smokedb.sql", "CREATE TABLE t (id INT);\n"},
+		{"cpmove-smoke.jabalitest.com/cron/smoke.jabalitest.com", "15 2 * * * /usr/bin/php /home/smoke.jabalitest.com/public_html/cron.php\n"},
+		{"cpmove-smoke.jabalitest.com/domains-paths.txt", "smoke.jabalitest.com\t/home/smoke.jabalitest.com/public_html\n"},
+	})
+	p, err := ParseTarball(tarPath, filepath.Join(dir, "extracted"))
+	if err != nil {
+		t.Fatalf("ParseTarball: %v", err)
+	}
+	if p.SourceUser != "smoke.jabalitest.com" {
+		t.Errorf("SourceUser = %q, want the dotted domain", p.SourceUser)
+	}
+	if len(p.MySQLDumps) != 1 || len(p.CronFiles) != 1 {
+		t.Errorf("dumps=%v cron=%v — dotted-account wrapper strip broke classification", p.MySQLDumps, p.CronFiles)
+	}
+}

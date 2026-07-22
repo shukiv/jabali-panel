@@ -327,6 +327,7 @@ failed stage. Already-done stages are skipped.`,
 				models.MigrationSourceDirectAdmin,
 				models.MigrationSourceHestia,
 				models.MigrationSourceCloudPanel,
+				models.MigrationSourceCyberPanel,
 				models.MigrationSourcePlesk:
 				// supported — fall through
 			default:
@@ -418,10 +419,15 @@ failed stage. Already-done stages are skipped.`,
 						"warning: cpanel.ParseTarball failed on DA tarball %s (%v); using pre-extracted cp/<user>/ assumption\n",
 						daTarPath, perr)
 				}
-			case models.MigrationSourceCloudPanel:
-				// CloudPanel pull synthesises a cpmove-shaped tarball
-				// (cloudpanel/backup.go BackupUser) at cpmove-<user>.tar.gz,
-				// so the cpanel restore writers consume it unchanged.
+			case models.MigrationSourceCloudPanel, models.MigrationSourceCyberPanel:
+				// CloudPanel + CyberPanel pull synthesise a cpmove-shaped
+				// tarball (<source>/backup.go BackupUser) at
+				// cpmove-<user>.tar.gz, so the cpanel restore writers consume
+				// it unchanged. Both populate DomainNames/DocRoots from
+				// domains-paths.txt (their authoritative domain list). CyberPanel
+				// additionally ships dnszones/ once DNS lands, which ParseTarball
+				// classifies into ZoneFiles automatically — additive, no change
+				// here. (CyberPanel's account id is its primary domain.)
 				// CloudPanel is web-only and doesn't bundle homedir/domains
 				// or dnszones, so the AUTHORITATIVE domain list is
 				// domains-paths.txt (written by BackupUser). Populate
@@ -971,7 +977,7 @@ func cpanelRestoreCallback(
 			type rsyncPair struct{ Dom, SrcPath string }
 			var rsyncRows []rsyncPair
 			switch job.SourceKind {
-			case models.MigrationSourceDirectAdmin, models.MigrationSourcePlesk, models.MigrationSourceCloudPanel:
+			case models.MigrationSourceDirectAdmin, models.MigrationSourcePlesk, models.MigrationSourceCloudPanel, models.MigrationSourceCyberPanel:
 				manifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "domains-paths.txt")
 				if raw, rerr := os.ReadFile(manifest); rerr == nil {
 					for _, line := range strings.Split(string(raw), "\n") {
