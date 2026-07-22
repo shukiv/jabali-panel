@@ -12,12 +12,52 @@ import (
 
 // fakeSession builds a *session whose run() returns canned sqlite output,
 // so the SQLite-parsing logic is exercised without a live CloudPanel host.
-func fakeSession(out string) *session {
+// route pairs a distinctive SQL substring with canned sqlite output so the fake
+// answers each of DescribeAccount's queries independently.
+type route struct{ contains, out string }
+
+func fakeRouted(routes ...route) *session {
 	s := &session{dbPath: "/test/db.sq3", commandTimeout: time.Second}
-	s.run = func(_ context.Context, _ time.Duration, _ string) ([]byte, error) {
-		return []byte(out), nil
+	s.run = func(_ context.Context, _ time.Duration, cmd string) ([]byte, error) {
+		for _, r := range routes {
+			if strings.Contains(cmd, r.contains) {
+				return []byte(r.out), nil
+			}
+		}
+		return nil, nil
 	}
 	return s
+}
+
+// fakeSession answers only the ListAccounts query (group_concat), so the older
+// DescribeAccount tests see empty domains/databases.
+func fakeSession(out string) *session {
+	return fakeRouted(route{"group_concat", out})
+}
+
+func TestDescribeAccount_PopulatesAreas(t *testing.T) {
+	d := New()
+	s := fakeRouted(
+		route{"group_concat", "smokeuser|smoke.jabalitest.com\n"},
+		route{"root_directory", "smoke.jabalitest.com|smoke.jabalitest.com|php|8.1\n"},
+		route{"database_user", "smokedb|smokedbu\n"},
+	)
+	m, err := d.DescribeAccount(context.Background(), s, "smokeuser")
+	if err != nil {
+		t.Fatalf("DescribeAccount: %v", err)
+	}
+	if len(m.Domains) != 1 || !m.Domains[0].IsPrimary || m.Domains[0].Name != "smoke.jabalitest.com" {
+		t.Fatalf("domains = %+v", m.Domains)
+	}
+	if m.Domains[0].DocRoot != "/home/smokeuser/htdocs/smoke.jabalitest.com" || !m.Domains[0].HasPHP || m.Domains[0].PHPVer != "8.1" {
+		t.Errorf("domain docroot/php wrong: %+v", m.Domains[0])
+	}
+	if len(m.Databases) != 1 || m.Databases[0].Name != "smokedb" || m.Databases[0].GrantUser != "smokedbu" || m.Databases[0].Engine != "mysql" {
+		t.Fatalf("databases = %+v", m.Databases)
+	}
+	if len(m.Mailboxes) != 0 {
+		t.Errorf("CloudPanel has no mail — Mailboxes must be empty, got %d", len(m.Mailboxes))
+	}
 }
 
 func TestListAccounts_ParsesSiteUsersAndFiltersClp(t *testing.T) {

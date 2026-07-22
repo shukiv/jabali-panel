@@ -251,17 +251,106 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	if s.client != nil {
 		host = s.client.RemoteAddr().String()
 	}
-	return &migrate.AccountManifest{
+	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,
 		Source: migrate.SourceRef{
 			Kind: models.MigrationSourceCloudPanel,
 			Host: host,
 			User: accountID,
 		},
+		Domains:   []migrate.DomainSpec{},
+		Databases: []migrate.DatabaseSpec{},
 		// CloudPanel has no mail server — Mailboxes stays empty by design.
 		Mailboxes: []migrate.MailboxSpec{},
 		Warnings:  []migrate.Warning{},
-	}, nil
+	}
+	m.Domains = s.buildDomains(ctx, accountID, &m.Warnings)
+	m.Databases = s.buildDatabases(ctx, accountID, &m.Warnings)
+	return m, nil
+}
+
+// buildDomains returns one DomainSpec per site the account owns. CloudPanel
+// stores each site's docroot as root_directory under /home/<user>/htdocs; the
+// first site (alphabetical) is marked primary so the restore has a main domain.
+// accountID is already siteUserRe-validated, so embedding it in a SQL string
+// literal is safe and sqliteQuerySep shell-quotes the whole statement.
+func (s *session) buildDomains(ctx context.Context, user string, warns *[]migrate.Warning) []migrate.DomainSpec {
+	q := "SELECT s.domain_name, s.root_directory, s.type, coalesce(ps.php_version, '') " +
+		"FROM site s LEFT JOIN php_settings ps ON ps.site_id = s.id " +
+		"WHERE s.user = '" + user + "' ORDER BY s.domain_name"
+	b, err := s.run(ctx, s.commandTimeout, sqliteQuerySep(s.dbPath, "|", q))
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "cloudpanel_domains", Detail: err.Error()})
+		return []migrate.DomainSpec{}
+	}
+	out := []migrate.DomainSpec{}
+	first := true
+	for _, line := range splitLines(b) {
+		cols := strings.Split(line, "|")
+		name := strings.TrimSpace(cols[0])
+		if name == "" {
+			continue
+		}
+		root := ""
+		if len(cols) > 1 {
+			root = strings.TrimSpace(cols[1])
+		}
+		docroot := "/home/" + user + "/htdocs/" + name
+		if root != "" {
+			docroot = "/home/" + user + "/htdocs/" + root
+		}
+		hasPHP := len(cols) > 2 && strings.TrimSpace(cols[2]) == "php"
+		php := ""
+		if len(cols) > 3 {
+			php = strings.TrimSpace(cols[3])
+		}
+		out = append(out, migrate.DomainSpec{
+			Name: name, DocRoot: docroot, IsPrimary: first, HasPHP: hasPHP, PHPVer: php,
+		})
+		first = false
+	}
+	return out
+}
+
+// buildDatabases returns the MySQL databases across all of the account's sites,
+// with the CloudPanel database user as the grant user.
+func (s *session) buildDatabases(ctx context.Context, user string, warns *[]migrate.Warning) []migrate.DatabaseSpec {
+	q := "SELECT d.name, coalesce(du.user_name, '') FROM \"database\" d " +
+		"JOIN site s ON d.site_id = s.id " +
+		"LEFT JOIN database_user du ON du.database_id = d.id " +
+		"WHERE s.user = '" + user + "' ORDER BY d.name"
+	b, err := s.run(ctx, s.commandTimeout, sqliteQuerySep(s.dbPath, "|", q))
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "cloudpanel_databases", Detail: err.Error()})
+		return []migrate.DatabaseSpec{}
+	}
+	out := []migrate.DatabaseSpec{}
+	for _, line := range splitLines(b) {
+		cols := strings.Split(line, "|")
+		name := strings.TrimSpace(cols[0])
+		if name == "" {
+			continue
+		}
+		spec := migrate.DatabaseSpec{Engine: "mysql", Name: name}
+		if len(cols) > 1 {
+			spec.GrantUser = strings.TrimSpace(cols[1])
+		}
+		out = append(out, spec)
+	}
+	return out
+}
+
+// splitLines splits sqlite output into non-empty, CR-trimmed lines.
+func splitLines(b []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // Close releases the SSH client. Best-effort.
