@@ -404,6 +404,32 @@ chmod 0750 "$WR"`)
 					return fmt.Errorf("git reset --hard %s failed even after re-chowning the repo to %s: %w", resetRef, serviceUser, err2)
 				}
 			}
+			// GH #606: a corrupt/linked worktree (the reporting box's .git was
+			// a corrupted worktree pointer, flagged by `jabali repair
+			// --diagnose`) can leave HEAD correct after `git reset --hard` yet
+			// some tracked files missing from the working tree — the reset
+			// compares against a stale index and skips re-materializing them.
+			// The very next step's `install -m <repo>/install/systemd/<unit>`
+			// then dies with "install: cannot stat ... No such file or
+			// directory" and the whole update aborts, stranding the host on
+			// OLD code. Self-heal: if any tracked file is missing from the
+			// working tree, force-restore it from the index; if it is STILL
+			// missing afterwards the .git pointer itself is corrupt, so fail
+			// with an actionable message instead of the opaque install-stat
+			// error downstream.
+			missingOut, _ := exec.Command("sudo", "-u", serviceUser,
+				"git", "-C", repoDir, "ls-files", "--deleted").Output()
+			if strings.TrimSpace(string(missingOut)) != "" {
+				fmt.Println("  working tree is missing tracked files after reset (incomplete/corrupt checkout) — forcing a fresh checkout of the tree")
+				_ = asUser(repoDir, "git", "checkout", "--force", "--", ".")
+				missingOut2, _ := exec.Command("sudo", "-u", serviceUser,
+					"git", "-C", repoDir, "ls-files", "--deleted").Output()
+				if still := strings.TrimSpace(string(missingOut2)); still != "" {
+					return fmt.Errorf("working tree at %s is still missing tracked files after a forced checkout "+
+						"(corrupt git worktree pointer) — run `jabali repair --auto` to rebuild the checkout, then re-run `jabali update`; missing:\n%s",
+						repoDir, still)
+				}
+			}
 			post, err := gitHead()
 			if err != nil {
 				return err
