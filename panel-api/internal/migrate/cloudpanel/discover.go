@@ -23,7 +23,9 @@ package cloudpanel
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -266,7 +268,82 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	}
 	m.Domains = s.buildDomains(ctx, accountID, &m.Warnings)
 	m.Databases = s.buildDatabases(ctx, accountID, &m.Warnings)
+	m.Cron = s.buildCron(ctx, accountID, &m.Warnings)
+	m.SSH = s.buildSSH(ctx, accountID, &m.Warnings)
 	return m, nil
+}
+
+// buildCron returns the account's CloudPanel cron jobs. CloudPanel stores each
+// job's schedule as five columns (minute..weekday) + command in cron_job,
+// linked to a site. RunAs is the site user (the account).
+func (s *session) buildCron(ctx context.Context, user string, warns *[]migrate.Warning) []migrate.CronSpec {
+	q := "SELECT cj.minute, cj.hour, cj.day, cj.month, cj.weekday, cj.command " +
+		"FROM cron_job cj JOIN site s ON cj.site_id = s.id WHERE s.user = '" + user + "' ORDER BY cj.id"
+	b, err := s.run(ctx, s.commandTimeout, sqliteQuerySep(s.dbPath, "|", q))
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "cloudpanel_cron", Detail: err.Error()})
+		return []migrate.CronSpec{}
+	}
+	out := []migrate.CronSpec{}
+	for _, line := range splitLines(b) {
+		// SplitN keeps a command that itself contains a pipe intact in the last field.
+		cols := strings.SplitN(line, "|", 6)
+		if len(cols) < 6 {
+			continue
+		}
+		command := strings.TrimSpace(cols[5])
+		if command == "" {
+			continue
+		}
+		schedule := strings.Join([]string{
+			strings.TrimSpace(cols[0]), strings.TrimSpace(cols[1]), strings.TrimSpace(cols[2]),
+			strings.TrimSpace(cols[3]), strings.TrimSpace(cols[4]),
+		}, " ")
+		out = append(out, migrate.CronSpec{Schedule: schedule, Command: command, RunAs: user})
+	}
+	return out
+}
+
+// buildSSH returns the authorized SSH keys across the account's sites
+// (ssh_user.ssh_keys is an authorized_keys blob). Each line becomes an
+// SSHKeySpec; a valid key gets its real SHA256 fingerprint, otherwise a stable
+// hash of the raw line (so re-runs still de-dup).
+func (s *session) buildSSH(ctx context.Context, user string, warns *[]migrate.Warning) []migrate.SSHKeySpec {
+	q := "SELECT su.ssh_keys FROM ssh_user su JOIN site s ON su.site_id = s.id " +
+		"WHERE s.user = '" + user + "' AND su.ssh_keys IS NOT NULL AND su.ssh_keys != ''"
+	b, err := s.run(ctx, s.commandTimeout, sqliteQuerySep(s.dbPath, "|", q))
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "cloudpanel_ssh", Detail: err.Error()})
+		return []migrate.SSHKeySpec{}
+	}
+	out := []migrate.SSHKeySpec{}
+	seen := map[string]bool{}
+	for _, line := range splitLines(b) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		spec := migrate.SSHKeySpec{PublicKey: line}
+		if pk, comment, _, _, perr := ssh.ParseAuthorizedKey([]byte(line)); perr == nil {
+			spec.PublicKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pk)))
+			spec.Comment = comment
+			spec.Fingerprint = ssh.FingerprintSHA256(pk)
+		} else {
+			// Malformed / placeholder key: keep the raw line, derive a stable
+			// hash + best-effort comment (trailing field).
+			sum := sha256.Sum256([]byte(line))
+			spec.Fingerprint = "sha256:" + hex.EncodeToString(sum[:])
+			if f := strings.Fields(line); len(f) >= 3 {
+				spec.Comment = f[len(f)-1]
+			}
+		}
+		if seen[spec.Fingerprint] {
+			continue
+		}
+		seen[spec.Fingerprint] = true
+		out = append(out, spec)
+	}
+	return out
 }
 
 // buildDomains returns one DomainSpec per site the account owns. CloudPanel

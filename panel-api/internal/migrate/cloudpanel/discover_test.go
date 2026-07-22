@@ -41,6 +41,8 @@ func TestDescribeAccount_PopulatesAreas(t *testing.T) {
 		route{"group_concat", "smokeuser|smoke.jabalitest.com\n"},
 		route{"root_directory", "smoke.jabalitest.com|smoke.jabalitest.com|php|8.1\n"},
 		route{"database_user", "smokedb|smokedbu\n"},
+		route{"cron_job", "30|3|*|*|*|/usr/bin/php /home/smokeuser/htdocs/smoke.jabalitest.com/cron.php\n"},
+		route{"ssh_user", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISmokeTestKeyBase64xxxxxxxx smoke@test\n"},
 	)
 	m, err := d.DescribeAccount(context.Background(), s, "smokeuser")
 	if err != nil {
@@ -57,6 +59,17 @@ func TestDescribeAccount_PopulatesAreas(t *testing.T) {
 	}
 	if len(m.Mailboxes) != 0 {
 		t.Errorf("CloudPanel has no mail — Mailboxes must be empty, got %d", len(m.Mailboxes))
+	}
+	// Cron: five schedule columns joined, command intact, RunAs = the site user.
+	if len(m.Cron) != 1 || m.Cron[0].Schedule != "30 3 * * *" || m.Cron[0].RunAs != "smokeuser" {
+		t.Fatalf("cron = %+v, want one job run as smokeuser", m.Cron)
+	}
+	if m.Cron[0].Command != "/usr/bin/php /home/smokeuser/htdocs/smoke.jabalitest.com/cron.php" {
+		t.Errorf("cron command wrong: %q", m.Cron[0].Command)
+	}
+	// SSH: the authorized_keys line is surfaced with a stable fingerprint + comment.
+	if len(m.SSH) != 1 || m.SSH[0].Comment != "smoke@test" || m.SSH[0].Fingerprint == "" {
+		t.Fatalf("ssh keys = %+v, want one key with comment+fingerprint", m.SSH)
 	}
 }
 
