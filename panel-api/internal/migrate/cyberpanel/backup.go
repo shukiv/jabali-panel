@@ -106,6 +106,23 @@ MYQ "SELECT aliasDomain FROM websiteFunctions_aliasdomains WHERE master_id=$WID"
   printf '%%s\t/home/%%s/public_html\n' "$ad" "$ACCT" >> "$BASE/domains-paths.txt"
 done
 
+# 3b. dnszones/<domain>.db — BIND zone per domain from CyberPanel's PowerDNS
+#     records (gmysql backend). Emit one record line per row:
+#       "<name>. <ttl> IN <type> [<prio> ]<content>"  (TXT content quoted).
+#     cpanel.ParseTarball classifies dnszones/ into ZoneFiles; cpanel.ImportDNS
+#     parses each + overlays the records onto the bootstrapped jabali zone
+#     (apex SOA/NS are filtered there — pdns owns them — so SOA is skipped
+#     here). No $ORIGIN/$TTL needed: ImportDNS derives the origin from the .db
+#     filename and each record carries its own FQDN name + TTL.
+mkdir -p "$BASE/dnszones"
+if [ -f "$BASE/domains-paths.txt" ]; then
+  cut -f1 "$BASE/domains-paths.txt" | while read -r DOM; do
+    if [ -z "$DOM" ]; then continue; fi
+    MYQ "SELECT CONCAT(name, '. ', ttl, ' IN ', type, ' ', IF(type IN ('MX','SRV'), CONCAT(prio, ' '), ''), IF(type = 'TXT', CONCAT(CHAR(34), content, CHAR(34)), content)) FROM records WHERE domain_id = (SELECT id FROM domains WHERE name = '$DOM') AND type <> 'SOA' AND (disabled = 0 OR disabled IS NULL) ORDER BY type" > "$BASE/dnszones/$DOM.db" 2>/dev/null || true
+    if [ ! -s "$BASE/dnszones/$DOM.db" ]; then rm -f "$BASE/dnszones/$DOM.db"; fi
+  done
+fi
+
 # 4. cron/<domain> — the externalApp user's crontab. Guard externalApp against
 #    the same allow-list the Go side enforces before it reaches crontab -u.
 if printf '%%s' "$EXTAPP" | grep -Eq '^[a-z_][a-z0-9._-]{0,63}$'; then
@@ -123,7 +140,7 @@ if [ ! -s "$BASE/homedir/.ssh/authorized_keys" ]; then rm -f "$BASE/homedir/.ssh
 # 6. tar it up. cp/ FIRST (ParseTarball wrapper detection — see above), then
 #    the areas that exist. Last stdout line = the path the caller reads.
 TARARGS="cpmove-$ACCT/cp"
-for d in mysql cron homedir domains-paths.txt; do
+for d in mysql dnszones cron homedir domains-paths.txt; do
   if [ -e "$BASE/$d" ]; then TARARGS="$TARARGS cpmove-$ACCT/$d"; fi
 done
 tar -czf "$OUT" -C "$TMP" $TARARGS
