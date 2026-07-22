@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -150,6 +151,26 @@ func validateDocumentRoot(docRoot, username, domainName string) error {
 		return fmt.Errorf("document root contains invalid path traversal sequences")
 	}
 
+	return nil
+}
+
+// validateTenantDocumentRoot is the stricter confinement for a NON-admin owner
+// changing their own domain's docroot (GH #526): the path must stay inside the
+// domain's OWN tree /home/<user>/domains/<domain>/ (so an app can point at a sub-
+// or parent dir like .../public), never another domain or elsewhere in the home.
+// Admins keep the looser validateDocumentRoot (anywhere under the owner's home).
+func validateTenantDocumentRoot(docRoot, username, domainName string) error {
+	if docRoot == "" {
+		return nil // resets to the canonical default
+	}
+	if strings.Contains(docRoot, "..") {
+		return fmt.Errorf("document root contains invalid path traversal sequences")
+	}
+	clean := filepath.Clean(docRoot)
+	base := "/home/" + username + "/domains/" + domainName
+	if clean != base && !strings.HasPrefix(clean, base+"/") {
+		return fmt.Errorf("document root must be inside /home/%s/domains/%s/", username, domainName)
+	}
 	return nil
 }
 
@@ -849,6 +870,36 @@ func (h *domainHandler) update(c *gin.Context) {
 				return
 			}
 			domain.NginxRules = *req.NginxRules
+		}
+	}
+
+	// GH #526: a non-admin owner may repoint their own domain's docroot within
+	// the domain's own tree (e.g. a framework's public/ subdir) when the admin
+	// has opted in (tenant_domain_options_enabled). Confined by
+	// validateTenantDocumentRoot; admins use the looser whole-home path above.
+	// Silently dropped when the opt-in is off so other fields still PATCH.
+	if !claims.IsAdmin && req.DocRoot != nil {
+		allowed := false
+		if h.cfg.ServerSettings != nil {
+			if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil && st.TenantDomainOptionsEnabled {
+				allowed = true
+			}
+		}
+		if allowed {
+			owner, oerr := h.cfg.Users.FindByID(ctx, domain.UserID)
+			if oerr != nil || owner == nil || owner.Username == nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "owner_lookup_failed"})
+				return
+			}
+			newRoot := strings.TrimSpace(*req.DocRoot)
+			if newRoot == "" {
+				newRoot = "/home/" + *owner.Username + "/domains/" + domain.Name + "/public_html"
+			}
+			if err := validateTenantDocumentRoot(newRoot, *owner.Username, domain.Name); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_doc_root", "detail": err.Error()})
+				return
+			}
+			domain.DocRoot = newRoot
 		}
 	}
 

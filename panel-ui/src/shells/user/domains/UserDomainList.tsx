@@ -15,6 +15,7 @@ import {
   LockOutlined,
   ThunderboltOutlined,
   ToolOutlined,
+  FolderOutlined,
 } from "@icons";
 import { Button, Card, Dropdown, Modal, Space, Table, Tag, Tooltip, Typography, notification } from "antd";
 import { useState } from "react";
@@ -22,6 +23,7 @@ import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { DomainDocRootModal } from "./DomainDocRootModal";
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { RowActionButton } from "../../../components/RowActionButton";
@@ -172,7 +174,7 @@ export type Domain = {
   updated_at: string;
 };
 
-type ActiveModal = { domainId: string; type: "redirects" | "index" | "directory-privacy" | "caching" | "nginx-options" | "rewrite-rules" } | null;
+type ActiveModal = { domainId: string; type: "redirects" | "index" | "directory-privacy" | "caching" | "nginx-options" | "rewrite-rules" | "document-root" } | null;
 
 export const UserDomainList = () => {
   const { t } = useTranslation();
@@ -344,6 +346,12 @@ export const UserDomainList = () => {
                               icon: <ToolOutlined />,
                               onClick: () => setActiveModal({ domainId: r.id, type: "rewrite-rules" }),
                             },
+                            {
+                              key: "document-root",
+                              label: "Document root",
+                              icon: <FolderOutlined />,
+                              onClick: () => setActiveModal({ domainId: r.id, type: "document-root" }),
+                            },
                           ]
                         : []),
                       {
@@ -435,6 +443,14 @@ export const UserDomainList = () => {
                   <TenantNginxRulesButton
                     domain={r}
                     open={true}
+                    onClose={() => setActiveModal(null)}
+                  />
+                )}
+                {activeModal?.domainId === r.id && activeModal.type === "document-root" && (
+                  <DomainDocRootModal
+                    domainId={r.id}
+                    domainName={r.name}
+                    currentDocRoot={r.doc_root}
                     onClose={() => setActiveModal(null)}
                   />
                 )}

@@ -400,3 +400,35 @@ func TestExtractDirective(t *testing.T) {
 		})
 	}
 }
+
+// GH #526: a tenant may edit their own domain's docroot but is confined to the
+// domain's OWN tree — a stricter check than the admin whole-home one.
+func TestValidateTenantDocumentRoot(t *testing.T) {
+	const u, d = "alice", "example.com"
+	base := "/home/alice/domains/example.com"
+	ok := []string{
+		"",                     // reset to default
+		base,                   // the domain root
+		base + "/public_html",  // the default
+		base + "/myapp/public", // a framework public/ subdir (the #526 use case)
+		base + "/public_html/sub",
+	}
+	for _, dr := range ok {
+		if err := validateTenantDocumentRoot(dr, u, d); err != nil {
+			t.Errorf("expected %q valid, got %v", dr, err)
+		}
+	}
+	bad := []string{
+		"/home/alice/domains/other.com/public_html", // another domain (theirs, but out of tree)
+		"/home/alice/secret",                        // elsewhere in the home
+		"/home/bob/domains/example.com/public_html", // another user
+		"/etc/passwd",                             // outside home
+		base + "/../other.com/public_html",        // traversal
+		"/home/alice/domains/example.com/../evil", // traversal
+	}
+	for _, dr := range bad {
+		if err := validateTenantDocumentRoot(dr, u, d); err == nil {
+			t.Errorf("expected %q rejected, got nil", dr)
+		}
+	}
+}
