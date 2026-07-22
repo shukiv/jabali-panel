@@ -40,6 +40,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cloudpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cyberpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
@@ -199,6 +200,8 @@ live source SSH. Use scp directly for that kind.`,
 				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceCloudPanel:
 				localTar, err = pullCloudPanel(ctx, sshUser, job, secret, localDir, allowPrivate)
+			case models.MigrationSourceCyberPanel:
+				localTar, err = pullCyberPanel(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourcePlesk:
 				localTar, err = pullPlesk(ctx, sshUser, job, secret, localDir, allowPrivate)
 			default:
@@ -312,6 +315,38 @@ func pullCloudPanel(ctx context.Context, sshUser string, job *models.MigrationJo
 	remoteTar, err := d.BackupUser(ctx, s, job.SourceUser)
 	if err != nil {
 		return "", fmt.Errorf("cloudpanel BackupUser: %w", err)
+	}
+	fmt.Printf("  → tarball ready on source: %s — downloading...\n", remoteTar)
+	localTar := filepath.Join(localDir, fmt.Sprintf("cpmove-%s.tar.gz", job.SourceUser))
+	if _, err := d.PullFile(ctx, s, remoteTar, localTar); err != nil {
+		return "", fmt.Errorf("PullFile: %w", err)
+	}
+	// JAB-50: don't leave the full account backup on the source server.
+	if rmErr := d.RemoveRemote(ctx, s, remoteTar); rmErr != nil {
+		fmt.Printf("  (warning: source-side rm %s failed: %v)\n", remoteTar, rmErr)
+	}
+	return localTar, nil
+}
+
+// pullCyberPanel (GH #522 follow-on) connects to a CyberPanel source over SSH
+// and runs BackupUser, which synthesises a cpmove-shaped tarball from
+// CyberPanel's MySQL inventory (cp/<domain>, mysql/<db>.sql, cron/<domain>,
+// domains-paths.txt, homedir/.ssh) — the same DA-style approach so the shared
+// cpanel restore writers consume it unchanged. The CyberPanel account IS the
+// primary domain; the tarball lands at cpmove-<domain>.tar.gz.
+func pullCyberPanel(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
+	d := cyberpanel.New()
+	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
+	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
+	if err != nil {
+		return "", fmt.Errorf("cyberpanel.Connect: %w", err)
+	}
+	defer func() { _ = d.Close(ctx, s) }()
+	fmt.Printf("  → synthesizing cpmove for %s on the CyberPanel source (dumping databases)...\n", job.SourceUser)
+	remoteTar, err := d.BackupUser(ctx, s, job.SourceUser)
+	if err != nil {
+		return "", fmt.Errorf("cyberpanel BackupUser: %w", err)
 	}
 	fmt.Printf("  → tarball ready on source: %s — downloading...\n", remoteTar)
 	localTar := filepath.Join(localDir, fmt.Sprintf("cpmove-%s.tar.gz", job.SourceUser))
