@@ -534,7 +534,11 @@ func createMailboxUnder(ctx context.Context, accountID, name, role, parentID str
 		"create":    map[string]any{createID: body},
 	}
 	var result jmapSetResult
-	if err := jmapCall(ctx, "Mailbox/set", args, &result); err != nil {
+	// Mailbox/set (like Mailbox/get/query + Email/*) is a mail-capability method:
+	// Stalwart rejects it with "requires capability urn:ietf:params:jmap:mail"
+	// unless it's in the request's `using` set. Surfaced in the CyberPanel mail
+	// E2E creating the Junk/Deleted auto-folders (JAB-29 family).
+	if err := jmapCallWith(ctx, "urn:ietf:params:jmap:mail", "Mailbox/set", args, &result); err != nil {
 		return "", fmt.Errorf("Mailbox/set create: %w", err)
 	}
 	if reason, ok := result.NotCreated[createID]; ok {
