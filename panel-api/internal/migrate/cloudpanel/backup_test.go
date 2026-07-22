@@ -45,6 +45,7 @@ func TestBackupUser_SynthesizeScriptAndPath(t *testing.T) {
 		`domains-paths.txt`,            // rsync manifest
 		`FROM cron_job cj JOIN site`,   // cron reconstruction
 		`FROM ssh_user su JOIN site`,   // authorized_keys
+		`TARARGS="cpmove-$ACCT/cp"`,    // cp/ archived FIRST (ParseTarball wrapper detection)
 		`tar -czf "$OUT"`,              // final archive
 	} {
 		if !strings.Contains(*last, want) {

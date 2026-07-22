@@ -107,8 +107,17 @@ if [ ! -s "$BASE/cron/$ACCT" ]; then rm -f "$BASE/cron/$ACCT"; fi
 Q "SELECT su.ssh_keys FROM ssh_user su JOIN site s ON su.site_id=s.id WHERE s.user='$ACCT' AND su.ssh_keys IS NOT NULL AND su.ssh_keys != ''" > "$BASE/homedir/.ssh/authorized_keys" 2>/dev/null || true
 if [ ! -s "$BASE/homedir/.ssh/authorized_keys" ]; then rm -f "$BASE/homedir/.ssh/authorized_keys"; fi
 
-# 6. tar it up (last stdout line = the path the caller reads).
-tar -czf "$OUT" -C "$TMP" "cpmove-$ACCT"
+# 6. tar it up (last stdout line = the path the caller reads). cp/ MUST be the
+#    first area in the stream: cpanel.ParseTarball detects the cpmove-<user>/
+#    wrapper lazily on the first 'cp/' segment and only strips it from later
+#    entries, so an area (mysql/cron/homedir) seen before cp/ would be
+#    misclassified and silently dropped. List cp first, then the areas that
+#    exist, so classification is deterministic regardless of readdir order.
+TARARGS="cpmove-$ACCT/cp"
+for d in mysql cron homedir domains-paths.txt; do
+  if [ -e "$BASE/$d" ]; then TARARGS="$TARARGS cpmove-$ACCT/$d"; fi
+done
+tar -czf "$OUT" -C "$TMP" $TARARGS
 rm -rf "$TMP"
 echo "$OUT"
 `, acct, dbp)

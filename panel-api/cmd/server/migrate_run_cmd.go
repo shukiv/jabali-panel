@@ -326,6 +326,7 @@ failed stage. Already-done stages are skipped.`,
 				models.MigrationSourceWHMpkgacct,
 				models.MigrationSourceDirectAdmin,
 				models.MigrationSourceHestia,
+				models.MigrationSourceCloudPanel,
 				models.MigrationSourcePlesk:
 				// supported — fall through
 			default:
@@ -416,6 +417,52 @@ failed stage. Already-done stages are skipped.`,
 					fmt.Fprintf(cmd.ErrOrStderr(),
 						"warning: cpanel.ParseTarball failed on DA tarball %s (%v); using pre-extracted cp/<user>/ assumption\n",
 						daTarPath, perr)
+				}
+			case models.MigrationSourceCloudPanel:
+				// CloudPanel pull synthesises a cpmove-shaped tarball
+				// (cloudpanel/backup.go BackupUser) at cpmove-<user>.tar.gz,
+				// so the cpanel restore writers consume it unchanged.
+				// CloudPanel is web-only and doesn't bundle homedir/domains
+				// or dnszones, so the AUTHORITATIVE domain list is
+				// domains-paths.txt (written by BackupUser). Populate
+				// DomainNames + DocRoots from it so ImportDomains creates one
+				// panel domain + nginx vhost per site; the dest docroot is
+				// jabali-native /home/<target>/domains/<dom>/public_html —
+				// the per-domain rsync at the home stage lands the source
+				// htdocs content there (rsyncRows below reads the same file).
+				clpTar := filepath.Join("/var/lib/jabali-migrations", job.ID,
+					fmt.Sprintf("cpmove-%s.tar.gz", job.SourceUser))
+				if cp, perr := cpanel.ParseTarball(clpTar, extractDir); perr == nil {
+					parsed = cp
+					manifestPath := filepath.Join(extractDir, "cpmove-"+parsed.SourceUser, "domains-paths.txt")
+					if raw, rerr := os.ReadFile(manifestPath); rerr == nil {
+						if parsed.DocRoots == nil {
+							parsed.DocRoots = map[string]string{}
+						}
+						for _, line := range strings.Split(string(raw), "\n") {
+							line = strings.TrimSpace(line)
+							if line == "" {
+								continue
+							}
+							dom := strings.SplitN(line, "\t", 2)[0]
+							if dom == "" {
+								continue
+							}
+							parsed.DomainNames = append(parsed.DomainNames, dom)
+							parsed.DocRoots[dom] = filepath.Join("/home", *user.Username, "domains", dom, "public_html")
+						}
+					}
+				} else {
+					// Pre-extracted fallback (operator dropped the cpmove
+					// tree out of band).
+					parsed = &cpanel.ParsedTarball{
+						ExtractDir: extractDir,
+						HomeDir:    filepath.Join(extractDir, "cpmove-"+job.SourceUser, "homedir"),
+						SourceUser: job.SourceUser,
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: cpanel.ParseTarball failed on CloudPanel tarball %s (%v); using pre-extracted assumption\n",
+						clpTar, perr)
 				}
 			case models.MigrationSourcePlesk:
 				// Plesk pull synthesises a METADATA cpmove (cpmove-<slug>/
@@ -924,7 +971,7 @@ func cpanelRestoreCallback(
 			type rsyncPair struct{ Dom, SrcPath string }
 			var rsyncRows []rsyncPair
 			switch job.SourceKind {
-			case models.MigrationSourceDirectAdmin, models.MigrationSourcePlesk:
+			case models.MigrationSourceDirectAdmin, models.MigrationSourcePlesk, models.MigrationSourceCloudPanel:
 				manifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "domains-paths.txt")
 				if raw, rerr := os.ReadFile(manifest); rerr == nil {
 					for _, line := range strings.Split(string(raw), "\n") {
