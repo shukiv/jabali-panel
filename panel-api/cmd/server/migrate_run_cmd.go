@@ -1320,7 +1320,7 @@ func cpanelRestoreCallback(
 		}
 
 		if plan.Mailboxes {
-			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials)
+			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials, p.targetUsername)
 			if err != nil {
 				return bytes, warnings, fmt.Errorf("mailboxes: %w", err)
 			}

@@ -479,7 +479,7 @@ func applyAccountRestore(
 				warnings = append(warnings, "mail: Stalwart inactive — message import skipped")
 				continue
 			}
-			impRes, impErr := importMaildirTree(ctx, mailTree, "")
+			impRes, impErr := importMaildirTree(ctx, mailTree, "", migrationStagingRoots)
 			if impErr != nil {
 				warnings = append(warnings, fmt.Sprintf("mail: import: %v", impErr))
 				continue

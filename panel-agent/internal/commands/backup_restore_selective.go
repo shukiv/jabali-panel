@@ -291,7 +291,7 @@ func applySelectiveMail(ctx context.Context, stagingRoot string, mailboxes []str
 			warnings = append(warnings, "mail "+mb+": not found in this backup — skipped")
 			continue
 		}
-		n, _, _, ierr := importOneMailbox(ctx, mb, md)
+		n, _, _, ierr := importOneMailbox(ctx, mb, md, migrationStagingRoots)
 		if ierr != nil {
 			warnings = append(warnings, "mail "+mb+": import: "+ierr.Error())
 			continue

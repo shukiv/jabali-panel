@@ -44,7 +44,7 @@ func TestImportMailboxes_CountsOwnerTopLevelMaildir(t *testing.T) {
 	}
 
 	// agentCli nil → observation-only: counts then returns, no JMAP.
-	res, err := ImportMailboxes(context.Background(), parsed, nil, "", nil, nil, false)
+	res, err := ImportMailboxes(context.Background(), parsed, nil, "", nil, nil, false, "")
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestImportMailboxes_NoOwnerEmailSkipsTopLevel(t *testing.T) {
 		MailRoot:   mailRoot,
 		// OwnerEmail intentionally empty.
 	}
-	res, err := ImportMailboxes(context.Background(), parsed, nil, "", nil, nil, false)
+	res, err := ImportMailboxes(context.Background(), parsed, nil, "", nil, nil, false, "")
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}

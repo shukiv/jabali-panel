@@ -80,7 +80,7 @@ func TestImportMailboxes_PreservesSourcePassword(t *testing.T) {
 	mb := &fakeMailboxRepoMB{}
 	dom := &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/)
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/, "")
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestImportMailboxes_DefaultSetsFreshPasswordAndWarns(t *testing.T) {
 	mb := &fakeMailboxRepoMB{}
 	dom := &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, false /*preserveCreds*/)
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, false /*preserveCreds*/, "")
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}

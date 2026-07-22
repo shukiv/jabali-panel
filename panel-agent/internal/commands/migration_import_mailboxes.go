@@ -63,6 +63,11 @@ type migrationImportMailboxesParams struct {
 	// handler skips owner-mailbox detection — only per-domain
 	// dirs are processed.
 	OwnerEmail string `json:"owner_email,omitempty"`
+	// DestUser, when set, additionally permits src_mail_dir under
+	// /home/<DestUser>/mail — CyberPanel Maildirs are rsynced into the migrated
+	// user's home (out-of-tarball /home/vmail source), not the staging tree.
+	// Reads stay symlink-safe (scoped RESOLVE_BENEATH this root).
+	DestUser string `json:"dest_user,omitempty"`
 }
 
 type migrationImportMailboxesResult struct {
@@ -95,8 +100,17 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 			Code: agentwire.CodeInvalidArgument, Message: "src_mail_dir not absolute: " + err.Error(),
 		}
 	}
+	allowedRoots := migrationStagingRoots
+	if p.DestUser != "" {
+		if strings.Contains(p.DestUser, "/") || strings.Contains(p.DestUser, "..") {
+			return nil, &agentwire.AgentError{
+				Code: agentwire.CodeInvalidArgument, Message: "dest_user must be a bare username",
+			}
+		}
+		allowedRoots = append(append([]string{}, migrationStagingRoots...), "/home/"+p.DestUser+"/mail")
+	}
 	underRoot := false
-	for _, root := range migrationStagingRoots {
+	for _, root := range allowedRoots {
 		if strings.HasPrefix(srcAbs+"/", root+"/") {
 			underRoot = true
 			break
@@ -105,11 +119,11 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 	if !underRoot {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("src_mail_dir must live under %s, got %q", strings.Join(migrationStagingRoots, " or "), srcAbs),
+			Message: fmt.Sprintf("src_mail_dir must live under %s, got %q", strings.Join(allowedRoots, " or "), srcAbs),
 		}
 	}
 
-	return importMaildirTree(ctx, srcAbs, p.OwnerEmail)
+	return importMaildirTree(ctx, srcAbs, p.OwnerEmail, allowedRoots)
 }
 
 // importMaildirTree imports every <domain>/<local>/{cur,new,.Sub} Maildir
@@ -119,7 +133,7 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 // Shared by migration.import_mailboxes (operator-supplied path, prefix-
 // guarded by the caller) and account-restore (internally-derived path,
 // ADR-0123). Applies its own 4h ceiling.
-func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string) (*migrationImportMailboxesResult, error) {
+func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string, allowedRoots []string) (*migrationImportMailboxesResult, error) {
 	subctx, cancel := context.WithTimeout(ctx, migrationMailboxTimeout)
 	defer cancel()
 
@@ -131,7 +145,7 @@ func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string) (*migrati
 	// when supplied so messages aren't silently dropped.
 	if ownerEmail != "" {
 		if _, ok := looksLikeMailMaildir(srcAbs); ok {
-			n, b, skipped, err := importOneMailbox(subctx, ownerEmail, srcAbs)
+			n, b, skipped, err := importOneMailbox(subctx, ownerEmail, srcAbs, allowedRoots)
 			if err != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("owner_mailbox %s: %v", ownerEmail, err))
 			} else {
@@ -172,7 +186,7 @@ func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string) (*migrati
 				continue
 			}
 			email := fmt.Sprintf("%s@%s", u.Name(), dom.Name())
-			n, b, skipped, err := importOneMailbox(subctx, email, maildirPath)
+			n, b, skipped, err := importOneMailbox(subctx, email, maildirPath, allowedRoots)
 			if err != nil {
 				// Don't fail the whole job on one mailbox — record
 				// + skip. Operator inspects manifest_json + can
@@ -235,7 +249,7 @@ func looksLikeMailMaildir(path string) (string, bool) {
 // is per-blob, not per-batch. Pipelining 10-100 imports per JMAP
 // call would be a follow-up optimisation; v1 sequential import is
 // correct + bounded.
-func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, int64, []string, error) {
+func importOneMailbox(ctx context.Context, destEmail, maildir string, allowedRoots []string) (int64, int64, []string, error) {
 	// Ensure domain + account exist in Stalwart before trying to import.
 	// accountEnsureInRegistry is idempotent: creates domain then account
 	// when absent, no-ops when they already exist.
@@ -258,7 +272,7 @@ func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, in
 	var skipped []string
 
 	// Push INBOX (mailroot itself: cur/ + new/).
-	in, ib, isk := pushMaildirSlots(ctx, accountID, inboxID, maildir, &skipped)
+	in, ib, isk := pushMaildirSlots(ctx, accountID, inboxID, maildir, &skipped, allowedRoots)
 	imported += in
 	bytes += ib
 	skipped = append(skipped, isk...)
@@ -297,7 +311,7 @@ func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, in
 			skipped = append(skipped, fmt.Sprintf("ensure mailbox %q: %v", raw, err))
 			continue
 		}
-		sn, sb, ssk := pushMaildirSlots(ctx, accountID, mboxID, subDir, &skipped)
+		sn, sb, ssk := pushMaildirSlots(ctx, accountID, mboxID, subDir, &skipped, allowedRoots)
 		imported += sn
 		bytes += sb
 		skipped = append(skipped, ssk...)
@@ -309,7 +323,7 @@ func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, in
 // pushMaildirSlots imports every .eml-shaped message under
 // <maildir>/cur + <maildir>/new into the named Stalwart mailbox.
 // Returns (messages_imported, bytes_imported, skipped).
-func pushMaildirSlots(ctx context.Context, accountID, mailboxID, maildir string, _ *[]string) (int64, int64, []string) {
+func pushMaildirSlots(ctx context.Context, accountID, mailboxID, maildir string, _ *[]string, allowedRoots []string) (int64, int64, []string) {
 	var imported, bytes int64
 	var skipped []string
 	// Idempotency: Stalwart's Email/import does NOT dedup on Message-ID
@@ -338,7 +352,7 @@ func pushMaildirSlots(ctx context.Context, accountID, mailboxID, maildir string,
 				skipped = append(skipped, fmt.Sprintf("oversized:%s:%d", path, info.Size()))
 				continue
 			}
-			if mid := messageIDFromFile(path); mid != "" {
+			if mid := messageIDFromFile(path, allowedRoots); mid != "" {
 				if seen[mid] {
 					continue // already in mailbox → idempotent skip
 				}
@@ -357,7 +371,7 @@ func pushMaildirSlots(ctx context.Context, accountID, mailboxID, maildir string,
 					keywords["$seen"] = true
 				}
 			}
-			n, err := importOneMessage(ctx, accountID, mailboxID, path, info.Size(), keywords, info.ModTime())
+			n, err := importOneMessage(ctx, accountID, mailboxID, path, info.Size(), keywords, info.ModTime(), allowedRoots)
 			if err != nil {
 				skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
 				continue
@@ -564,8 +578,8 @@ func mailboxIDByRole(ctx context.Context, accountID, role string) (string, error
 
 // importOneMessage = blob upload + Email/import in two HTTP round-
 // trips. Returns the bytes uploaded.
-func importOneMessage(ctx context.Context, accountID, mailboxID, path string, size int64, keywords map[string]bool, receivedAt time.Time) (int64, error) {
-	blobID, err := uploadBlob(ctx, accountID, path)
+func importOneMessage(ctx context.Context, accountID, mailboxID, path string, size int64, keywords map[string]bool, receivedAt time.Time, allowedRoots []string) (int64, error) {
+	blobID, err := uploadBlob(ctx, accountID, path, allowedRoots)
 	if err != nil {
 		return 0, fmt.Errorf("blob/upload: %w", err)
 	}
@@ -608,8 +622,8 @@ func importOneMessage(ctx context.Context, accountID, mailboxID, path string, si
 
 // uploadBlob streams the file at `path` to Stalwart's /jmap/upload/<accountId>
 // endpoint. Returns the produced blobId.
-func uploadBlob(ctx context.Context, accountID, path string) (string, error) {
-	f, err := openMaildirFileInStaging(path)
+func uploadBlob(ctx context.Context, accountID, path string, allowedRoots []string) (string, error) {
+	f, err := openMaildirFileInStaging(path, allowedRoots)
 	if err != nil {
 		return "", err
 	}
@@ -777,8 +791,8 @@ func existingMessageIDs(ctx context.Context, accountID, mailboxID string) map[st
 
 // messageIDFromFile reads the Message-ID header from an RFC822 file.
 // Returns "" when absent (such messages can't be deduped — they import).
-func messageIDFromFile(path string) string {
-	f, err := openMaildirFileInStaging(path)
+func messageIDFromFile(path string, allowedRoots []string) string {
+	f, err := openMaildirFileInStaging(path, allowedRoots)
 	if err != nil {
 		return ""
 	}
@@ -812,8 +826,8 @@ func normMsgID(s string) string {
 // the root agent into reading a host file and uploading it into a mailbox
 // (Gitea #477). ReadDir/Stat above may follow a symlink, but this open is the
 // gate: a symlinked component is refused here.
-func openMaildirFileInStaging(path string) (*os.File, error) {
-	scope, err := filesafe.NewScope("migration", "migration", migrationStagingRoots)
+func openMaildirFileInStaging(path string, allowedRoots []string) (*os.File, error) {
+	scope, err := filesafe.NewScope("migration", "migration", allowedRoots)
 	if err != nil {
 		return nil, err
 	}

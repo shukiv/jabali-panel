@@ -65,7 +65,7 @@ type agentImportMailboxesResult struct {
 // agentCli nil → observation-only behaviour (legacy stub —
 // per-mailbox 'pending_manual' warnings recorded; no JMAP push).
 // Useful for tests + dry-run paths where Stalwart isn't reachable.
-func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.AgentInterface, jobID string, mbRepo repository.MailboxRepository, domainsRepo repository.DomainRepository, preserveCreds bool) (*MailImportResult, error) {
+func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.AgentInterface, jobID string, mbRepo repository.MailboxRepository, domainsRepo repository.DomainRepository, preserveCreds bool, destUser string) (*MailImportResult, error) {
 	if parsed == nil {
 		return nil, fmt.Errorf("ImportMailboxes: parsed nil")
 	}
@@ -184,6 +184,10 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		"job_id":       jobID,
 		"src_mail_dir": mailRoot,
 		"owner_email":  parsed.OwnerEmail, // empty → agent skips owner-mailbox detection
+		// dest_user lets the agent also accept a MailRoot under /home/<destUser>/mail
+		// (CyberPanel rsyncs its /home/vmail Maildirs into the target's home, not
+		// the staging tree). Empty for tarball-bundled sources (staging root only).
+		"dest_user": destUser,
 	})
 	if err != nil {
 		// Don't fail the whole restore stage on a mail import
@@ -441,13 +445,13 @@ func listSourceMailAccounts(domainDir string) []string {
 // what Stalwart recognises by prefix.
 var stalwartHashPrefixes = []string{
 	"$2a$", "$2b$", "$2y$", // bcrypt
-	"$6$",      // SHA-512 crypt
-	"$5$",      // SHA-256 crypt
-	"$1$",      // MD5 crypt
-	"$argon2",  // $argon2id / $argon2i / $argon2d
-	"$pbkdf2",  // PBKDF2 variants
-	"$scrypt",  // scrypt
-	"$sha1",    // SHA-1 crypt
+	"$6$",     // SHA-512 crypt
+	"$5$",     // SHA-256 crypt
+	"$1$",     // MD5 crypt
+	"$argon2", // $argon2id / $argon2i / $argon2d
+	"$pbkdf2", // PBKDF2 variants
+	"$scrypt", // scrypt
+	"$sha1",   // SHA-1 crypt
 }
 
 // normalizeSourceMailHash strips a leading dovecot {SCHEME} tag and returns the
