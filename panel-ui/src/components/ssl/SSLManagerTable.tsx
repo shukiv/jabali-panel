@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -126,6 +127,7 @@ export const SSLManagerTable = ({
   endpoint,
   showOwner,
 }: SSLManagerTableProps) => {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   // Client-side search over the fetched rows — SSL list is small
@@ -224,7 +226,7 @@ export const SSLManagerTable = ({
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="Failed to load SSL certificates"
+        description={t("sslmanagertable.failed_to_load_ssl_certificates")}
       />
     );
   }
@@ -251,7 +253,7 @@ export const SSLManagerTable = ({
             <Space size={4}>
               <span style={{ fontFamily: "monospace" }}>{text}</span>
               {isPanelCert && (
-                <Tooltip title="Panel cert — managed via Server Settings → Panel SSL">
+                <Tooltip title={t("sslmanagertable.panel_cert_managed_via_server_settings_panel")}>
                   <Tag color="purple">panel</Tag>
                 </Tooltip>
               )}
@@ -326,7 +328,7 @@ export const SSLManagerTable = ({
               </Tag>
             </Tooltip>
             {hasError && (
-              <Tooltip title="Show last error">
+              <Tooltip title={t("sslmanagertable.show_last_error")}>
                 <Button
                   size="small"
                   type="text"
@@ -407,7 +409,7 @@ export const SSLManagerTable = ({
         // exist for it). GH#132.
         if (record.id.startsWith("mail-cert:")) {
           return (
-            <Tooltip title="Clears backoff and reissues the Let's Encrypt mail certificate">
+            <Tooltip title={t("sslmanagertable.clears_backoff_and_reissues_the_let_s_encryp")}>
               <Button
                 icon={<RedoOutlined />}
                 loading={reissueMailMutation.isPending}
@@ -423,7 +425,7 @@ export const SSLManagerTable = ({
         return (
           <Space>
             {isRetryable && (
-              <Tooltip title="Force ACME retry now">
+              <Tooltip title={t("sslmanagertable.force_acme_retry_now")}>
                 <Button
                   icon={<RedoOutlined />}
                   loading={retryMutation.isPending}
@@ -432,7 +434,7 @@ export const SSLManagerTable = ({
               </Tooltip>
             )}
             {record.status === "issued" && (
-              <Tooltip title="Renew certificate">
+              <Tooltip title={t("sslmanagertable.renew_certificate")}>
                 <Button
                   type="primary"
                   icon={<ReloadOutlined />}
@@ -443,10 +445,10 @@ export const SSLManagerTable = ({
             )}
             {record.status === "issued" && (
               <Popconfirm
-                title="Revoke Certificate"
-                description="Are you sure you want to revoke this certificate?"
+                title={t("sslmanagertable.revoke_certificate")}
+                description={t("sslmanagertable.are_you_sure_you_want_to_revoke_this_certifi")}
                 onConfirm={() => revokeMutation.mutate(record.domain_id)}
-                okText="Yes"
+                okText={t("sslmanagertable.yes")}
                 cancelText="No"
               >
                 <Button
@@ -467,7 +469,7 @@ export const SSLManagerTable = ({
       {!data || data.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="No SSL certificates yet"
+          description={t("sslmanagertable.no_ssl_certificates_yet")}
         />
       ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -503,19 +505,19 @@ export const SSLManagerTable = ({
         {errorRow && (
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="Status">
+              <Descriptions.Item label={t("sslmanagertable.status")}>
                 {errorRow.status.charAt(0).toUpperCase() +
                   errorRow.status.slice(1).replace(/_/g, " ")}
               </Descriptions.Item>
-              <Descriptions.Item label="Last attempt">
+              <Descriptions.Item label={t("sslmanagertable.last_attempt")}>
                 {errorRow.last_attempt_at
                   ? new Date(errorRow.last_attempt_at).toLocaleString()
                   : "—"}
               </Descriptions.Item>
-              <Descriptions.Item label="Retry count">
+              <Descriptions.Item label={t("sslmanagertable.retry_count")}>
                 {errorRow.retry_count}
               </Descriptions.Item>
-              <Descriptions.Item label="Next retry">
+              <Descriptions.Item label={t("sslmanagertable.next_retry")}>
                 {errorRow.next_retry_at
                   ? new Date(errorRow.next_retry_at).toLocaleString()
                   : "—"}

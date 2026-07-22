@@ -15,6 +15,7 @@
 //
 // Scope: still no multi-select, no chmod, no image preview, no editor —
 // those remain Phase 2.
+import { useTranslation } from "react-i18next";
 import type { ReactNode } from "react";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
@@ -308,6 +309,7 @@ function makeTreeNode(path: string, name: string): TreeNode {
 }
 
 export const FileManagerPage = () => {
+  const { t } = useTranslation();
   // Pull live theme tokens so the bulk-action bar (and any other
   // tinted surface here) tracks the global light/dark palette — we had
   // hard-coded #f0f5ff / #adc6ff / dim text before and those only
@@ -1339,7 +1341,7 @@ export const FileManagerPage = () => {
         onClose={() => setTreeDrawerOpen(false)}
         placement="left"
         width={280}
-        title="Folders"
+        title={t("filemanagerpage.folders")}
         styles={{ body: { padding: 8, background: token.colorBgContainer } }}
       >
         <Tree
@@ -1479,7 +1481,7 @@ export const FileManagerPage = () => {
               columns={columns as never}
               pagination={false}
               scroll={{ x: "max-content" }}
-              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Empty directory" /> }}
+              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("filemanagerpage.empty_directory")} /> }}
               // Row drag-to-move: any row is draggable; folders are drop
               // targets. `dragPathMime` carries the list of paths being
               // dragged (array, JSON-encoded). If the dragged row is part
@@ -1565,11 +1567,11 @@ export const FileManagerPage = () => {
       )}
 
       <Modal
-        title="New Folder"
+        title={t("filemanagerpage.new_folder")}
         open={mkdirOpen}
         onOk={() => void submitMkdir()}
         onCancel={() => setMkdirOpen(false)}
-        okText="Create"
+        okText={t("filemanagerpage.create")}
       >
         <Input
           value={mkdirName}
@@ -1581,11 +1583,11 @@ export const FileManagerPage = () => {
       </Modal>
 
       <Modal
-        title="New File"
+        title={t("filemanagerpage.new_file")}
         open={newFileOpen}
         onOk={() => void submitNewFile()}
         onCancel={() => setNewFileOpen(false)}
-        okText="Create"
+        okText={t("filemanagerpage.create")}
       >
         <Input
           value={newFileName}
@@ -1601,7 +1603,7 @@ export const FileManagerPage = () => {
         open={renameOpen}
         onOk={() => void submitRename()}
         onCancel={() => setRenameOpen(false)}
-        okText="Rename"
+        okText={t("filemanagerpage.rename")}
       >
         <Input
           value={renameNewName}
@@ -1654,7 +1656,7 @@ export const FileManagerPage = () => {
           setBulkMoveOpen(false);
           setBulkMoveDest("");
         }}
-        okText="Move"
+        okText={t("filemanagerpage.move")}
         okButtonProps={{ disabled: !bulkMoveDest }}
       >
         <p style={{ marginBottom: 8 }}>Pick a destination folder:</p>
@@ -1710,7 +1712,7 @@ export const FileManagerPage = () => {
         open={bulkChmodOpen}
         onOk={() => void handleBulkChmod()}
         onCancel={() => setBulkChmodOpen(false)}
-        okText="Apply"
+        okText={t("filemanagerpage.apply")}
       >
         <ChmodEditor value={bulkChmodMode} onChange={setBulkChmodMode} />
       </Modal>
@@ -1720,7 +1722,7 @@ export const FileManagerPage = () => {
         open={!!chmodTarget}
         onOk={() => void submitSingleChmod()}
         onCancel={() => setChmodTarget(null)}
-        okText="Apply"
+        okText={t("filemanagerpage.apply")}
       >
         <ChmodEditor value={chmodTargetMode} onChange={setChmodTargetMode} />
       </Modal>
@@ -1730,7 +1732,7 @@ export const FileManagerPage = () => {
         open={!!editTarget}
         onOk={() => void submitEdit()}
         onCancel={() => setEditTarget(null)}
-        okText="Save"
+        okText={t("filemanagerpage.save")}
         okButtonProps={{ loading: editSaving, disabled: editContent === editOriginal }}
         width="min(1100px, 95vw)"
       >

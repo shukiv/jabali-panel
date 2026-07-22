@@ -3,6 +3,7 @@
 // Lists all email-enabled domains + their catch-all target (if any).
 // Create/edit dialog: pick domain, enter target mailbox email.
 
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   Button,
@@ -40,6 +41,7 @@ interface CatchAllRow {
 }
 
 export const CatchAllTab = () => {
+  const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
@@ -122,7 +124,7 @@ export const CatchAllTab = () => {
   }
 
   if (emailEnabledDomains.length === 0) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No email-enabled domains yet" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("catchalltab.no_email_enabled_domains_yet")} />;
   }
 
   // Build the mailbox options; preserve a current target that isn't in
@@ -222,18 +224,18 @@ export const CatchAllTab = () => {
         title={editing ? `Catch-all: ${editing.domain_name}` : "Set catch-all"}
         onCancel={() => setEditOpen(false)}
         onOk={submit}
-        okText="Save"
+        okText={t("catchalltab.save")}
         confirmLoading={updateMut.isPending}
         destroyOnClose
       >
         <Form form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="domain_id"
-            label="Domain"
+            label={t("catchalltab.domain")}
             rules={[{ required: true, message: "Select a domain" }]}
           >
             <Select
-              placeholder="Select email-enabled domain"
+              placeholder={t("catchalltab.select_email_enabled_domain")}
               disabled={!!editing}
               onChange={() => form.setFieldValue("target", undefined)}
               options={emailEnabledDomains.map((d) => ({ label: d.name, value: d.id }))}
@@ -241,7 +243,7 @@ export const CatchAllTab = () => {
           </Form.Item>
           <Form.Item
             name="target"
-            label="Target mailbox"
+            label={t("catchalltab.target_mailbox")}
             rules={[{ required: true, message: "Select a target mailbox" }]}
             extra="Mail sent to unknown addresses at this domain is delivered to this mailbox."
           >

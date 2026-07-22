@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   App,
@@ -51,6 +52,7 @@ const humanizeSchedule = (schedule: string): string => {
 };
 
 export const UserCronList = () => {
+  const { t } = useTranslation();
   const { message: antMessage } = App.useApp();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<CronJob | null>(null);
@@ -195,7 +197,7 @@ export const UserCronList = () => {
       <Card>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Input.Search
-          placeholder="Search by name, command, or schedule"
+          placeholder={t("usercronlist.search_by_name_command_or_schedule")}
           allowClear
           value={search}
           onChange={(e) => setSearch(e.target.value)}

@@ -10,6 +10,7 @@
 // The modal calls POST /domains/:id/mailboxes on submit and surfaces
 // the reveal-once password via the onCreated callback — the parent
 // page pops the DatabaseUserPasswordModal with it.
+import { useTranslation } from "react-i18next";
 import { Alert, Button, Checkbox, Drawer, Form, Grid, Input, InputNumber, Select, Space } from "antd";
 
 import { PasswordInput } from "../../../components/PasswordInput";
@@ -60,6 +61,7 @@ export const CreateMailboxWizardModal = ({
   onCancel,
   onCreated,
 }: Props) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<FormValues>();
   const createMutation = useCreateMailbox();
   const screens = Grid.useBreakpoint();
@@ -157,7 +159,7 @@ export const CreateMailboxWizardModal = ({
 
   return (
     <Drawer
-      title="Create mailbox"
+      title={t("createmailboxwizardmodal.create_mailbox")}
       open={open}
       onClose={onCancelInternal}
       width={isDesktop ? 520 : undefined}
@@ -178,15 +180,15 @@ export const CreateMailboxWizardModal = ({
         initialValues={{ quota_mib: QUOTA_DEFAULT_BYTES / 1024 / 1024 }}
       >
         <Form.Item
-          label="Domain"
+          label={t("createmailboxwizardmodal.domain")}
           name="domain_id"
           rules={[{ required: true, message: "Pick a domain" }]}
-          tooltip="Only domains with email enabled appear here."
+          tooltip={t("createmailboxwizardmodal.only_domains_with_email_enabled_appear_here")}
         >
           <Select
             showSearch
             optionFilterProp="label"
-            placeholder="Select a domain"
+            placeholder={t("createmailboxwizardmodal.select_a_domain")}
             options={domains.map((d) => ({ value: d.id, label: d.name }))}
           />
         </Form.Item>
@@ -194,7 +196,7 @@ export const CreateMailboxWizardModal = ({
         {chosenDomain && (
           <>
             <Form.Item
-              label="Email address"
+              label={t("createmailboxwizardmodal.email_address")}
               name="local_part"
               rules={[
                 { required: true, message: "Required" },
@@ -214,17 +216,17 @@ export const CreateMailboxWizardModal = ({
             </Form.Item>
 
             <Form.Item
-              label="Display name"
+              label={t("createmailboxwizardmodal.display_name")}
               name="display_name"
-              tooltip="Shown as the sender name in webmail and outgoing mail (e.g. Alice Smith). Optional."
+              tooltip={t("createmailboxwizardmodal.shown_as_the_sender_name_in_webmail_and_outg")}
             >
-              <Input placeholder="Alice Smith" autoComplete="off" maxLength={255} />
+              <Input placeholder={t("createmailboxwizardmodal.alice_smith")} autoComplete="off" maxLength={255} />
             </Form.Item>
 
             <Form.Item
-              label="Password"
+              label={t("createmailboxwizardmodal.password")}
               name="password"
-              tooltip="Leave blank to auto-generate. Generated passwords are shown exactly once."
+              tooltip={t("createmailboxwizardmodal.leave_blank_to_auto_generate_generated_passw")}
               rules={[{ min: 8, message: "8 characters minimum" }]}
             >
               <PasswordInput
@@ -234,7 +236,7 @@ export const CreateMailboxWizardModal = ({
             </Form.Item>
 
             <Form.Item
-              label="Quota (MiB)"
+              label={t("createmailboxwizardmodal.quota_mib")}
               name="quota_mib"
               tooltip={`Default ${QUOTA_DEFAULT_BYTES / 1024 / 1024} MiB. Minimum ${
                 QUOTA_MIN_BYTES / 1024 / 1024
@@ -251,21 +253,21 @@ export const CreateMailboxWizardModal = ({
             <Form.Item
               name="send_only"
               valuePropName="checked"
-              tooltip="A send-only mailbox can authenticate for SMTP submission (sending) but never receives or stores mail — inbound is rejected. Ideal for per-service or per-appliance notification credentials, so each system has its own account to revoke or rotate."
+              tooltip={t("createmailboxwizardmodal.a_send_only_mailbox_can_authenticate_for_smt")}
             >
               <Checkbox>Send-only (SMTP submission, no inbox)</Checkbox>
             </Form.Item>
 
             {domainGroups && domainGroups.length > 0 && (
               <Form.Item
-                label="Add to groups"
+                label={t("createmailboxwizardmodal.add_to_groups")}
                 name="group_ids"
-                tooltip="The mailbox joins these groups and gains their shared mailbox, calendar, address book and files."
+                tooltip={t("createmailboxwizardmodal.the_mailbox_joins_these_groups_and_gains_the")}
               >
                 <Select
                   mode="multiple"
                   allowClear
-                  placeholder="Select groups (optional)"
+                  placeholder={t("createmailboxwizardmodal.select_groups_optional")}
                   optionFilterProp="label"
                   options={domainGroups.map((g) => ({ value: g.id, label: g.display_name || g.email }))}
                 />
@@ -273,9 +275,9 @@ export const CreateMailboxWizardModal = ({
             )}
 
             <Form.Item
-              label="Aliases (optional)"
+              label={t("createmailboxwizardmodal.aliases_optional")}
               name="aliases"
-              tooltip="Extra addresses that deliver to this mailbox. One local-part per line or comma-separated — e.g. sales, info."
+              tooltip={t("createmailboxwizardmodal.extra_addresses_that_deliver_to_this_mailbox")}
             >
               <Input.TextArea
                 rows={2}
@@ -284,9 +286,9 @@ export const CreateMailboxWizardModal = ({
               />
             </Form.Item>
             <Form.Item
-              label="Forward to (optional)"
+              label={t("createmailboxwizardmodal.forward_to_optional")}
               name="forward_target"
-              tooltip="Redirect a copy of incoming mail to an external address."
+              tooltip={t("createmailboxwizardmodal.redirect_a_copy_of_incoming_mail_to_an_exter")}
               rules={[{ type: "email", message: "Must be a valid email" }]}
             >
               <Input placeholder="external@example.com" autoComplete="off" />
@@ -301,8 +303,8 @@ export const CreateMailboxWizardModal = ({
           <Alert
             type="warning"
             showIcon
-            message="No email-enabled domains"
-            description="Enable email on at least one domain before creating a mailbox."
+            message={t("createmailboxwizardmodal.no_email_enabled_domains")}
+            description={t("createmailboxwizardmodal.enable_email_on_at_least_one_domain_before_c")}
           />
         )}
       </Form>

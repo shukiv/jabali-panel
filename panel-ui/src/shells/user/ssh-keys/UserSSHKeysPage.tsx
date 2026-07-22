@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { StandardDrawerFooter } from "../../../components/StandardActionFooter";
@@ -52,6 +53,7 @@ function generateEd25519Keypair(comment: string) {
 }
 
 export const UserSSHKeysPage = () => {
+  const { t } = useTranslation();
   const [form] = Form.useForm();
   const [genForm] = Form.useForm();
   const [modalOpen, setModalOpen] = useState(false);
@@ -242,7 +244,7 @@ export const UserSSHKeysPage = () => {
         showIcon
         style={{ marginBottom: 16 }}
         title={<strong>SSH & SFTP Access</strong>}
-        description="Connect to your server securely using SSH for terminal access or SFTP for file transfers. Generate a new key pair or add your existing public SSH keys below."
+        description={t("usersshkeyspage.connect_to_your_server_securely_using_ssh_fo")}
       />
 
       {conn && (
@@ -283,7 +285,7 @@ export const UserSSHKeysPage = () => {
 
       <Card>
         <Input.Search
-          placeholder="Search by name or fingerprint"
+          placeholder={t("usersshkeyspage.search_by_name_or_fingerprint")}
           allowClear
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -327,10 +329,10 @@ export const UserSSHKeysPage = () => {
               dataIndex: "actions",
               render: (_, record) => (
                 <Popconfirm
-                  title="Delete SSH Key"
-                  description="Are you sure? This revokes SFTP access."
+                  title={t("usersshkeyspage.delete_ssh_key")}
+                  description={t("usersshkeyspage.are_you_sure_this_revokes_sftp_access")}
                   onConfirm={() => handleDelete(record)}
-                  okText="Yes"
+                  okText={t("usersshkeyspage.yes")}
                   cancelText="No"
                 >
                   <RowActionButton
@@ -349,7 +351,7 @@ export const UserSSHKeysPage = () => {
       </Card>
 
       <Drawer
-        title="Add SSH Key"
+        title={t("usersshkeyspage.add_ssh_key")}
         open={modalOpen}
         onClose={() => {
           setModalOpen(false);
@@ -377,7 +379,7 @@ export const UserSSHKeysPage = () => {
           onFinish={handleAddKey}
         >
           <Form.Item
-            label="Name"
+            label={t("usersshkeyspage.name")}
             name="name"
             rules={[
               { required: true, message: "Please enter a name" },
@@ -388,7 +390,7 @@ export const UserSSHKeysPage = () => {
           </Form.Item>
 
           <Form.Item
-            label="Public Key"
+            label={t("usersshkeyspage.public_key")}
             name="public_key"
             rules={[
               { required: true, message: "Please paste your public key" },
@@ -414,7 +416,7 @@ export const UserSSHKeysPage = () => {
           and POSTs only the public half. The private key is shown once
           in the result modal below. */}
       <Drawer
-        title="Generate SSH Key"
+        title={t("usersshkeyspage.generate_ssh_key")}
         open={genOpen}
         onClose={() => {
           setGenOpen(false);
@@ -442,7 +444,7 @@ export const UserSSHKeysPage = () => {
         </Typography.Paragraph>
         <Form id="ssh-gen-form" form={genForm} layout="vertical" onFinish={handleGenerate}>
           <Form.Item
-            label="Name"
+            label={t("usersshkeyspage.name")}
             name="name"
             rules={[
               { required: true, message: "Please enter a name" },
@@ -452,7 +454,7 @@ export const UserSSHKeysPage = () => {
             <Input placeholder="e.g., My Laptop" />
           </Form.Item>
           <Form.Item
-            label="Comment (optional)"
+            label={t("usersshkeyspage.comment_optional")}
             name="comment"
             extra="Embedded in the public key as a label; defaults to 'jabali'."
           >
@@ -465,7 +467,7 @@ export const UserSSHKeysPage = () => {
           Shows the private key once with copy + download. Dismissing
           clears it from React state so it's not retained in memory. */}
       <Modal
-        title="Save your private key now"
+        title={t("usersshkeyspage.save_your_private_key_now")}
         open={generatedPrivate !== null}
         onCancel={() => {
           setGeneratedPrivate(null);
@@ -485,8 +487,8 @@ export const UserSSHKeysPage = () => {
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          title="This is the only time the private key will be shown."
-          description="Copy or download it now. If you close this dialog without saving, you'll need to generate a new key and delete this one."
+          title={t("usersshkeyspage.this_is_the_only_time_the_private_key_will_b")}
+          description={t("usersshkeyspage.copy_or_download_it_now_if_you_close_this_di")}
         />
         <Space style={{ marginBottom: 8 }}>
           <Button icon={<CopyOutlined />} onClick={copyPrivateKey}>

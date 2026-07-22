@@ -3,6 +3,7 @@
 // useTableURL with a custom useQuery `refetchInterval` so
 // transitional statuses (pending/installing/cloning/deleting) poll
 // until ready.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
@@ -222,6 +223,7 @@ const ActionsCell = ({
 };
 
 export const UserApplicationList = () => {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const qc = useQueryClient();
 
@@ -381,7 +383,7 @@ export const UserApplicationList = () => {
           <AppstoreOutlined /> Applications
         </Typography.Title>
         <Space wrap size={[8, 8]}>
-          <Tooltip title="Detect WordPress, Joomla, Drupal, and Magento installs on disk that aren't yet tracked by the panel.">
+          <Tooltip title={t("userapplicationlist.detect_wordpress_joomla_drupal_and_magento_i")}>
             <Button
               icon={<SearchOutlined />}
               loading={scanning}
@@ -473,21 +475,21 @@ export const UserApplicationList = () => {
                       <Col xs={12} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(207, 19, 34, 0.12)" iconColor="#cf1322" Icon={AppstoreOutlined}
-                          label="Installed Apps" value={installedCount}
+                          label={t("userapplicationlist.installed_apps")} value={installedCount}
                           subtitle={<Typography.Text type="secondary">{catalogCount} in catalog</Typography.Text>}
                         />
                       </Col>
                       <Col xs={12} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(63, 134, 0, 0.12)" iconColor="#3f8600" Icon={CheckCircleOutlined}
-                          label="Ready" value={readyCount}
+                          label={t("userapplicationlist.ready")} value={readyCount}
                           subtitle={<Typography.Text type="secondary">{pct(readyCount)}% of installed</Typography.Text>}
                         />
                       </Col>
                       <Col xs={12} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(22, 119, 255, 0.12)" iconColor="#1677ff" Icon={SyncOutlined}
-                          label="In Progress" value={inProgressCount}
+                          label={t("userapplicationlist.in_progress")} value={inProgressCount}
                           subtitle={inProgressCount > 0
                             ? <Typography.Text type="warning">Working…</Typography.Text>
                             : <Typography.Text type="secondary">Idle</Typography.Text>}
@@ -496,7 +498,7 @@ export const UserApplicationList = () => {
                       <Col xs={12} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(212, 107, 8, 0.12)" iconColor="#d46b08" Icon={ExclamationCircleOutlined}
-                          label="Failed" value={failedCount}
+                          label={t("userapplicationlist.failed")} value={failedCount}
                           subtitle={failedCount > 0
                             ? <Typography.Text type="danger">Needs attention</Typography.Text>
                             : <Typography.Text type="secondary">All healthy</Typography.Text>}
@@ -513,7 +515,7 @@ export const UserApplicationList = () => {
           searchPlaceholder="Search by domain"
           locale={{
             emptyText: (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No installed apps yet">
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("userapplicationlist.no_installed_apps_yet")}>
                 <Button type="primary" onClick={() => setActiveTab("catalog")}>
                   Browse Catalog
                 </Button>
@@ -530,7 +532,7 @@ export const UserApplicationList = () => {
         >
           <Table.Column<ApplicationInstall>
             dataIndex="domain_name"
-            title="Domain"
+            title={t("userapplicationlist.domain")}
             key="domain_name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -589,7 +591,7 @@ export const UserApplicationList = () => {
           />
           <Table.Column<ApplicationInstall>
             dataIndex="version"
-            title="App / Version"
+            title={t("userapplicationlist.app_version")}
             responsive={["lg"]}
             render={(version: string | null, record) => (
               <Space size={6}>
@@ -600,19 +602,19 @@ export const UserApplicationList = () => {
           />
           <Table.Column<ApplicationInstall>
             dataIndex="admin_email"
-            title="Admin email"
+            title={t("userapplicationlist.admin_email")}
             responsive={["md"]}
           />
           <Table.Column<ApplicationInstall>
             dataIndex="created_at"
-            title="Created"
+            title={t("userapplicationlist.created")}
             responsive={["lg"]}
             key="created_at"
             sorter={{ multiple: 2 }}
             render={(date: string) => shortDateTime(date)}
           />
           <Table.Column<ApplicationInstall>
-            title="Cache"
+            title={t("userapplicationlist.cache")}
             dataIndex="cache_enabled"
             responsive={["md"]}
             render={(_, r) => {
@@ -631,15 +633,15 @@ export const UserApplicationList = () => {
               if (!supported) return sw;
               return (
                 <Space size={4}>
-                  <Tooltip title="Redis object cache + nginx page cache">
+                  <Tooltip title={t("userapplicationlist.redis_object_cache_nginx_page_cache")}>
                     {sw}
                   </Tooltip>
-                  <Tooltip title="Cache settings">
+                  <Tooltip title={t("userapplicationlist.cache_settings")}>
                     <Button
                       type="text"
                       size="small"
                       icon={<SettingOutlined />}
-                      aria-label="Cache settings"
+                      aria-label={t("userapplicationlist.cache_settings")}
                       onClick={() => setCacheSettingsFor(r)}
                     />
                   </Tooltip>
@@ -648,7 +650,7 @@ export const UserApplicationList = () => {
             }}
           />
           <Table.Column<ApplicationInstall>
-            title="Actions"
+            title={t("userapplicationlist.actions")}
             dataIndex="actions"
             render={(_, r) => {
               const isDeleting =

@@ -12,6 +12,7 @@
 // app type (e.g. DokuWiki with a "license" enum) requires zero UI
 // code — the descriptor on the API side is the only source of truth.
 
+import { useTranslation } from "react-i18next";
 import { useState, useEffect, useMemo } from "react";
 import {
   Drawer,
@@ -314,6 +315,7 @@ export const InstallApplicationModal = ({
   defaultAdminEmail,
   presetAppType,
 }: Props) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<Record<string, unknown>>();
   const [submitting, setSubmitting] = useState(false);
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -546,7 +548,7 @@ export const InstallApplicationModal = ({
 
   return (
     <Drawer
-      title="Install application"
+      title={t("installapplicationmodal.install_application")}
       open={open}
       onClose={handleClose}
       maskClosable={!submitting && !result}
@@ -581,7 +583,7 @@ export const InstallApplicationModal = ({
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            title="What happens next"
+            title={t("installapplicationmodal.what_happens_next")}
             description={
               <>
                 We&rsquo;ll provision the application&rsquo;s database (if
@@ -598,8 +600,8 @@ export const InstallApplicationModal = ({
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
-              title="No domains yet"
-              description="You have no domains. Create one first."
+              title={t("installapplicationmodal.no_domains_yet")}
+              description={t("installapplicationmodal.you_have_no_domains_create_one_first")}
             />
           )}
           <Form
@@ -636,12 +638,12 @@ export const InstallApplicationModal = ({
               </>
             ) : (
               <Form.Item
-                label="Application"
+                label={t("installapplicationmodal.application")}
                 name="app_type"
                 rules={[{ required: true, message: "Pick an application" }]}
               >
                 <Select
-                  placeholder="Select an application"
+                  placeholder={t("installapplicationmodal.select_an_application")}
                   loading={loadingApps}
                   suffixIcon={<AppstoreOutlined />}
                   options={apps.map((a) => ({
@@ -672,12 +674,12 @@ export const InstallApplicationModal = ({
             )}
 
             <Form.Item
-              label="Domain"
+              label={t("installapplicationmodal.domain")}
               name="domain_id"
               rules={[{ required: true, message: "Pick a domain" }]}
             >
               <Select
-                placeholder="Select a domain"
+                placeholder={t("installapplicationmodal.select_a_domain")}
                 loading={loadingDomains}
                 options={availableDomains.map((d) => ({
                   value: d.id,
@@ -705,7 +707,7 @@ export const InstallApplicationModal = ({
                 </div>
 
                 <Form.Item
-                  label="Directory (optional)"
+                  label={t("installapplicationmodal.directory_optional")}
                   name="subdirectory"
                   rules={[{ validator: validateSubdirectory }]}
                 >
@@ -736,8 +738,8 @@ export const InstallApplicationModal = ({
             type="success"
             showIcon
             icon={<CheckCircleTwoTone twoToneColor="#52c41a" />}
-            title="Install queued"
-            description="The install runs in the background. Copy the password now — it is shown only once. We store only a bcrypt hash."
+            title={t("installapplicationmodal.install_queued")}
+            description={t("installapplicationmodal.the_install_runs_in_the_background_copy_the")}
           />
           <div>
             <Typography.Text strong>Domain</Typography.Text>
@@ -750,7 +752,7 @@ export const InstallApplicationModal = ({
                 readOnly
                 value={result.adminUsername}
                 addonAfter={
-                  <Tooltip title="Copy">
+                  <Tooltip title={t("installapplicationmodal.copy")}>
                     <Button
                       type="text"
                       icon={<CopyOutlined />}
@@ -772,7 +774,7 @@ export const InstallApplicationModal = ({
               value={result.adminPassword}
               visibilityToggle
               addonAfter={
-                <Tooltip title="Copy">
+                <Tooltip title={t("installapplicationmodal.copy")}>
                   <Button
                     type="text"
                     icon={<CopyOutlined />}

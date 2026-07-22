@@ -4,6 +4,7 @@
 // if the package doesn't allow editing, the whole card renders a hint instead.
 // This replaces the old raw UserPHPPoolCard (removed in PR #34) with the
 // package-gated, preset-based model.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
@@ -35,6 +36,7 @@ export const UserPHPPerformanceCard = ({
 }: {
   versions: string[];
 }) => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [version, setVersion] = useState<string>(versions[0] ?? "");
   const [mode, setMode] = useState<string>("balanced");
@@ -52,8 +54,8 @@ export const UserPHPPerformanceCard = ({
       <Alert
         type="info"
         showIcon
-        message="PHP performance tuning isn't enabled on your plan."
-        description="Ask your provider to enable it on your hosting package."
+        message={t("userphpperformancecard.php_performance_tuning_isn_t_enabled_on_your")}
+        description={t("userphpperformancecard.ask_your_provider_to_enable_it_on_your_hosti")}
       />
     );
   }
@@ -90,7 +92,7 @@ export const UserPHPPerformanceCard = ({
   const cap = policy.max_children_cap;
 
   return (
-    <Card title="PHP Performance">
+    <Card title={t("userphpperformancecard.php_performance")}>
       <Space direction="vertical" size="large" style={{ width: "100%", maxWidth: 560 }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Pick how your PHP workers scale. Values are capped for your plan (max{" "}
@@ -130,7 +132,7 @@ export const UserPHPPerformanceCard = ({
                 label: "Advanced (raw pm.* — clamped to your plan)",
                 children: (
                   <Form form={advForm} layout="vertical" initialValues={{ pm_mode: "dynamic", pm_max_children: Math.min(10, cap) }}>
-                    <Form.Item name="pm_mode" label="Process manager">
+                    <Form.Item name="pm_mode" label={t("userphpperformancecard.process_manager")}>
                       <Select
                         options={[
                           { value: "dynamic", label: "dynamic" },
@@ -142,16 +144,16 @@ export const UserPHPPerformanceCard = ({
                     <Form.Item name="pm_max_children" label={`Max children (≤ ${cap})`}>
                       <InputNumber min={1} max={cap} style={{ width: 160 }} />
                     </Form.Item>
-                    <Form.Item name="pm_start_servers" label="Start servers (dynamic)">
+                    <Form.Item name="pm_start_servers" label={t("userphpperformancecard.start_servers_dynamic")}>
                       <InputNumber min={1} max={cap} style={{ width: 160 }} />
                     </Form.Item>
-                    <Form.Item name="pm_min_spare_servers" label="Min spare (dynamic)">
+                    <Form.Item name="pm_min_spare_servers" label={t("userphpperformancecard.min_spare_dynamic")}>
                       <InputNumber min={1} max={cap} style={{ width: 160 }} />
                     </Form.Item>
-                    <Form.Item name="pm_max_spare_servers" label="Max spare (dynamic)">
+                    <Form.Item name="pm_max_spare_servers" label={t("userphpperformancecard.max_spare_dynamic")}>
                       <InputNumber min={1} max={cap} style={{ width: 160 }} />
                     </Form.Item>
-                    <Form.Item name="pm_max_requests" label="Max requests per worker (0 = never)">
+                    <Form.Item name="pm_max_requests" label={t("userphpperformancecard.max_requests_per_worker_0_never")}>
                       <InputNumber min={0} max={100000} style={{ width: 160 }} />
                     </Form.Item>
                     <Button loading={saving} onClick={applyAdvanced}>

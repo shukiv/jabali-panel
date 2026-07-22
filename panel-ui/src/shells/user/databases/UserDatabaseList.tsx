@@ -2,6 +2,7 @@
 // + Open-in-phpMyAdmin + Delete. phpMyAdmin SSO is wired through the
 // apiClient helper; a blank tab is opened synchronously to dodge
 // popup blockers while the SSO call runs.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { useQueryClient } from "@tanstack/react-query";
@@ -56,6 +57,7 @@ const formatBytes = (bytes: number | undefined): string => {
 };
 
 export const UserDatabaseList = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const query = useTableURL<Database>({
     resource: "databases",
@@ -214,7 +216,7 @@ export const UserDatabaseList = () => {
         >
           <Table.Column<Database>
             dataIndex="name"
-            title="Database"
+            title={t("userdatabaselist.database")}
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -226,31 +228,31 @@ export const UserDatabaseList = () => {
           />
           <Table.Column<Database>
             dataIndex="engine"
-            title="Engine"
+            title={t("userdatabaselist.engine")}
             width={140}
             render={(engine: string) => <EngineTag engine={engine} />}
           />
           <Table.Column<Database>
             dataIndex="size_bytes"
-            title="Size"
+            title={t("userdatabaselist.size")}
             key="size_bytes"
             sorter={{ multiple: 3 }}
             render={(size_bytes?: number) => formatBytes(size_bytes)}
           />
           <Table.Column<Database>
             dataIndex="charset"
-            title="Charset"
+            title={t("userdatabaselist.charset")}
             render={(charset?: string) => charset || "-"}
           />
           <Table.Column<Database>
             dataIndex="created_at"
-            title="Created"
+            title={t("userdatabaselist.created")}
             key="created_at"
             sorter={{ multiple: 2 }}
             render={(date: string) => shortDateTime(date)}
           />
           <Table.Column<Database>
-            title="Actions"
+            title={t("userdatabaselist.actions")}
             dataIndex="actions"
             render={(_, r) => {
               const isPostgres = r.engine === "postgres";

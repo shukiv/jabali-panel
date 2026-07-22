@@ -9,6 +9,7 @@
 // a footer Space for the push toggle. Container uses theme tokens
 // (colorBgElevated / borderRadiusLG / boxShadowSecondary) so the
 // popup is visually identical to every other AntD dropdown.
+import { useTranslation } from "react-i18next";
 import { Badge, Button, Divider, Dropdown, Empty, Grid, Popconfirm, Space, Tag, Tooltip, Typography, message, theme } from "antd";
 import type { MenuProps } from "antd";
 import type { CSSProperties, ReactElement } from "react";
@@ -70,6 +71,7 @@ function relativeTime(iso: string): string {
 }
 
 export function NotificationBell() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -286,7 +288,7 @@ export function NotificationBell() {
             </Space>
             <Space size={token.marginXS}>
               {isNarrow ? (
-                <Tooltip title="Mark all read">
+                <Tooltip title={t("notificationbell.mark_all_read")}>
                   <Button
                     type="text"
                     size="small"
@@ -306,10 +308,10 @@ export function NotificationBell() {
                 </Button>
               )}
               <Popconfirm
-                title="Clear all notifications?"
-                description="This deletes every notification in your inbox."
+                title={t("notificationbell.clear_all_notifications")}
+                description={t("notificationbell.this_deletes_every_notification_in_your_inbo")}
                 onConfirm={clearAll}
-                okText="Clear"
+                okText={t("notificationbell.clear")}
                 okButtonProps={{ danger: true }}
               >
                 <Button
@@ -353,7 +355,7 @@ export function NotificationBell() {
         </div>
       )}
     >
-      <Button type="text" aria-label="Notifications" style={{ width: 40, height: 40, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+      <Button type="text" aria-label={t("notificationbell.notifications")} style={{ width: 40, height: 40, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
         <Badge count={unread} size="small" overflowCount={99}>
           <BellOutlined />
         </Badge>

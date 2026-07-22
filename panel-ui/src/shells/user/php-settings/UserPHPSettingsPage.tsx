@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   Tabs,
   Alert,
@@ -106,6 +107,7 @@ const MAX_INPUT_TIME_OPTIONS = [
 ];
 
 export function UserPHPSettingsPage() {
+  const { t } = useTranslation();
   const [, setMe] = useState<Identity | null>(null);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
@@ -288,8 +290,8 @@ export function UserPHPSettingsPage() {
         </Typography.Title>
 
         <Alert
-          title="Caution"
-          description="Changing PHP settings can affect your website performance and functionality. Incorrect values may cause errors or prevent your site from functioning properly. Changes apply after the next request to PHP."
+          title={t("userphpsettingspage.caution")}
+          description={t("userphpsettingspage.changing_php_settings_can_affect_your_websit")}
           type="warning"
           showIcon
         />
@@ -302,7 +304,7 @@ export function UserPHPSettingsPage() {
               label: "Version & Domains",
               children: (
                 <Space direction="vertical" size="large" style={{ width: "100%" }}>
-        <Card title="CLI / Terminal default PHP version" size="small">
+        <Card title={t("userphpsettingspage.cli_terminal_default_php_version")} size="small">
           <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
             Sets which PHP version a bare <code>php</code> (and composer / wp-cli)
             uses in your SSH/terminal sessions. This is separate from each
@@ -328,12 +330,12 @@ export function UserPHPSettingsPage() {
             onFinish={onSave}
           >
             <Form.Item
-              label="Domain"
+              label={t("userphpsettingspage.domain")}
               name="domain_id"
               rules={[{ required: true, message: "Please select a domain" }]}
             >
               <Select
-                placeholder="Select a domain"
+                placeholder={t("userphpsettingspage.select_a_domain")}
                 onChange={setSelectedDomain}
                 options={domains.map((d) => ({
                   label: d.name,
@@ -346,7 +348,7 @@ export function UserPHPSettingsPage() {
               {selectedDomain && phpSettings && (
                 <>
                   <Form.Item
-                    label="PHP Version"
+                    label={t("userphpsettingspage.php_version")}
                     extra="Applies to this domain only — each domain can run its own PHP version. EOL versions have no security patches; avoid them on public sites."
                   >
                     <Select
@@ -378,11 +380,11 @@ export function UserPHPSettingsPage() {
                   <Row gutter={[16, 16]}>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label="Memory Limit"
+                        label={t("userphpsettingspage.memory_limit")}
                         name="php_memory_limit"
                       >
                         <Select
-                          placeholder="Use pool default"
+                          placeholder={t("userphpsettingspage.use_pool_default")}
                           allowClear
                           options={MEMORY_LIMIT_OPTIONS}
                         />
@@ -390,11 +392,11 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label="Upload Max File Size"
+                        label={t("userphpsettingspage.upload_max_file_size")}
                         name="php_upload_max_filesize"
                       >
                         <Select
-                          placeholder="Use pool default"
+                          placeholder={t("userphpsettingspage.use_pool_default")}
                           allowClear
                           options={UPLOAD_MAX_OPTIONS}
                         />
@@ -402,11 +404,11 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label="POST Max Size"
+                        label={t("userphpsettingspage.post_max_size")}
                         name="php_post_max_size"
                       >
                         <Select
-                          placeholder="Use pool default"
+                          placeholder={t("userphpsettingspage.use_pool_default")}
                           allowClear
                           options={POST_MAX_OPTIONS}
                         />
@@ -414,11 +416,11 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label="Max Input Variables"
+                        label={t("userphpsettingspage.max_input_variables")}
                         name="php_max_input_vars"
                       >
                         <Select
-                          placeholder="Use pool default"
+                          placeholder={t("userphpsettingspage.use_pool_default")}
                           allowClear
                           options={MAX_INPUT_VARS_OPTIONS}
                         />
@@ -430,11 +432,11 @@ export function UserPHPSettingsPage() {
                   <Row gutter={[16, 16]}>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label="Max Execution Time"
+                        label={t("userphpsettingspage.max_execution_time")}
                         name="php_max_execution_time"
                       >
                         <Select
-                          placeholder="Use pool default"
+                          placeholder={t("userphpsettingspage.use_pool_default")}
                           allowClear
                           options={MAX_EXECUTION_TIME_OPTIONS}
                         />
@@ -442,11 +444,11 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label="Max Input Time"
+                        label={t("userphpsettingspage.max_input_time")}
                         name="php_max_input_time"
                       >
                         <Select
-                          placeholder="Use pool default"
+                          placeholder={t("userphpsettingspage.use_pool_default")}
                           allowClear
                           options={MAX_INPUT_TIME_OPTIONS}
                         />

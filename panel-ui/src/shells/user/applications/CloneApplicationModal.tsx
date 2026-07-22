@@ -4,6 +4,7 @@
 // the WordPress descriptor only); future clonable apps reuse the same
 // modal and POST /applications/:id/clone path.
 
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Modal,
@@ -53,6 +54,7 @@ export const CloneApplicationModal = ({
   onSuccess,
   installId,
 }: Props) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<{ dest_domain_id: string }>();
   const [submitting, setSubmitting] = useState(false);
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -128,7 +130,7 @@ export const CloneApplicationModal = ({
 
   return (
     <Modal
-      title="Clone application"
+      title={t("cloneapplicationmodal.clone_application")}
       open={open}
       onCancel={handleClose}
       maskClosable={!submitting}
@@ -159,12 +161,12 @@ export const CloneApplicationModal = ({
         disabled={submitting}
       >
         <Form.Item
-          label="Destination domain"
+          label={t("cloneapplicationmodal.destination_domain")}
           name="dest_domain_id"
           rules={[{ required: true, message: "Pick a destination domain" }]}
         >
           <Select
-            placeholder="Select a domain"
+            placeholder={t("cloneapplicationmodal.select_a_domain")}
             loading={loadingDomains}
             options={availableDomains.map((d) => ({
               value: d.id,

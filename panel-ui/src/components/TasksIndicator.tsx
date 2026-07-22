@@ -2,6 +2,7 @@
 // (panel/system-package updates, backups, malware scans). Polls
 // /admin/active-tasks every 8s; spins + badges the count when tasks are
 // active, and lists them in a dropdown. Admin shell only.
+import { useTranslation } from "react-i18next";
 import { Badge, Button, Dropdown, Empty, Space, Tag, Tooltip, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { useNavigate } from "react-router";
@@ -31,6 +32,7 @@ const deeplinkFor = (kind: ActiveTask["kind"]) =>
       : "/jabali-admin/security";
 
 export function TasksIndicator() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const q = useQuery({
     queryKey: ["admin-active-tasks"],
@@ -61,7 +63,7 @@ export function TasksIndicator() {
             label: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="No tasks running"
+                description={t("tasksindicator.no_tasks_running")}
                 style={{ padding: 8, margin: 0 }}
               />
             ),
@@ -82,7 +84,7 @@ export function TasksIndicator() {
     <Dropdown menu={{ items }} placement="bottomRight" trigger={["click"]}>
       <Tooltip title={count > 0 ? `${count} task${count > 1 ? "s" : ""} running` : "Background tasks"}>
         <Badge count={count} size="small" offset={[-2, 4]}>
-          <Button type="text" icon={<SyncOutlined spin={count > 0} />} aria-label="Background tasks" />
+          <Button type="text" icon={<SyncOutlined spin={count > 0} />} aria-label={t("tasksindicator.background_tasks")} />
         </Badge>
       </Tooltip>
     </Dropdown>

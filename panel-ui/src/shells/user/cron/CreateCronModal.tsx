@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Drawer,
@@ -39,6 +40,7 @@ export const CreateCronModal = ({
   onSuccess,
   initial,
 }: CreateCronModalProps) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<string>(
@@ -159,7 +161,7 @@ export const CreateCronModal = ({
         }}
       >
         <Form.Item
-          label="Name"
+          label={t("createcronmodal.name")}
           name="name"
           rules={[
             { required: true, message: "Please enter a job name" },
@@ -170,7 +172,7 @@ export const CreateCronModal = ({
         </Form.Item>
 
         <Form.Item
-          label="Command"
+          label={t("createcronmodal.command")}
           name="command"
           rules={[
             { required: true, message: "Please enter a command" },
@@ -193,7 +195,7 @@ export const CreateCronModal = ({
 
         <Divider style={{ margin: "16px 0" }} />
 
-        <Form.Item label="Schedule">
+        <Form.Item label={t("createcronmodal.schedule")}>
           <Radio.Group
             value={scheduleMode}
             onChange={(e) => setScheduleMode(e.target.value)}
@@ -208,7 +210,7 @@ export const CreateCronModal = ({
 
         {scheduleMode === "advanced" && (
           <Form.Item
-            label="Cron Expression"
+            label={t("createcronmodal.cron_expression")}
             rules={[
               { required: true, message: "Please enter a cron expression" },
             ]}

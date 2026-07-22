@@ -4,6 +4,7 @@
 // ddclient config for a chosen hostname, documents the DynDNS response strings,
 // and runs an optional live test update. No new backend — it drives the
 // existing GET /nic/update shim (api/ddns.go).
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   Alert,
@@ -47,6 +48,7 @@ const CodeBlock = ({ text }: { text: string }) => (
 );
 
 export function DDNSSetupGuide(): JSX.Element {
+  const { t } = useTranslation();
   const [hostname, setHostname] = useState("");
   const [token, setToken] = useState("");
   const [testing, setTesting] = useState(false);
@@ -101,14 +103,14 @@ export function DDNSSetupGuide(): JSX.Element {
     : undefined;
 
   return (
-    <Card title="Dynamic DNS (DDNS) setup" size="small" style={{ marginTop: 24 }}>
+    <Card title={t("ddnssetupguide.dynamic_dns_ddns_setup")} size="small" style={{ marginTop: 24 }}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Alert
           type="info"
           showIcon
           icon={<KeyOutlined />}
-          message="Your API token is the DDNS password"
-          description="Point your router or ddclient at the update URL below and use a ddns-scoped API token (mint one above) as the Basic-auth PASSWORD. The username is ignored — put anything. Scope the token to a single record for least privilege."
+          message={t("ddnssetupguide.your_api_token_is_the_ddns_password")}
+          description={t("ddnssetupguide.point_your_router_or_ddclient_at_the_update")}
         />
 
         <div>

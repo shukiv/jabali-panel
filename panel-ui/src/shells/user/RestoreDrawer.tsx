@@ -6,6 +6,7 @@
 // added since). Mail / DNS are not offered — see
 // plans/m267-tenant-selective-restore.md (mail is RocksDB-unsafe via file apply;
 // custom DNS records aren't captured).
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 
 import {
@@ -45,6 +46,7 @@ interface RestoreDrawerProps {
 }
 
 export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) => {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [databases, setDatabases] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -112,7 +114,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
 
   return (
     <Drawer
-      title="Restore from backup"
+      title={t("restoredrawer.restore_from_backup")}
       width={460}
       open={open}
       onClose={onClose}
@@ -196,8 +198,8 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
             <Alert
               type="warning"
               showIcon
-              message="This is destructive"
-              description="The selected items will be overwritten with the backed-up copy."
+              message={t("restoredrawer.this_is_destructive")}
+              description={t("restoredrawer.the_selected_items_will_be_overwritten_with")}
             />
           )}
 
@@ -225,7 +227,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
             <Alert
               type={(result.applied?.length ?? 0) > 0 ? "success" : "info"}
               showIcon
-              message="Restore result"
+              message={t("restoredrawer.restore_result")}
               description={
                 <Space direction="vertical" size={2}>
                   {(result.applied ?? []).map((a) => (

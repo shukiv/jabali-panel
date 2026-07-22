@@ -1,5 +1,6 @@
 // ForwardersTab — M6.5 Step 5. Two-flavor forwarders (alias + external).
 
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   Button,
@@ -48,6 +49,7 @@ interface FormValues {
 }
 
 export const ForwardersTab = () => {
+  const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
@@ -122,7 +124,7 @@ export const ForwardersTab = () => {
     return <Skeleton active paragraph={{ rows: 4 }} />;
   }
   if (mailboxes.length === 0) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Create mailboxes first" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("forwarderstab.create_mailboxes_first")} />;
   }
 
   return (
@@ -178,7 +180,7 @@ export const ForwardersTab = () => {
               width: 80,
               render: (_, row) => (
                 <Popconfirm
-                  title="Remove forwarder?"
+                  title={t("forwarderstab.remove_forwarder")}
                   onConfirm={async () => {
                     try {
                       await deleteMut.mutateAsync(row.id);
@@ -189,10 +191,10 @@ export const ForwardersTab = () => {
                       message.error(msg);
                     }
                   }}
-                  okText="Remove"
+                  okText={t("forwarderstab.remove")}
                   okButtonProps={{ danger: true }}
                 >
-                  <Tooltip title="Remove">
+                  <Tooltip title={t("forwarderstab.remove")}>
                     <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                   </Tooltip>
                 </Popconfirm>
@@ -206,10 +208,10 @@ export const ForwardersTab = () => {
 
       <Modal
         open={open}
-        title="Add forwarder"
+        title={t("forwarderstab.add_forwarder")}
         onCancel={() => setOpen(false)}
         onOk={submit}
-        okText="Create"
+        okText={t("forwarderstab.create")}
         confirmLoading={createMut.isPending}
         destroyOnClose
         width={560}
@@ -220,7 +222,7 @@ export const ForwardersTab = () => {
           preserve={false}
           initialValues={{ type: "alias" }}
         >
-          <Form.Item name="type" label="Type" rules={[{ required: true }]}>
+          <Form.Item name="type" label={t("forwarderstab.type")} rules={[{ required: true }]}>
             <Radio.Group>
               <Radio value="alias">Alias (local-part → mailbox)</Radio>
               <Radio value="external">External (mailbox → outside email)</Radio>
@@ -233,7 +235,7 @@ export const ForwardersTab = () => {
             rules={[{ required: true }]}
           >
             <Select
-              placeholder="Select mailbox"
+              placeholder={t("forwarderstab.select_mailbox")}
               showSearch
               optionFilterProp="label"
               options={mailboxes.map((m) => ({ label: m.email, value: m.id }))}
@@ -243,7 +245,7 @@ export const ForwardersTab = () => {
           {type === "alias" && (
             <Form.Item
               name="local_part"
-              label="Alias local-part"
+              label={t("forwarderstab.alias_local_part")}
               rules={[{ required: true, pattern: /^[a-z0-9._-]+$/, message: "a-z 0-9 . _ -" }]}
               extra="Alias @ source-mailbox's domain. Mail to alias@domain delivers to the mailbox."
             >
@@ -254,7 +256,7 @@ export const ForwardersTab = () => {
           {type === "external" && (
             <Form.Item
               name="target"
-              label="External target"
+              label={t("forwarderstab.external_target")}
               rules={[{ required: true, type: "email", message: "Enter a valid email" }]}
               extra="Mail to the source mailbox is forwarded (copy kept) to this address."
             >

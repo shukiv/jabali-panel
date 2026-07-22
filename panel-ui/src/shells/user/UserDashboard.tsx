@@ -4,6 +4,7 @@
 // recent-rows tables (domains, mailboxes, applications, databases)
 // on the other. Cards pack height-balanced like the admin shell so a
 // long table doesn't leave whitespace next to a short one.
+import { useTranslation } from "react-i18next";
 import {
   Button,
   Card,
@@ -59,6 +60,7 @@ type DatabaseRow = {
 type MailboxRow = Mailbox & { domain_name: string };
 
 export function UserDashboard() {
+  const { t } = useTranslation();
   const [me, setMe] = useState<Identity | null>(null);
 
   useEffect(() => {
@@ -125,7 +127,7 @@ export function UserDashboard() {
       data: null,
       children: (
         <Card
-          title="Recent Domains"
+          title={t("userdashboard.recent_domains")}
           size="small"
           extra={
             <Link to="/jabali-panel/domains">
@@ -152,7 +154,7 @@ export function UserDashboard() {
       data: null,
       children: (
         <Card
-          title="Recent Mailboxes"
+          title={t("userdashboard.recent_mailboxes")}
           size="small"
           extra={
             <Link to="/jabali-panel/mail/mailboxes">
@@ -185,7 +187,7 @@ export function UserDashboard() {
       data: null,
       children: (
         <Card
-          title="Recent Applications"
+          title={t("userdashboard.recent_applications")}
           size="small"
           extra={
             <Link to="/jabali-panel/applications">
@@ -225,7 +227,7 @@ export function UserDashboard() {
       data: null,
       children: (
         <Card
-          title="Recent Databases"
+          title={t("userdashboard.recent_databases")}
           size="small"
           extra={
             <Link to="/jabali-panel/databases">
@@ -271,7 +273,7 @@ export function UserDashboard() {
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={6}>
           <StatCard
-            label="Domains"
+            label={t("userdashboard.domains")}
             value={formatCount(recentDomains.total)}
             icon={<GlobalOutlined />}
             iconBg="rgba(146, 84, 222, 0.14)"
@@ -281,7 +283,7 @@ export function UserDashboard() {
         </Col>
         <Col xs={24} sm={12} md={6}>
           <StatCard
-            label="Mailboxes"
+            label={t("userdashboard.mailboxes")}
             value={formatCount(mailboxTotal)}
             icon={<MailOutlined />}
             iconBg="rgba(250, 140, 22, 0.14)"
@@ -291,7 +293,7 @@ export function UserDashboard() {
         </Col>
         <Col xs={24} sm={12} md={6}>
           <StatCard
-            label="Applications"
+            label={t("userdashboard.applications")}
             value={formatCount(recentApps.total)}
             icon={<AppstoreOutlined />}
             iconBg="rgba(22, 119, 255, 0.12)"
@@ -301,7 +303,7 @@ export function UserDashboard() {
         </Col>
         <Col xs={24} sm={12} md={6}>
           <StatCard
-            label="Databases"
+            label={t("userdashboard.databases")}
             value={formatCount(recentDatabases.total)}
             icon={<DatabaseOutlined />}
             iconBg="rgba(82, 196, 26, 0.14)"

@@ -1,5 +1,6 @@
 // LogsTab — M6.5 Step 7. Read-only mail log viewer.
 
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Alert,
@@ -25,6 +26,7 @@ interface Filters {
 }
 
 export const LogsTab = () => {
+  const { t } = useTranslation();
   const [filters, setFilters] = useState<Filters>({});
   const [page, setPage] = useState(1);
   const [detailQid, setDetailQid] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export const LogsTab = () => {
       <Space wrap style={{ marginBottom: 12 }}>
         <DatePicker
           showTime
-          placeholder="From"
+          placeholder={t("logstab.from")}
           value={filters.from}
           onChange={(v) => setFilters((f) => ({ ...f, from: v }))}
         />
@@ -70,14 +72,14 @@ export const LogsTab = () => {
           onChange={(v) => setFilters((f) => ({ ...f, to: v }))}
         />
         <Input
-          placeholder="Sender contains"
+          placeholder={t("logstab.sender_contains")}
           allowClear
           value={filters.sender ?? ""}
           onChange={(e) => setFilters((f) => ({ ...f, sender: e.target.value }))}
           style={{ width: 200 }}
         />
         <Input
-          placeholder="Recipient contains"
+          placeholder={t("logstab.recipient_contains")}
           allowClear
           value={filters.recipient ?? ""}
           onChange={(e) => setFilters((f) => ({ ...f, recipient: e.target.value }))}
@@ -88,8 +90,8 @@ export const LogsTab = () => {
       {error && (
         <Alert
           type="warning"
-          message="Mail logs unavailable"
-          description="The mail server's trace log isn't responding. Try again in a moment."
+          message={t("logstab.mail_logs_unavailable")}
+          description={t("logstab.the_mail_server_s_trace_log_isn_t_responding")}
           style={{ marginBottom: 12 }}
           showIcon
         />

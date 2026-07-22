@@ -1,6 +1,7 @@
 // UserDatabaseDrawer — tenant Create-database Drawer (replaces the
 // /jabali-panel/databases/create page route). Backend prepends the
 // caller's username to the final database name.
+import { useTranslation } from "react-i18next";
 import { Button, Drawer, Form, Grid, Input, Segmented, Space, message } from "antd";
 import { useEffect, useState } from "react";
 
@@ -16,6 +17,7 @@ export interface UserDatabaseDrawerProps {
 }
 
 export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<UserDatabaseCreateInput>();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
@@ -50,7 +52,7 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
 
   return (
     <Drawer
-      title="Create database"
+      title={t("userdatabasedrawer.create_database")}
       open={open}
       onClose={onClose}
       width={isDesktop ? 480 : undefined}
@@ -65,9 +67,9 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
       >
         {postgresEnabled && (
           <Form.Item
-            label="Engine"
+            label={t("userdatabasedrawer.engine")}
             name="engine"
-            tooltip="MariaDB is the default. PostgreSQL must be enabled by an admin in Server Settings."
+            tooltip={t("userdatabasedrawer.mariadb_is_the_default_postgresql_must_be_en")}
           >
             <Segmented
               options={[
@@ -79,7 +81,7 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
         )}
 
         <Form.Item
-          label="Name"
+          label={t("userdatabasedrawer.name")}
           name="name"
           rules={[
             { required: true, message: "Database name is required" },
@@ -89,7 +91,7 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
                 "Lowercase letters, digits and underscores only; must start with a letter; max 30 chars",
             },
           ]}
-          tooltip="The final database name is your username plus an underscore plus this suffix (e.g. `alice_wp`)."
+          tooltip={t("userdatabasedrawer.the_final_database_name_is_your_username_plu")}
           extra="Your username will be prepended automatically."
         >
           <Input placeholder="e.g. wp_prod" autoComplete="off" />

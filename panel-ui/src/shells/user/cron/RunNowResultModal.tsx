@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Modal, Alert, Card, Space } from "antd";
 
 interface RunNowResultModalProps {
@@ -15,6 +16,7 @@ export const RunNowResultModal = ({
   onClose,
   result,
 }: RunNowResultModalProps) => {
+  const { t } = useTranslation();
   if (!result) {
     return null;
   }
@@ -23,7 +25,7 @@ export const RunNowResultModal = ({
 
   return (
     <Modal
-      title="Cron Job Execution Result"
+      title={t("runnowresultmodal.cron_job_execution_result")}
       open={open}
       onCancel={onClose}
       footer={null}
@@ -38,7 +40,7 @@ export const RunNowResultModal = ({
         />
 
         {result.stdout && (
-          <Card title="Standard Output">
+          <Card title={t("runnowresultmodal.standard_output")}>
             <pre
               style={{
                 fontFamily: "monospace",
@@ -59,7 +61,7 @@ export const RunNowResultModal = ({
 
         {result.stderr && (
           <Card
-            title="Standard Error"
+            title={t("runnowresultmodal.standard_error")}
             style={{ borderColor: "var(--ant-color-error)" }}
           >
             <pre

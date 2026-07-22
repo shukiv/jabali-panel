@@ -10,6 +10,7 @@
 // Timestamps render in the viewer's browser timezone: the server tz
 // lives behind an admin-only endpoint, and the column header names the
 // tz so the rendered time is never ambiguous.
+import { useTranslation } from "react-i18next";
 import { Card, Space, Table, Tag, Typography } from "antd";
 import { FileTextOutlined } from "@icons";
 
@@ -26,6 +27,7 @@ import {
 import { useTableURL } from "../../../hooks/useTableURL";
 
 export const AccountActivity = () => {
+  const { t } = useTranslation();
   const tz = browserTz();
   const query = useTableURL<AuditRow>({
     resource: "me/activity",
@@ -80,7 +82,7 @@ export const AccountActivity = () => {
             render={(ts: string) => <code>{fmtTSInTz(ts, tz)}</code>}
           />
           <Table.Column
-            title="What"
+            title={t("accountactivity.what")}
             key="action"
             render={(_: unknown, r: AuditRow) => (
               <AuditActionLabel
@@ -94,7 +96,7 @@ export const AccountActivity = () => {
             )}
           />
           <Table.Column
-            title="Target"
+            title={t("accountactivity.target")}
             key="target"
             render={(_: unknown, r: AuditRow) =>
               r.target_type || r.target_id ? (
@@ -108,7 +110,7 @@ export const AccountActivity = () => {
           />
           <Table.Column
             dataIndex="result"
-            title="Result"
+            title={t("accountactivity.result")}
             key="result"
             render={resultTag}
           />

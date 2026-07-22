@@ -2,6 +2,7 @@
 // backup of the caller's account; list recent self-backups; download
 // when a row is succeeded. Mirrors AdminBackupsPage data shape but
 // scoped via /me/backups (auth-gated to caller's user_id).
+import { useTranslation } from "react-i18next";
 import { Button, Card, Grid, Select, Space, Table, Tag, Typography, message } from "antd";
 import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
@@ -40,6 +41,7 @@ const statusColor = (status: string): string => {
 };
 
 export const MyProfileBackupCard = () => {
+  const { t } = useTranslation();
   const screens = Grid.useBreakpoint();
   const [submitting, setSubmitting] = useState(false);
   const [restoreId, setRestoreId] = useState<string | null>(null);
@@ -117,7 +119,7 @@ export const MyProfileBackupCard = () => {
               value={destinationId}
               onChange={setDestinationId}
               style={{ minWidth: 180 }}
-              placeholder="Destination"
+              placeholder={t("myprofilebackupcard.destination")}
               options={destOptions}
             />
           )}

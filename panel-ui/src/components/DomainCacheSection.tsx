@@ -2,6 +2,7 @@
 // (ADR-0108, Gitea #596). Self-contained like DomainEmailSection: loads its own
 // state, flips the switch, edits the cache TTL (DB-as-truth → reconciler
 // re-renders the vhost), and exposes a manual purge button.
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
@@ -39,6 +40,7 @@ const sameSet = (a: string[], b: string[]) =>
   a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
 
 export const DomainCacheSection = ({ domainId }: Props) => {
+  const { t } = useTranslation();
   const [state, setState] = useState<CacheState | null>(null);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
@@ -169,8 +171,8 @@ export const DomainCacheSection = ({ domainId }: Props) => {
         />
         <span>nginx page cache</span>
         <Popconfirm
-          title="Purge cached pages for this domain?"
-          okText="Purge"
+          title={t("domaincachesection.purge_cached_pages_for_this_domain")}
+          okText={t("domaincachesection.purge")}
           onConfirm={onPurge}
           disabled={!enabled}
         >
@@ -234,15 +236,15 @@ export const DomainCacheSection = ({ domainId }: Props) => {
       <Alert
         type="info"
         showIcon
-        title="Cacheable query parameters"
-        description="Query-string params that get their own cache entry (e.g. paged for pagination). Everything else with a query string still bypasses. This does NOT cache JetEngine AJAX filters — those are admin-ajax POST requests and always bypass. Keep the list tight: faceted params multiply cache entries. Names are lower-case letters, digits, and underscores."
+        title={t("domaincachesection.cacheable_query_parameters")}
+        description={t("domaincachesection.query_string_params_that_get_their_own_cache")}
       />
 
       <Alert
         type="info"
         showIcon
-        title="Page cache with background refresh"
-        description="Caches PHP/HTML responses for the TTL above (default 600s). On expiry the stale page is served instantly while nginx refreshes it in the background — no visitor waits for the rebuild. Automatically bypassed for POST requests, logged-in WordPress users, carts/checkout, wp-admin and session cookies, so dynamic and authenticated pages stay correct."
+        title={t("domaincachesection.page_cache_with_background_refresh")}
+        description={t("domaincachesection.caches_php_html_responses_for_the_ttl_above")}
       />
     </Space>
   );

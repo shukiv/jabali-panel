@@ -1212,5 +1212,420 @@
     "new_password_shown_once": "New password — shown once",
     "reset": "Reset",
     "reset_password": "Reset password?"
+  },
+  "myprofile": {
+    "account": "Account",
+    "email": "Email",
+    "full_name": "Full name",
+    "hosting_package": "Hosting package",
+    "member_since": "Member since",
+    "password_and_two_factor_2fa_totp_settings_al": "Password and two-factor (2FA/TOTP) settings always apply to your own admin account — there is no separate login session for the user you are acting as, so changing them here would change YOUR credentials, not theirs. Exit impersonation to manage your own security. To reset a user's 2FA, go to Users → the user → Reset 2FA.",
+    "role": "Role",
+    "security": "Security",
+    "security_settings_unavailable_while_acting_a": "Security settings unavailable while acting as another user",
+    "user_id": "User ID",
+    "username": "Username"
+  },
+  "myprofilebackupcard": {
+    "destination": "Destination"
+  },
+  "myprofileschedulecard": {
+    "destination": "Destination",
+    "scheduled_backups_are_not_included_in_your_h": "Scheduled backups are not included in your hosting plan."
+  },
+  "restoredrawer": {
+    "restore_from_backup": "Restore from backup",
+    "restore_result": "Restore result",
+    "the_selected_items_will_be_overwritten_with": "The selected items will be overwritten with the backed-up copy.",
+    "this_is_destructive": "This is destructive"
+  },
+  "userdashboard": {
+    "applications": "Applications",
+    "databases": "Databases",
+    "domains": "Domains",
+    "mailboxes": "Mailboxes",
+    "recent_applications": "Recent Applications",
+    "recent_databases": "Recent Databases",
+    "recent_domains": "Recent Domains",
+    "recent_mailboxes": "Recent Mailboxes"
+  },
+  "accountactivity": {
+    "result": "Result",
+    "target": "Target",
+    "what": "What"
+  },
+  "ddnssetupguide": {
+    "dynamic_dns_ddns_setup": "Dynamic DNS (DDNS) setup",
+    "point_your_router_or_ddclient_at_the_update": "Point your router or ddclient at the update URL below and use a ddns-scoped API token (mint one above) as the Basic-auth PASSWORD. The username is ignored — put anything. Scope the token to a single record for least privilege.",
+    "your_api_token_is_the_ddns_password": "Your API token is the DDNS password"
+  },
+  "userapitokenspage": {
+    "any_script_using_it_will_start_getting_401": "Any script using it will start getting 401.",
+    "copy_this_secret_now": "Copy this secret now.",
+    "create": "Create",
+    "create_api_token": "Create API token",
+    "expires_in_seconds_optional": "Expires in (seconds, optional)",
+    "full_access_can_do_anything_you_can_a_custom": "Full access can do anything you can. A custom token is restricted to exactly the areas you tick and is rejected everywhere else.",
+    "i_ve_copied_it": "I've copied it",
+    "limit_to_one_dns_record_id_optional": "Limit to one DNS record ID (optional)",
+    "my_token": "My token",
+    "name": "Name",
+    "permissions": "Permissions",
+    "personal_api_tokens": "Personal API Tokens",
+    "revoke": "Revoke",
+    "revoke_this_token": "Revoke this token?",
+    "the_plaintext_token_is_shown_only_once_after": "The plaintext token is shown only once. After you close this dialog the panel only stores its hash — there's no way to retrieve it again. Lost? Revoke + create a new one."
+  },
+  "catalogtab": {
+    "failed_to_load_the_application_catalog": "Failed to load the application catalog",
+    "no_applications_available": "No applications available",
+    "no_applications_match_the_selected_tags": "No applications match the selected tags",
+    "try_reloading_the_page": "Try reloading the page."
+  },
+  "cloneapplicationmodal": {
+    "clone_application": "Clone application",
+    "destination_domain": "Destination domain",
+    "select_a_domain": "Select a domain"
+  },
+  "installapplicationmodal": {
+    "application": "Application",
+    "copy": "Copy",
+    "directory_optional": "Directory (optional)",
+    "domain": "Domain",
+    "install_application": "Install application",
+    "install_queued": "Install queued",
+    "no_domains_yet": "No domains yet",
+    "select_a_domain": "Select a domain",
+    "select_an_application": "Select an application",
+    "the_install_runs_in_the_background_copy_the": "The install runs in the background. Copy the password now — it is shown only once. We store only a bcrypt hash.",
+    "what_happens_next": "What happens next",
+    "you_have_no_domains_create_one_first": "You have no domains. Create one first."
+  },
+  "userapplicationlist": {
+    "actions": "Actions",
+    "admin_email": "Admin email",
+    "app_version": "App / Version",
+    "cache": "Cache",
+    "cache_settings": "Cache settings",
+    "created": "Created",
+    "detect_wordpress_joomla_drupal_and_magento_i": "Detect WordPress, Joomla, Drupal, and Magento installs on disk that aren't yet tracked by the panel.",
+    "domain": "Domain",
+    "failed": "Failed",
+    "in_progress": "In Progress",
+    "installed_apps": "Installed Apps",
+    "no_installed_apps_yet": "No installed apps yet",
+    "ready": "Ready",
+    "redis_object_cache_nginx_page_cache": "Redis object cache + nginx page cache"
+  },
+  "createcronmodal": {
+    "command": "Command",
+    "cron_expression": "Cron Expression",
+    "name": "Name",
+    "schedule": "Schedule"
+  },
+  "cronlogdrawer": {
+    "cron_job_log": "Cron Job Log"
+  },
+  "runnowresultmodal": {
+    "cron_job_execution_result": "Cron Job Execution Result",
+    "standard_error": "Standard Error",
+    "standard_output": "Standard Output"
+  },
+  "usercronlist": {
+    "search_by_name_command_or_schedule": "Search by name, command, or schedule"
+  },
+  "quicksetupmodal": {
+    "copy": "Copy",
+    "copy_the_password_now_it_is_shown_only_once": "Copy the password now — it is shown only once. We store only a bcrypt hash.",
+    "database_and_user_created": "Database and user created",
+    "database_user_name": "Database & User Name",
+    "engine": "Engine",
+    "mariadb_is_the_default_postgresql_must_be_en": "MariaDB is the default. PostgreSQL must be enabled in Server Settings.",
+    "quick_database_setup": "Quick Database Setup"
+  },
+  "userdatabasedrawer": {
+    "create_database": "Create database",
+    "engine": "Engine",
+    "mariadb_is_the_default_postgresql_must_be_en": "MariaDB is the default. PostgreSQL must be enabled by an admin in Server Settings.",
+    "name": "Name",
+    "the_final_database_name_is_your_username_plu": "The final database name is your username plus an underscore plus this suffix (e.g. `alice_wp`)."
+  },
+  "userdatabaselist": {
+    "actions": "Actions",
+    "charset": "Charset",
+    "created": "Created",
+    "database": "Database",
+    "engine": "Engine",
+    "size": "Size"
+  },
+  "diskusagepage": {
+    "could_not_load_disk_usage": "Could not load disk usage",
+    "home_directory_is_empty": "Home directory is empty",
+    "no_disk_usage_snapshot_yet_click_refresh_to": "No disk-usage snapshot yet — click Refresh to calculate."
+  },
+  "userdnszonesoverviewpage": {
+    "actions": "Actions",
+    "dns_zones_are_provisioned_automatically_when": "DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings.",
+    "dnssec": "DNSSEC",
+    "domain_name": "Domain Name",
+    "domain_registration_expiry_from_whois": "Domain registration expiry (from WHOIS)",
+    "expiration": "Expiration",
+    "no_domains_found": "No domains found",
+    "records": "Records",
+    "ttl": "TTL",
+    "zone_status": "Zone Status"
+  },
+  "userdockerappspage": {
+    "ask_your_administrator_to_enable_tenant_dock": "Ask your administrator to enable tenant Docker apps for your hosting package.",
+    "docker_apps_are_not_enabled_on_this_server": "Docker apps are not enabled on this server",
+    "docker_apps_are_over_your_disk_quota": "Docker apps are over your disk quota",
+    "installed_apps": "Installed Apps",
+    "no_installed_apps_yet": "No installed apps yet",
+    "running": "Running",
+    "search_by_name": "Search by name",
+    "stopped": "Stopped",
+    "updates_available": "Updates Available",
+    "your_installed_apps_exceed_your_package_disk": "Your installed apps exceed your package disk allowance. Delete an app or ask your administrator to raise the quota."
+  },
+  "userdomaindrawer": {
+    "add_domain": "Add domain",
+    "adds_a_www_cname_pointing_at_the_domain_apex": "Adds a www CNAME pointing at the domain apex. Off by default — leave unchecked for subdomains or domains that don't serve a www host.",
+    "domain_name": "Domain Name",
+    "google_dkim_value": "Google DKIM value",
+    "let_s_encrypt_issues_a_free_trusted_certific": "Let's Encrypt issues a free trusted certificate automatically (recommended). Self-signed works without DNS/ACME but browsers warn. None serves over HTTP only.",
+    "mail": "Mail",
+    "microsoft_365_tenant": "Microsoft 365 tenant",
+    "optional_paste_the_google_domainkey_txt_valu": "Optional. Paste the google._domainkey TXT value from Google Admin. MX/SPF are added automatically.",
+    "optional_your_tenant_onmicrosoft_com_adds_th": "Optional. Your <tenant>.onmicrosoft.com — adds the selector1/2 DKIM CNAMEs. MX/SPF/autodiscover are added automatically.",
+    "tls_certificate": "TLS certificate",
+    "where_this_domain_s_email_is_hosted_none_and": "Where this domain's email is hosted. 'None' and the external providers skip Jabali's mail DNS records and mail certificate SANs."
+  },
+  "userdomainlist": {
+    "actions": "Actions",
+    "bw_30d": "BW (30d)",
+    "domain": "Domain",
+    "more_actions": "More actions",
+    "redirect": "Redirect",
+    "ssl": "SSL",
+    "status": "Status"
+  },
+  "filemanagerpage": {
+    "apply": "Apply",
+    "create": "Create",
+    "empty_directory": "Empty directory",
+    "folders": "Folders",
+    "move": "Move",
+    "new_file": "New File",
+    "new_folder": "New Folder",
+    "rename": "Rename",
+    "save": "Save"
+  },
+  "autoreplymodal": {
+    "active_dates_optional": "Active dates (optional)",
+    "html_body_optional": "HTML body (optional)",
+    "i_m_away_until": "I'm away until...",
+    "out_of_office": "Out of office",
+    "plain_text_body": "Plain text body",
+    "save": "Save",
+    "send_automatic_replies": "Send automatic replies",
+    "subject": "Subject",
+    "turn_off": "Turn off"
+  },
+  "createmailboxwizardmodal": {
+    "a_send_only_mailbox_can_authenticate_for_smt": "A send-only mailbox can authenticate for SMTP submission (sending) but never receives or stores mail — inbound is rejected. Ideal for per-service or per-appliance notification credentials, so each system has its own account to revoke or rotate.",
+    "add_to_groups": "Add to groups",
+    "aliases_optional": "Aliases (optional)",
+    "alice_smith": "Alice Smith",
+    "create_mailbox": "Create mailbox",
+    "display_name": "Display name",
+    "domain": "Domain",
+    "email_address": "Email address",
+    "enable_email_on_at_least_one_domain_before_c": "Enable email on at least one domain before creating a mailbox.",
+    "extra_addresses_that_deliver_to_this_mailbox": "Extra addresses that deliver to this mailbox. One local-part per line or comma-separated — e.g. sales, info.",
+    "forward_to_optional": "Forward to (optional)",
+    "leave_blank_to_auto_generate_generated_passw": "Leave blank to auto-generate. Generated passwords are shown exactly once.",
+    "no_email_enabled_domains": "No email-enabled domains",
+    "only_domains_with_email_enabled_appear_here": "Only domains with email enabled appear here.",
+    "password": "Password",
+    "quota_mib": "Quota (MiB)",
+    "redirect_a_copy_of_incoming_mail_to_an_exter": "Redirect a copy of incoming mail to an external address.",
+    "select_a_domain": "Select a domain",
+    "select_groups_optional": "Select groups (optional)",
+    "shown_as_the_sender_name_in_webmail_and_outg": "Shown as the sender name in webmail and outgoing mail (e.g. Alice Smith). Optional.",
+    "the_mailbox_joins_these_groups_and_gains_the": "The mailbox joins these groups and gains their shared mailbox, calendar, address book and files."
+  },
+  "catchalltab": {
+    "domain": "Domain",
+    "no_email_enabled_domains_yet": "No email-enabled domains yet",
+    "save": "Save",
+    "select_email_enabled_domain": "Select email-enabled domain",
+    "target_mailbox": "Target mailbox"
+  },
+  "disclaimertab": {
+    "disclaimer_text": "Disclaimer Text",
+    "edit": "Edit",
+    "enable_disclaimer": "Enable Disclaimer",
+    "if_you_received_this_email_by_mistake_please": "If you received this email by mistake, please notify the sender and delete it.",
+    "no_email_enabled_domains": "No email-enabled domains",
+    "save": "Save"
+  },
+  "forwarderstab": {
+    "add_forwarder": "Add forwarder",
+    "alias_local_part": "Alias local-part",
+    "create": "Create",
+    "create_mailboxes_first": "Create mailboxes first",
+    "external_target": "External target",
+    "remove": "Remove",
+    "remove_forwarder": "Remove forwarder?",
+    "select_mailbox": "Select mailbox",
+    "type": "Type"
+  },
+  "groupstab": {
+    "enable_email_on_a_domain_first_to_create_gro": "Enable email on a domain first to create groups",
+    "no_groups": "No groups"
+  },
+  "logstab": {
+    "from": "From",
+    "mail_logs_unavailable": "Mail logs unavailable",
+    "recipient_contains": "Recipient contains",
+    "sender_contains": "Sender contains",
+    "the_mail_server_s_trace_log_isn_t_responding": "The mail server's trace log isn't responding. Try again in a moment."
+  },
+  "maillogdetaildrawer": {
+    "delivery_trail": "Delivery trail",
+    "no_delivery_trail_found": "No delivery trail found"
+  },
+  "mailboxestab": {
+    "automatic_replies_active": "Automatic replies active",
+    "leave_blank_to_auto_generate_auto_generated": "Leave blank to auto-generate. Auto-generated passwords are shown exactly once.",
+    "new_password": "New password",
+    "no_mailboxes": "No mailboxes",
+    "no_mailboxes_yet": "No mailboxes yet",
+    "set_password": "Set password"
+  },
+  "sharedfolderstab": {
+    "create_mailboxes_first": "Create mailboxes first",
+    "remove": "Remove",
+    "remove_share": "Remove share?",
+    "rights": "Rights",
+    "select_owner_mailbox": "Select owner mailbox",
+    "select_target_mailbox": "Select target mailbox",
+    "share": "Share",
+    "share_folder": "Share folder",
+    "source_mailbox_owner": "Source mailbox (owner)",
+    "target_mailbox_grantee": "Target mailbox (grantee)"
+  },
+  "sharedresourcestab": {
+    "no_email_enabled_domains_yet": "No email-enabled domains yet"
+  },
+  "userphpperformancecard": {
+    "ask_your_provider_to_enable_it_on_your_hosti": "Ask your provider to enable it on your hosting package.",
+    "max_requests_per_worker_0_never": "Max requests per worker (0 = never)",
+    "max_spare_dynamic": "Max spare (dynamic)",
+    "min_spare_dynamic": "Min spare (dynamic)",
+    "php_performance": "PHP Performance",
+    "php_performance_tuning_isn_t_enabled_on_your": "PHP performance tuning isn't enabled on your plan.",
+    "process_manager": "Process manager",
+    "start_servers_dynamic": "Start servers (dynamic)"
+  },
+  "userphpsettingspage": {
+    "caution": "Caution",
+    "changing_php_settings_can_affect_your_websit": "Changing PHP settings can affect your website performance and functionality. Incorrect values may cause errors or prevent your site from functioning properly. Changes apply after the next request to PHP.",
+    "cli_terminal_default_php_version": "CLI / Terminal default PHP version",
+    "domain": "Domain",
+    "max_execution_time": "Max Execution Time",
+    "max_input_time": "Max Input Time",
+    "max_input_variables": "Max Input Variables",
+    "memory_limit": "Memory Limit",
+    "php_version": "PHP Version",
+    "post_max_size": "POST Max Size",
+    "select_a_domain": "Select a domain",
+    "upload_max_file_size": "Upload Max File Size",
+    "use_pool_default": "Use pool default"
+  },
+  "pythonappspage": {
+    "app_directory": "App directory",
+    "create": "Create",
+    "domain": "Domain",
+    "entrypoint": "Entrypoint",
+    "mount_path": "Mount path",
+    "my_api": "My API",
+    "name": "Name",
+    "path_under_your_home_e_g_domains_example_com": "Path under your home, e.g. domains/example.com/app",
+    "python": "Python",
+    "runtime": "Runtime",
+    "select_a_domain": "Select a domain",
+    "status": "Status",
+    "type": "Type"
+  },
+  "usersshkeyspage": {
+    "add_ssh_key": "Add SSH Key",
+    "are_you_sure_this_revokes_sftp_access": "Are you sure? This revokes SFTP access.",
+    "comment_optional": "Comment (optional)",
+    "connect_to_your_server_securely_using_ssh_fo": "Connect to your server securely using SSH for terminal access or SFTP for file transfers. Generate a new key pair or add your existing public SSH keys below.",
+    "copy_or_download_it_now_if_you_close_this_di": "Copy or download it now. If you close this dialog without saving, you'll need to generate a new key and delete this one.",
+    "delete_ssh_key": "Delete SSH Key",
+    "generate_ssh_key": "Generate SSH Key",
+    "name": "Name",
+    "public_key": "Public Key",
+    "save_your_private_key_now": "Save your private key now",
+    "search_by_name_or_fingerprint": "Search by name or fingerprint",
+    "this_is_the_only_time_the_private_key_will_b": "This is the only time the private key will be shown.",
+    "yes": "Yes"
+  },
+  "dnsrecordspage": {
+    "no_dns_records_yet": "No DNS records yet",
+    "system_records": "System Records",
+    "your_administrator_has_restricted_changes_to": "Your administrator has restricted changes to this record type."
+  },
+  "domaincachesection": {
+    "cacheable_query_parameters": "Cacheable query parameters",
+    "caches_php_html_responses_for_the_ttl_above": "Caches PHP/HTML responses for the TTL above (default 600s). On expiry the stale page is served instantly while nginx refreshes it in the background — no visitor waits for the rebuild. Automatically bypassed for POST requests, logged-in WordPress users, carts/checkout, wp-admin and session cookies, so dynamic and authenticated pages stay correct.",
+    "page_cache_with_background_refresh": "Page cache with background refresh",
+    "purge": "Purge",
+    "purge_cached_pages_for_this_domain": "Purge cached pages for this domain?",
+    "query_string_params_that_get_their_own_cache": "Query-string params that get their own cache entry (e.g. paged for pagination). Everything else with a query string still bypasses. This does NOT cache JetEngine AJAX filters — those are admin-ajax POST requests and always bypass. Keep the list tight: faceted params multiply cache entries. Names are lower-case letters, digits, and underscores."
+  },
+  "domainnginxoptionsmodal": {
+    "domain_options": "Domain options",
+    "max_upload_size_mb": "Max upload size (MB)",
+    "save": "Save"
+  },
+  "installappbutton": {
+    "install_app": "Install app",
+    "install_jabali_as_an_app": "Install Jabali as an app"
+  },
+  "jabalifooter": {
+    "source_code": "Source code"
+  },
+  "notificationbell": {
+    "clear": "Clear",
+    "clear_all_notifications": "Clear all notifications?",
+    "mark_all_read": "Mark all read",
+    "notifications": "Notifications",
+    "this_deletes_every_notification_in_your_inbo": "This deletes every notification in your inbox."
+  },
+  "serverhealthindicator": {
+    "server_health_alerts": "Server health alerts"
+  },
+  "tasksindicator": {
+    "background_tasks": "Background tasks",
+    "no_tasks_running": "No tasks running"
+  },
+  "sslmanagertable": {
+    "are_you_sure_you_want_to_revoke_this_certifi": "Are you sure you want to revoke this certificate?",
+    "clears_backoff_and_reissues_the_let_s_encryp": "Clears backoff and reissues the Let's Encrypt mail certificate",
+    "failed_to_load_ssl_certificates": "Failed to load SSL certificates",
+    "force_acme_retry_now": "Force ACME retry now",
+    "last_attempt": "Last attempt",
+    "next_retry": "Next retry",
+    "no_ssl_certificates_yet": "No SSL certificates yet",
+    "panel_cert_managed_via_server_settings_panel": "Panel cert — managed via Server Settings → Panel SSL",
+    "renew_certificate": "Renew certificate",
+    "retry_count": "Retry count",
+    "revoke_certificate": "Revoke Certificate",
+    "show_last_error": "Show last error",
+    "status": "Status",
+    "yes": "Yes"
   }
 }

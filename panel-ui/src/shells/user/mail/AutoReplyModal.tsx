@@ -2,6 +2,7 @@
 // editor. GH #240: autoresponders moved out of their own tab and into the
 // Mailboxes list, edited inline per mailbox. Renamed "Automatic Replies"
 // to match the Microsoft 365 wording.
+import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
 import {
   Button,
@@ -45,6 +46,7 @@ export const AutoReplyModal = ({
   current,
   onClose,
 }: AutoReplyModalProps) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<FormValues>();
   const updateMut = useUpdateAutoresponder();
   const deleteMut = useDeleteAutoresponder();
@@ -109,7 +111,7 @@ export const AutoReplyModal = ({
       title={`Automatic replies: ${email}`}
       onCancel={onClose}
       onOk={submit}
-      okText="Save"
+      okText={t("autoreplymodal.save")}
       confirmLoading={updateMut.isPending}
       destroyOnClose
       width={640}
@@ -119,7 +121,7 @@ export const AutoReplyModal = ({
             key="off"
             title={`Turn off automatic replies for ${email}?`}
             onConfirm={turnOff}
-            okText="Turn off"
+            okText={t("autoreplymodal.turn_off")}
             okButtonProps={{ danger: true }}
           >
             <Button danger loading={deleteMut.isPending} style={{ float: "left" }}>
@@ -141,19 +143,19 @@ export const AutoReplyModal = ({
       ]}
     >
       <Form form={form} layout="vertical" preserve={false}>
-        <Form.Item name="enabled" label="Send automatic replies" valuePropName="checked">
+        <Form.Item name="enabled" label={t("autoreplymodal.send_automatic_replies")} valuePropName="checked">
           <Switch />
         </Form.Item>
-        <Form.Item name="date_range" label="Active dates (optional)">
+        <Form.Item name="date_range" label={t("autoreplymodal.active_dates_optional")}>
           <DatePicker.RangePicker showTime style={{ width: "100%" }} />
         </Form.Item>
-        <Form.Item name="subject" label="Subject">
-          <Input placeholder="Out of office" maxLength={200} />
+        <Form.Item name="subject" label={t("autoreplymodal.subject")}>
+          <Input placeholder={t("autoreplymodal.out_of_office")} maxLength={200} />
         </Form.Item>
-        <Form.Item name="text_body" label="Plain text body">
-          <Input.TextArea rows={4} placeholder="I'm away until..." />
+        <Form.Item name="text_body" label={t("autoreplymodal.plain_text_body")}>
+          <Input.TextArea rows={4} placeholder={t("autoreplymodal.i_m_away_until")} />
         </Form.Item>
-        <Form.Item name="html_body" label="HTML body (optional)">
+        <Form.Item name="html_body" label={t("autoreplymodal.html_body_optional")}>
           <Input.TextArea rows={4} placeholder="<p>I'm away until...</p>" />
         </Form.Item>
       </Form>

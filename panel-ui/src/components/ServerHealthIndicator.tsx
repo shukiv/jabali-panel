@@ -7,6 +7,7 @@
 // Endpoint is admin-gated; on the user shell this component MUST NOT
 // mount (caller in JabaliHeader checks isAdminShell).
 
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Badge, Button, Tooltip } from "antd";
 import { ExclamationCircleOutlined, WarningOutlined } from "@icons";
@@ -28,6 +29,7 @@ interface ServerStatusPayload {
 const POLL_MS = 30_000;
 
 export function ServerHealthIndicator(): JSX.Element | null {
+  const { t } = useTranslation();
   const [worst, setWorst] = useState<"ok" | "warning" | "critical">("ok");
   const [count, setCount] = useState(0);
   const [tooltip, setTooltip] = useState("");
@@ -70,7 +72,7 @@ export function ServerHealthIndicator(): JSX.Element | null {
     <Tooltip title={tooltip} placement="bottomRight">
       <Button
         type="text"
-        aria-label="Server health alerts"
+        aria-label={t("serverhealthindicator.server_health_alerts")}
         onClick={() => navigate("/jabali-admin/server-status")}
         style={{ width: 40, height: 40, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
       >

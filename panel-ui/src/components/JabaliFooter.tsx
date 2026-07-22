@@ -5,6 +5,7 @@
 //
 // The version string is imported from panel-ui/package.json at build
 // time so bumping the SPA version there propagates automatically.
+import { useTranslation } from "react-i18next";
 import { GithubOutlined } from "@icons";
 import { Grid, Layout, Space, theme, Typography } from "antd";
 
@@ -17,6 +18,7 @@ const SOURCE_URL = "https://github.com/shukiv/jabali-panel";
 const WEBSITE_URL = "https://jabali-panel.com/";
 
 export function JabaliFooter() {
+  const { t } = useTranslation();
   const { mode } = useThemeMode();
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
@@ -82,7 +84,7 @@ export function JabaliFooter() {
           href={SOURCE_URL}
           target="_blank"
           rel="noreferrer"
-          aria-label="Source code"
+          aria-label={t("jabalifooter.source_code")}
           style={{ color: "inherit", display: "inline-flex", alignItems: "center" }}
         >
           <GithubOutlined style={{ fontSize: 18 }} />

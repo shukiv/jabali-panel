@@ -4,6 +4,7 @@
 // Gated on the hosting package's scheduled_backups_enabled. Unlike the on-demand
 // card, a schedule needs a real destination row — the implicit "local default"
 // is skipped by the scheduler fan-out — so only concrete destinations are offered.
+import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, InputNumber, Select, Space, Switch, Typography, message } from "antd";
 import { ClockCircleOutlined } from "@icons";
 import { useEffect, useState } from "react";
@@ -26,6 +27,7 @@ type ScheduleView = {
 };
 
 export const MyProfileScheduleCard = () => {
+  const { t } = useTranslation();
   const schedQuery = useQuery({
     queryKey: ["me-backup-schedule"],
     queryFn: async () => (await apiClient.get<{ data: ScheduleView }>("/me/backup-schedule")).data.data,
@@ -91,7 +93,7 @@ export const MyProfileScheduleCard = () => {
       loading={schedQuery.isLoading}
     >
       {view && !view.scheduled_backups_enabled ? (
-        <Alert type="info" showIcon message="Scheduled backups are not included in your hosting plan." />
+        <Alert type="info" showIcon message={t("myprofileschedulecard.scheduled_backups_are_not_included_in_your_h")} />
       ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -120,7 +122,7 @@ export const MyProfileScheduleCard = () => {
               value={destinationId}
               onChange={setDestinationId}
               style={{ minWidth: 200 }}
-              placeholder="Destination"
+              placeholder={t("myprofileschedulecard.destination")}
               options={destOptions}
               notFoundContent="No allowed destinations"
             />

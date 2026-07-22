@@ -1,5 +1,6 @@
 // SharedFoldersTab — M6.5 Step 4. Cross-mailbox ACL sharing via Mailbox.shareWith.
 
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   Button,
@@ -56,6 +57,7 @@ interface FormValues {
 }
 
 export const SharedFoldersTab = () => {
+  const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
@@ -125,7 +127,7 @@ export const SharedFoldersTab = () => {
   }
 
   if (mailboxes.length === 0) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Create mailboxes first" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("sharedfolderstab.create_mailboxes_first")} />;
   }
 
   return (
@@ -189,7 +191,7 @@ export const SharedFoldersTab = () => {
               width: 80,
               render: (_, row) => (
                 <Popconfirm
-                  title="Remove share?"
+                  title={t("sharedfolderstab.remove_share")}
                   onConfirm={async () => {
                     try {
                       await deleteMut.mutateAsync({
@@ -203,10 +205,10 @@ export const SharedFoldersTab = () => {
                       message.error(msg);
                     }
                   }}
-                  okText="Remove"
+                  okText={t("sharedfolderstab.remove")}
                   okButtonProps={{ danger: true }}
                 >
-                  <Tooltip title="Remove">
+                  <Tooltip title={t("sharedfolderstab.remove")}>
                     <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                   </Tooltip>
                 </Popconfirm>
@@ -218,10 +220,10 @@ export const SharedFoldersTab = () => {
 
       <Modal
         open={open}
-        title="Share folder"
+        title={t("sharedfolderstab.share_folder")}
         onCancel={() => setOpen(false)}
         onOk={submit}
-        okText="Share"
+        okText={t("sharedfolderstab.share")}
         confirmLoading={createMut.isPending}
         destroyOnClose
         width={560}
@@ -229,11 +231,11 @@ export const SharedFoldersTab = () => {
         <Form form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="owner_mailbox_id"
-            label="Source mailbox (owner)"
+            label={t("sharedfolderstab.source_mailbox_owner")}
             rules={[{ required: true }]}
           >
             <Select
-              placeholder="Select owner mailbox"
+              placeholder={t("sharedfolderstab.select_owner_mailbox")}
               showSearch
               optionFilterProp="label"
               options={mailboxes.map((m) => ({ label: m.email, value: m.id }))}
@@ -241,11 +243,11 @@ export const SharedFoldersTab = () => {
           </Form.Item>
           <Form.Item
             name="shared_with_mailbox_id"
-            label="Target mailbox (grantee)"
+            label={t("sharedfolderstab.target_mailbox_grantee")}
             rules={[{ required: true }]}
           >
             <Select
-              placeholder="Select target mailbox"
+              placeholder={t("sharedfolderstab.select_target_mailbox")}
               showSearch
               optionFilterProp="label"
               options={mailboxes.map((m) => ({ label: m.email, value: m.id }))}
@@ -253,7 +255,7 @@ export const SharedFoldersTab = () => {
           </Form.Item>
           <Form.Item
             name="rights"
-            label="Rights"
+            label={t("sharedfolderstab.rights")}
             initialValue={["mayRead"]}
             rules={[{ required: true, message: "Select at least one right" }]}
           >

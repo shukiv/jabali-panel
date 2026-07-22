@@ -2,6 +2,7 @@
 // stat cards (Total / Files / Email / Databases / Quota). Bottom row: three
 // breakdown cards (Files & Folders, Email Mailboxes, Databases) each with a
 // table + a "View all" link. Backed by GET /api/v1/me/disk-usage.
+import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Col, Empty, Row, Spin, Table, Tag, Tree, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { DataNode } from "antd/es/tree";
@@ -104,6 +105,7 @@ function updateTreeData(list: DataNode[], key: string, children: DataNode[]): Da
 // carries its recursive size; expanding a folder fetches the next level on
 // demand (GET /me/disk-usage/files?path=).
 function FilesTree() {
+  const { t } = useTranslation();
   const [treeData, setTreeData] = useState<DataNode[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -144,7 +146,7 @@ function FilesTree() {
   if (treeData.length === 0) {
     return (
       <div style={{ padding: 24 }}>
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Home directory is empty" />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("diskusagepage.home_directory_is_empty")} />
       </div>
     );
   }
@@ -163,6 +165,7 @@ const COLORS = {
 } as const;
 
 export function DiskUsagePage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery<DiskUsage>({
@@ -195,7 +198,7 @@ export function DiskUsagePage() {
       <Alert
         type="error"
         showIcon
-        message="Could not load disk usage"
+        message={t("diskusagepage.could_not_load_disk_usage")}
         description={error instanceof Error ? error.message : "Please try again."}
       />
     );
@@ -344,7 +347,7 @@ export function DiskUsagePage() {
       <div>
         {header}
         <Empty
-          description="No disk-usage snapshot yet — click Refresh to calculate."
+          description={t("diskusagepage.no_disk_usage_snapshot_yet_click_refresh_to")}
           style={{ padding: 64 }}
         />
       </div>

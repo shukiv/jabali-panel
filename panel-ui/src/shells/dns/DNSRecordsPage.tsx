@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import {
   ArrowLeftOutlined,
@@ -176,6 +177,7 @@ const getPlaceholders = (
 };
 
 export const DNSRecordsPage = () => {
+  const { t } = useTranslation();
   const { id: domainId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -586,7 +588,7 @@ export const DNSRecordsPage = () => {
       {/* Records Table */}
       {displayRecords.length === 0 ? (
         <Card style={{ marginBottom: 24 }}>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No DNS records yet" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("dnsrecordspage.no_dns_records_yet")} />
         </Card>
       ) : (
         <Card style={{ marginBottom: 24 }}>
@@ -681,7 +683,7 @@ export const DNSRecordsPage = () => {
                   const canDelete = allowsRecord(record.type as string, "delete");
                   if (!canEdit && !canDelete) {
                     return (
-                      <Tooltip title="Your administrator has restricted changes to this record type.">
+                      <Tooltip title={t("dnsrecordspage.your_administrator_has_restricted_changes_to")}>
                         <Space>
                           <LockOutlined />
                           {!isCompact && <Typography.Text type="secondary">Restricted</Typography.Text>}
@@ -722,7 +724,7 @@ export const DNSRecordsPage = () => {
           settings on the Server Settings page. */}
       {systemRecords.length > 0 && (
         <Card
-          title="System Records"
+          title={t("dnsrecordspage.system_records")}
           style={{ marginBottom: 24 }}
           extra={
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>

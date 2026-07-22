@@ -1,5 +1,6 @@
 // UserDomainDrawer — tenant Add-domain Drawer (replaces the
 // /jabali-panel/domains/create page route).
+import { useTranslation } from "react-i18next";
 import { Button, Checkbox, Drawer, Form, Grid, Input, Select, Space, message } from "antd";
 import { useEffect } from "react";
 
@@ -21,6 +22,7 @@ export interface UserDomainDrawerProps {
 }
 
 export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<UserDomainCreateInput>();
   const mailProvider = Form.useWatch("mail_provider", form) ?? "jabali";
   const screens = Grid.useBreakpoint();
@@ -46,7 +48,7 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
 
   return (
     <Drawer
-      title="Add domain"
+      title={t("userdomaindrawer.add_domain")}
       open={open}
       onClose={onClose}
       width={isDesktop ? 480 : undefined}
@@ -55,7 +57,7 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
     >
       <Form<UserDomainCreateInput> form={form} layout="vertical" onFinish={handleFinish}>
         <Form.Item
-          label="Domain Name"
+          label={t("userdomaindrawer.domain_name")}
           name="name"
           rules={[
             { required: true, message: "Domain name is required" },
@@ -70,10 +72,10 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
         </Form.Item>
 
         <Form.Item
-          label="Mail"
+          label={t("userdomaindrawer.mail")}
           name="mail_provider"
           initialValue="jabali"
-          tooltip="Where this domain's email is hosted. 'None' and the external providers skip Jabali's mail DNS records and mail certificate SANs."
+          tooltip={t("userdomaindrawer.where_this_domain_s_email_is_hosted_none_and")}
         >
           <Select
             options={[
@@ -87,9 +89,9 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
 
         {mailProvider === "m365" && (
           <Form.Item
-            label="Microsoft 365 tenant"
+            label={t("userdomaindrawer.microsoft_365_tenant")}
             name="m365_onmicrosoft"
-            tooltip="Optional. Your <tenant>.onmicrosoft.com — adds the selector1/2 DKIM CNAMEs. MX/SPF/autodiscover are added automatically."
+            tooltip={t("userdomaindrawer.optional_your_tenant_onmicrosoft_com_adds_th")}
           >
             <Input placeholder="contoso.onmicrosoft.com (optional)" />
           </Form.Item>
@@ -97,19 +99,19 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
 
         {mailProvider === "google" && (
           <Form.Item
-            label="Google DKIM value"
+            label={t("userdomaindrawer.google_dkim_value")}
             name="google_dkim"
-            tooltip="Optional. Paste the google._domainkey TXT value from Google Admin. MX/SPF are added automatically."
+            tooltip={t("userdomaindrawer.optional_paste_the_google_domainkey_txt_valu")}
           >
             <Input.TextArea rows={2} placeholder="v=DKIM1; k=rsa; p=... (optional)" />
           </Form.Item>
         )}
 
         <Form.Item
-          label="TLS certificate"
+          label={t("userdomaindrawer.tls_certificate")}
           name="ssl_mode"
           initialValue="le"
-          tooltip="Let's Encrypt issues a free trusted certificate automatically (recommended). Self-signed works without DNS/ACME but browsers warn. None serves over HTTP only."
+          tooltip={t("userdomaindrawer.let_s_encrypt_issues_a_free_trusted_certific")}
         >
           <Select
             options={[
@@ -124,7 +126,7 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
           name="create_www"
           valuePropName="checked"
           initialValue={false}
-          tooltip="Adds a www CNAME pointing at the domain apex. Off by default — leave unchecked for subdomains or domains that don't serve a www host."
+          tooltip={t("userdomaindrawer.adds_a_www_cname_pointing_at_the_domain_apex")}
         >
           <Checkbox>Create www record</Checkbox>
         </Form.Item>

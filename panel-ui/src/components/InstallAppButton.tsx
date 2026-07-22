@@ -2,6 +2,7 @@
 // only after the browser fires `beforeinstallprompt` (i.e. the manifest + SW
 // install criteria are met and the app isn't already installed); hidden
 // otherwise, so it's a no-op on unsupported browsers / installed instances.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 
 import { Button, Tooltip } from "antd";
@@ -15,6 +16,7 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 export function InstallAppButton() {
+  const { t } = useTranslation();
   const [promptEvent, setPromptEvent] =
     useState<BeforeInstallPromptEvent | null>(null);
 
@@ -35,10 +37,10 @@ export function InstallAppButton() {
   if (!promptEvent) return null;
 
   return (
-    <Tooltip title="Install Jabali as an app">
+    <Tooltip title={t("installappbutton.install_jabali_as_an_app")}>
       <Button
         type="text"
-        aria-label="Install app"
+        aria-label={t("installappbutton.install_app")}
         icon={<DownloadOutlined />}
         onClick={async () => {
           try {

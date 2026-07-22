@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Drawer,
@@ -26,6 +27,7 @@ export const CronLogDrawer = ({
   onClose,
   jobId,
 }: CronLogDrawerProps) => {
+  const { t } = useTranslation();
   const [lines, setLines] = useState<number>(200);
 
   const {
@@ -50,7 +52,7 @@ export const CronLogDrawer = ({
 
   return (
     <Drawer
-      title="Cron Job Log"
+      title={t("cronlogdrawer.cron_job_log")}
       placement="right"
       onClose={onClose}
       open={open}

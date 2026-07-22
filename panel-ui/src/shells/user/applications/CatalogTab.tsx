@@ -2,6 +2,7 @@
 // modelled on the admin Docker-Apps catalog: a masonry of cards, one per
 // registered app descriptor (GET /applications/registry). Clicking a card
 // opens the Install drawer pre-targeted to that app_type.
+import { useTranslation } from "react-i18next";
 import { Alert, Empty, Spin, Tag } from "antd";
 import { useMemo, useState } from "react";
 import { DatabaseOutlined } from "@icons";
@@ -15,6 +16,7 @@ type Props = {
 };
 
 export const CatalogTab = ({ onInstall }: Props) => {
+  const { t } = useTranslation();
   const { data: apps = [], isLoading, isError } = useAppRegistry();
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
@@ -44,8 +46,8 @@ export const CatalogTab = ({ onInstall }: Props) => {
       <Alert
         type="error"
         showIcon
-        message="Failed to load the application catalog"
-        description="Try reloading the page."
+        message={t("catalogtab.failed_to_load_the_application_catalog")}
+        description={t("catalogtab.try_reloading_the_page")}
       />
     );
   }
@@ -54,7 +56,7 @@ export const CatalogTab = ({ onInstall }: Props) => {
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="No applications available"
+        description={t("catalogtab.no_applications_available")}
       />
     );
   }
@@ -65,7 +67,7 @@ export const CatalogTab = ({ onInstall }: Props) => {
       {visibleApps.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="No applications match the selected tags"
+          description={t("catalogtab.no_applications_match_the_selected_tags")}
         />
       ) : (
         <CatalogGrid>

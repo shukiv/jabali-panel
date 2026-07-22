@@ -1,6 +1,7 @@
 // Python Application Manager (ADR-0131 / GH #203) — user-shell page to
 // register and control native Python web apps. Hidden behind the
 // python_apps_enabled server setting; the API 403s when off.
+import { useTranslation } from "react-i18next";
 import {
   App,
   Button,
@@ -45,6 +46,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function PythonAppsPage() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const apps = usePythonApps();
   const create = useCreatePythonApp();
@@ -177,9 +179,9 @@ export function PythonAppsPage() {
         loading={apps.isLoading}
         pagination={false}
       >
-        <Table.Column<PythonApp> title="Name" dataIndex="name" />
+        <Table.Column<PythonApp> title={t("pythonappspage.name")} dataIndex="name" />
         <Table.Column<PythonApp>
-          title="Domain"
+          title={t("pythonappspage.domain")}
           render={(_, r) => (
             <Typography.Text>
               {domainName.get(r.domain_id) ?? "—"}
@@ -190,7 +192,7 @@ export function PythonAppsPage() {
           )}
         />
         <Table.Column<PythonApp>
-          title="Runtime"
+          title={t("pythonappspage.runtime")}
           render={(_, r) => (
             <span>
               Python {r.python_version}{" "}
@@ -199,7 +201,7 @@ export function PythonAppsPage() {
           )}
         />
         <Table.Column<PythonApp>
-          title="Status"
+          title={t("pythonappspage.status")}
           render={(_, r) => {
             const tag = <Tag color={STATUS_COLOR[r.status] ?? "default"}>{r.status}</Tag>;
             // GH #357: a failed app used to show just "failed" with no reason
@@ -296,25 +298,25 @@ export function PythonAppsPage() {
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={() => void submit()}
-        okText="Create"
+        okText={t("pythonappspage.create")}
         confirmLoading={create.isPending}
       >
         <Form form={form} layout="vertical" initialValues={{ app_type: "wsgi", base_uri: "/" }}>
-          <Form.Item name="name" label="Name" rules={[{ required: true }]}>
-            <Input placeholder="My API" />
+          <Form.Item name="name" label={t("pythonappspage.name")} rules={[{ required: true }]}>
+            <Input placeholder={t("pythonappspage.my_api")} />
           </Form.Item>
-          <Form.Item name="domain_id" label="Domain" rules={[{ required: true }]}>
+          <Form.Item name="domain_id" label={t("pythonappspage.domain")} rules={[{ required: true }]}>
             <Select
               loading={domains.isLoading}
               options={(domains.data ?? []).map((d) => ({ value: d.id, label: d.name }))}
-              placeholder="Select a domain"
+              placeholder={t("pythonappspage.select_a_domain")}
             />
           </Form.Item>
-          <Form.Item name="base_uri" label="Mount path" tooltip="'/' for the whole domain, or '/app' for a sub-path">
+          <Form.Item name="base_uri" label={t("pythonappspage.mount_path")} tooltip="'/' for the whole domain, or '/app' for a sub-path">
             <Input placeholder="/" />
           </Form.Item>
           <Space style={{ width: "100%" }} size="middle">
-            <Form.Item name="python_version" label="Python" rules={[{ required: true }]}>
+            <Form.Item name="python_version" label={t("pythonappspage.python")} rules={[{ required: true }]}>
               <Select
                 style={{ width: 120 }}
                 loading={pyVersions.isLoading}
@@ -323,7 +325,7 @@ export function PythonAppsPage() {
               />
             </Form.Item>
             {!installFw && (
-              <Form.Item name="app_type" label="Type" rules={[{ required: true }]}>
+              <Form.Item name="app_type" label={t("pythonappspage.type")} rules={[{ required: true }]}>
                 <Select
                   style={{ width: 160 }}
                   options={[
@@ -347,14 +349,14 @@ export function PythonAppsPage() {
           ) : (
             <Form.Item
               name="entrypoint"
-              label="Entrypoint"
+              label={t("pythonappspage.entrypoint")}
               tooltip="module:callable, e.g. myapp.wsgi:application or main:app"
               rules={[{ required: true }, { pattern: /^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$/, message: "Expected module:callable" }]}
             >
               <Input placeholder="main:app" />
             </Form.Item>
           )}
-          <Form.Item name="app_root" label="App directory" tooltip="Path under your home, e.g. domains/example.com/app" rules={[{ required: true }]}>
+          <Form.Item name="app_root" label={t("pythonappspage.app_directory")} tooltip={t("pythonappspage.path_under_your_home_e_g_domains_example_com")} rules={[{ required: true }]}>
             <Input placeholder="domains/example.com/app" />
           </Form.Item>
         </Form>

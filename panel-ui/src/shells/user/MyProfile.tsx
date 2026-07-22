@@ -7,6 +7,7 @@
 // the SPA bounces to `/jabali-panel/profile?flow=<id>`. When this page
 // sees `?flow=<id>` it fetches the flow and renders the Kratos node
 // tree inline inside the Security card — no extra page, no extra tab.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
@@ -41,6 +42,7 @@ import {
 import { MyProfileUsageCard } from "./MyProfileUsageCard";
 
 export function MyProfile() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const [me, setMe] = useState<Identity | null>(null);
@@ -174,33 +176,33 @@ export function MyProfile() {
         }}
       >
         <div style={{ breakInside: "avoid", marginBottom: 16, display: "inline-block", width: "100%" }}>
-        <Card title="Account" loading={!me}>
+        <Card title={t("myprofile.account")} loading={!me}>
           {me && (
             <Descriptions column={1}>
-              <Descriptions.Item label="Email">{me.email}</Descriptions.Item>
+              <Descriptions.Item label={t("myprofile.email")}>{me.email}</Descriptions.Item>
               {me.fullName && (
-                <Descriptions.Item label="Full name">{me.fullName}</Descriptions.Item>
+                <Descriptions.Item label={t("myprofile.full_name")}>{me.fullName}</Descriptions.Item>
               )}
               {me.username && (
-                <Descriptions.Item label="Username">
+                <Descriptions.Item label={t("myprofile.username")}>
                   <Typography.Text code>{me.username}</Typography.Text>
                 </Descriptions.Item>
               )}
-              <Descriptions.Item label="User ID">
+              <Descriptions.Item label={t("myprofile.user_id")}>
                 <Typography.Text code>{me.id}</Typography.Text>
               </Descriptions.Item>
-              <Descriptions.Item label="Hosting package">
+              <Descriptions.Item label={t("myprofile.hosting_package")}>
                 {me.packageName ? (
                   me.packageName
                 ) : (
                   <Typography.Text type="secondary">No package</Typography.Text>
                 )}
               </Descriptions.Item>
-              <Descriptions.Item label="Role">
+              <Descriptions.Item label={t("myprofile.role")}>
                 {me.isAdmin ? "Administrator" : "Tenant"}
               </Descriptions.Item>
               {me.createdAt && (
-                <Descriptions.Item label="Member since">
+                <Descriptions.Item label={t("myprofile.member_since")}>
                   {new Date(me.createdAt).toLocaleDateString()}
                 </Descriptions.Item>
               )}
@@ -210,13 +212,13 @@ export function MyProfile() {
         </div>
 
         <div style={{ breakInside: "avoid", marginBottom: 16, display: "inline-block", width: "100%" }}>
-        <Card title="Security">
+        <Card title={t("myprofile.security")}>
           {impersonating ? (
             <Alert
               type="info"
               showIcon
-              message="Security settings unavailable while acting as another user"
-              description="Password and two-factor (2FA/TOTP) settings always apply to your own admin account — there is no separate login session for the user you are acting as, so changing them here would change YOUR credentials, not theirs. Exit impersonation to manage your own security. To reset a user's 2FA, go to Users → the user → Reset 2FA."
+              message={t("myprofile.security_settings_unavailable_while_acting_a")}
+              description={t("myprofile.password_and_two_factor_2fa_totp_settings_al")}
             />
           ) : (
           <>

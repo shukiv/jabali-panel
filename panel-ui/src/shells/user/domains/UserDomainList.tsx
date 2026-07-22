@@ -2,6 +2,7 @@
 // strip as the admin list (DNS/Redirects/Index/Settings/Toggle/Delete)
 // minus the Edit button (users edit per-domain config via the row
 // buttons rather than a full edit page).
+import { useTranslation } from "react-i18next";
 import {
   PlusSquareOutlined,
   GlobalOutlined,
@@ -174,6 +175,7 @@ export type Domain = {
 type ActiveModal = { domainId: string; type: "redirects" | "index" | "directory-privacy" | "caching" | "nginx-options" | "rewrite-rules" } | null;
 
 export const UserDomainList = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
@@ -248,7 +250,7 @@ export const UserDomainList = () => {
         >
           <Table.Column<Domain>
             dataIndex="name"
-            title="Domain"
+            title={t("userdomainlist.domain")}
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -263,7 +265,7 @@ export const UserDomainList = () => {
           />
           <Table.Column<Domain>
             dataIndex="is_enabled"
-            title="Status"
+            title={t("userdomainlist.status")}
             render={(enabled: boolean) =>
               enabled ? (
                 <Tag color="green">active</Tag>
@@ -274,22 +276,22 @@ export const UserDomainList = () => {
           />
           <Table.Column<Domain>
             dataIndex="ssl_state"
-            title="SSL"
+            title={t("userdomainlist.ssl")}
             render={(state?: string) => (
               <Tag color={getSSLTagColor(state)}>{getSSLTagLabel(state)}</Tag>
             )}
           />
           <Table.Column<Domain>
-            title="Redirect"
+            title={t("userdomainlist.redirect")}
             render={(_, record) => renderRedirect(record)}
           />
           <Table.Column<Domain>
             dataIndex="bytes_30d"
-            title="BW (30d)"
+            title={t("userdomainlist.bw_30d")}
             render={(v: number | undefined) => humanBytes(v ?? 0)}
           />
           <Table.Column<Domain>
-            title="Actions"
+            title={t("userdomainlist.actions")}
             dataIndex="actions"
             render={(_, r) => (
               <>
@@ -390,7 +392,7 @@ export const UserDomainList = () => {
                     ],
                   }}
                 >
-                  <RowActionButton icon={<MoreOutlined />} color="default" aria-label="More actions" />
+                  <RowActionButton icon={<MoreOutlined />} color="default" aria-label={t("userdomainlist.more_actions")} />
                 </Dropdown>
                 </Space>
                 {activeModal?.domainId === r.id && activeModal.type === "redirects" && (

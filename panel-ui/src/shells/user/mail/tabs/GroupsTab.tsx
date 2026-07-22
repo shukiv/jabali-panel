@@ -1,6 +1,7 @@
 // GroupsTab — M51 mail groups (issue #201). Pick a mail-enabled domain,
 // create/edit groups (shared mailbox + calendar + address book + files),
 // manage membership, delete. Mirrors MailboxesTab styling.
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { RowActions } from "../../../../components/RowActions";
 import {
@@ -43,6 +44,7 @@ import {
 
 
 export function GroupsTab() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
 
   const { items: domains } = useListQuery<Domain>({
@@ -67,7 +69,7 @@ export function GroupsTab() {
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="Enable email on a domain first to create groups"
+        description={t("groupstab.enable_email_on_a_domain_first_to_create_gro")}
       />
     );
   }
@@ -108,7 +110,7 @@ export function GroupsTab() {
           onSearchChange={setSearch}
           pagination={{ pageSize: 25 }}
           locale={{
-            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No groups" />,
+            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("groupstab.no_groups")} />,
           }}
           columns={[
             {

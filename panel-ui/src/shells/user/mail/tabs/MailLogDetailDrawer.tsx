@@ -5,6 +5,7 @@
 // STARTTLS → delivered / DSN with the remote server's response — which answers
 // "why didn't my mail arrive". Fetches GET /mail/logs/detail (scoped server-side
 // to the caller's domains).
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 
 import { Drawer, Empty, Spin, Timeline, Typography, message } from "antd";
@@ -39,6 +40,7 @@ const dotColor = (ev: string): string => {
 };
 
 export const MailLogDetailDrawer = ({ queueId, open, onClose }: Props) => {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<DetailResponse | null>(null);
 
@@ -56,13 +58,13 @@ export const MailLogDetailDrawer = ({ queueId, open, onClose }: Props) => {
   }, [open, queueId]);
 
   return (
-    <Drawer title="Delivery trail" width={480} open={open} onClose={onClose} destroyOnClose>
+    <Drawer title={t("maillogdetaildrawer.delivery_trail")} width={480} open={open} onClose={onClose} destroyOnClose>
       {loading ? (
         <div style={{ textAlign: "center", padding: 48 }}>
           <Spin />
         </div>
       ) : !data || data.events.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No delivery trail found" />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("maillogdetaildrawer.no_delivery_trail_found")} />
       ) : (
         <>
           <Typography.Paragraph style={{ marginBottom: 4 }}>

@@ -2,6 +2,7 @@
 // address books, and file folders across the user's mail-enabled domains, and
 // assign them to mailboxes / groups via grants. The shared-mailbox kind (#241)
 // is intentionally not offered here yet — its send-as path is pending.
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   Button,
@@ -55,6 +56,7 @@ const KIND_COLOR: Record<string, string> = {
 const OFFERED_KINDS: SharedResourceKind[] = ["calendar", "addressbook", "files"];
 
 export const SharedResourcesTab = () => {
+  const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
@@ -92,7 +94,7 @@ export const SharedResourcesTab = () => {
 
   if (loadingDomains && domains.length === 0) return <Skeleton active paragraph={{ rows: 4 }} />;
   if (mailDomains.length === 0)
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No email-enabled domains yet" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("sharedresourcestab.no_email_enabled_domains_yet")} />;
 
   return (
     <>

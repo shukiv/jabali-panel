@@ -3,6 +3,7 @@
 // table of your installs with start/stop/restart/delete. Degrades to a clear
 // "not enabled on this server" notice when the host has no userns-remap (the
 // backend 403s docker_tenant_not_enabled).
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { RowActions } from "../../../components/RowActions";
 import { CatalogCard, CatalogGrid, CategoryFilter } from "../../../components/catalog";
@@ -68,6 +69,7 @@ const statusColor = (s: InstalledApp["status"]) =>
         : "default";
 
 export const UserDockerAppsPage = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [installFor, setInstallFor] = useState<CatalogEntry | null>(null);
   const [logsFor, setLogsFor] = useState<InstalledApp | null>(null);
@@ -136,8 +138,8 @@ export const UserDockerAppsPage = () => {
         <Alert
           type="info"
           showIcon
-          message="Docker apps are not enabled on this server"
-          description="Ask your administrator to enable tenant Docker apps for your hosting package."
+          message={t("userdockerappspage.docker_apps_are_not_enabled_on_this_server")}
+          description={t("userdockerappspage.ask_your_administrator_to_enable_tenant_dock")}
         />
       </div>
     );
@@ -154,8 +156,8 @@ export const UserDockerAppsPage = () => {
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message="Docker apps are over your disk quota"
-          description="Your installed apps exceed your package disk allowance. Delete an app or ask your administrator to raise the quota."
+          message={t("userdockerappspage.docker_apps_are_over_your_disk_quota")}
+          description={t("userdockerappspage.your_installed_apps_exceed_your_package_disk")}
         />
       )}
       <Tabs
@@ -171,14 +173,14 @@ export const UserDockerAppsPage = () => {
                   <Col xs={24} sm={12} lg={6}>
                     <StatCard
                       iconBg="rgba(207, 19, 34, 0.12)" iconColor="#cf1322" Icon={AppstoreOutlined}
-                      label="Installed Apps" value={installedCount}
+                      label={t("userdockerappspage.installed_apps")} value={installedCount}
                       subtitle={<Typography.Text type="secondary">{catalogCount} in catalog</Typography.Text>}
                     />
                   </Col>
                   <Col xs={24} sm={12} lg={6}>
                     <StatCard
                       iconBg="rgba(114, 46, 209, 0.12)" iconColor="#722ed1" Icon={SyncOutlined}
-                      label="Updates Available" value={updateCount}
+                      label={t("userdockerappspage.updates_available")} value={updateCount}
                       subtitle={updateCount > 0
                         ? <Typography.Text type="warning">Needs attention</Typography.Text>
                         : <Typography.Text type="secondary">Up to date</Typography.Text>}
@@ -187,21 +189,21 @@ export const UserDockerAppsPage = () => {
                   <Col xs={24} sm={12} lg={6}>
                     <StatCard
                       iconBg="rgba(63, 134, 0, 0.12)" iconColor="#3f8600" Icon={PlayCircleOutlined}
-                      label="Running" value={runningCount}
+                      label={t("userdockerappspage.running")} value={runningCount}
                       subtitle={<Typography.Text type="secondary">{pct(runningCount)}% of installed</Typography.Text>}
                     />
                   </Col>
                   <Col xs={24} sm={12} lg={6}>
                     <StatCard
                       iconBg="rgba(212, 107, 8, 0.12)" iconColor="#d46b08" Icon={PauseCircleOutlined}
-                      label="Stopped" value={stoppedCount}
+                      label={t("userdockerappspage.stopped")} value={stoppedCount}
                       subtitle={<Typography.Text type="secondary">{pct(stoppedCount)}% of installed</Typography.Text>}
                     />
                   </Col>
                 </Row>
                 <Input.Search
                   allowClear
-                  placeholder="Search by name"
+                  placeholder={t("userdockerappspage.search_by_name")}
                   value={installedSearch}
                   onChange={(e) => setInstalledSearch(e.target.value)}
                   style={{ marginBottom: 16, maxWidth: 360 }}
@@ -226,7 +228,7 @@ export const UserDockerAppsPage = () => {
                   }}
                   locale={{
                     emptyText: (
-                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No installed apps yet">
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("userdockerappspage.no_installed_apps_yet")}>
                         <Button type="primary" onClick={() => setTab("catalog")}>
                           Browse Catalog
                         </Button>

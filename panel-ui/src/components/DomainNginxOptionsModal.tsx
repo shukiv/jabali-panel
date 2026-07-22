@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Checkbox, Form, InputNumber, Modal, Typography, message } from "antd";
 
@@ -19,6 +20,7 @@ export interface DomainNginxOptionsModalProps {
 // Only mounted when the admin has enabled tenant_domain_options_enabled. The
 // panel renders these to fixed, vetted directives; no raw config.
 export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOptionsModalProps) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<SafeOptions>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -62,7 +64,7 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
   };
 
   return (
-    <Modal open title="Domain options" onCancel={onClose} onOk={onOk} confirmLoading={saving} okText="Save">
+    <Modal open title={t("domainnginxoptionsmodal.domain_options")} onCancel={onClose} onOk={onOk} confirmLoading={saving} okText={t("domainnginxoptionsmodal.save")}>
       <Typography.Paragraph type="secondary">
         Safe nginx options for this domain. The panel renders fixed directives —
         no raw config.
@@ -70,7 +72,7 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
       <Form<SafeOptions> form={form} layout="vertical" disabled={loading}>
         <Form.Item
           name="max_body_mb"
-          label="Max upload size (MB)"
+          label={t("domainnginxoptionsmodal.max_upload_size_mb")}
           tooltip="client_max_body_size. 0 = use the default."
         >
           <InputNumber min={0} max={10240} style={{ width: "100%" }} placeholder="0" />

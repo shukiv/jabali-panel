@@ -10,6 +10,7 @@
 // the user can't dismiss without copying. Anything else risks a
 // "wait, what was that secret?" support ticket.
 
+import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -107,6 +108,7 @@ function statusTag(t: UserAPIToken): JSX.Element {
 }
 
 export function UserAPITokensPage(): JSX.Element {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<UserAPIToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -289,9 +291,9 @@ export function UserAPITokensPage(): JSX.Element {
             </Typography.Text>
           ) : (
             <Popconfirm
-              title="Revoke this token?"
-              description="Any script using it will start getting 401."
-              okText="Revoke"
+              title={t("userapitokenspage.revoke_this_token")}
+              description={t("userapitokenspage.any_script_using_it_will_start_getting_401")}
+              okText={t("userapitokenspage.revoke")}
               okType="danger"
               onConfirm={() => onRevoke(row)}
             >
@@ -307,7 +309,7 @@ export function UserAPITokensPage(): JSX.Element {
 
   const tokensCard = (
     <Card
-      title="Personal API Tokens"
+      title={t("userapitokenspage.personal_api_tokens")}
       extra={
         <Button
           type="primary"
@@ -352,18 +354,18 @@ export function UserAPITokensPage(): JSX.Element {
       />
 
       <Modal
-        title="Create API token"
+        title={t("userapitokenspage.create_api_token")}
         open={createOpen}
         onCancel={() => {
           setCreateOpen(false);
           createForm.resetFields();
         }}
         onOk={onCreate}
-        okText="Create"
+        okText={t("userapitokenspage.create")}
       >
         <Form form={createForm} layout="vertical">
           <Form.Item
-            label="Name"
+            label={t("userapitokenspage.name")}
             name="name"
             rules={[
               { required: true, message: "Required" },
@@ -371,10 +373,10 @@ export function UserAPITokensPage(): JSX.Element {
             ]}
             extra="A label for you — e.g. 'office router DDNS', 'CI deploy bot'."
           >
-            <Input placeholder="My token" autoFocus maxLength={100} />
+            <Input placeholder={t("userapitokenspage.my_token")} autoFocus maxLength={100} />
           </Form.Item>
           <Form.Item
-            label="Expires in (seconds, optional)"
+            label={t("userapitokenspage.expires_in_seconds_optional")}
             name="expires_in_seconds"
             extra="Leave blank for a token that never expires. Max 1 year (31536000)."
             rules={[
@@ -395,8 +397,8 @@ export function UserAPITokensPage(): JSX.Element {
             />
           </Form.Item>
           <Form.Item
-            label="Permissions"
-            tooltip="Full access can do anything you can. A custom token is restricted to exactly the areas you tick and is rejected everywhere else."
+            label={t("userapitokenspage.permissions")}
+            tooltip={t("userapitokenspage.full_access_can_do_anything_you_can_a_custom")}
           >
             <Radio.Group
               value={accessMode}
@@ -424,7 +426,7 @@ export function UserAPITokensPage(): JSX.Element {
                     <div style={{ marginTop: 6, marginLeft: 24 }}>
                       <Input
                         size="small"
-                        placeholder="Limit to one DNS record ID (optional)"
+                        placeholder={t("userapitokenspage.limit_to_one_dns_record_id_optional")}
                         value={ddnsRecordId}
                         onChange={(e) => setDdnsRecordId(e.target.value)}
                         allowClear
@@ -469,7 +471,7 @@ export function UserAPITokensPage(): JSX.Element {
         open={!!secret}
         onCancel={() => setSecret(null)}
         onOk={() => setSecret(null)}
-        okText="I've copied it"
+        okText={t("userapitokenspage.i_ve_copied_it")}
         cancelButtonProps={{ style: { display: "none" } }}
         closable={false}
         maskClosable={false}
@@ -477,8 +479,8 @@ export function UserAPITokensPage(): JSX.Element {
         <Alert
           type="warning"
           showIcon
-          message="Copy this secret now."
-          description="The plaintext token is shown only once. After you close this dialog the panel only stores its hash — there's no way to retrieve it again. Lost? Revoke + create a new one."
+          message={t("userapitokenspage.copy_this_secret_now")}
+          description={t("userapitokenspage.the_plaintext_token_is_shown_only_once_after")}
           style={{ marginBottom: 16 }}
         />
         <Input.Group compact>

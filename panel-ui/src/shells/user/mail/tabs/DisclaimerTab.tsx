@@ -1,6 +1,7 @@
 // DisclaimerTab — M6.5 Step 6. Per-domain outbound disclaimer.
 // Mockup: row click → modal with Enable toggle + Disclaimer Text TextArea + Save/Cancel.
 
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   Button,
@@ -32,6 +33,7 @@ interface FormValues {
 }
 
 export const DisclaimerTab = () => {
+  const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
@@ -82,7 +84,7 @@ export const DisclaimerTab = () => {
 
   if (loadingDomains && domains.length === 0) return <Skeleton active paragraph={{ rows: 4 }} />;
   if (emailEnabled.length === 0) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No email-enabled domains" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("disclaimertab.no_email_enabled_domains")} />;
   }
 
   return (
@@ -128,7 +130,7 @@ export const DisclaimerTab = () => {
               title: "Actions",
               width: 100,
               render: (_, row) => (
-                <Tooltip title="Edit">
+                <Tooltip title={t("disclaimertab.edit")}>
                   <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(row)} />
                 </Tooltip>
               ),
@@ -148,18 +150,18 @@ export const DisclaimerTab = () => {
         }
         onCancel={() => setOpen(false)}
         onOk={submit}
-        okText="Save"
+        okText={t("disclaimertab.save")}
         confirmLoading={updateMut.isPending}
         destroyOnClose
         width={640}
       >
         <Form form={form} layout="vertical" preserve={false}>
-          <Form.Item name="enabled" label="Enable Disclaimer" valuePropName="checked" extra="Append a disclaimer to all outbound emails from this domain">
+          <Form.Item name="enabled" label={t("disclaimertab.enable_disclaimer")} valuePropName="checked" extra="Append a disclaimer to all outbound emails from this domain">
             <Switch />
           </Form.Item>
           <Form.Item
             name="text"
-            label="Disclaimer Text"
+            label={t("disclaimertab.disclaimer_text")}
             rules={[
               ({ getFieldValue }) => ({
                 validator(_, value) {
@@ -172,7 +174,7 @@ export const DisclaimerTab = () => {
             ]}
             extra="This text will be appended to every outgoing email"
           >
-            <Input.TextArea rows={5} placeholder="If you received this email by mistake, please notify the sender and delete it." />
+            <Input.TextArea rows={5} placeholder={t("disclaimertab.if_you_received_this_email_by_mistake_please")} />
           </Form.Item>
         </Form>
       </Modal>

@@ -11,6 +11,7 @@
 // Atomic rollback would need a new backend endpoint — out of scope for
 // the shortcut.
 
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Modal,
@@ -56,6 +57,7 @@ function extractError(err: unknown, fallback: string): string {
 }
 
 export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<{ name: string; engine: "mariadb" | "postgres" }>();
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedResult | null>(null);
@@ -160,7 +162,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
 
   return (
     <Modal
-      title="Quick Database Setup"
+      title={t("quicksetupmodal.quick_database_setup")}
       open={open}
       onCancel={handleClose}
       maskClosable={!submitting && !result}
@@ -200,9 +202,9 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
           >
             {postgresEnabled && (
               <Form.Item
-                label="Engine"
+                label={t("quicksetupmodal.engine")}
                 name="engine"
-                tooltip="MariaDB is the default. PostgreSQL must be enabled in Server Settings."
+                tooltip={t("quicksetupmodal.mariadb_is_the_default_postgresql_must_be_en")}
               >
                 <Segmented
                   options={[
@@ -213,7 +215,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
               </Form.Item>
             )}
             <Form.Item
-              label="Database & User Name"
+              label={t("quicksetupmodal.database_user_name")}
               name="name"
               rules={[
                 { required: true, message: "Name is required" },
@@ -237,8 +239,8 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
             type="success"
             showIcon
             icon={<CheckCircleTwoTone twoToneColor="#52c41a" />}
-            title="Database and user created"
-            description="Copy the password now — it is shown only once. We store only a bcrypt hash."
+            title={t("quicksetupmodal.database_and_user_created")}
+            description={t("quicksetupmodal.copy_the_password_now_it_is_shown_only_once")}
           />
           <div>
             <Typography.Text strong>Database</Typography.Text>
@@ -246,7 +248,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
               readOnly
               value={result.databaseName}
               addonAfter={
-                <Tooltip title="Copy">
+                <Tooltip title={t("quicksetupmodal.copy")}>
                   <Button
                     type="text"
                     icon={<CopyOutlined />}
@@ -262,7 +264,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
               readOnly
               value={result.username}
               addonAfter={
-                <Tooltip title="Copy">
+                <Tooltip title={t("quicksetupmodal.copy")}>
                   <Button
                     type="text"
                     icon={<CopyOutlined />}
@@ -279,7 +281,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
               value={result.password}
               visibilityToggle
               addonAfter={
-                <Tooltip title="Copy">
+                <Tooltip title={t("quicksetupmodal.copy")}>
                   <Button
                     type="text"
                     icon={<CopyOutlined />}

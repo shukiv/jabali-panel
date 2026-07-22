@@ -3,6 +3,7 @@
 // Lists mailboxes from all user domains in a single table. Extracted from
 // the original UserMailboxesPage. Merges results from per-domain list queries
 // client-side and provides password rotation, SSO mint, and delete actions.
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import {
   Button,
@@ -61,6 +62,7 @@ function formatBytes(n: number): string {
 }
 
 export const MailboxesTab = () => {
+  const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
@@ -267,7 +269,7 @@ export const MailboxesTab = () => {
   }
 
   if (rows.length === 0) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No mailboxes yet" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("mailboxestab.no_mailboxes_yet")} />;
   }
 
   return (
@@ -281,7 +283,7 @@ export const MailboxesTab = () => {
         initialSearch={search}
         onSearchChange={setSearch}
         pagination={{ pageSize: 20 }}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No mailboxes" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("mailboxestab.no_mailboxes")} /> }}
         columns={[
           {
             title: "Mailbox",
@@ -380,7 +382,7 @@ export const MailboxesTab = () => {
                   <Button
                     type="text"
                     icon={<ClockCircleOutlined style={{ color: "#52c41a" }} />}
-                    aria-label="Automatic replies active"
+                    aria-label={t("mailboxestab.automatic_replies_active")}
                     onClick={() => setArTarget(record)}
                   />
                 </Tooltip>
@@ -503,7 +505,7 @@ export const MailboxesTab = () => {
       <Modal
         open={resetTarget !== null}
         title={resetTarget ? `Reset password — ${resetTarget.email}` : "Reset password"}
-        okText="Set password"
+        okText={t("mailboxestab.set_password")}
         confirmLoading={resetTarget ? rotatingId === resetTarget.id : false}
         onOk={submitReset}
         onCancel={() => setResetTarget(null)}
@@ -511,9 +513,9 @@ export const MailboxesTab = () => {
       >
         <Form form={resetForm} layout="vertical" requiredMark={false}>
           <Form.Item
-            label="New password"
+            label={t("mailboxestab.new_password")}
             name="password"
-            tooltip="Leave blank to auto-generate. Auto-generated passwords are shown exactly once."
+            tooltip={t("mailboxestab.leave_blank_to_auto_generate_auto_generated")}
           >
             <PasswordInput
               autoComplete="new-password"
