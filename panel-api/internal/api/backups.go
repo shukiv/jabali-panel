@@ -656,6 +656,15 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
 		return
 	}
+	// Backup downloads stream multi-GB archives, and the restic materialize can
+	// take minutes — both far exceed the server's 30s WriteTimeout, which would
+	// sever the connection mid-stream. GH #462: the download stalled at ~1.15 GB,
+	// i.e. exactly 30s of throughput. Clear this request's write deadline so the
+	// stream runs to completion (nginx already allows an hour via
+	// proxy_send/read_timeout 3600s). Best-effort: a writer that doesn't support
+	// deadlines just keeps the default.
+	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{})
+
 	matCtx, matCancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
 	defer matCancel()
 	// The snapshot lives in the job's DESTINATION repo. Forward repo_url +
