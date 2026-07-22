@@ -1129,8 +1129,17 @@ func cpanelRestoreCallback(
 				for _, r := range rsyncRows {
 					destPath := filepath.Join("/home", p.targetUsername, "domains", r.Dom, "public_html")
 					rawResp, rerr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
-						"port":        srcSSHPort(job),
-						"job_id":      job.ID,
+						"port":   srcSSHPort(job),
+						"job_id": job.ID,
+						// src_account scopes the agent-side rsync to
+						// /home/<account> (JAB-45). The agent REQUIRES it; the
+						// call previously omitted it, so every DA-family home
+						// rsync (DA/CloudPanel/CyberPanel) failed with
+						// "src_account required" (found in the live CloudPanel
+						// E2E). The source home is /home/<SourceUser> for these
+						// sources (CyberPanel's SourceUser is its dotted domain,
+						// which the agent now accepts).
+						"src_account": p.parsed.SourceUser,
 						"host":        job.SourceHost,
 						"ssh_user":    remoteSSHUser,
 						"secret_path": secretPath,
@@ -1463,7 +1472,19 @@ func migrationSSHUser(job *models.MigrationJob) string {
 	// cPanel accounts DO have SSH shells (SourceUser == login), and DirectAdmin
 	// pivots SourceUser to its admin login upstream, so only Hestia needs the
 	// override.
-	if job.SourceKind == models.MigrationSourceHestia {
+	//
+	// CloudPanel + CyberPanel are the same case as Hestia: SourceUser is the
+	// site user / primary domain, NOT an SSH login with the privileges the
+	// source read needs. Their discover + BackupUser read the panel's config DB
+	// (CloudPanel db.sq3, CyberPanel MySQL) + run mysqldump + read /home — all
+	// root-only. The pull path forces root (--ssh-user); the analyze stage went
+	// through this helper and inherited the account, so the online flow failed
+	// at `stage analyze: connect:` (verified end-to-end against a live CloudPanel
+	// source) even though pull-source succeeded as root.
+	switch job.SourceKind {
+	case models.MigrationSourceHestia,
+		models.MigrationSourceCloudPanel,
+		models.MigrationSourceCyberPanel:
 		return "root"
 	}
 	if job.SourceUser != "" {

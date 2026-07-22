@@ -64,11 +64,19 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 	// source account home (/home/<src_account>), not just /home/, so a tampered
 	// manifest can't pull another source tenant's files (the SSH login is usually
 	// root/admin). filepath.Clean collapses any ../ traversal.
-	if p.SrcAccount == "" || strings.ContainsAny(p.SrcAccount, "/.") {
+	// Reject path separators + ".." traversal, but ALLOW dots: CyberPanel's
+	// account home is /home/<domain> (e.g. /home/smoke.example.com), so a bare
+	// no-dots rule wrongly refused every CyberPanel home rsync. filepath.Clean
+	// on srcRoot below + the srcRoot-prefix check keep this traversal-safe.
+	if p.SrcAccount == "" || strings.Contains(p.SrcAccount, "/") || strings.Contains(p.SrcAccount, "..") {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
-			Message: "src_account required and must be a bare account name"}
+			Message: "src_account required and must be a bare account name (no / or ..)"}
 	}
-	srcRoot := "/home/" + p.SrcAccount
+	srcRoot := filepath.Clean("/home/" + p.SrcAccount)
+	if srcRoot == "/home" || !strings.HasPrefix(srcRoot, "/home/") {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
+			Message: "src_account resolves outside /home"}
+	}
 	cleanSrc := filepath.Clean(p.SrcPath)
 	if cleanSrc != srcRoot && !strings.HasPrefix(cleanSrc, srcRoot+"/") {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
