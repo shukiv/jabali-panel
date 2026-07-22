@@ -57,6 +57,9 @@ const DefaultDBName = "cyberpanel"
 // — DescribeAccount also validates against the Go-side account list).
 var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,253})$`)
 
+// phpVerRe pulls the bare X.Y version out of CyberPanel's "PHP 8.1" strings.
+var phpVerRe = regexp.MustCompile(`[0-9]+\.[0-9]+`)
+
 // Discoverer is the CyberPanel-side implementation of migrate.Discoverer.
 type Discoverer struct {
 	// AllowPrivate — when true the SSRF guard permits RFC1918 / ULA targets.
@@ -255,16 +258,190 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	if s.client != nil {
 		host = s.client.RemoteAddr().String()
 	}
-	return &migrate.AccountManifest{
+	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,
 		Source: migrate.SourceRef{
 			Kind: models.MigrationSourceCyberPanel,
 			Host: host,
 			User: accountID,
 		},
+		Domains:   []migrate.DomainSpec{},
 		Mailboxes: []migrate.MailboxSpec{},
+		Databases: []migrate.DatabaseSpec{},
 		Warnings:  []migrate.Warning{},
-	}, nil
+	}
+
+	// Resolve the website's numeric id + PHP version once; the per-area builders
+	// key their joins off the id (an int from the DB, injection-safe). accountID
+	// is already domainRe-validated, so embedding it in a SQL string literal is
+	// safe (no quote/metachar can occur), and mysqlQuery shell-quotes the whole
+	// statement on top.
+	wid, php, werr := s.websiteInfo(ctx, accountID)
+	if werr != nil {
+		return nil, fmt.Errorf("cyberpanel.DescribeAccount: resolve website %q: %w", accountID, werr)
+	}
+	m.Domains = s.buildDomains(ctx, accountID, wid, php, &m.Warnings)
+	m.Databases = s.buildDatabases(ctx, wid, &m.Warnings)
+	m.Mailboxes = s.buildMailboxes(ctx, wid, &m.Warnings)
+	return m, nil
+}
+
+// websiteInfo returns the numeric website id + parsed PHP version for a domain.
+func (s *session) websiteInfo(ctx context.Context, domain string) (int, string, error) {
+	q := "SELECT id, phpSelection FROM websiteFunctions_websites WHERE domain='" + domain + "'"
+	out, err := s.run(ctx, s.commandTimeout, mysqlQuery(s.dbName, q))
+	if err != nil {
+		return 0, "", err
+	}
+	line := firstLine(out)
+	if line == "" {
+		return 0, "", fmt.Errorf("website %q not found", domain)
+	}
+	cols := strings.Split(line, "	")
+	id, aerr := strconv.Atoi(strings.TrimSpace(cols[0]))
+	if aerr != nil {
+		return 0, "", fmt.Errorf("bad website id %q: %w", cols[0], aerr)
+	}
+	php := ""
+	if len(cols) > 1 {
+		php = parsePHP(cols[1])
+	}
+	return id, php, nil
+}
+
+// buildDomains returns the primary website domain plus its child + alias
+// domains. DocRoot follows CyberPanel's /home/<domain>/public_html layout.
+func (s *session) buildDomains(ctx context.Context, domain string, wid int, php string, warns *[]migrate.Warning) []migrate.DomainSpec {
+	out := []migrate.DomainSpec{{
+		Name:      domain,
+		DocRoot:   "/home/" + domain + "/public_html",
+		IsPrimary: true,
+		HasPHP:    true,
+		PHPVer:    php,
+	}}
+	cq := fmt.Sprintf("SELECT domain, path, phpSelection FROM websiteFunctions_childdomains WHERE master_id=%d", wid)
+	if b, err := s.run(ctx, s.commandTimeout, mysqlQuery(s.dbName, cq)); err == nil {
+		for _, line := range splitLines(b) {
+			cols := strings.Split(line, "	")
+			name := strings.TrimSpace(cols[0])
+			if name == "" {
+				continue
+			}
+			cd := migrate.DomainSpec{Name: name, IsPrimary: false, HasPHP: true}
+			if len(cols) > 1 && strings.TrimSpace(cols[1]) != "" {
+				cd.DocRoot = strings.TrimSpace(cols[1])
+			} else {
+				cd.DocRoot = "/home/" + domain + "/public_html"
+			}
+			if len(cols) > 2 {
+				cd.PHPVer = parsePHP(cols[2])
+			}
+			out = append(out, cd)
+		}
+	} else {
+		*warns = append(*warns, migrate.Warning{Code: "cyberpanel_childdomains", Detail: err.Error()})
+	}
+	aq := fmt.Sprintf("SELECT aliasDomain FROM websiteFunctions_aliasdomains WHERE master_id=%d", wid)
+	if b, err := s.run(ctx, s.commandTimeout, mysqlQuery(s.dbName, aq)); err == nil {
+		for _, line := range splitLines(b) {
+			name := strings.TrimSpace(line)
+			if name == "" {
+				continue
+			}
+			out = append(out, migrate.DomainSpec{
+				Name: name, DocRoot: "/home/" + domain + "/public_html",
+				IsPrimary: false, HasPHP: true, PHPVer: php,
+			})
+		}
+	} else {
+		*warns = append(*warns, migrate.Warning{Code: "cyberpanel_aliasdomains", Detail: err.Error()})
+	}
+	return out
+}
+
+// buildDatabases returns the MySQL databases attached to the website.
+func (s *session) buildDatabases(ctx context.Context, wid int, warns *[]migrate.Warning) []migrate.DatabaseSpec {
+	q := fmt.Sprintf("SELECT dbName, dbUser FROM databases_databases WHERE website_id=%d", wid)
+	b, err := s.run(ctx, s.commandTimeout, mysqlQuery(s.dbName, q))
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "cyberpanel_databases", Detail: err.Error()})
+		return []migrate.DatabaseSpec{}
+	}
+	out := []migrate.DatabaseSpec{}
+	for _, line := range splitLines(b) {
+		cols := strings.Split(line, "	")
+		name := strings.TrimSpace(cols[0])
+		if name == "" {
+			continue
+		}
+		spec := migrate.DatabaseSpec{Engine: "mysql", Name: name}
+		if len(cols) > 1 {
+			spec.GrantUser = strings.TrimSpace(cols[1])
+		}
+		out = append(out, spec)
+	}
+	return out
+}
+
+// buildMailboxes returns the mailboxes on the website's mail domains
+// (e_users joined to e_domains, which owns the domain). CyberPanel stores mail
+// under /home/vmail/<domain>/<local>/. DiskUsage is CyberPanel's MB figure.
+func (s *session) buildMailboxes(ctx context.Context, wid int, warns *[]migrate.Warning) []migrate.MailboxSpec {
+	q := fmt.Sprintf("SELECT u.email, u.DiskUsage FROM e_users u JOIN e_domains d ON u.emailOwner_id=d.domain WHERE d.domainOwner_id=%d", wid)
+	b, err := s.run(ctx, s.commandTimeout, mysqlQuery(s.dbName, q))
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "cyberpanel_mailboxes", Detail: err.Error()})
+		return []migrate.MailboxSpec{}
+	}
+	out := []migrate.MailboxSpec{}
+	for _, line := range splitLines(b) {
+		cols := strings.Split(line, "	")
+		email := strings.TrimSpace(cols[0])
+		if email == "" {
+			continue
+		}
+		local, mdom, _ := strings.Cut(email, "@")
+		mb := migrate.MailboxSpec{
+			Address:     email,
+			MaildirPath: "/home/vmail/" + mdom + "/" + local + "/",
+		}
+		if len(cols) > 1 {
+			if mbUsed, aerr := strconv.Atoi(strings.TrimSpace(cols[1])); aerr == nil && mbUsed > 0 {
+				mb.BytesUsed = int64(mbUsed) * 1024 * 1024
+			}
+		}
+		out = append(out, mb)
+	}
+	return out
+}
+
+// parsePHP extracts a bare "8.1" from CyberPanel's phpSelection ("PHP 8.1").
+func parsePHP(s string) string {
+	if m := phpVerRe.FindString(s); m != "" {
+		return m
+	}
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(s), "PHP"))
+}
+
+// firstLine returns the first non-empty line of b, trimmed.
+func firstLine(b []byte) string {
+	for _, line := range splitLines(b) {
+		return line
+	}
+	return ""
+}
+
+// splitLines splits mysql output into non-empty, CR-trimmed lines.
+func splitLines(b []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // Close releases the SSH client. Best-effort.

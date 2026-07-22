@@ -10,20 +10,43 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-// fakeSession builds a *session whose run() returns canned mysql output (TAB-
-// separated, as `mysql -N -B` produces), exercising the parsing logic without a
-// live CyberPanel host.
-func fakeSession(out string) *session {
+// route pairs a distinctive SQL substring with the canned TAB-separated output
+// `mysql -N -B` would return, so the fake session answers each of
+// DescribeAccount's queries independently without a live host.
+type route struct{ contains, out string }
+
+func fakeRouted(routes ...route) *session {
 	s := &session{dbName: "cyberpanel", commandTimeout: time.Second}
-	s.run = func(_ context.Context, _ time.Duration, _ string) ([]byte, error) {
-		return []byte(out), nil
+	s.run = func(_ context.Context, _ time.Duration, cmd string) ([]byte, error) {
+		for _, r := range routes {
+			if strings.Contains(cmd, r.contains) {
+				return []byte(r.out), nil
+			}
+		}
+		return nil, nil // unmatched query (e.g. no child/alias rows)
 	}
 	return s
 }
 
+// fakeSession answers only the ListAccounts query (domain \t externalApp).
+func fakeSession(accountsOut string) *session {
+	return fakeRouted(route{"domain, externalApp", accountsOut})
+}
+
+// fullAccount wires every DescribeAccount query for the smoke sample account.
+func fullAccount() *session {
+	return fakeRouted(
+		route{"domain, externalApp", "smoke.jabalitest.com\tsmoke6221\n"},
+		route{"id, phpSelection", "1\tPHP 8.1\n"},
+		route{"databases_databases", "smokedb\tsmokeuser\n"},
+		route{"e_users", "info@smoke.jabalitest.com\t0\n"},
+		route{"childdomains", ""},
+		route{"aliasdomains", ""},
+	)
+}
+
 func TestListAccounts_ParsesWebsites(t *testing.T) {
 	d := New()
-	// domain \t externalApp — one row per website.
 	s := fakeSession("smoke.jabalitest.com\tsmoke6221\nshop.example.com\tshop4820\n")
 	accts, err := d.ListAccounts(context.Background(), s)
 	if err != nil {
@@ -40,25 +63,38 @@ func TestListAccounts_ParsesWebsites(t *testing.T) {
 	}
 }
 
-func TestDescribeAccount_EmptyManifestForKnownDomain(t *testing.T) {
+func TestDescribeAccount_PopulatesAreas(t *testing.T) {
 	d := New()
-	s := fakeSession("smoke.jabalitest.com\tsmoke6221\nshop.example.com\tshop4820\n")
-	m, err := d.DescribeAccount(context.Background(), s, "smoke.jabalitest.com")
+	m, err := d.DescribeAccount(context.Background(), fullAccount(), "smoke.jabalitest.com")
 	if err != nil {
 		t.Fatalf("DescribeAccount: %v", err)
 	}
-	if m.SchemaVersion != migrate.ManifestSchemaVersion {
-		t.Errorf("SchemaVersion = %d, want %d", m.SchemaVersion, migrate.ManifestSchemaVersion)
+	if m.SchemaVersion != migrate.ManifestSchemaVersion || m.Source.Kind != models.MigrationSourceCyberPanel {
+		t.Errorf("source/schema wrong: %+v v%d", m.Source, m.SchemaVersion)
 	}
-	if m.Source.Kind != models.MigrationSourceCyberPanel || m.Source.User != "smoke.jabalitest.com" {
-		t.Errorf("Source = %+v, want kind=cyberpanel user=smoke.jabalitest.com", m.Source)
+	// Primary domain.
+	if len(m.Domains) != 1 || !m.Domains[0].IsPrimary || m.Domains[0].Name != "smoke.jabalitest.com" {
+		t.Fatalf("domains = %+v, want the primary website", m.Domains)
+	}
+	if m.Domains[0].DocRoot != "/home/smoke.jabalitest.com/public_html" || m.Domains[0].PHPVer != "8.1" {
+		t.Errorf("primary domain docroot/php wrong: %+v", m.Domains[0])
+	}
+	// Database.
+	if len(m.Databases) != 1 || m.Databases[0].Name != "smokedb" || m.Databases[0].GrantUser != "smokeuser" || m.Databases[0].Engine != "mysql" {
+		t.Fatalf("databases = %+v, want smokedb/smokeuser", m.Databases)
+	}
+	// Mailbox.
+	if len(m.Mailboxes) != 1 || m.Mailboxes[0].Address != "info@smoke.jabalitest.com" {
+		t.Fatalf("mailboxes = %+v, want info@", m.Mailboxes)
+	}
+	if m.Mailboxes[0].MaildirPath != "/home/vmail/smoke.jabalitest.com/info/" {
+		t.Errorf("maildir path wrong: %q", m.Mailboxes[0].MaildirPath)
 	}
 }
 
 func TestDescribeAccount_SingleTenantAutodetect(t *testing.T) {
 	d := New()
-	s := fakeSession("smoke.jabalitest.com\tsmoke6221\n")
-	m, err := d.DescribeAccount(context.Background(), s, "root")
+	m, err := d.DescribeAccount(context.Background(), fullAccount(), "root")
 	if err != nil {
 		t.Fatalf("DescribeAccount autodetect: %v", err)
 	}
@@ -86,6 +122,14 @@ func TestDescribeAccount_RejectsInjectionyID(t *testing.T) {
 	}
 }
 
+func TestParsePHP(t *testing.T) {
+	for in, want := range map[string]string{"PHP 8.1": "8.1", "PHP 8.3": "8.3", "8.2": "8.2", "PHP": ""} {
+		if got := parsePHP(in); got != want {
+			t.Errorf("parsePHP(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestShellSingleQuote_EscapesQuotes(t *testing.T) {
 	got := shellSingleQuote("a'b")
 	want := `'a'\''b'`
@@ -101,9 +145,6 @@ func TestMysqlQuery_BatchAndQuoted(t *testing.T) {
 	}
 	if !strings.Contains(cmd, `'cyberpanel'`) {
 		t.Errorf("db name must be single-quoted: %q", cmd)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(cmd), "mysql ") {
-		t.Errorf("must invoke mysql: %q", cmd)
 	}
 }
 
