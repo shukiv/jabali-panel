@@ -34,6 +34,9 @@ func SystemRecords(zone *models.DNSZone, srv *models.ServerSettings) []Record {
 		return nil
 	}
 	zoneName := strings.TrimSuffix(zone.Name, ".")
+	// GH #527: apex SOA + NS TTLs follow the operator default like every other
+	// record (the SOA content refresh/retry/expire/minimum timers are unchanged).
+	sysTTL := models.EffectiveDNSTTL(srv)
 
 	// SOA is generated from server_settings + zone scalars, never from
 	// the dns_records table directly. That keeps SOA consistent even
@@ -56,18 +59,18 @@ func SystemRecords(zone *models.DNSZone, srv *models.ServerSettings) []Record {
 		Content: fmt.Sprintf("%s %s %d %d %d %d %d",
 			primaryNS, hostmaster, serial,
 			zone.RefreshSeconds, zone.RetrySeconds, zone.ExpireSeconds, zone.MinimumTTL),
-		TTL: zone.MinimumTTL,
+		TTL: sysTTL,
 	}}
 
 	// NS records — one per configured nameserver. Without server_settings
 	// we still emit the zone apex as its own NS so PowerDNS accepts the
 	// zone as valid.
 	if srv == nil || srv.NS1Name == "" {
-		out = append(out, Record{Name: zoneName, Type: "NS", Content: zoneName, TTL: zone.MinimumTTL})
+		out = append(out, Record{Name: zoneName, Type: "NS", Content: zoneName, TTL: sysTTL})
 	} else {
-		out = append(out, Record{Name: zoneName, Type: "NS", Content: srv.NS1Name, TTL: zone.MinimumTTL})
+		out = append(out, Record{Name: zoneName, Type: "NS", Content: srv.NS1Name, TTL: sysTTL})
 		if srv.NS2Name != "" {
-			out = append(out, Record{Name: zoneName, Type: "NS", Content: srv.NS2Name, TTL: zone.MinimumTTL})
+			out = append(out, Record{Name: zoneName, Type: "NS", Content: srv.NS2Name, TTL: sysTTL})
 		}
 	}
 	return out

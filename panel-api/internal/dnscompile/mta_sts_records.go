@@ -34,6 +34,7 @@ const MTAStsRecordsManagedBy = "mta-sts"
 func BuildMTAStsRecords(
 	zoneID, zoneName, panelIPv4 string,
 	mtaStsID uint64,
+	srv *models.ServerSettings,
 	idNew func() string,
 	now time.Time,
 ) []models.DNSRecord {
@@ -48,7 +49,7 @@ func BuildMTAStsRecords(
 			Name:      name,
 			Type:      typ,
 			Content:   content,
-			TTL:       300,
+			TTL:       models.EffectiveDNSTTL(srv),
 			Priority:  0,
 			Managed:   true,
 			ManagedBy: &marker,

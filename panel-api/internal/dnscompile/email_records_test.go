@@ -26,6 +26,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 		"example.com",
 		"jabali",
 		"v=DKIM1; k=ed25519; p=AAAA",
+		nil,
 		idCounter(),
 		now,
 	)
@@ -108,7 +109,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 // rotation lands, the handler will pass the rotated selector through.
 func TestBuildEmailRecords_HonorsSelector(t *testing.T) {
 	recs := BuildEmailRecords(
-		"z", "example.com", "rotated-20260101", "dummy-pub", idCounter(), time.Now(),
+		"z", "example.com", "rotated-20260101", "dummy-pub", nil, idCounter(), time.Now(),
 	)
 	require.Equal(t, "rotated-20260101._domainkey", recs[0].Name)
 }
@@ -117,7 +118,7 @@ func TestBuildEmailRecords_HonorsSelector(t *testing.T) {
 // refactor that accidentally reuses ids across records (which would
 // violate the PK and blow up Create).
 func TestBuildEmailRecords_IDGeneratorCalledOncePerRecord(t *testing.T) {
-	recs := BuildEmailRecords("z", "example.com", "s", "p", idCounter(), time.Now())
+	recs := BuildEmailRecords("z", "example.com", "s", "p", nil, idCounter(), time.Now())
 	seen := map[string]bool{}
 	for _, r := range recs {
 		require.False(t, seen[r.ID], "duplicate id %q", r.ID)

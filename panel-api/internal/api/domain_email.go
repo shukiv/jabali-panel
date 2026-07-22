@@ -31,12 +31,13 @@ import (
 // they're nil, the helper skips the flip (call sites that don't wire
 // SSL, like some unit tests, still work).
 type enableDomainEmailDeps struct {
-	Agent         agent.AgentInterface
-	Domains       repository.DomainRepository
-	DNSZones      repository.DNSZoneRepository
-	DNSRecords    repository.DNSRecordRepository
-	SSLCerts      repository.SSLCertificateRepository
-	SSLReconciler SSLScheduler
+	Agent          agent.AgentInterface
+	Domains        repository.DomainRepository
+	DNSZones       repository.DNSZoneRepository
+	DNSRecords     repository.DNSRecordRepository
+	ServerSettings repository.ServerSettingsRepository
+	SSLCerts       repository.SSLCertificateRepository
+	SSLReconciler  SSLScheduler
 }
 
 // Sentinel errors so callers can distinguish HTTP status classes when
@@ -104,7 +105,7 @@ func EnableDomainEmailInline(
 	// DNS sync is best-effort. Warnings flow back to caller; a DNS-side
 	// failure does NOT roll back the email_enabled flip (the mailbox
 	// system still works without the convenience records).
-	warnings = syncEmailDNSOnEnableInline(ctx, deps.DNSZones, deps.DNSRecords, dom.ID, selector, pubKey)
+	warnings = syncEmailDNSOnEnableInline(ctx, deps.DNSZones, deps.DNSRecords, deps.ServerSettings, dom.ID, selector, pubKey)
 
 	// Mutate caller's Domain struct so the response reflects new state.
 	dom.EmailEnabled = true
@@ -170,12 +171,13 @@ func triggerSSLSANExpansion(ctx context.Context, deps enableDomainEmailDeps, dom
 // SSLCerts + SSLReconciler are optional — when both are wired, enabling
 // email on a domain triggers SSL SAN expansion via the reconciler.
 type DomainEmailHandlerConfig struct {
-	Domains       repository.DomainRepository
-	Agent         agent.AgentInterface
-	DNSZones      repository.DNSZoneRepository
-	DNSRecords    repository.DNSRecordRepository
-	SSLCerts      repository.SSLCertificateRepository
-	SSLReconciler SSLScheduler
+	Domains        repository.DomainRepository
+	Agent          agent.AgentInterface
+	DNSZones       repository.DNSZoneRepository
+	DNSRecords     repository.DNSRecordRepository
+	ServerSettings repository.ServerSettingsRepository
+	SSLCerts       repository.SSLCertificateRepository
+	SSLReconciler  SSLScheduler
 }
 
 const (
@@ -377,12 +379,13 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 	}
 
 	selector, pubKey, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
-		Agent:         h.cfg.Agent,
-		Domains:       h.cfg.Domains,
-		DNSZones:      h.cfg.DNSZones,
-		DNSRecords:    h.cfg.DNSRecords,
-		SSLCerts:      h.cfg.SSLCerts,
-		SSLReconciler: h.cfg.SSLReconciler,
+		Agent:          h.cfg.Agent,
+		Domains:        h.cfg.Domains,
+		DNSZones:       h.cfg.DNSZones,
+		DNSRecords:     h.cfg.DNSRecords,
+		ServerSettings: h.cfg.ServerSettings,
+		SSLCerts:       h.cfg.SSLCerts,
+		SSLReconciler:  h.cfg.SSLReconciler,
 	}, dom)
 	if err != nil {
 		// Translate helper error categories back to HTTP responses.
@@ -483,6 +486,7 @@ func syncEmailDNSOnEnableInline(
 	ctx context.Context,
 	dnsZones repository.DNSZoneRepository,
 	dnsRecords repository.DNSRecordRepository,
+	serverSettings repository.ServerSettingsRepository,
 	domainID, selector, dkimPub string,
 ) []string {
 	if dnsZones == nil || dnsRecords == nil {
@@ -505,7 +509,11 @@ func syncEmailDNSOnEnableInline(
 		slog.Error("m6 dns: list records", "zone_id", zone.ID, "err", err)
 		return []string{"DNS autoconfig couldn't read existing records."}
 	}
-	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, dkimPub, ids.NewULID, time.Now().UTC())
+	var srv *models.ServerSettings
+	if serverSettings != nil {
+		srv, _ = serverSettings.Get(ctx)
+	}
+	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, dkimPub, srv, ids.NewULID, time.Now().UTC())
 
 	var warnings []string
 	for _, rec := range intended {
@@ -532,7 +540,7 @@ func syncEmailDNSOnEnableInline(
 // syncEmailDNSOnEnable is the method-form thin wrapper kept for callers
 // still using the handler receiver (disable path's sibling + tests).
 func (h *domainEmailHandler) syncEmailDNSOnEnable(ctx context.Context, domainID, selector, dkimPub string) []string {
-	return syncEmailDNSOnEnableInline(ctx, h.cfg.DNSZones, h.cfg.DNSRecords, domainID, selector, dkimPub)
+	return syncEmailDNSOnEnableInline(ctx, h.cfg.DNSZones, h.cfg.DNSRecords, h.cfg.ServerSettings, domainID, selector, dkimPub)
 }
 
 // deleteEmailDNSOnDisable removes M6-managed records (by managed_by

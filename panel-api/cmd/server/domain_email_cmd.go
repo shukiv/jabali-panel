@@ -219,7 +219,11 @@ func syncEmailDNSOnEnableDirect(ctx context.Context, deps domainEmailDeps, domai
 		slog.Error("cli m6 dns: list records", "zone_id", zone.ID, "err", err)
 		return []string{"DNS autoconfig couldn't read existing records."}
 	}
-	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, ids.NewULID, time.Now().UTC())
+	var srv *models.ServerSettings
+	if sharedDB != nil {
+		srv, _ = repository.NewServerSettingsRepository(sharedDB).Get(ctx)
+	}
+	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, srv, ids.NewULID, time.Now().UTC())
 
 	var warnings []string
 	for _, rec := range intended {

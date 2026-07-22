@@ -8,7 +8,7 @@ import (
 
 func TestBuildMTAStsRecords_HappyPath(t *testing.T) {
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
-	recs := BuildMTAStsRecords("zone1", "example.com", "203.0.113.7", 1716206400, idCounter(), now)
+	recs := BuildMTAStsRecords("zone1", "example.com", "203.0.113.7", 1716206400, nil, idCounter(), now)
 	if len(recs) != 2 {
 		t.Fatalf("want 2 records, got %d", len(recs))
 	}
@@ -46,14 +46,14 @@ func TestBuildMTAStsRecords_HappyPath(t *testing.T) {
 
 func TestBuildMTAStsRecords_NilWhenEmptyIP(t *testing.T) {
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
-	if got := BuildMTAStsRecords("z", "x.com", "", 1, idCounter(), now); got != nil {
+	if got := BuildMTAStsRecords("z", "x.com", "", 1, nil, idCounter(), now); got != nil {
 		t.Errorf("empty ip should return nil, got %+v", got)
 	}
 }
 
 func TestBuildMTAStsRecords_NilWhenZeroID(t *testing.T) {
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
-	if got := BuildMTAStsRecords("z", "x.com", "203.0.113.7", 0, idCounter(), now); got != nil {
+	if got := BuildMTAStsRecords("z", "x.com", "203.0.113.7", 0, nil, idCounter(), now); got != nil {
 		t.Errorf("zero id should return nil (no policy ever published), got %+v", got)
 	}
 }

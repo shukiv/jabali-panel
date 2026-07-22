@@ -64,6 +64,7 @@ const EmailRecordsSelector = "jabali"
 //     a textual diff between the two won't flap on reconciliation.
 func BuildEmailRecords(
 	zoneID, zoneName, selector, dkimPublicKey string,
+	srv *models.ServerSettings,
 	idNew func() string,
 	now time.Time,
 ) []models.DNSRecord {
@@ -75,7 +76,7 @@ func BuildEmailRecords(
 			Name:      name,
 			Type:      typ,
 			Content:   content,
-			TTL:       300,
+			TTL:       models.EffectiveDNSTTL(srv),
 			Priority:  priority,
 			Managed:   true,
 			ManagedBy: &m6,

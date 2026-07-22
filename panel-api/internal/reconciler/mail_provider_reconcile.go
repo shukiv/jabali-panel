@@ -71,7 +71,7 @@ func (r *Reconciler) reconcileMailProviderRecords(ctx context.Context, zone *mod
 	if domain.GoogleDKIM != nil {
 		gdkim = *domain.GoogleDKIM
 	}
-	desiredProv := dnscompile.BuildProviderMailRecords(provider, zone.Name, m365, gdkim, ids.NewULID, now)
+	desiredProv := dnscompile.BuildProviderMailRecords(provider, zone.Name, m365, gdkim, srv, ids.NewULID, now)
 	stampZone(desiredProv, zone.ID)
 	marker := dnscompile.ProviderMailManagedBy(provider)
 	if marker != "" {
@@ -203,7 +203,7 @@ func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZ
 	mk := func(name, typ, content string, prio int) *models.DNSRecord {
 		return &models.DNSRecord{
 			ID: ids.NewULID(), ZoneID: zone.ID, Name: name, Type: typ, Content: content,
-			TTL: 3600, Priority: prio, Managed: true, IsEnabled: true, CreatedAt: now, UpdatedAt: now,
+			TTL: models.EffectiveDNSTTL(srv), Priority: prio, Managed: true, IsEnabled: true, CreatedAt: now, UpdatedAt: now,
 		}
 	}
 	if !hasMX && zone.Name != "" {

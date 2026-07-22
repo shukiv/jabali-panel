@@ -718,12 +718,13 @@ func (h *domainHandler) create(c *gin.Context) {
 	// computes live DNS status anyway. Hard errors go to slog.
 	if mailProvider == models.MailProviderJabali && h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
 		if _, _, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
-			Agent:         h.cfg.Agent,
-			Domains:       h.cfg.Domains,
-			DNSZones:      h.cfg.DNSZones,
-			DNSRecords:    h.cfg.DNSRecords,
-			SSLCerts:      h.cfg.SSLCerts,
-			SSLReconciler: h.cfg.Reconciler,
+			Agent:          h.cfg.Agent,
+			Domains:        h.cfg.Domains,
+			DNSZones:       h.cfg.DNSZones,
+			DNSRecords:     h.cfg.DNSRecords,
+			ServerSettings: h.cfg.ServerSettings,
+			SSLCerts:       h.cfg.SSLCerts,
+			SSLReconciler:  h.cfg.Reconciler,
 		}, domain); err != nil {
 			slog.Warn("auto-enable email failed during domain.create (operator can retry from UI)",
 				"domain_id", domain.ID, "domain", domain.Name, "err", err)

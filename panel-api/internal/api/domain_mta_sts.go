@@ -15,8 +15,9 @@
 //     covers the SAN.
 //
 // GET /domains/:id/mta-sts → current state + projected policy + cert-
-//   readiness hint so the UI can tell the operator whether the policy
-//   is live yet.
+//
+//	readiness hint so the UI can tell the operator whether the policy
+//	is live yet.
 //
 // The handler does NOT call the agent synchronously on toggle: the
 // vhost can't be written until the SSL cert SAN actually covers
@@ -165,7 +166,7 @@ func (h *domainMTAStsHandler) publishDNSRecords(ctx context.Context, dom *models
 	}
 	intended := dnscompile.BuildMTAStsRecords(
 		zone.ID, zone.Name, srv.PublicIPv4, dom.MTASTSId,
-		ids.NewULID, time.Now().UTC(),
+		srv, ids.NewULID, time.Now().UTC(),
 	)
 	if len(intended) == 0 {
 		return
@@ -217,11 +218,11 @@ func hasExistingMTAStsRecord(rows []models.DNSRecord, name, typ string) bool {
 // buildResponse summarises state for the UI. status_hint values:
 //   - "off"                   — toggle is off
 //   - "policy_published"      — toggle on, DNS records out; cert
-//                               renewal still pending (next ACME tick
-//                               adds the SAN, then Wave 7c reconciler
-//                               step writes the vhost). The UI surfaces
-//                               this as "Policy live in DNS — vhost
-//                               waiting for SSL renewal."
+//     renewal still pending (next ACME tick
+//     adds the SAN, then Wave 7c reconciler
+//     step writes the vhost). The UI surfaces
+//     this as "Policy live in DNS — vhost
+//     waiting for SSL renewal."
 func (h *domainMTAStsHandler) buildResponse(ctx context.Context, dom *models.Domain) mtaStsResponse {
 	_ = ctx
 	resp := mtaStsResponse{

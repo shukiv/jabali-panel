@@ -68,22 +68,22 @@ func TestBuildApexMailRecords_PerProvider(t *testing.T) {
 func TestBuildProviderMailRecords_NonApex(t *testing.T) {
 	now := time.Unix(0, 0)
 	// m365 without token -> just autodiscover; with token -> + selectors
-	m := recStr(BuildProviderMailRecords(models.MailProviderM365, "example.com", "", "", ids(), now))
+	m := recStr(BuildProviderMailRecords(models.MailProviderM365, "example.com", "", "", nil, ids(), now))
 	if !strings.Contains(m, "autodiscover CNAME autodiscover.outlook.com [mail-provider-m365]") {
 		t.Errorf("m365 autodiscover missing:\n%s", m)
 	}
 	if strings.Contains(m, "selector1") {
 		t.Errorf("m365 selectors should be absent without token:\n%s", m)
 	}
-	mt := recStr(BuildProviderMailRecords(models.MailProviderM365, "example.com", "contoso.onmicrosoft.com", "", ids(), now))
+	mt := recStr(BuildProviderMailRecords(models.MailProviderM365, "example.com", "contoso.onmicrosoft.com", "", nil, ids(), now))
 	if !strings.Contains(mt, "selector1._domainkey CNAME selector1-example-com._domainkey.contoso.onmicrosoft.com [mail-provider-m365]") {
 		t.Errorf("m365 selector1 wrong:\n%s", mt)
 	}
 	// google DKIM only when token present
-	if r := BuildProviderMailRecords(models.MailProviderGoogle, "example.com", "", "", ids(), now); len(r) != 0 {
+	if r := BuildProviderMailRecords(models.MailProviderGoogle, "example.com", "", "", nil, ids(), now); len(r) != 0 {
 		t.Errorf("google without DKIM token should be empty, got %d", len(r))
 	}
-	gt := recStr(BuildProviderMailRecords(models.MailProviderGoogle, "example.com", "", "v=DKIM1; k=rsa; p=ABC", ids(), now))
+	gt := recStr(BuildProviderMailRecords(models.MailProviderGoogle, "example.com", "", "v=DKIM1; k=rsa; p=ABC", nil, ids(), now))
 	if !strings.Contains(gt, `google._domainkey TXT "v=DKIM1; k=rsa; p=ABC" [mail-provider-google]`) {
 		t.Errorf("google DKIM wrong:\n%s", gt)
 	}

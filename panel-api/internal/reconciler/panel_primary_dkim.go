@@ -243,7 +243,11 @@ func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, sel
 			"zone_id", zone.ID, "err", err)
 		return
 	}
-	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, ids.NewULID, time.Now().UTC())
+	var srv *models.ServerSettings
+	if r.serverSettings != nil {
+		srv, _ = r.serverSettings.Get(ctx)
+	}
+	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, srv, ids.NewULID, time.Now().UTC())
 	for i := range intended {
 		rec := intended[i]
 		if hasExistingM6DNSRecord(existing, rec.Name, rec.Type) {
@@ -281,7 +285,6 @@ func hasExistingM6DNSRecord(existing []models.DNSRecord, name, recType string) b
 	}
 	return false
 }
-
 
 // domainIsMailRoutable returns false for RFC 6761 reserved TLDs
 // (.local, .test, .localhost, .invalid, .example) that Stalwart refuses

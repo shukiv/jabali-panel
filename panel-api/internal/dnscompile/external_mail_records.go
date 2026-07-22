@@ -50,7 +50,7 @@ func BuildApexMailRecords(provider, zoneName string, srv *models.ServerSettings,
 	mk := func(name, typ, content string, prio int) models.DNSRecord {
 		return models.DNSRecord{
 			ID: idNew(), ZoneID: "", Name: name, Type: typ, Content: content,
-			TTL: 300, Priority: prio, Managed: true, ManagedBy: &marker,
+			TTL: models.EffectiveDNSTTL(srv), Priority: prio, Managed: true, ManagedBy: &marker,
 			IsEnabled: true, CreatedAt: now, UpdatedAt: now,
 		}
 	}
@@ -82,7 +82,7 @@ func BuildApexMailRecords(provider, zoneName string, srv *models.ServerSettings,
 // (autodiscover CNAME + optional DKIM). jabali/none return nil — jabali's
 // non-apex set is BuildEmailRecords; none has nothing. ZoneID is left empty
 // for the caller to stamp. Tokens must already be validated.
-func BuildProviderMailRecords(provider, zoneName, m365Onmicrosoft, googleDKIM string, idNew func() string, now time.Time) []models.DNSRecord {
+func BuildProviderMailRecords(provider, zoneName, m365Onmicrosoft, googleDKIM string, srv *models.ServerSettings, idNew func() string, now time.Time) []models.DNSRecord {
 	marker := ProviderMailManagedBy(provider)
 	if marker == "" {
 		return nil
@@ -90,7 +90,7 @@ func BuildProviderMailRecords(provider, zoneName, m365Onmicrosoft, googleDKIM st
 	mk := func(name, typ, content string, prio int) models.DNSRecord {
 		return models.DNSRecord{
 			ID: idNew(), ZoneID: "", Name: name, Type: typ, Content: content,
-			TTL: 300, Priority: prio, Managed: true, ManagedBy: &marker,
+			TTL: models.EffectiveDNSTTL(srv), Priority: prio, Managed: true, ManagedBy: &marker,
 			IsEnabled: true, CreatedAt: now, UpdatedAt: now,
 		}
 	}
