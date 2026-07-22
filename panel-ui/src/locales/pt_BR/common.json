@@ -1,1 +1,141 @@
-{}
+{
+  "nav": {
+    "admin": {
+      "dashboard": "Painel",
+      "dashboard_desc": "Visão geral do servidor e estatísticas rápidas",
+      "users": "Usuários",
+      "users_desc": "Gerenciar usuários do painel, sessões e representação",
+      "domains": "Domínios",
+      "domains_desc": "Todos os domínios de todos os usuários",
+      "mail": "E-mail",
+      "mail_desc": "Caixas de correio, encaminhamentos e webmail",
+      "packages": "Pacotes de hospedagem",
+      "packages_desc": "Planos de hospedagem e limites",
+      "ssl": "Gerenciador de SSL",
+      "ssl_desc": "Certificados SSL e emissão",
+      "applications": "Aplicativos",
+      "applications_desc": "Instalação de aplicativos com um clique (WordPress e mais)",
+      "docker-apps": "Aplicativos Docker",
+      "docker-apps_desc": "Catálogo de aplicativos Docker",
+      "settings": "Configurações do servidor",
+      "settings_desc": "Configurações globais do servidor e módulos opcionais",
+      "server-status": "Status do servidor",
+      "server-status_desc": "Serviços, recursos e integridade em tempo real",
+      "cache": "Cache",
+      "cache_desc": "Ferramentas de cache do Redis e do WordPress",
+      "security": "Segurança",
+      "security_desc": "CrowdSec, verificação de malware e firewall",
+      "backups": "Backups",
+      "backups_desc": "Destinos e agendamentos de backup",
+      "php-pools": "Gerenciador de PHP",
+      "php-pools_desc": "Versões do PHP e pools FPM",
+      "dns": "Zonas DNS",
+      "dns_desc": "Zonas DNS autoritativas e registros",
+      "ips": "Endereços IP",
+      "ips_desc": "Endereços IP gerenciados do servidor",
+      "notifications": "Notificações",
+      "notifications_desc": "Alertas e canais de notificação",
+      "updates": "Atualizações",
+      "updates_desc": "Atualizações do painel e dos pacotes do sistema",
+      "automation": "Acesso à API do servidor",
+      "automation_desc": "Tokens de API globais do servidor e escopos para automações",
+      "api-tokens": "Tokens de API pessoais",
+      "api-tokens_desc": "Chaves da API REST",
+      "migrations": "Migrações",
+      "migrations_desc": "Importar contas do cPanel, HestiaCP ou DirectAdmin",
+      "terminal": "Terminal",
+      "terminal_desc": "Terminal web para o servidor",
+      "logs": "Logs e estatísticas",
+      "logs_desc": "Logs de acesso e de erro além de estatísticas",
+      "cron": "Cron",
+      "cron_desc": "Tarefas Cron agendadas",
+      "support": "Suporte",
+      "support_desc": "Diagnóstico e contato com o suporte"
+    },
+    "user": {
+      "dashboard": "Painel",
+      "domains": "Domínios",
+      "mail": "E-mail",
+      "applications": "Aplicativos",
+      "python-apps": "Aplicativos Python",
+      "docker-apps": "Aplicativos Docker",
+      "databases": "Bancos de dados",
+      "disk-usage": "Uso de disco",
+      "files": "Arquivos",
+      "logs": "Logs e estatísticas",
+      "ssh-keys": "Chaves SSH",
+      "api-tokens": "Tokens de API pessoais",
+      "dns": "DNS",
+      "ssl": "Gerenciador de SSL",
+      "php-settings": "Configurações do PHP",
+      "cron": "Cron",
+      "backups": "Backup/Restauração"
+    }
+  },
+  "login": {
+    "flowError": "Não foi possível iniciar o fluxo de login. Verifique se o serviço de identidade está em execução e recarregue a página.",
+    "hostnameWarningTitle": "Faça login usando o nome do host, não o IP",
+    "hostnameWarningDescription": "O provedor de identidade está vinculado ao nome do host do painel, portanto fazer login pelo endereço IP do servidor não funcionará. Abra o painel pelo nome do host (a URL exibida após a instalação) e tente novamente.",
+    "noCredentialMethod": "Nenhum método de credencial está configurado no momento para a sua conta. Entre em contato com um administrador.",
+    "fieldRequired": "Obrigatório",
+    "identifierHint": "Use seu nome de usuário, não seu e-mail.",
+    "totpHint": "Digite o código de 6 dígitos do seu aplicativo autenticador.",
+    "backupCodeHint": "Digite um dos seus códigos de backup.",
+    "webauthnHint": "Use sua chave de segurança para fazer login.",
+    "submitVerify": "Verificar",
+    "submitSignIn": "Entrar"
+  },
+  "menu": {
+    "profile": "Perfil",
+    "language": "Idioma",
+    "sign_out": "Sair"
+  },
+  "dashboard": {
+    "stats": {
+      "users": "Total de usuários",
+      "domains": "Domínios ativos",
+      "mailboxes": "Caixas de correio"
+    },
+    "health": {
+      "healthy": "Saudável",
+      "critical": "{{count}} crítico",
+      "warning_one": "{{count}} aviso",
+      "warning_other": "{{count}} avisos"
+    },
+    "server_ip": "IP do servidor:",
+    "summary": "Resumo geral. Para métricas em tempo real, serviços, rede e processos, consulte Status do servidor.",
+    "view_server_status": "Ver status do servidor →",
+    "view_all": "Ver tudo",
+    "recent_users": "Usuários recentes",
+    "recent_domains": "Domínios recentes",
+    "recent_apps": "Aplicativos recentes",
+    "packages": "Pacotes de hospedagem",
+    "empty": {
+      "users": "Nenhum usuário ainda",
+      "domains": "Nenhum domínio ainda",
+      "apps": "Nenhum aplicativo ainda",
+      "packages": "Nenhum pacote ainda"
+    },
+    "col": {
+      "username": "Nome de usuário",
+      "role": "Função",
+      "domain": "Domínio",
+      "name": "Nome",
+      "type": "Tipo",
+      "ssh": "SSH"
+    },
+    "role": {
+      "admin": "Administrador",
+      "user": "Usuário"
+    },
+    "ssh": {
+      "on": "ativado",
+      "off": "desativado"
+    },
+    "alert": {
+      "title_one": "{{count}} problema crítico no host",
+      "title_other": "{{count}} problemas críticos no host",
+      "action": "Abra Status do servidor para investigar →"
+    }
+  }
+}

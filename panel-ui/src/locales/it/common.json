@@ -1,1 +1,141 @@
-{}
+{
+  "nav": {
+    "admin": {
+      "dashboard": "Dashboard",
+      "dashboard_desc": "Panoramica del server e statistiche rapide",
+      "users": "Utenti",
+      "users_desc": "Gestisci gli utenti del pannello, le sessioni e l'impersonificazione",
+      "domains": "Domini",
+      "domains_desc": "Tutti i domini di tutti gli utenti",
+      "mail": "Posta",
+      "mail_desc": "Caselle di posta, inoltri e webmail",
+      "packages": "Pacchetti di hosting",
+      "packages_desc": "Piani di hosting e limiti",
+      "ssl": "Gestore SSL",
+      "ssl_desc": "Certificati SSL ed emissione",
+      "applications": "Applicazioni",
+      "applications_desc": "Installazione di applicazioni con un clic (WordPress e altro)",
+      "docker-apps": "App Docker",
+      "docker-apps_desc": "Catalogo di app Docker",
+      "settings": "Impostazioni del server",
+      "settings_desc": "Impostazioni globali del server e moduli opzionali",
+      "server-status": "Stato del server",
+      "server-status_desc": "Servizi, risorse e integrità in tempo reale",
+      "cache": "Cache",
+      "cache_desc": "Strumenti di cache di Redis e WordPress",
+      "security": "Sicurezza",
+      "security_desc": "CrowdSec, scansione malware e firewall",
+      "backups": "Backup",
+      "backups_desc": "Destinazioni e pianificazioni dei backup",
+      "php-pools": "Gestore PHP",
+      "php-pools_desc": "Versioni di PHP e pool FPM",
+      "dns": "Zone DNS",
+      "dns_desc": "Zone DNS autoritative e record",
+      "ips": "Indirizzi IP",
+      "ips_desc": "Indirizzi IP gestiti del server",
+      "notifications": "Notifiche",
+      "notifications_desc": "Avvisi e canali di notifica",
+      "updates": "Aggiornamenti",
+      "updates_desc": "Aggiornamenti del pannello e dei pacchetti di sistema",
+      "automation": "Accesso API del server",
+      "automation_desc": "Token API globali del server e ambiti per le automazioni",
+      "api-tokens": "Token API personali",
+      "api-tokens_desc": "Chiavi API REST",
+      "migrations": "Migrazioni",
+      "migrations_desc": "Importa account da cPanel, HestiaCP o DirectAdmin",
+      "terminal": "Terminale",
+      "terminal_desc": "Terminale web verso il server",
+      "logs": "Log e statistiche",
+      "logs_desc": "Log di accesso e di errore oltre alle statistiche",
+      "cron": "Cron",
+      "cron_desc": "Processi Cron pianificati",
+      "support": "Assistenza",
+      "support_desc": "Diagnostica e contatto con l'assistenza"
+    },
+    "user": {
+      "dashboard": "Dashboard",
+      "domains": "Domini",
+      "mail": "Posta",
+      "applications": "Applicazioni",
+      "python-apps": "App Python",
+      "docker-apps": "App Docker",
+      "databases": "Database",
+      "disk-usage": "Utilizzo del disco",
+      "files": "File",
+      "logs": "Log e statistiche",
+      "ssh-keys": "Chiavi SSH",
+      "api-tokens": "Token API personali",
+      "dns": "DNS",
+      "ssl": "Gestore SSL",
+      "php-settings": "Impostazioni PHP",
+      "cron": "Cron",
+      "backups": "Backup/Ripristino"
+    }
+  },
+  "login": {
+    "flowError": "Impossibile avviare la procedura di accesso. Verifica che il servizio di identità sia in esecuzione e ricarica la pagina.",
+    "hostnameWarningTitle": "Accedi usando il nome host, non l'IP",
+    "hostnameWarningDescription": "Il provider di identità è associato al nome host del pannello, quindi l'accesso tramite l'indirizzo IP del server non funzionerà. Apri il pannello tramite il suo nome host (l'URL mostrato dopo l'installazione) e riprova.",
+    "noCredentialMethod": "Al momento non è configurato alcun metodo di credenziali per il tuo account. Contatta un amministratore.",
+    "fieldRequired": "Obbligatorio",
+    "identifierHint": "Usa il tuo nome utente, non la tua email.",
+    "totpHint": "Inserisci il codice a 6 cifre della tua app di autenticazione.",
+    "backupCodeHint": "Inserisci uno dei tuoi codici di backup.",
+    "webauthnHint": "Usa la tua chiave di sicurezza per accedere.",
+    "submitVerify": "Verifica",
+    "submitSignIn": "Accedi"
+  },
+  "menu": {
+    "profile": "Profilo",
+    "language": "Lingua",
+    "sign_out": "Esci"
+  },
+  "dashboard": {
+    "stats": {
+      "users": "Utenti totali",
+      "domains": "Domini attivi",
+      "mailboxes": "Caselle di posta"
+    },
+    "health": {
+      "healthy": "Integro",
+      "critical": "{{count}} critico",
+      "warning_one": "{{count}} avviso",
+      "warning_other": "{{count}} avvisi"
+    },
+    "server_ip": "IP del server:",
+    "summary": "Riepilogo generale. Per metriche in tempo reale, servizi, rete e processi, vedi Stato del server.",
+    "view_server_status": "Visualizza stato del server →",
+    "view_all": "Visualizza tutto",
+    "recent_users": "Utenti recenti",
+    "recent_domains": "Domini recenti",
+    "recent_apps": "Applicazioni recenti",
+    "packages": "Pacchetti di hosting",
+    "empty": {
+      "users": "Ancora nessun utente",
+      "domains": "Ancora nessun dominio",
+      "apps": "Ancora nessuna applicazione",
+      "packages": "Ancora nessun pacchetto"
+    },
+    "col": {
+      "username": "Nome utente",
+      "role": "Ruolo",
+      "domain": "Dominio",
+      "name": "Nome",
+      "type": "Tipo",
+      "ssh": "SSH"
+    },
+    "role": {
+      "admin": "Amministratore",
+      "user": "Utente"
+    },
+    "ssh": {
+      "on": "attivo",
+      "off": "disattivato"
+    },
+    "alert": {
+      "title_one": "{{count}} problema critico sull'host",
+      "title_other": "{{count}} problemi critici sull'host",
+      "action": "Apri Stato del server per approfondire →"
+    }
+  }
+}

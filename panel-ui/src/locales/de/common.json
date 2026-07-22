@@ -1,1 +1,141 @@
-{}
+{
+  "nav": {
+    "admin": {
+      "dashboard": "Dashboard",
+      "dashboard_desc": "Serverübersicht und Schnellstatistiken",
+      "users": "Benutzer",
+      "users_desc": "Panel-Benutzer, Sitzungen und Identitätswechsel verwalten",
+      "domains": "Domains",
+      "domains_desc": "Alle Domains aller Benutzer",
+      "mail": "E-Mail",
+      "mail_desc": "Postfächer, Weiterleitungen und Webmail",
+      "packages": "Hosting-Pakete",
+      "packages_desc": "Hosting-Tarife und Limits",
+      "ssl": "SSL-Manager",
+      "ssl_desc": "SSL-Zertifikate und Ausstellung",
+      "applications": "Anwendungen",
+      "applications_desc": "Ein-Klick-App-Installationen (WordPress und mehr)",
+      "docker-apps": "Docker-Apps",
+      "docker-apps_desc": "Docker-App-Marktplatz",
+      "settings": "Servereinstellungen",
+      "settings_desc": "Serverweite Einstellungen und optionale Module",
+      "server-status": "Serverstatus",
+      "server-status_desc": "Dienste, Ressourcen und Zustand in Echtzeit",
+      "cache": "Cache",
+      "cache_desc": "Redis- und WordPress-Cache-Tools",
+      "security": "Sicherheit",
+      "security_desc": "CrowdSec, Malware-Scan und Firewall",
+      "backups": "Backups",
+      "backups_desc": "Backup-Ziele und Zeitpläne",
+      "php-pools": "PHP-Manager",
+      "php-pools_desc": "PHP-Versionen und FPM-Pools",
+      "dns": "DNS-Zonen",
+      "dns_desc": "Autoritative DNS-Zonen und Einträge",
+      "ips": "IP-Adressen",
+      "ips_desc": "Verwaltete Server-IP-Adressen",
+      "notifications": "Benachrichtigungen",
+      "notifications_desc": "Warnungen und Benachrichtigungskanäle",
+      "updates": "Updates",
+      "updates_desc": "Panel- und Systempaket-Updates",
+      "automation": "Server-API-Zugriff",
+      "automation_desc": "Server-/globale API-Tokens und Berechtigungen für Automatisierungen",
+      "api-tokens": "Persönliche API-Tokens",
+      "api-tokens_desc": "REST-API-Schlüssel",
+      "migrations": "Migrationen",
+      "migrations_desc": "Konten aus cPanel, HestiaCP oder DirectAdmin importieren",
+      "terminal": "Terminal",
+      "terminal_desc": "Web-Shell zum Server",
+      "logs": "Protokolle & Statistiken",
+      "logs_desc": "Zugriffs- und Fehlerprotokolle sowie Statistiken",
+      "cron": "Cron",
+      "cron_desc": "Geplante Cron-Jobs",
+      "support": "Support",
+      "support_desc": "Diagnose und Support kontaktieren"
+    },
+    "user": {
+      "dashboard": "Dashboard",
+      "domains": "Domains",
+      "mail": "E-Mail",
+      "applications": "Anwendungen",
+      "python-apps": "Python-Apps",
+      "docker-apps": "Docker-Apps",
+      "databases": "Datenbanken",
+      "disk-usage": "Speichernutzung",
+      "files": "Dateien",
+      "logs": "Protokolle & Statistiken",
+      "ssh-keys": "SSH-Schlüssel",
+      "api-tokens": "Persönliche API-Tokens",
+      "dns": "DNS",
+      "ssl": "SSL-Manager",
+      "php-settings": "PHP-Einstellungen",
+      "cron": "Cron",
+      "backups": "Backup/Wiederherstellung"
+    }
+  },
+  "login": {
+    "flowError": "Der Anmeldevorgang konnte nicht gestartet werden. Stellen Sie sicher, dass der Identitätsdienst läuft, und laden Sie die Seite neu.",
+    "hostnameWarningTitle": "Melden Sie sich über den Hostnamen an, nicht über die IP",
+    "hostnameWarningDescription": "Der Identitätsanbieter ist an den Hostnamen des Panels gebunden, daher funktioniert die Anmeldung über die Server-IP-Adresse nicht. Öffnen Sie das Panel über seinen Hostnamen (die nach der Installation angezeigte URL) und versuchen Sie es erneut.",
+    "noCredentialMethod": "Für Ihr Konto ist derzeit keine Anmeldemethode konfiguriert. Wenden Sie sich an einen Administrator.",
+    "fieldRequired": "Erforderlich",
+    "identifierHint": "Verwenden Sie Ihren Benutzernamen, nicht Ihre E-Mail-Adresse.",
+    "totpHint": "Geben Sie den 6-stelligen Code aus Ihrer Authenticator-App ein.",
+    "backupCodeHint": "Geben Sie einen Ihrer Backup-Codes ein.",
+    "webauthnHint": "Verwenden Sie Ihren Sicherheitsschlüssel zum Anmelden.",
+    "submitVerify": "Bestätigen",
+    "submitSignIn": "Anmelden"
+  },
+  "menu": {
+    "profile": "Profil",
+    "language": "Sprache",
+    "sign_out": "Abmelden"
+  },
+  "dashboard": {
+    "stats": {
+      "users": "Benutzer insgesamt",
+      "domains": "Aktive Domains",
+      "mailboxes": "Postfächer"
+    },
+    "health": {
+      "healthy": "Fehlerfrei",
+      "critical": "{{count}} kritisch",
+      "warning_one": "{{count}} Warnung",
+      "warning_other": "{{count}} Warnungen"
+    },
+    "server_ip": "Server-IP:",
+    "summary": "Übersicht auf oberster Ebene. Live-Metriken, Dienste, Netzwerk und Prozesse finden Sie unter „Serverstatus“.",
+    "view_server_status": "Serverstatus anzeigen →",
+    "view_all": "Alle anzeigen",
+    "recent_users": "Neueste Benutzer",
+    "recent_domains": "Neueste Domains",
+    "recent_apps": "Neueste Anwendungen",
+    "packages": "Hosting-Pakete",
+    "empty": {
+      "users": "Noch keine Benutzer",
+      "domains": "Noch keine Domains",
+      "apps": "Noch keine Anwendungen",
+      "packages": "Noch keine Pakete"
+    },
+    "col": {
+      "username": "Benutzername",
+      "role": "Rolle",
+      "domain": "Domain",
+      "name": "Name",
+      "type": "Typ",
+      "ssh": "SSH"
+    },
+    "role": {
+      "admin": "Administrator",
+      "user": "Benutzer"
+    },
+    "ssh": {
+      "on": "ein",
+      "off": "aus"
+    },
+    "alert": {
+      "title_one": "{{count}} kritisches Problem auf dem Host",
+      "title_other": "{{count}} kritische Probleme auf dem Host",
+      "action": "„Serverstatus“ zur Analyse öffnen →"
+    }
+  }
+}

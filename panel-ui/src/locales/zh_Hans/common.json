@@ -1,1 +1,141 @@
-{}
+{
+  "nav": {
+    "admin": {
+      "dashboard": "仪表盘",
+      "dashboard_desc": "服务器概览与快速统计",
+      "users": "用户",
+      "users_desc": "管理面板用户、会话和身份模拟",
+      "domains": "域名",
+      "domains_desc": "所有用户的全部域名",
+      "mail": "邮件",
+      "mail_desc": "邮箱、转发和网页邮箱",
+      "packages": "托管套餐",
+      "packages_desc": "托管套餐方案与限制",
+      "ssl": "SSL 管理器",
+      "ssl_desc": "SSL 证书与签发",
+      "applications": "应用",
+      "applications_desc": "一键安装应用（WordPress 等）",
+      "docker-apps": "Docker 应用",
+      "docker-apps_desc": "Docker 应用市场",
+      "settings": "服务器设置",
+      "settings_desc": "全局服务器设置和可选模块",
+      "server-status": "服务器状态",
+      "server-status_desc": "实时的服务、资源和运行状况",
+      "cache": "缓存",
+      "cache_desc": "Redis 和 WordPress 缓存工具",
+      "security": "安全",
+      "security_desc": "CrowdSec、恶意软件扫描和防火墙",
+      "backups": "备份",
+      "backups_desc": "备份目标与计划",
+      "php-pools": "PHP 管理器",
+      "php-pools_desc": "PHP 版本和 FPM 池",
+      "dns": "DNS 区域",
+      "dns_desc": "权威 DNS 区域与记录",
+      "ips": "IP 地址",
+      "ips_desc": "受管的服务器 IP 地址",
+      "notifications": "通知",
+      "notifications_desc": "告警和通知渠道",
+      "updates": "更新",
+      "updates_desc": "面板和系统软件包更新",
+      "automation": "服务器 API 访问",
+      "automation_desc": "用于自动化的服务器/全局 API 令牌与权限范围",
+      "api-tokens": "个人 API 令牌",
+      "api-tokens_desc": "REST API 密钥",
+      "migrations": "迁移",
+      "migrations_desc": "从 cPanel、HestiaCP 或 DirectAdmin 导入账户",
+      "terminal": "终端",
+      "terminal_desc": "连接到服务器的网页终端",
+      "logs": "日志与统计",
+      "logs_desc": "访问和错误日志以及统计信息",
+      "cron": "Cron",
+      "cron_desc": "计划的 Cron 任务",
+      "support": "支持",
+      "support_desc": "诊断与联系支持"
+    },
+    "user": {
+      "dashboard": "仪表盘",
+      "domains": "域名",
+      "mail": "邮件",
+      "applications": "应用",
+      "python-apps": "Python 应用",
+      "docker-apps": "Docker 应用",
+      "databases": "数据库",
+      "disk-usage": "磁盘用量",
+      "files": "文件",
+      "logs": "日志与统计",
+      "ssh-keys": "SSH 密钥",
+      "api-tokens": "个人 API 令牌",
+      "dns": "DNS",
+      "ssl": "SSL 管理器",
+      "php-settings": "PHP 设置",
+      "cron": "Cron",
+      "backups": "备份/恢复"
+    }
+  },
+  "login": {
+    "flowError": "无法启动登录流程。请确认身份服务正在运行，然后刷新页面。",
+    "hostnameWarningTitle": "请使用主机名登录，而不是 IP",
+    "hostnameWarningDescription": "身份提供程序绑定到面板的主机名，因此通过服务器 IP 地址登录将无法使用。请通过主机名（安装后显示的网址）打开面板，然后重试。",
+    "noCredentialMethod": "当前未为您的账户配置任何凭据方式。请联系管理员。",
+    "fieldRequired": "必填",
+    "identifierHint": "请使用用户名，而不是电子邮箱。",
+    "totpHint": "请输入身份验证器应用中的 6 位代码。",
+    "backupCodeHint": "请输入您的一个备份代码。",
+    "webauthnHint": "请使用您的安全密钥登录。",
+    "submitVerify": "验证",
+    "submitSignIn": "登录"
+  },
+  "menu": {
+    "profile": "个人资料",
+    "language": "语言",
+    "sign_out": "退出登录"
+  },
+  "dashboard": {
+    "stats": {
+      "users": "用户总数",
+      "domains": "活动域名",
+      "mailboxes": "邮箱"
+    },
+    "health": {
+      "healthy": "正常",
+      "critical": "{{count}} 项严重",
+      "warning_one": "{{count}} 项警告",
+      "warning_other": "{{count}} 项警告"
+    },
+    "server_ip": "服务器 IP：",
+    "summary": "顶层摘要。有关实时指标、服务、网络和进程，请参阅服务器状态。",
+    "view_server_status": "查看服务器状态 →",
+    "view_all": "查看全部",
+    "recent_users": "最近的用户",
+    "recent_domains": "最近的域名",
+    "recent_apps": "最近的应用",
+    "packages": "托管套餐",
+    "empty": {
+      "users": "暂无用户",
+      "domains": "暂无域名",
+      "apps": "暂无应用",
+      "packages": "暂无套餐"
+    },
+    "col": {
+      "username": "用户名",
+      "role": "角色",
+      "domain": "域名",
+      "name": "名称",
+      "type": "类型",
+      "ssh": "SSH"
+    },
+    "role": {
+      "admin": "管理员",
+      "user": "用户"
+    },
+    "ssh": {
+      "on": "开",
+      "off": "关"
+    },
+    "alert": {
+      "title_one": "主机上有 {{count}} 个严重问题",
+      "title_other": "主机上有 {{count}} 个严重问题",
+      "action": "打开服务器状态进行排查 →"
+    }
+  }
+}

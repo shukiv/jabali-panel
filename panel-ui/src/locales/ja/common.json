@@ -1,1 +1,141 @@
-{}
+{
+  "nav": {
+    "admin": {
+      "dashboard": "ダッシュボード",
+      "dashboard_desc": "サーバーの概要とクイック統計",
+      "users": "ユーザー",
+      "users_desc": "パネルのユーザー、セッション、代理ログインの管理",
+      "domains": "ドメイン",
+      "domains_desc": "すべてのユーザーのすべてのドメイン",
+      "mail": "メール",
+      "mail_desc": "メールボックス、転送、ウェブメール",
+      "packages": "ホスティングパッケージ",
+      "packages_desc": "ホスティングプランと制限",
+      "ssl": "SSL マネージャー",
+      "ssl_desc": "SSL 証明書と発行",
+      "applications": "アプリケーション",
+      "applications_desc": "ワンクリックのアプリインストール（WordPress など）",
+      "docker-apps": "Docker アプリ",
+      "docker-apps_desc": "Docker アプリのマーケットプレイス",
+      "settings": "サーバー設定",
+      "settings_desc": "サーバー全体の設定とオプションモジュール",
+      "server-status": "サーバーステータス",
+      "server-status_desc": "サービス、リソース、稼働状況をリアルタイムに表示",
+      "cache": "キャッシュ",
+      "cache_desc": "Redis と WordPress のキャッシュツール",
+      "security": "セキュリティ",
+      "security_desc": "CrowdSec、マルウェアスキャン、ファイアウォール",
+      "backups": "バックアップ",
+      "backups_desc": "バックアップ先とスケジュール",
+      "php-pools": "PHP マネージャー",
+      "php-pools_desc": "PHP バージョンと FPM プール",
+      "dns": "DNS ゾーン",
+      "dns_desc": "権威 DNS ゾーンとレコード",
+      "ips": "IP アドレス",
+      "ips_desc": "管理対象のサーバー IP アドレス",
+      "notifications": "通知",
+      "notifications_desc": "アラートと通知チャネル",
+      "updates": "アップデート",
+      "updates_desc": "パネルとシステムパッケージのアップデート",
+      "automation": "サーバー API アクセス",
+      "automation_desc": "自動化向けのサーバー／グローバル API トークンとスコープ",
+      "api-tokens": "個人用 API トークン",
+      "api-tokens_desc": "REST API キー",
+      "migrations": "移行",
+      "migrations_desc": "cPanel、HestiaCP、DirectAdmin からアカウントをインポート",
+      "terminal": "ターミナル",
+      "terminal_desc": "サーバーへのウェブシェル",
+      "logs": "ログと統計",
+      "logs_desc": "アクセスログとエラーログ、および統計",
+      "cron": "Cron",
+      "cron_desc": "スケジュールされた Cron ジョブ",
+      "support": "サポート",
+      "support_desc": "診断とサポートへの問い合わせ"
+    },
+    "user": {
+      "dashboard": "ダッシュボード",
+      "domains": "ドメイン",
+      "mail": "メール",
+      "applications": "アプリケーション",
+      "python-apps": "Python アプリ",
+      "docker-apps": "Docker アプリ",
+      "databases": "データベース",
+      "disk-usage": "ディスク使用量",
+      "files": "ファイル",
+      "logs": "ログと統計",
+      "ssh-keys": "SSH キー",
+      "api-tokens": "個人用 API トークン",
+      "dns": "DNS",
+      "ssl": "SSL マネージャー",
+      "php-settings": "PHP 設定",
+      "cron": "Cron",
+      "backups": "バックアップ／復元"
+    }
+  },
+  "login": {
+    "flowError": "サインインの処理を開始できませんでした。ID サービスが稼働していることを確認し、ページを再読み込みしてください。",
+    "hostnameWarningTitle": "IP ではなくホスト名でログインしてください",
+    "hostnameWarningDescription": "ID プロバイダーはパネルのホスト名に紐づいているため、サーバーの IP アドレスでのサインインは機能しません。ホスト名（インストール後に表示された URL）でパネルを開いて、もう一度お試しください。",
+    "noCredentialMethod": "現在、お使いのアカウントには認証方法が設定されていません。管理者にお問い合わせください。",
+    "fieldRequired": "必須",
+    "identifierHint": "メールアドレスではなくユーザー名を使用してください。",
+    "totpHint": "認証アプリの 6 桁のコードを入力してください。",
+    "backupCodeHint": "バックアップコードのいずれかを入力してください。",
+    "webauthnHint": "セキュリティキーを使用してサインインしてください。",
+    "submitVerify": "確認",
+    "submitSignIn": "サインイン"
+  },
+  "menu": {
+    "profile": "プロフィール",
+    "language": "言語",
+    "sign_out": "サインアウト"
+  },
+  "dashboard": {
+    "stats": {
+      "users": "ユーザー総数",
+      "domains": "アクティブなドメイン",
+      "mailboxes": "メールボックス"
+    },
+    "health": {
+      "healthy": "正常",
+      "critical": "{{count}} 件の重大",
+      "warning_one": "{{count}} 件の警告",
+      "warning_other": "{{count}} 件の警告"
+    },
+    "server_ip": "サーバー IP：",
+    "summary": "概要のサマリー。リアルタイムの指標、サービス、ネットワーク、プロセスについてはサーバーステータスをご覧ください。",
+    "view_server_status": "サーバーステータスを表示 →",
+    "view_all": "すべて表示",
+    "recent_users": "最近のユーザー",
+    "recent_domains": "最近のドメイン",
+    "recent_apps": "最近のアプリケーション",
+    "packages": "ホスティングパッケージ",
+    "empty": {
+      "users": "ユーザーはまだいません",
+      "domains": "ドメインはまだありません",
+      "apps": "アプリケーションはまだありません",
+      "packages": "パッケージはまだありません"
+    },
+    "col": {
+      "username": "ユーザー名",
+      "role": "ロール",
+      "domain": "ドメイン",
+      "name": "名前",
+      "type": "種類",
+      "ssh": "SSH"
+    },
+    "role": {
+      "admin": "管理者",
+      "user": "ユーザー"
+    },
+    "ssh": {
+      "on": "オン",
+      "off": "オフ"
+    },
+    "alert": {
+      "title_one": "ホストに {{count}} 件の重大な問題",
+      "title_other": "ホストに {{count}} 件の重大な問題",
+      "action": "サーバーステータスを開いて調査 →"
+    }
+  }
+}

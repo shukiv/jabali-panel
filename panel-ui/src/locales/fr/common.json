@@ -1,1 +1,141 @@
-{}
+{
+  "nav": {
+    "admin": {
+      "dashboard": "Tableau de bord",
+      "dashboard_desc": "Vue d'ensemble du serveur et statistiques rapides",
+      "users": "Utilisateurs",
+      "users_desc": "Gérer les utilisateurs du panneau, les sessions et l'usurpation d'identité",
+      "domains": "Domaines",
+      "domains_desc": "Tous les domaines de tous les utilisateurs",
+      "mail": "Courrier",
+      "mail_desc": "Boîtes aux lettres, redirections et webmail",
+      "packages": "Offres d'hébergement",
+      "packages_desc": "Formules d'hébergement et limites",
+      "ssl": "Gestionnaire SSL",
+      "ssl_desc": "Certificats SSL et émission",
+      "applications": "Applications",
+      "applications_desc": "Installation d'applications en un clic (WordPress et plus)",
+      "docker-apps": "Applications Docker",
+      "docker-apps_desc": "Catalogue d'applications Docker",
+      "settings": "Paramètres du serveur",
+      "settings_desc": "Paramètres globaux du serveur et modules optionnels",
+      "server-status": "État du serveur",
+      "server-status_desc": "Services, ressources et santé en temps réel",
+      "cache": "Cache",
+      "cache_desc": "Outils de cache Redis et WordPress",
+      "security": "Sécurité",
+      "security_desc": "CrowdSec, analyse des logiciels malveillants et pare-feu",
+      "backups": "Sauvegardes",
+      "backups_desc": "Destinations et planifications des sauvegardes",
+      "php-pools": "Gestionnaire PHP",
+      "php-pools_desc": "Versions de PHP et pools FPM",
+      "dns": "Zones DNS",
+      "dns_desc": "Zones DNS faisant autorité et enregistrements",
+      "ips": "Adresses IP",
+      "ips_desc": "Adresses IP gérées du serveur",
+      "notifications": "Notifications",
+      "notifications_desc": "Alertes et canaux de notification",
+      "updates": "Mises à jour",
+      "updates_desc": "Mises à jour du panneau et des paquets système",
+      "automation": "Accès API du serveur",
+      "automation_desc": "Jetons d'API globaux du serveur et portées pour les automatisations",
+      "api-tokens": "Jetons d'API personnels",
+      "api-tokens_desc": "Clés d'API REST",
+      "migrations": "Migrations",
+      "migrations_desc": "Importer des comptes depuis cPanel, HestiaCP ou DirectAdmin",
+      "terminal": "Terminal",
+      "terminal_desc": "Terminal web vers le serveur",
+      "logs": "Journaux et statistiques",
+      "logs_desc": "Journaux d'accès et d'erreurs ainsi que statistiques",
+      "cron": "Cron",
+      "cron_desc": "Tâches Cron planifiées",
+      "support": "Assistance",
+      "support_desc": "Diagnostics et contact avec l'assistance"
+    },
+    "user": {
+      "dashboard": "Tableau de bord",
+      "domains": "Domaines",
+      "mail": "Courrier",
+      "applications": "Applications",
+      "python-apps": "Applications Python",
+      "docker-apps": "Applications Docker",
+      "databases": "Bases de données",
+      "disk-usage": "Utilisation du disque",
+      "files": "Fichiers",
+      "logs": "Journaux et statistiques",
+      "ssh-keys": "Clés SSH",
+      "api-tokens": "Jetons d'API personnels",
+      "dns": "DNS",
+      "ssl": "Gestionnaire SSL",
+      "php-settings": "Paramètres PHP",
+      "cron": "Cron",
+      "backups": "Sauvegarde/Restauration"
+    }
+  },
+  "login": {
+    "flowError": "Impossible de démarrer la procédure de connexion. Vérifiez que le service d'identité est en cours d'exécution et actualisez la page.",
+    "hostnameWarningTitle": "Connectez-vous avec le nom d'hôte, pas avec l'IP",
+    "hostnameWarningDescription": "Le fournisseur d'identité est lié au nom d'hôte du panneau ; se connecter via l'adresse IP du serveur ne fonctionnera donc pas. Ouvrez le panneau par son nom d'hôte (l'URL affichée après l'installation) et réessayez.",
+    "noCredentialMethod": "Aucune méthode d'authentification n'est actuellement configurée pour votre compte. Contactez un administrateur.",
+    "fieldRequired": "Obligatoire",
+    "identifierHint": "Utilisez votre nom d'utilisateur, pas votre adresse e-mail.",
+    "totpHint": "Saisissez le code à 6 chiffres de votre application d'authentification.",
+    "backupCodeHint": "Saisissez l'un de vos codes de secours.",
+    "webauthnHint": "Utilisez votre clé de sécurité pour vous connecter.",
+    "submitVerify": "Vérifier",
+    "submitSignIn": "Se connecter"
+  },
+  "menu": {
+    "profile": "Profil",
+    "language": "Langue",
+    "sign_out": "Se déconnecter"
+  },
+  "dashboard": {
+    "stats": {
+      "users": "Nombre total d'utilisateurs",
+      "domains": "Domaines actifs",
+      "mailboxes": "Boîtes aux lettres"
+    },
+    "health": {
+      "healthy": "Sain",
+      "critical": "{{count}} critique",
+      "warning_one": "{{count}} avertissement",
+      "warning_other": "{{count}} avertissements"
+    },
+    "server_ip": "IP du serveur :",
+    "summary": "Résumé général. Pour les métriques en temps réel, les services, le réseau et les processus, voir État du serveur.",
+    "view_server_status": "Voir l'état du serveur →",
+    "view_all": "Tout voir",
+    "recent_users": "Utilisateurs récents",
+    "recent_domains": "Domaines récents",
+    "recent_apps": "Applications récentes",
+    "packages": "Offres d'hébergement",
+    "empty": {
+      "users": "Aucun utilisateur pour l'instant",
+      "domains": "Aucun domaine pour l'instant",
+      "apps": "Aucune application pour l'instant",
+      "packages": "Aucune offre pour l'instant"
+    },
+    "col": {
+      "username": "Nom d'utilisateur",
+      "role": "Rôle",
+      "domain": "Domaine",
+      "name": "Nom",
+      "type": "Type",
+      "ssh": "SSH"
+    },
+    "role": {
+      "admin": "Administrateur",
+      "user": "Utilisateur"
+    },
+    "ssh": {
+      "on": "activé",
+      "off": "désactivé"
+    },
+    "alert": {
+      "title_one": "{{count}} problème critique sur l'hôte",
+      "title_other": "{{count}} problèmes critiques sur l'hôte",
+      "action": "Ouvrir État du serveur pour enquêter →"
+    }
+  }
+}

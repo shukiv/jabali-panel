@@ -1,1 +1,141 @@
-{}
+{
+  "nav": {
+    "admin": {
+      "dashboard": "Kontrol paneli",
+      "dashboard_desc": "Sunucuya genel bakış ve hızlı istatistikler",
+      "users": "Kullanıcılar",
+      "users_desc": "Panel kullanıcılarını, oturumları ve kimliğe bürünmeyi yönetin",
+      "domains": "Alan adları",
+      "domains_desc": "Tüm kullanıcıların tüm alan adları",
+      "mail": "Posta",
+      "mail_desc": "Posta kutuları, yönlendirmeler ve web posta",
+      "packages": "Barındırma paketleri",
+      "packages_desc": "Barındırma planları ve sınırlar",
+      "ssl": "SSL Yöneticisi",
+      "ssl_desc": "SSL sertifikaları ve verilmesi",
+      "applications": "Uygulamalar",
+      "applications_desc": "Tek tıkla uygulama kurulumları (WordPress ve daha fazlası)",
+      "docker-apps": "Docker Uygulamaları",
+      "docker-apps_desc": "Docker uygulama mağazası",
+      "settings": "Sunucu ayarları",
+      "settings_desc": "Sunucu geneli ayarlar ve isteğe bağlı modüller",
+      "server-status": "Sunucu durumu",
+      "server-status_desc": "Gerçek zamanlı hizmetler, kaynaklar ve sağlık",
+      "cache": "Önbellek",
+      "cache_desc": "Redis ve WordPress önbellek araçları",
+      "security": "Güvenlik",
+      "security_desc": "CrowdSec, kötü amaçlı yazılım taraması ve güvenlik duvarı",
+      "backups": "Yedeklemeler",
+      "backups_desc": "Yedekleme hedefleri ve zamanlamaları",
+      "php-pools": "PHP Yöneticisi",
+      "php-pools_desc": "PHP sürümleri ve FPM havuzları",
+      "dns": "DNS Bölgeleri",
+      "dns_desc": "Yetkili DNS bölgeleri ve kayıtları",
+      "ips": "IP Adresleri",
+      "ips_desc": "Yönetilen sunucu IP adresleri",
+      "notifications": "Bildirimler",
+      "notifications_desc": "Uyarılar ve bildirim kanalları",
+      "updates": "Güncellemeler",
+      "updates_desc": "Panel ve sistem paketi güncellemeleri",
+      "automation": "Sunucu API Erişimi",
+      "automation_desc": "Otomasyonlar için sunucu/genel API belirteçleri ve kapsamları",
+      "api-tokens": "Kişisel API Belirteçleri",
+      "api-tokens_desc": "REST API anahtarları",
+      "migrations": "Geçişler",
+      "migrations_desc": "cPanel, HestiaCP veya DirectAdmin'den hesap içe aktarın",
+      "terminal": "Terminal",
+      "terminal_desc": "Sunucuya web kabuğu",
+      "logs": "Günlükler ve İstatistikler",
+      "logs_desc": "Erişim ve hata günlükleri ile istatistikler",
+      "cron": "Cron",
+      "cron_desc": "Zamanlanmış Cron işleri",
+      "support": "Destek",
+      "support_desc": "Tanılama ve destekle iletişim"
+    },
+    "user": {
+      "dashboard": "Kontrol paneli",
+      "domains": "Alan adları",
+      "mail": "Posta",
+      "applications": "Uygulamalar",
+      "python-apps": "Python Uygulamaları",
+      "docker-apps": "Docker Uygulamaları",
+      "databases": "Veritabanları",
+      "disk-usage": "Disk kullanımı",
+      "files": "Dosyalar",
+      "logs": "Günlükler ve İstatistikler",
+      "ssh-keys": "SSH Anahtarları",
+      "api-tokens": "Kişisel API Belirteçleri",
+      "dns": "DNS",
+      "ssl": "SSL Yöneticisi",
+      "php-settings": "PHP Ayarları",
+      "cron": "Cron",
+      "backups": "Yedekleme/Geri yükleme"
+    }
+  },
+  "login": {
+    "flowError": "Oturum açma işlemi başlatılamadı. Kimlik hizmetinin çalıştığından emin olun ve sayfayı yenileyin.",
+    "hostnameWarningTitle": "IP ile değil, ana bilgisayar adıyla oturum açın",
+    "hostnameWarningDescription": "Kimlik sağlayıcısı panelin ana bilgisayar adına bağlıdır; bu nedenle sunucu IP adresi üzerinden oturum açmak çalışmaz. Paneli ana bilgisayar adıyla (kurulumdan sonra gösterilen URL) açın ve tekrar deneyin.",
+    "noCredentialMethod": "Hesabınız için şu anda yapılandırılmış bir kimlik bilgisi yöntemi yok. Bir yöneticiyle iletişime geçin.",
+    "fieldRequired": "Zorunlu",
+    "identifierHint": "E-posta adresinizi değil, kullanıcı adınızı kullanın.",
+    "totpHint": "Kimlik doğrulama uygulamanızdaki 6 haneli kodu girin.",
+    "backupCodeHint": "Yedekleme kodlarınızdan birini girin.",
+    "webauthnHint": "Oturum açmak için güvenlik anahtarınızı kullanın.",
+    "submitVerify": "Doğrula",
+    "submitSignIn": "Oturum aç"
+  },
+  "menu": {
+    "profile": "Profil",
+    "language": "Dil",
+    "sign_out": "Oturumu kapat"
+  },
+  "dashboard": {
+    "stats": {
+      "users": "Toplam kullanıcı",
+      "domains": "Etkin alan adları",
+      "mailboxes": "Posta kutuları"
+    },
+    "health": {
+      "healthy": "Sağlıklı",
+      "critical": "{{count}} kritik",
+      "warning_one": "{{count}} uyarı",
+      "warning_other": "{{count}} uyarı"
+    },
+    "server_ip": "Sunucu IP'si:",
+    "summary": "Üst düzey özet. Gerçek zamanlı ölçümler, hizmetler, ağ ve işlemler için Sunucu durumu bölümüne bakın.",
+    "view_server_status": "Sunucu durumunu görüntüle →",
+    "view_all": "Tümünü görüntüle",
+    "recent_users": "Son kullanıcılar",
+    "recent_domains": "Son alan adları",
+    "recent_apps": "Son uygulamalar",
+    "packages": "Barındırma paketleri",
+    "empty": {
+      "users": "Henüz kullanıcı yok",
+      "domains": "Henüz alan adı yok",
+      "apps": "Henüz uygulama yok",
+      "packages": "Henüz paket yok"
+    },
+    "col": {
+      "username": "Kullanıcı adı",
+      "role": "Rol",
+      "domain": "Alan adı",
+      "name": "Ad",
+      "type": "Tür",
+      "ssh": "SSH"
+    },
+    "role": {
+      "admin": "Yönetici",
+      "user": "Kullanıcı"
+    },
+    "ssh": {
+      "on": "açık",
+      "off": "kapalı"
+    },
+    "alert": {
+      "title_one": "Ana bilgisayarda {{count}} kritik sorun",
+      "title_other": "Ana bilgisayarda {{count}} kritik sorun",
+      "action": "İncelemek için Sunucu durumu bölümünü açın →"
+    }
+  }
+}
