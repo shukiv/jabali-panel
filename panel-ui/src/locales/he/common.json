@@ -141,5 +141,52 @@
       "title_other": "{{count}} בעיות קריטיות בשרת",
       "action": "פתחו את מצב השרת לבדיקה ←"
     }
+  },
+  "users": {
+    "actions": {
+      "login_as": "התחברות כמשתמש",
+      "edit": "עריכה",
+      "reset_2fa": "איפוס אימות דו-שלבי",
+      "reset_password": "איפוס סיסמה",
+      "suspend": "השעיה",
+      "unsuspend": "ביטול השעיה",
+      "delete": "מחיקה"
+    },
+    "error": {
+      "login_as": "לא ניתן להתחיל התחברות כמשתמש זה"
+    },
+    "filter": {
+      "all": "הכול",
+      "active": "פעילים",
+      "suspended": "מושעים"
+    },
+    "empty": {
+      "users": "אין עדיין משתמשים",
+      "admins": "אין עדיין מנהלים"
+    },
+    "cta": {
+      "create_user": "יצירת משתמש",
+      "create_admin": "יצירת מנהל"
+    },
+    "col": {
+      "username": "שם משתמש",
+      "name": "שם",
+      "package": "חבילה",
+      "created": "נוצר",
+      "disk_usage": "שימוש בדיסק",
+      "actions": "פעולות"
+    },
+    "suspended": "מושעה",
+    "suspended_on": "בתאריך {{date}}",
+    "suspend_reason": "סיבה: {{reason}}",
+    "tab": {
+      "users": "משתמשים",
+      "admins": "מנהלים",
+      "sessions": "הפעלות"
+    },
+    "search": {
+      "users": "חיפוש לפי אימייל, שם משתמש או שם",
+      "admins": "חיפוש לפי אימייל או שם"
+    }
   }
 }

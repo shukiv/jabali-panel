@@ -13,6 +13,7 @@ import { Badge, Button, Card, Input, message, Segmented, Space, Table, Tag, Tool
 import { DeleteOutlined, EditOutlined, LoginOutlined, PauseCircleOutlined, PlayCircleOutlined, SafetyOutlined, SearchOutlined, TeamOutlined } from "@icons";
 import { RowActions, type RowAction } from "../../../components/RowActions";
 import { Link } from "react-router";
+import { useTranslation } from "react-i18next";
 import { adminLinks } from "../../../components/admin/entityLinks";
 import { shortDateTime } from "../../../utils/datetime";
 
@@ -66,6 +67,7 @@ function UserRowActions({
   user: User;
   onEdit: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const [reset2faOpen, setReset2faOpen] = useState(false);
   const [resetPwOpen, setResetPwOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
@@ -79,7 +81,7 @@ function UserRowActions({
       await startImpersonation(user.id);
       window.location.assign("/jabali-panel");
     } catch {
-      message.error("Could not start \"log in as\" for this user");
+      message.error(t("users.error.login_as"));
     }
   };
 
@@ -88,27 +90,27 @@ function UserRowActions({
       ? [
           {
             key: "login",
-            label: "Log in as user",
+            label: t("users.actions.login_as"),
             icon: <LoginOutlined />,
             onClick: handleLoginAs,
           },
         ]
       : []),
-    { key: "edit", label: "Edit", icon: <EditOutlined />, onClick: () => onEdit(user.id) },
-    { key: "reset2fa", label: "Reset 2FA", icon: <SafetyOutlined />, onClick: () => setReset2faOpen(true) },
-    { key: "resetpw", label: "Reset password", icon: <SafetyOutlined />, onClick: () => setResetPwOpen(true) },
+    { key: "edit", label: t("users.actions.edit"), icon: <EditOutlined />, onClick: () => onEdit(user.id) },
+    { key: "reset2fa", label: t("users.actions.reset_2fa"), icon: <SafetyOutlined />, onClick: () => setReset2faOpen(true) },
+    { key: "resetpw", label: t("users.actions.reset_password"), icon: <SafetyOutlined />, onClick: () => setResetPwOpen(true) },
     ...(!user.is_admin
       ? [
           {
             key: "suspend",
-            label: user.suspended ? "Unsuspend" : "Suspend",
+            label: user.suspended ? t("users.actions.unsuspend") : t("users.actions.suspend"),
             icon: user.suspended ? <PlayCircleOutlined /> : <PauseCircleOutlined />,
             danger: !user.suspended,
             onClick: () => setSuspendOpen(true),
           },
         ]
       : []),
-    { key: "delete", label: "Delete", icon: <DeleteOutlined />, danger: true, onClick: () => setDeleteOpen(true) },
+    { key: "delete", label: t("users.actions.delete"), icon: <DeleteOutlined />, danger: true, onClick: () => setDeleteOpen(true) },
   ];
 
   return (
@@ -160,6 +162,7 @@ function UsersShellTable({
   onEdit,
   onCreate,
 }: UsersTableProps) {
+  const { t } = useTranslation();
   const [suspendFilter, setSuspendFilter] = useState<"all" | "active" | "suspended">(
     "all",
   );
@@ -217,9 +220,9 @@ function UsersShellTable({
       <div style={{ marginBottom: 12 }}>
         <Segmented<"all" | "active" | "suspended">
           options={[
-            { label: "All", value: "all" },
-            { label: "Active", value: "active" },
-            { label: "Suspended", value: "suspended" },
+            { label: t("users.filter.all"), value: "all" },
+            { label: t("users.filter.active"), value: "active" },
+            { label: t("users.filter.suspended"), value: "suspended" },
           ]}
           value={suspendFilter}
           onChange={(v) => {
@@ -244,15 +247,15 @@ function UsersShellTable({
       locale={{
         emptyText: (
           <EmptyWithCTA
-            description={isAdmin ? "No administrators yet" : "No users yet"}
-            ctaLabel={isAdmin ? "Create administrator" : "Create user"}
+            description={isAdmin ? t("users.empty.admins") : t("users.empty.users")}
+            ctaLabel={isAdmin ? t("users.cta.create_admin") : t("users.cta.create_user")}
             onCta={onCreate}
           />
         ),
       }}
     >
       <Table.Column<User>
-        title="Username"
+        title={t("users.col.username")}
         dataIndex="username"
         key="username"
         sorter={{ multiple: 1 }}
@@ -264,7 +267,7 @@ function UsersShellTable({
         )}
       />
       <Table.Column<User>
-        title="Name"
+        title={t("users.col.name")}
         key="name_first"
         sorter={{ multiple: 1 }}
         filterIcon={() => (
@@ -299,19 +302,19 @@ function UsersShellTable({
                     title={
                       <>
                         <div>
-                          <b>Suspended</b>
+                          <b>{t("users.suspended")}</b>
                           {r.suspended_at
-                            ? ` on ${new Date(r.suspended_at).toLocaleString()}`
+                            ? ` ${t("users.suspended_on", { date: new Date(r.suspended_at).toLocaleString() })}`
                             : ""}
                         </div>
                         {r.suspend_reason ? (
-                          <div>Reason: {r.suspend_reason}</div>
+                          <div>{t("users.suspend_reason", { reason: r.suspend_reason })}</div>
                         ) : null}
                       </>
                     }
                   >
                     <Tag color="error" style={{ marginLeft: 8 }}>
-                      Suspended
+                      {t("users.suspended")}
                     </Tag>
                   </Tooltip>
                 ) : null}
@@ -325,7 +328,7 @@ function UsersShellTable({
       />
       {!isAdmin && (
         <Table.Column<User>
-          title="Package"
+          title={t("users.col.package")}
           dataIndex="package_id"
           key="package_id"
           sorter={{ multiple: 1 }}
@@ -344,19 +347,19 @@ function UsersShellTable({
       )}
       <Table.Column
         dataIndex="created_at"
-        title="Created"
+        title={t("users.col.created")}
         key="created_at"
         sorter={{ multiple: 1 }}
         render={renderCreated}
       />
       {showDiskUsageColumn && (
         <Table.Column
-          title="Disk usage"
+          title={t("users.col.disk_usage")}
           render={(_: unknown, r: User) => <UserDiskUsage userId={r.id} />}
         />
       )}
       <Table.Column
-        title="Actions"
+        title={t("users.col.actions")}
         dataIndex="actions"
         render={(_: unknown, r: User) => <UserRowActions user={r} onEdit={onEdit} />}
       />
@@ -366,6 +369,7 @@ function UsersShellTable({
 }
 
 export const UserList = () => {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useTabParam<"users" | "admins" | "sessions">(
     "users",
   );
@@ -427,7 +431,7 @@ export const UserList = () => {
             key: "users",
             tab: (
               <Space size={6}>
-                <span>Users</span>
+                <span>{t("users.tab.users")}</span>
                 <Badge count={usersCountQ.total} showZero color="#999" />
               </Space>
             ),
@@ -436,7 +440,7 @@ export const UserList = () => {
             key: "admins",
             tab: (
               <Space size={6}>
-                <span>Administrators</span>
+                <span>{t("users.tab.admins")}</span>
                 <Badge count={adminsCountQ.total} showZero color="#999" />
               </Space>
             ),
@@ -445,7 +449,7 @@ export const UserList = () => {
             // JAB-126: Sessions is now a tab here rather than a standalone
             // sidebar entry. The view itself (AdminSessionsPage) is unchanged.
             key: "sessions",
-            tab: <span>Sessions</span>,
+            tab: <span>{t("users.tab.sessions")}</span>,
           },
         ]}
         activeTabKey={activeTab}
@@ -458,7 +462,7 @@ export const UserList = () => {
         ) : activeTab === "users" ? (
           <UsersShellTable
             isAdmin={false}
-            searchPlaceholder="Search by email, username, or name"
+            searchPlaceholder={t("users.search.users")}
             showDiskUsageColumn
             onEdit={openEdit}
             onCreate={openCreate}
@@ -466,7 +470,7 @@ export const UserList = () => {
         ) : (
           <UsersShellTable
             isAdmin
-            searchPlaceholder="Search by email or name"
+            searchPlaceholder={t("users.search.admins")}
             showDiskUsageColumn={false}
             onEdit={openEdit}
             onCreate={openCreate}

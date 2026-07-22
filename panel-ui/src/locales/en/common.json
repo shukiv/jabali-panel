@@ -137,5 +137,52 @@
       "title_other": "{{count}} critical issues on host",
       "action": "Open Server Status to investigate →"
     }
+  },
+  "users": {
+    "actions": {
+      "login_as": "Log in as user",
+      "edit": "Edit",
+      "reset_2fa": "Reset 2FA",
+      "reset_password": "Reset password",
+      "suspend": "Suspend",
+      "unsuspend": "Unsuspend",
+      "delete": "Delete"
+    },
+    "error": {
+      "login_as": "Could not start \"log in as\" for this user"
+    },
+    "filter": {
+      "all": "All",
+      "active": "Active",
+      "suspended": "Suspended"
+    },
+    "empty": {
+      "users": "No users yet",
+      "admins": "No administrators yet"
+    },
+    "cta": {
+      "create_user": "Create user",
+      "create_admin": "Create administrator"
+    },
+    "col": {
+      "username": "Username",
+      "name": "Name",
+      "package": "Package",
+      "created": "Created",
+      "disk_usage": "Disk usage",
+      "actions": "Actions"
+    },
+    "suspended": "Suspended",
+    "suspended_on": "on {{date}}",
+    "suspend_reason": "Reason: {{reason}}",
+    "tab": {
+      "users": "Users",
+      "admins": "Administrators",
+      "sessions": "Sessions"
+    },
+    "search": {
+      "users": "Search by email, username, or name",
+      "admins": "Search by email or name"
+    }
   }
 }

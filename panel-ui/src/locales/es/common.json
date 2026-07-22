@@ -137,5 +137,52 @@
       "title_other": "{{count}} problemas críticos en el host",
       "action": "Abrir Estado del servidor para investigar →"
     }
+  },
+  "users": {
+    "actions": {
+      "login_as": "Acceder como usuario",
+      "edit": "Editar",
+      "reset_2fa": "Restablecer 2FA",
+      "reset_password": "Restablecer contraseña",
+      "suspend": "Suspender",
+      "unsuspend": "Reactivar",
+      "delete": "Eliminar"
+    },
+    "error": {
+      "login_as": "No se ha podido iniciar el acceso como este usuario"
+    },
+    "filter": {
+      "all": "Todos",
+      "active": "Activos",
+      "suspended": "Suspendidos"
+    },
+    "empty": {
+      "users": "Aún no hay usuarios",
+      "admins": "Aún no hay administradores"
+    },
+    "cta": {
+      "create_user": "Crear usuario",
+      "create_admin": "Crear administrador"
+    },
+    "col": {
+      "username": "Usuario",
+      "name": "Nombre",
+      "package": "Paquete",
+      "created": "Creado",
+      "disk_usage": "Uso de disco",
+      "actions": "Acciones"
+    },
+    "suspended": "Suspendido",
+    "suspended_on": "el {{date}}",
+    "suspend_reason": "Motivo: {{reason}}",
+    "tab": {
+      "users": "Usuarios",
+      "admins": "Administradores",
+      "sessions": "Sesiones"
+    },
+    "search": {
+      "users": "Buscar por correo, usuario o nombre",
+      "admins": "Buscar por correo o nombre"
+    }
   }
 }
