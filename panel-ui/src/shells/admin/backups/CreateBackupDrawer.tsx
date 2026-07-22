@@ -2,6 +2,7 @@
 // backup (kind=account_backup) or a system_backup. The agent
 // orchestrator runs the actual stages; the panel just creates the
 // workflow row + dispatches.
+import { useTranslation } from "react-i18next";
 import { Alert, Button, Drawer, Form, Grid, Input, Radio, Select, Space, message } from "antd";
 import { useEffect, useState } from "react";
 
@@ -38,6 +39,7 @@ interface FormValues {
 type Destination = { id: string; name: string; kind: string; enabled: boolean };
 
 export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDrawerProps) => {
+  const { t } = useTranslation();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   const [form] = Form.useForm<FormValues>();
@@ -114,7 +116,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
 
   return (
     <Drawer
-      title="Create backup"
+      title={t("createbackupdrawer.create_backup")}
       open={open}
       onClose={onClose}
       width={isDesktop ? 520 : undefined}
@@ -132,7 +134,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
       <Alert
         type="info"
         showIcon
-        message="Backups run as a goroutine inside panel-agent."
+        message={t("createbackupdrawer.backups_run_as_a_goroutine_inside_panel_agen")}
         description={
           kind === "full_server"
             ? "Full Server: the complete system/panel backup PLUS every account (each account's home, databases, and mailboxes) in one run. Best for disaster recovery."
@@ -148,7 +150,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         onFinish={handleSubmit}
         initialValues={{ kind: "account_backup" }}
       >
-        <Form.Item label="Type" name="kind" rules={[{ required: true }]}>
+        <Form.Item label={t("createbackupdrawer.type")} name="kind" rules={[{ required: true }]}>
           <Radio.Group>
             <Radio.Button value="account_backup">Account</Radio.Button>
             <Radio.Button value="system_backup">System</Radio.Button>
@@ -157,13 +159,13 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         </Form.Item>
 
         <Form.Item
-          label="Destination"
+          label={t("createbackupdrawer.destination")}
           name="destination_id"
           rules={[{ required: true, message: "Pick a destination" }]}
           extra="The backup writes directly to this destination — no local source repo."
         >
           <Select
-            placeholder="Pick a destination"
+            placeholder={t("createbackupdrawer.pick_a_destination")}
             loading={destQuery.isLoading}
             options={(destQuery.items ?? [])
               .filter((d) => d.enabled)
@@ -174,12 +176,12 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         {kind === "account_backup" && (
           <>
             <Form.Item
-              label="User"
+              label={t("createbackupdrawer.user")}
               name="user_id"
               rules={[{ required: true, message: "Pick a user" }]}
             >
               <Select
-                placeholder="Pick a user"
+                placeholder={t("createbackupdrawer.pick_a_user")}
                 showSearch
                 optionFilterProp="label"
                 loading={usersQuery.isLoading}
@@ -192,21 +194,21 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
               />
             </Form.Item>
             <Form.Item
-              label="Databases (comma-separated, optional)"
+              label={t("createbackupdrawer.databases_comma_separated_optional")}
               name="databases"
               extra="Names of databases owned by the user. Leave empty to skip the DB stage."
             >
               <Input placeholder="alice_wp, alice_blog" />
             </Form.Item>
             <Form.Item
-              label="Mailboxes (comma-separated, optional)"
+              label={t("createbackupdrawer.mailboxes_comma_separated_optional")}
               name="mailboxes"
               extra="user@domain pairs. Skips with warning when Stalwart is down."
             >
               <Input placeholder="alice@example.com, hello@example.com" />
             </Form.Item>
             <Form.Item
-              label="Content"
+              label={t("createbackupdrawer.content")}
               name="content"
               extra="Full = home + databases + mailboxes. Files = home only. Databases = DBs only. Folders = a subset of the home directory."
             >
@@ -221,7 +223,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
             </Form.Item>
             {content === "folders" && (
               <Form.Item
-                label="Folders (comma-separated)"
+                label={t("createbackupdrawer.folders_comma_separated")}
                 name="folders"
                 rules={[{ required: true, message: "List at least one folder" }]}
                 extra="Paths relative to the account home, e.g. public_html, public_html/wp-content/uploads"
@@ -230,7 +232,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
               </Form.Item>
             )}
             <Form.Item
-              label="Compression"
+              label={t("createbackupdrawer.compression")}
               name="compression"
               extra="restic compression level (zstd). Auto is recommended; Max is smaller but slower; Off is fastest."
             >

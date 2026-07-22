@@ -3,6 +3,7 @@
 // custom realm; the expanded row holds the per-rule credentials (bcrypt
 // hashed at the API, never read back). Rule-creation form collects the
 // first credential too so newly-added rules ship with a working login.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -46,6 +47,7 @@ export const DomainDirectoryPrivacySection = ({
   domainId,
   domainName,
 }: Props) => {
+  const { t } = useTranslation();
   const { data, isLoading } = useDirectoryPrivacyRules(domainId);
   const createRule = useCreateDirectoryPrivacyRule(domainId);
   const deleteRule = useDeleteDirectoryPrivacyRule(domainId);
@@ -110,7 +112,7 @@ export const DomainDirectoryPrivacySection = ({
       <Alert
         type="info"
         showIcon
-        message="Per-directory password protection"
+        message={t("domaindirectoryprivacysection.per_directory_password_protection")}
         description={
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             Lock a subdirectory of this domain behind HTTP Basic Auth.{" "}
@@ -138,12 +140,12 @@ export const DomainDirectoryPrivacySection = ({
         }}
       >
         <Table.Column<DirectoryPrivacyRule>
-          title="Path"
+          title={t("domaindirectoryprivacysection.path")}
           dataIndex="path"
           render={(p: string) => <Typography.Text code>{p}</Typography.Text>}
         />
         <Table.Column<DirectoryPrivacyRule>
-          title="Authentication name"
+          title={t("domaindirectoryprivacysection.authentication_name")}
           dataIndex="realm"
         />
         <Table.Column<DirectoryPrivacyRule>
@@ -151,9 +153,9 @@ export const DomainDirectoryPrivacySection = ({
           width={80}
           render={(_, r) => (
             <Popconfirm
-              title="Delete this rule and all its credentials?"
+              title={t("domaindirectoryprivacysection.delete_this_rule_and_all_its_credentials")}
               onConfirm={() => onDeleteRule(r.id)}
-              okText="Delete"
+              okText={t("domaindirectoryprivacysection.delete")}
               okButtonProps={{ danger: true }}
             >
               <Button
@@ -175,9 +177,9 @@ export const DomainDirectoryPrivacySection = ({
           style={{ maxWidth: 520 }}
         >
           <Form.Item
-            label="Path"
+            label={t("domaindirectoryprivacysection.path")}
             name="path"
-            tooltip="Directory under the docroot to protect (e.g. /secret)."
+            tooltip={t("domaindirectoryprivacysection.directory_under_the_docroot_to_protect_e_g_s")}
             rules={[
               { required: true, message: "Required" },
               {
@@ -196,14 +198,14 @@ export const DomainDirectoryPrivacySection = ({
             />
           </Form.Item>
           <Form.Item
-            label="Authentication name"
+            label={t("domaindirectoryprivacysection.authentication_name")}
             name="realm"
-            tooltip="Label shown in the browser's Basic Auth popup."
+            tooltip={t("domaindirectoryprivacysection.label_shown_in_the_browser_s_basic_auth_popu")}
           >
             <Input placeholder={realmPlaceholder} />
           </Form.Item>
           <Form.Item
-            label="Username"
+            label={t("domaindirectoryprivacysection.username")}
             name="username"
             rules={[
               { required: true, message: "Required" },
@@ -216,7 +218,7 @@ export const DomainDirectoryPrivacySection = ({
             <Input placeholder="user" />
           </Form.Item>
           <Form.Item
-            label="Password"
+            label={t("domaindirectoryprivacysection.password")}
             name="password"
             rules={[
               { required: true, message: "Required" },
@@ -272,6 +274,7 @@ const DirectoryPrivacyCredentialsTable = ({
   domainId: string;
   ruleId: string;
 }) => {
+  const { t } = useTranslation();
   const { data, isLoading } = useDirectoryPrivacyCredentials(domainId, ruleId);
   const create = useCreateDirectoryPrivacyCredential(domainId, ruleId);
   const remove = useDeleteDirectoryPrivacyCredential(domainId, ruleId);
@@ -315,7 +318,7 @@ const DirectoryPrivacyCredentialsTable = ({
         }}
       >
         <Table.Column<DirectoryPrivacyCredential>
-          title="Username"
+          title={t("domaindirectoryprivacysection.username")}
           dataIndex="username"
         />
         <Table.Column<DirectoryPrivacyCredential>
@@ -323,9 +326,9 @@ const DirectoryPrivacyCredentialsTable = ({
           width={80}
           render={(_, c) => (
             <Popconfirm
-              title="Delete this user?"
+              title={t("domaindirectoryprivacysection.delete_this_user")}
               onConfirm={() => onDelete(c.id)}
-              okText="Delete"
+              okText={t("domaindirectoryprivacysection.delete")}
               okButtonProps={{ danger: true }}
             >
               <Button
@@ -345,7 +348,7 @@ const DirectoryPrivacyCredentialsTable = ({
           onFinish={onAdd}
         >
           <Form.Item
-            label="User"
+            label={t("domaindirectoryprivacysection.user")}
             name="username"
             rules={[
               { required: true, message: "Required" },
@@ -358,7 +361,7 @@ const DirectoryPrivacyCredentialsTable = ({
             <Input style={{ width: 160 }} />
           </Form.Item>
           <Form.Item
-            label="Password"
+            label={t("domaindirectoryprivacysection.password")}
             name="password"
             rules={[
               { required: true, message: "Required" },

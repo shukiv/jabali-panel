@@ -2,6 +2,7 @@
 // Lists every group across all domains; reuses the user GroupDrawer +
 // MembersModal for edit/members. Create uses a "Create in:" domain picker
 // since groups are domain-scoped.
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { RowActions } from "../../../components/RowActions";
 import {
@@ -35,6 +36,7 @@ const RESOURCE_TAGS: { key: keyof MailGroup; label: string; color: string }[] = 
 ];
 
 export function AdminGroupsTab() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const { data: rows, isLoading } = useAdminMailGroups();
   const { items: domains } = useListQuery<Domain>({
@@ -81,7 +83,7 @@ export function AdminGroupsTab() {
         rowKey="id"
         dataSource={rows ?? []}
         pagination={{ pageSize: 25, showSizeChanger: true }}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No groups" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("admingroupstab.no_groups")} /> }}
         columns={[
           {
             title: "Group",

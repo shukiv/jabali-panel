@@ -3,6 +3,7 @@
 // Rendered inside NotificationsTabsPage Card.tabList. Strips its own
 // page-level header; the "Add channel" button stays here because it's
 // tab-specific (the History tab has a different action).
+import { useTranslation } from "react-i18next";
 import { Button, Space, Switch, Table, Tag, message } from "antd";
 import { useState } from "react";
 
@@ -22,6 +23,7 @@ import { kindColors, kindLabels } from "./channelKindConfig";
 const RESOURCE = "admin/notifications/channels";
 
 export const ChannelsTab = () => {
+  const { t } = useTranslation();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<NotificationChannel | undefined>();
 
@@ -102,14 +104,14 @@ export const ChannelsTab = () => {
       >
         <Table.Column
           dataIndex="name"
-          title="Name"
+          title={t("channelstab.name")}
           render={(name: string, row: NotificationChannel) => (
             <a onClick={() => openEdit(row)}>{name}</a>
           )}
         />
         <Table.Column
           dataIndex="kind"
-          title="Kind"
+          title={t("channelstab.kind")}
           render={(k: string) => (
             <Tag color={kindColors[k as keyof typeof kindColors]}>
               {kindLabels[k as keyof typeof kindLabels] ?? k}
@@ -118,13 +120,13 @@ export const ChannelsTab = () => {
         />
         <Table.Column
           dataIndex="enabled"
-          title="Enabled"
+          title={t("channelstab.enabled")}
           render={(enabled: boolean, row: NotificationChannel) => (
             <Switch checked={enabled} onChange={(next) => handleToggleEnabled(row, next)} />
           )}
         />
         <Table.Column
-          title="Actions"
+          title={t("channelstab.actions")}
           key="actions"
           render={(_: unknown, row: NotificationChannel) => (
             <RowActions

@@ -2,6 +2,7 @@
 // Network / Security / Email so the page stops being a 1500px scroll. Each
 // tab owns one section component; General hosts the basic Form
 // (name/doc_root/enabled/custom directives + Save).
+import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
 import {
   Alert,
@@ -44,6 +45,7 @@ export type DomainEditInput = {
 };
 
 export const DomainEdit = () => {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -119,12 +121,12 @@ export const DomainEdit = () => {
 
   const generalTab = (
     <Form<DomainEditInput> form={form} layout="vertical" onFinish={handleFinish}>
-      <Form.Item label="Name">
+      <Form.Item label={t("domainedit.name")}>
         <Typography.Text>{domain.name}</Typography.Text>
       </Form.Item>
 
       <Form.Item
-        label="Doc Root"
+        label={t("domainedit.doc_root")}
         name="doc_root"
         extra="Must be under the owner's home directory. Changing it re-points the vhost on the next sync and creates the new directory — existing files are NOT moved. Leave blank to reset to the default public_html."
       >
@@ -290,7 +292,7 @@ export const DomainEdit = () => {
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            message="Panel hostname domain (mail-only)"
+            message={t("domainedit.panel_hostname_domain_mail_only")}
             description={
               <>
                 This row backs the panel hostname's mail service (DKIM,

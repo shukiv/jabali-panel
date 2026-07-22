@@ -3,6 +3,7 @@
 // persists python_apps_enabled; the host installs the Python runtime
 // prerequisites (python3-venv + build toolchain) via install.sh on the
 // next `jabali update` (or already, on a fresh install with the flag set).
+import { useTranslation } from "react-i18next";
 import { App, Alert, Card, Space, Spin, Switch, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
@@ -13,6 +14,7 @@ interface ServerSettingsPyApps {
 }
 
 export function PythonAppsCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -112,8 +114,8 @@ export function PythonAppsCard() {
           <Alert
             type="info"
             showIcon
-            message="Runtime prerequisites"
-            description="Apps need python3-venv and a build toolchain (gcc, python3-dev, libffi/ssl-dev). These are installed by the host provisioner; if a venv build fails for a C-extension package, run jabali update to ensure the toolchain is present."
+            message={t("pythonappscard.runtime_prerequisites")}
+            description={t("pythonappscard.apps_need_python3_venv_and_a_build_toolchain")}
           />
         )}
       </Space>

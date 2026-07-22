@@ -1,6 +1,7 @@
 // CreateMigrationDrawer — operator-driven 'New Migration' wizard.
 // Step 1: pick source kind / host / user and create the job.
 // Step 2+: source-specific drive steps (upload / pull / import) — no CLI needed.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Alert,
@@ -482,6 +483,7 @@ export const CreateMigrationDrawer = ({
   open,
   onClose,
 }: CreateMigrationDrawerProps) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<CreateInput>();
   const qc = useQueryClient();
   const [created, setCreated] = useState<MigrationJob | null>(null);
@@ -529,7 +531,7 @@ export const CreateMigrationDrawer = ({
 
   return (
     <Drawer
-      title="New migration job"
+      title={t("createmigrationdrawer.new_migration_job")}
       open={open}
       onClose={handleDone}
       width={640}
@@ -544,7 +546,7 @@ export const CreateMigrationDrawer = ({
           initialValues={{ source_kind: "cpanel", source_port: 22 }}
         >
           <Form.Item
-            label="Source kind"
+            label={t("createmigrationdrawer.source_kind")}
             name="source_kind"
             rules={[{ required: true, message: "Pick a source panel kind" }]}
           >
@@ -594,9 +596,9 @@ export const CreateMigrationDrawer = ({
               }
               return (
                 <Form.Item
-                  label="SSH port"
+                  label={t("createmigrationdrawer.ssh_port")}
                   name="source_port"
-                  tooltip="The source server's SSH port. Defaults to 22."
+                  tooltip={t("createmigrationdrawer.the_source_server_s_ssh_port_defaults_to_22")}
                 >
                   <InputNumber min={1} max={65535} style={{ width: 140 }} />
                 </Form.Item>
@@ -607,9 +609,9 @@ export const CreateMigrationDrawer = ({
             {({ getFieldValue }) =>
               getFieldValue("source_kind") === "wordpress_ssh" ? (
                 <Form.Item
-                  label="WordPress path (optional)"
+                  label={t("createmigrationdrawer.wordpress_path_optional")}
                   name="source_path"
-                  tooltip="Absolute path to the WordPress root on the source (must contain wp-config.php). Leave blank to auto-detect ~/public_html, /home/*/public_html, or Cloudways /home/master/applications/*/public_html."
+                  tooltip={t("createmigrationdrawer.absolute_path_to_the_wordpress_root_on_the_s")}
                 >
                   <Input placeholder="/home/master/applications/xxxx/public_html" />
                 </Form.Item>
@@ -671,8 +673,8 @@ export const CreateMigrationDrawer = ({
               <Alert
                 type="success"
                 showIcon
-                message="Import started"
-                description="The migration is running in the background. Open the migration job to track stage-by-stage progress."
+                message={t("createmigrationdrawer.import_started")}
+                description={t("createmigrationdrawer.the_migration_is_running_in_the_background_o")}
               />
               <Button type="primary" onClick={handleDone}>
                 Done

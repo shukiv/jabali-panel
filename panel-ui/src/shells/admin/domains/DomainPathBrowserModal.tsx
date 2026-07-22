@@ -2,6 +2,7 @@
 // "Path" field. Calls /api/v1/domains/:id/browse to list directories
 // under the domain's docroot; user clicks a folder to drill in,
 // breadcrumb to navigate up, "Select this folder" returns the path.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -40,6 +41,7 @@ export const DomainPathBrowserModal = ({
   onCancel,
   onSelect,
 }: Props) => {
+  const { t } = useTranslation();
   const [path, setPath] = useState<string>(initialPath || "/");
 
   const { data, isLoading, error } = useQuery({
@@ -72,7 +74,7 @@ export const DomainPathBrowserModal = ({
   return (
     <Modal
       open={open}
-      title="Pick a folder under the docroot"
+      title={t("domainpathbrowsermodal.pick_a_folder_under_the_docroot")}
       onCancel={onCancel}
       width={620}
       destroyOnClose
@@ -127,7 +129,7 @@ export const DomainPathBrowserModal = ({
         {!isLoading && data && data.entries.length === 0 && (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="No subfolders here."
+            description={t("domainpathbrowsermodal.no_subfolders_here")}
           />
         )}
         {!isLoading && data && data.entries.length > 0 && (

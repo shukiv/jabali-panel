@@ -7,6 +7,7 @@
 // from the API's `records` hint list. Live record-presence status
 // is blueprint Step 5 scope (DNS autoconfig) — until then, hints
 // render as static instructions (empty `status` column).
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Alert,
@@ -47,6 +48,7 @@ async function copyText(text: string) {
 }
 
 export const DomainEmailSection = ({ domainId }: Props) => {
+  const { t } = useTranslation();
   const { data, isLoading } = useDomainEmail(domainId);
   const enableMutation = useEnableDomainEmail();
   const disableMutation = useDisableDomainEmail();
@@ -110,7 +112,7 @@ export const DomainEmailSection = ({ domainId }: Props) => {
     return <Skeleton active paragraph={{ rows: 3 }} />;
   }
   if (!data) {
-    return <Alert type="error" showIcon title="Failed to load email state" />;
+    return <Alert type="error" showIcon title={t("domainemailsection.failed_to_load_email_state")} />;
   }
 
   const enabled = data.email_enabled;
@@ -148,16 +150,16 @@ export const DomainEmailSection = ({ domainId }: Props) => {
         <Alert
           type="error"
           showIcon
-          title="DKIM key missing"
-          description="Email is enabled but no DKIM public key is stored. Toggle off and back on to regenerate."
+          title={t("domainemailsection.dkim_key_missing")}
+          description={t("domainemailsection.email_is_enabled_but_no_dkim_public_key_is_s")}
         />
       )}
 
       {enabled && dkim && (
         <Popconfirm
-          title="Rotate DKIM key?"
-          description="A fresh DKIM keypair is generated and the DNS TXT record changes. Remote receivers may need propagation time before they accept the new signature; the old key is kept as a backup."
-          okText="Rotate"
+          title={t("domainemailsection.rotate_dkim_key")}
+          description={t("domainemailsection.a_fresh_dkim_keypair_is_generated_and_the_dn")}
+          okText={t("domainemailsection.rotate")}
           okButtonProps={{ danger: true }}
           onConfirm={onRotateDKIM}
         >
@@ -173,7 +175,7 @@ export const DomainEmailSection = ({ domainId }: Props) => {
         <Alert
           type="warning"
           showIcon
-          message="DNS autoconfig partially applied"
+          message={t("domainemailsection.dns_autoconfig_partially_applied")}
           description={
             <ul style={{ margin: 0, paddingInlineStart: 20 }}>
               {data.warnings.map((w) => (
@@ -185,7 +187,7 @@ export const DomainEmailSection = ({ domainId }: Props) => {
       )}
 
       {enabled && (
-        <Card size="small" title="DNS records">
+        <Card size="small" title={t("domainemailsection.dns_records")}>
           <Table<DomainEmailDNSHint>
             size="small"
             pagination={false}
@@ -229,7 +231,7 @@ export const DomainEmailSection = ({ domainId }: Props) => {
                         size="small"
                         icon={<CopyOutlined />}
                         onClick={() => copyText(value)}
-                        aria-label="Copy value"
+                        aria-label={t("domainemailsection.copy_value")}
                       />
                     </Space>
                   ) : (

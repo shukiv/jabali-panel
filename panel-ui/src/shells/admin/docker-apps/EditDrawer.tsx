@@ -3,6 +3,7 @@
 // the wire-level knobs (domain + per-port enabled/bind/host_port/
 // reverse_proxy). Backend gates port + domain edits on `status =
 // stopped` and re-renders the compose + re-dispatches the agent.
+import { useTranslation } from "react-i18next";
 import { Alert, App, Divider, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
@@ -34,6 +35,7 @@ interface FormValues {
 }
 
 export const EditDrawer = ({ open, app, onClose }: Props) => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
   const [form] = Form.useForm<FormValues>();
@@ -239,12 +241,12 @@ export const EditDrawer = ({ open, app, onClose }: Props) => {
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message="Stop the container before editing ports or domain"
-          description="Limits + update mode can still be saved; ports/domain edits will return 409 conflict while the container is running."
+          message={t("editdrawer.stop_the_container_before_editing_ports_or_d")}
+          description={t("editdrawer.limits_update_mode_can_still_be_saved_ports")}
         />
       )}
       <Form layout="vertical" form={form} onFinish={(v) => patch.mutate(v)}>
-        <Form.Item label="Update mode" name="update_mode">
+        <Form.Item label={t("editdrawer.update_mode")} name="update_mode">
           <Select
             options={[
               { value: "manual", label: "Manual" },
@@ -253,12 +255,12 @@ export const EditDrawer = ({ open, app, onClose }: Props) => {
           />
         </Form.Item>
 
-        <Form.Item label="Domain" name="domain" tooltip="Pick from the panel's domains list. Leave empty to drop the managed-domain row.">
+        <Form.Item label={t("editdrawer.domain")} name="domain" tooltip={t("editdrawer.pick_from_the_panel_s_domains_list_leave_emp")}>
           <Select
             showSearch
             allowClear
             disabled={running}
-            placeholder="Select a domain"
+            placeholder={t("editdrawer.select_a_domain")}
             optionFilterProp="label"
             options={(domainsQ.data ?? []).map((d) => ({ value: d.name, label: d.name }))}
             loading={domainsQ.isLoading}
@@ -266,13 +268,13 @@ export const EditDrawer = ({ open, app, onClose }: Props) => {
         </Form.Item>
 
         <Space size="middle" style={{ width: "100%" }}>
-          <Form.Item label="CPU" name="cpu_limit" style={{ flex: 1 }} extra={cpuCapNote}>
+          <Form.Item label={t("editdrawer.cpu")} name="cpu_limit" style={{ flex: 1 }} extra={cpuCapNote}>
             <Input placeholder="0.5" />
           </Form.Item>
-          <Form.Item label="Memory" name="memory_limit" style={{ flex: 1 }}>
+          <Form.Item label={t("editdrawer.memory")} name="memory_limit" style={{ flex: 1 }}>
             <Input placeholder="256m" />
           </Form.Item>
-          <Form.Item label="PIDs" name="pids_limit" style={{ flex: 1 }}>
+          <Form.Item label={t("editdrawer.pids")} name="pids_limit" style={{ flex: 1 }}>
             <InputNumber min={1} max={65535} style={{ width: "100%" }} />
           </Form.Item>
         </Space>

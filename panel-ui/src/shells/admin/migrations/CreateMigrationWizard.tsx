@@ -18,6 +18,7 @@
 //
 // Single-account flow stays in CreateMigrationDrawer for now —
 // migrating it into the wizard is M35.2 work.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -110,6 +111,7 @@ interface Props {
 }
 
 export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
+  const { t } = useTranslation();
   const [step, setStep] = useState(0);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [areas, setAreas] = useState<Record<string, boolean>>({
@@ -404,7 +406,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
       open={open}
       onClose={handleClose}
       width={680}
-      title="Create migration"
+      title={t("createmigrationwizard.create_migration")}
       destroyOnClose
     >
       <Steps
@@ -424,8 +426,8 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
           <Alert
             type="info"
             showIcon
-            message="Pick the source panel type"
-            description="WHM enables bulk migration of every cPanel account. Single-account migrations are still available via the 'New migration' button."
+            message={t("createmigrationwizard.pick_the_source_panel_type")}
+            description={t("createmigrationwizard.whm_enables_bulk_migration_of_every_cpanel_a")}
           />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
             {SOURCE_OPTIONS.map((o) => {
@@ -484,13 +486,13 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             type="info"
             showIcon
             message={`Draft ${draftId.slice(-6)} created`}
-            description="Credentials are written to /etc/jabali-panel/migration-secrets and reaped 24h after job completion."
+            description={t("createmigrationwizard.credentials_are_written_to_etc_jabali_panel")}
           />
           <Form layout="vertical">
             <Form.Item
-              label="Source host"
+              label={t("createmigrationwizard.source_host")}
               required
-              tooltip="Use the server's direct IP if it sits behind Cloudflare or another proxy — a hostname can resolve to the proxy instead of the source server."
+              tooltip={t("createmigrationwizard.use_the_server_s_direct_ip_if_it_sits_behind")}
             >
               <Input
                 value={sourceHost}
@@ -498,7 +500,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
                 placeholder="203.0.113.10 or src.example.com"
               />
             </Form.Item>
-            <Form.Item label="SSH port" tooltip="The source server's SSH port. Defaults to 22.">
+            <Form.Item label={t("createmigrationwizard.ssh_port")} tooltip={t("createmigrationwizard.the_source_server_s_ssh_port_defaults_to_22")}>
               <InputNumber
                 min={1}
                 max={65535}
@@ -507,14 +509,14 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
                 style={{ width: 140 }}
               />
             </Form.Item>
-            <Form.Item label="Admin user" required>
+            <Form.Item label={t("createmigrationwizard.admin_user")} required>
               <Input
                 value={sourceUser}
                 onChange={(e) => setSourceUser(e.target.value)}
                 placeholder="root"
               />
             </Form.Item>
-            <Form.Item label="Credential type">
+            <Form.Item label={t("createmigrationwizard.credential_type")}>
               <Radio.Group value={credKind} onChange={(e) => setCredKind(e.target.value)}>
                 <Radio value="password">Password</Radio>
                 <Radio value="key">SSH key</Radio>
@@ -538,13 +540,13 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
               )}
             </Form.Item>
             <Form.Item
-              label="Source host key fingerprint (optional)"
+              label={t("createmigrationwizard.source_host_key_fingerprint_optional")}
               help="SHA256 fingerprint of the source server's SSH host key, e.g. from `ssh-keyscan -t ed25519 HOST | ssh-keygen -lf -`. When set, the connection is rejected unless the host key matches — protecting against a man-in-the-middle on the source even on first connect."
             >
               <Input
                 value={expectedHostKey}
                 onChange={(e) => setExpectedHostKey(e.target.value)}
-                placeholder="SHA256:abc123…"
+                placeholder={t("createmigrationwizard.sha256_abc123")}
               />
             </Form.Item>
             {!expectedHostKey.trim() && (
@@ -552,8 +554,8 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
                 type="warning"
                 showIcon
                 style={{ marginBottom: 8 }}
-                message="First connection is unverified"
-                description="Without a fingerprint, the first connection to the source is trusted blindly (trust-on-first-use). For a hostile network, paste the source host key fingerprint above to verify it."
+                message={t("createmigrationwizard.first_connection_is_unverified")}
+                description={t("createmigrationwizard.without_a_fingerprint_the_first_connection_t")}
               />
             )}
           </Form>
@@ -582,7 +584,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             <Alert
               type="error"
               showIcon
-              message="Account discovery failed"
+              message={t("createmigrationwizard.account_discovery_failed")}
               description={(accounts.error as Error).message}
             />
           )}
@@ -592,7 +594,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
                 type="success"
                 showIcon
                 message={`Found ${accounts.data.accounts.length} accounts`}
-                description="Pick which accounts to migrate. Each becomes its own migration_job sharing a batch_id."
+                description={t("createmigrationwizard.pick_which_accounts_to_migrate_each_becomes")}
               />
               <Checkbox
                 checked={selected.size === accounts.data.accounts.length}
@@ -705,7 +707,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
           <Alert
             type="info"
             showIcon
-            message="Review"
+            message={t("createmigrationwizard.review")}
             description={
               <>
                 <div>
@@ -724,7 +726,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             }
           />
           {sourceKind !== "wordpress_ssh" && sourceKind !== "wordpress_plugin" && (
-            <Card size="small" title="Import options">
+            <Card size="small" title={t("createmigrationwizard.import_options")}>
               <Checkbox.Group
                 value={Object.keys(areas).filter((k) => areas[k])}
                 onChange={(vals) => {

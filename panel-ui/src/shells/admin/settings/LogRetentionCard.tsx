@@ -3,6 +3,7 @@
 // 365d for forensic security tables, 0 = keep forever. Saving PATCHes
 // /admin/settings with a { category: days } log_retention map; the daily
 // jabali-retention-sweep reads it (an absent category uses the code default).
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   App,
@@ -51,6 +52,7 @@ const CATEGORIES: {
 ];
 
 export function LogRetentionCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [form] = Form.useForm<RetentionMap>();
   const [loaded, setLoaded] = useState(false);
@@ -92,7 +94,7 @@ export function LogRetentionCard() {
   };
 
   return (
-    <Card title="Logs — retention" style={{ marginBottom: 16 }}>
+    <Card title={t("logretentioncard.logs_retention")} style={{ marginBottom: 16 }}>
       <Typography.Paragraph type="secondary">
         How long each log/report table is kept before the daily retention sweep
         prunes it. <b>0 = keep forever.</b> Changes take effect on the next sweep.
@@ -130,8 +132,8 @@ export function LogRetentionCard() {
             type="info"
             showIcon
             style={{ marginTop: 8, marginBottom: 16, maxWidth: 640 }}
-            message="The audit log defaults to keep-forever"
-            description="It's hash-chained and tamper-evident. Set a window only if you accept a shorter forensic record; pruning re-anchors the chain so it stays verifiable forward."
+            message={t("logretentioncard.the_audit_log_defaults_to_keep_forever")}
+            description={t("logretentioncard.it_s_hash_chained_and_tamper_evident_set_a_w")}
           />
           <Button type="primary" loading={saving} onClick={() => void save()}>
             Save retention

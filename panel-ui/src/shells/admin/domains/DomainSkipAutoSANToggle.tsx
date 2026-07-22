@@ -3,6 +3,7 @@
 // cert SAN list per ADR-0070. On: panel issues a cert for ONLY
 // <domain> + www.<domain>. Use when the tenant's mail runs elsewhere
 // or the helper subdomains aren't DNS-resolvable.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Alert, Skeleton, Space, Switch, Typography, message } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +15,7 @@ type Resp = { domain_id: string; domain_name: string; enabled: boolean };
 type Props = { domainId: string };
 
 export const DomainSkipAutoSANToggle = ({ domainId }: Props) => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["domain-skip-auto-san", domainId],
@@ -60,7 +62,7 @@ export const DomainSkipAutoSANToggle = ({ domainId }: Props) => {
       <Alert
         type="info"
         showIcon
-        message="Skip auto-added SAN names"
+        message={t("domainskipautosantoggle.skip_auto_added_san_names")}
         description={
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             By default the panel adds <code>mail.&lt;domain&gt;</code> and{" "}

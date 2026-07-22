@@ -6,12 +6,14 @@
 // No edit affordance; the hostname comes from JABALI_SRV_HOSTNAME at
 // install time and isn't editable from the panel UI.
 
+import { useTranslation } from "react-i18next";
 import { MailOutlined, ReloadOutlined } from "@icons";
 import { Alert, Badge, Button, Card, Descriptions, Skeleton, Space, Typography } from "antd";
 
 import { useSettingsEmail } from "../../../hooks/useSettingsEmail";
 
 export const EmailCard = () => {
+  const { t } = useTranslation();
   const q = useSettingsEmail();
 
   if (q.isPending) {
@@ -27,7 +29,7 @@ export const EmailCard = () => {
       <Card title={<CardTitle />}>
         <Alert
           type="error"
-          message="Failed to load email settings"
+          message={t("emailcard.failed_to_load_email_settings")}
           description={q.error.message}
           action={
             <Button icon={<ReloadOutlined />} onClick={() => q.refetch()}>
@@ -53,8 +55,8 @@ export const EmailCard = () => {
         <Alert
           type="info"
           showIcon
-          message="Webmail is initializing"
-          description="The panel hostname's mail domain is being provisioned (DKIM keypair, Stalwart, DNS records, nginx vhost). This typically takes ~30 seconds on a fresh install. This page will refresh automatically."
+          message={t("emailcard.webmail_is_initializing")}
+          description={t("emailcard.the_panel_hostname_s_mail_domain_is_being_pr")}
         />
       </Card>
     );
@@ -68,22 +70,22 @@ export const EmailCard = () => {
   return (
     <Card title={<CardTitle />}>
       <Descriptions column={1} size="middle" layout="vertical">
-        <Descriptions.Item label="Primary mail domain">
+        <Descriptions.Item label={t("emailcard.primary_mail_domain")}>
           <Typography.Text code>{data.primaryDomainName}</Typography.Text>
         </Descriptions.Item>
-        <Descriptions.Item label="Webmail URL">
+        <Descriptions.Item label={t("emailcard.webmail_url")}>
           <Typography.Link href={data.webmailURL} target="_blank" rel="noreferrer">
             {data.webmailURL}
           </Typography.Link>
         </Descriptions.Item>
-        <Descriptions.Item label="DKIM">
+        <Descriptions.Item label={t("emailcard.dkim")}>
           {data.dkimPublished ? (
             <Badge status="success" text="Published" />
           ) : (
             <Badge status="processing" text="Initializing" />
           )}
         </Descriptions.Item>
-        <Descriptions.Item label="Enabled at">{enabledAtLabel}</Descriptions.Item>
+        <Descriptions.Item label={t("emailcard.enabled_at")}>{enabledAtLabel}</Descriptions.Item>
       </Descriptions>
       <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
         Auto-registered at install time. The hostname comes from{" "}

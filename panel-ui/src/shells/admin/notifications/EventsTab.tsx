@@ -1,6 +1,7 @@
 // EventsTab — admin Notifications > Events. Per-event-kind enable
 // toggle. Defaults seeded by panel-api first-boot per
 // models.AllNotificationEventKinds (important = on).
+import { useTranslation } from "react-i18next";
 import { Switch, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -25,6 +26,7 @@ const severityColor: Record<EventKindRow["severity"], string> = {
 };
 
 export const EventsTab = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
 
   const list = useQuery<{ data: EventKindRow[] }>({
@@ -61,7 +63,7 @@ export const EventsTab = () => {
       scroll={{ x: 800 }}
     >
       <Table.Column<EventKindRow>
-        title="Event"
+        title={t("eventstab.event")}
         dataIndex="label"
         width={280}
         render={(label: string, row) => (
@@ -76,7 +78,7 @@ export const EventsTab = () => {
         )}
       />
       <Table.Column<EventKindRow>
-        title="Severity"
+        title={t("eventstab.severity")}
         dataIndex="severity"
         width={120}
         render={(s: EventKindRow["severity"]) => (
@@ -84,7 +86,7 @@ export const EventsTab = () => {
         )}
       />
       <Table.Column<EventKindRow>
-        title="Description"
+        title={t("eventstab.description")}
         dataIndex="description"
         // Wrap on word boundaries instead of truncating — long
         // sentences span multiple lines inside the cell so the
@@ -104,7 +106,7 @@ export const EventsTab = () => {
         )}
       />
       <Table.Column<EventKindRow>
-        title="Enabled"
+        title={t("eventstab.enabled")}
         dataIndex="enabled"
         width={120}
         render={(enabled: boolean, row) => (

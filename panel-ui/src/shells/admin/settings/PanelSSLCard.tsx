@@ -4,6 +4,7 @@
 // and the panel mail (mail.<hostname>) cert. Each gets its own status
 // row + Retry; mail can never block the hostname cert. The single
 // Use-LE / staging toggle (the hostname row's flags) governs both.
+import { useTranslation } from "react-i18next";
 import {
   CheckCircleOutlined,
   CloseOutlined,
@@ -122,19 +123,20 @@ function CertRow({
 }
 
 export function PanelSSLCard() {
+  const { t } = useTranslation();
   const q = usePanelCertificate();
   const toggle = usePanelCertificateToggle();
   const issue = usePanelCertificateIssue();
 
   if (q.isPending) {
-    return <Card title="Panel SSL" loading style={{ marginBottom: 16 }} />;
+    return <Card title={t("panelsslcard.panel_ssl")} loading style={{ marginBottom: 16 }} />;
   }
   if (q.isError || !q.data) {
     return (
-      <Card title="Panel SSL" style={{ marginBottom: 16 }}>
+      <Card title={t("panelsslcard.panel_ssl")} style={{ marginBottom: 16 }}>
         <Alert
           type="error"
-          message="Failed to load panel SSL state"
+          message={t("panelsslcard.failed_to_load_panel_ssl_state")}
           description={String((q.error as Error)?.message ?? "")}
           showIcon
         />
@@ -147,8 +149,8 @@ export function PanelSSLCard() {
   const mail = certs.find((c) => c.kind === "mail");
   if (!host) {
     return (
-      <Card title="Panel SSL" style={{ marginBottom: 16 }}>
-        <Alert type="info" message="Panel certificate not initialised yet." showIcon />
+      <Card title={t("panelsslcard.panel_ssl")} style={{ marginBottom: 16 }}>
+        <Alert type="info" message={t("panelsslcard.panel_certificate_not_initialised_yet")} showIcon />
       </Card>
     );
   }
@@ -195,7 +197,7 @@ export function PanelSSLCard() {
           <Alert
             type="warning"
             showIcon
-            message="Let's Encrypt is unavailable for the panel"
+            message={t("panelsslcard.let_s_encrypt_is_unavailable_for_the_panel")}
             description={
               host.routable_reason
                 ? `${host.routable_reason}. Point the panel hostname's DNS A record at this server's public IP, then click Refresh.`
@@ -244,14 +246,14 @@ export function PanelSSLCard() {
         </Space>
 
         <CertRow
-          label="Hostname"
+          label={t("panelsslcard.hostname")}
           cert={host}
           retrying={issue.isPending}
           onRetry={() => doIssue("hostname")}
         />
         {mail && (
           <CertRow
-            label="Mail"
+            label={t("panelsslcard.mail")}
             cert={mail}
             retrying={issue.isPending}
             onRetry={() => doIssue("mail")}

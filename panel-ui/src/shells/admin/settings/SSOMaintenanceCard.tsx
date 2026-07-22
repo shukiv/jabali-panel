@@ -7,6 +7,7 @@
 //   rotation that reloads the serving process is a foot-gun that, done wrong,
 //   breaks phpMyAdmin SSO for every tenant. We surface the exact guarded
 //   procedure + rollback instead (the CLI-supported branch of #575).
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   App,
@@ -43,6 +44,7 @@ mv /etc/jabali/sso_key.txt.bak /etc/jabali/sso_key.txt
 systemctl kill -s SIGHUP jabali-panel`;
 
 export function SSOMaintenanceCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
 
   const prune = useMutation({
@@ -54,7 +56,7 @@ export function SSOMaintenanceCard() {
   });
 
   return (
-    <Card title="SSO maintenance (phpMyAdmin)" style={{ marginBottom: 16 }}>
+    <Card title={t("ssomaintenancecard.sso_maintenance_phpmyadmin")} style={{ marginBottom: 16 }}>
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
         {/* prune — safe, one-click */}
         <div>
@@ -64,9 +66,9 @@ export function SSOMaintenanceCard() {
             sweep. This forces an immediate purge.
           </Paragraph>
           <Popconfirm
-            title="Purge expired SSO tokens now?"
-            description="Deletes only already-expired tokens — active SSO sessions are unaffected."
-            okText="Purge"
+            title={t("ssomaintenancecard.purge_expired_sso_tokens_now")}
+            description={t("ssomaintenancecard.deletes_only_already_expired_tokens_active_s")}
+            okText={t("ssomaintenancecard.purge")}
             onConfirm={() => prune.mutate()}
           >
             <Button loading={prune.isPending}>Prune expired tokens</Button>
@@ -80,8 +82,8 @@ export function SSOMaintenanceCard() {
             style={{ margin: "8px 0" }}
             type="warning"
             showIcon
-            message="Operator procedure — run on the host, not from the browser"
-            description="Rotation re-encrypts every stored DB-user password, then swaps the on-disk key file and reloads the panel. It is intentionally CLI-only: a browser-triggered rotation that reloads the panel mid-request is high-risk, and a failure between re-encrypt and key-swap breaks phpMyAdmin SSO for all tenants. Take a backup (step 3) so you can roll back."
+            message={t("ssomaintenancecard.operator_procedure_run_on_the_host_not_from")}
+            description={t("ssomaintenancecard.rotation_re_encrypts_every_stored_db_user_pa")}
           />
           <Paragraph type="secondary" style={{ marginBottom: 4 }}>
             Rotate the AES-256-GCM key (as root on the panel host):

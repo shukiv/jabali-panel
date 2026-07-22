@@ -6,6 +6,7 @@
 // v1 surface: paste accounts as newline / comma-separated list. The
 // M35.2 follow-up replaces the textarea with a discover-accounts call
 // that returns the cPanel account list from a live WHM API session.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Alert,
@@ -33,6 +34,7 @@ interface Props {
 }
 
 export const BulkWhmDrawer = ({ open, onClose, onCreated }: Props) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<{ source_host: string; accounts: string }>();
   const [result, setResult] = useState<BulkResp | null>(null);
 
@@ -76,7 +78,7 @@ export const BulkWhmDrawer = ({ open, onClose, onCreated }: Props) => {
       open={open}
       onClose={handleDone}
       width={520}
-      title="Create WHM migration batch"
+      title={t("bulkwhmdrawer.create_whm_migration_batch")}
       destroyOnClose
     >
       {!result ? (
@@ -88,22 +90,22 @@ export const BulkWhmDrawer = ({ open, onClose, onCreated }: Props) => {
           <Alert
             type="info"
             showIcon
-            message="Bulk WHM"
-            description="Creates one migration_job per account, all sharing a batch_id. Cancel-batch + per-account retry are available from the list page."
+            message={t("bulkwhmdrawer.bulk_whm")}
+            description={t("bulkwhmdrawer.creates_one_migration_job_per_account_all_sh")}
           />
           <Form.Item
-            label="Source host"
+            label={t("bulkwhmdrawer.source_host")}
             name="source_host"
             rules={[{ required: true, message: "Source WHM host required" }]}
-            tooltip="Hostname or IP of the source WHM server. Private-IP targets require server_settings.migration_allow_private_hosts=true."
+            tooltip={t("bulkwhmdrawer.hostname_or_ip_of_the_source_whm_server_priv")}
           >
             <Input placeholder="src.example.com" />
           </Form.Item>
           <Form.Item
-            label="Accounts"
+            label={t("bulkwhmdrawer.accounts")}
             name="accounts"
             rules={[{ required: true, message: "At least one account required" }]}
-            tooltip="One account per line, or comma-separated. Existing jobs for any (host, account) are skipped automatically."
+            tooltip={t("bulkwhmdrawer.one_account_per_line_or_comma_separated_exis")}
           >
             <Input.TextArea
               rows={8}

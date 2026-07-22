@@ -2,6 +2,7 @@
 // skeleton: the tree of starter files copied into every new domain's web
 // root on creation. List + delete on the left; "Add file" uploads a file
 // (stored base64) at an operator-chosen relative path.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Button,
@@ -53,6 +54,7 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export const AccountSkeletonCard = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [relPath, setRelPath] = useState("");
@@ -101,7 +103,7 @@ export const AccountSkeletonCard = () => {
 
   return (
     <Card
-      title="Account skeleton"
+      title={t("accountskeletoncard.account_skeleton")}
       style={{ marginBottom: 16 }}
       extra={
         <Button icon={<PlusOutlined />} onClick={() => setAdding(true)}>
@@ -151,11 +153,11 @@ export const AccountSkeletonCard = () => {
       />
 
       <Modal
-        title="Add skeleton file"
+        title={t("accountskeletoncard.add_skeleton_file")}
         open={adding}
         onCancel={() => setAdding(false)}
         onOk={() => put.mutate()}
-        okText="Add"
+        okText={t("accountskeletoncard.add")}
         confirmLoading={put.isPending}
         okButtonProps={{ disabled: !pending }}
       >
@@ -170,7 +172,7 @@ export const AccountSkeletonCard = () => {
             <Button icon={<UploadOutlined />}>Choose file</Button>
           </Upload>
           <Input
-            addonBefore="Path"
+            addonBefore={t("accountskeletoncard.path")}
             placeholder={pending?.name ? pending.name : "index.html or css/style.css"}
             value={relPath}
             onChange={(e) => setRelPath(e.target.value)}

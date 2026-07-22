@@ -1,5 +1,6 @@
 // AdminDockerAppsPage — landing page for the M48 marketplace.
 // Two tabs: Catalog (browse + install) and Installed (lifecycle).
+import { useTranslation } from "react-i18next";
 import { Alert, App, Avatar, Button, Col, Drawer, Empty, Input, Modal, Row, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -51,6 +52,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export const AdminDockerAppsPage = () => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const { mode } = useThemeMode();
   const qc = useQueryClient();
@@ -168,14 +170,14 @@ export const AdminDockerAppsPage = () => {
                       <Col xs={24} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(207, 19, 34, 0.12)" iconColor="#cf1322" Icon={AppstoreOutlined}
-                          label="Installed Apps" value={installedCount}
+                          label={t("admindockerappspage.installed_apps")} value={installedCount}
                           subtitle={<Typography.Text type="secondary">{catalogCount} in catalog</Typography.Text>}
                         />
                       </Col>
                       <Col xs={24} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(114, 46, 209, 0.12)" iconColor="#722ed1" Icon={SyncOutlined}
-                          label="Updates Available" value={updateCount}
+                          label={t("admindockerappspage.updates_available")} value={updateCount}
                           subtitle={updateCount > 0
                             ? <Typography.Text type="warning">Needs attention</Typography.Text>
                             : <Typography.Text type="secondary">Up to date</Typography.Text>}
@@ -184,14 +186,14 @@ export const AdminDockerAppsPage = () => {
                       <Col xs={24} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(63, 134, 0, 0.12)" iconColor="#3f8600" Icon={PlayCircleOutlined}
-                          label="Running" value={runningCount}
+                          label={t("admindockerappspage.running")} value={runningCount}
                           subtitle={<Typography.Text type="secondary">{pct(runningCount)}% of installed</Typography.Text>}
                         />
                       </Col>
                       <Col xs={24} sm={12} lg={6}>
                         <StatCard
                           iconBg="rgba(212, 107, 8, 0.12)" iconColor="#d46b08" Icon={PauseCircleOutlined}
-                          label="Stopped" value={stoppedCount}
+                          label={t("admindockerappspage.stopped")} value={stoppedCount}
                           subtitle={<Typography.Text type="secondary">{pct(stoppedCount)}% of installed</Typography.Text>}
                         />
                       </Col>
@@ -200,7 +202,7 @@ export const AdminDockerAppsPage = () => {
                 })()}
               <Input.Search
                 allowClear
-                placeholder="Search by name"
+                placeholder={t("admindockerappspage.search_by_name")}
                 value={installedSearch}
                 onChange={(e) => setInstalledSearch(e.target.value)}
                 style={{ marginBottom: 16, maxWidth: 360 }}
@@ -228,7 +230,7 @@ export const AdminDockerAppsPage = () => {
                   emptyText: (
                     <Empty
                       image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      description="No installed apps yet"
+                      description={t("admindockerappspage.no_installed_apps_yet")}
                     >
                       <Button type="primary" onClick={() => setActiveTab("catalog")}>
                         Browse Catalog
@@ -473,7 +475,7 @@ export const AdminDockerAppsPage = () => {
         onClose={() => setBackupsAppId(null)}
       />
       <Drawer
-        title="Credentials"
+        title={t("admindockerappspage.credentials")}
         open={credsAppId !== null}
         onClose={() => setCredsAppId(null)}
         width={760}

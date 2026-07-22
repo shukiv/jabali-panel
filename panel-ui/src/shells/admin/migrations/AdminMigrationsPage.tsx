@@ -10,6 +10,7 @@
 //
 // Backed by panel-api/internal/api/admin_migrations.go (commit
 // 5981541a).
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import {
@@ -81,6 +82,7 @@ const SOURCE_BADGE: Record<string, { color: string; label: string }> = {
 };
 
 export const AdminMigrationsPage = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -220,7 +222,7 @@ export const AdminMigrationsPage = () => {
   const migrationsToolbar = (
           <Space wrap>
             <Tooltip
-              title="Allow SSH to RFC1918 / loopback / link-local source hosts. Default off for production safety. Restart panel + agent after flipping to pick up the change."
+              title={t("adminmigrationspage.allow_ssh_to_rfc1918_loopback_link_local_sou")}
             >
               <Space size={6}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -318,8 +320,8 @@ export const AdminMigrationsPage = () => {
             {r.batch_id ? (
               <Popconfirm
                 title={`Cancel entire batch ${r.batch_id.slice(-6)}?`}
-                description="Cancels every non-terminal job sharing this batch_id."
-                okText="Cancel batch"
+                description={t("adminmigrationspage.cancels_every_non_terminal_job_sharing_this")}
+                okText={t("adminmigrationspage.cancel_batch")}
                 okButtonProps={{ danger: true }}
                 onConfirm={() => cancelBatch.mutate({ batchId: r.batch_id! })}
               >
@@ -339,7 +341,7 @@ export const AdminMigrationsPage = () => {
       <Alert
         type="info"
         showIcon
-        message="Account migration importer (M35)"
+        message={t("adminmigrationspage.account_migration_importer_m35")}
         description={
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             Read-only view of the migration_jobs table. Start new migrations
@@ -370,7 +372,7 @@ export const AdminMigrationsPage = () => {
 
       <Card
         size="small"
-        title="Recent migration jobs"
+        title={t("adminmigrationspage.recent_migration_jobs")}
         extra={screens.md ? migrationsToolbar : undefined}
       >
         {!screens.md ? (
@@ -387,13 +389,13 @@ export const AdminMigrationsPage = () => {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="No migrations yet"
+                description={t("adminmigrationspage.no_migrations_yet")}
               />
             ),
           }}
         >
           <Table.Column<MigrationJob>
-            title="Source"
+            title={t("adminmigrationspage.source")}
             dataIndex="source_kind"
             sorter={(a, b) => (a.source_kind ?? "").localeCompare(b.source_kind ?? "")}
             render={(k: string) => {
@@ -402,7 +404,7 @@ export const AdminMigrationsPage = () => {
             }}
           />
           <Table.Column<MigrationJob>
-            title="Source host"
+            title={t("adminmigrationspage.source_host")}
             dataIndex="source_host"
             sorter={(a, b) => (a.source_host ?? "").localeCompare(b.source_host ?? "")}
             render={(s: string) => (
@@ -412,15 +414,15 @@ export const AdminMigrationsPage = () => {
             )}
           />
           <Table.Column<MigrationJob>
-            title="Batch"
+            title={t("adminmigrationspage.batch")}
             dataIndex="batch_id"
             sorter={(a, b) => (a.batch_id ?? "").localeCompare(b.batch_id ?? "")}
             render={(b: string | null) =>
               b ? (
                 <Popconfirm
                   title={`Cancel entire batch ${b.slice(-6)}?`}
-                  description="Cancels every non-terminal job sharing this batch_id."
-                  okText="Cancel batch"
+                  description={t("adminmigrationspage.cancels_every_non_terminal_job_sharing_this")}
+                  okText={t("adminmigrationspage.cancel_batch")}
                   okButtonProps={{ danger: true }}
                   onConfirm={() => cancelBatch.mutate({ batchId: b })}
                 >
@@ -439,7 +441,7 @@ export const AdminMigrationsPage = () => {
             }
           />
           <Table.Column<MigrationJob>
-            title="Source user"
+            title={t("adminmigrationspage.source_user")}
             dataIndex="source_user"
             sorter={(a, b) => (a.source_user ?? "").localeCompare(b.source_user ?? "")}
             render={(s: string) => (
@@ -449,7 +451,7 @@ export const AdminMigrationsPage = () => {
             )}
           />
           <Table.Column<MigrationJob>
-            title="State"
+            title={t("adminmigrationspage.state")}
             dataIndex="state"
             sorter={(a, b) => (a.state ?? "").localeCompare(b.state ?? "")}
             render={(s: string) => {
@@ -458,13 +460,13 @@ export const AdminMigrationsPage = () => {
             }}
           />
           <Table.Column<MigrationJob>
-            title="Started"
+            title={t("adminmigrationspage.started")}
             dataIndex="started_at"
             sorter={(a, b) => (a.started_at ? +new Date(a.started_at) : 0) - (b.started_at ? +new Date(b.started_at) : 0)}
             render={(s: string) => shortDateTime(s)}
           />
           <Table.Column<MigrationJob>
-            title="Ended"
+            title={t("adminmigrationspage.ended")}
             dataIndex="ended_at"
             sorter={(a, b) => (a.ended_at ? +new Date(a.ended_at) : 0) - (b.ended_at ? +new Date(b.ended_at) : 0)}
             render={(s: string | null) =>
@@ -481,13 +483,13 @@ export const AdminMigrationsPage = () => {
           <List
             dataSource={rows}
             loading={list.isLoading}
-            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No migrations yet" /> }}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminmigrationspage.no_migrations_yet")} /> }}
             renderItem={renderMobileJobCard}
           />
         )}
       </Card>
 
-      <Card size="small" title="Per-source-kind support">
+      <Card size="small" title={t("adminmigrationspage.per_source_kind_support")}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Typography.Text>
             <Tag color="green">cPanel</Tag> SSH discovery + pkgacct + full

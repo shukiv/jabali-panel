@@ -5,6 +5,7 @@
 //
 // Polls every 10s when the job is in a non-terminal state so the
 // operator sees stages advance live while the cobra CLI runs.
+import { useTranslation } from "react-i18next";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -105,6 +106,7 @@ function isTerminal(state: string): boolean {
 }
 
 export const AdminMigrationDetailPage = () => {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
@@ -162,7 +164,7 @@ export const AdminMigrationDetailPage = () => {
   }, [id]);
 
   if (!id) {
-    return <Empty description="No migration job selected" />;
+    return <Empty description={t("adminmigrationdetailpage.no_migration_job_selected")} />;
   }
   if (detail.isLoading || !detail.data) {
     return (
@@ -189,38 +191,38 @@ export const AdminMigrationDetailPage = () => {
         </Space>
 
         <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
-          <Descriptions.Item label="Job ID">
+          <Descriptions.Item label={t("adminmigrationdetailpage.job_id")}>
             <Typography.Text code>{job.id}</Typography.Text>
           </Descriptions.Item>
-          <Descriptions.Item label="Source kind">
+          <Descriptions.Item label={t("adminmigrationdetailpage.source_kind")}>
             {job.source_kind}
           </Descriptions.Item>
-          <Descriptions.Item label="Started">
+          <Descriptions.Item label={t("adminmigrationdetailpage.started")}>
             {new Date(job.started_at).toLocaleString()}
           </Descriptions.Item>
-          <Descriptions.Item label="Ended">
+          <Descriptions.Item label={t("adminmigrationdetailpage.ended")}>
             {job.ended_at ? new Date(job.ended_at).toLocaleString() : "—"}
           </Descriptions.Item>
-          <Descriptions.Item label="Target user ID">
+          <Descriptions.Item label={t("adminmigrationdetailpage.target_user_id")}>
             {job.target_user_id ? (
               <Typography.Text code>{job.target_user_id}</Typography.Text>
             ) : (
               "—"
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="Destination user">
+          <Descriptions.Item label={t("adminmigrationdetailpage.destination_user")}>
             {job.dest_user ? job.dest_user : <Typography.Text type="secondary">—</Typography.Text>}
           </Descriptions.Item>
-          <Descriptions.Item label="Destination domain">
+          <Descriptions.Item label={t("adminmigrationdetailpage.destination_domain")}>
             {job.dest_domain ? job.dest_domain : <Typography.Text type="secondary">—</Typography.Text>}
           </Descriptions.Item>
-          <Descriptions.Item label="Last error">
+          <Descriptions.Item label={t("adminmigrationdetailpage.last_error")}>
             {job.last_error ?? "—"}
           </Descriptions.Item>
         </Descriptions>
       </Card>
 
-      <Card size="small" title="Pipeline">
+      <Card size="small" title={t("adminmigrationdetailpage.pipeline")}>
         {(() => {
           const done = STAGE_ORDER.filter((n) => stagesByName.get(n)?.state === "done").length;
           const pct = job.state === "done" ? 100 : Math.round((done / STAGE_ORDER.length) * 100);
@@ -259,9 +261,9 @@ export const AdminMigrationDetailPage = () => {
 
       <DriveCard jobId={job.id} jobState={job.state} jobSourceKind={job.source_kind} />
 
-      <Card size="small" title="Stage timeline">
+      <Card size="small" title={t("adminmigrationdetailpage.stage_timeline")}>
         {stages.length === 0 ? (
-          <Empty description="No stage rows yet" />
+          <Empty description={t("adminmigrationdetailpage.no_stage_rows_yet")} />
         ) : (
           <Space direction="vertical" style={{ width: "100%" }}>
             {stages.map((s) => (
@@ -286,18 +288,18 @@ export const AdminMigrationDetailPage = () => {
                     </Tag>
                   </Space>
                   <Descriptions size="small" column={{ xs: 1, sm: 2 }}>
-                    <Descriptions.Item label="Started">
+                    <Descriptions.Item label={t("adminmigrationdetailpage.started")}>
                       {s.started_at
                         ? new Date(s.started_at).toLocaleString()
                         : "—"}
                     </Descriptions.Item>
-                    <Descriptions.Item label="Ended">
+                    <Descriptions.Item label={t("adminmigrationdetailpage.ended")}>
                       {s.ended_at ? new Date(s.ended_at).toLocaleString() : "—"}
                     </Descriptions.Item>
-                    <Descriptions.Item label="Bytes processed">
+                    <Descriptions.Item label={t("adminmigrationdetailpage.bytes_processed")}>
                       {s.bytes_processed.toLocaleString()}
                     </Descriptions.Item>
-                    <Descriptions.Item label="Error">
+                    <Descriptions.Item label={t("adminmigrationdetailpage.error")}>
                       {s.last_error ?? "—"}
                     </Descriptions.Item>
                   </Descriptions>

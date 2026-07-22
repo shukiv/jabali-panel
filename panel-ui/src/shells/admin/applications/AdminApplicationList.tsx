@@ -5,6 +5,7 @@
 //
 // Status badge styling is inlined from UserApplicationList to keep
 // coupling low and avoid tight dependency on that component.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { useQueryClient } from "@tanstack/react-query";
@@ -144,6 +145,7 @@ const AdminActionsCell = ({
 };
 
 export const AdminApplicationList = () => {
+  const { t } = useTranslation();
   const query = useTableURL<ApplicationInstall>({
     resource: "applications",
     defaultSort: "created_at",
@@ -215,7 +217,7 @@ export const AdminApplicationList = () => {
         >
           <Table.Column<ApplicationInstall>
             dataIndex="domain_name"
-            title="Domain"
+            title={t("adminapplicationlist.domain")}
             key="domain_name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -227,7 +229,7 @@ export const AdminApplicationList = () => {
             filterDropdown={({ confirm, close }) => (
               <div style={{ padding: 8, minWidth: 240 }}>
                 <Input.Search
-                  placeholder="Search by domain or user"
+                  placeholder={t("adminapplicationlist.search_by_domain_or_user")}
                   allowClear
                   defaultValue={query.params.q}
                   onSearch={(value) => {
@@ -268,7 +270,7 @@ export const AdminApplicationList = () => {
           />
           <Table.Column<ApplicationInstall>
             dataIndex="owner_email"
-            title="Owner"
+            title={t("adminapplicationlist.owner")}
             filterIcon={() => (
               <SearchOutlined
                 style={{ color: query.params.q ? "#ef4444" : undefined }}
@@ -277,7 +279,7 @@ export const AdminApplicationList = () => {
             filterDropdown={({ confirm, close }) => (
               <div style={{ padding: 8, minWidth: 240 }}>
                 <Input.Search
-                  placeholder="Search by domain or user"
+                  placeholder={t("adminapplicationlist.search_by_domain_or_user")}
                   allowClear
                   defaultValue={query.params.q}
                   onSearch={(value) => {
@@ -294,11 +296,11 @@ export const AdminApplicationList = () => {
           />
           <Table.Column<ApplicationInstall>
             dataIndex="version"
-            title="Version"
+            title={t("adminapplicationlist.version")}
           />
           <Table.Column<ApplicationInstall>
             dataIndex="status"
-            title="Status"
+            title={t("adminapplicationlist.status")}
             render={(status: ApplicationInstall["status"], record) => {
               const meta = STATUS_META[status] ?? STATUS_META.pending;
               const tag = (
@@ -314,14 +316,14 @@ export const AdminApplicationList = () => {
           />
           <Table.Column<ApplicationInstall>
             dataIndex="created_at"
-            title="Created"
+            title={t("adminapplicationlist.created")}
             key="created_at"
             sorter={{ multiple: 2 }}
             defaultSortOrder="descend"
             render={(date: string) => shortDateTime(date)}
           />
           <Table.Column<ApplicationInstall>
-            title="Actions"
+            title={t("adminapplicationlist.actions")}
             dataIndex="actions"
             render={(_, r) => {
               const appType = r.app_type ?? "wordpress";

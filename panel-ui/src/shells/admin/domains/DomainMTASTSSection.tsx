@@ -10,6 +10,7 @@
 // the reconciler step that fires the agent call. Until then, the UI
 // shows "Policy live in DNS — vhost waiting for SSL renewal" so the
 // operator knows the toggle worked and the wait is intentional.
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Skeleton, Space, Switch, Typography, message } from "antd";
 import { CheckOutlined, CloseOutlined, SafetyOutlined } from "@icons";
@@ -28,6 +29,7 @@ type MTAStsState = {
 type Props = { domainId: string };
 
 export const DomainMTASTSSection = ({ domainId }: Props) => {
+  const { t } = useTranslation();
   const [state, setState] = useState<MTAStsState | null>(null);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
@@ -97,7 +99,7 @@ export const DomainMTASTSSection = ({ domainId }: Props) => {
         <Alert
           type="warning"
           showIcon
-          message="Policy live in DNS — vhost waiting for SSL renewal"
+          message={t("domainmtastssection.policy_live_in_dns_vhost_waiting_for_ssl_ren")}
           description={
             <>
               The TXT and A records are published. The agent will start
@@ -114,8 +116,8 @@ export const DomainMTASTSSection = ({ domainId }: Props) => {
         <Alert
           type="info"
           showIcon
-          message="MTA-STS protects inbound mail from TLS downgrade"
-          description="When enabled, jabali publishes a policy telling every sending mail server to require TLS for messages to this domain. Two DNS records (TXT + A) appear and the agent serves the policy at https://mta-sts.<domain>/.well-known/mta-sts.txt. Cert renewal handles the SAN; no manual steps."
+          message={t("domainmtastssection.mta_sts_protects_inbound_mail_from_tls_downg")}
+          description={t("domainmtastssection.when_enabled_jabali_publishes_a_policy_telli")}
         />
       )}
     </Space>

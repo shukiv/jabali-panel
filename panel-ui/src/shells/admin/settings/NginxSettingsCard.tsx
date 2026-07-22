@@ -7,6 +7,7 @@
 // The Advanced free-form box drops raw directives into the http{} fragment.
 // It is gated only by nginx -t, so a syntactically-valid-but-wrong directive
 // can still degrade the server — hence the red warning.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   App,
@@ -55,6 +56,7 @@ const sizeRule = { pattern: SIZE_RE, message: "e.g. 50m, 1g, or a number" };
 const timeRule = { pattern: TIME_RE, message: "e.g. 60s, 300, 5m" };
 
 export function NginxSettingsCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [form] = Form.useForm<NginxSettings>();
   const [loaded, setLoaded] = useState(false);
@@ -94,14 +96,14 @@ export function NginxSettingsCard() {
 
   if (!loaded) {
     return (
-      <Card title="Nginx">
+      <Card title={t("nginxsettingscard.nginx")}>
         <Spin />
       </Card>
     );
   }
 
   return (
-    <Card title="Nginx">
+    <Card title={t("nginxsettingscard.nginx")}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Server-wide nginx tunables applied at <code>http&#123;&#125;</code> scope (individual
         sites may override per-directive). Changes are validated with{" "}
@@ -111,23 +113,23 @@ export function NginxSettingsCard() {
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item
           name="nginx_client_max_body_size"
-          label="Max upload size (client_max_body_size)"
-          tooltip="Largest request body nginx accepts before 413. Raise it for big-upload apps (ownCloud, Nextcloud). e.g. 50m, 2g."
+          label={t("nginxsettingscard.max_upload_size_client_max_body_size")}
+          tooltip={t("nginxsettingscard.largest_request_body_nginx_accepts_before_41")}
           rules={[sizeRule]}
         >
           <Input style={{ maxWidth: 200 }} placeholder="50m" />
         </Form.Item>
 
         <Space size="large" wrap>
-          <Form.Item name="nginx_server_tokens" label="Show nginx version (server_tokens)" valuePropName="checked" tooltip="Off hides the nginx version in responses + error pages (recommended).">
+          <Form.Item name="nginx_server_tokens" label={t("nginxsettingscard.show_nginx_version_server_tokens")} valuePropName="checked" tooltip={t("nginxsettingscard.off_hides_the_nginx_version_in_responses_err")}>
             <Switch checkedChildren="on" unCheckedChildren="off" />
           </Form.Item>
-          <Form.Item name="nginx_gzip" label="Gzip compression" valuePropName="checked">
+          <Form.Item name="nginx_gzip" label={t("nginxsettingscard.gzip_compression")} valuePropName="checked">
             <Switch checkedChildren="on" unCheckedChildren="off" />
           </Form.Item>
         </Space>
 
-        <Form.Item name="nginx_keepalive_timeout" label="Keepalive timeout" rules={[timeRule]}>
+        <Form.Item name="nginx_keepalive_timeout" label={t("nginxsettingscard.keepalive_timeout")} rules={[timeRule]}>
           <Input style={{ maxWidth: 160 }} placeholder="65s" />
         </Form.Item>
 
@@ -180,13 +182,13 @@ export function NginxSettingsCard() {
 
         <Divider plain>FastCGI cache capacity (GH #634)</Divider>
         <Space wrap>
-          <Form.Item name="nginx_cache_max_size_gb" label="max_size (GB)" tooltip="Shared FastCGI cache max on-disk size">
+          <Form.Item name="nginx_cache_max_size_gb" label="max_size (GB)" tooltip={t("nginxsettingscard.shared_fastcgi_cache_max_on_disk_size")}>
             <InputNumber min={1} max={1024} style={{ width: 140 }} />
           </Form.Item>
-          <Form.Item name="nginx_cache_keyzone_mb" label="keys_zone (MB)" tooltip="Cache key metadata zone (~8000 keys/MB)">
+          <Form.Item name="nginx_cache_keyzone_mb" label="keys_zone (MB)" tooltip={t("nginxsettingscard.cache_key_metadata_zone_8000_keys_mb")}>
             <InputNumber min={8} max={1024} style={{ width: 140 }} />
           </Form.Item>
-          <Form.Item name="nginx_cache_inactive_min" label="inactive (min)" tooltip="Evict entries not accessed within this window">
+          <Form.Item name="nginx_cache_inactive_min" label="inactive (min)" tooltip={t("nginxsettingscard.evict_entries_not_accessed_within_this_windo")}>
             <InputNumber min={1} max={1440} style={{ width: 140 }} />
           </Form.Item>
         </Space>
@@ -198,7 +200,7 @@ export function NginxSettingsCard() {
           type="error"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Raw nginx directives — can make the server unstable"
+          message={t("nginxsettingscard.raw_nginx_directives_can_make_the_server_uns")}
           description={
             <>
               Directives below are inserted verbatim into the http&#123;&#125; block. They are
@@ -210,7 +212,7 @@ export function NginxSettingsCard() {
         />
         <Form.Item
           name="nginx_custom_http"
-          label="Custom http{} directives"
+          label={t("nginxsettingscard.custom_http_directives")}
           rules={[{ max: 4000, message: "Max 4000 characters" }]}
         >
           <Input.TextArea

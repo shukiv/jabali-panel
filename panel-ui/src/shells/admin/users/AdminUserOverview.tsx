@@ -11,6 +11,7 @@
 //      the card starts impersonation (#545) and opens the matching
 //      /jabali-panel/... page AS that user (same flow as the Users-table
 //      "Log in as user" action, ADR-0128).
+import { useTranslation } from "react-i18next";
 import {
   ApiOutlined,
   AppstoreOutlined,
@@ -98,6 +99,7 @@ const USER_PANEL_CARDS: { key: string; label: string; icon: React.ReactNode; pat
 ];
 
 export function AdminUserOverview() {
+  const { t } = useTranslation();
   const { id = "" } = useParams();
   const [impersonating, setImpersonating] = useState(false);
 
@@ -141,7 +143,7 @@ export function AdminUserOverview() {
     return <Skeleton active paragraph={{ rows: 4 }} />;
   }
   if (userQ.isError || !userQ.data) {
-    return <Alert type="error" showIcon message="User not found" />;
+    return <Alert type="error" showIcon message={t("adminuseroverview.user_not_found")} />;
   }
 
   const user = userQ.data;

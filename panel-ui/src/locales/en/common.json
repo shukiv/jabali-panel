@@ -184,5 +184,1033 @@
       "users": "Search by email, username, or name",
       "admins": "Search by email or name"
     }
+  },
+  "adminapplicationlist": {
+    "actions": "Actions",
+    "created": "Created",
+    "domain": "Domain",
+    "owner": "Owner",
+    "search_by_domain_or_user": "Search by domain or user",
+    "status": "Status",
+    "version": "Version"
+  },
+  "adminauditlist": {
+    "action": "Action",
+    "actor": "Actor",
+    "chain_broken_tamper_detected": "Chain BROKEN — tamper detected",
+    "integrity_retention": "Integrity & retention",
+    "prune": "Prune",
+    "result": "Result",
+    "target": "Target",
+    "this_permanently_deletes_old_audit_records_t": "This permanently deletes old audit records. The prune itself is recorded as an audit event (ADR-0106)."
+  },
+  "adminautomationtokenspage": {
+    "actions": "Actions",
+    "copy_it_now_and_store_it_in_your_automation": "Copy it now and store it in your automation's secret manager. The server only keeps an encrypted copy. If you lose it, revoke this token and mint a new one.",
+    "created": "Created",
+    "external_callers_using_this_token_will_start": "External callers using this token will start failing immediately. Revoke is soft (audit-only); the row stays in this list with a 'revoked' tag.",
+    "last_used": "Last Used",
+    "mint_server_api_token": "Mint Server API Token",
+    "name": "Name",
+    "revoke": "Revoke",
+    "scopes": "Scopes",
+    "status": "Status",
+    "this_is_the_only_time_the_secret_will_be_sho": "This is the only time the secret will be shown.",
+    "token_id": "Token ID",
+    "writes_enabled": "Writes enabled"
+  },
+  "backuplogstab": {
+    "backup_logs_unavailable": "Backup logs unavailable",
+    "from": "From",
+    "kind_contains": "Kind contains",
+    "status": "Status",
+    "the_backup_service_isn_t_responding_try_agai": "The backup service isn't responding. Try again in a moment.",
+    "user_id": "User ID"
+  },
+  "backupsettingstab": {
+    "max_concurrent_backup_jobs": "Max concurrent backup jobs",
+    "tenant_scheduled_backup_time_cron": "Tenant scheduled-backup time (cron)",
+    "tenants_choose_what_to_back_up_and_where_you": "Tenants choose what to back up and where; you own when. 5-field cron (min hour day-of-month month day-of-week), e.g. '0 3 * * *' = daily at 03:00 UTC.",
+    "the_dispatcher_runs_at_most_this_many_backup": "The dispatcher runs at most this many backup_jobs at once. Scheduled jobs queue and start as slots free."
+  },
+  "createbackupdrawer": {
+    "backups_run_as_a_goroutine_inside_panel_agen": "Backups run as a goroutine inside panel-agent.",
+    "compression": "Compression",
+    "content": "Content",
+    "create_backup": "Create backup",
+    "databases_comma_separated_optional": "Databases (comma-separated, optional)",
+    "destination": "Destination",
+    "folders_comma_separated": "Folders (comma-separated)",
+    "mailboxes_comma_separated_optional": "Mailboxes (comma-separated, optional)",
+    "pick_a_destination": "Pick a destination",
+    "pick_a_user": "Pick a user",
+    "type": "Type",
+    "user": "User"
+  },
+  "destinationstab": {
+    "actions": "Actions",
+    "backend": "Backend",
+    "credentials": "Credentials",
+    "enabled": "Enabled",
+    "name": "Name",
+    "url": "URL"
+  },
+  "encryptionkeycard": {
+    "losing_this_key_loses_every_snapshot": "Losing this key loses every snapshot."
+  },
+  "recoveryhandofftab": {
+    "bare_metal_full_host_restore_overwrites_the": "Bare-metal / full-host restore overwrites the running host and is run from the root shell, never as a one-click browser action. Use the template below on a clean OS install.",
+    "bare_metal_recovery_sequence": "Bare-metal recovery sequence",
+    "deleted_user_restore_panel_user_row_is_gone": "Deleted-user restore (panel user row is gone)",
+    "every_restore_flow_above_requires_the_restic": "Every restore flow above requires the restic master encryption key for the repository. Reveal and stash it now from the Encryption key tab — without it, no snapshot can be decrypted and recovery is impossible.",
+    "interactive_pick_destination_snapshot_and_us": "Interactive — pick destination, snapshot, and user from real lists",
+    "normal_account_restore_runs_from_the_backups": "Normal account restore runs from the Backups tab. The advanced and disaster-recovery flows below run from the root shell on the host — they are intentionally CLI-only so they work even when the panel itself is down.",
+    "restore_what_the_panel_does_vs_what_the_cli": "Restore: what the panel does vs. what the CLI does",
+    "staging_only_materialize_to_staging_do_not_a": "Staging-only (materialize to staging, do not apply)",
+    "system_restore_is_not_available_in_the_brows": "System restore is not available in the browser",
+    "you_need_the_backup_encryption_key_to_restor": "You need the backup encryption key to restore"
+  },
+  "schedulestab": {
+    "actions": "Actions",
+    "create_at_least_one_destination_before_addin": "Create at least one destination before adding schedules.",
+    "cron": "Cron",
+    "destinations": "Destinations",
+    "enabled": "Enabled",
+    "last_run": "Last run",
+    "next_run": "Next run",
+    "users": "Users"
+  },
+  "cacheoverviewpage": {
+    "cache_overview_page_cache_hit_ratio_by_domai": "Cache overview — page-cache hit ratio by domain"
+  },
+  "fleetcachedoctor": {
+    "re_provisions_cache_constants_acl_drop_in_fo": "Re-provisions cache (constants, ACL, drop-in) for every drifted site.",
+    "refresh": "Refresh",
+    "refresh_the_jabali_cache_plugin_on_every_cac": "Refresh the jabali-cache plugin on every cache-enabled site?",
+    "repair": "Repair",
+    "repair_all_drifted_installs": "Repair all drifted installs?"
+  },
+  "admincreatecronmodal": {
+    "choose_tenant": "Choose tenant",
+    "command": "Command",
+    "custom_cron_expression": "Custom cron expression",
+    "name": "Name",
+    "new_cron_job_as_tenant": "New cron job (as tenant)",
+    "run_as": "Run as",
+    "schedule": "Schedule",
+    "tenant": "Tenant"
+  },
+  "admincronlist": {
+    "no_cron_jobs_yet": "No cron jobs yet",
+    "search_by_name_command_schedule_or_owner": "Search by name, command, schedule, or owner"
+  },
+  "databaseuserdrawer": {
+    "create_database_user": "Create database user",
+    "database_user_created": "Database user created",
+    "engine": "Engine",
+    "mariadb_is_the_default_postgresql_must_be_en": "MariaDB is the default. PostgreSQL must be enabled in Server Settings.",
+    "the_final_mariadb_username_will_be_your_pane": "The final MariaDB username will be your panel username plus an underscore plus this value (e.g. alice_api).",
+    "username": "Username"
+  },
+  "databaseuserslist": {
+    "actions": "Actions",
+    "created": "Created",
+    "database_privileges": "Database Privileges",
+    "engine": "Engine",
+    "user": "User"
+  },
+  "databasecreate": {
+    "admins_create_databases_without_a_username_p": "Admins create databases without a username prefix. When a non-admin user creates one, the server prepends their username automatically (e.g. `alice_wp`).",
+    "name": "Name"
+  },
+  "databaselist": {
+    "actions": "Actions",
+    "charset": "Charset",
+    "created": "Created",
+    "database": "Database",
+    "engine": "Engine",
+    "no_databases_yet": "No databases yet",
+    "user_id": "User ID"
+  },
+  "dnszonesoverviewpage": {
+    "actions": "Actions",
+    "dns_zones_are_provisioned_automatically_when": "DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings.",
+    "dnssec": "DNSSEC",
+    "domain_name": "Domain Name",
+    "domain_registration_expiry_from_whois": "Domain registration expiry (from WHOIS)",
+    "expiration": "Expiration",
+    "no_dns_zones_yet_create_a_domain_to_manage_i": "No DNS zones yet — create a domain to manage its DNS",
+    "owner": "Owner",
+    "records": "Records",
+    "ttl": "TTL",
+    "zone_status": "Zone Status"
+  },
+  "admindockerappspage": {
+    "credentials": "Credentials",
+    "installed_apps": "Installed Apps",
+    "no_installed_apps_yet": "No installed apps yet",
+    "running": "Running",
+    "search_by_name": "Search by name",
+    "stopped": "Stopped",
+    "updates_available": "Updates Available"
+  },
+  "backupsdrawer": {
+    "backups": "Backups",
+    "container_will_be_stopped_files_restored_con": "Container will be stopped, files restored, container brought back up.",
+    "phase_8_1_restic_via_env_vars": "Phase 8.1: restic via env vars",
+    "restore": "Restore",
+    "restore_this_snapshot": "Restore this snapshot?"
+  },
+  "editdrawer": {
+    "cpu": "CPU",
+    "domain": "Domain",
+    "limits_update_mode_can_still_be_saved_ports": "Limits + update mode can still be saved; ports/domain edits will return 409 conflict while the container is running.",
+    "memory": "Memory",
+    "pick_from_the_panel_s_domains_list_leave_emp": "Pick from the panel's domains list. Leave empty to drop the managed-domain row.",
+    "pids": "PIDs",
+    "select_a_domain": "Select a domain",
+    "stop_the_container_before_editing_ports_or_d": "Stop the container before editing ports or domain",
+    "update_mode": "Update mode"
+  },
+  "envsection": {
+    "copy": "Copy",
+    "mints_a_new_secret_and_recreates_the_contain": "Mints a new secret and recreates the container.",
+    "recreate_the_container": "Recreate the container?",
+    "regenerate": "Regenerate",
+    "save_recreate": "Save & recreate",
+    "saving_applies_the_new_values_by_recreating": "Saving applies the new values by recreating the container (brief downtime)."
+  },
+  "execdrawer": {
+    "admin_only": "Admin-only",
+    "exec_command": "Exec command",
+    "runs_sh_c_command_in_the_first_service_of_th": "Runs `sh -c <command>` in the first service of the compose project. No TTY, no shell history. Use one command at a time."
+  },
+  "installdrawer": {
+    "backup_destination": "Backup destination",
+    "cpu": "CPU",
+    "domain": "Domain",
+    "hostname_to_attach_to_the_loopback_bound_por": "Hostname to attach to the loopback-bound port via nginx. Pick from the panel's domains list -- a vhost gets auto-rendered on save.",
+    "inherit_env_var_fallback": "Inherit env-var fallback",
+    "install_name": "Install name",
+    "memory": "Memory",
+    "per_install_identifier_combined_with_the_cat": "Per-install identifier. Combined with the catalog slug to form a unique data root + container name, so the same catalog app can be installed multiple times side-by-side.",
+    "pick_a_destination_from_server_settings_back": "Pick a destination from Server Settings -> Backups. Leave empty to fall back to JABALI_RESTIC_REPO env vars (Phase 8.1).",
+    "pids": "PIDs",
+    "select_a_domain": "Select a domain",
+    "update_mode": "Update mode"
+  },
+  "maintenancetab": {
+    "build_cache": "Build cache",
+    "containers": "Containers",
+    "disk_usage": "Disk usage",
+    "images": "Images",
+    "prune": "Prune",
+    "reclaimable": "Reclaimable",
+    "volumes": "Volumes"
+  },
+  "domaincreate": {
+    "adds_a_www_cname_pointing_at_the_domain_apex": "Adds a www CNAME pointing at the domain apex. Off by default — leave unchecked for subdomains or domains that don't serve a www host.",
+    "doc_root": "Doc Root",
+    "google_dkim_value": "Google DKIM value",
+    "leave_empty_for_auto_generated_path": "Leave empty for auto-generated path",
+    "let_s_encrypt_recommended_self_signed_or_non": "Let's Encrypt (recommended), self-signed, or none (HTTP only). Custom certs are uploaded after create from the domain's SSL settings.",
+    "mail": "Mail",
+    "microsoft_365_tenant": "Microsoft 365 tenant",
+    "name": "Name",
+    "optional_paste_the_google_domainkey_txt_valu": "Optional. Paste the google._domainkey TXT value from Google Admin. MX/SPF are added automatically.",
+    "optional_your_tenant_onmicrosoft_com_adds_th": "Optional. Your <tenant>.onmicrosoft.com — adds the selector1/2 DKIM CNAMEs. MX/SPF/autodiscover are added automatically.",
+    "select_a_user": "Select a user",
+    "tls_certificate": "TLS certificate",
+    "user": "User",
+    "where_this_domain_s_email_is_hosted_none_and": "Where this domain's email is hosted. 'None' and the external providers skip Jabali's mail DNS records and mail certificate SANs."
+  },
+  "domaindeliverabilitysection": {
+    "deliverability_score": "Deliverability score",
+    "deliverability_score_unavailable_for_this_do": "Deliverability score unavailable for this domain"
+  },
+  "domaindirectoryprivacysection": {
+    "authentication_name": "Authentication name",
+    "delete": "Delete",
+    "delete_this_rule_and_all_its_credentials": "Delete this rule and all its credentials?",
+    "delete_this_user": "Delete this user?",
+    "directory_under_the_docroot_to_protect_e_g_s": "Directory under the docroot to protect (e.g. /secret).",
+    "label_shown_in_the_browser_s_basic_auth_popu": "Label shown in the browser's Basic Auth popup.",
+    "password": "Password",
+    "path": "Path",
+    "per_directory_password_protection": "Per-directory password protection",
+    "user": "User",
+    "username": "Username"
+  },
+  "domainedit": {
+    "doc_root": "Doc Root",
+    "name": "Name",
+    "panel_hostname_domain_mail_only": "Panel hostname domain (mail-only)"
+  },
+  "domainemailsection": {
+    "a_fresh_dkim_keypair_is_generated_and_the_dn": "A fresh DKIM keypair is generated and the DNS TXT record changes. Remote receivers may need propagation time before they accept the new signature; the old key is kept as a backup.",
+    "copy_value": "Copy value",
+    "dkim_key_missing": "DKIM key missing",
+    "dns_autoconfig_partially_applied": "DNS autoconfig partially applied",
+    "dns_records": "DNS records",
+    "email_is_enabled_but_no_dkim_public_key_is_s": "Email is enabled but no DKIM public key is stored. Toggle off and back on to regenerate.",
+    "failed_to_load_email_state": "Failed to load email state",
+    "rotate": "Rotate",
+    "rotate_dkim_key": "Rotate DKIM key?"
+  },
+  "domainipaclsection": {
+    "action": "Action",
+    "cidr": "CIDR",
+    "comment": "Comment",
+    "delete": "Delete",
+    "delete_this_rule": "Delete this rule?",
+    "per_domain_ip_allow_deny": "Per-domain IP allow / deny",
+    "priority": "Priority"
+  },
+  "domainlist": {
+    "actions": "Actions",
+    "bw_30d": "BW (30d)",
+    "domain": "Domain",
+    "more_actions": "More actions",
+    "no_domains_yet": "No domains yet",
+    "redirect": "Redirect",
+    "ssl": "SSL",
+    "status": "Status",
+    "user": "User"
+  },
+  "domainmtastssection": {
+    "mta_sts_protects_inbound_mail_from_tls_downg": "MTA-STS protects inbound mail from TLS downgrade",
+    "policy_live_in_dns_vhost_waiting_for_ssl_ren": "Policy live in DNS — vhost waiting for SSL renewal",
+    "when_enabled_jabali_publishes_a_policy_telli": "When enabled, jabali publishes a policy telling every sending mail server to require TLS for messages to this domain. Two DNS records (TXT + A) appear and the agent serves the policy at https://mta-sts.<domain>/.well-known/mta-sts.txt. Cert renewal handles the SAN; no manual steps."
+  },
+  "domainmailprovidersection": {
+    "mail_provider": "Mail provider"
+  },
+  "domainmailtlssection": {
+    "clears_backoff_and_dispatches_ssl_mail_issue": "Clears backoff and dispatches ssl.mail.issue on the next reconciler tick"
+  },
+  "domainmailboxessection": {
+    "a_send_only_mailbox_authenticates_for_smtp_s": "A send-only mailbox authenticates for SMTP submission but never receives or stores mail — inbound is rejected. Useful for per-service notification credentials.",
+    "create": "Create",
+    "create_mailbox": "Create mailbox",
+    "domain": "Domain",
+    "email_isn_t_enabled_on_this_domain": "Email isn't enabled on this domain",
+    "leave_blank_to_auto_generate_generated_passw": "Leave blank to auto-generate. Generated passwords are shown exactly once.",
+    "local_part": "Local part",
+    "mailboxes_can_only_be_created_once_email_is": "Mailboxes can only be created once email is enabled. Usually this happens automatically when the domain is created — click below to retry.",
+    "only_domains_with_email_enabled_appear_here": "Only domains with email enabled appear here.",
+    "password": "Password",
+    "pick_a_domain": "Pick a domain",
+    "quota_mib": "Quota (MiB)"
+  },
+  "domainpathbrowsermodal": {
+    "no_subfolders_here": "No subfolders here.",
+    "pick_a_folder_under_the_docroot": "Pick a folder under the docroot"
+  },
+  "domainsslsection": {
+    "acme_issuance_failed": "ACME issuance failed",
+    "install": "Install",
+    "paste_the_full_chain_certificate_leaf_interm": "Paste the full-chain certificate (leaf + intermediates) and the matching private key in PEM format. The key is stored on the server and never shown again.",
+    "set_an_admin_email_to_use_ssl": "Set an admin email to use SSL",
+    "this_domain_is_using_a_self_signed_certifica": "This domain is using a self-signed certificate while Let's Encrypt issuance retries. Browsers will show a security warning until the real cert is issued.",
+    "upload_custom_certificate": "Upload custom certificate",
+    "using_self_signed_certificate": "Using self-signed certificate"
+  },
+  "domainskipautosantoggle": {
+    "skip_auto_added_san_names": "Skip auto-added SAN names"
+  },
+  "adminiplist": {
+    "actions": "Actions",
+    "address": "Address",
+    "bound": "Bound",
+    "default": "Default",
+    "family": "Family",
+    "ip_is_in_use": "IP is in use",
+    "label": "Label",
+    "no_managed_ips_yet": "No managed IPs yet",
+    "status": "Status",
+    "user_selectable": "User-selectable"
+  },
+  "logstreammodal": {
+    "goaccess_dashboard": "GoAccess Dashboard"
+  },
+  "admingroupstab": {
+    "no_groups": "No groups"
+  },
+  "adminmailpage": {
+    "leave_blank_to_auto_generate_auto_generated": "Leave blank to auto-generate. Auto-generated passwords are shown exactly once.",
+    "mailbox_password": "Mailbox password",
+    "new_password": "New password",
+    "no_mailboxes": "No mailboxes",
+    "search_email_name_domain_owner": "Search email, name, domain, owner",
+    "set_password": "Set password"
+  },
+  "maildeliverabilitypage": {
+    "each_of_the_four_signals_can_subtract_up_to": "Each of the four signals can subtract up to 25 points from a clean 100. The signals come from M47: RBL listings of the public IP, DKIM-failing buckets in inbound DMARC RUA reports, TLS-session failures in TLS-RPT reports, and abuse-feedback (ARF) reports from receiver postmasters. All counted over the last 7 days.",
+    "failed_to_load_deliverability_score": "Failed to load deliverability score",
+    "how_this_score_works": "How this score works",
+    "mail_deliverability_server_wide_score": "Mail deliverability — server-wide score"
+  },
+  "mailthrottlespage": {
+    "each_row_converges_into_a_stalwart_mtaoutbou": "Each row converges into a Stalwart MtaOutboundThrottle object on the next reconciler tick. 0 = unlimited. v1 enforces the hourly cap (Stalwart's rate object takes one window); daily cap is logged but not enforced until a later wave splits it into a paired object.",
+    "enabled": "Enabled",
+    "max_per_day_logged_only_v1": "Max per day (logged only, v1)",
+    "max_per_hour_0_unlimited": "Max per hour (0 = unlimited)",
+    "per_account_per_domain_server_wide_outbound": "Per-account / per-domain / server-wide outbound rate caps",
+    "scope": "Scope",
+    "scope_ref_ulid": "Scope ref (ULID)"
+  },
+  "adminmigrationdetailpage": {
+    "bytes_processed": "Bytes processed",
+    "destination_domain": "Destination domain",
+    "destination_user": "Destination user",
+    "ended": "Ended",
+    "error": "Error",
+    "job_id": "Job ID",
+    "last_error": "Last error",
+    "no_migration_job_selected": "No migration job selected",
+    "no_stage_rows_yet": "No stage rows yet",
+    "pipeline": "Pipeline",
+    "source_kind": "Source kind",
+    "stage_timeline": "Stage timeline",
+    "started": "Started",
+    "target_user_id": "Target user ID"
+  },
+  "adminmigrationspage": {
+    "account_migration_importer_m35": "Account migration importer (M35)",
+    "allow_ssh_to_rfc1918_loopback_link_local_sou": "Allow SSH to RFC1918 / loopback / link-local source hosts. Default off for production safety. Restart panel + agent after flipping to pick up the change.",
+    "batch": "Batch",
+    "cancel_batch": "Cancel batch",
+    "cancels_every_non_terminal_job_sharing_this": "Cancels every non-terminal job sharing this batch_id.",
+    "ended": "Ended",
+    "no_migrations_yet": "No migrations yet",
+    "per_source_kind_support": "Per-source-kind support",
+    "recent_migration_jobs": "Recent migration jobs",
+    "source": "Source",
+    "source_host": "Source host",
+    "source_user": "Source user",
+    "started": "Started",
+    "state": "State"
+  },
+  "bulkwhmdrawer": {
+    "accounts": "Accounts",
+    "bulk_whm": "Bulk WHM",
+    "create_whm_migration_batch": "Create WHM migration batch",
+    "creates_one_migration_job_per_account_all_sh": "Creates one migration_job per account, all sharing a batch_id. Cancel-batch + per-account retry are available from the list page.",
+    "hostname_or_ip_of_the_source_whm_server_priv": "Hostname or IP of the source WHM server. Private-IP targets require server_settings.migration_allow_private_hosts=true.",
+    "one_account_per_line_or_comma_separated_exis": "One account per line, or comma-separated. Existing jobs for any (host, account) are skipped automatically.",
+    "source_host": "Source host"
+  },
+  "createmigrationdrawer": {
+    "absolute_path_to_the_wordpress_root_on_the_s": "Absolute path to the WordPress root on the source (must contain wp-config.php). Leave blank to auto-detect ~/public_html, /home/*/public_html, or Cloudways /home/master/applications/*/public_html.",
+    "import_started": "Import started",
+    "new_migration_job": "New migration job",
+    "source_kind": "Source kind",
+    "ssh_port": "SSH port",
+    "the_migration_is_running_in_the_background_o": "The migration is running in the background. Open the migration job to track stage-by-stage progress.",
+    "the_source_server_s_ssh_port_defaults_to_22": "The source server's SSH port. Defaults to 22.",
+    "wordpress_path_optional": "WordPress path (optional)"
+  },
+  "createmigrationwizard": {
+    "account_discovery_failed": "Account discovery failed",
+    "admin_user": "Admin user",
+    "create_migration": "Create migration",
+    "credential_type": "Credential type",
+    "credentials_are_written_to_etc_jabali_panel": "Credentials are written to /etc/jabali-panel/migration-secrets and reaped 24h after job completion.",
+    "first_connection_is_unverified": "First connection is unverified",
+    "import_options": "Import options",
+    "pick_the_source_panel_type": "Pick the source panel type",
+    "pick_which_accounts_to_migrate_each_becomes": "Pick which accounts to migrate. Each becomes its own migration_job sharing a batch_id.",
+    "review": "Review",
+    "sha256_abc123": "SHA256:abc123…",
+    "source_host": "Source host",
+    "source_host_key_fingerprint_optional": "Source host key fingerprint (optional)",
+    "ssh_port": "SSH port",
+    "the_source_server_s_ssh_port_defaults_to_22": "The source server's SSH port. Defaults to 22.",
+    "use_the_server_s_direct_ip_if_it_sits_behind": "Use the server's direct IP if it sits behind Cloudflare or another proxy — a hostname can resolve to the proxy instead of the source server.",
+    "whm_enables_bulk_migration_of_every_cpanel_a": "WHM enables bulk migration of every cPanel account. Single-account migrations are still available via the 'New migration' button.",
+    "without_a_fingerprint_the_first_connection_t": "Without a fingerprint, the first connection to the source is trusted blindly (trust-on-first-use). For a hostile network, paste the source host key fingerprint above to verify it."
+  },
+  "channelstab": {
+    "actions": "Actions",
+    "enabled": "Enabled",
+    "kind": "Kind",
+    "name": "Name"
+  },
+  "dlqtab": {
+    "clear": "Clear",
+    "dlq_is_empty": "DLQ is empty",
+    "re_publishes_every_envelope_to_the_main_deli": "Re-publishes every envelope to the main delivery queue. Legacy entries without a preserved payload will be dropped silently.",
+    "replay_all": "Replay all",
+    "this_deletes_every_entry_in_the_stream_use_o": "This deletes every entry in the stream. Use only if you've already addressed the underlying failures (e.g. fixed a misconfigured channel)."
+  },
+  "eventstab": {
+    "description": "Description",
+    "enabled": "Enabled",
+    "event": "Event",
+    "severity": "Severity"
+  },
+  "historytab": {
+    "body": "Body",
+    "channel": "Channel",
+    "clear": "Clear",
+    "clear_all_notifications": "Clear all notifications?",
+    "deeplink": "Deeplink",
+    "event": "Event",
+    "outcome": "Outcome",
+    "read": "Read",
+    "retries": "Retries",
+    "severity": "Severity",
+    "show_details": "Show details",
+    "this_envelope_was_moved_to_the_dead_letter_q": "This envelope was moved to the Dead Letter queue after the dispatcher exhausted its retries.",
+    "this_permanently_deletes_every_row_in_your_i": "This permanently deletes every row in your inbox.",
+    "time": "Time",
+    "title": "Title"
+  },
+  "webpushtab": {
+    "browser_blocked_notifications": "Browser blocked notifications",
+    "browser_push_is_not_supported_in_this_browse": "Browser push is not supported in this browser",
+    "couldn_t_enable_browser_push": "Couldn't enable browser push",
+    "notifications_appear_via_your_operating_syst": "Notifications appear via your operating system even when the panel tab isn't focused. Disable any time below.",
+    "open_the_site_permissions_for_this_domain_in": "Open the site permissions for this domain in your browser settings and re-allow notifications, then reload.",
+    "this_browser_is_receiving_jabali_push_notifi": "This browser is receiving Jabali push notifications",
+    "web_push_relies_on_the_service_worker_push_a": "Web Push relies on the Service Worker + Push API. Try a modern Chrome, Firefox, Safari 16+, or Edge build."
+  },
+  "packagecreate": {
+    "allow_cgi_scripts": "Allow CGI scripts",
+    "allow_ssh_access": "Allow SSH access",
+    "allow_tenants_on_this_plan_to_enable_a_sched": "Allow tenants on this plan to enable a scheduled backup. The schedule time is admin-controlled.",
+    "allowed_backup_destinations": "Allowed Backup Destinations",
+    "also_expose_the_individual_pm_knobs_clamped": "Also expose the individual pm.* knobs (clamped to the cap). Implies the toggle above.",
+    "backup_retention_policy": "Backup Retention Policy",
+    "bandwidth_quota_mb": "Bandwidth Quota (MB)",
+    "cpu_quota": "CPU Quota (%)",
+    "destination_kinds_a_tenant_may_back_up_to_em": "Destination kinds a tenant may back up to. Empty = none allowed.",
+    "disk_quota_mb": "Disk Quota (MB)",
+    "docker_apps_per_package_allowlist": "Docker apps (per-package allowlist)",
+    "empty_server_wide_default": "Empty = server-wide default",
+    "est_ram_per_worker_mb_drives_the_memory_budg": "Est. RAM per worker (MB) — drives the memory-budget estimate",
+    "io_read_bandwidth_mb_s": "IO Read Bandwidth (MB/s)",
+    "io_write_bandwidth_mb_s": "IO Write Bandwidth (MB/s)",
+    "let_tenants_pick_a_safe_php_performance_mode": "Let tenants pick a safe PHP Performance Mode (Balanced / Low-memory / High-traffic / WordPress-optimized).",
+    "max_backups": "Max Backups",
+    "max_children_per_user_fpm_cap": "Max children per user (FPM cap)",
+    "max_databases": "Max Databases",
+    "max_docker_apps": "Max Docker Apps",
+    "max_domains": "Max Domains",
+    "max_email_accounts": "Max Email Accounts",
+    "max_python_apps": "Max Python Apps",
+    "max_tasks": "Max Tasks",
+    "memory_limit_mb": "Memory Limit (MB)",
+    "name": "Name",
+    "retention_cap_most_snapshots_a_tenant_on_thi": "Retention cap — most snapshots a tenant on this plan may keep. 0 = tenant backups not included.",
+    "scheduled_backups": "Scheduled Backups",
+    "security_re_enables_php_exec_proc_open_shell": "Security: re-enables PHP exec/proc_open/shell_exec for ALL tenants on this package (GH #401 lockdown is OFF). Only enable for plans whose apps genuinely need shell-outs.",
+    "what_happens_when_a_tenant_reaches_max_backu": "What happens when a tenant reaches Max Backups: Reject (safe — block the new backup) or Auto-prune (delete the tenant's oldest backup to make room). Both notify the tenant and admins."
+  },
+  "packageedit": {
+    "allow_cgi_scripts": "Allow CGI scripts",
+    "allow_ssh_access": "Allow SSH access",
+    "allow_tenants_on_this_plan_to_enable_a_sched": "Allow tenants on this plan to enable a scheduled backup. The schedule time is admin-controlled.",
+    "allowed_backup_destinations": "Allowed Backup Destinations",
+    "also_expose_the_individual_pm_knobs_clamped": "Also expose the individual pm.* knobs (clamped to the cap). Implies the toggle above.",
+    "backup_retention_policy": "Backup Retention Policy",
+    "bandwidth_quota_mb": "Bandwidth Quota (MB)",
+    "cpu_quota": "CPU Quota (%)",
+    "destination_kinds_a_tenant_may_back_up_to_em": "Destination kinds a tenant may back up to. Empty = none allowed.",
+    "disk_quota_mb": "Disk Quota (MB)",
+    "docker_apps_per_package_allowlist": "Docker apps (per-package allowlist)",
+    "empty_server_wide_default": "Empty = server-wide default",
+    "est_ram_per_worker_mb_drives_the_memory_budg": "Est. RAM per worker (MB) — drives the memory-budget estimate",
+    "io_read_bandwidth_mb_s": "IO Read Bandwidth (MB/s)",
+    "io_write_bandwidth_mb_s": "IO Write Bandwidth (MB/s)",
+    "let_tenants_pick_a_safe_php_performance_mode": "Let tenants pick a safe PHP Performance Mode (Balanced / Low-memory / High-traffic / WordPress-optimized).",
+    "max_backups": "Max Backups",
+    "max_children_per_user_fpm_cap": "Max children per user (FPM cap)",
+    "max_databases": "Max Databases",
+    "max_docker_apps": "Max Docker Apps",
+    "max_domains": "Max Domains",
+    "max_email_accounts": "Max Email Accounts",
+    "max_python_apps": "Max Python Apps",
+    "max_tasks": "Max Tasks",
+    "memory_limit_mb": "Memory Limit (MB)",
+    "name": "Name",
+    "retention_cap_most_snapshots_a_tenant_on_thi": "Retention cap — most snapshots a tenant on this plan may keep. 0 = tenant backups not included.",
+    "scheduled_backups": "Scheduled Backups",
+    "security_re_enables_php_exec_proc_open_shell": "Security: re-enables PHP exec/proc_open/shell_exec for ALL tenants on this package (GH #401 lockdown is OFF). Only enable for plans whose apps genuinely need shell-outs.",
+    "what_happens_when_a_tenant_reaches_max_backu": "What happens when a tenant reaches Max Backups: Reject (safe — block the new backup) or Auto-prune (delete the tenant's oldest backup to make room). Both notify the tenant and admins."
+  },
+  "packagelist": {
+    "actions": "Actions",
+    "bandwidth_mb": "Bandwidth (MB)",
+    "created": "Created",
+    "disk_mb": "Disk (MB)",
+    "domains": "Domains",
+    "email": "Email",
+    "name": "Name",
+    "no_hosting_packages_yet": "No hosting packages yet",
+    "php_exec": "PHP exec",
+    "search_by_package_name": "Search by package name",
+    "ssh": "SSH"
+  },
+  "fpmpoolstab": {
+    "could_not_load_php_fpm_pools": "Could not load PHP-FPM pools.",
+    "filter_by_php_version": "Filter by PHP version"
+  },
+  "phpextensionstab": {
+    "action": "Action",
+    "extension": "Extension",
+    "install_a_php_version_first_under_the_php_ve": "Install a PHP version first under the PHP Versions tab. Extension management requires at least one installed version.",
+    "installed": "Installed",
+    "no_php_versions_installed": "No PHP versions installed",
+    "php_version": "PHP version",
+    "search_extensions": "Search extensions",
+    "status": "Status"
+  },
+  "versionstab": {
+    "actions": "Actions",
+    "default": "Default",
+    "end_of_life_no_upstream_security_patches_run": "End of life — no upstream security patches. Running an EOL PHP version on a public site is a security risk.",
+    "fpm_workers": "FPM workers",
+    "modifying_php_versions_can_cause_server_down": "Modifying PHP versions can cause server downtime",
+    "php_version": "PHP Version",
+    "status": "Status",
+    "uninstalling_php_versions_may_break_websites": "Uninstalling PHP versions may break websites that depend on them. Ensure you understand the impact before making changes."
+  },
+  "phppooledit": {
+    "add_ini_override": "Add INI Override",
+    "directive": "Directive",
+    "idle_timeout_in_seconds": "Idle timeout in seconds",
+    "kind": "Kind",
+    "max_children": "Max Children",
+    "max_requests_per_worker_0_never": "Max Requests per Worker (0 = never)",
+    "max_spare_servers_dynamic_max_children": "Max Spare Servers (dynamic, <= max children)",
+    "min_spare_servers_dynamic": "Min Spare Servers (dynamic)",
+    "number_of_child_processes": "Number of child processes",
+    "php_version": "PHP Version",
+    "process_idle_timeout_seconds": "Process Idle Timeout (seconds)",
+    "process_mode": "Process Mode",
+    "request_terminate_timeout_seconds_0_no_limit": "Request Terminate Timeout (seconds, 0 = no limit)",
+    "select_process_manager_mode": "Select process manager mode",
+    "start_servers_dynamic": "Start Servers (dynamic)",
+    "value": "Value"
+  },
+  "adminsecurityaide": {
+    "added": "Added",
+    "aide_file_integrity_monitor": "AIDE — file integrity monitor",
+    "aide_not_active": "AIDE not active",
+    "all_watched_paths_match_the_baseline_checksu": "All watched paths match the baseline checksum.",
+    "category": "Category",
+    "change_type": "Change type",
+    "changed": "Changed",
+    "db_age": "DB age",
+    "last_check": "Last check",
+    "no_tamper_detected": "No tamper detected",
+    "prioritize_these": "Prioritize these",
+    "rebuild": "Rebuild",
+    "rebuild_the_aide_baseline": "Rebuild the AIDE baseline?",
+    "removed": "Removed",
+    "review_the_sample_below_if_the_changes_are_e": "Review the sample below. If the changes are expected (kernel bump, manual config edit), re-baseline via SSH: jabali aide rebuild --full.",
+    "this_replaces_the_integrity_baseline_with_th": "This replaces the integrity baseline with the current filesystem state (aideinit -y -f). Only do this after deliberate changes — any tampering present now becomes the new 'clean' baseline."
+  },
+  "adminsecurityapparmor": {
+    "apparmor": "AppArmor",
+    "apparmor_disabled": "AppArmor disabled",
+    "apparmor_profiles_intentionally_not_loaded_o": "AppArmor profiles intentionally not loaded on this kernel",
+    "complain_mode_profiles_are_logging_would_den": "Complain-mode profiles are logging would-deny (apparmor ALLOWED) violations — not soak-ready to enforce. Resolve or allowlist these before flipping to enforce.",
+    "denied_enforce_blocks": "Denied (enforce blocks)",
+    "enforce_will_start_denying_paths_caps_not_in": "Enforce will start denying paths/caps not in the profile.",
+    "filter_mode": "Filter mode",
+    "flip": "Flip",
+    "if_the_profile_is_missing_a_path_the_daemon": "If the profile is missing a path the daemon needs, the daemon will fail. Review complain-mode AVC denials in journalctl -k before flipping.",
+    "mode": "Mode",
+    "protects": "Protects",
+    "this_profile_is_not_soak_ready_enforcing_now": "This profile is NOT soak-ready. Enforcing now will BLOCK those operations and can break the daemon. Resolve or allowlist them first.",
+    "would_deny_complain": "Would-deny (complain)"
+  },
+  "adminsecuritycrowdsec": {
+    "active_decision_sources": "Active decision sources",
+    "active_decisions": "Active decisions",
+    "active_until": "Active until",
+    "add_crowdsec_decision_manual_ban": "Add CrowdSec decision (manual ban)",
+    "add_to_allowlist": "Add to allowlist",
+    "added": "Added",
+    "aggregates_every_active_decision_by_origin_s": "Aggregates every active decision by (origin/scenario). CAPI = pulled from app.crowdsec.net; cscli-import = manually imported; crowdsec = local detection. Subscribe to community blocklists at app.crowdsec.net → Blocklists.",
+    "alert_not_found": "Alert not found",
+    "alerts_last_24h": "Alerts (last 24h)",
+    "all_time_alerts_since_crowdsec_started": "All-time alerts since CrowdSec started",
+    "allow_list_with_no_countries_blocks_every_re": "Allow-list with no countries blocks every request — add at least one before applying.",
+    "allowlist_never_ban": "Allowlist (never ban)",
+    "allowlisted_ips_bypass_every_scenario_decisi": "Allowlisted IPs bypass every scenario, decision, and the AppSec geoblock. Use for your office, home IP, or CI runner CIDR.",
+    "apply": "Apply",
+    "apply_appsec_geoblock": "Apply AppSec geoblock",
+    "apply_captcha_settings": "Apply captcha settings?",
+    "apply_overrides": "Apply overrides?",
+    "appsec_geoblock_server_wide": "AppSec geoblock (server-wide)",
+    "auto_allowlist_login_ips_server_wide": "Auto-allowlist login IPs (server-wide)",
+    "ban_duration": "Ban duration",
+    "behaviour_based_intrusion_prevention_tails_s": "Behaviour-based intrusion-prevention. Tails server logs (nginx, sshd, panel, mail), matches them against scenarios (brute-force, scanners, web exploits, credential stuffing), and emits IP decisions. Bouncers enforce them at the firewall (UFW), at nginx (AppSec WAF with OWASP CRS rules + optional captcha challenge), and against a crowdsourced blocklist of IPs flagged by the wider community in the last hours.",
+    "bouncer_mode_server_wide": "Bouncer mode (server-wide)",
+    "cancel": "Cancel",
+    "captcha_action_requires_the_captcha_remediat": "Captcha action requires the Captcha remediation card above to be enabled.",
+    "captcha_remediation": "Captcha remediation",
+    "config_validation_failed_crowdsec_t": "Config validation failed (crowdsec -t)",
+    "country_bans_rely_on_the_geoip_enricher_as_b": "Country bans rely on the GeoIP enricher; AS bans on the ASN enricher. Both are installed by default on fresh CrowdSec hosts.",
+    "create_an_hcaptcha_recaptcha_turnstile_site": "Create an hCaptcha / reCAPTCHA / Turnstile site at the provider, paste the keys below. Secret is stored server-side and never returned.",
+    "decisions": "Decisions",
+    "decisions_issued": "Decisions issued",
+    "deny_list_with_no_countries_has_no_effect_ad": "Deny-list with no countries has no effect — add at least one before applying.",
+    "description": "Description",
+    "duration": "Duration",
+    "enabled": "Enabled",
+    "events": "Events",
+    "how_this_is_enforced": "How this is enforced",
+    "ip_or_cidr": "IP or CIDR",
+    "ip_value": "IP / value",
+    "ips_currently_banned_under_captcha": "IPs currently banned / under captcha",
+    "item": "Item",
+    "leave_blank_to_keep_the_stored_secret_unchan": "Leave blank to keep the stored secret unchanged.",
+    "lines_no_parser_matched_gaps_in_coverage": "Lines no parser matched (gaps in coverage)",
+    "machine": "Machine",
+    "no_active_decisions": "No active decisions",
+    "no_alerts_in_the_last_24h": "No alerts in the last 24h",
+    "no_allowlist_entries": "No allowlist entries",
+    "no_bouncers_registered_cscli_bouncers_add": "No bouncers registered (cscli bouncers add)",
+    "no_decisions_issued": "No decisions issued",
+    "no_scenarios_installed": "No scenarios installed",
+    "one_click_install_of_upstream_crowdsec_hub_i": "One-click install of upstream CrowdSec Hub items",
+    "override": "Override",
+    "per_scenario_remediation_override": "Per-scenario remediation override",
+    "provider": "Provider",
+    "reason": "Reason",
+    "recent_changes_audit": "Recent changes (audit)",
+    "recommended_free_blocklists_scenarios": "Recommended free blocklists & scenarios",
+    "remove": "Remove",
+    "remove_from_allowlist": "Remove from allowlist",
+    "rewrites_etc_crowdsec_profiles_yaml_marker_b": "Rewrites /etc/crowdsec/profiles.yaml (marker-bounded) and reloads crowdsec.",
+    "scenario": "Scenario",
+    "scenario_fired": "Scenario fired",
+    "scenario_thresholds_tripped_suspicious_patte": "Scenario thresholds tripped (suspicious patterns matched)",
+    "scope": "Scope",
+    "secret_key_write_only": "Secret key (write-only)",
+    "security_trade_off": "Security trade-off",
+    "sensitivity_preset_server_wide": "Sensitivity preset (server-wide)",
+    "single_ipv4_ipv6_address_or_cidr_block_e_g_1": "Single IPv4/IPv6 address or CIDR block (e.g. 192.0.2.1 or 10.0.0.0/24).",
+    "site_key_public": "Site key (public)",
+    "source": "Source",
+    "started": "Started",
+    "this_ip_was_banned_because_the_scenario_abov": "This IP was banned because the scenario above fired on its traffic. Enforcement is applied by the active bouncers: the firewall bouncer drops it at nftables (all ports), and the nginx bouncer returns 403 on HTTP. To lift it, delete the decision (or add the IP to the Allowlist so it is never re-banned).",
+    "this_is_a_broad_crowdsec_exemption_a_success": "This is a broad CrowdSec exemption. A successful login from a stolen key or compromised account shields that source IP from all CrowdSec decisions for the TTL. Lower the TTL or disable this if that window is unacceptable for your threat model.",
+    "this_rewrites_etc_crowdsec_bouncers_crowdsec": "This rewrites /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf and reloads nginx.",
+    "type": "Type",
+    "type_a_country_name_or_code_or_pick_from_the": "Type a country name or code, or pick from the list",
+    "until": "Until",
+    "value": "Value",
+    "what_is_crowdsec": "What is CrowdSec?",
+    "when_enabled_crowdsec_scenarios_flagged_for": "When enabled, CrowdSec scenarios flagged for captcha serve a challenge page instead of a 403.",
+    "why_reason": "Why (reason)"
+  },
+  "adminsecurityegress": {
+    "actions": "Actions",
+    "cidr": "CIDR",
+    "comment": "Comment",
+    "drops_24h": "Drops 24h",
+    "drops_last_tick": "Drops (last tick)",
+    "egress_state": "Egress state",
+    "enforced_users": "Enforced users",
+    "learning_users": "Learning users",
+    "off_users": "Off users",
+    "per_user_php_fpm_egress_firewall": "Per-user PHP-FPM egress firewall",
+    "per_user_policy": "Per-user policy",
+    "port": "Port",
+    "proto": "Proto",
+    "protocol": "Protocol",
+    "reason": "Reason",
+    "state": "State",
+    "submitted": "Submitted",
+    "total_drops_last_tick": "Total drops (last tick)",
+    "user": "User"
+  },
+  "adminsecuritymalware": {
+    "built_in_rule_packs": "Built-in rule packs",
+    "custom_yara_rules": "Custom YARA rules",
+    "daily_scan_schedule_cron": "Daily scan schedule (cron)",
+    "enable_mail_attachment_scanning": "Enable mail attachment scanning",
+    "event_detail": "Event detail",
+    "exec_audit_auditd_jabali_susp_exec": "Exec audit (auditd jabali_susp_exec)",
+    "explain_why_this_restore_is_safe": "Explain why this restore is safe",
+    "filename": "Filename",
+    "inotify_watches": "Inotify watches",
+    "manual_scan": "Manual scan",
+    "max_attachment_size_mb": "Max attachment size (MB)",
+    "max_scan_size_per_file_mb": "Max scan size per file (MB)",
+    "notification_severity_threshold": "Notification severity threshold",
+    "original": "Original",
+    "per_attachment_scan_timeout_seconds": "Per-attachment scan timeout (seconds)",
+    "per_tick_budget_mailboxes_scanned_each_cycle": "Per-tick budget (mailboxes scanned each cycle)",
+    "pre_flight_parsed_via_yara_w_before_install": "Pre-flight parsed via 'yara -w' before install",
+    "quarantine": "Quarantine",
+    "quarantine_retention_days": "Quarantine retention (days)",
+    "real_time_scanning": "Real-time scanning",
+    "real_time_scanning_is_off": "Real-time scanning is off",
+    "realtime_monitor": "Realtime monitor",
+    "reason_audit": "Reason (audit)",
+    "recent_events": "Recent events",
+    "restore_from_quarantine": "Restore from quarantine",
+    "restoring_re_introduces_the_file_to_disk": "Restoring re-introduces the file to disk",
+    "rule_content": "Rule content",
+    "scan_all_folders_not_just_inbox": "Scan all folders (not just Inbox)",
+    "search_username_name_or_email": "Search username, name, or email",
+    "settings": "Settings",
+    "sha256": "SHA256",
+    "skip_these_recipient_addresses_comma_separat": "Skip these recipient addresses (comma-separated)",
+    "the_inotify_monitor_is_not_running_daily_sch": "The inotify monitor is not running. Daily scheduled scans + on-demand scans still work. Enable real-time scanning in the Settings tab to catch threats within ~120s of file write (~1.7GB RAM peak per scan cycle).",
+    "upload_fails_with_the_parser_error_if_the_ru": "Upload fails with the parser error if the rule is malformed. Filenames must match ^[a-z0-9][a-z0-9._-]{0,63}\\\\.yar$ and are capped at 64 KB.",
+    "upload_yara_rule": "Upload YARA rule",
+    "yara_engine": "YARA engine"
+  },
+  "adminsecuritysnuffleupagus": {
+    "action": "Action",
+    "disable": "Disable",
+    "disable_rule_reason_required": "Disable rule — reason required",
+    "domain_tenant": "Domain / tenant",
+    "php_defense": "PHP Defense",
+    "php_defense_rules": "PHP Defense rules",
+    "php_version": "PHP version",
+    "re_enable_this_rule": "Re-enable this rule?",
+    "request_uri": "Request URI",
+    "rule": "Rule",
+    "rules_log_incidents_below_without_blocking_s": "Rules log incidents below without blocking. Soak for 7 days to identify false positives, then flip to enforce.",
+    "simulation_mode_active": "Simulation mode active",
+    "source_ip": "Source IP",
+    "when": "When"
+  },
+  "adminsecurityufw": {
+    "action": "Action",
+    "add_ufw_rule": "Add UFW rule",
+    "cancel": "Cancel",
+    "continue": "Continue",
+    "delete": "Delete",
+    "delete_rule": "Delete rule",
+    "disable_firewall": "Disable firewall?",
+    "disabling_ufw_drops_host_firewall_protection": "Disabling UFW DROPS host firewall protection. CrowdSec firewall-bouncer also stops applying rules. Use only for emergency triage.",
+    "enable_the_firewall_to_view_and_manage_rules": "Enable the firewall to view and manage rules.",
+    "enabling_ufw_will_activate_default_deny_inco": "Enabling UFW will activate default-deny incoming. Make sure SSH (22) is in the allow-list.",
+    "firewall_disabled": "Firewall DISABLED",
+    "from": "From",
+    "no_rules": "No rules",
+    "port": "Port",
+    "proto": "Proto",
+    "protocol": "Protocol",
+    "rules": "Rules",
+    "rules_hidden_firewall_disabled": "Rules hidden — firewall disabled",
+    "status": "Status",
+    "this_drops_the_host_firewall_crowdsec_firewa": "This drops the host firewall. CrowdSec firewall-bouncer stops applying rules. Confirm again in the next dialog.",
+    "ufw_is_not_active_rules_below_if_any_are_not": "UFW is not active. Rules below (if any) are not enforced. CrowdSec firewall-bouncer also has no effect until UFW is enabled.",
+    "ufw_is_port_policy_only": "UFW is port policy only",
+    "yes": "YES"
+  },
+  "crowdsectestipcard": {
+    "drops_every_active_crowdsec_decision_targeti": "Drops every active CrowdSec decision targeting this IP.",
+    "test_failed": "Test failed",
+    "test_ip_would_this_ip_be_blocked": "Test IP — would this IP be blocked?",
+    "unban": "Unban"
+  },
+  "egressmaturepromotion": {
+    "operator_pin_active": "Operator pin active",
+    "promote": "Promote",
+    "this_enforces_the_egress_firewall_for_those": "This enforces the egress firewall for those users on the next reconcile tick."
+  },
+  "speedtestcard": {
+    "jitter": "Jitter"
+  },
+  "adminsessionspage": {
+    "active_sessions": "Active Sessions",
+    "revoke": "Revoke",
+    "revoke_this_session": "Revoke this session?",
+    "the_user_will_be_signed_out_of_the_panel": "The user will be signed out of the panel."
+  },
+  "accountskeletoncard": {
+    "account_skeleton": "Account skeleton",
+    "add": "Add",
+    "add_skeleton_file": "Add skeleton file",
+    "path": "Path"
+  },
+  "brandingcard": {
+    "brand_text": "Brand text",
+    "browser_cache": "Browser cache",
+    "jabali": "Jabali",
+    "newly_uploaded_logos_may_take_up_to_5_minute": "Newly uploaded logos may take up to 5 minutes to appear across all sessions due to HTTP cache. Force-reload (Ctrl+Shift+R) to see yours immediately.",
+    "panel_branding": "Panel Branding"
+  },
+  "dnspermissionscard": {
+    "admins_always_have_full_control_ns_and_soa_r": "Admins always have full control. NS and SOA records are zone infrastructure and are never user-editable. Use a preset or fine-tune per type, then Save.",
+    "dns_record_permissions": "DNS Record Permissions",
+    "which_dns_record_types_regular_users_may_man": "Which DNS record types regular users may manage"
+  },
+  "dnsresolverscard": {
+    "dns_resolvers": "DNS Resolvers",
+    "ipv4_primary": "IPv4 Primary",
+    "ipv4_secondary_optional": "IPv4 Secondary (optional)",
+    "ipv6_primary_optional": "IPv6 Primary (optional)",
+    "ipv6_secondary_optional": "IPv6 Secondary (optional)",
+    "search_domain_optional": "Search domain (optional)",
+    "the_drop_in_will_still_be_written_but_change": "The drop-in will still be written, but changes won't take effect until the service is running."
+  },
+  "databaseadminsections": {
+    "actions": "Actions",
+    "apply": "Apply",
+    "command": "Command",
+    "host": "Host",
+    "i_saved_it": "I saved it",
+    "kill": "Kill",
+    "query": "Query",
+    "rotate": "Rotate",
+    "state": "State",
+    "the_previous_password_if_any_stops_working_i": "The previous password (if any) stops working immediately.",
+    "time": "Time",
+    "user": "User"
+  },
+  "dockermarketplacecard": {
+    "docker_app_marketplace_m48": "Docker App Marketplace (M48)",
+    "marketplace_live": "Marketplace live",
+    "opt_in_feature": "Opt-in feature"
+  },
+  "emailcard": {
+    "dkim": "DKIM",
+    "enabled_at": "Enabled at",
+    "failed_to_load_email_settings": "Failed to load email settings",
+    "primary_mail_domain": "Primary mail domain",
+    "the_panel_hostname_s_mail_domain_is_being_pr": "The panel hostname's mail domain is being provisioned (DKIM keypair, Stalwart, DNS records, nginx vhost). This typically takes ~30 seconds on a fresh install. This page will refresh automatically.",
+    "webmail_is_initializing": "Webmail is initializing",
+    "webmail_url": "Webmail URL"
+  },
+  "logretentioncard": {
+    "it_s_hash_chained_and_tamper_evident_set_a_w": "It's hash-chained and tamper-evident. Set a window only if you accept a shorter forensic record; pruning re-anchors the chain so it stays verifiable forward.",
+    "logs_retention": "Logs — retention",
+    "the_audit_log_defaults_to_keep_forever": "The audit log defaults to keep-forever"
+  },
+  "lookandfeelcard": {
+    "look_and_feel": "Look and feel",
+    "panel_font_size": "Panel font size"
+  },
+  "modulescard": {
+    "modules": "Modules"
+  },
+  "nginxsettingscard": {
+    "cache_key_metadata_zone_8000_keys_mb": "Cache key metadata zone (~8000 keys/MB)",
+    "custom_http_directives": "Custom http{} directives",
+    "evict_entries_not_accessed_within_this_windo": "Evict entries not accessed within this window",
+    "gzip_compression": "Gzip compression",
+    "keepalive_timeout": "Keepalive timeout",
+    "largest_request_body_nginx_accepts_before_41": "Largest request body nginx accepts before 413. Raise it for big-upload apps (ownCloud, Nextcloud). e.g. 50m, 2g.",
+    "max_upload_size_client_max_body_size": "Max upload size (client_max_body_size)",
+    "nginx": "Nginx",
+    "off_hides_the_nginx_version_in_responses_err": "Off hides the nginx version in responses + error pages (recommended).",
+    "raw_nginx_directives_can_make_the_server_uns": "Raw nginx directives — can make the server unstable",
+    "shared_fastcgi_cache_max_on_disk_size": "Shared FastCGI cache max on-disk size",
+    "show_nginx_version_server_tokens": "Show nginx version (server_tokens)"
+  },
+  "nspawnimagescard": {
+    "codename": "Codename",
+    "delete_all_unused_images": "Delete all unused images?",
+    "prune": "Prune",
+    "prune_result": "Prune result",
+    "removes_every_sealed_image_no_user_and_not_t": "Removes every sealed image no user (and not the server default) is pinned to. Irreversible — you'd rebuild from a snapshot to restore.",
+    "snapshot": "Snapshot",
+    "ssh_sandbox_images_nspawn": "SSH sandbox images (nspawn)",
+    "suite": "Suite",
+    "version": "Version"
+  },
+  "phpperformancemodescard": {
+    "idle_timeout_s": "Idle timeout (s)",
+    "max_children": "Max children",
+    "max_requests_0_never": "Max requests (0 = never)",
+    "max_spare": "Max spare",
+    "min_spare": "Min spare",
+    "php_performance_modes": "PHP Performance Modes",
+    "process_manager": "Process manager",
+    "start_servers": "Start servers"
+  },
+  "pagetemplatescard": {
+    "cancel": "Cancel",
+    "page_templates": "Page Templates",
+    "save": "Save"
+  },
+  "panelsslcard": {
+    "failed_to_load_panel_ssl_state": "Failed to load panel SSL state",
+    "hostname": "Hostname",
+    "let_s_encrypt_is_unavailable_for_the_panel": "Let's Encrypt is unavailable for the panel",
+    "mail": "Mail",
+    "panel_certificate_not_initialised_yet": "Panel certificate not initialised yet.",
+    "panel_ssl": "Panel SSL"
+  },
+  "pythonappscard": {
+    "apps_need_python3_venv_and_a_build_toolchain": "Apps need python3-venv and a build toolchain (gcc, python3-dev, libffi/ssl-dev). These are installed by the host provisioner; if a venv build fails for a C-extension package, run jabali update to ensure the toolchain is present.",
+    "runtime_prerequisites": "Runtime prerequisites"
+  },
+  "ssomaintenancecard": {
+    "deletes_only_already_expired_tokens_active_s": "Deletes only already-expired tokens — active SSO sessions are unaffected.",
+    "operator_procedure_run_on_the_host_not_from": "Operator procedure — run on the host, not from the browser",
+    "purge": "Purge",
+    "purge_expired_sso_tokens_now": "Purge expired SSO tokens now?",
+    "rotation_re_encrypts_every_stored_db_user_pa": "Rotation re-encrypts every stored DB-user password, then swaps the on-disk key file and reloads the panel. It is intentionally CLI-only: a browser-triggered rotation that reloads the panel mid-request is high-risk, and a failure between re-encrypt and key-swap breaks phpMyAdmin SSO for all tenants. Take a backup (step 3) so you can roll back.",
+    "sso_maintenance_phpmyadmin": "SSO maintenance (phpMyAdmin)"
+  },
+  "stalwartwebadmincard": {
+    "done": "Done",
+    "stalwart_webadmin_advanced": "Stalwart WebAdmin (advanced)",
+    "the_full_mail_server_admin_is_reachable_behi": "The full mail-server admin is reachable behind Stalwart’s own login. Restrict by IP and disable when not in use."
+  },
+  "tenantdomainoptionscard": {
+    "tenant_domain_options": "Tenant Domain Options"
+  },
+  "webmailtogglecard": {
+    "webmail": "Webmail"
+  },
+  "sslmanagerpage": {
+    "domain_certificates": "Domain Certificates"
+  },
+  "adminterminal": {
+    "root_shell_every_keystroke_and_all_output_is": "ROOT SHELL — every keystroke and all output is recorded to /var/log/jabali/terminal and an alert is sent on open.",
+    "root_terminal_is_disabled": "Root terminal is disabled"
+  },
+  "domainrepaircard": {
+    "cancel": "Cancel",
+    "delete_all_orphan_sites": "Delete all orphan sites?",
+    "delete_permanently": "Delete permanently",
+    "no_orphan_sites_found": "No orphan sites found.",
+    "select_a_user": "Select a user",
+    "this_is_irreversible_it_tears_down_each_site": "This is irreversible — it tears down each site's nginx vhost, DKIM keys, and Stalwart mail domain row. Scan first and review the list."
+  },
+  "repaircard": {
+    "applies_non_destructive_fixes_only_jabali_re": "Applies non-destructive fixes only (jabali repair --auto). The panel may briefly restart.",
+    "auto_repair_safe_issues": "Auto-repair safe issues?",
+    "cancel": "Cancel",
+    "click_auto_repair_to_fix_the_non_destructive": "Click Auto-Repair to fix the non-destructive ones.",
+    "diagnostics_failed": "Diagnostics failed",
+    "no_issues_detected_all_healthy": "No issues detected — all healthy.",
+    "run": "Run",
+    "run_diagnostics_to_see_what_s_broken": "Run diagnostics to see what's broken."
+  },
+  "systemupdatespage": {
+    "a_bad_self_update_can_take_the_panel_offline": "A bad self-update can take the panel offline. Leave off unless you want hands-off panel upgrades.",
+    "development_channel_less_reviewed_builds": "Development channel: less-reviewed builds",
+    "development_follows_the_latest_main_commit_a": "Development follows the latest main commit and may include unreviewed changes. Use it only on test hosts; switch back to Stable for production.",
+    "no_update_runs_yet": "No update runs yet",
+    "promoting_a_build_to_stable_is_an_operator_c": "Promoting a build to Stable is an operator/CI task",
+    "update_carefully_especially_system_packages": "Update carefully — especially system packages"
+  },
+  "adminuseroverview": {
+    "user_not_found": "User not found"
+  },
+  "userreset2faaction": {
+    "reset": "Reset",
+    "reset_two_factor_authentication": "Reset two-factor authentication?"
+  },
+  "userresetpasswordaction": {
+    "done": "Done",
+    "new_password_shown_once": "New password — shown once",
+    "reset": "Reset",
+    "reset_password": "Reset password?"
   }
 }

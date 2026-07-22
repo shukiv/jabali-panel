@@ -3,6 +3,7 @@
 // broken; "Auto-Repair safe issues" fires `jabali repair --auto` as a
 // transient unit and tails its output until done. Destructive fixes are
 // intentionally NOT exposed here — they stay on the CLI (`--all --yes`).
+import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -59,6 +60,7 @@ function parseDiagnose(text: string): RepairItem[] {
 }
 
 export function RepairCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const screens = Grid.useBreakpoint();
   const diagnose = useRepairDiagnose();
@@ -103,10 +105,10 @@ export function RepairCard() {
         Run Diagnostics
       </Button>
       <Popconfirm
-        title="Auto-repair safe issues?"
-        description="Applies non-destructive fixes only (jabali repair --auto). The panel may briefly restart."
-        okText="Run"
-        cancelText="Cancel"
+        title={t("repaircard.auto_repair_safe_issues")}
+        description={t("repaircard.applies_non_destructive_fixes_only_jabali_re")}
+        okText={t("repaircard.run")}
+        cancelText={t("repaircard.cancel")}
         onConfirm={onAutoRepair}
         disabled={running}
       >
@@ -146,7 +148,7 @@ export function RepairCard() {
           <Alert
             type="info"
             showIcon
-            message="Run diagnostics to see what's broken."
+            message={t("repaircard.run_diagnostics_to_see_what_s_broken")}
           />
         )}
 
@@ -154,7 +156,7 @@ export function RepairCard() {
           <Alert
             type="error"
             showIcon
-            message="Diagnostics failed"
+            message={t("repaircard.diagnostics_failed")}
             description={
               diagnose.error instanceof Error ? diagnose.error.message : "Unknown error"
             }
@@ -164,13 +166,13 @@ export function RepairCard() {
         {parsedOk && (
           <>
             {brokenCount === 0 ? (
-              <Alert type="success" showIcon message="No issues detected — all healthy." />
+              <Alert type="success" showIcon message={t("repaircard.no_issues_detected_all_healthy")} />
             ) : (
               <Alert
                 type="warning"
                 showIcon
                 message={`${brokenCount} issue${brokenCount === 1 ? "" : "s"} detected`}
-                description="Click Auto-Repair to fix the non-destructive ones."
+                description={t("repaircard.click_auto_repair_to_fix_the_non_destructive")}
               />
             )}
             <List

@@ -1,6 +1,7 @@
 // ExecDrawer — admin-only one-shot exec into the app's container.
 // Not a TTY/shell; pipe one command at a time. Bidi shell over
 // websocket is queued as a follow-up.
+import { useTranslation } from "react-i18next";
 import { Alert, App, Button, Drawer, Input, Space, Typography } from "antd";
 import { useState } from "react";
 
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export const ExecDrawer = ({ open, appId, onClose }: Props) => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [command, setCommand] = useState("");
   const [busy, setBusy] = useState(false);
@@ -35,7 +37,7 @@ export const ExecDrawer = ({ open, appId, onClose }: Props) => {
     <Drawer
       open={open}
       onClose={onClose}
-      title="Exec command"
+      title={t("execdrawer.exec_command")}
       width="min(100%, 720px)"
       destroyOnClose
     >
@@ -43,8 +45,8 @@ export const ExecDrawer = ({ open, appId, onClose }: Props) => {
         <Alert
           type="warning"
           showIcon
-          message="Admin-only"
-          description="Runs `sh -c <command>` in the first service of the compose project. No TTY, no shell history. Use one command at a time."
+          message={t("execdrawer.admin_only")}
+          description={t("execdrawer.runs_sh_c_command_in_the_first_service_of_th")}
         />
         <Input.TextArea
           rows={3}

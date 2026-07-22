@@ -2,6 +2,7 @@
 // root PTY broker. Off by default; this page shows enable-instructions
 // when the gate is closed. Every byte of an open session is recorded
 // server-side to /var/log/jabali/terminal/<id>.cast.
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Card, Result, Spin, Typography } from "antd";
 import { Terminal } from "@xterm/xterm";
@@ -27,6 +28,7 @@ function frame(op: number, payload: Uint8Array): Uint8Array {
 }
 
 export function AdminTerminal() {
+  const { t } = useTranslation();
   const gate = useRootTerminalEnabled();
   const hostRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed" | "error">("idle");
@@ -146,7 +148,7 @@ export function AdminTerminal() {
     return (
       <Result
         status="warning"
-        title="Root terminal is disabled"
+        title={t("adminterminal.root_terminal_is_disabled")}
         subTitle="This is a true unrestricted root shell and is off by default. Enable it in Server Settings → root_terminal_enabled. Every session is fully recorded."
       />
     );
@@ -165,7 +167,7 @@ export function AdminTerminal() {
         type="error"
         showIcon
         banner
-        message="ROOT SHELL — every keystroke and all output is recorded to /var/log/jabali/terminal and an alert is sent on open."
+        message={t("adminterminal.root_shell_every_keystroke_and_all_output_is")}
       />
       {status === "error" && (
         <Alert type="error" showIcon style={{ margin: 12 }} message={errMsg} />

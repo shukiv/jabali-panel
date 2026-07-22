@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import {
@@ -46,6 +47,7 @@ interface Filters {
 }
 
 export const BackupLogsTab = () => {
+  const { t } = useTranslation();
   const { token } = theme.useToken();
   const [filters, setFilters] = useState<Filters>({});
   const [page, setPage] = useState(1);
@@ -166,7 +168,7 @@ export const BackupLogsTab = () => {
       <Space wrap style={{ marginBottom: 12 }}>
         <DatePicker
           showTime
-          placeholder="From"
+          placeholder={t("backuplogstab.from")}
           value={filters.from}
           onChange={(v) => setFilters((f) => ({ ...f, from: v }))}
         />
@@ -177,21 +179,21 @@ export const BackupLogsTab = () => {
           onChange={(v) => setFilters((f) => ({ ...f, to: v }))}
         />
         <Input
-          placeholder="Kind contains"
+          placeholder={t("backuplogstab.kind_contains")}
           allowClear
           value={filters.kind ?? ""}
           onChange={(e) => setFilters((f) => ({ ...f, kind: e.target.value }))}
           style={{ width: 150 }}
         />
         <Input
-          placeholder="Status"
+          placeholder={t("backuplogstab.status")}
           allowClear
           value={filters.status ?? ""}
           onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
           style={{ width: 120 }}
         />
         <Input
-          placeholder="User ID"
+          placeholder={t("backuplogstab.user_id")}
           allowClear
           value={filters.user_id ?? ""}
           onChange={(e) => setFilters((f) => ({ ...f, user_id: e.target.value }))}
@@ -202,8 +204,8 @@ export const BackupLogsTab = () => {
       {error && (
         <Alert
           type="warning"
-          message="Backup logs unavailable"
-          description="The backup service isn't responding. Try again in a moment."
+          message={t("backuplogstab.backup_logs_unavailable")}
+          description={t("backuplogstab.the_backup_service_isn_t_responding_try_agai")}
           style={{ marginBottom: 12 }}
           showIcon
         />

@@ -3,6 +3,7 @@
 // so Kratos has no self-service recovery; this admin-set flow is the only
 // password reset. Mirrors UserReset2FAAction's controlled-modal shape; the
 // parent (UserList RowActions) drives `open`.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Modal, Typography, message } from "antd";
 
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Props) => {
+  const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
 
@@ -42,12 +44,12 @@ export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Pr
   if (tempPassword !== null) {
     return (
       <Modal
-        title="New password — shown once"
+        title={t("userresetpasswordaction.new_password_shown_once")}
         open={open}
         onCancel={close}
         onOk={close}
         cancelButtonProps={{ style: { display: "none" } }}
-        okText="Done"
+        okText={t("userresetpasswordaction.done")}
       >
         <p>
           Hand this temporary password to <strong>{userEmail}</strong>. It is shown
@@ -62,12 +64,12 @@ export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Pr
 
   return (
     <Modal
-      title="Reset password?"
+      title={t("userresetpasswordaction.reset_password")}
       open={open}
       onCancel={close}
       onOk={handleReset}
       confirmLoading={isLoading}
-      okText="Reset"
+      okText={t("userresetpasswordaction.reset")}
       okButtonProps={{ danger: true }}
     >
       <p>

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -148,6 +149,7 @@ function notifyError(notify: NotifyFn, title: string, err: unknown) {
 }
 
 export const DNSResolversCard = () => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<FormShape>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -209,7 +211,7 @@ export const DNSResolversCard = () => {
   };
 
   return (
-    <Card title="DNS Resolvers" style={{ marginBottom: 16 }}>
+    <Card title={t("dnsresolverscard.dns_resolvers")} style={{ marginBottom: 16 }}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Set the upstream DNS servers this server uses to resolve hostnames.
         Writes a drop-in at <code>/etc/systemd/resolved.conf.d/jabali.conf</code>
@@ -233,7 +235,7 @@ export const DNSResolversCard = () => {
           showIcon
           style={{ marginBottom: 12 }}
           title="systemd-resolved is not active"
-          description="The drop-in will still be written, but changes won't take effect until the service is running."
+          description={t("dnsresolverscard.the_drop_in_will_still_be_written_but_change")}
         />
       )}
 
@@ -261,7 +263,7 @@ export const DNSResolversCard = () => {
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item
-              label="IPv4 Primary"
+              label={t("dnsresolverscard.ipv4_primary")}
               name="ipv4_primary"
               rules={[
                 {
@@ -275,7 +277,7 @@ export const DNSResolversCard = () => {
           </Col>
           <Col span={12}>
             <Form.Item
-              label="IPv4 Secondary (optional)"
+              label={t("dnsresolverscard.ipv4_secondary_optional")}
               name="ipv4_secondary"
               rules={[
                 {
@@ -292,7 +294,7 @@ export const DNSResolversCard = () => {
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item
-              label="IPv6 Primary (optional)"
+              label={t("dnsresolverscard.ipv6_primary_optional")}
               name="ipv6_primary"
               rules={[
                 {
@@ -306,7 +308,7 @@ export const DNSResolversCard = () => {
           </Col>
           <Col span={12}>
             <Form.Item
-              label="IPv6 Secondary (optional)"
+              label={t("dnsresolverscard.ipv6_secondary_optional")}
               name="ipv6_secondary"
               rules={[
                 {
@@ -321,7 +323,7 @@ export const DNSResolversCard = () => {
         </Row>
 
         <Form.Item
-          label="Search domain (optional)"
+          label={t("dnsresolverscard.search_domain_optional")}
           name="search_domain"
           extra="Appended to unqualified hostnames (systemd-resolved Domains=)."
           rules={[

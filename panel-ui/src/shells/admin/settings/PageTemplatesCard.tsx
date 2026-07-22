@@ -1,6 +1,7 @@
 // PageTemplatesCard — M28 admin list of operator-editable page
 // templates (default domain index, 404/403/500). List on the left,
 // edit in a Modal with a textarea.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Button,
@@ -33,6 +34,7 @@ const LIST_KEY = ["admin", "page-templates"] as const;
 const MAX_BYTES = 128 * 1024;
 
 export const PageTemplatesCard = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<PageTemplate | null>(null);
   const [draft, setDraft] = useState("");
@@ -91,7 +93,7 @@ export const PageTemplatesCard = () => {
 
   return (
     <>
-      <Card title="Page Templates" style={{ marginBottom: 16 }}>
+      <Card title={t("pagetemplatescard.page_templates")} style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           Edit the HTML written to disk on new domains and rendered for common
           error pages. The domain default index supports{" "}
@@ -148,8 +150,8 @@ export const PageTemplatesCard = () => {
         width={900}
         confirmLoading={saving}
         onOk={save}
-        okText="Save"
-        cancelText="Cancel"
+        okText={t("pagetemplatescard.save")}
+        cancelText={t("pagetemplatescard.cancel")}
         destroyOnClose
       >
         {editing && (

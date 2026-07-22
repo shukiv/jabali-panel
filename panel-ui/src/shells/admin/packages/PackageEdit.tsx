@@ -2,6 +2,7 @@
 //
 // Same field set as PackageCreate; initial values load via useOneQuery
 // and seed the Form once they arrive.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Button,
@@ -67,6 +68,7 @@ type PackageEditInput = {
 type PackageRecord = PackageEditInput & { id: string };
 
 export const PackageEdit = () => {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [form] = Form.useForm<PackageEditInput>();
@@ -176,7 +178,7 @@ export const PackageEdit = () => {
         onFinish={handleFinish}
       >
         <Form.Item
-          label="Name"
+          label={t("packageedit.name")}
           name="name"
           rules={[{ required: true, message: "Package name is required" }]}
         >
@@ -192,7 +194,7 @@ export const PackageEdit = () => {
         <Row gutter={16}>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Disk Quota (MB)"
+              label={t("packageedit.disk_quota_mb")}
               name="disk_quota_mb"
               rules={[{ required: true, message: "Disk quota is required" }]}
               tooltip={
@@ -211,7 +213,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="CPU Quota (%)"
+              label={t("packageedit.cpu_quota")}
               name="cpu_quota_percent"
               tooltip="systemd CPUQuota — 100% = 1 core, 200% = 2 cores. 0 = unlimited."
             >
@@ -220,7 +222,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Memory Limit (MB)"
+              label={t("packageedit.memory_limit_mb")}
               name="memory_limit_mb"
               tooltip="systemd MemoryMax; MemoryHigh is fixed at 90% of this. 0 = unlimited."
             >
@@ -229,7 +231,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="IO Read Bandwidth (MB/s)"
+              label={t("packageedit.io_read_bandwidth_mb_s")}
               name="io_read_mbps"
               tooltip="systemd IOReadBandwidthMax on /. 0 = unlimited."
             >
@@ -238,7 +240,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="IO Write Bandwidth (MB/s)"
+              label={t("packageedit.io_write_bandwidth_mb_s")}
               name="io_write_mbps"
               tooltip="systemd IOWriteBandwidthMax on /. 0 = unlimited."
             >
@@ -247,7 +249,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Max Tasks"
+              label={t("packageedit.max_tasks")}
               name="max_tasks"
               tooltip="systemd TasksMax — upper bound on concurrent processes. 0 = unlimited."
             >
@@ -261,7 +263,7 @@ export const PackageEdit = () => {
         <Row gutter={16}>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Bandwidth Quota (MB)"
+              label={t("packageedit.bandwidth_quota_mb")}
               name="bandwidth_quota_mb"
               rules={[{ required: true, message: "Bandwidth quota is required" }]}
               tooltip="0 = unlimited"
@@ -271,7 +273,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Max Domains"
+              label={t("packageedit.max_domains")}
               name="max_domains"
               rules={[{ required: true, message: "Max domains is required" }]}
               tooltip="0 = unlimited"
@@ -281,7 +283,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Max Email Accounts"
+              label={t("packageedit.max_email_accounts")}
               name="max_email_accounts"
               rules={[
                 { required: true, message: "Max email accounts is required" },
@@ -293,7 +295,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Max Databases"
+              label={t("packageedit.max_databases")}
               name="max_databases"
               rules={[{ required: true, message: "Max databases is required" }]}
               tooltip="0 = unlimited"
@@ -303,7 +305,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Max Docker Apps"
+              label={t("packageedit.max_docker_apps")}
               name="max_docker_apps"
               tooltip="0 = Docker apps not included in this package"
             >
@@ -312,7 +314,7 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Max Python Apps"
+              label={t("packageedit.max_python_apps")}
               name="max_python_apps"
               tooltip="0 = Python apps not included in this package"
             >
@@ -330,28 +332,28 @@ export const PackageEdit = () => {
         <Row gutter={16}>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Max Backups"
+              label={t("packageedit.max_backups")}
               name="max_backups"
-              tooltip="Retention cap — most snapshots a tenant on this plan may keep. 0 = tenant backups not included."
+              tooltip={t("packageedit.retention_cap_most_snapshots_a_tenant_on_thi")}
             >
               <InputNumber min={0} style={{ width: "100%" }} />
             </Form.Item>
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Scheduled Backups"
+              label={t("packageedit.scheduled_backups")}
               name="scheduled_backups_enabled"
               valuePropName="checked"
-              tooltip="Allow tenants on this plan to enable a scheduled backup. The schedule time is admin-controlled."
+              tooltip={t("packageedit.allow_tenants_on_this_plan_to_enable_a_sched")}
             >
               <Switch />
             </Form.Item>
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Allowed Backup Destinations"
+              label={t("packageedit.allowed_backup_destinations")}
               name="allowed_backup_destination_kinds"
-              tooltip="Destination kinds a tenant may back up to. Empty = none allowed."
+              tooltip={t("packageedit.destination_kinds_a_tenant_may_back_up_to_em")}
             >
               <Select
                 mode="multiple"
@@ -364,9 +366,9 @@ export const PackageEdit = () => {
           </Col>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
-              label="Backup Retention Policy"
+              label={t("packageedit.backup_retention_policy")}
               name="backup_retention_policy"
-              tooltip="What happens when a tenant reaches Max Backups: Reject (safe — block the new backup) or Auto-prune (delete the tenant's oldest backup to make room). Both notify the tenant and admins."
+              tooltip={t("packageedit.what_happens_when_a_tenant_reaches_max_backu")}
             >
               <Select
                 options={[
@@ -385,7 +387,7 @@ export const PackageEdit = () => {
           <Form.Item
             name="ssh_enabled"
             valuePropName="checked"
-            tooltip="Allow SSH access"
+            tooltip={t("packageedit.allow_ssh_access")}
             noStyle
           >
             <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
@@ -397,7 +399,7 @@ export const PackageEdit = () => {
           <Form.Item
             name="cgi_enabled"
             valuePropName="checked"
-            tooltip="Allow CGI scripts"
+            tooltip={t("packageedit.allow_cgi_scripts")}
             noStyle
           >
             <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
@@ -409,7 +411,7 @@ export const PackageEdit = () => {
           <Form.Item
             name="php_exec_enabled"
             valuePropName="checked"
-            tooltip="Security: re-enables PHP exec/proc_open/shell_exec for ALL tenants on this package (GH #401 lockdown is OFF). Only enable for plans whose apps genuinely need shell-outs."
+            tooltip={t("packageedit.security_re_enables_php_exec_proc_open_shell")}
             noStyle
           >
             <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
@@ -424,7 +426,7 @@ export const PackageEdit = () => {
           <Form.Item
             name="fpm_user_can_edit"
             valuePropName="checked"
-            tooltip="Let tenants pick a safe PHP Performance Mode (Balanced / Low-memory / High-traffic / WordPress-optimized)."
+            tooltip={t("packageedit.let_tenants_pick_a_safe_php_performance_mode")}
             noStyle
           >
             <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
@@ -435,30 +437,30 @@ export const PackageEdit = () => {
           <Form.Item
             name="fpm_advanced_mode"
             valuePropName="checked"
-            tooltip="Also expose the individual pm.* knobs (clamped to the cap). Implies the toggle above."
+            tooltip={t("packageedit.also_expose_the_individual_pm_knobs_clamped")}
             noStyle
           >
             <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
           </Form.Item>
           <Typography.Text>Users can use Advanced mode (raw pm.*, clamped to the cap)</Typography.Text>
         </div>
-        <Form.Item name="fpm_max_children_cap" label="Max children per user (FPM cap)">
+        <Form.Item name="fpm_max_children_cap" label={t("packageedit.max_children_per_user_fpm_cap")}>
           <InputNumber min={1} max={2000} style={{ width: 160 }} />
         </Form.Item>
-        <Form.Item name="fpm_worker_mem_mb" label="Est. RAM per worker (MB) — drives the memory-budget estimate">
+        <Form.Item name="fpm_worker_mem_mb" label={t("packageedit.est_ram_per_worker_mb_drives_the_memory_budg")}>
           <InputNumber min={8} max={2048} style={{ width: 160 }} />
         </Form.Item>
 
 
         <Form.Item
-          label="Docker apps (per-package allowlist)"
+          label={t("packageedit.docker_apps_per_package_allowlist")}
           name="docker_app_slugs"
           extra="Tenants on this package may install only these apps. Empty = use the server-wide Docker Apps curation. Requires Max Docker Apps > 0."
         >
           <Select
             mode="multiple"
             allowClear
-            placeholder="Empty = server-wide default"
+            placeholder={t("packageedit.empty_server_wide_default")}
             options={dockerApps.map((a) => ({ value: a.slug, label: a.name }))}
           />
         </Form.Item>

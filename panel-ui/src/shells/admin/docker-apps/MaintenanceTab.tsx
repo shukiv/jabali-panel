@@ -1,6 +1,7 @@
 // Maintenance tab — reclaim disk + sweep stale containers / images /
 // volumes / build cache. Backed by docker.disk_usage + docker.prune
 // agent verbs (see panel-agent/internal/commands/docker_lifecycle.go).
+import { useTranslation } from "react-i18next";
 import { App, Button, Card, Col, Modal, Row, Space, Statistic, Switch, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -34,6 +35,7 @@ function fmtBytes(n: number): string {
 }
 
 export const MaintenanceTab = () => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
   const [pruneAll, setPruneAll] = useState(false);
@@ -93,23 +95,23 @@ export const MaintenanceTab = () => {
   return (
     <div>
       <DockerEngineCard />
-      <Card title="Disk usage" loading={usage.isLoading} style={{ marginBottom: 16 }}>
+      <Card title={t("maintenancetab.disk_usage")} loading={usage.isLoading} style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]}>
           <Col xs={12} sm={6}>
-            <Statistic title="Images" value={fmtBytes(usage.data?.images_bytes ?? 0)} />
+            <Statistic title={t("maintenancetab.images")} value={fmtBytes(usage.data?.images_bytes ?? 0)} />
           </Col>
           <Col xs={12} sm={6}>
-            <Statistic title="Containers" value={fmtBytes(usage.data?.containers_bytes ?? 0)} />
+            <Statistic title={t("maintenancetab.containers")} value={fmtBytes(usage.data?.containers_bytes ?? 0)} />
           </Col>
           <Col xs={12} sm={6}>
-            <Statistic title="Volumes" value={fmtBytes(usage.data?.volumes_bytes ?? 0)} />
+            <Statistic title={t("maintenancetab.volumes")} value={fmtBytes(usage.data?.volumes_bytes ?? 0)} />
           </Col>
           <Col xs={12} sm={6}>
-            <Statistic title="Build cache" value={fmtBytes(usage.data?.build_cache_bytes ?? 0)} />
+            <Statistic title={t("maintenancetab.build_cache")} value={fmtBytes(usage.data?.build_cache_bytes ?? 0)} />
           </Col>
           <Col span={24}>
             <Statistic
-              title="Reclaimable"
+              title={t("maintenancetab.reclaimable")}
               valueStyle={{ color: (usage.data?.reclaimable_bytes ?? 0) > 0 ? "#cf1322" : undefined }}
               value={fmtBytes(usage.data?.reclaimable_bytes ?? 0)}
             />
@@ -117,7 +119,7 @@ export const MaintenanceTab = () => {
         </Row>
       </Card>
 
-      <Card title="Prune">
+      <Card title={t("maintenancetab.prune")}>
         <Typography.Paragraph type="secondary">
           Frees disk by removing what docker considers unused. Toggle to control how aggressive.
         </Typography.Paragraph>

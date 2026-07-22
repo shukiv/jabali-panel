@@ -5,6 +5,7 @@
 // × that revokes just that grant. Row-level actions are Add Access
 // (open AddGrantModal), Password (rotate + reveal modal), and Delete
 // (drops the whole user, cascading all grants).
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { Button, Card, Space, Table, Tag, Typography, message } from "antd";
@@ -71,6 +72,7 @@ function grantLabel(grant: Grant): string {
 }
 
 export const DatabaseUsersList = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const query = useTableURL<DatabaseUser>({
     resource: "database-users",
@@ -176,7 +178,7 @@ export const DatabaseUsersList = () => {
         >
           <Table.Column<DatabaseUser>
             dataIndex="username"
-            title="User"
+            title={t("databaseuserslist.user")}
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
             {...columnSearchProps<DatabaseUser>({
@@ -194,7 +196,7 @@ export const DatabaseUsersList = () => {
           />
           <Table.Column<DatabaseUser>
             dataIndex="engine"
-            title="Engine"
+            title={t("databaseuserslist.engine")}
             key="engine"
             sorter={{ multiple: 1 }}
             width={140}
@@ -203,7 +205,7 @@ export const DatabaseUsersList = () => {
             )}
           />
           <Table.Column<DatabaseUser>
-            title="Database Privileges"
+            title={t("databaseuserslist.database_privileges")}
             dataIndex="grants"
             render={(grants: Grant[] | undefined) => {
               if (!grants || grants.length === 0) {
@@ -242,13 +244,13 @@ export const DatabaseUsersList = () => {
           />
           <Table.Column<DatabaseUser>
             dataIndex="created_at"
-            title="Created"
+            title={t("databaseuserslist.created")}
             sorter={{ multiple: 2 }}
             render={(date: string) => shortDateTime(date)}
             width={120}
           />
           <Table.Column<DatabaseUser>
-            title="Actions"
+            title={t("databaseuserslist.actions")}
             dataIndex="actions"
             width={180}
             render={(_, row) => (

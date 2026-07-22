@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Alert, notification, Spin, Table, Tag, Tooltip } from "antd";
 import {
@@ -26,6 +27,7 @@ interface PHPVersionStatusResponse {
 }
 
 export const VersionsTab = () => {
+  const { t } = useTranslation();
   const [statusData, setStatusData] = useState<PHPVersionStatusResponse | null>(
     null
   );
@@ -203,8 +205,8 @@ export const VersionsTab = () => {
         <Alert
           type="warning"
           showIcon
-          title="Modifying PHP versions can cause server downtime"
-          description="Uninstalling PHP versions may break websites that depend on them. Ensure you understand the impact before making changes."
+          title={t("versionstab.modifying_php_versions_can_cause_server_down")}
+          description={t("versionstab.uninstalling_php_versions_may_break_websites")}
           closable
           onClose={() => setDismissedWarning(true)}
           style={{ marginBottom: 16 }}
@@ -220,12 +222,12 @@ export const VersionsTab = () => {
       >
         <Table.Column<PHPVersionStatus>
           dataIndex="version"
-          title="PHP Version"
+          title={t("versionstab.php_version")}
           render={(version: string) => (
             <span>
               PHP {version}
               {isPHPEOL(version) && (
-                <Tooltip title="End of life — no upstream security patches. Running an EOL PHP version on a public site is a security risk.">
+                <Tooltip title={t("versionstab.end_of_life_no_upstream_security_patches_run")}>
                   <Tag color="red" style={{ marginLeft: 8 }}>
                     EOL
                   </Tag>
@@ -236,7 +238,7 @@ export const VersionsTab = () => {
         />
         <Table.Column<PHPVersionStatus>
           dataIndex="installed"
-          title="Status"
+          title={t("versionstab.status")}
           width={150}
           render={(installed: boolean) =>
             installed ? (
@@ -247,7 +249,7 @@ export const VersionsTab = () => {
           }
         />
         <Table.Column<PHPVersionStatus>
-          title="Default"
+          title={t("versionstab.default")}
           width={140}
           render={(_: any, record: PHPVersionStatus) => {
             if (record.version === statusData?.default_version && record.installed) {
@@ -272,7 +274,7 @@ export const VersionsTab = () => {
         />
         <Table.Column<PHPVersionStatus>
           dataIndex="fpm_running"
-          title="FPM workers"
+          title={t("versionstab.fpm_workers")}
           width={170}
           render={(_fpmRunning: boolean, record: PHPVersionStatus) => {
             if (!record.installed) return "—";
@@ -289,7 +291,7 @@ export const VersionsTab = () => {
           }}
         />
         <Table.Column<PHPVersionStatus>
-          title="Actions"
+          title={t("versionstab.actions")}
           width={220}
           render={(_: any, record: PHPVersionStatus) => {
             const isInstalling = installingVersion === record.version;

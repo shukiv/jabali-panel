@@ -3,6 +3,7 @@
 // user-side CreateCronModal but adds a target-user picker as the
 // first field. UserID flows into the request body; the server
 // uses it only when caller.IsAdmin (security gate in panel-api).
+import { useTranslation } from "react-i18next";
 import { App, Button, Divider, Drawer, Form, Grid, Input, Radio, Select, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -31,6 +32,7 @@ interface Props {
 }
 
 export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const screens = Grid.useBreakpoint();
   const [form] = Form.useForm<{
@@ -109,7 +111,7 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
     <Drawer
       open={open}
       onClose={onClose}
-      title="New cron job (as tenant)"
+      title={t("admincreatecronmodal.new_cron_job_as_tenant")}
       width={screens.xs ? "100%" : 560}
       destroyOnClose
       extra={
@@ -134,7 +136,7 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
           if (c.run_as !== undefined) setRunAs(c.run_as);
         }}
       >
-        <Form.Item label="Run as" name="run_as" initialValue="tenant">
+        <Form.Item label={t("admincreatecronmodal.run_as")} name="run_as" initialValue="tenant">
           <Radio.Group>
             <Radio value="tenant">Tenant (per-user systemd)</Radio>
             <Radio value="root">Root (system-scoped systemd)</Radio>
@@ -142,12 +144,12 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
         </Form.Item>
         {runAs === "tenant" && (
           <Form.Item
-            label="Tenant"
+            label={t("admincreatecronmodal.tenant")}
             name="user_id"
             rules={[{ required: true, message: "Pick a tenant" }]}
           >
             <Select
-              placeholder="Choose tenant"
+              placeholder={t("admincreatecronmodal.choose_tenant")}
               options={userOptions}
               loading={usersQ.isLoading}
               showSearch
@@ -158,7 +160,7 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
           </Form.Item>
         )}
         <Form.Item
-          label="Name"
+          label={t("admincreatecronmodal.name")}
           name="name"
           rules={[
             { required: true, message: "Name is required" },
@@ -168,14 +170,14 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
           <Input placeholder="e.g. nightly-backup" />
         </Form.Item>
         <Form.Item
-          label="Command"
+          label={t("admincreatecronmodal.command")}
           name="command"
           rules={[{ required: true, message: "Command is required" }]}
         >
           <Input.TextArea placeholder="cd /home/tenant && ./run.sh" rows={3} />
         </Form.Item>
         <Divider />
-        <Form.Item label="Schedule" name="preset">
+        <Form.Item label={t("admincreatecronmodal.schedule")} name="preset">
           <Radio.Group>
             <Space direction="vertical" size="small" style={{ width: "100%" }}>
               {SCHEDULE_PRESETS.map((p) => (
@@ -193,7 +195,7 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
         </Form.Item>
         {preset === "advanced" && (
           <Form.Item
-            label="Custom cron expression"
+            label={t("admincreatecronmodal.custom_cron_expression")}
             name="schedule"
             rules={[{ required: true, message: "Cron expression required" }]}
           >

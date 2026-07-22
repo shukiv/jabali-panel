@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Card, Switch, Typography, notification } from "antd";
 
@@ -7,6 +8,7 @@ import { apiClient } from "../../../apiClient";
 // Bulwark webmail client server-wide (GH #316). When off, the reconciler tears
 // down the webmail vhosts and stops the jabali-webmail service.
 export const WebmailToggleCard = () => {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -47,7 +49,7 @@ export const WebmailToggleCard = () => {
   };
 
   return (
-    <Card title="Webmail" style={{ marginBottom: 16 }} loading={loading}>
+    <Card title={t("webmailtogglecard.webmail")} style={{ marginBottom: 16 }} loading={loading}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Serve the bundled webmail client (Bulwark) at <Typography.Text code>mail.&lt;domain&gt;</Typography.Text>{" "}
         for every email-enabled domain. Turn it off to stop offering webmail

@@ -1,6 +1,7 @@
 // LookAndFeelCard — panel-wide appearance: font size + operator colors. Stored
 // as a server_settings singleton and applied for ALL users via the app's
 // ConfigProvider (useBranding -> useMuiTheme). Empty color = built-in default.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 
 import {
@@ -56,6 +57,7 @@ const toHex = (c: unknown): string => {
 };
 
 export const LookAndFeelCard = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [form] = Form.useForm<FormShape>();
   const [loading, setLoading] = useState(true);
@@ -111,10 +113,10 @@ export const LookAndFeelCard = () => {
   };
 
   return (
-    <Card title="Look and feel" style={{ marginBottom: 16 }}>
+    <Card title={t("lookandfeelcard.look_and_feel")} style={{ marginBottom: 16 }}>
       <Form form={form} layout="vertical" onFinish={persist} disabled={loading}>
         <Form.Item
-          label="Panel font size"
+          label={t("lookandfeelcard.panel_font_size")}
           name="panel_font_size"
           extra="Applies to the whole panel for all users. Medium is the default."
         >

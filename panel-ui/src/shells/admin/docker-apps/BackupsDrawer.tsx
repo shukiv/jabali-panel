@@ -3,6 +3,7 @@
 // (JABALI_RESTIC_REPO + JABALI_RESTIC_PASSWORD on the agent
 // service unit); a 503 from the backend means the operator hasn't
 // configured them yet.
+import { useTranslation } from "react-i18next";
 import { Alert, App, Button, Drawer, Popconfirm, Space, Table, Tag, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export const BackupsDrawer = ({ open, appId, onClose }: Props) => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
 
@@ -55,7 +57,7 @@ export const BackupsDrawer = ({ open, appId, onClose }: Props) => {
     <Drawer
       open={open}
       onClose={onClose}
-      title="Backups"
+      title={t("backupsdrawer.backups")}
       width="min(100%, 760px)"
       destroyOnClose
       extra={
@@ -68,7 +70,7 @@ export const BackupsDrawer = ({ open, appId, onClose }: Props) => {
         <Alert
           type="info"
           showIcon
-          message="Phase 8.1: restic via env vars"
+          message={t("backupsdrawer.phase_8_1_restic_via_env_vars")}
           description={
             <>
               Operator must set <code>JABALI_RESTIC_REPO</code> and{" "}
@@ -117,9 +119,9 @@ export const BackupsDrawer = ({ open, appId, onClose }: Props) => {
               width: 130,
               render: (_, row) => (
                 <Popconfirm
-                  title="Restore this snapshot?"
-                  description="Container will be stopped, files restored, container brought back up."
-                  okText="Restore"
+                  title={t("backupsdrawer.restore_this_snapshot")}
+                  description={t("backupsdrawer.container_will_be_stopped_files_restored_con")}
+                  okText={t("backupsdrawer.restore")}
                   okButtonProps={{ danger: true, loading: restore.isPending }}
                   onConfirm={() => restore.mutate(row.id)}
                 >

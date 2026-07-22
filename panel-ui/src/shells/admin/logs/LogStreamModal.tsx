@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState, useEffect, useRef } from "react";
 import { Modal, Typography, Button, Space, message, Spin, theme } from "antd";
 import { PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
@@ -46,6 +47,7 @@ const buildGoAccessHttpUrl = (streamUrl: string): string | null => {
 };
 
 export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: LogStreamModalProps) => {
+  const { t } = useTranslation();
   const { token } = theme.useToken();
   const [logs, setLogs] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
@@ -232,7 +234,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
               border: "none",
               display: "block",
             }}
-            title="GoAccess Dashboard"
+            title={t("logstreammodal.goaccess_dashboard")}
             sandbox="allow-scripts allow-same-origin"
             onLoad={() => {
               const iframe = goAccessFrameRef.current;

@@ -6,12 +6,14 @@
 // notification "channel" was misleading — every browser already needs
 // its own enable click anyway. This tab exposes the same toggle the
 // bell dropdown footer offers, with a bit more context around it.
+import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Space, Typography, message } from "antd";
 import { BellOutlined } from "@icons";
 
 import { useWebPushSubscription } from "../../../hooks/useWebPushSubscription";
 
 export const WebPushTab = () => {
+  const { t } = useTranslation();
   const webpush = useWebPushSubscription();
 
   const handleEnable = async () => {
@@ -38,8 +40,8 @@ export const WebPushTab = () => {
         <Alert
           type="warning"
           showIcon
-          message="Browser push is not supported in this browser"
-          description="Web Push relies on the Service Worker + Push API. Try a modern Chrome, Firefox, Safari 16+, or Edge build."
+          message={t("webpushtab.browser_push_is_not_supported_in_this_browse")}
+          description={t("webpushtab.web_push_relies_on_the_service_worker_push_a")}
         />
       );
     }
@@ -48,8 +50,8 @@ export const WebPushTab = () => {
         <Alert
           type="warning"
           showIcon
-          message="Browser blocked notifications"
-          description="Open the site permissions for this domain in your browser settings and re-allow notifications, then reload."
+          message={t("webpushtab.browser_blocked_notifications")}
+          description={t("webpushtab.open_the_site_permissions_for_this_domain_in")}
         />
       );
     }
@@ -59,8 +61,8 @@ export const WebPushTab = () => {
           <Alert
             type="success"
             showIcon
-            message="This browser is receiving Jabali push notifications"
-            description="Notifications appear via your operating system even when the panel tab isn't focused. Disable any time below."
+            message={t("webpushtab.this_browser_is_receiving_jabali_push_notifi")}
+            description={t("webpushtab.notifications_appear_via_your_operating_syst")}
           />
           <Button danger onClick={handleDisable} loading={webpush.loading}>
             Disable on this browser
@@ -79,7 +81,7 @@ export const WebPushTab = () => {
           <Alert
             type="error"
             showIcon
-            message="Couldn't enable browser push"
+            message={t("webpushtab.couldn_t_enable_browser_push")}
             description={webpush.error}
           />
         )}

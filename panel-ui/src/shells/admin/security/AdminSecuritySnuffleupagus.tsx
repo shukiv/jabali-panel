@@ -1,6 +1,7 @@
 // AdminSecuritySnuffleupagus — Security tab card for M41 Snuffleupagus.
 // Wave D — full surface: mode toggle, php-version load matrix, recent
 // incidents table, per-rule kill switch.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -48,6 +49,7 @@ const ACTION_COLOR: Record<string, string> = {
 };
 
 export function AdminSecuritySnuffleupagus() {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const status = useSnuffleupagusStatus();
   const incidents = useSnuffleupagusIncidents({ limit: 50 });
@@ -61,7 +63,7 @@ export function AdminSecuritySnuffleupagus() {
 
   if (status.isLoading) {
     return (
-      <Card title="PHP Defense" size="small">
+      <Card title={t("adminsecuritysnuffleupagus.php_defense")} size="small">
         <Text type="secondary">Loading…</Text>
       </Card>
     );
@@ -73,7 +75,7 @@ export function AdminSecuritySnuffleupagus() {
 
   return (
     <Card
-      title="PHP Defense"
+      title={t("adminsecuritysnuffleupagus.php_defense")}
       size="small"
       extra={
         <Space>
@@ -156,8 +158,8 @@ export function AdminSecuritySnuffleupagus() {
           <Alert
             type="info"
             showIcon
-            message="Simulation mode active"
-            description="Rules log incidents below without blocking. Soak for 7 days to identify false positives, then flip to enforce."
+            message={t("adminsecuritysnuffleupagus.simulation_mode_active")}
+            description={t("adminsecuritysnuffleupagus.rules_log_incidents_below_without_blocking_s")}
           />
         )}
 
@@ -213,7 +215,7 @@ export function AdminSecuritySnuffleupagus() {
       </Space>
 
       <Modal
-        title="PHP Defense rules"
+        title={t("adminsecuritysnuffleupagus.php_defense_rules")}
         open={rulesOpen}
         onCancel={() => setRulesOpen(false)}
         footer={<Button onClick={() => setRulesOpen(false)}>Close</Button>}
@@ -260,7 +262,7 @@ export function AdminSecuritySnuffleupagus() {
                   />
                 ) : (
                   <Popconfirm
-                    title="Re-enable this rule?"
+                    title={t("adminsecuritysnuffleupagus.re_enable_this_rule")}
                     onConfirm={() =>
                       toggleRule
                         .mutateAsync({ name: row.name, enabled: true })
@@ -288,13 +290,13 @@ export function AdminSecuritySnuffleupagus() {
         {detailIncident ? (
           <>
             <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="When">{new Date(detailIncident.ts).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="Action">{detailIncident.action}</Descriptions.Item>
-              <Descriptions.Item label="Rule">{detailIncident.rule_name}</Descriptions.Item>
-              <Descriptions.Item label="Domain / tenant">{detailIncident.domain || "—"}</Descriptions.Item>
-              <Descriptions.Item label="Request URI">{detailIncident.request_uri || "—"}</Descriptions.Item>
-              <Descriptions.Item label="Source IP">{detailIncident.source_ip || "—"}</Descriptions.Item>
-              <Descriptions.Item label="PHP version">{detailIncident.php_version || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.when")}>{new Date(detailIncident.ts).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.action")}>{detailIncident.action}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.rule")}>{detailIncident.rule_name}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.domain_tenant")}>{detailIncident.domain || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.request_uri")}>{detailIncident.request_uri || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.source_ip")}>{detailIncident.source_ip || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.php_version")}>{detailIncident.php_version || "—"}</Descriptions.Item>
             </Descriptions>
             {(() => {
               // GH #717: per-rule incident history from the loaded window — how
@@ -343,9 +345,9 @@ export function AdminSecuritySnuffleupagus() {
         ) : null}
       </Drawer>
       <Modal
-        title="Disable rule — reason required"
+        title={t("adminsecuritysnuffleupagus.disable_rule_reason_required")}
         open={disabling !== null}
-        okText="Disable"
+        okText={t("adminsecuritysnuffleupagus.disable")}
         okButtonProps={{ danger: true, disabled: !disabling?.reason.trim() }}
         onCancel={() => setDisabling(null)}
         onOk={() => {

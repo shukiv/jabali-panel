@@ -1,5 +1,6 @@
 // AdminSecurityAide — admin Security tab "AIDE" sub-tab (M42, ADR-0087).
 // Read-only FIM status + manual recheck trigger.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { apiClient } from "../../../apiClient";
 import { Alert, Badge, Button, Card, Popconfirm, Select, Space, Statistic, Table, Tag, Tooltip, Typography, message } from "antd";
@@ -37,6 +38,7 @@ function humanizeAge(seconds: number): string {
 }
 
 export const AdminSecurityAide = () => {
+  const { t } = useTranslation();
   const { data, isLoading, refetch } = useAideStatus();
   const [aideCatFilter, setAideCatFilter] = useState<string | undefined>(undefined);
   const [aideTypeFilter, setAideTypeFilter] = useState<string | undefined>(undefined);
@@ -45,7 +47,7 @@ export const AdminSecurityAide = () => {
 
   if (isLoading) {
     return (
-      <Card title="AIDE — file integrity monitor" size="small">
+      <Card title={t("adminsecurityaide.aide_file_integrity_monitor")} size="small">
         <Typography.Text type="secondary">Loading…</Typography.Text>
       </Card>
     );
@@ -53,11 +55,11 @@ export const AdminSecurityAide = () => {
 
   if (!data?.enabled) {
     return (
-      <Card title="AIDE — file integrity monitor" size="small">
+      <Card title={t("adminsecurityaide.aide_file_integrity_monitor")} size="small">
         <Alert
           type="warning"
           showIcon
-          message="AIDE not active"
+          message={t("adminsecurityaide.aide_not_active")}
           description={data?.reason || "AIDE not installed or DB missing. install_aide() runs on jabali update."}
         />
       </Card>
@@ -68,7 +70,7 @@ export const AdminSecurityAide = () => {
 
   return (
     <Card
-      title="AIDE — file integrity monitor"
+      title={t("adminsecurityaide.aide_file_integrity_monitor")}
       size="small"
       extra={
         <Space>
@@ -127,9 +129,9 @@ export const AdminSecurityAide = () => {
             Rebuild (dry run)
           </Button>
           <Popconfirm
-            title="Rebuild the AIDE baseline?"
-            description="This replaces the integrity baseline with the current filesystem state (aideinit -y -f). Only do this after deliberate changes — any tampering present now becomes the new 'clean' baseline."
-            okText="Rebuild"
+            title={t("adminsecurityaide.rebuild_the_aide_baseline")}
+            description={t("adminsecurityaide.this_replaces_the_integrity_baseline_with_th")}
+            okText={t("adminsecurityaide.rebuild")}
             okButtonProps={{ danger: true }}
             onConfirm={() =>
               runRebuild.mutate(false, {
@@ -155,11 +157,11 @@ export const AdminSecurityAide = () => {
       </Typography.Paragraph>
 
       <Space size="large" style={{ marginBottom: 16 }}>
-        <Statistic title="DB age" value={humanizeAge(data.db_age_seconds)} />
-        <Statistic title="Last check" value={data.last_check_ts || "—"} />
-        <Statistic title="Added" value={data.summary.added} />
-        <Statistic title="Changed" value={data.summary.changed} />
-        <Statistic title="Removed" value={data.summary.removed} />
+        <Statistic title={t("adminsecurityaide.db_age")} value={humanizeAge(data.db_age_seconds)} />
+        <Statistic title={t("adminsecurityaide.last_check")} value={data.last_check_ts || "—"} />
+        <Statistic title={t("adminsecurityaide.added")} value={data.summary.added} />
+        <Statistic title={t("adminsecurityaide.changed")} value={data.summary.changed} />
+        <Statistic title={t("adminsecurityaide.removed")} value={data.summary.removed} />
       </Space>
 
       {total > 0 ? (
@@ -167,15 +169,15 @@ export const AdminSecurityAide = () => {
           type="warning"
           showIcon
           message={`${total} file(s) changed since the last baseline`}
-          description="Review the sample below. If the changes are expected (kernel bump, manual config edit), re-baseline via SSH: jabali aide rebuild --full."
+          description={t("adminsecurityaide.review_the_sample_below_if_the_changes_are_e")}
           style={{ marginBottom: 12 }}
         />
       ) : (
         <Alert
           type="success"
           showIcon
-          message="No tamper detected"
-          description="All watched paths match the baseline checksum."
+          message={t("adminsecurityaide.no_tamper_detected")}
+          description={t("adminsecurityaide.all_watched_paths_match_the_baseline_checksu")}
           style={{ marginBottom: 12 }}
         />
       )}
@@ -197,7 +199,7 @@ export const AdminSecurityAide = () => {
               type="warning"
               showIcon
               style={{ marginTop: 12 }}
-              message="Prioritize these"
+              message={t("adminsecurityaide.prioritize_these")}
               description="`security-control` and `unknown/unowned` changes deserve scrutiny before re-baselining — the rest is usually package/kernel churn."
             />
           ) : null}
@@ -206,7 +208,7 @@ export const AdminSecurityAide = () => {
       <Space wrap style={{ marginBottom: 12 }}>
         <Select
           allowClear
-          placeholder="Category"
+          placeholder={t("adminsecurityaide.category")}
           style={{ width: 180 }}
           value={aideCatFilter}
           onChange={setAideCatFilter}
@@ -214,7 +216,7 @@ export const AdminSecurityAide = () => {
         />
         <Select
           allowClear
-          placeholder="Change type"
+          placeholder={t("adminsecurityaide.change_type")}
           style={{ width: 150 }}
           value={aideTypeFilter}
           onChange={setAideTypeFilter}

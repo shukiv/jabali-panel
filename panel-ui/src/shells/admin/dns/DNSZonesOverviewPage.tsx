@@ -3,6 +3,7 @@
 // + DS export). Mirrors the UserList tab style — a count Tag in each
 // label, controlled activeTabKey, panel-attached strip. Both tabs
 // view the same `domains` list so the badge total matches on both.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { Alert, Button, Card, Spin, Table, Tag, Tooltip, Typography } from "antd";
@@ -34,6 +35,7 @@ interface ZoneStatus {
 }
 
 const ZonesTab = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
     new Map(),
@@ -87,7 +89,7 @@ const ZonesTab = () => {
   return (
     <>
       <Alert
-        title="DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings."
+        title={t("dnszonesoverviewpage.dns_zones_are_provisioned_automatically_when")}
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
@@ -95,7 +97,7 @@ const ZonesTab = () => {
       {query.isLoading ? (
         <Spin />
       ) : query.items.length === 0 ? (
-        <EmptyWithCTA description="No DNS zones yet — create a domain to manage its DNS" ctaLabel="Create domain" onCta={() => navigate("/jabali-admin/domains/create")} />
+        <EmptyWithCTA description={t("dnszonesoverviewpage.no_dns_zones_yet_create_a_domain_to_manage_i")} ctaLabel="Create domain" onCta={() => navigate("/jabali-admin/domains/create")} />
       ) : (
         <SearchableTableStringQ<Domain>
           rowKey="id"
@@ -113,7 +115,7 @@ const ZonesTab = () => {
         >
           <Table.Column<Domain>
             dataIndex="name"
-            title="Domain Name"
+            title={t("dnszonesoverviewpage.domain_name")}
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -125,7 +127,7 @@ const ZonesTab = () => {
           />
           <Table.Column<Domain>
             dataIndex="username"
-            title="Owner"
+            title={t("dnszonesoverviewpage.owner")}
             key="username"
             sorter={{ multiple: 1 }}
             render={(username: string | null | undefined, record: Domain) =>
@@ -133,11 +135,11 @@ const ZonesTab = () => {
             }
           />
           <Table.Column<Domain>
-            title="Zone Status"
+            title={t("dnszonesoverviewpage.zone_status")}
             render={(_, record) => getZoneStatusTag(record.id)}
           />
           <Table.Column<Domain>
-            title="Records"
+            title={t("dnszonesoverviewpage.records")}
             render={(_, record) => {
               const s = zoneStatuses.get(record.id);
               if (s === undefined) return <Spin size="small" />;
@@ -145,7 +147,7 @@ const ZonesTab = () => {
             }}
           />
           <Table.Column<Domain>
-            title="TTL"
+            title={t("dnszonesoverviewpage.ttl")}
             render={(_, record) => {
               const s = zoneStatuses.get(record.id);
               if (s === undefined) return <Spin size="small" />;
@@ -153,18 +155,18 @@ const ZonesTab = () => {
             }}
           />
           <Table.Column<Domain>
-            title="DNSSEC"
+            title={t("dnszonesoverviewpage.dnssec")}
             dataIndex="dnssec_enabled"
             render={(enabled: boolean | undefined) =>
               enabled ? <Tag color="green">Signed</Tag> : <Tag>Unsigned</Tag>
             }
           />
           <Table.Column<Domain>
-            title="Expiration"
+            title={t("dnszonesoverviewpage.expiration")}
             dataIndex="registrar_expires_at"
             render={(d: string | null | undefined) =>
               d ? (
-                <Tooltip title="Domain registration expiry (from WHOIS)">
+                <Tooltip title={t("dnszonesoverviewpage.domain_registration_expiry_from_whois")}>
                   {new Date(d).toLocaleDateString()}
                 </Tooltip>
               ) : (
@@ -173,7 +175,7 @@ const ZonesTab = () => {
             }
           />
           <Table.Column<Domain>
-            title="Actions"
+            title={t("dnszonesoverviewpage.actions")}
             render={(_, record) => (
               <Button
                 type="primary"

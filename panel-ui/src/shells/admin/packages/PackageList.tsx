@@ -2,6 +2,7 @@
 // Post-M21: useTable → useTableURL, <CreateButton>/<EditButton>/
 // <DeleteButton> replaced with plain react-router <Button>s + a
 // RowDeleteButton wired to useDeleteMutation.
+import { useTranslation } from "react-i18next";
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
 import { EditOutlined, PackageOpenOutlined, SearchOutlined, DeleteOutlined } from "@icons";
 
@@ -34,6 +35,7 @@ type Package = {
 const formatQuota = (value: number) => (value === 0 ? "∞" : value);
 
 export const PackageList = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const query = useTableURL<Package>({
     resource: "packages",
@@ -102,7 +104,7 @@ export const PackageList = () => {
           locale={{
             emptyText: (
               <EmptyWithCTA
-                description="No hosting packages yet"
+                description={t("packagelist.no_hosting_packages_yet")}
                 ctaLabel="Create package"
                 onCta={() => navigate("/jabali-admin/packages/create")}
               />
@@ -111,7 +113,7 @@ export const PackageList = () => {
         >
           <Table.Column
             dataIndex="name"
-            title="Name"
+            title={t("packagelist.name")}
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -123,7 +125,7 @@ export const PackageList = () => {
             filterDropdown={({ confirm, close }) => (
               <div style={{ padding: 8, minWidth: 240 }}>
                 <Input.Search
-                  placeholder="Search by package name"
+                  placeholder={t("packagelist.search_by_package_name")}
                   allowClear
                   defaultValue={query.params.q}
                   onSearch={(value) => {
@@ -137,28 +139,28 @@ export const PackageList = () => {
           />
           <Table.Column
             dataIndex="disk_quota_mb"
-            title="Disk (MB)"
+            title={t("packagelist.disk_mb")}
             key="disk_quota_mb"
             sorter={{ multiple: 1 }}
             render={(value: number) => formatQuota(value)}
           />
           <Table.Column
             dataIndex="bandwidth_quota_mb"
-            title="Bandwidth (MB)"
+            title={t("packagelist.bandwidth_mb")}
             key="bandwidth_quota_mb"
             sorter={{ multiple: 1 }}
             render={(value: number) => formatQuota(value)}
           />
           <Table.Column
             dataIndex="max_domains"
-            title="Domains"
+            title={t("packagelist.domains")}
             key="max_domains"
             sorter={{ multiple: 1 }}
             render={(value: number) => formatQuota(value)}
           />
           <Table.Column
             dataIndex="max_email_accounts"
-            title="Email"
+            title={t("packagelist.email")}
             key="max_email_accounts"
             sorter={{ multiple: 1 }}
             render={(value: number) => formatQuota(value)}
@@ -172,7 +174,7 @@ export const PackageList = () => {
           />
           <Table.Column
             dataIndex="ssh_enabled"
-            title="SSH"
+            title={t("packagelist.ssh")}
             key="ssh_enabled"
             sorter={{ multiple: 1 }}
             render={(enabled: boolean) =>
@@ -181,7 +183,7 @@ export const PackageList = () => {
           />
           <Table.Column
             dataIndex="php_exec_enabled"
-            title="PHP exec"
+            title={t("packagelist.php_exec")}
             key="php_exec_enabled"
             sorter={{ multiple: 1 }}
             render={(enabled: boolean) =>
@@ -190,13 +192,13 @@ export const PackageList = () => {
           />
           <Table.Column
             dataIndex="created_at"
-            title="Created"
+            title={t("packagelist.created")}
             key="created_at"
             sorter={{ multiple: 1 }}
             render={(ts: string) => shortDateTime(ts)}
           />
           <Table.Column
-            title="Actions"
+            title={t("packagelist.actions")}
             dataIndex="actions"
             render={(_: unknown, r: Package) => (
               <RowActions

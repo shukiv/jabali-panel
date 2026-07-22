@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -41,6 +42,7 @@ interface VersionStatusResponse {
 type ApplyAction = "install" | "remove" | "enable" | "disable";
 
 export const PHPExtensionsTab = () => {
+  const { t } = useTranslation();
   const [versions, setVersions] = useState<string[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [extensions, setExtensions] = useState<ExtensionState[]>([]);
@@ -153,8 +155,8 @@ export const PHPExtensionsTab = () => {
       <Alert
         type="info"
         showIcon
-        title="No PHP versions installed"
-        description="Install a PHP version first under the PHP Versions tab. Extension management requires at least one installed version."
+        title={t("phpextensionstab.no_php_versions_installed")}
+        description={t("phpextensionstab.install_a_php_version_first_under_the_php_ve")}
       />
     );
   }
@@ -168,7 +170,7 @@ export const PHPExtensionsTab = () => {
           value={selectedVersion ?? undefined}
           onChange={(v) => setSelectedVersion(v)}
           options={versions.map((v) => ({ value: v, label: `PHP ${v}` }))}
-          aria-label="PHP version"
+          aria-label={t("phpextensionstab.php_version")}
         />
       </Space>
 
@@ -185,7 +187,7 @@ export const PHPExtensionsTab = () => {
         >
           <Table.Column<ExtensionState>
             dataIndex="name"
-            title="Extension"
+            title={t("phpextensionstab.extension")}
             sorter={(a, b) => a.name.localeCompare(b.name)}
             filterIcon={() => <SearchOutlined />}
             // Column-level search wired to the same `search` state that
@@ -196,7 +198,7 @@ export const PHPExtensionsTab = () => {
             filterDropdown={({ confirm, close }) => (
               <div style={{ padding: 8, minWidth: 220 }}>
                 <Input.Search
-                  placeholder="Search extensions"
+                  placeholder={t("phpextensionstab.search_extensions")}
                   allowClear
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -217,7 +219,7 @@ export const PHPExtensionsTab = () => {
           />
           <Table.Column<ExtensionState>
             dataIndex="enabled"
-            title="Status"
+            title={t("phpextensionstab.status")}
             width={120}
             sorter={(a, b) => Number(b.enabled) - Number(a.enabled)}
             render={(enabled: boolean) =>
@@ -226,7 +228,7 @@ export const PHPExtensionsTab = () => {
           />
           <Table.Column<ExtensionState>
             dataIndex="installed"
-            title="Installed"
+            title={t("phpextensionstab.installed")}
             width={120}
             sorter={(a, b) => Number(b.installed) - Number(a.installed)}
             render={(installed: boolean) =>
@@ -234,7 +236,7 @@ export const PHPExtensionsTab = () => {
             }
           />
           <Table.Column<ExtensionState>
-            title="Action"
+            title={t("phpextensionstab.action")}
             width={260}
             render={(_: unknown, record) => (
               <ExtensionActions

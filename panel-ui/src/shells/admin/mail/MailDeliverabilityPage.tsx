@@ -3,6 +3,7 @@
 // Single GET /api/v1/admin/mail/deliverability; renders the 0-100 score
 // with a colour badge and each contributing signal as its own line so
 // the operator sees exactly which axis cost what.
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Progress, Skeleton, Tag, Typography } from "antd";
 
@@ -29,6 +30,7 @@ const severityColour: Record<ScoreResponse["severity"], string> = {
 };
 
 export const MailDeliverabilityPage = () => {
+  const { t } = useTranslation();
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin", "mail", "deliverability"],
     queryFn: async () => (await apiClient.get<ScoreResponse>("/admin/mail/deliverability")).data,
@@ -37,11 +39,11 @@ export const MailDeliverabilityPage = () => {
 
   if (isLoading) return <Skeleton active />;
   if (error || !data) {
-    return <Alert type="error" message="Failed to load deliverability score" />;
+    return <Alert type="error" message={t("maildeliverabilitypage.failed_to_load_deliverability_score")} />;
   }
 
   return (
-    <Card title="Mail deliverability — server-wide score" variant="outlined">
+    <Card title={t("maildeliverabilitypage.mail_deliverability_server_wide_score")} variant="outlined">
       <div style={{ marginBottom: 24 }}>
         <Progress
           type="circle"
@@ -81,8 +83,8 @@ export const MailDeliverabilityPage = () => {
         type="info"
         showIcon
         style={{ marginTop: 16 }}
-        message="How this score works"
-        description="Each of the four signals can subtract up to 25 points from a clean 100. The signals come from M47: RBL listings of the public IP, DKIM-failing buckets in inbound DMARC RUA reports, TLS-session failures in TLS-RPT reports, and abuse-feedback (ARF) reports from receiver postmasters. All counted over the last 7 days."
+        message={t("maildeliverabilitypage.how_this_score_works")}
+        description={t("maildeliverabilitypage.each_of_the_four_signals_can_subtract_up_to")}
       />
     </Card>
   );

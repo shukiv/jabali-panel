@@ -8,11 +8,13 @@
 // the table renders an inline Unban button that DELETEs every
 // active decision for that IP/CIDR. Lets the operator self-recover
 // without dropping to a shell.
+import { useTranslation } from "react-i18next";
 import { Alert, App, Button, Card, Form, Input, Popconfirm, Space, Table, Tag, Typography } from "antd";
 
 import { useTrustTest, useUnbanIP, type TrustTestResponse, type TrustVerdict } from "../../../hooks/useSecurityTrust";
 
 export const CrowdsecTestIPCard = () => {
+  const { t } = useTranslation();
   const trustTest = useTrustTest();
   const unbanIP = useUnbanIP();
   const { message } = App.useApp();
@@ -32,7 +34,7 @@ export const CrowdsecTestIPCard = () => {
   };
 
   return (
-    <Card size="small" title="Test IP — would this IP be blocked?">
+    <Card size="small" title={t("crowdsectestipcard.test_ip_would_this_ip_be_blocked")}>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
         Asks every brain at once. Returns each layer's verdict so you can
         spot disagreement (the failure mode M43 fixes — see ADR-0089).
@@ -50,7 +52,7 @@ export const CrowdsecTestIPCard = () => {
       {trustTest.isError && (
         <Alert
           type="error"
-          message="Test failed"
+          message={t("crowdsectestipcard.test_failed")}
           description={trustTest.error instanceof Error ? trustTest.error.message : "unknown error"}
         />
       )}
@@ -81,8 +83,8 @@ export const CrowdsecTestIPCard = () => {
                 row.layer === "crowdsec" && row.outcome === "deny" ? (
                   <Popconfirm
                     title={`Unban ${lastResult.ip}?`}
-                    description="Drops every active CrowdSec decision targeting this IP."
-                    okText="Unban"
+                    description={t("crowdsectestipcard.drops_every_active_crowdsec_decision_targeti")}
+                    okText={t("crowdsectestipcard.unban")}
                     okButtonProps={{ danger: true }}
                     onConfirm={() => handleUnban(lastResult.ip)}
                   >

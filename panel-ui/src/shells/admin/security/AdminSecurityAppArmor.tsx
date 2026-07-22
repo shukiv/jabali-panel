@@ -3,6 +3,7 @@
 // flip behind a confirm modal. Recent denials feed (last 24h, capped
 // 50 rows) below the profile table — answers "what did AppArmor
 // actually drop?" without dropping to journalctl.
+import { useTranslation } from "react-i18next";
 import { Alert, Badge, Button, Card, Checkbox, Descriptions, Drawer, Empty, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useState } from "react";
 
@@ -28,6 +29,7 @@ const MODE_TINT: Record<AppArmorProfile["mode"], "success" | "warning" | "error"
 };
 
 export const AdminSecurityAppArmor = () => {
+  const { t } = useTranslation();
   const { data, isLoading, refetch } = useAppArmorStatus();
   const setMode = useSetAppArmorMode();
   const [pendingFlip, setPendingFlip] = useState<{ profile: string; nextMode: "enforce" | "complain" } | null>(null);
@@ -37,7 +39,7 @@ export const AdminSecurityAppArmor = () => {
 
   if (isLoading) {
     return (
-      <Card title="AppArmor" size="small">
+      <Card title={t("adminsecurityapparmor.apparmor")} size="small">
         <Typography.Text type="secondary">Loading…</Typography.Text>
       </Card>
     );
@@ -45,11 +47,11 @@ export const AdminSecurityAppArmor = () => {
 
   if (!data?.enabled) {
     return (
-      <Card title="AppArmor" size="small">
+      <Card title={t("adminsecurityapparmor.apparmor")} size="small">
         <Alert
           type="warning"
           showIcon
-          message="AppArmor disabled"
+          message={t("adminsecurityapparmor.apparmor_disabled")}
           description={data?.reason || "AppArmor is not active on this host. Reboot may be required if /etc/jabali/.apparmor-grub-pending exists."}
         />
       </Card>
@@ -58,7 +60,7 @@ export const AdminSecurityAppArmor = () => {
 
   return (
     <Card
-      title="AppArmor"
+      title={t("adminsecurityapparmor.apparmor")}
       size="small"
       extra={
         <Button size="small" onClick={() => refetch()}>
@@ -79,7 +81,7 @@ export const AdminSecurityAppArmor = () => {
           showIcon
           style={{ marginBottom: 16 }}
           message={`${data?.violations?.length} complain-mode would-deny event(s) in the recent window`}
-          description="Complain-mode profiles are logging would-deny (apparmor ALLOWED) violations — not soak-ready to enforce. Resolve or allowlist these before flipping to enforce."
+          description={t("adminsecurityapparmor.complain_mode_profiles_are_logging_would_den")}
         />
       ) : null}
       {(data?.profiles ?? []).some((p) => p.mode === "kernel-gated") && (
@@ -87,7 +89,7 @@ export const AdminSecurityAppArmor = () => {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="AppArmor profiles intentionally not loaded on this kernel"
+          message={t("adminsecurityapparmor.apparmor_profiles_intentionally_not_loaded_o")}
           description={
             data?.reason ||
             "This kernel lacks AppArmor unix-socket mediation (Debian 13 / Ubuntu 24.04). Jabali profiles are deliberately not loaded here — attaching them would break DNS/DB over unix sockets. This is expected, not a failure or a security regression."
@@ -98,7 +100,7 @@ export const AdminSecurityAppArmor = () => {
         <Select
           allowClear
           size="small"
-          placeholder="Filter mode"
+          placeholder={t("adminsecurityapparmor.filter_mode")}
           style={{ width: 160 }}
           value={modeFilter}
           onChange={setModeFilter}
@@ -261,7 +263,7 @@ export const AdminSecurityAppArmor = () => {
             ? `Flip ${pendingFlip.profile} → ${pendingFlip.nextMode}`
             : ""
         }
-        okText="Flip"
+        okText={t("adminsecurityapparmor.flip")}
         okButtonProps={(() => {
           // GH #715: block flip-to-enforce on a profile with unresolved
           // would-deny events unless the operator explicitly acknowledges —
@@ -290,8 +292,8 @@ export const AdminSecurityAppArmor = () => {
           <Alert
             type="warning"
             showIcon
-            message="Enforce will start denying paths/caps not in the profile."
-            description="If the profile is missing a path the daemon needs, the daemon will fail. Review complain-mode AVC denials in journalctl -k before flipping."
+            message={t("adminsecurityapparmor.enforce_will_start_denying_paths_caps_not_in")}
+            description={t("adminsecurityapparmor.if_the_profile_is_missing_a_path_the_daemon")}
             style={{ marginBottom: 12 }}
           />
         ) : null}
@@ -302,7 +304,7 @@ export const AdminSecurityAppArmor = () => {
               type="error"
               showIcon
               message={`${(data?.violations ?? []).filter((v) => v.profile === pendingFlip.profile).length} unresolved would-deny event(s) on this profile`}
-              description="This profile is NOT soak-ready. Enforcing now will BLOCK those operations and can break the daemon. Resolve or allowlist them first."
+              description={t("adminsecurityapparmor.this_profile_is_not_soak_ready_enforcing_now")}
               style={{ marginBottom: 12 }}
             />
             <Checkbox checked={ackRisk} onChange={(e) => setAckRisk(e.target.checked)}>
@@ -335,10 +337,10 @@ export const AdminSecurityAppArmor = () => {
               return (
                 <>
                   <Descriptions column={1} size="small" bordered>
-                    <Descriptions.Item label="Protects">{PROFILE_DESC[detail] ?? "—"}</Descriptions.Item>
-                    <Descriptions.Item label="Mode">{prof?.mode ?? "?"}</Descriptions.Item>
-                    <Descriptions.Item label="Would-deny (complain)">{viols.length}</Descriptions.Item>
-                    <Descriptions.Item label="Denied (enforce blocks)">{dens.length}</Descriptions.Item>
+                    <Descriptions.Item label={t("adminsecurityapparmor.protects")}>{PROFILE_DESC[detail] ?? "—"}</Descriptions.Item>
+                    <Descriptions.Item label={t("adminsecurityapparmor.mode")}>{prof?.mode ?? "?"}</Descriptions.Item>
+                    <Descriptions.Item label={t("adminsecurityapparmor.would_deny_complain")}>{viols.length}</Descriptions.Item>
+                    <Descriptions.Item label={t("adminsecurityapparmor.denied_enforce_blocks")}>{dens.length}</Descriptions.Item>
                   </Descriptions>
                   {prof?.mode === "complain" ? (
                     <Alert

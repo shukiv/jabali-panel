@@ -1,6 +1,7 @@
 // CacheOverviewPage — GH #617 admin cache visibility. Ranks cache-enabled
 // domains by nginx page-cache hit ratio so low-hit / high-bypass / noisy sites
 // are visible at a glance. Reads GET /api/v1/admin/cache/overview.
+import { useTranslation } from "react-i18next";
 import { App, Card, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
@@ -17,6 +18,7 @@ type Row = {
 };
 
 export function CacheOverviewPage() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
@@ -35,7 +37,7 @@ export function CacheOverviewPage() {
   return (
     <>
       <FleetCacheDoctor />
-      <Card title="Cache overview — page-cache hit ratio by domain">
+      <Card title={t("cacheoverviewpage.cache_overview_page_cache_hit_ratio_by_domai")}>
       <Typography.Paragraph type="secondary">
         Cache-enabled WordPress domains, ranked with the lowest hit ratio (most in
         need of attention) first. A low ratio with high traffic suggests a

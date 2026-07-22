@@ -3,6 +3,7 @@
 // group/setgid retrofit) and `jabali domain prune-orphans` (list orphan nginx
 // sites; delete is guarded + dry-run-first). Both proxy the CLI via the agent
 // (POST /admin/updates/repair/domain/*); nothing is re-implemented client-side.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Alert,
@@ -40,6 +41,7 @@ interface OrphansResult {
 }
 
 export function DomainRepairCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [username, setUsername] = useState<string | undefined>();
   const [fixResult, setFixResult] = useState<FixPermsResult | null>(null);
@@ -130,7 +132,7 @@ export function DomainRepairCard() {
           <Space style={{ marginTop: 8 }} wrap>
             <Select
               style={{ minWidth: 220 }}
-              placeholder="Select a user"
+              placeholder={t("domainrepaircard.select_a_user")}
               loading={users.isLoading}
               showSearch
               optionFilterProp="label"
@@ -186,11 +188,11 @@ export function DomainRepairCard() {
               Scan for orphans
             </Button>
             <Popconfirm
-              title="Delete all orphan sites?"
-              description="This is irreversible — it tears down each site's nginx vhost, DKIM keys, and Stalwart mail domain row. Scan first and review the list."
-              okText="Delete permanently"
+              title={t("domainrepaircard.delete_all_orphan_sites")}
+              description={t("domainrepaircard.this_is_irreversible_it_tears_down_each_site")}
+              okText={t("domainrepaircard.delete_permanently")}
               okButtonProps={{ danger: true }}
-              cancelText="Cancel"
+              cancelText={t("domainrepaircard.cancel")}
               onConfirm={() => prune.mutate()}
               disabled={orphanList.length === 0}
             >
@@ -206,7 +208,7 @@ export function DomainRepairCard() {
               style={{ marginTop: 8 }}
               type="success"
               showIcon
-              message="No orphan sites found."
+              message={t("domainrepaircard.no_orphan_sites_found")}
             />
           )}
           {orphanList.length > 0 && (

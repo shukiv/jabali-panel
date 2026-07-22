@@ -6,6 +6,7 @@
 // Tables consume <Table.Column> children. Modal.confirm stays for the
 // enable/disable typed-YES gate — that's a destructive confirmation,
 // not a create form, so it's the right antd primitive.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
@@ -70,6 +71,7 @@ const renderActionTag = (a: string) => {
 };
 
 export const AdminSecurityUfw = () => {
+  const { t } = useTranslation();
   const status = useUfwStatus();
   const addRule = useAddUfwRule();
   const deleteRule = useDeleteUfwRule();
@@ -116,20 +118,20 @@ export const AdminSecurityUfw = () => {
             <Alert
               type="warning"
               showIcon
-              message="Enabling UFW will activate default-deny incoming. Make sure SSH (22) is in the allow-list."
+              message={t("adminsecurityufw.enabling_ufw_will_activate_default_deny_inco")}
             />
           ) : (
             <Alert
               type="error"
               showIcon
-              message="Disabling UFW DROPS host firewall protection. CrowdSec firewall-bouncer also stops applying rules. Use only for emergency triage."
+              message={t("adminsecurityufw.disabling_ufw_drops_host_firewall_protection")}
             />
           )}
           <Typography.Text>
             Type <Typography.Text code>YES</Typography.Text> to confirm:
           </Typography.Text>
           <Input
-            placeholder="YES"
+            placeholder={t("adminsecurityufw.yes")}
             autoComplete="off"
             onChange={(e) => {
               typed = e.target.value;
@@ -163,8 +165,8 @@ export const AdminSecurityUfw = () => {
         <Alert
           type="error"
           showIcon
-          message="Firewall DISABLED"
-          description="UFW is not active. Rules below (if any) are not enforced. CrowdSec firewall-bouncer also has no effect until UFW is enabled."
+          message={t("adminsecurityufw.firewall_disabled")}
+          description={t("adminsecurityufw.ufw_is_not_active_rules_below_if_any_are_not")}
           action={
             <Button type="primary" onClick={() => openToggleModal(true)}>
               Enable firewall
@@ -173,7 +175,7 @@ export const AdminSecurityUfw = () => {
         />
       )}
 
-      <Card size="small" title="Status">
+      <Card size="small" title={t("adminsecurityufw.status")}>
         <Space wrap>
           {active ? <Tag color="green">active</Tag> : <Tag color="red">inactive</Tag>}
           {status.data?.default_in && (
@@ -188,9 +190,9 @@ export const AdminSecurityUfw = () => {
           )}
           {active ? (
             <Popconfirm
-              title="Disable firewall?"
-              description="This drops the host firewall. CrowdSec firewall-bouncer stops applying rules. Confirm again in the next dialog."
-              okText="Continue"
+              title={t("adminsecurityufw.disable_firewall")}
+              description={t("adminsecurityufw.this_drops_the_host_firewall_crowdsec_firewa")}
+              okText={t("adminsecurityufw.continue")}
               okButtonProps={{ danger: true }}
               onConfirm={() => openToggleModal(false)}
             >
@@ -209,7 +211,7 @@ export const AdminSecurityUfw = () => {
       {active ? (
         <Card
           size="small"
-          title="Rules"
+          title={t("adminsecurityufw.rules")}
           extra={
             <Button type="primary" size="small" onClick={() => setAddOpen(true)}>
               Add rule
@@ -222,31 +224,31 @@ export const AdminSecurityUfw = () => {
             loading={status.isLoading}
             pagination={false}
             size="small"
-            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No rules" /> }}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminsecurityufw.no_rules")} /> }}
             scroll={{ x: "max-content" }}
           >
             <Table.Column<UfwRule> dataIndex="num" title="#" key="num" width={60} />
             <Table.Column<UfwRule>
               dataIndex="action"
-              title="Action"
+              title={t("adminsecurityufw.action")}
               key="action"
               width={120}
               render={renderActionTag}
             />
             <Table.Column<UfwRule> dataIndex="to" title="To" key="to" />
-            <Table.Column<UfwRule> dataIndex="from" title="From" key="from" />
-            <Table.Column<UfwRule> dataIndex="proto" title="Proto" key="proto" width={80} />
+            <Table.Column<UfwRule> dataIndex="from" title={t("adminsecurityufw.from")} key="from" />
+            <Table.Column<UfwRule> dataIndex="proto" title={t("adminsecurityufw.proto")} key="proto" width={80} />
             <Table.Column<UfwRule>
               title=""
               key="delete"
               width={90}
               render={(_, row) => (
                 <Popconfirm
-                  title="Delete rule"
+                  title={t("adminsecurityufw.delete_rule")}
                   description={`Delete rule #${row.num} (${row.action} ${row.to})? Existing connections continue; new ones are subject to the next-matching rule.`}
-                  okText="Delete"
+                  okText={t("adminsecurityufw.delete")}
                   okButtonProps={{ danger: true }}
-                  cancelText="Cancel"
+                  cancelText={t("adminsecurityufw.cancel")}
                   onConfirm={() => onDelete(row)}
                 >
                   <RowActionButton danger size="small" icon={<DeleteOutlined />}>
@@ -261,13 +263,13 @@ export const AdminSecurityUfw = () => {
         <Alert
           type="info"
           showIcon
-          message="Rules hidden — firewall disabled"
-          description="Enable the firewall to view and manage rules."
+          message={t("adminsecurityufw.rules_hidden_firewall_disabled")}
+          description={t("adminsecurityufw.enable_the_firewall_to_view_and_manage_rules")}
         />
       )}
 
       <Drawer
-        title="Add UFW rule"
+        title={t("adminsecurityufw.add_ufw_rule")}
         open={addOpen}
         onClose={() => setAddOpen(false)}
         width={isDesktop ? 520 : undefined}
@@ -288,12 +290,12 @@ export const AdminSecurityUfw = () => {
           onFinish={submitAdd}
           initialValues={{ action: "allow", proto: "tcp" }}
         >
-          <Form.Item name="action" label="Action" rules={[{ required: true }]}>
+          <Form.Item name="action" label={t("adminsecurityufw.action")} rules={[{ required: true }]}>
             <Select options={ACTION_OPTIONS} />
           </Form.Item>
           <Form.Item
             name="port"
-            label="Port"
+            label={t("adminsecurityufw.port")}
             rules={[
               { required: true, message: "Required" },
               { pattern: PORT_OR_RANGE, message: 'Number or "lo:hi" range' },
@@ -301,7 +303,7 @@ export const AdminSecurityUfw = () => {
           >
             <Input placeholder="9999 or 1000:2000" autoComplete="off" />
           </Form.Item>
-          <Form.Item name="proto" label="Protocol" rules={[{ required: true }]}>
+          <Form.Item name="proto" label={t("adminsecurityufw.protocol")} rules={[{ required: true }]}>
             <Select options={PROTO_OPTIONS} />
           </Form.Item>
           {/*
@@ -314,7 +316,7 @@ export const AdminSecurityUfw = () => {
             type="info"
             showIcon
             style={{ marginTop: 8 }}
-            message="UFW is port policy only"
+            message={t("adminsecurityufw.ufw_is_port_policy_only")}
             description={
               <span>
                 IP-level decisions live in CrowdSec — open the

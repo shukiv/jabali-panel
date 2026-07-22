@@ -2,6 +2,7 @@
 // Stalwart's WebAdmin UI through an nginx reverse-proxy (TLS + optional IP
 // allowlist + Stalwart's own admin login). Stalwart itself stays loopback-bound;
 // this is the only door. Default off. Lives on the Server Settings → Email tab.
+import { useTranslation } from "react-i18next";
 import { App, Alert, Button, Card, Input, Modal, Space, Switch, Typography } from "antd";
 import { useEffect, useState } from "react";
 
@@ -21,6 +22,7 @@ interface AdminCredential {
 }
 
 export function StalwartWebadminCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [enabled, setEnabled] = useState(false);
   const [cidrs, setCidrs] = useState("");
@@ -129,7 +131,7 @@ export function StalwartWebadminCard() {
     });
 
   return (
-    <Card title="Stalwart WebAdmin (advanced)" size="small" style={{ marginTop: 16 }}>
+    <Card title={t("stalwartwebadmincard.stalwart_webadmin_advanced")} size="small" style={{ marginTop: 16 }}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
           Exposes Stalwart&apos;s native admin UI (queues, tracing, fine-grained
@@ -167,7 +169,7 @@ export function StalwartWebadminCard() {
               type="warning"
               showIcon
               message={`Live at https://${hostname}:8449/`}
-              description="The full mail-server admin is reachable behind Stalwart’s own login. Restrict by IP and disable when not in use."
+              description={t("stalwartwebadmincard.the_full_mail_server_admin_is_reachable_behi")}
             />
             <div>
               <Typography.Text strong>Stalwart admin login</Typography.Text>
@@ -193,7 +195,7 @@ export function StalwartWebadminCard() {
           title={adminCred?.rotated ? "New Stalwart admin password" : "Stalwart admin login"}
           onOk={() => setAdminCred(null)}
           onCancel={() => setAdminCred(null)}
-          okText="Done"
+          okText={t("stalwartwebadmincard.done")}
           cancelButtonProps={{ style: { display: "none" } }}
         >
           <Typography.Paragraph>

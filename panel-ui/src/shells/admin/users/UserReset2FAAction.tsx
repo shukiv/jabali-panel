@@ -5,6 +5,7 @@
 // from /profile. The parent (UserList RowActions) drives `open` via
 // its dropdown menu so the modal lives alongside the row's other
 // action modals and the dropdown items can use stock AntD styling.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Modal, message } from "antd";
 
@@ -23,6 +24,7 @@ export const UserReset2FAAction = ({
   open,
   onClose,
 }: UserReset2FAActionProps) => {
+  const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(false);
 
   const handleReset = async () => {
@@ -42,12 +44,12 @@ export const UserReset2FAAction = ({
 
   return (
     <Modal
-      title="Reset two-factor authentication?"
+      title={t("userreset2faaction.reset_two_factor_authentication")}
       open={open}
       onCancel={onClose}
       onOk={handleReset}
       confirmLoading={isLoading}
-      okText="Reset"
+      okText={t("userreset2faaction.reset")}
       okButtonProps={{ danger: true }}
     >
       <p>

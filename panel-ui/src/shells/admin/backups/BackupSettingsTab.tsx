@@ -1,6 +1,7 @@
 // BackupSettingsTab — knobs that govern the in-process backup
 // scheduler/dispatcher. Backed by server_settings (PATCH /admin/settings).
 // Retention is per-schedule (Schedules tab) — not server-wide.
+import { useTranslation } from "react-i18next";
 import { Button, Form, Input, InputNumber, Spin, message } from "antd";
 import { SaveOutlined } from "@icons";
 import { useEffect, useState } from "react";
@@ -21,6 +22,7 @@ interface ServerSettingsResponse {
 }
 
 export const BackupSettingsTab = () => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<BackupSettingsShape>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -68,16 +70,16 @@ export const BackupSettingsTab = () => {
       >
         <Form.Item
           name="backup_max_concurrent_jobs"
-          label="Max concurrent backup jobs"
-          tooltip="The dispatcher runs at most this many backup_jobs at once. Scheduled jobs queue and start as slots free."
+          label={t("backupsettingstab.max_concurrent_backup_jobs")}
+          tooltip={t("backupsettingstab.the_dispatcher_runs_at_most_this_many_backup")}
           rules={[{ required: true, type: "number", min: 1, max: 64 }]}
         >
           <InputNumber min={1} max={64} style={{ width: "100%" }} />
         </Form.Item>
         <Form.Item
           name="tenant_backup_cron"
-          label="Tenant scheduled-backup time (cron)"
-          tooltip="Tenants choose what to back up and where; you own when. 5-field cron (min hour day-of-month month day-of-week), e.g. '0 3 * * *' = daily at 03:00 UTC."
+          label={t("backupsettingstab.tenant_scheduled_backup_time_cron")}
+          tooltip={t("backupsettingstab.tenants_choose_what_to_back_up_and_where_you")}
           rules={[{ required: true, message: "A cron expression is required" }]}
         >
           <Input placeholder="0 3 * * *" style={{ fontFamily: "monospace" }} />

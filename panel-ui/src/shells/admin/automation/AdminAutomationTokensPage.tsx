@@ -8,6 +8,7 @@
 //
 // Revocation is soft (sets revoked_at). Operators can audit which
 // admin minted what + when it was last used.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { StandardDrawerFooter } from "../../../components/StandardActionFooter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -74,6 +75,7 @@ function fmt(iso?: string | null): string {
 }
 
 export const AdminAutomationTokensPage = () => {
+  const { t } = useTranslation();
   const { token } = theme.useToken();
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -191,9 +193,9 @@ export const AdminAutomationTokensPage = () => {
           pagination={false}
           scroll={{ x: "max-content" }}
         >
-          <Table.Column<Token> title="Name" dataIndex="name" />
+          <Table.Column<Token> title={t("adminautomationtokenspage.name")} dataIndex="name" />
           <Table.Column<Token>
-            title="Token ID"
+            title={t("adminautomationtokenspage.token_id")}
             dataIndex="id"
             render={(v: string) => (
               <Typography.Text copyable code style={{ fontSize: 12 }}>
@@ -202,7 +204,7 @@ export const AdminAutomationTokensPage = () => {
             )}
           />
           <Table.Column<Token>
-            title="Scopes"
+            title={t("adminautomationtokenspage.scopes")}
             width={260}
             render={(_, r) => (
               <Space wrap size={4} style={{ maxWidth: 260 }}>
@@ -215,12 +217,12 @@ export const AdminAutomationTokensPage = () => {
             )}
           />
           <Table.Column<Token>
-            title="Created"
+            title={t("adminautomationtokenspage.created")}
             dataIndex="created_at"
             render={(v: string) => fmt(v)}
           />
           <Table.Column<Token>
-            title="Last Used"
+            title={t("adminautomationtokenspage.last_used")}
             render={(_, r) => (
               <Space direction="vertical" size={0}>
                 <span>{fmt(r.last_used_at)}</span>
@@ -233,7 +235,7 @@ export const AdminAutomationTokensPage = () => {
             )}
           />
           <Table.Column<Token>
-            title="Status"
+            title={t("adminautomationtokenspage.status")}
             render={(_, r) =>
               r.revoked_at ? (
                 <Tag color="red">revoked {fmt(r.revoked_at)}</Tag>
@@ -243,15 +245,15 @@ export const AdminAutomationTokensPage = () => {
             }
           />
           <Table.Column<Token>
-            title="Actions"
+            title={t("adminautomationtokenspage.actions")}
             render={(_, r) =>
               r.revoked_at ? (
                 <Typography.Text type="secondary">—</Typography.Text>
               ) : (
                 <Popconfirm
                   title={`Revoke token "${r.name}"?`}
-                  description="External callers using this token will start failing immediately. Revoke is soft (audit-only); the row stays in this list with a 'revoked' tag."
-                  okText="Revoke"
+                  description={t("adminautomationtokenspage.external_callers_using_this_token_will_start")}
+                  okText={t("adminautomationtokenspage.revoke")}
                   okButtonProps={{ danger: true }}
                   onConfirm={() => revoke.mutateAsync({ id: r.id })}
                 >
@@ -266,7 +268,7 @@ export const AdminAutomationTokensPage = () => {
       </Card>
 
       <Drawer
-        title="Mint Server API Token"
+        title={t("adminautomationtokenspage.mint_server_api_token")}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={500}
@@ -289,7 +291,7 @@ export const AdminAutomationTokensPage = () => {
         >
           <Form.Item
             name="name"
-            label="Name"
+            label={t("adminautomationtokenspage.name")}
             rules={[
               { required: true, message: "Required" },
               { max: 100 },
@@ -301,7 +303,7 @@ export const AdminAutomationTokensPage = () => {
 
           <Form.Item
             name="scopes"
-            label="Scopes"
+            label={t("adminautomationtokenspage.scopes")}
             rules={[{ required: true, message: "At least one scope" }]}
             getValueFromEvent={normalizeScopes}
             extra="Wildcard 'read:*' grants every read; otherwise tick only the resources the automation needs (mutually exclusive)."
@@ -312,7 +314,7 @@ export const AdminAutomationTokensPage = () => {
           {hasWriteScope ? (
             <Form.Item
               name="writes_enabled"
-              label="Writes enabled"
+              label={t("adminautomationtokenspage.writes_enabled")}
               valuePropName="checked"
               initialValue={true}
               extra="Master switch. Turn off to mint a write-scoped token with writes paused — it can be enabled later without re-issuing the secret. A write token acts on any tenant; grant sparingly."
@@ -355,8 +357,8 @@ export const AdminAutomationTokensPage = () => {
         <Alert
           type="warning"
           showIcon
-          message="This is the only time the secret will be shown."
-          description="Copy it now and store it in your automation's secret manager. The server only keeps an encrypted copy. If you lose it, revoke this token and mint a new one."
+          message={t("adminautomationtokenspage.this_is_the_only_time_the_secret_will_be_sho")}
+          description={t("adminautomationtokenspage.copy_it_now_and_store_it_in_your_automation")}
           style={{ marginBottom: 16 }}
         />
         <Typography.Text type="secondary">Secret</Typography.Text>

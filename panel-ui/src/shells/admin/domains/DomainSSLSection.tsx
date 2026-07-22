@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Input, Modal, Select, Skeleton, Space, Tag, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@icons";
@@ -57,6 +58,7 @@ type Props = {
 };
 
 export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => {
+  const { t } = useTranslation();
   const [cert, setCert] = useState<SSLCertificate | null>(null);
   const [certMissing, setCertMissing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -184,7 +186,7 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
         <Alert
           type="warning"
           showIcon
-          title="Set an admin email to use SSL"
+          title={t("domainsslsection.set_an_admin_email_to_use_ssl")}
           description={
             <>
               Let&apos;s Encrypt requires an email on the account. Configure it in{" "}
@@ -198,8 +200,8 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
         <Alert
           type="warning"
           showIcon
-          title="Using self-signed certificate"
-          description="This domain is using a self-signed certificate while Let's Encrypt issuance retries. Browsers will show a security warning until the real cert is issued."
+          title={t("domainsslsection.using_self_signed_certificate")}
+          description={t("domainsslsection.this_domain_is_using_a_self_signed_certifica")}
         />
       ) : null}
 
@@ -207,7 +209,7 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
         <Alert
           type="error"
           showIcon
-          title="ACME issuance failed"
+          title={t("domainsslsection.acme_issuance_failed")}
           description={
             <>
               {cert?.last_error && <div>Error: {cert.last_error}</div>}
@@ -269,8 +271,8 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
 
       <Modal
         open={customOpen}
-        title="Upload custom certificate"
-        okText="Install"
+        title={t("domainsslsection.upload_custom_certificate")}
+        okText={t("domainsslsection.install")}
         confirmLoading={uploading}
         onOk={uploadCustom}
         onCancel={() => setCustomOpen(false)}
@@ -281,7 +283,7 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
           <Alert
             type="info"
             showIcon
-            message="Paste the full-chain certificate (leaf + intermediates) and the matching private key in PEM format. The key is stored on the server and never shown again."
+            message={t("domainsslsection.paste_the_full_chain_certificate_leaf_interm")}
           />
           <div>
             <div style={{ marginBottom: 4 }}>Certificate (PEM)</div>

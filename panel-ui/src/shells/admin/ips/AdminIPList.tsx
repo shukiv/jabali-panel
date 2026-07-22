@@ -3,6 +3,7 @@
 // Same shape as PackageList.tsx: useTableURL + SearchableTable +
 // RowDeleteButton. Delete handles the 409 ip_in_use case by surfacing
 // the affected-domains list returned by the API.
+import { useTranslation } from "react-i18next";
 import { Button, Card, Modal, Space, Table, Tag, Typography, message } from "antd";
 import { DeleteOutlined, EditOutlined, EthernetPortOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
@@ -53,6 +54,7 @@ type AffectedDomainsBody = {
 };
 
 export const AdminIPList = () => {
+  const { t } = useTranslation();
   const [conflictModal, setConflictModal] = useState<AffectedDomainsBody | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | undefined>(undefined);
@@ -129,7 +131,7 @@ export const AdminIPList = () => {
           locale={{
             emptyText: (
               <EmptyWithCTA
-                description="No managed IPs yet"
+                description={t("adminiplist.no_managed_ips_yet")}
                 ctaLabel="Add IP"
                 onCta={openCreate}
               />
@@ -138,14 +140,14 @@ export const AdminIPList = () => {
         >
           <Table.Column
             dataIndex="address"
-            title="Address"
+            title={t("adminiplist.address")}
             key="address"
             sorter={(a: ManagedIP, b: ManagedIP) => a.address.localeCompare(b.address)}
             render={(addr: string) => <code>{addr}</code>}
           />
           <Table.Column
             dataIndex="family"
-            title="Family"
+            title={t("adminiplist.family")}
             sorter={(a: ManagedIP, b: ManagedIP) => a.family.localeCompare(b.family)}
             render={(family: ManagedIP["family"]) => (
               <Tag color={family === "ipv4" ? "blue" : "purple"}>{family}</Tag>
@@ -153,24 +155,24 @@ export const AdminIPList = () => {
           />
           <Table.Column
             dataIndex="label"
-            title="Label"
+            title={t("adminiplist.label")}
             sorter={(a: ManagedIP, b: ManagedIP) => (a.label ?? "").localeCompare(b.label ?? "")}
           />
           <Table.Column
             dataIndex="is_default"
-            title="Default"
+            title={t("adminiplist.default")}
             sorter={(a: ManagedIP, b: ManagedIP) => Number(a.is_default) - Number(b.is_default)}
             render={(v: boolean) => (v ? <Tag color="gold">default</Tag> : null)}
           />
           <Table.Column
-            title="Bound"
+            title={t("adminiplist.bound")}
             key="is_bound"
             sorter={(a: ManagedIP, b: ManagedIP) => Number(a.is_bound) - Number(b.is_bound)}
             render={(_: unknown, row: ManagedIP) => renderBoundTag(row)}
           />
           <Table.Column
             dataIndex="is_user_selectable"
-            title="User-selectable"
+            title={t("adminiplist.user_selectable")}
             sorter={(a: ManagedIP, b: ManagedIP) => Number(a.is_user_selectable) - Number(b.is_user_selectable)}
             render={(v: boolean) =>
               v ? <Tag color="cyan">yes</Tag> : <Tag>no</Tag>
@@ -178,14 +180,14 @@ export const AdminIPList = () => {
           />
           <Table.Column
             dataIndex="degraded"
-            title="Status"
+            title={t("adminiplist.status")}
             sorter={(a: ManagedIP, b: ManagedIP) => Number(a.degraded) - Number(b.degraded)}
             render={(v: boolean) =>
               v ? <Tag color="red">degraded</Tag> : <Tag color="green">ok</Tag>
             }
           />
           <Table.Column
-            title="Actions"
+            title={t("adminiplist.actions")}
             dataIndex="actions"
             render={(_: unknown, r: ManagedIP) => (
               <RowActions
@@ -202,7 +204,7 @@ export const AdminIPList = () => {
       <AdminIPDrawer open={drawerOpen} onClose={closeDrawer} editingId={editingId} />
 
       <Modal
-        title="IP is in use"
+        title={t("adminiplist.ip_is_in_use")}
         open={conflictModal !== null}
         onCancel={() => setConflictModal(null)}
         onOk={() => setConflictModal(null)}

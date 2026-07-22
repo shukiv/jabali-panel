@@ -5,6 +5,7 @@
 //
 // Icons go through the @icons shim (CONVENTIONS) — never
 // @ant-design/icons.
+import { useTranslation } from "react-i18next";
 import {
   DatabaseOutlined,
   KeyOutlined,
@@ -44,6 +45,7 @@ const ENGINE_LABEL: Record<Engine, string> = {
 };
 
 function RootPasswordSection() {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState<Engine | null>(null);
   const [revealed, setRevealed] = useState<{ engine: Engine; password: string } | null>(
     null,
@@ -89,8 +91,8 @@ function RootPasswordSection() {
           <Popconfirm
             key={engine}
             title={`Rotate the ${ENGINE_LABEL[engine]} password?`}
-            description="The previous password (if any) stops working immediately."
-            okText="Rotate"
+            description={t("databaseadminsections.the_previous_password_if_any_stops_working_i")}
+            okText={t("databaseadminsections.rotate")}
             okButtonProps={{ danger: true }}
             onConfirm={() => rotate(engine)}
           >
@@ -117,7 +119,7 @@ function RootPasswordSection() {
         }
         onCancel={() => setRevealed(null)}
         onOk={() => setRevealed(null)}
-        okText="I saved it"
+        okText={t("databaseadminsections.i_saved_it")}
         cancelButtonProps={{ style: { display: "none" } }}
         maskClosable={false}
       >
@@ -150,6 +152,7 @@ interface ConfigParam {
 }
 
 function ConfigTunerSection() {
+  const { t } = useTranslation();
   const [engine, setEngine] = useState<Engine>("mariadb");
   const [params, setParams] = useState<ConfigParam[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -294,7 +297,7 @@ function ConfigTunerSection() {
                 ? "Some changed keys require a service restart — DB connections will drop briefly."
                 : "Configuration will be reloaded."
             }
-            okText="Apply"
+            okText={t("databaseadminsections.apply")}
             onConfirm={apply}
           >
             <Button type="primary" loading={saving}>
@@ -489,6 +492,7 @@ interface DbProc {
 }
 
 function ProcessesSection() {
+  const { t } = useTranslation();
   const [engine, setEngine] = useState<Engine>("mariadb");
   const [rows, setRows] = useState<DbProc[]>([]);
   const [loading, setLoading] = useState(false);
@@ -560,19 +564,19 @@ function ProcessesSection() {
         scroll={{ x: "max-content", y: 320 }}
       >
         <Table.Column dataIndex="id" title="ID" />
-        <Table.Column dataIndex="user" title="User" />
-        <Table.Column dataIndex="host" title="Host" />
+        <Table.Column dataIndex="user" title={t("databaseadminsections.user")} />
+        <Table.Column dataIndex="host" title={t("databaseadminsections.host")} />
         <Table.Column dataIndex="db" title="DB" />
         {engine === "mariadb" && (
-          <Table.Column dataIndex="command" title="Command" />
+          <Table.Column dataIndex="command" title={t("databaseadminsections.command")} />
         )}
         {engine === "mariadb" && (
-          <Table.Column dataIndex="time" title="Time" />
+          <Table.Column dataIndex="time" title={t("databaseadminsections.time")} />
         )}
-        <Table.Column dataIndex="state" title="State" />
+        <Table.Column dataIndex="state" title={t("databaseadminsections.state")} />
         <Table.Column
           dataIndex="info"
-          title="Query"
+          title={t("databaseadminsections.query")}
           width={380}
           render={(v: string) => (
             // Bounded + ellipsis so a long query can't blow out the
@@ -595,11 +599,11 @@ function ProcessesSection() {
           )}
         />
         <Table.Column
-          title="Actions"
+          title={t("databaseadminsections.actions")}
           render={(_, row: DbProc) => (
             <Popconfirm
               title={`Kill ${row.id}?`}
-              okText="Kill"
+              okText={t("databaseadminsections.kill")}
               okButtonProps={{ danger: true }}
               onConfirm={() => kill(row.id)}
             >

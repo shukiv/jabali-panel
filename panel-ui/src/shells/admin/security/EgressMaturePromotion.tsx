@@ -8,6 +8,7 @@
 // count), sees whether the operator pin blocks promotion, and — confirm-gated —
 // promotes them all at once. Backed by GET /admin/egress/mature-preview (dry
 // run) and POST /admin/egress/flip-mature.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Alert,
@@ -63,6 +64,7 @@ const columns: ColumnsType<Eligible> = [
 ];
 
 export function EgressMaturePromotion() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
   const [soakDays, setSoakDays] = useState(7);
@@ -140,8 +142,8 @@ export function EgressMaturePromotion() {
         </Button>
         <Popconfirm
           title={`Promote ${eligibleCount} mature policy(ies) to ENFORCED?`}
-          description="This enforces the egress firewall for those users on the next reconcile tick."
-          okText="Promote"
+          description={t("egressmaturepromotion.this_enforces_the_egress_firewall_for_those")}
+          okText={t("egressmaturepromotion.promote")}
           okButtonProps={{ danger: true }}
           disabled={pinned || eligibleCount === 0}
           onConfirm={() => promoteMutation.mutate(soakDays)}
@@ -163,7 +165,7 @@ export function EgressMaturePromotion() {
           showIcon
           icon={<WarningOutlined />}
           style={{ marginBottom: 12 }}
-          message="Operator pin active"
+          message={t("egressmaturepromotion.operator_pin_active")}
           description={
             <span>
               <code>per-user-egress.mode</code> ={" "}

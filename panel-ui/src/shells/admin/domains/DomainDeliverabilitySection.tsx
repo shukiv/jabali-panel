@@ -4,6 +4,7 @@
 // RBL stays server-wide (the IP is shared across all hosted domains)
 // so it's omitted from the per-domain view; the operator sees it on
 // the server-wide /jabali-admin/mail/deliverability page.
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Progress, Skeleton, Tag, Typography } from "antd";
 
@@ -33,6 +34,7 @@ const severityColour: Record<ScoreResponse["severity"], string> = {
 type Props = { domainName: string };
 
 export const DomainDeliverabilitySection = ({ domainName }: Props) => {
+  const { t } = useTranslation();
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin", "mail", "deliverability", domainName],
     queryFn: async () =>
@@ -43,7 +45,7 @@ export const DomainDeliverabilitySection = ({ domainName }: Props) => {
 
   if (isLoading) return <Skeleton active />;
   if (error || !data) {
-    return <Alert type="warning" message="Deliverability score unavailable for this domain" />;
+    return <Alert type="warning" message={t("domaindeliverabilitysection.deliverability_score_unavailable_for_this_do")} />;
   }
   // Filter out the rbl component server-side returns even with ?domain= set
   // (RBL is server-wide; the handler already skips it when domain is set,
@@ -51,7 +53,7 @@ export const DomainDeliverabilitySection = ({ domainName }: Props) => {
   const components = data.components.filter((c) => c.name !== "rbl");
 
   return (
-    <Card title="Deliverability score" size="small">
+    <Card title={t("domaindeliverabilitysection.deliverability_score")} size="small">
       <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 16 }}>
         <Progress
           type="circle"

@@ -3,6 +3,7 @@
 // is long (one agent call per install), so the POST returns a run id and this
 // polls it — no synchronous fleet call that would 502. Shows live progress,
 // per-install results, and recent run history.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   App,
@@ -112,6 +113,7 @@ const itemColumns: ColumnsType<DoctorItem> = [
 ];
 
 export function FleetCacheDoctor() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -200,9 +202,9 @@ export function FleetCacheDoctor() {
           Run doctor
         </Button>
         <Popconfirm
-          title="Repair all drifted installs?"
-          description="Re-provisions cache (constants, ACL, drop-in) for every drifted site."
-          okText="Repair"
+          title={t("fleetcachedoctor.repair_all_drifted_installs")}
+          description={t("fleetcachedoctor.re_provisions_cache_constants_acl_drop_in_fo")}
+          okText={t("fleetcachedoctor.repair")}
           okButtonProps={{ danger: true }}
           disabled={busy}
           onConfirm={() => startMutation.mutate("repair")}
@@ -212,8 +214,8 @@ export function FleetCacheDoctor() {
           </Button>
         </Popconfirm>
         <Popconfirm
-          title="Refresh the jabali-cache plugin on every cache-enabled site?"
-          okText="Refresh"
+          title={t("fleetcachedoctor.refresh_the_jabali_cache_plugin_on_every_cac")}
+          okText={t("fleetcachedoctor.refresh")}
           disabled={busy}
           onConfirm={() => startMutation.mutate("refresh")}
         >

@@ -2,6 +2,7 @@
 // a table of existing rules (priority asc) with delete + an inline
 // add form. nginx interprets `allow` and `deny` directives top-down
 // inside the server block; lower priority = higher precedence.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import {
   Alert,
@@ -42,6 +43,7 @@ const ACTION_TAG: Record<ACLAction, { color: string; label: string }> = {
 };
 
 export const DomainIPACLSection = ({ domainId }: Props) => {
+  const { t } = useTranslation();
   const { data, isLoading } = useDomainIPACLs(domainId);
   const create = useCreateDomainIPACL(domainId);
   const remove = useDeleteDomainIPACL(domainId);
@@ -86,7 +88,7 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
       <Alert
         type="info"
         showIcon
-        message="Per-domain IP allow / deny"
+        message={t("domainipaclsection.per_domain_ip_allow_deny")}
         description={
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             Rules are evaluated by nginx top-down (lower priority = higher
@@ -106,12 +108,12 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
         locale={{ emptyText: "No rules — domain accepts all traffic." }}
       >
         <Table.Column<DomainIPACL>
-          title="Priority"
+          title={t("domainipaclsection.priority")}
           dataIndex="priority"
           width={80}
         />
         <Table.Column<DomainIPACL>
-          title="Action"
+          title={t("domainipaclsection.action")}
           dataIndex="action"
           width={100}
           render={(a: ACLAction) => {
@@ -120,12 +122,12 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
           }}
         />
         <Table.Column<DomainIPACL>
-          title="CIDR"
+          title={t("domainipaclsection.cidr")}
           dataIndex="cidr"
           render={(c: string) => <Typography.Text code>{c}</Typography.Text>}
         />
         <Table.Column<DomainIPACL>
-          title="Comment"
+          title={t("domainipaclsection.comment")}
           dataIndex="comment"
           render={(c: string) =>
             c ? (
@@ -140,9 +142,9 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
           width={80}
           render={(_, r) => (
             <Popconfirm
-              title="Delete this rule?"
+              title={t("domainipaclsection.delete_this_rule")}
               onConfirm={() => onDelete(r.id)}
-              okText="Delete"
+              okText={t("domainipaclsection.delete")}
               okButtonProps={{ danger: true }}
             >
               <Button
@@ -164,23 +166,23 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
           initialValues={{ action: "allow", priority: 100 }}
         >
           <Form.Item
-            label="CIDR"
+            label={t("domainipaclsection.cidr")}
             name="cidr"
             rules={[{ required: true, message: "Required" }]}
           >
             <Input placeholder="203.0.113.0/24" style={{ width: 180 }} />
           </Form.Item>
           <Form.Item
-            label="Action"
+            label={t("domainipaclsection.action")}
             name="action"
             rules={[{ required: true }]}
           >
             <Select options={ACTION_OPTIONS} style={{ width: 100 }} />
           </Form.Item>
-          <Form.Item label="Priority" name="priority">
+          <Form.Item label={t("domainipaclsection.priority")} name="priority">
             <InputNumber min={0} max={9999} style={{ width: 90 }} />
           </Form.Item>
-          <Form.Item label="Comment" name="comment">
+          <Form.Item label={t("domainipaclsection.comment")} name="comment">
             <Input style={{ width: 200 }} />
           </Form.Item>
           <Form.Item>

@@ -6,6 +6,7 @@
 // Reveal is gated behind a click-to-show button; the page never auto-
 // loads the secret. Copy + Download buttons let the operator stash
 // it in a password manager / printed sheet / off-host vault.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
@@ -35,6 +36,7 @@ interface RevealResponse {
 }
 
 export function EncryptionKeyCard() {
+  const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [secret, setSecret] = useState<RevealResponse | null>(null);
@@ -91,7 +93,7 @@ export function EncryptionKeyCard() {
         type="warning"
         showIcon
         style={{ marginBottom: 16 }}
-        message="Losing this key loses every snapshot."
+        message={t("encryptionkeycard.losing_this_key_loses_every_snapshot")}
         description={
           <>
             Restic encrypts every backup with AES-256-GCM using the password at{" "}

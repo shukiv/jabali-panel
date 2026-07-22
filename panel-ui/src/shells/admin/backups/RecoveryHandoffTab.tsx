@@ -4,6 +4,7 @@
 // system restore. This tab makes those discoverable BEFORE an incident, with
 // copy-able command templates and the encryption-key prerequisite, instead of
 // leaving operators to find them mid-disaster.
+import { useTranslation } from "react-i18next";
 import { Alert, Space, Table, Typography } from "antd";
 import { LifeBuoyOutlined, KeyOutlined } from "@icons";
 
@@ -66,14 +67,15 @@ const CommandBlock = ({ label, cmd }: { label: string; cmd: string }) => (
 );
 
 export const RecoveryHandoffTab = () => {
+  const { t } = useTranslation();
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Alert
         type="info"
         showIcon
         icon={<LifeBuoyOutlined />}
-        message="Restore: what the panel does vs. what the CLI does"
-        description="Normal account restore runs from the Backups tab. The advanced and disaster-recovery flows below run from the root shell on the host — they are intentionally CLI-only so they work even when the panel itself is down."
+        message={t("recoveryhandofftab.restore_what_the_panel_does_vs_what_the_cli")}
+        description={t("recoveryhandofftab.normal_account_restore_runs_from_the_backups")}
       />
 
       <Table<FlowRow>
@@ -99,9 +101,9 @@ export const RecoveryHandoffTab = () => {
 
       <div>
         <Title level={5}>Advanced account restore (CLI)</Title>
-        <CommandBlock label="Interactive — pick destination, snapshot, and user from real lists" cmd={CMD_INTERACTIVE} />
-        <CommandBlock label="Staging-only (materialize to staging, do not apply)" cmd={CMD_STAGE} />
-        <CommandBlock label="Deleted-user restore (panel user row is gone)" cmd={CMD_DELETED} />
+        <CommandBlock label={t("recoveryhandofftab.interactive_pick_destination_snapshot_and_us")} cmd={CMD_INTERACTIVE} />
+        <CommandBlock label={t("recoveryhandofftab.staging_only_materialize_to_staging_do_not_a")} cmd={CMD_STAGE} />
+        <CommandBlock label={t("recoveryhandofftab.deleted_user_restore_panel_user_row_is_gone")} cmd={CMD_DELETED} />
       </div>
 
       <div>
@@ -110,18 +112,18 @@ export const RecoveryHandoffTab = () => {
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="System restore is not available in the browser"
-          description="Bare-metal / full-host restore overwrites the running host and is run from the root shell, never as a one-click browser action. Use the template below on a clean OS install."
+          message={t("recoveryhandofftab.system_restore_is_not_available_in_the_brows")}
+          description={t("recoveryhandofftab.bare_metal_full_host_restore_overwrites_the")}
         />
-        <CommandBlock label="Bare-metal recovery sequence" cmd={CMD_SYSTEM} />
+        <CommandBlock label={t("recoveryhandofftab.bare_metal_recovery_sequence")} cmd={CMD_SYSTEM} />
       </div>
 
       <Alert
         type="warning"
         showIcon
         icon={<KeyOutlined />}
-        message="You need the backup encryption key to restore"
-        description="Every restore flow above requires the restic master encryption key for the repository. Reveal and stash it now from the Encryption key tab — without it, no snapshot can be decrypted and recovery is impossible."
+        message={t("recoveryhandofftab.you_need_the_backup_encryption_key_to_restor")}
+        description={t("recoveryhandofftab.every_restore_flow_above_requires_the_restic")}
       />
     </Space>
   );

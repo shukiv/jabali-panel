@@ -1,5 +1,6 @@
 // M30.1 Schedules admin tab. Lists every backup_schedules row, drawer
 // for create/edit, multi-select destinations, "Run now" button.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
@@ -406,6 +407,7 @@ function ScheduleDrawer({
 }
 
 export function SchedulesTab() {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<BackupSchedule[]>([]);
   const [destinations, setDestinations] = useState<BackupDestinationOption[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -484,7 +486,7 @@ export function SchedulesTab() {
           showIcon
           type="warning"
           style={{ marginBottom: 12 }}
-          message="Create at least one destination before adding schedules."
+          message={t("schedulestab.create_at_least_one_destination_before_addin")}
         />
       )}
       <Table<BackupSchedule>
@@ -495,7 +497,7 @@ export function SchedulesTab() {
         scroll={{ x: "max-content" }}
       >
         <Table.Column<BackupSchedule>
-          title="Users"
+          title={t("schedulestab.users")}
           render={(_, row) => {
             if (row.kind === "system_backup") return "—";
             const ids = row.user_ids ?? [];
@@ -512,7 +514,7 @@ export function SchedulesTab() {
         />
         <Table.Column
           dataIndex="cron_expr"
-          title="Cron"
+          title={t("schedulestab.cron")}
           render={(c: string, row: BackupSchedule) => (
             <Tooltip
               title={
@@ -527,11 +529,11 @@ export function SchedulesTab() {
         />
         <Table.Column
           dataIndex="enabled"
-          title="Enabled"
+          title={t("schedulestab.enabled")}
           render={(v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)}
         />
         <Table.Column<BackupSchedule>
-          title="Destinations"
+          title={t("schedulestab.destinations")}
           render={(_, row) => (
             <Space wrap>
               {(row.destinations ?? []).map((d) => (
@@ -547,16 +549,16 @@ export function SchedulesTab() {
         />
         <Table.Column
           dataIndex="next_run_at"
-          title="Next run"
+          title={t("schedulestab.next_run")}
           render={(v: string | null) => v ?? "—"}
         />
         <Table.Column
           dataIndex="last_run_at"
-          title="Last run"
+          title={t("schedulestab.last_run")}
           render={(v: string | null) => shortDateTime(v)}
         />
         <Table.Column<BackupSchedule>
-          title="Actions"
+          title={t("schedulestab.actions")}
           render={(_, row) => (
             <RowActions
               actions={[

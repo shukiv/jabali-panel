@@ -9,6 +9,7 @@
 // invalidate the public /branding key so the topbar re-reads
 // immediately. DELETE clears the custom logo; the topbar falls back
 // to the built-in SVG.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -39,6 +40,7 @@ const LOGO_ACCEPT = "image/png,image/svg+xml,image/webp,image/jpeg,image/gif";
 const MAX_LOGO_BYTES = 512 * 1024;
 
 export const BrandingCard = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [form] = Form.useForm<ServerSettingsShape>();
   const [loading, setLoading] = useState(true);
@@ -147,7 +149,7 @@ export const BrandingCard = () => {
 
   return (
     <>
-      <Card title="Panel Branding" style={{ marginBottom: 16 }}>
+      <Card title={t("brandingcard.panel_branding")} style={{ marginBottom: 16 }}>
         <Form
           form={form}
           layout="vertical"
@@ -155,12 +157,12 @@ export const BrandingCard = () => {
           disabled={loading}
         >
           <Form.Item
-            label="Brand text"
+            label={t("brandingcard.brand_text")}
             name="panel_brand_text"
             rules={[{ max: 60, message: "<= 60 chars" }]}
             extra="Shown next to the logo and in the browser tab title. Empty falls back to 'Jabali'."
           >
-            <Input placeholder="Jabali" maxLength={60} showCount />
+            <Input placeholder={t("brandingcard.jabali")} maxLength={60} showCount />
           </Form.Item>
 
           <Space>
@@ -216,8 +218,8 @@ export const BrandingCard = () => {
           type="info"
           showIcon
           style={{ marginTop: 16 }}
-          message="Browser cache"
-          description="Newly uploaded logos may take up to 5 minutes to appear across all sessions due to HTTP cache. Force-reload (Ctrl+Shift+R) to see yours immediately."
+          message={t("brandingcard.browser_cache")}
+          description={t("brandingcard.newly_uploaded_logos_may_take_up_to_5_minute")}
         />
       </Card>
     </>

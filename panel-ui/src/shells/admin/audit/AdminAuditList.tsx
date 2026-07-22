@@ -8,6 +8,7 @@
 // Timestamps render in the server timezone (Server Settings →
 // Timezone). Actor shows the resolved username (API batch-resolves the
 // ULID). The Action cell opens a modal with the full recorded detail.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   App,
@@ -46,6 +47,7 @@ interface VerifyResult {
   broken_id: string;
 }
 const AuditMaintenanceCard = () => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [days, setDays] = useState<number>(365);
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
@@ -67,7 +69,7 @@ const AuditMaintenanceCard = () => {
   });
 
   return (
-    <Card title="Integrity & retention" size="small" style={{ marginBottom: 16 }}>
+    <Card title={t("adminauditlist.integrity_retention")} size="small" style={{ marginBottom: 16 }}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <div>
           <Space wrap>
@@ -90,7 +92,7 @@ const AuditMaintenanceCard = () => {
                 <Alert
                   type="error"
                   showIcon
-                  message="Chain BROKEN — tamper detected"
+                  message={t("adminauditlist.chain_broken_tamper_detected")}
                   description={
                     <span>
                       First broken row after {verifyResult.checked} verified:{" "}
@@ -115,8 +117,8 @@ const AuditMaintenanceCard = () => {
             <Typography.Text>days</Typography.Text>
             <Popconfirm
               title={`Prune audit rows older than ${days} days?`}
-              description="This permanently deletes old audit records. The prune itself is recorded as an audit event (ADR-0106)."
-              okText="Prune"
+              description={t("adminauditlist.this_permanently_deletes_old_audit_records_t")}
+              okText={t("adminauditlist.prune")}
               okButtonProps={{ danger: true }}
               onConfirm={() => prune.mutate()}
             >
@@ -132,6 +134,7 @@ const AuditMaintenanceCard = () => {
 };
 
 export const AdminAuditList = () => {
+  const { t } = useTranslation();
   const tz = useServerTz();
   const query = useTableURL<AuditRow>({
     resource: "admin/audit",
@@ -175,7 +178,7 @@ export const AdminAuditList = () => {
             render={(ts: string) => <code>{fmtTSInTz(ts, tz)}</code>}
           />
           <Table.Column
-            title="Actor"
+            title={t("adminauditlist.actor")}
             key="actor"
             render={(_: unknown, r: AuditRow) => (
               <span>
@@ -189,13 +192,13 @@ export const AdminAuditList = () => {
             )}
           />
           <Table.Column
-            title="Action"
+            title={t("adminauditlist.action")}
             key="action"
             sorter={{ multiple: 1 }}
             render={(_: unknown, r: AuditRow) => <AuditActionLabel row={r} />}
           />
           <Table.Column
-            title="Target"
+            title={t("adminauditlist.target")}
             key="target"
             render={(_: unknown, r: AuditRow) =>
               r.target_type || r.target_id ? (
@@ -209,7 +212,7 @@ export const AdminAuditList = () => {
           />
           <Table.Column
             dataIndex="result"
-            title="Result"
+            title={t("adminauditlist.result")}
             key="result"
             sorter={{ multiple: 1 }}
             render={resultTag}

@@ -1,6 +1,7 @@
 // DatabaseList — admin view. Currently unrouted (no /jabali-admin/
 // databases mount in App.tsx) but kept Refine-free so a future route
 // wire-up doesn't have to touch this file again.
+import { useTranslation } from "react-i18next";
 import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import { shortDateTime } from "../../../utils/datetime";
 import { useNavigate } from "react-router";
@@ -30,6 +31,7 @@ const engineColorMap: Record<string, string> = {
 };
 
 export const DatabaseList = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const query = useTableURL<Database>({
     resource: "databases",
@@ -96,7 +98,7 @@ export const DatabaseList = () => {
           locale={{
             emptyText: (
               <EmptyWithCTA
-                description="No databases yet"
+                description={t("databaselist.no_databases_yet")}
                 ctaLabel="Create database"
                 onCta={() => navigate("/jabali-admin/databases/create")}
               />
@@ -105,7 +107,7 @@ export const DatabaseList = () => {
         >
           <Table.Column<Database>
             dataIndex="name"
-            title="Database"
+            title={t("databaselist.database")}
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -117,29 +119,29 @@ export const DatabaseList = () => {
           />
           <Table.Column<Database>
             dataIndex="user_id"
-            title="User ID"
+            title={t("databaselist.user_id")}
             render={(value: string) => value.substring(0, 8)}
           />
           <Table.Column<Database>
             dataIndex="engine"
-            title="Engine"
+            title={t("databaselist.engine")}
             render={(engine: string) => (
               <Tag color={engineColorMap[engine] || "default"}>{engine}</Tag>
             )}
           />
           <Table.Column<Database>
             dataIndex="charset"
-            title="Charset"
+            title={t("databaselist.charset")}
           />
           <Table.Column<Database>
             dataIndex="created_at"
-            title="Created"
+            title={t("databaselist.created")}
             key="created_at"
             sorter={{ multiple: 2 }}
             render={(date: string) => shortDateTime(date)}
           />
           <Table.Column<Database>
-            title="Actions"
+            title={t("databaselist.actions")}
             dataIndex="actions"
             render={(_, r) => (
               <Space>

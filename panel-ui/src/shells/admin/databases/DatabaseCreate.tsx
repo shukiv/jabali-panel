@@ -2,6 +2,7 @@
 // name segment — non-admin users get their username auto-prefixed
 // on the server (see panel-api/internal/api/databases.go). Admins
 // create without a prefix. The helper text reflects that distinction.
+import { useTranslation } from "react-i18next";
 import { Button, Card, Form, Input, Typography, message } from "antd";
 import { useNavigate } from "react-router";
 
@@ -14,6 +15,7 @@ type DatabaseCreateInput = {
 type DatabaseCreated = { id: string };
 
 export const DatabaseCreate = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [form] = Form.useForm<DatabaseCreateInput>();
   const createMutation = useCreateMutation<DatabaseCreated, DatabaseCreateInput>({
@@ -43,7 +45,7 @@ export const DatabaseCreate = () => {
         onFinish={handleFinish}
       >
         <Form.Item
-          label="Name"
+          label={t("databasecreate.name")}
           name="name"
           rules={[
             { required: true, message: "Database name is required" },
@@ -53,7 +55,7 @@ export const DatabaseCreate = () => {
                 "Lowercase letters, digits and underscores only; must start with a letter; max 30 chars",
             },
           ]}
-          tooltip="Admins create databases without a username prefix. When a non-admin user creates one, the server prepends their username automatically (e.g. `alice_wp`)."
+          tooltip={t("databasecreate.admins_create_databases_without_a_username_p")}
         >
           <Input placeholder="e.g. wp_prod" autoComplete="off" />
         </Form.Item>

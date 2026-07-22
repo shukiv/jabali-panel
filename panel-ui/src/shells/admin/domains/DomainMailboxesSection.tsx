@@ -5,6 +5,7 @@
 // 409 email_not_enabled on create otherwise), so the empty-state
 // explains that. Reveal-once passwords reuse DatabaseUserPasswordModal
 // — the UX is identical (operator saves, we never display again).
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { RowActions } from "../../../components/RowActions";
 import {
@@ -86,6 +87,7 @@ export const DomainMailboxesSection = ({
   domainOptions,
   onDomainCreated,
 }: Props) => {
+  const { t } = useTranslation();
   const email = useDomainEmail(domainId);
   const enabled = email.data?.email_enabled ?? false;
 
@@ -157,8 +159,8 @@ export const DomainMailboxesSection = ({
       <Alert
         type="info"
         showIcon
-        message="Email isn't enabled on this domain"
-        description="Mailboxes can only be created once email is enabled. Usually this happens automatically when the domain is created — click below to retry."
+        message={t("domainmailboxessection.email_isn_t_enabled_on_this_domain")}
+        description={t("domainmailboxessection.mailboxes_can_only_be_created_once_email_is")}
         action={
           <Button
             type="primary"
@@ -392,21 +394,21 @@ export const DomainMailboxesSection = ({
       </Card>
 
       <Modal
-        title="Create mailbox"
+        title={t("domainmailboxessection.create_mailbox")}
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={onCreate}
         confirmLoading={createMutation.isPending}
-        okText="Create"
+        okText={t("domainmailboxessection.create")}
         destroyOnClose
       >
         <Form form={form} layout="vertical">
           {showDomainPicker && (
             <Form.Item
-              label="Domain"
+              label={t("domainmailboxessection.domain")}
               name="domain_id"
               rules={[{ required: true, message: "Pick a domain" }]}
-              tooltip="Only domains with email enabled appear here."
+              tooltip={t("domainmailboxessection.only_domains_with_email_enabled_appear_here")}
             >
               <Select
                 showSearch
@@ -415,12 +417,12 @@ export const DomainMailboxesSection = ({
                   value: d.id,
                   label: d.name,
                 }))}
-                placeholder="Pick a domain"
+                placeholder={t("domainmailboxessection.pick_a_domain")}
               />
             </Form.Item>
           )}
           <Form.Item
-            label="Local part"
+            label={t("domainmailboxessection.local_part")}
             name="local_part"
             rules={[
               { required: true, message: "Required" },
@@ -440,9 +442,9 @@ export const DomainMailboxesSection = ({
           </Form.Item>
 
           <Form.Item
-            label="Password"
+            label={t("domainmailboxessection.password")}
             name="password"
-            tooltip="Leave blank to auto-generate. Generated passwords are shown exactly once."
+            tooltip={t("domainmailboxessection.leave_blank_to_auto_generate_generated_passw")}
             rules={[
               { min: 8, message: "8 characters minimum" },
             ]}
@@ -451,7 +453,7 @@ export const DomainMailboxesSection = ({
           </Form.Item>
 
           <Form.Item
-            label="Quota (MiB)"
+            label={t("domainmailboxessection.quota_mib")}
             name="quota_mib"
             tooltip={`Default 1024 MiB. Minimum ${QUOTA_MIN_BYTES / 1024 / 1024} MiB.`}
             initialValue={QUOTA_DEFAULT_BYTES / 1024 / 1024}
@@ -466,7 +468,7 @@ export const DomainMailboxesSection = ({
           <Form.Item
             name="send_only"
             valuePropName="checked"
-            tooltip="A send-only mailbox authenticates for SMTP submission but never receives or stores mail — inbound is rejected. Useful for per-service notification credentials."
+            tooltip={t("domainmailboxessection.a_send_only_mailbox_authenticates_for_smtp_s")}
           >
             <Checkbox>Send-only (SMTP submission, no inbox)</Checkbox>
           </Form.Item>

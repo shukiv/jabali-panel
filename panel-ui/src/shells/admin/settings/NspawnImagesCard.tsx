@@ -3,6 +3,7 @@
 // as a transient unit, polled for progress), and prune images no user is
 // pinned to. Proxies the operator `jabali nspawn build/prune` CLIs via the
 // agent; nothing is re-implemented client-side.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -37,6 +38,7 @@ interface PruneResult {
 }
 
 export function NspawnImagesCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [form] = Form.useForm();
   const [since, setSince] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export function NspawnImagesCard() {
   });
 
   return (
-    <Card title="SSH sandbox images (nspawn)" style={{ marginBottom: 16 }}>
+    <Card title={t("nspawnimagescard.ssh_sandbox_images_nspawn")} style={{ marginBottom: 16 }}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Text type="secondary">
           Sealed, immutable base images for the nspawn SSH sandbox. Building runs
@@ -126,15 +128,15 @@ export function NspawnImagesCard() {
           initialValues={{ codename: "debian-13", suite: "trixie" }}
           onFinish={(v) => build.mutate(v)}
         >
-          <Form.Item name="codename" label="Codename" rules={[{ required: true }]}>
+          <Form.Item name="codename" label={t("nspawnimagescard.codename")} rules={[{ required: true }]}>
             <Input placeholder="debian-13" style={{ width: 130 }} />
           </Form.Item>
-          <Form.Item name="version" label="Version" rules={[{ required: true }]}>
+          <Form.Item name="version" label={t("nspawnimagescard.version")} rules={[{ required: true }]}>
             <Input placeholder="v1" style={{ width: 90 }} />
           </Form.Item>
           <Form.Item
             name="snapshot"
-            label="Snapshot"
+            label={t("nspawnimagescard.snapshot")}
             rules={[
               { required: true },
               {
@@ -145,7 +147,7 @@ export function NspawnImagesCard() {
           >
             <Input placeholder="20260426T000000Z" style={{ width: 175 }} />
           </Form.Item>
-          <Form.Item name="suite" label="Suite">
+          <Form.Item name="suite" label={t("nspawnimagescard.suite")}>
             <Input placeholder="trixie" style={{ width: 100 }} />
           </Form.Item>
           <Form.Item>
@@ -169,9 +171,9 @@ export function NspawnImagesCard() {
             Scan for unused images
           </Button>
           <Popconfirm
-            title="Delete all unused images?"
-            description="Removes every sealed image no user (and not the server default) is pinned to. Irreversible — you'd rebuild from a snapshot to restore."
-            okText="Prune"
+            title={t("nspawnimagescard.delete_all_unused_images")}
+            description={t("nspawnimagescard.removes_every_sealed_image_no_user_and_not_t")}
+            okText={t("nspawnimagescard.prune")}
             okButtonProps={{ danger: true }}
             onConfirm={() => prune.mutate(true)}
           >
@@ -183,7 +185,7 @@ export function NspawnImagesCard() {
         {pruneOut && (
           <Alert
             type="info"
-            message="Prune result"
+            message={t("nspawnimagescard.prune_result")}
             description={<pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>{pruneOut}</pre>}
           />
         )}

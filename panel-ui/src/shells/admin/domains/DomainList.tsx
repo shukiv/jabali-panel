@@ -1,6 +1,7 @@
 // DomainList — admin domains grid. GH #351: Edit is the primary
 // always-visible row action (used far more than DNS); DNS moved into the
 // "..." overflow with Info/Redirects/Index/Settings/Caching/Toggle/Delete.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Button, Card, Dropdown, Modal, Space, Table, Tag, Tooltip, Typography, notification } from "antd";
 import {
@@ -176,6 +177,7 @@ export type Domain = {
 };
 
 export const DomainList = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
@@ -295,7 +297,7 @@ export const DomainList = () => {
           locale={{
             emptyText: (
               <EmptyWithCTA
-                description="No domains yet"
+                description={t("domainlist.no_domains_yet")}
                 ctaLabel="Create domain"
                 onCta={() => navigate("create")}
               />
@@ -304,7 +306,7 @@ export const DomainList = () => {
         >
           <Table.Column<Domain>
             dataIndex="name"
-            title="Domain"
+            title={t("domainlist.domain")}
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
@@ -319,7 +321,7 @@ export const DomainList = () => {
           />
           <Table.Column<Domain>
             dataIndex="username"
-            title="User"
+            title={t("domainlist.user")}
             key="username"
             sorter={{ multiple: 1 }}
             render={(username: string | null | undefined, record: Domain) => (
@@ -330,7 +332,7 @@ export const DomainList = () => {
           />
           <Table.Column<Domain>
             dataIndex="is_enabled"
-            title="Status"
+            title={t("domainlist.status")}
             key="is_enabled"
             sorter={{ multiple: 1 }}
             render={(enabled: boolean) =>
@@ -343,20 +345,20 @@ export const DomainList = () => {
           />
           <Table.Column<Domain>
             dataIndex="ssl"
-            title="SSL"
+            title={t("domainlist.ssl")}
             render={(ssl: SSLBadge | null | undefined) => renderSSL(ssl)}
           />
           <Table.Column<Domain>
-            title="Redirect"
+            title={t("domainlist.redirect")}
             render={(_, record) => renderRedirect(record)}
           />
           <Table.Column<Domain>
             dataIndex="bytes_30d"
-            title="BW (30d)"
+            title={t("domainlist.bw_30d")}
             render={(v: number | undefined) => humanBytes(v ?? 0)}
           />
           <Table.Column<Domain>
-            title="Actions"
+            title={t("domainlist.actions")}
             dataIndex="actions"
             render={(_, r) => (
               <Space>
@@ -436,7 +438,7 @@ export const DomainList = () => {
                     ],
                   }}
                 >
-                  <RowActionButton icon={<MoreOutlined />} color="default" aria-label="More actions" />
+                  <RowActionButton icon={<MoreOutlined />} color="default" aria-label={t("domainlist.more_actions")} />
                 </Dropdown>
                 {activeModal?.domain.id === r.id && activeModal.type === "redirects" && (
                   <DomainRedirectsButton

@@ -4,6 +4,7 @@
 // every retry. Each row exposes Replay (re-publish to the main queue +
 // drop from DLQ) and Drop (XDEL just that entry). Clear-all empties
 // the stream via XTRIM MAXLEN 0.
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
@@ -49,6 +50,7 @@ function formatTs(iso: string): string {
 }
 
 export const DLQTab = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [busyID, setBusyID] = useState<string | null>(null);
 
@@ -144,8 +146,8 @@ export const DLQTab = () => {
             <>
               <Popconfirm
                 title={`Replay all ${total} dead-letter entries?`}
-                description="Re-publishes every envelope to the main delivery queue. Legacy entries without a preserved payload will be dropped silently."
-                okText="Replay all"
+                description={t("dlqtab.re_publishes_every_envelope_to_the_main_deli")}
+                okText={t("dlqtab.replay_all")}
                 onConfirm={replayAll}
               >
                 <Button icon={<RedoOutlined />} loading={replayingAll}>
@@ -154,8 +156,8 @@ export const DLQTab = () => {
               </Popconfirm>
               <Popconfirm
                 title={`Clear all ${total} dead-letter entries?`}
-                description="This deletes every entry in the stream. Use only if you've already addressed the underlying failures (e.g. fixed a misconfigured channel)."
-                okText="Clear"
+                description={t("dlqtab.this_deletes_every_entry_in_the_stream_use_o")}
+                okText={t("dlqtab.clear")}
                 okButtonProps={{ danger: true }}
                 onConfirm={clearAll}
               >
@@ -175,7 +177,7 @@ export const DLQTab = () => {
         pagination={false}
         size="small"
         scroll={{ x: "max-content" }}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="DLQ is empty" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("dlqtab.dlq_is_empty")} /> }}
         columns={[
           {
             title: "When",

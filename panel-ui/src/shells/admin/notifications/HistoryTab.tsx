@@ -4,6 +4,7 @@
 // own per-user deliveries AND system-wide broadcast rows (user_id IS
 // NULL) via ListForAdminInbox on the backend. Click a row to mark it
 // read and (if a deeplink exists) navigate there.
+import { useTranslation } from "react-i18next";
 import { Button, Descriptions, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -60,6 +61,7 @@ function formatTs(iso: string): string {
 }
 
 export const HistoryTab = () => {
+  const { t } = useTranslation();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [info, setInfo] = useState<NotificationHistoryRow | null>(null);
@@ -145,10 +147,10 @@ export const HistoryTab = () => {
             Mark all as read
           </Button>
           <Popconfirm
-            title="Clear all notifications?"
-            description="This permanently deletes every row in your inbox."
+            title={t("historytab.clear_all_notifications")}
+            description={t("historytab.this_permanently_deletes_every_row_in_your_i")}
             onConfirm={clearAll}
-            okText="Clear"
+            okText={t("historytab.clear")}
             okButtonProps={{ danger: true }}
           >
             <Button
@@ -188,13 +190,13 @@ export const HistoryTab = () => {
         })}
       >
         <Table.Column<NotificationHistoryRow>
-          title="Time"
+          title={t("historytab.time")}
           dataIndex="created_at"
           width={180}
           render={(v: string) => formatTs(v)}
         />
         <Table.Column<NotificationHistoryRow>
-          title="Severity"
+          title={t("historytab.severity")}
           dataIndex="severity"
           width={110}
           render={(s: NotificationHistoryRow["severity"]) => (
@@ -202,18 +204,18 @@ export const HistoryTab = () => {
           )}
         />
         <Table.Column<NotificationHistoryRow>
-          title="Event"
+          title={t("historytab.event")}
           dataIndex="event_kind"
           width={200}
           render={(k: string) => <code style={{ fontSize: 12 }}>{k}</code>}
         />
         <Table.Column<NotificationHistoryRow>
-          title="Title"
+          title={t("historytab.title")}
           dataIndex="title"
           render={(v: string) => <Typography.Text strong>{v}</Typography.Text>}
         />
         <Table.Column<NotificationHistoryRow>
-          title="Body"
+          title={t("historytab.body")}
           dataIndex="body"
           width={420}
           render={(v: string) => (
@@ -226,7 +228,7 @@ export const HistoryTab = () => {
           )}
         />
         <Table.Column<NotificationHistoryRow>
-          title="Outcome"
+          title={t("historytab.outcome")}
           dataIndex="outcome"
           width={160}
           render={(o: NotificationHistoryRow["outcome"], row) => {
@@ -241,7 +243,7 @@ export const HistoryTab = () => {
               return (
                 <Space size={4} wrap>
                   {wrapped}
-                  <Tooltip title="This envelope was moved to the Dead Letter queue after the dispatcher exhausted its retries.">
+                  <Tooltip title={t("historytab.this_envelope_was_moved_to_the_dead_letter_q")}>
                     <Tag color="volcano">dead letter</Tag>
                   </Tooltip>
                 </Space>
@@ -251,7 +253,7 @@ export const HistoryTab = () => {
           }}
         />
         <Table.Column<NotificationHistoryRow>
-          title="Read"
+          title={t("historytab.read")}
           dataIndex="read_at"
           width={80}
           render={(v: string | null | undefined) =>
@@ -270,7 +272,7 @@ export const HistoryTab = () => {
                 setInfo(row);
                 void markRead(row);
               }}
-              aria-label="Show details"
+              aria-label={t("historytab.show_details")}
             >
               View
             </RowActionButton>
@@ -305,17 +307,17 @@ export const HistoryTab = () => {
       >
         {info && (
           <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label="Time">{formatTs(info.created_at)}</Descriptions.Item>
-            <Descriptions.Item label="Severity">
+            <Descriptions.Item label={t("historytab.time")}>{formatTs(info.created_at)}</Descriptions.Item>
+            <Descriptions.Item label={t("historytab.severity")}>
               <Tag color={severityColor[info.severity] ?? "default"}>{info.severity}</Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="Event">
+            <Descriptions.Item label={t("historytab.event")}>
               <code style={{ fontSize: 12 }}>{info.event_kind}</code>
             </Descriptions.Item>
-            <Descriptions.Item label="Title">
+            <Descriptions.Item label={t("historytab.title")}>
               <Typography.Text strong>{info.title}</Typography.Text>
             </Descriptions.Item>
-            <Descriptions.Item label="Body">
+            <Descriptions.Item label={t("historytab.body")}>
               <Typography.Paragraph
                 style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}
                 copyable={{ text: info.body }}
@@ -323,7 +325,7 @@ export const HistoryTab = () => {
                 {info.body}
               </Typography.Paragraph>
             </Descriptions.Item>
-            <Descriptions.Item label="Outcome">
+            <Descriptions.Item label={t("historytab.outcome")}>
               <Space size={4} wrap>
                 <Tag color={outcomeColor[info.outcome] ?? "default"}>{info.outcome}</Tag>
                 {info.is_dead_letter && <Tag color="volcano">dead letter</Tag>}
@@ -338,15 +340,15 @@ export const HistoryTab = () => {
               )}
             </Descriptions.Item>
             {info.channel_id && (
-              <Descriptions.Item label="Channel">
+              <Descriptions.Item label={t("historytab.channel")}>
                 <code style={{ fontSize: 12 }}>{info.channel_id}</code>
               </Descriptions.Item>
             )}
             {info.retry_count > 0 && (
-              <Descriptions.Item label="Retries">{info.retry_count}</Descriptions.Item>
+              <Descriptions.Item label={t("historytab.retries")}>{info.retry_count}</Descriptions.Item>
             )}
             {info.deeplink && (
-              <Descriptions.Item label="Deeplink">
+              <Descriptions.Item label={t("historytab.deeplink")}>
                 <code style={{ fontSize: 12 }}>{info.deeplink}</code>
               </Descriptions.Item>
             )}

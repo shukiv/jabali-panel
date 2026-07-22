@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -53,6 +54,7 @@ function applyPreset(name: "permissive" | "hosting-safe" | "locked-down"): Polic
 }
 
 export function DNSPermissionsCard() {
+  const { t } = useTranslation();
   const [policy, setPolicy] = useState<Policy>(() => normalize(undefined));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -110,12 +112,12 @@ export function DNSPermissionsCard() {
   ];
 
   return (
-    <Card title="DNS Record Permissions" style={{ marginBottom: 16 }} loading={loading}>
+    <Card title={t("dnspermissionscard.dns_record_permissions")} style={{ marginBottom: 16 }} loading={loading}>
       <Alert
         type="info"
         style={{ marginBottom: 16 }}
-        message="Which DNS record types regular users may manage"
-        description="Admins always have full control. NS and SOA records are zone infrastructure and are never user-editable. Use a preset or fine-tune per type, then Save."
+        message={t("dnspermissionscard.which_dns_record_types_regular_users_may_man")}
+        description={t("dnspermissionscard.admins_always_have_full_control_ns_and_soa_r")}
       />
       <Space wrap style={{ marginBottom: 16 }}>
         <Button onClick={() => setPolicy(applyPreset("permissive"))}>Permissive</Button>

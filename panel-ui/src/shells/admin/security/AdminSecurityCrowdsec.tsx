@@ -8,6 +8,7 @@
 // inline marginLeft. Hooks stay direct useQuery (not useTableURL) —
 // these endpoints are not the standard {data,total,page,page_size}
 // list shape; they're agent passthroughs.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
@@ -123,6 +124,7 @@ const fmtTime = (s?: string): string => (s ? new Date(s).toLocaleString() : "—
 
 
 export const AdminSecurityCrowdsec = () => {
+  const { t } = useTranslation();
   const [scope, setScope] = useState<CrowdsecScope | "all">("all");
   const decisions = useCrowdsecDecisions(scope === "all" ? undefined : scope);
   const hub = useCrowdsecHub();
@@ -207,8 +209,8 @@ export const AdminSecurityCrowdsec = () => {
       <Alert
         type="info"
         showIcon
-        message="What is CrowdSec?"
-        description="Behaviour-based intrusion-prevention. Tails server logs (nginx, sshd, panel, mail), matches them against scenarios (brute-force, scanners, web exploits, credential stuffing), and emits IP decisions. Bouncers enforce them at the firewall (UFW), at nginx (AppSec WAF with OWASP CRS rules + optional captcha challenge), and against a crowdsourced blocklist of IPs flagged by the wider community in the last hours."
+        message={t("adminsecuritycrowdsec.what_is_crowdsec")}
+        description={t("adminsecuritycrowdsec.behaviour_based_intrusion_prevention_tails_s")}
       />
       <TopSourcesCard />
       <AlertsOverTimeCard />
@@ -219,7 +221,7 @@ export const AdminSecurityCrowdsec = () => {
   const decisionsPanel = (
     <Card
       size="small"
-      title="Active decisions"
+      title={t("adminsecuritycrowdsec.active_decisions")}
       extra={
         <Space wrap>
           <Select
@@ -240,7 +242,7 @@ export const AdminSecurityCrowdsec = () => {
         dataSource={decisions.data ?? []}
         loading={decisions.isLoading}
         pagination={{ pageSize: 20, showSizeChanger: false }}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No active decisions" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminsecuritycrowdsec.no_active_decisions")} /> }}
         scroll={{ x: "max-content" }}
       >
         <Table.Column<CrowdsecDecision>
@@ -253,11 +255,11 @@ export const AdminSecurityCrowdsec = () => {
             </Button>
           )}
         />
-        <Table.Column<CrowdsecDecision> dataIndex="scenario" title="Scenario" key="scenario" />
-        <Table.Column<CrowdsecDecision> dataIndex="reason" title="Reason" key="reason" />
+        <Table.Column<CrowdsecDecision> dataIndex="scenario" title={t("adminsecuritycrowdsec.scenario")} key="scenario" />
+        <Table.Column<CrowdsecDecision> dataIndex="reason" title={t("adminsecuritycrowdsec.reason")} key="reason" />
         <Table.Column<CrowdsecDecision>
           dataIndex="until"
-          title="Until"
+          title={t("adminsecuritycrowdsec.until")}
           key="until"
           render={(s: string) => fmtTime(s)}
         />
@@ -284,18 +286,18 @@ export const AdminSecurityCrowdsec = () => {
         {detailDecision ? (
           <>
             <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="IP / value">{detailDecision.ip}</Descriptions.Item>
-              <Descriptions.Item label="Why (reason)">{detailDecision.reason || "—"}</Descriptions.Item>
-              <Descriptions.Item label="Scenario fired">{detailDecision.scenario || "—"}</Descriptions.Item>
-              <Descriptions.Item label="Ban duration">{detailDecision.duration || "—"}</Descriptions.Item>
-              <Descriptions.Item label="Active until">{detailDecision.until || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritycrowdsec.ip_value")}>{detailDecision.ip}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritycrowdsec.why_reason")}>{detailDecision.reason || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritycrowdsec.scenario_fired")}>{detailDecision.scenario || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritycrowdsec.ban_duration")}>{detailDecision.duration || "—"}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritycrowdsec.active_until")}>{detailDecision.until || "—"}</Descriptions.Item>
             </Descriptions>
             <Alert
               style={{ marginTop: 12 }}
               type="info"
               showIcon
-              message="How this is enforced"
-              description="This IP was banned because the scenario above fired on its traffic. Enforcement is applied by the active bouncers: the firewall bouncer drops it at nftables (all ports), and the nginx bouncer returns 403 on HTTP. To lift it, delete the decision (or add the IP to the Allowlist so it is never re-banned)."
+              message={t("adminsecuritycrowdsec.how_this_is_enforced")}
+              description={t("adminsecuritycrowdsec.this_ip_was_banned_because_the_scenario_abov")}
             />
             {(() => {
               // GH #716: alert -> decision linkage. Show the alerts whose source
@@ -356,7 +358,7 @@ export const AdminSecurityCrowdsec = () => {
       />
 
       <Drawer
-        title="Add CrowdSec decision (manual ban)"
+        title={t("adminsecuritycrowdsec.add_crowdsec_decision_manual_ban")}
         open={addOpen}
         onClose={() => setAddOpen(false)}
         width={isDesktop ? 520 : undefined}
@@ -384,9 +386,9 @@ export const AdminSecurityCrowdsec = () => {
         >
           <Form.Item
             name="scope"
-            label="Scope"
+            label={t("adminsecuritycrowdsec.scope")}
             rules={[{ required: true, message: "Scope required" }]}
-            tooltip="Country bans rely on the GeoIP enricher; AS bans on the ASN enricher. Both are installed by default on fresh CrowdSec hosts."
+            tooltip={t("adminsecuritycrowdsec.country_bans_rely_on_the_geoip_enricher_as_b")}
           >
             <Select options={ADD_SCOPE_OPTIONS} />
           </Form.Item>
@@ -447,7 +449,7 @@ export const AdminSecurityCrowdsec = () => {
           </Form.Item>
           <Form.Item
             name="duration"
-            label="Duration"
+            label={t("adminsecuritycrowdsec.duration")}
             initialValue="4h"
             rules={[
               { required: true, message: "Duration required" },
@@ -458,7 +460,7 @@ export const AdminSecurityCrowdsec = () => {
           </Form.Item>
           <Form.Item
             name="reason"
-            label="Reason"
+            label={t("adminsecuritycrowdsec.reason")}
             rules={[
               { required: true, message: "Reason required" },
               { min: 3, max: 200, message: "3..200 characters" },
@@ -480,6 +482,7 @@ export const AdminSecurityCrowdsec = () => {
 // Country") reason. Operator must wire nginx to CrowdSec's AppSec
 // endpoint for enforcement — see plans/m26-security-tab-runbook.md.
 const AppSecGeoblockCard = () => {
+  const { t } = useTranslation();
   const geoblock = useAppSecGeoblock();
   const updateGeoblock = useUpdateAppSecGeoblock();
 
@@ -522,7 +525,7 @@ const AppSecGeoblockCard = () => {
   };
 
   return (
-    <Card size="small" title="AppSec geoblock (server-wide)" loading={geoblock.isLoading}>
+    <Card size="small" title={t("adminsecuritycrowdsec.appsec_geoblock_server_wide")} loading={geoblock.isLoading}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           HTTP-layer country filter applied by CrowdSec AppSec. Blocks with
@@ -547,7 +550,7 @@ const AppSecGeoblockCard = () => {
             <Select<string[]>
               mode="multiple"
               style={{ width: "100%", maxWidth: 720 }}
-              placeholder="Type a country name or code, or pick from the list"
+              placeholder={t("adminsecuritycrowdsec.type_a_country_name_or_code_or_pick_from_the")}
               value={countries}
               onChange={(next) =>
                 setCountries(
@@ -571,19 +574,19 @@ const AppSecGeoblockCard = () => {
           <Alert
             type="warning"
             showIcon
-            message="Allow-list with no countries blocks every request — add at least one before applying."
+            message={t("adminsecuritycrowdsec.allow_list_with_no_countries_blocks_every_re")}
           />
         )}
         {mode === "deny" && countries.length === 0 && (
           <Alert
             type="warning"
             showIcon
-            message="Deny-list with no countries has no effect — add at least one before applying."
+            message={t("adminsecuritycrowdsec.deny_list_with_no_countries_has_no_effect_ad")}
           />
         )}
         <Space>
           <Popconfirm
-            title="Apply AppSec geoblock"
+            title={t("adminsecuritycrowdsec.apply_appsec_geoblock")}
             description={
               mode === "off"
                 ? "Disables the server-wide country filter. Requests from any country pass AppSec."
@@ -591,7 +594,7 @@ const AppSecGeoblockCard = () => {
                     countries.length === 1 ? "country" : "countries"
                   }. CrowdSec is reloaded (SIGHUP) — no traffic drops.`
             }
-            okText="Apply"
+            okText={t("adminsecuritycrowdsec.apply")}
             onConfirm={apply}
             disabled={!dirty || updateGeoblock.isPending}
           >
@@ -635,6 +638,7 @@ const ALLOWLIST_IP_OR_CIDR = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
 // BlocklistsCard — community blocklists currently contributing active
 // decisions to this engine. Subscriptions live at app.crowdsec.net.
 const BlocklistsCard = () => {
+  const { t } = useTranslation();
   const q = useCrowdsecBlocklists();
   const refresh = useRefreshCrowdsecBlocklists();
   const data = q.data?.blocklists ?? [];
@@ -642,7 +646,7 @@ const BlocklistsCard = () => {
 
   return (
     <Card
-      title="Active decision sources"
+      title={t("adminsecuritycrowdsec.active_decision_sources")}
       extra={
         <Space size={12}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -662,7 +666,7 @@ const BlocklistsCard = () => {
       <Alert
         type="info"
         showIcon
-        message="Aggregates every active decision by (origin/scenario). CAPI = pulled from app.crowdsec.net; cscli-import = manually imported; crowdsec = local detection. Subscribe to community blocklists at app.crowdsec.net → Blocklists."
+        message={t("adminsecuritycrowdsec.aggregates_every_active_decision_by_origin_s")}
         style={{ marginBottom: 12 }}
       />
       <Table<{ name: string; count: number; latest_end: string }>
@@ -700,6 +704,7 @@ const BlocklistsCard = () => {
 };
 
 const AllowlistsCard = () => {
+  const { t } = useTranslation();
   const allowlists = useCrowdsecAllowlists();
   const [allowlistQuery, setAllowlistQuery] = useState("");
   const addEntry = useAddCrowdsecAllowlist();
@@ -733,7 +738,7 @@ const AllowlistsCard = () => {
     <>
       <Card
         size="small"
-        title="Allowlist (never ban)"
+        title={t("adminsecuritycrowdsec.allowlist_never_ban")}
         extra={
           <Button type="primary" size="small" onClick={() => setAddOpen(true)}>
             Add to allowlist
@@ -744,7 +749,7 @@ const AllowlistsCard = () => {
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Allowlisted IPs bypass every scenario, decision, and the AppSec geoblock. Use for your office, home IP, or CI runner CIDR."
+          message={t("adminsecuritycrowdsec.allowlisted_ips_bypass_every_scenario_decisi")}
         />
         <SearchableTableStringQ<CrowdsecAllowlistEntry>
           onSearchChange={setAllowlistQuery}
@@ -758,22 +763,22 @@ const AllowlistsCard = () => {
           )}
           loading={allowlists.isLoading}
           pagination={{ pageSize: 10, showSizeChanger: false }}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No allowlist entries" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminsecuritycrowdsec.no_allowlist_entries")} /> }}
         >
           <Table.Column<CrowdsecAllowlistEntry>
             dataIndex="value"
-            title="IP or CIDR"
+            title={t("adminsecuritycrowdsec.ip_or_cidr")}
             key="value"
             render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
           />
           <Table.Column<CrowdsecAllowlistEntry>
             dataIndex="reason"
-            title="Reason"
+            title={t("adminsecuritycrowdsec.reason")}
             key="reason"
           />
           <Table.Column<CrowdsecAllowlistEntry>
             dataIndex="created_at"
-            title="Added"
+            title={t("adminsecuritycrowdsec.added")}
             key="created_at"
             render={(s: string) => fmtTime(s)}
           />
@@ -783,11 +788,11 @@ const AllowlistsCard = () => {
             width={90}
             render={(_, row) => (
               <Popconfirm
-                title="Remove from allowlist"
+                title={t("adminsecuritycrowdsec.remove_from_allowlist")}
                 description={`${row.value} will be subject to scenarios and decisions again.`}
-                okText="Remove"
+                okText={t("adminsecuritycrowdsec.remove")}
                 okButtonProps={{ danger: true }}
-                cancelText="Cancel"
+                cancelText={t("adminsecuritycrowdsec.cancel")}
                 onConfirm={() => onRemove(row)}
               >
                 <Button danger type="text" size="small">
@@ -800,7 +805,7 @@ const AllowlistsCard = () => {
       </Card>
 
       <Drawer
-        title="Add to allowlist"
+        title={t("adminsecuritycrowdsec.add_to_allowlist")}
         open={addOpen}
         onClose={() => setAddOpen(false)}
         width={isDesktop ? 520 : undefined}
@@ -818,18 +823,18 @@ const AllowlistsCard = () => {
         <Form<AllowlistFormValues> form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item
             name="value"
-            label="IP or CIDR"
+            label={t("adminsecuritycrowdsec.ip_or_cidr")}
             rules={[
               { required: true, message: "Value required" },
               { pattern: ALLOWLIST_IP_OR_CIDR, message: "Must be a valid IP or CIDR" },
             ]}
-            tooltip="Single IPv4/IPv6 address or CIDR block (e.g. 192.0.2.1 or 10.0.0.0/24)."
+            tooltip={t("adminsecuritycrowdsec.single_ipv4_ipv6_address_or_cidr_block_e_g_1")}
           >
             <Input placeholder="192.0.2.1 or 10.0.0.0/24" />
           </Form.Item>
           <Form.Item
             name="reason"
-            label="Reason"
+            label={t("adminsecuritycrowdsec.reason")}
             rules={[
               { required: true, message: "Reason required" },
               { min: 3, max: 200, message: "Reason must be 3..200 chars" },
@@ -859,6 +864,7 @@ type AlertDetail = {
 };
 
 const AlertsCard = () => {
+  const { t } = useTranslation();
   const alerts = useCrowdsecAlerts();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const detail = useCrowdsecAlert(selectedId);
@@ -866,22 +872,22 @@ const AlertsCard = () => {
 
   return (
     <>
-      <Card size="small" title="Alerts (last 24h)">
+      <Card size="small" title={t("adminsecuritycrowdsec.alerts_last_24h")}>
         <Table<CrowdsecAlert>
           rowKey="id"
           dataSource={alerts.data ?? []}
           loading={alerts.isLoading}
           pagination={{ pageSize: 20, showSizeChanger: false }}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No alerts in the last 24h" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminsecuritycrowdsec.no_alerts_in_the_last_24h")} /> }}
           scroll={{ x: "max-content" }}
           onRow={(row) => ({
             onClick: () => setSelectedId(row.id),
             style: { cursor: "pointer" },
           })}
         >
-          <Table.Column<CrowdsecAlert> dataIndex="scenario" title="Scenario" key="scenario" />
+          <Table.Column<CrowdsecAlert> dataIndex="scenario" title={t("adminsecuritycrowdsec.scenario")} key="scenario" />
           <Table.Column<CrowdsecAlert>
-            title="Source"
+            title={t("adminsecuritycrowdsec.source")}
             key="source"
             render={(_, row) => (
               <Space size="small">
@@ -892,25 +898,25 @@ const AlertsCard = () => {
           />
           <Table.Column<CrowdsecAlert>
             dataIndex="events_count"
-            title="Events"
+            title={t("adminsecuritycrowdsec.events")}
             key="events_count"
             width={100}
           />
           <Table.Column<CrowdsecAlert>
             dataIndex="decisions_count"
-            title="Decisions"
+            title={t("adminsecuritycrowdsec.decisions")}
             key="decisions_count"
             width={110}
           />
           <Table.Column<CrowdsecAlert>
             dataIndex="started_at"
-            title="Started"
+            title={t("adminsecuritycrowdsec.started")}
             key="started_at"
             render={(s: string) => fmtTime(s)}
           />
           <Table.Column<CrowdsecAlert>
             dataIndex="machine_id"
-            title="Machine"
+            title={t("adminsecuritycrowdsec.machine")}
             key="machine_id"
             render={(s: string) => <Typography.Text type="secondary">{s || "—"}</Typography.Text>}
           />
@@ -952,9 +958,9 @@ const AlertsCard = () => {
               ]}
             />
 
-            <Card size="small" title="Decisions issued">
+            <Card size="small" title={t("adminsecuritycrowdsec.decisions_issued")}>
               {(alert.decisions ?? []).length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No decisions issued" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminsecuritycrowdsec.no_decisions_issued")} />
               ) : (
                 <Table
                   rowKey={(_, idx) => `d-${idx}`}
@@ -963,15 +969,15 @@ const AlertsCard = () => {
                   size="small"
                   scroll={{ x: "max-content" }}
                 >
-                  <Table.Column dataIndex="type" title="Type" key="type" />
-                  <Table.Column dataIndex="value" title="Value" key="value" />
-                  <Table.Column dataIndex="duration" title="Duration" key="duration" />
+                  <Table.Column dataIndex="type" title={t("adminsecuritycrowdsec.type")} key="type" />
+                  <Table.Column dataIndex="value" title={t("adminsecuritycrowdsec.value")} key="value" />
+                  <Table.Column dataIndex="duration" title={t("adminsecuritycrowdsec.duration")} key="duration" />
                 </Table>
               )}
             </Card>
           </Space>
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Alert not found" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminsecuritycrowdsec.alert_not_found")} />
         )}
       </Drawer>
     </>
@@ -996,6 +1002,7 @@ const PROVIDER_OPTIONS = [
 ];
 
 const CaptchaRemediationCard = () => {
+  const { t } = useTranslation();
   const captcha = useCrowdsecCaptcha();
   const update = useUpdateCrowdsecCaptcha();
   const [form] = Form.useForm<CaptchaFormValues>();
@@ -1029,7 +1036,7 @@ const CaptchaRemediationCard = () => {
   return (
     <Card
       size="small"
-      title="Captcha remediation"
+      title={t("adminsecuritycrowdsec.captcha_remediation")}
       loading={captcha.isLoading}
       extra={
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -1041,8 +1048,8 @@ const CaptchaRemediationCard = () => {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="When enabled, CrowdSec scenarios flagged for captcha serve a challenge page instead of a 403."
-        description="Create an hCaptcha / reCAPTCHA / Turnstile site at the provider, paste the keys below. Secret is stored server-side and never returned."
+        message={t("adminsecuritycrowdsec.when_enabled_crowdsec_scenarios_flagged_for")}
+        description={t("adminsecuritycrowdsec.create_an_hcaptcha_recaptcha_turnstile_site")}
       />
       <Form<CaptchaFormValues>
         form={form}
@@ -1052,7 +1059,7 @@ const CaptchaRemediationCard = () => {
       >
         <Form.Item
           name="enabled"
-          label="Enabled"
+          label={t("adminsecuritycrowdsec.enabled")}
           getValueProps={(v) => ({ value: v ? "on" : "off" })}
           normalize={(v) => v === "on"}
         >
@@ -1073,14 +1080,14 @@ const CaptchaRemediationCard = () => {
               <>
                 <Form.Item
                   name="provider"
-                  label="Provider"
+                  label={t("adminsecuritycrowdsec.provider")}
                   rules={enabled ? [{ required: true, message: "Provider required" }] : []}
                 >
                   <Select disabled={!enabled} options={PROVIDER_OPTIONS} />
                 </Form.Item>
                 <Form.Item
                   name="site_key"
-                  label="Site key (public)"
+                  label={t("adminsecuritycrowdsec.site_key_public")}
                   rules={
                     enabled
                       ? [{ required: true, message: "Site key required" }, { max: 512 }]
@@ -1091,8 +1098,8 @@ const CaptchaRemediationCard = () => {
                 </Form.Item>
                 <Form.Item
                   name="secret_key"
-                  label="Secret key (write-only)"
-                  tooltip="Leave blank to keep the stored secret unchanged."
+                  label={t("adminsecuritycrowdsec.secret_key_write_only")}
+                  tooltip={t("adminsecuritycrowdsec.leave_blank_to_keep_the_stored_secret_unchan")}
                   rules={[{ max: 512 }]}
                 >
                   <Input.Password
@@ -1108,10 +1115,10 @@ const CaptchaRemediationCard = () => {
         </Form.Item>
         <Space>
           <Popconfirm
-            title="Apply captcha settings?"
-            description="This rewrites /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf and reloads nginx."
-            okText="Apply"
-            cancelText="Cancel"
+            title={t("adminsecuritycrowdsec.apply_captcha_settings")}
+            description={t("adminsecuritycrowdsec.this_rewrites_etc_crowdsec_bouncers_crowdsec")}
+            okText={t("adminsecuritycrowdsec.apply")}
+            cancelText={t("adminsecuritycrowdsec.cancel")}
             onConfirm={() => form.submit()}
           >
             <Button type="primary" loading={update.isPending}>
@@ -1132,6 +1139,7 @@ type ProfileRow = CrowdsecScenarioItem & {
 };
 
 const ProfilesCard = () => {
+  const { t } = useTranslation();
   const profiles = useCrowdsecProfiles();
   const update = useUpdateCrowdsecProfiles();
   const [draft, setDraft] = useState<Record<string, "default" | "captcha" | "off">>({});
@@ -1167,17 +1175,17 @@ const ProfilesCard = () => {
   return (
     <Card
       size="small"
-      title="Per-scenario remediation override"
+      title={t("adminsecuritycrowdsec.per_scenario_remediation_override")}
       loading={profiles.isLoading}
       extra={
         dirty && (
           <Space>
             <Button onClick={() => setDraft({})}>Reset</Button>
             <Popconfirm
-              title="Apply overrides?"
-              description="Rewrites /etc/crowdsec/profiles.yaml (marker-bounded) and reloads crowdsec."
-              okText="Apply"
-              cancelText="Cancel"
+              title={t("adminsecuritycrowdsec.apply_overrides")}
+              description={t("adminsecuritycrowdsec.rewrites_etc_crowdsec_profiles_yaml_marker_b")}
+              okText={t("adminsecuritycrowdsec.apply")}
+              cancelText={t("adminsecuritycrowdsec.cancel")}
               onConfirm={onApply}
             >
               <Button type="primary" loading={update.isPending}>
@@ -1193,26 +1201,26 @@ const ProfilesCard = () => {
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Captcha action requires the Captcha remediation card above to be enabled."
+          message={t("adminsecuritycrowdsec.captcha_action_requires_the_captcha_remediat")}
         />
       )}
       <Table<ProfileRow>
         rowKey="name"
         dataSource={rows}
         pagination={{ pageSize: 20, showSizeChanger: false }}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No scenarios installed" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminsecuritycrowdsec.no_scenarios_installed")} /> }}
         tableLayout="fixed"
       >
         <Table.Column<ProfileRow>
           dataIndex="name"
-          title="Scenario"
+          title={t("adminsecuritycrowdsec.scenario")}
           key="name"
           width={320}
           render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
         />
         <Table.Column<ProfileRow>
           dataIndex="description"
-          title="Description"
+          title={t("adminsecuritycrowdsec.description")}
           key="description"
           ellipsis={{ showTitle: false }}
           render={(v: string) => (
@@ -1222,7 +1230,7 @@ const ProfilesCard = () => {
           )}
         />
         <Table.Column<ProfileRow>
-          title="Override"
+          title={t("adminsecuritycrowdsec.override")}
           key="override"
           width={200}
           render={(_, row) => (
@@ -1336,6 +1344,7 @@ const RecommendedHubCard = ({
 }: {
   hub: ReturnType<typeof useCrowdsecHub>;
 }) => {
+  const { t } = useTranslation();
   const install = useInstallCrowdsecHubItem();
   const remove = useRemoveCrowdsecHubItem();
   const [pending, setPending] = useState<string | null>(null);
@@ -1376,7 +1385,7 @@ const RecommendedHubCard = ({
   return (
     <Card
       size="small"
-      title="Recommended free blocklists & scenarios"
+      title={t("adminsecuritycrowdsec.recommended_free_blocklists_scenarios")}
       extra={
         <Typography.Link
           href="https://hub.crowdsec.net/"
@@ -1391,7 +1400,7 @@ const RecommendedHubCard = ({
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="One-click install of upstream CrowdSec Hub items"
+        message={t("adminsecuritycrowdsec.one_click_install_of_upstream_crowdsec_hub_i")}
         description={
           <>
             Curated free items from the public Hub. Install runs{" "}
@@ -1409,7 +1418,7 @@ const RecommendedHubCard = ({
         tableLayout="fixed"
       >
         <Table.Column<RecommendedItem>
-          title="Item"
+          title={t("adminsecuritycrowdsec.item")}
           key="title"
           width={260}
           render={(_, row) => (
@@ -1428,7 +1437,7 @@ const RecommendedHubCard = ({
           )}
         />
         <Table.Column<RecommendedItem>
-          title="Description"
+          title={t("adminsecuritycrowdsec.description")}
           dataIndex="description"
           key="description"
           ellipsis={{ showTitle: false }}
@@ -1450,7 +1459,7 @@ const RecommendedHubCard = ({
             return isInstalled ? (
               <Popconfirm
                 title={`Remove ${row.name}?`}
-                okText="Remove"
+                okText={t("adminsecuritycrowdsec.remove")}
                 okButtonProps={{ danger: true }}
                 onConfirm={() => onRemove(row)}
               >
@@ -1524,6 +1533,7 @@ const lastPullStatus = (lastPull: string | undefined, kind: string) => {
 };
 
 const RemediationComponentsCard = () => {
+  const { t } = useTranslation();
   const bouncers = useCrowdsecBouncers();
   const rows = bouncers.data ?? [];
   return (
@@ -1545,7 +1555,7 @@ const RemediationComponentsCard = () => {
       {rows.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="No bouncers registered (cscli bouncers add)"
+          description={t("adminsecuritycrowdsec.no_bouncers_registered_cscli_bouncers_add")}
         />
       ) : (
         <Row gutter={[12, 12]}>
@@ -1627,6 +1637,7 @@ type SecAuditEvent = {
   result: string;
 };
 const RecentChangesCard = () => {
+  const { t } = useTranslation();
   const q = useQuery({
     queryKey: ["security", "crowdsec", "recent-changes"],
     queryFn: async () =>
@@ -1637,7 +1648,7 @@ const RecentChangesCard = () => {
       ).data.data,
   });
   return (
-    <Card size="small" title="Recent changes (audit)">
+    <Card size="small" title={t("adminsecuritycrowdsec.recent_changes_audit")}>
       <Table<SecAuditEvent>
         size="small"
         pagination={false}
@@ -1660,6 +1671,7 @@ const RecentChangesCard = () => {
 
 // GH #716: at-a-glance health cards — pass/fail per enforcement layer.
 const EngineIdentityCard = () => {
+  const { t } = useTranslation();
   const status = useCrowdsecStatus();
   const metrics = useCrowdsecMetrics();
   const settings = useQuery({
@@ -1713,7 +1725,7 @@ const EngineIdentityCard = () => {
           <Alert
             type="error"
             showIcon
-            message="Config validation failed (crowdsec -t)"
+            message={t("adminsecuritycrowdsec.config_validation_failed_crowdsec_t")}
             description={
               <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
                 {status.data.config_valid_detail}
@@ -1751,7 +1763,7 @@ const EngineIdentityCard = () => {
             </div>
           </Col>
           <Col xs={12} md={8} lg={4}>
-            <Tooltip title="Lines no parser matched (gaps in coverage)">
+            <Tooltip title={t("adminsecuritycrowdsec.lines_no_parser_matched_gaps_in_coverage")}>
               <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                 Unparsed
               </Typography.Text>
@@ -1767,7 +1779,7 @@ const EngineIdentityCard = () => {
             </div>
           </Col>
           <Col xs={12} md={8} lg={4}>
-            <Tooltip title="Scenario thresholds tripped (suspicious patterns matched)">
+            <Tooltip title={t("adminsecuritycrowdsec.scenario_thresholds_tripped_suspicious_patte")}>
               <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                 Buckets fired
               </Typography.Text>
@@ -1777,7 +1789,7 @@ const EngineIdentityCard = () => {
             </div>
           </Col>
           <Col xs={12} md={8} lg={4}>
-            <Tooltip title="IPs currently banned / under captcha">
+            <Tooltip title={t("adminsecuritycrowdsec.ips_currently_banned_under_captcha")}>
               <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                 Active decisions
               </Typography.Text>
@@ -1793,7 +1805,7 @@ const EngineIdentityCard = () => {
             </div>
           </Col>
           <Col xs={12} md={8} lg={4}>
-            <Tooltip title="All-time alerts since CrowdSec started">
+            <Tooltip title={t("adminsecuritycrowdsec.all_time_alerts_since_crowdsec_started")}>
               <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                 Total alerts
               </Typography.Text>
@@ -2030,6 +2042,7 @@ const CaptchaPanel = () => (
 // saves. Three presets collapse all three knobs (ssh-bf threshold,
 // AppSec anomaly score, ban duration) into one choice.
 const SensitivityCard = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const settings = useQuery({
     queryKey: ["admin-settings"],
@@ -2057,7 +2070,7 @@ const SensitivityCard = () => {
   });
 
   return (
-    <Card size="small" title="Sensitivity preset (server-wide)" loading={settings.isLoading}>
+    <Card size="small" title={t("adminsecuritycrowdsec.sensitivity_preset_server_wide")} loading={settings.isLoading}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Single dial that tunes three CrowdSec knobs at once: SSH brute-
@@ -2112,6 +2125,7 @@ const SensitivityCard = () => {
 //          firewall bouncer is also 60s so net L3 exposure is the
 //          same.
 const BouncerModeCard = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const settings = useQuery({
     queryKey: ["admin-settings"],
@@ -2139,7 +2153,7 @@ const BouncerModeCard = () => {
   });
 
   return (
-    <Card size="small" title="Bouncer mode (server-wide)" loading={settings.isLoading}>
+    <Card size="small" title={t("adminsecuritycrowdsec.bouncer_mode_server_wide")} loading={settings.isLoading}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           How the nginx bouncer evaluates each request. Stream mode caches
@@ -2187,6 +2201,7 @@ const BouncerModeCard = () => {
 // on /admin/settings; the panel middleware reads it directly and the agent SSH
 // watcher gets it pushed via security.crowdsec.login_allowlist.apply.
 const LoginAllowlistCard = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const settings = useQuery({
     queryKey: ["admin-settings"],
@@ -2230,7 +2245,7 @@ const LoginAllowlistCard = () => {
     ttlHours !== settings.data?.crowdsec_login_allowlist_ttl_hours;
 
   return (
-    <Card size="small" title="Auto-allowlist login IPs (server-wide)" loading={settings.isLoading}>
+    <Card size="small" title={t("adminsecuritycrowdsec.auto_allowlist_login_ips_server_wide")} loading={settings.isLoading}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           After a successful panel or SSH login, add the source IP to the CrowdSec
@@ -2241,8 +2256,8 @@ const LoginAllowlistCard = () => {
         <Alert
           type="warning"
           showIcon
-          message="Security trade-off"
-          description="This is a broad CrowdSec exemption. A successful login from a stolen key or compromised account shields that source IP from all CrowdSec decisions for the TTL. Lower the TTL or disable this if that window is unacceptable for your threat model."
+          message={t("adminsecuritycrowdsec.security_trade_off")}
+          description={t("adminsecuritycrowdsec.this_is_a_broad_crowdsec_exemption_a_success")}
         />
         <Space align="center">
           <Switch checked={enabled} onChange={setEnabled} />

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, Space, Spin, Switch, Tag, Typography, notification } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
@@ -38,6 +39,7 @@ const POLL_INTERVAL_MS = 5000;
 const POLL_MAX_ATTEMPTS = 60; // ~5 minutes; apt + downloads can be slow
 
 export const ModulesCard = () => {
+  const { t } = useTranslation();
   const [state, setState] = useState<Record<ModuleKey, boolean>>({
     dns_enabled: true,
     mail_enabled: true,
@@ -170,7 +172,7 @@ export const ModulesCard = () => {
   };
 
   return (
-    <Card title="Modules" style={{ marginBottom: 16 }} loading={loading}>
+    <Card title={t("modulescard.modules")} style={{ marginBottom: 16 }} loading={loading}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Turn optional modules on or off. Enabling a module installs its software in
         the background (the panel hides a module's pages when it's off; existing

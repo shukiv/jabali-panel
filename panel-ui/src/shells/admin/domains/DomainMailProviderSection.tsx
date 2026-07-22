@@ -2,6 +2,7 @@
 // hosted. The choice derives email_enabled + skip_auto_san server-side and
 // publishes (or prunes) the provider's DNS records. Switching re-publishes
 // DNS and reissues the cert on the next reconcile.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Alert, Button, Input, Select, Space, Typography, message } from "antd";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +29,7 @@ export const DomainMailProviderSection = ({
   m365Onmicrosoft,
   googleDkim,
 }: Props) => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [provider, setProvider] = useState<string>(mailProvider ?? "jabali");
   const [m365, setM365] = useState<string>(m365Onmicrosoft ?? "");
@@ -60,7 +62,7 @@ export const DomainMailProviderSection = ({
       <Alert
         type="info"
         showIcon
-        message="Mail provider"
+        message={t("domainmailprovidersection.mail_provider")}
         description={
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             Where this domain's email is hosted. <b>No mail</b> and the

@@ -1,5 +1,6 @@
 // AdminSessionsPage — GH #338. Live panel (Kratos) login sessions: user, source
 // IP, channel, auth level, when authenticated / expires, with a revoke action.
+import { useTranslation } from "react-i18next";
 import { App, Button, Card, Popconfirm, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -26,6 +27,7 @@ const fmt = (s: string): string => {
 };
 
 export function AdminSessionsPage() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
 
@@ -46,7 +48,7 @@ export function AdminSessionsPage() {
 
   return (
     <Card
-      title="Active Sessions"
+      title={t("adminsessionspage.active_sessions")}
       extra={<Typography.Text type="secondary">Live panel logins (auto-refreshes)</Typography.Text>}
     >
       <Table<SessionRow>
@@ -113,9 +115,9 @@ export function AdminSessionsPage() {
             width: 110,
             render: (_, r) => (
               <Popconfirm
-                title="Revoke this session?"
-                description="The user will be signed out of the panel."
-                okText="Revoke"
+                title={t("adminsessionspage.revoke_this_session")}
+                description={t("adminsessionspage.the_user_will_be_signed_out_of_the_panel")}
+                okText={t("adminsessionspage.revoke")}
                 okButtonProps={{ danger: true }}
                 onConfirm={() => revoke.mutate(r.id)}
               >

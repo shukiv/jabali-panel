@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Card, Switch, Typography, notification } from "antd";
 
@@ -7,6 +8,7 @@ import { apiClient } from "../../../apiClient";
 // owners into the curated safe nginx options (GH #307). Off by default; raw
 // nginx directives stay admin-only regardless.
 export const TenantDomainOptionsCard = () => {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,7 +44,7 @@ export const TenantDomainOptionsCard = () => {
   };
 
   return (
-    <Card title="Tenant Domain Options" style={{ marginBottom: 16 }} loading={loading}>
+    <Card title={t("tenantdomainoptionscard.tenant_domain_options")} style={{ marginBottom: 16 }} loading={loading}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Let non-admin users set a curated, safe set of nginx options on their own
         domains — max upload size, HSTS, security headers, and gzip. The panel

@@ -5,6 +5,7 @@
 // is out of scope for the initial cut. PATCH / DELETE / run-now / log
 // all go through the existing /cron/:id endpoints, which authorise
 // admins via fetchAndAuthorize's claims.IsAdmin bypass.
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { App, Button, Card, Input, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import {
@@ -44,6 +45,7 @@ const SCHEDULE_PRESETS: Record<string, string> = {
 const humanizeSchedule = (s: string): string => SCHEDULE_PRESETS[s] || s;
 
 export const AdminCronList = () => {
+  const { t } = useTranslation();
   const { message: antMessage } = App.useApp();
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const [logJobId, setLogJobId] = useState<string | null>(null);
@@ -146,7 +148,7 @@ export const AdminCronList = () => {
       <Card>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Input.Search
-            placeholder="Search by name, command, schedule, or owner"
+            placeholder={t("admincronlist.search_by_name_command_schedule_or_owner")}
             allowClear
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -162,7 +164,7 @@ export const AdminCronList = () => {
             locale={{
               emptyText: (
                 <EmptyWithCTA
-                  description="No cron jobs yet"
+                  description={t("admincronlist.no_cron_jobs_yet")}
                   ctaLabel="Create cron job"
                   onCta={() => setCreateOpen(true)}
                 />

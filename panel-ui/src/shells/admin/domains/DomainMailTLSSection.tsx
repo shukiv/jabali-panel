@@ -10,6 +10,7 @@
 //   POST   /api/v1/domains/:id/mail-certificate/enable
 //   POST   /api/v1/domains/:id/mail-certificate/disable
 //   POST   /api/v1/domains/:id/mail-certificate/reissue
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Skeleton, Space, Switch, Table, Tag, Tooltip, Typography, message } from "antd";
 import { ReloadOutlined } from "@icons";
@@ -61,6 +62,7 @@ interface Props {
 }
 
 export const DomainMailTLSSection = ({ domainId }: Props) => {
+  const { t } = useTranslation();
   const [cert, setCert] = useState<MailCertResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -185,7 +187,7 @@ export const DomainMailTLSSection = ({ domainId }: Props) => {
       />
 
       {(cert.status === "failed" || cert.status === "dns_missing" || cert.status === "issued") && (
-        <Tooltip title="Clears backoff and dispatches ssl.mail.issue on the next reconciler tick">
+        <Tooltip title={t("domainmailtlssection.clears_backoff_and_dispatches_ssl_mail_issue")}>
           <Button icon={<ReloadOutlined />} loading={busy} onClick={handleReissue}>
             Re-issue
           </Button>

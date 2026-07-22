@@ -3,6 +3,7 @@
 // secrets, lets you edit a value, and regenerate a generated secret. Apply
 // re-renders the compose and recreates the container, so it has its own
 // action independent of the ports/limits Save above it.
+import { useTranslation } from "react-i18next";
 import { App, Button, Input, Popconfirm, Space, Table, Tooltip, Typography } from "antd";
 import { CopyOutlined, EyeInvisibleOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export const EnvSection = ({ appId, active }: Props) => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -74,9 +76,9 @@ export const EnvSection = ({ appId, active }: Props) => {
           Environment
         </Typography.Title>
         <Popconfirm
-          title="Recreate the container?"
-          description="Saving applies the new values by recreating the container (brief downtime)."
-          okText="Save & recreate"
+          title={t("envsection.recreate_the_container")}
+          description={t("envsection.saving_applies_the_new_values_by_recreating")}
+          okText={t("envsection.save_recreate")}
           disabled={!dirty}
           onConfirm={() => save.mutate()}
         >
@@ -128,7 +130,7 @@ export const EnvSection = ({ appId, active }: Props) => {
                       />
                     </Tooltip>
                   )}
-                  <Tooltip title="Copy">
+                  <Tooltip title={t("envsection.copy")}>
                     <Button icon={<CopyOutlined />} onClick={() => copy(editing ? edits[r.name] : v)} />
                   </Tooltip>
                 </Space.Compact>
@@ -143,8 +145,8 @@ export const EnvSection = ({ appId, active }: Props) => {
               r.generated ? (
                 <Popconfirm
                   title={`Regenerate ${r.name}?`}
-                  description="Mints a new secret and recreates the container."
-                  okText="Regenerate"
+                  description={t("envsection.mints_a_new_secret_and_recreates_the_contain")}
+                  okText={t("envsection.regenerate")}
                   onConfirm={() => regen.mutate(r.name)}
                 >
                   <Button size="small" icon={<ReloadOutlined />} loading={regen.isPending && regen.variables === r.name}>

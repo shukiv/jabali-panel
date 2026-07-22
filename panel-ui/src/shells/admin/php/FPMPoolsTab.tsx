@@ -1,6 +1,7 @@
 // FPMPoolsTab — GH #339 phase 2, Step 3. Admin PHP Manager tab: pick a PHP
 // version, see every user's pool on it, edit the raw pm.* via the existing
 // PHPPoolEdit route. L3 (admin, uncapped). /php-pools is admin-only (PR #34).
+import { useTranslation } from "react-i18next";
 import { Alert, Select, Space, Spin, Table, Tag, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -18,6 +19,7 @@ type Pool = {
 };
 
 export const FPMPoolsTab = () => {
+  const { t } = useTranslation();
   const [version, setVersion] = useState<string>("");
   const { data, isLoading, isError } = useQuery<Pool[]>({
     queryKey: ["admin-php-pools"],
@@ -25,7 +27,7 @@ export const FPMPoolsTab = () => {
   });
 
   if (isLoading) return <Spin />;
-  if (isError) return <Alert type="error" message="Could not load PHP-FPM pools." />;
+  if (isError) return <Alert type="error" message={t("fpmpoolstab.could_not_load_php_fpm_pools")} />;
 
   const pools = data ?? [];
   const versions = Array.from(new Set(pools.map((p) => p.php_version))).sort();
@@ -39,7 +41,7 @@ export const FPMPoolsTab = () => {
       </Typography.Paragraph>
       <Select
         style={{ width: 220 }}
-        placeholder="Filter by PHP version"
+        placeholder={t("fpmpoolstab.filter_by_php_version")}
         allowClear
         value={version || undefined}
         onChange={(v) => setVersion(v ?? "")}

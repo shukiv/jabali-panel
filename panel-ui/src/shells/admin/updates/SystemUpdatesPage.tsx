@@ -4,6 +4,7 @@
 // of Jabali Panel + System Packages, then Automatic Updates + Recent History,
 // then the Changelog. Data auto-loads on mount (jabali + apt checks fire once)
 // so the page shows real numbers immediately instead of empty placeholders.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   Alert,
@@ -47,6 +48,7 @@ import { apiClient } from "../../../apiClient";
 // tracks the latest main commit. Persisted in server_settings; the updater +
 // behind-count honor it.
 const ReleaseChannelCard = () => {
+  const { t } = useTranslation();
   const [channel, setChannel] = useState<string>("stable");
   const [saving, setSaving] = useState(false);
   useEffect(() => {
@@ -94,15 +96,15 @@ const ReleaseChannelCard = () => {
           type="warning"
           showIcon
           style={{ marginTop: 12 }}
-          message="Development channel: less-reviewed builds"
-          description="Development follows the latest main commit and may include unreviewed changes. Use it only on test hosts; switch back to Stable for production."
+          message={t("systemupdatespage.development_channel_less_reviewed_builds")}
+          description={t("systemupdatespage.development_follows_the_latest_main_commit_a")}
         />
       )}
       <Alert
         type="info"
         showIcon
         style={{ marginTop: 12 }}
-        message="Promoting a build to Stable is an operator/CI task"
+        message={t("systemupdatespage.promoting_a_build_to_stable_is_an_operator_c")}
         description={
           <span>
             This switch only chooses which tag this host tracks. Moving the{" "}
@@ -644,13 +646,14 @@ function SystemPackagesError({
 // commands behind a "Show recovery steps" toggle (collapsed by default each
 // load, so the page stays compact). No safety content is removed.
 export function UpdateWarningAlert() {
+  const { t } = useTranslation();
   const [showRecovery, setShowRecovery] = useState(false);
   return (
     <Alert
       type="warning"
       showIcon
       style={{ marginBottom: 16 }}
-      message="Update carefully — especially system packages"
+      message={t("systemupdatespage.update_carefully_especially_system_packages")}
       description={
         <div>
           <ul style={{ margin: "4px 0 8px", paddingLeft: 18 }}>
@@ -858,6 +861,7 @@ function SystemPackagesCard({ check }: { check: ReturnType<typeof useAptCheck> }
 // --- Automatic Updates -----------------------------------------------------
 
 function AutomaticUpdatesCard() {
+  const { t } = useTranslation();
   const { data, isLoading } = useAutoupdateConfig();
   const save = useUpdateAutoupdate();
   const [draft, setDraft] = useState<AutoupdateConfig | null>(null);
@@ -921,7 +925,7 @@ function AutomaticUpdatesCard() {
             <Col flex="auto">
               <Text strong>
                 Jabali panel self-update{" "}
-                <Tooltip title="A bad self-update can take the panel offline. Leave off unless you want hands-off panel upgrades.">
+                <Tooltip title={t("systemupdatespage.a_bad_self_update_can_take_the_panel_offline")}>
                   <Tag color="orange">advanced</Tag>
                 </Tooltip>
               </Text>
@@ -964,6 +968,7 @@ const historyStatusTag = (status: string) => {
 };
 
 function RecentHistoryCard() {
+  const { t } = useTranslation();
   const { data, isLoading } = useUpdateHistory(8);
   const rows = data?.items ?? [];
   return (
@@ -979,7 +984,7 @@ function RecentHistoryCard() {
       {isLoading ? (
         <div style={{ textAlign: "center", padding: 24 }}><Spin /></div>
       ) : rows.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No update runs yet" />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("systemupdatespage.no_update_runs_yet")} />
       ) : (
         <Timeline
           items={rows.map((r: UpdateHistoryRow) => ({

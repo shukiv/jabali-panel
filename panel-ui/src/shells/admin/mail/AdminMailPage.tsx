@@ -1,6 +1,7 @@
 // AdminMailPage — server-wide mailbox management (admin). Lists every mailbox
 // across all domains with add / edit / reset-password / delete. Reuses the
 // per-domain create wizard + the shared EditMailboxModal (GH #197 companion).
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
 import {
@@ -48,6 +49,7 @@ function formatBytes(n: number): string {
 }
 
 export function AdminMailPage() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const { data: rows, isLoading } = useAdminMailboxes();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -205,7 +207,7 @@ export function AdminMailPage() {
       <>
         <Space style={{ width: "100%", justifyContent: "flex-start", marginBottom: 16 }} wrap>
           <Input.Search
-            placeholder="Search email, name, domain, owner"
+            placeholder={t("adminmailpage.search_email_name_domain_owner")}
             allowClear
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -219,7 +221,7 @@ export function AdminMailPage() {
           dataSource={filtered}
           loading={isLoading}
           pagination={{ pageSize: 25, showSizeChanger: true }}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No mailboxes" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminmailpage.no_mailboxes")} /> }}
           columns={[
             {
               title: "Email",
@@ -339,7 +341,7 @@ export function AdminMailPage() {
       <Modal
         open={resetTarget !== null}
         title={resetTarget ? `Reset password — ${resetTarget.email}` : "Reset password"}
-        okText="Set password"
+        okText={t("adminmailpage.set_password")}
         confirmLoading={rotate.isPending}
         onOk={submitReset}
         onCancel={() => setResetTarget(null)}
@@ -347,9 +349,9 @@ export function AdminMailPage() {
       >
         <Form form={resetForm} layout="vertical" requiredMark={false}>
           <Form.Item
-            label="New password"
+            label={t("adminmailpage.new_password")}
             name="password"
-            tooltip="Leave blank to auto-generate. Auto-generated passwords are shown exactly once."
+            tooltip={t("adminmailpage.leave_blank_to_auto_generate_auto_generated")}
           >
             <PasswordInput autoComplete="new-password" placeholder="(leave blank to auto-generate)" />
           </Form.Item>
@@ -361,7 +363,7 @@ export function AdminMailPage() {
           open
           username={revealed.email}
           password={revealed.password}
-          title="Mailbox password"
+          title={t("adminmailpage.mailbox_password")}
           onClose={() => setRevealed(null)}
         />
       )}

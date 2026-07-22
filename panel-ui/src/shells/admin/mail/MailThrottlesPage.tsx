@@ -4,6 +4,7 @@
 // reconciler converges each row into Stalwart's MtaOutboundThrottle
 // on the next tick (5s typical). last_applied_at + last_error on each
 // row tell the operator whether the Stalwart side caught up.
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { RowActions } from "../../../components/RowActions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +29,7 @@ type Policy = {
 };
 
 export const MailThrottlesPage = () => {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [drawer, setDrawer] = useState<{ open: boolean; row?: Policy }>({ open: false });
   const [form] = Form.useForm();
@@ -128,8 +130,8 @@ export const MailThrottlesPage = () => {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="Per-account / per-domain / server-wide outbound rate caps"
-        description="Each row converges into a Stalwart MtaOutboundThrottle object on the next reconciler tick. 0 = unlimited. v1 enforces the hourly cap (Stalwart's rate object takes one window); daily cap is logged but not enforced until a later wave splits it into a paired object."
+        message={t("mailthrottlespage.per_account_per_domain_server_wide_outbound")}
+        description={t("mailthrottlespage.each_row_converges_into_a_stalwart_mtaoutbou")}
       />
       <Table rowKey="id" loading={isLoading} dataSource={data ?? []} columns={columns} pagination={false} />
       <Drawer
@@ -147,7 +149,7 @@ export const MailThrottlesPage = () => {
         }
       >
         <Form form={form} layout="vertical" initialValues={{ scope: "global", enabled: true }}>
-          <Form.Item name="scope" label="Scope" rules={[{ required: true }]}>
+          <Form.Item name="scope" label={t("mailthrottlespage.scope")} rules={[{ required: true }]}>
             <Select disabled={!!drawer.row}>
               <Select.Option value="global">global (server-wide)</Select.Option>
               <Select.Option value="user">user</Select.Option>
@@ -157,19 +159,19 @@ export const MailThrottlesPage = () => {
           <Form.Item shouldUpdate={(p, n) => p.scope !== n.scope} noStyle>
             {({ getFieldValue }) =>
               getFieldValue("scope") !== "global" ? (
-                <Form.Item name="scope_ref" label="Scope ref (ULID)" rules={[{ required: true }]}>
+                <Form.Item name="scope_ref" label={t("mailthrottlespage.scope_ref_ulid")} rules={[{ required: true }]}>
                   <Input placeholder={getFieldValue("scope") === "user" ? "users.id" : "domains.id"} disabled={!!drawer.row} />
                 </Form.Item>
               ) : null
             }
           </Form.Item>
-          <Form.Item name="max_per_hour" label="Max per hour (0 = unlimited)">
+          <Form.Item name="max_per_hour" label={t("mailthrottlespage.max_per_hour_0_unlimited")}>
             <InputNumber min={0} max={1000000} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="max_per_day" label="Max per day (logged only, v1)">
+          <Form.Item name="max_per_day" label={t("mailthrottlespage.max_per_day_logged_only_v1")}>
             <InputNumber min={0} max={10000000} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Form.Item name="enabled" label={t("mailthrottlespage.enabled")} valuePropName="checked">
             <Switch />
           </Form.Item>
         </Form>

@@ -2,6 +2,7 @@
 // request. Renders one editable row per catalog-declared port so the
 // admin can flip Enabled / Bind / Host port / Reverse-proxy before
 // committing. See ADR-0116 Decision 5.
+import { useTranslation } from "react-i18next";
 import { Alert, App, Button, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
@@ -26,6 +27,7 @@ interface PortRow extends InstallPortOverride {
 }
 
 export const InstallDrawer = ({ open, entry, onClose, onInstalled }: Props) => {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const qc = useQueryClient();
   const destsQ = useQuery({
@@ -242,7 +244,7 @@ export const InstallDrawer = ({ open, entry, onClose, onInstalled }: Props) => {
             showIcon
           />
           <Form.Item
-            label="Install name"
+            label={t("installdrawer.install_name")}
             name="name"
             rules={[
               { required: true, message: "Name is required" },
@@ -258,25 +260,25 @@ export const InstallDrawer = ({ open, entry, onClose, onInstalled }: Props) => {
                 },
               },
             ]}
-            tooltip="Per-install identifier. Combined with the catalog slug to form a unique data root + container name, so the same catalog app can be installed multiple times side-by-side."
+            tooltip={t("installdrawer.per_install_identifier_combined_with_the_cat")}
           >
             <Input placeholder="e.g. vault-prod" />
           </Form.Item>
           <Form.Item
-            label="Domain"
+            label={t("installdrawer.domain")}
             name="domain"
-            tooltip="Hostname to attach to the loopback-bound port via nginx. Pick from the panel's domains list -- a vhost gets auto-rendered on save."
+            tooltip={t("installdrawer.hostname_to_attach_to_the_loopback_bound_por")}
           >
             <Select
               showSearch
               allowClear
-              placeholder="Select a domain"
+              placeholder={t("installdrawer.select_a_domain")}
               optionFilterProp="label"
               options={(domainsQ.data ?? []).map((d) => ({ value: d.name, label: d.name }))}
               loading={domainsQ.isLoading}
             />
           </Form.Item>
-          <Form.Item label="Update mode" name="update_mode">
+          <Form.Item label={t("installdrawer.update_mode")} name="update_mode">
             <Select
               options={[
                 { value: "manual", label: "Manual" },
@@ -285,25 +287,25 @@ export const InstallDrawer = ({ open, entry, onClose, onInstalled }: Props) => {
             />
           </Form.Item>
           <Space size="middle" style={{ width: "100%" }}>
-            <Form.Item label="CPU" name="cpu_limit" style={{ flex: 1 }} extra={cpuCapNote}>
+            <Form.Item label={t("installdrawer.cpu")} name="cpu_limit" style={{ flex: 1 }} extra={cpuCapNote}>
               <Input placeholder="0.5" />
             </Form.Item>
-            <Form.Item label="Memory" name="memory_limit" style={{ flex: 1 }}>
+            <Form.Item label={t("installdrawer.memory")} name="memory_limit" style={{ flex: 1 }}>
               <Input placeholder="256m" />
             </Form.Item>
-            <Form.Item label="PIDs" name="pids_limit" style={{ flex: 1 }}>
+            <Form.Item label={t("installdrawer.pids")} name="pids_limit" style={{ flex: 1 }}>
               <InputNumber min={1} max={65535} style={{ width: "100%" }} />
             </Form.Item>
           </Space>
 
           <Form.Item
-            label="Backup destination"
+            label={t("installdrawer.backup_destination")}
             name="backup_destination_id"
-            tooltip="Pick a destination from Server Settings -> Backups. Leave empty to fall back to JABALI_RESTIC_REPO env vars (Phase 8.1)."
+            tooltip={t("installdrawer.pick_a_destination_from_server_settings_back")}
           >
             <Select
               allowClear
-              placeholder="Inherit env-var fallback"
+              placeholder={t("installdrawer.inherit_env_var_fallback")}
               options={(destsQ.data ?? []).map((d) => ({
                 value: d.id,
                 label: `${d.name} (${d.kind})`,

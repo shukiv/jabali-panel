@@ -6,6 +6,7 @@
 // The measurement runs on the main thread with fetch + a streaming reader
 // (no Web Worker / vendored asset) — parallel streams over a fixed time
 // window approximate LibreSpeed's accuracy without the worker plumbing.
+import { useTranslation } from "react-i18next";
 import { useRef, useState } from "react";
 import { Button, Card, Space, Statistic, Typography } from "antd";
 import {
@@ -130,6 +131,7 @@ const fmtMbps = (v: number | undefined) =>
 const fmtMs = (v: number | undefined) => (v === undefined ? "—" : v.toFixed(1));
 
 export const SpeedTestCard = () => {
+  const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>("idle");
   const [results, setResults] = useState<Partial<Results>>({});
   const [live, setLive] = useState<number | undefined>(undefined);
@@ -199,7 +201,7 @@ export const SpeedTestCard = () => {
           value={fmtMs(results.ping)}
           suffix="ms"
         />
-        <Statistic title="Jitter" value={fmtMs(results.jitter)} suffix="ms" />
+        <Statistic title={t("speedtestcard.jitter")} value={fmtMs(results.jitter)} suffix="ms" />
         <Statistic
           title={
             <>

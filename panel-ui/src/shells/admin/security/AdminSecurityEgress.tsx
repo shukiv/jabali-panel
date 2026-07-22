@@ -3,6 +3,7 @@
 // panel below the table; approve/deny inline.
 //
 // Backed by panel-api/internal/api/user_egress.go.
+import { useTranslation } from "react-i18next";
 import {
   App,
   Alert,
@@ -71,6 +72,7 @@ const renderStateTag = (state: EgressState) => {
 };
 
 export const AdminSecurityEgress = () => {
+  const { t } = useTranslation();
   const summary = useEgressSummary();
   const pending = usePendingEgressRequests();
   const usersQuery = useListQuery<UserRow>({
@@ -87,7 +89,7 @@ export const AdminSecurityEgress = () => {
       <Alert
         type="info"
         showIcon
-        message="Per-user PHP-FPM egress firewall"
+        message={t("adminsecurityegress.per_user_php_fpm_egress_firewall")}
         description={
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             Kernel-level packet filter via nftables + cgroup v2 socket match. ENFORCED
@@ -102,19 +104,19 @@ export const AdminSecurityEgress = () => {
       <Card size="small">
         <Space size="large" wrap>
           <Statistic
-            title="Enforced users"
+            title={t("adminsecurityegress.enforced_users")}
             value={summary.data?.state_counts.enforced ?? 0}
           />
           <Statistic
-            title="Learning users"
+            title={t("adminsecurityegress.learning_users")}
             value={summary.data?.state_counts.learning ?? 0}
           />
           <Statistic
-            title="Off users"
+            title={t("adminsecurityegress.off_users")}
             value={summary.data?.state_counts.off ?? 0}
           />
           <Statistic
-            title="Total drops (last tick)"
+            title={t("adminsecurityegress.total_drops_last_tick")}
             value={summary.data?.total_drops ?? 0}
           />
         </Space>
@@ -122,7 +124,7 @@ export const AdminSecurityEgress = () => {
 
       <EgressMaturePromotion />
 
-      <Card size="small" title="Per-user policy">
+      <Card size="small" title={t("adminsecurityegress.per_user_policy")}>
         <Table<UserRow>
           dataSource={nonAdminUsers}
           rowKey="id"
@@ -131,24 +133,24 @@ export const AdminSecurityEgress = () => {
           scroll={{ x: "max-content" }}
         >
           <Table.Column<UserRow>
-            title="User"
+            title={t("adminsecurityegress.user")}
             dataIndex="username"
             render={(_, r) => r.username ?? r.email}
           />
           <Table.Column<UserRow>
-            title="Egress state"
+            title={t("adminsecurityegress.egress_state")}
             render={(_, r) => <UserStateCell userID={r.id} />}
           />
           <Table.Column<UserRow>
-            title="Drops (last tick)"
+            title={t("adminsecurityegress.drops_last_tick")}
             render={(_, r) => <UserDropsCell userID={r.id} />}
           />
           <Table.Column<UserRow>
-            title="Drops 24h"
+            title={t("adminsecurityegress.drops_24h")}
             render={(_, r) => <UserDrops24hSparkline userID={r.id} />}
           />
           <Table.Column<UserRow>
-            title="Actions"
+            title={t("adminsecurityegress.actions")}
             render={(_, r) => (
               <Button size="small" onClick={() => setEditingUserID(r.id)}>
                 Edit policy
@@ -341,6 +343,7 @@ type FormValues = {
 };
 
 const UserEgressDrawer = ({ open, userID, onClose }: UserEgressDrawerProps) => {
+  const { t } = useTranslation();
   const policy = useUserEgressPolicy(userID);
   const update = useUpdateUserEgress(userID ?? "");
   const [form] = Form.useForm<FormValues>();
@@ -383,7 +386,7 @@ const UserEgressDrawer = ({ open, userID, onClose }: UserEgressDrawerProps) => {
         <Typography.Text>Loading...</Typography.Text>
       ) : (
         <Form<FormValues> form={form} layout="vertical" onFinish={onFinish}>
-          <Form.Item label="State" name="state" rules={[{ required: true }]}>
+          <Form.Item label={t("adminsecurityegress.state")} name="state" rules={[{ required: true }]}>
             <Select options={STATE_OPTIONS} />
           </Form.Item>
 
@@ -399,23 +402,23 @@ const UserEgressDrawer = ({ open, userID, onClose }: UserEgressDrawerProps) => {
                 {fields.map((field) => (
                   <Space key={field.key} align="baseline" wrap>
                     <Form.Item
-                      label="CIDR"
+                      label={t("adminsecurityegress.cidr")}
                       name={[field.name, "cidr"]}
                       rules={[{ required: true, message: "Required" }]}
                     >
                       <Input placeholder="203.0.113.0/24" style={{ width: 200 }} />
                     </Form.Item>
-                    <Form.Item label="Port" name={[field.name, "port"]}>
+                    <Form.Item label={t("adminsecurityegress.port")} name={[field.name, "port"]}>
                       <InputNumber min={1} max={65535} style={{ width: 100 }} />
                     </Form.Item>
-                    <Form.Item label="Protocol" name={[field.name, "protocol"]}>
+                    <Form.Item label={t("adminsecurityegress.protocol")} name={[field.name, "protocol"]}>
                       <Select
                         options={PROTOCOL_OPTIONS}
                         defaultValue="tcp"
                         style={{ width: 100 }}
                       />
                     </Form.Item>
-                    <Form.Item label="Comment" name={[field.name, "comment"]}>
+                    <Form.Item label={t("adminsecurityegress.comment")} name={[field.name, "comment"]}>
                       <Input style={{ width: 200 }} />
                     </Form.Item>
                     <Button danger size="small" onClick={() => remove(field.name)}>
@@ -443,21 +446,22 @@ const UserEgressDrawer = ({ open, userID, onClose }: UserEgressDrawerProps) => {
 };
 
 const PendingRequestsTable = ({ rows }: { rows: EgressRequest[] }) => {
+  const { t } = useTranslation();
   const decide = useDecideEgressRequest();
   if (rows.length === 0) {
     return <Typography.Text type="secondary">No pending requests.</Typography.Text>;
   }
   return (
     <Table<EgressRequest> dataSource={rows} rowKey="id" pagination={false} size="small">
-      <Table.Column<EgressRequest> title="User" dataIndex="user_id" />
-      <Table.Column<EgressRequest> title="CIDR" dataIndex="cidr" />
+      <Table.Column<EgressRequest> title={t("adminsecurityegress.user")} dataIndex="user_id" />
+      <Table.Column<EgressRequest> title={t("adminsecurityegress.cidr")} dataIndex="cidr" />
       <Table.Column<EgressRequest>
-        title="Port"
+        title={t("adminsecurityegress.port")}
         render={(_, r) => r.port ?? "—"}
       />
-      <Table.Column<EgressRequest> title="Proto" dataIndex="protocol" />
+      <Table.Column<EgressRequest> title={t("adminsecurityegress.proto")} dataIndex="protocol" />
       <Table.Column<EgressRequest>
-        title="Reason"
+        title={t("adminsecurityegress.reason")}
         dataIndex="reason"
         render={(s: string) => (
           <Typography.Text style={{ maxWidth: 280 }} ellipsis={{ tooltip: s }}>
@@ -466,12 +470,12 @@ const PendingRequestsTable = ({ rows }: { rows: EgressRequest[] }) => {
         )}
       />
       <Table.Column<EgressRequest>
-        title="Submitted"
+        title={t("adminsecurityegress.submitted")}
         dataIndex="created_at"
         render={(s: string) => shortDateTime(s)}
       />
       <Table.Column<EgressRequest>
-        title="Actions"
+        title={t("adminsecurityegress.actions")}
         render={(_, r) => (
           <RowActions
             actions={[

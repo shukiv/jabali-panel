@@ -2,6 +2,7 @@
 // /database-users/create page route). On success the reveal-once
 // password modal is shown — the form drawer closes first so the
 // modal isn't trapped inside it.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Button, Drawer, Form, Grid, Input, Segmented, Space, message } from "antd";
 
@@ -22,6 +23,7 @@ export const DatabaseUserDrawer = ({
   onClose,
   onCreated,
 }: DatabaseUserDrawerProps) => {
+  const { t } = useTranslation();
   const [form] = Form.useForm<CreateInput>();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
@@ -59,7 +61,7 @@ export const DatabaseUserDrawer = ({
   return (
     <>
       <Drawer
-        title="Create database user"
+        title={t("databaseuserdrawer.create_database_user")}
         open={open}
         onClose={onClose}
         width={isDesktop ? 480 : undefined}
@@ -68,12 +70,12 @@ export const DatabaseUserDrawer = ({
       >
         <Form<CreateInput> form={form} layout="vertical" onFinish={onFinish} initialValues={{ engine: "mariadb" }}>
           {postgresEnabled && (
-            <Form.Item label="Engine" name="engine" tooltip="MariaDB is the default. PostgreSQL must be enabled in Server Settings.">
+            <Form.Item label={t("databaseuserdrawer.engine")} name="engine" tooltip={t("databaseuserdrawer.mariadb_is_the_default_postgresql_must_be_en")}>
               <Segmented options={[{ label: "MariaDB", value: "mariadb" }, { label: "PostgreSQL", value: "postgres" }]} />
             </Form.Item>
           )}
           <Form.Item
-            label="Username"
+            label={t("databaseuserdrawer.username")}
             name="username"
             rules={[
               { required: true, message: "Username is required" },
@@ -83,7 +85,7 @@ export const DatabaseUserDrawer = ({
                   "Lowercase letters, digits and underscores only; must start with a letter; max 30 chars",
               },
             ]}
-            tooltip="The final MariaDB username will be your panel username plus an underscore plus this value (e.g. alice_api)."
+            tooltip={t("databaseuserdrawer.the_final_mariadb_username_will_be_your_pane")}
             extra="Your username will be prepended automatically."
           >
             <Input placeholder="e.g. api" autoComplete="off" />
@@ -104,7 +106,7 @@ export const DatabaseUserDrawer = ({
         open={revealed !== null}
         username={revealed?.username ?? ""}
         password={revealed?.password ?? ""}
-        title="Database user created"
+        title={t("databaseuserdrawer.database_user_created")}
         onClose={() => setRevealed(null)}
       />
     </>

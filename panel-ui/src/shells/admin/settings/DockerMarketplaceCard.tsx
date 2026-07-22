@@ -5,6 +5,7 @@
 //   (sources install.sh, runs install_docker_engine, starts docker).
 // Flip false: panel-api dispatches `docker.disable` (stops + disables
 //   docker units). Data under /var/lib/jabali/docker-apps/ stays.
+import { useTranslation } from "react-i18next";
 import { App, Alert, Button, Card, Checkbox, Modal, Space, Spin, Switch, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
@@ -23,6 +24,7 @@ interface CatalogEntry {
 }
 
 export function DockerMarketplaceCard() {
+  const { t } = useTranslation();
   const { message } = App.useApp();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -179,7 +181,7 @@ export function DockerMarketplaceCard() {
 
   if (enabled === null) {
     return (
-      <Card title="Docker App Marketplace (M48)">
+      <Card title={t("dockermarketplacecard.docker_app_marketplace_m48")}>
         <Spin />
       </Card>
     );
@@ -206,7 +208,7 @@ export function DockerMarketplaceCard() {
           <Alert
             type="info"
             showIcon
-            message="Opt-in feature"
+            message={t("dockermarketplacecard.opt_in_feature")}
             description={
               <>
                 Click <b>Enable</b> below to install Docker and unlock the marketplace at{" "}
@@ -221,7 +223,7 @@ export function DockerMarketplaceCard() {
           <Alert
             type="success"
             showIcon
-            message="Marketplace live"
+            message={t("dockermarketplacecard.marketplace_live")}
             description={
               <>
                 Open <a href="/jabali-admin/docker-apps">/jabali-admin/docker-apps</a> to

@@ -3,6 +3,7 @@
 // Intentionally thin: name + user id + optional doc root. The server
 // auto-generates doc_root when blank. Post-M21: Form.useForm +
 // useCreateMutation, no Refine wrappers.
+import { useTranslation } from "react-i18next";
 import { Button, Card, Checkbox, Form, Input, Select, Typography, message } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
@@ -24,6 +25,7 @@ export type DomainCreateInput = {
 type DomainCreated = { id: string };
 
 export const DomainCreate = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [form] = Form.useForm<DomainCreateInput>();
   const mailProvider = Form.useWatch("mail_provider", form) ?? "jabali";
@@ -63,7 +65,7 @@ export const DomainCreate = () => {
         onFinish={handleFinish}
       >
         <Form.Item
-          label="Name"
+          label={t("domaincreate.name")}
           name="name"
           rules={[
             { required: true, message: "Domain name is required" },
@@ -78,13 +80,13 @@ export const DomainCreate = () => {
         </Form.Item>
 
         <Form.Item
-          label="User"
+          label={t("domaincreate.user")}
           name="user_id"
           rules={[{ required: true, message: "User is required" }]}
         >
           <Select
             showSearch
-            placeholder="Select a user"
+            placeholder={t("domaincreate.select_a_user")}
             optionFilterProp="label"
             loading={usersQ.isLoading}
             options={(usersQ.data ?? []).map((u) => ({
@@ -95,18 +97,18 @@ export const DomainCreate = () => {
         </Form.Item>
 
         <Form.Item
-          label="Doc Root"
+          label={t("domaincreate.doc_root")}
           name="doc_root"
-          tooltip="Leave empty for auto-generated path"
+          tooltip={t("domaincreate.leave_empty_for_auto_generated_path")}
         >
           <Input placeholder="auto-generated if empty" />
         </Form.Item>
 
         <Form.Item
-          label="Mail"
+          label={t("domaincreate.mail")}
           name="mail_provider"
           initialValue="jabali"
-          tooltip="Where this domain's email is hosted. 'None' and the external providers skip Jabali's mail DNS records and mail certificate SANs."
+          tooltip={t("domaincreate.where_this_domain_s_email_is_hosted_none_and")}
         >
           <Select
             options={[
@@ -120,9 +122,9 @@ export const DomainCreate = () => {
 
         {mailProvider === "m365" && (
           <Form.Item
-            label="Microsoft 365 tenant"
+            label={t("domaincreate.microsoft_365_tenant")}
             name="m365_onmicrosoft"
-            tooltip="Optional. Your <tenant>.onmicrosoft.com — adds the selector1/2 DKIM CNAMEs. MX/SPF/autodiscover are added automatically."
+            tooltip={t("domaincreate.optional_your_tenant_onmicrosoft_com_adds_th")}
           >
             <Input placeholder="contoso.onmicrosoft.com (optional)" />
           </Form.Item>
@@ -130,19 +132,19 @@ export const DomainCreate = () => {
 
         {mailProvider === "google" && (
           <Form.Item
-            label="Google DKIM value"
+            label={t("domaincreate.google_dkim_value")}
             name="google_dkim"
-            tooltip="Optional. Paste the google._domainkey TXT value from Google Admin. MX/SPF are added automatically."
+            tooltip={t("domaincreate.optional_paste_the_google_domainkey_txt_valu")}
           >
             <Input.TextArea rows={2} placeholder="v=DKIM1; k=rsa; p=... (optional)" />
           </Form.Item>
         )}
 
         <Form.Item
-          label="TLS certificate"
+          label={t("domaincreate.tls_certificate")}
           name="ssl_mode"
           initialValue="le"
-          tooltip="Let's Encrypt (recommended), self-signed, or none (HTTP only). Custom certs are uploaded after create from the domain's SSL settings."
+          tooltip={t("domaincreate.let_s_encrypt_recommended_self_signed_or_non")}
         >
           <Select
             options={[
@@ -157,7 +159,7 @@ export const DomainCreate = () => {
           name="create_www"
           valuePropName="checked"
           initialValue={false}
-          tooltip="Adds a www CNAME pointing at the domain apex. Off by default — leave unchecked for subdomains or domains that don't serve a www host."
+          tooltip={t("domaincreate.adds_a_www_cname_pointing_at_the_domain_apex")}
         >
           <Checkbox>Create www record</Checkbox>
         </Form.Item>

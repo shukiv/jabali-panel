@@ -7,6 +7,7 @@
 // /root/.ssh/ via the system-ssh-keys endpoint and offers a
 // "Generate new key" inline action that calls the same endpoint with
 // POST.
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
@@ -579,6 +580,7 @@ function parseEnvBlock(block: string): Record<string, string> {
 }
 
 export function DestinationsTab() {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<BackupDestination[]>([]);
   const [loading, setLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -721,27 +723,27 @@ export function DestinationsTab() {
         pagination={false}
         scroll={{ x: "max-content" }}
       >
-        <Table.Column dataIndex="name" title="Name" />
+        <Table.Column dataIndex="name" title={t("destinationstab.name")} />
         <Table.Column
           dataIndex="kind"
-          title="Backend"
+          title={t("destinationstab.backend")}
           render={(k: string) => <Tag>{k.toUpperCase()}</Tag>}
         />
-        <Table.Column dataIndex="url" title="URL" />
+        <Table.Column dataIndex="url" title={t("destinationstab.url")} />
         <Table.Column
           dataIndex="enabled"
-          title="Enabled"
+          title={t("destinationstab.enabled")}
           render={(v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)}
         />
         <Table.Column
           dataIndex="has_credentials"
-          title="Credentials"
+          title={t("destinationstab.credentials")}
           render={(v: boolean) =>
             v ? <CheckCircleOutlined style={{ color: "#52c41a" }} /> : "—"
           }
         />
         <Table.Column<BackupDestination>
-          title="Actions"
+          title={t("destinationstab.actions")}
           render={(_, row) => (
             <RowActions
               actions={[

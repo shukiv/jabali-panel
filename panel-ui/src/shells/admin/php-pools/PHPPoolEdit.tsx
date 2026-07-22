@@ -3,6 +3,7 @@
 // Main form tweaks pm_mode / pm_max_children / idle timeout. A nested
 // INI overrides table lives below the save button, driven by its own
 // useListQuery + direct apiClient POST/DELETE calls.
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
   Button,
@@ -59,6 +60,7 @@ type IniOverrideInput = {
 };
 
 export const PHPPoolEdit = () => {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [form] = Form.useForm<PHPPoolInput>();
@@ -165,11 +167,11 @@ export const PHPPoolEdit = () => {
         onFinish={handleFinish}
       >
         <Form.Item
-          label="Process Mode"
+          label={t("phppooledit.process_mode")}
           name="pm_mode"
           rules={[{ required: true, message: "Process mode is required" }]}
         >
-          <Select placeholder="Select process manager mode">
+          <Select placeholder={t("phppooledit.select_process_manager_mode")}>
             <Select.Option value="static">static</Select.Option>
             <Select.Option value="dynamic">dynamic</Select.Option>
             <Select.Option value="ondemand">ondemand</Select.Option>
@@ -177,44 +179,44 @@ export const PHPPoolEdit = () => {
         </Form.Item>
 
         <Form.Item
-          label="Max Children"
+          label={t("phppooledit.max_children")}
           name="pm_max_children"
           rules={[{ required: true, message: "Max children is required" }]}
         >
-          <InputNumber min={1} placeholder="Number of child processes" />
+          <InputNumber min={1} placeholder={t("phppooledit.number_of_child_processes")} />
         </Form.Item>
 
         <Form.Item
-          label="Process Idle Timeout (seconds)"
+          label={t("phppooledit.process_idle_timeout_seconds")}
           name="process_idle_timeout_seconds"
           rules={[{ required: false }]}
         >
-          <InputNumber min={0} placeholder="Idle timeout in seconds" />
+          <InputNumber min={0} placeholder={t("phppooledit.idle_timeout_in_seconds")} />
         </Form.Item>
 
         {pmMode === "dynamic" && (
           <>
-            <Form.Item label="Start Servers (dynamic)" name="pm_start_servers">
+            <Form.Item label={t("phppooledit.start_servers_dynamic")} name="pm_start_servers">
               <InputNumber min={1} placeholder="pm.start_servers" />
             </Form.Item>
-            <Form.Item label="Min Spare Servers (dynamic)" name="pm_min_spare_servers">
+            <Form.Item label={t("phppooledit.min_spare_servers_dynamic")} name="pm_min_spare_servers">
               <InputNumber min={1} placeholder="pm.min_spare_servers" />
             </Form.Item>
-            <Form.Item label="Max Spare Servers (dynamic, <= max children)" name="pm_max_spare_servers">
+            <Form.Item label={t("phppooledit.max_spare_servers_dynamic_max_children")} name="pm_max_spare_servers">
               <InputNumber min={1} placeholder="pm.max_spare_servers" />
             </Form.Item>
           </>
         )}
 
-        <Form.Item label="Max Requests per Worker (0 = never)" name="pm_max_requests">
+        <Form.Item label={t("phppooledit.max_requests_per_worker_0_never")} name="pm_max_requests">
           <InputNumber min={0} placeholder="pm.max_requests" />
         </Form.Item>
 
-        <Form.Item label="Request Terminate Timeout (seconds, 0 = no limit)" name="request_terminate_timeout_seconds">
+        <Form.Item label={t("phppooledit.request_terminate_timeout_seconds_0_no_limit")} name="request_terminate_timeout_seconds">
           <InputNumber min={0} placeholder="request_terminate_timeout" />
         </Form.Item>
 
-        <Form.Item label="PHP Version" name="php_version">
+        <Form.Item label={t("phppooledit.php_version")} name="php_version">
           <Input disabled />
         </Form.Item>
 
@@ -297,7 +299,7 @@ export const PHPPoolEdit = () => {
         />
 
         <Modal
-          title="Add INI Override"
+          title={t("phppooledit.add_ini_override")}
           open={isOverrideModalOpen}
           onOk={handleAddOverride}
           onCancel={() => {
@@ -306,7 +308,7 @@ export const PHPPoolEdit = () => {
           }}
         >
           <Form layout="vertical">
-            <Form.Item label="Directive">
+            <Form.Item label={t("phppooledit.directive")}>
               <Input
                 placeholder="e.g., memory_limit"
                 value={overrideForm.directive}
@@ -318,7 +320,7 @@ export const PHPPoolEdit = () => {
                 }
               />
             </Form.Item>
-            <Form.Item label="Value">
+            <Form.Item label={t("phppooledit.value")}>
               <Input
                 placeholder="e.g., 256M"
                 value={overrideForm.value}
@@ -327,7 +329,7 @@ export const PHPPoolEdit = () => {
                 }
               />
             </Form.Item>
-            <Form.Item label="Kind">
+            <Form.Item label={t("phppooledit.kind")}>
               <Select
                 value={overrideForm.kind}
                 onChange={(value) =>
