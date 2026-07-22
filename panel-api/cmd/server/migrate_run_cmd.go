@@ -1257,6 +1257,68 @@ func cpanelRestoreCallback(
 			warnings = append(warnings, "cron: skipped per migration plan")
 		}
 
+		// CyberPanel mail: Maildirs live at /home/vmail/<domain>/<local>/Maildir,
+		// OUTSIDE the account home, so they aren't in the cpmove tarball. rsync
+		// each one (manifested in mail-paths.txt) into the target's home mail
+		// tree via the shared rsync_remote_home: src_account=vmail scopes the
+		// source to /home/vmail, dest is /home/<target>/mail/<domain>/<local>.
+		// The agent copies <Maildir>/ CONTENTS (trailing slash), so cur/new/tmp
+		// land directly under <local>/ — exactly the layout ImportMailboxes
+		// walks. Point MailRoot there so the generic import below picks it up.
+		if plan.Mailboxes && job.SourceKind == models.MigrationSourceCyberPanel && job.SourceHost != "" {
+			mailManifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "mail-paths.txt")
+			if raw, rerr := os.ReadFile(mailManifest); rerr == nil {
+				secretPath := fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)
+				remoteSSHUser := migrationSSHUser(job) // root for CyberPanel
+				destMailRoot := filepath.Join("/home", p.targetUsername, "mail")
+				mboxCount := 0
+				for _, line := range strings.Split(string(raw), "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					parts := strings.SplitN(line, "\t", 2)
+					if len(parts) != 2 {
+						continue
+					}
+					addr, srcMaildir := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+					at := strings.LastIndex(addr, "@")
+					if at < 1 {
+						continue
+					}
+					// SECURITY: only a source Maildir under /home/vmail/ — a
+					// tampered manifest must not rsync an arbitrary source path
+					// (the SSH login is root). The agent re-checks via
+					// src_account=vmail; this is defence in depth.
+					if !strings.HasPrefix(filepath.Clean(srcMaildir), "/home/vmail/") {
+						warnings = append(warnings, fmt.Sprintf("mail_rsync: %s: source %q not under /home/vmail — refused", addr, srcMaildir))
+						continue
+					}
+					local, mdom := addr[:at], addr[at+1:]
+					destPath := filepath.Join(destMailRoot, mdom, local)
+					if _, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+						"port":        srcSSHPort(job),
+						"job_id":      job.ID,
+						"src_account": "vmail",
+						"host":        job.SourceHost,
+						"ssh_user":    remoteSSHUser,
+						"secret_path": secretPath,
+						"src_path":    srcMaildir,
+						"dest_path":   destPath,
+						"dest_user":   p.targetUsername,
+					}); mrErr != nil {
+						warnings = append(warnings, fmt.Sprintf("mail_rsync: %s: %v", addr, mrErr))
+						continue
+					}
+					mboxCount++
+				}
+				if mboxCount > 0 {
+					p.parsed.MailRoot = destMailRoot
+					warnings = append(warnings, fmt.Sprintf("mail: rsynced %d maildir(s) -> %s (CyberPanel /home/vmail)", mboxCount, destMailRoot))
+				}
+			}
+		}
+
 		if plan.Mailboxes {
 			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials)
 			if err != nil {
