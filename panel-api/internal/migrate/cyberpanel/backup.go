@@ -123,6 +123,16 @@ if [ -f "$BASE/domains-paths.txt" ]; then
   done
 fi
 
+# 3c. mail-paths.txt — <address>\t<abs Maildir> for the restore-time Maildir
+#     sync into the staging mail tree (parity with Plesk's mail-paths.txt).
+#     CyberPanel stores mail at /home/vmail/<domain>/<local>/Maildir;
+#     e_users.email is the full address, e_domains maps the mail domain to the
+#     website (domainOwner_id = WID). The Maildir rsync + ImportMailboxes push
+#     into Stalwart land in a follow-up step; this manifests the inventory.
+#     Two columns (mysql -N -B tab-separates) so the tab is real, not escaped.
+MYQ "SELECT u.email, CONCAT('/home/vmail/', SUBSTRING_INDEX(u.email, '@', -1), '/', SUBSTRING_INDEX(u.email, '@', 1), '/Maildir') FROM e_users u JOIN e_domains d ON u.emailOwner_id = d.domain WHERE d.domainOwner_id = $WID" > "$BASE/mail-paths.txt" 2>/dev/null || true
+if [ ! -s "$BASE/mail-paths.txt" ]; then rm -f "$BASE/mail-paths.txt"; fi
+
 # 4. cron/<domain> — the externalApp user's crontab. Guard externalApp against
 #    the same allow-list the Go side enforces before it reaches crontab -u.
 if printf '%%s' "$EXTAPP" | grep -Eq '^[a-z_][a-z0-9._-]{0,63}$'; then
@@ -140,7 +150,7 @@ if [ ! -s "$BASE/homedir/.ssh/authorized_keys" ]; then rm -f "$BASE/homedir/.ssh
 # 6. tar it up. cp/ FIRST (ParseTarball wrapper detection — see above), then
 #    the areas that exist. Last stdout line = the path the caller reads.
 TARARGS="cpmove-$ACCT/cp"
-for d in mysql dnszones cron homedir domains-paths.txt; do
+for d in mysql dnszones cron homedir domains-paths.txt mail-paths.txt; do
   if [ -e "$BASE/$d" ]; then TARARGS="$TARARGS cpmove-$ACCT/$d"; fi
 done
 tar -czf "$OUT" -C "$TMP" $TARARGS

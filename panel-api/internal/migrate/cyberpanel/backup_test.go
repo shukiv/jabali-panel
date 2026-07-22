@@ -44,9 +44,11 @@ func TestBackupUser_SynthesizeScriptAndPath(t *testing.T) {
 		`websiteFunctions_childdomains`, // child domains
 		`websiteFunctions_aliasdomains`, // alias domains
 		`FROM records WHERE domain_id`,  // DNS BIND-zone synth
-		`dnszones`,                      // per-domain zone dir
-		`crontab -u "$EXTAPP" -l`,       // cron
-		`TARARGS="cpmove-$ACCT/cp"`,     // cp/ archived FIRST (ParseTarball wrapper detection)
+		`FROM e_users u JOIN e_domains`, // mail-paths.txt manifest
+		`mail-paths.txt`,
+		`dnszones`,                  // per-domain zone dir
+		`crontab -u "$EXTAPP" -l`,   // cron
+		`TARARGS="cpmove-$ACCT/cp"`, // cp/ archived FIRST (ParseTarball wrapper detection)
 		`tar -czf "$OUT"`,
 	} {
 		if !strings.Contains(*last, want) {
