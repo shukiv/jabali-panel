@@ -49,6 +49,7 @@ import (
 	// new source kind = adding one line here.
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cloudpanel"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
+	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cyberpanel"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"

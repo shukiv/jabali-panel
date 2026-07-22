@@ -42,6 +42,17 @@ const (
 	// writers via cpmove synthesis (DirectAdmin strategy). See
 	// plans/gh522-cloudpanel-migration.md.
 	MigrationSourceCloudPanel = "cloudpanel"
+
+	// MigrationSourceCyberPanel — full web-hosting migration from a CyberPanel
+	// source over SSH. CyberPanel keeps its inventory in a MySQL database
+	// (`cyberpanel`): websiteFunctions_websites (one row per site = one Linux
+	// user in `externalApp`, home at /home/<domain>), databases_databases,
+	// e_users (mailboxes) + e_forwardings (forwarders) + e_domains, and
+	// packages_package. Discovery reads it with read-only SELECTs over SSH.
+	// Unlike CloudPanel, CyberPanel HAS a mail server, so mailboxes/forwarders
+	// are part of the manifest. Restore reuses the cpanel writers via cpmove
+	// synthesis (DirectAdmin/CloudPanel strategy).
+	MigrationSourceCyberPanel = "cyberpanel"
 )
 
 // MigrationState is the per-job lifecycle. Stage transitions are
