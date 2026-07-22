@@ -71,6 +71,8 @@ const SOURCE_OPTIONS = [
   // migrate_run_cmd.go.
   { value: "directadmin", label: "DirectAdmin (single account)" },
   { value: "hestiacp", label: "HestiaCP (single account)" },
+  { value: "cloudpanel", label: "CloudPanel (site users)" },
+  { value: "cyberpanel", label: "CyberPanel (websites)" },
   { value: "plesk", label: "Plesk (subscriptions)" },
 ];
 
@@ -79,6 +81,8 @@ const SOURCE_DESC: Record<string, string> = {
   cpanel: "Live SSH or pkgacct backup — one full cPanel account",
   directadmin: "Live SSH or backup_user tarball — DA account(s)",
   hestiacp: "Live SSH or v-backup-user tarball — Hestia account(s)",
+  cloudpanel: "Live SSH — web sites, PHP, databases, cron, SSH keys (no mail)",
+  cyberpanel: "Live SSH — web sites, databases, cron, SSH keys, DNS, mail",
   plesk: "Live SSH — subscriptions, WordPress, DBs (streamed), mail, DNS",
   wordpress_ssh: "Cloudways / VPS / generic SSH — a single WordPress site",
 };
@@ -93,6 +97,8 @@ const MULTI_ACCOUNT_KINDS = new Set([
   "whm_pkgacct",
   "directadmin",
   "hestiacp",
+  "cloudpanel",
+  "cyberpanel",
   // GH #429: Plesk enumerates subscriptions via `plesk bin subscription --list`
   // (Discoverer.ListAccounts), so it MUST go through the account picker. Without
   // this it skipped selection, kept the SSH principal (root) as the account, and
