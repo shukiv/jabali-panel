@@ -38,6 +38,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cloudpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
@@ -196,6 +197,8 @@ live source SSH. Use scp directly for that kind.`,
 				localTar, err = pullDirectAdmin(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceHestia:
 				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir, allowPrivate)
+			case models.MigrationSourceCloudPanel:
+				localTar, err = pullCloudPanel(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourcePlesk:
 				localTar, err = pullPlesk(ctx, sshUser, job, secret, localDir, allowPrivate)
 			default:
@@ -284,6 +287,38 @@ func pullCpanel(ctx context.Context, sshUser string, job *models.MigrationJob, s
 	}
 	// M35.8: clean up source-side cpmove tarball so a multi-account
 	// migration doesn't accumulate GB on the source. Best-effort.
+	if rmErr := d.RemoveRemote(ctx, s, remoteTar); rmErr != nil {
+		fmt.Printf("  (warning: source-side rm %s failed: %v)\n", remoteTar, rmErr)
+	}
+	return localTar, nil
+}
+
+// pullCloudPanel (GH #522) connects to a CloudPanel source over SSH and runs
+// BackupUser, which synthesizes a cpmove-shaped tarball from CloudPanel's
+// SQLite inventory (cp/<user>, mysql/<db>.sql, cron/<user>, domains-paths.txt,
+// homedir/.ssh) — the same DA-style approach so the shared cpanel restore
+// writers consume it unchanged. The tarball lands at cpmove-<user>.tar.gz to
+// match what the extract + import stages expect.
+func pullCloudPanel(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
+	d := cloudpanel.New()
+	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
+	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
+	if err != nil {
+		return "", fmt.Errorf("cloudpanel.Connect: %w", err)
+	}
+	defer func() { _ = d.Close(ctx, s) }()
+	fmt.Printf("  → synthesizing cpmove for %s on the CloudPanel source (dumping databases)...\n", job.SourceUser)
+	remoteTar, err := d.BackupUser(ctx, s, job.SourceUser)
+	if err != nil {
+		return "", fmt.Errorf("cloudpanel BackupUser: %w", err)
+	}
+	fmt.Printf("  → tarball ready on source: %s — downloading...\n", remoteTar)
+	localTar := filepath.Join(localDir, fmt.Sprintf("cpmove-%s.tar.gz", job.SourceUser))
+	if _, err := d.PullFile(ctx, s, remoteTar, localTar); err != nil {
+		return "", fmt.Errorf("PullFile: %w", err)
+	}
+	// JAB-50: don't leave the full account backup on the source server.
 	if rmErr := d.RemoveRemote(ctx, s, remoteTar); rmErr != nil {
 		fmt.Printf("  (warning: source-side rm %s failed: %v)\n", remoteTar, rmErr)
 	}
