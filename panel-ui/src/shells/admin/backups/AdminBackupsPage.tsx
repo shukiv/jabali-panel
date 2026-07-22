@@ -2,6 +2,7 @@
 // Scheduler-fired jobs roll up under their run_id (one parent row,
 // expandable to per-user children). Manual creates render flat.
 import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { downloadUrl } from "../../../utils/download";
 import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { RowActions } from "../../../components/RowActions";
@@ -262,8 +263,9 @@ export const AdminBackupsPage = () => {
       message.warning("Backup must complete before download");
       return;
     }
-    const url = `/api/v1/admin/backups/${row.id}/download`;
-    window.location.href = url;
+    // GH #462: anchor-download, not window.location.href — navigating aborts the
+    // in-flight backups poll and shows a spurious "Network Failed" toast.
+    downloadUrl(`/api/v1/admin/backups/${row.id}/download`);
   };
 
   const handleCancel = async (row: BackupJob) => {

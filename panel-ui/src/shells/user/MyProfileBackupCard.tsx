@@ -3,6 +3,7 @@
 // when a row is succeeded. Mirrors AdminBackupsPage data shape but
 // scoped via /me/backups (auth-gated to caller's user_id).
 import { useTranslation } from "react-i18next";
+import { downloadUrl } from "../../utils/download";
 import { Button, Card, Grid, Select, Space, Table, Tag, Typography, message } from "antd";
 import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
@@ -182,7 +183,7 @@ export const MyProfileBackupCard = () => {
                 actions={[
                   ...(row.status === "succeeded"
                     ? [
-                        { key: "download", label: "Download", icon: <DownloadOutlined />, onClick: () => { const a = getActAs(); window.location.href = `/api/v1/me/backups/${row.id}/download${a ? `?act_as=${encodeURIComponent(a.id)}` : ""}`; } },
+                        { key: "download", label: "Download", icon: <DownloadOutlined />, onClick: () => { const act = getActAs(); downloadUrl(`/api/v1/me/backups/${row.id}/download${act ? `?act_as=${encodeURIComponent(act.id)}` : ""}`); } },
                         { key: "restore", label: "Restore", icon: <ReloadOutlined />, onClick: () => setRestoreId(row.id) },
                       ]
                     : []),
