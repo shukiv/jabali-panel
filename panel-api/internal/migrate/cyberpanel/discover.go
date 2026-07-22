@@ -60,6 +60,10 @@ var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,253})$`)
 // phpVerRe pulls the bare X.Y version out of CyberPanel's "PHP 8.1" strings.
 var phpVerRe = regexp.MustCompile(`[0-9]+\.[0-9]+`)
 
+// usernameRe is the strict allow-list a Linux username (externalApp) must match
+// before it is interpolated into a `crontab -u` shell argument.
+var usernameRe = regexp.MustCompile(`^[a-z_][a-z0-9._-]{0,63}$`)
+
 // Discoverer is the CyberPanel-side implementation of migrate.Discoverer.
 type Discoverer struct {
 	// AllowPrivate — when true the SSRF guard permits RFC1918 / ULA targets.
@@ -276,37 +280,129 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	// is already domainRe-validated, so embedding it in a SQL string literal is
 	// safe (no quote/metachar can occur), and mysqlQuery shell-quotes the whole
 	// statement on top.
-	wid, php, werr := s.websiteInfo(ctx, accountID)
+	wid, php, extApp, werr := s.websiteInfo(ctx, accountID)
 	if werr != nil {
 		return nil, fmt.Errorf("cyberpanel.DescribeAccount: resolve website %q: %w", accountID, werr)
 	}
 	m.Domains = s.buildDomains(ctx, accountID, wid, php, &m.Warnings)
 	m.Databases = s.buildDatabases(ctx, wid, &m.Warnings)
 	m.Mailboxes = s.buildMailboxes(ctx, wid, &m.Warnings)
+	m.DNSZones = s.buildDNSZones(ctx, m.Domains, &m.Warnings)
+	m.Cron = s.buildCron(ctx, extApp, &m.Warnings)
 	return m, nil
 }
 
+// buildDNSZones returns a DNSZoneSpec per account domain that has a PowerDNS
+// zone (CyberPanel's gmysql backend: records JOIN domains). A domain with no
+// zone (external DNS -- common on CyberPanel) simply yields no zone.
+func (s *session) buildDNSZones(ctx context.Context, domains []migrate.DomainSpec, warns *[]migrate.Warning) []migrate.DNSZoneSpec {
+	out := []migrate.DNSZoneSpec{}
+	for _, dom := range domains {
+		if !domainRe.MatchString(dom.Name) {
+			continue
+		}
+		q := "SELECT r.name, r.type, r.content, r.ttl, r.prio FROM records r " +
+			"JOIN domains dz ON r.domain_id = dz.id WHERE dz.name='" + dom.Name + "' ORDER BY r.name, r.type"
+		b, err := s.run(ctx, s.commandTimeout, mysqlQuery(s.dbName, q))
+		if err != nil {
+			*warns = append(*warns, migrate.Warning{Code: "cyberpanel_dns", Detail: dom.Name + ": " + err.Error()})
+			continue
+		}
+		recs := []migrate.DNSRecord{}
+		for _, line := range splitLines(b) {
+			cols := strings.Split(line, "	")
+			if len(cols) < 3 || strings.TrimSpace(cols[0]) == "" {
+				continue
+			}
+			rec := migrate.DNSRecord{
+				Name:    strings.TrimSpace(cols[0]),
+				Type:    strings.TrimSpace(cols[1]),
+				Content: strings.TrimSpace(cols[2]),
+			}
+			if len(cols) > 3 {
+				rec.TTL, _ = strconv.Atoi(strings.TrimSpace(cols[3]))
+			}
+			if len(cols) > 4 {
+				rec.Prio, _ = strconv.Atoi(strings.TrimSpace(cols[4]))
+			}
+			recs = append(recs, rec)
+		}
+		if len(recs) > 0 {
+			out = append(out, migrate.DNSZoneSpec{Origin: dom.Name, Records: recs})
+		}
+	}
+	return out
+}
+
+// buildCron reads the site Linux user's crontab and returns one CronSpec per
+// active line. CyberPanel runs site cron as the site's externalApp user.
+func (s *session) buildCron(ctx context.Context, extApp string, warns *[]migrate.Warning) []migrate.CronSpec {
+	out := []migrate.CronSpec{}
+	if extApp == "" || !usernameRe.MatchString(extApp) {
+		return out
+	}
+	// 2>/dev/null || true -- a user with no crontab exits non-zero; not an error.
+	b, err := s.run(ctx, s.commandTimeout, "crontab -u "+shellSingleQuote(extApp)+" -l 2>/dev/null || true")
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "cyberpanel_cron", Detail: err.Error()})
+		return out
+	}
+	for _, line := range splitLines(b) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		schedule, command := splitCronLine(line)
+		if command == "" {
+			continue
+		}
+		out = append(out, migrate.CronSpec{Schedule: schedule, Command: command, RunAs: extApp})
+	}
+	return out
+}
+
+// splitCronLine splits a crontab line into schedule + command: the 5-field form
+// (min hour dom mon dow) or the @-shortcut form (@daily cmd). Env assignments
+// (FOO=bar, no schedule) return an empty command and are skipped by the caller.
+func splitCronLine(line string) (schedule, command string) {
+	if strings.HasPrefix(line, "@") {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			return parts[0], strings.TrimSpace(parts[1])
+		}
+		return line, ""
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 6 {
+		return "", ""
+	}
+	return strings.Join(fields[:5], " "), strings.Join(fields[5:], " ")
+}
+
 // websiteInfo returns the numeric website id + parsed PHP version for a domain.
-func (s *session) websiteInfo(ctx context.Context, domain string) (int, string, error) {
-	q := "SELECT id, phpSelection FROM websiteFunctions_websites WHERE domain='" + domain + "'"
+func (s *session) websiteInfo(ctx context.Context, domain string) (int, string, string, error) {
+	q := "SELECT id, phpSelection, externalApp FROM websiteFunctions_websites WHERE domain='" + domain + "'"
 	out, err := s.run(ctx, s.commandTimeout, mysqlQuery(s.dbName, q))
 	if err != nil {
-		return 0, "", err
+		return 0, "", "", err
 	}
 	line := firstLine(out)
 	if line == "" {
-		return 0, "", fmt.Errorf("website %q not found", domain)
+		return 0, "", "", fmt.Errorf("website %q not found", domain)
 	}
 	cols := strings.Split(line, "	")
 	id, aerr := strconv.Atoi(strings.TrimSpace(cols[0]))
 	if aerr != nil {
-		return 0, "", fmt.Errorf("bad website id %q: %w", cols[0], aerr)
+		return 0, "", "", fmt.Errorf("bad website id %q: %w", cols[0], aerr)
 	}
-	php := ""
+	php, extApp := "", ""
 	if len(cols) > 1 {
 		php = parsePHP(cols[1])
 	}
-	return id, php, nil
+	if len(cols) > 2 {
+		extApp = strings.TrimSpace(cols[2])
+	}
+	return id, php, extApp, nil
 }
 
 // buildDomains returns the primary website domain plus its child + alias

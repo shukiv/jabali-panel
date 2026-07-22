@@ -37,9 +37,11 @@ func fakeSession(accountsOut string) *session {
 func fullAccount() *session {
 	return fakeRouted(
 		route{"domain, externalApp", "smoke.jabalitest.com\tsmoke6221\n"},
-		route{"id, phpSelection", "1\tPHP 8.1\n"},
+		route{"id, phpSelection", "1\tPHP 8.1\tsmoke6221\n"},
 		route{"databases_databases", "smokedb\tsmokeuser\n"},
 		route{"e_users", "info@smoke.jabalitest.com\t0\n"},
+		route{"records r", "smoke.jabalitest.com\tA\t192.0.2.10\t3600\t0\n"},
+		route{"crontab -u", "30 3 * * * /usr/bin/php /home/smoke.jabalitest.com/public_html/cron.php\n"},
 		route{"childdomains", ""},
 		route{"aliasdomains", ""},
 	)
@@ -89,6 +91,34 @@ func TestDescribeAccount_PopulatesAreas(t *testing.T) {
 	}
 	if m.Mailboxes[0].MaildirPath != "/home/vmail/smoke.jabalitest.com/info/" {
 		t.Errorf("maildir path wrong: %q", m.Mailboxes[0].MaildirPath)
+	}
+	// DNS zone (records JOIN domains).
+	if len(m.DNSZones) != 1 || m.DNSZones[0].Origin != "smoke.jabalitest.com" || len(m.DNSZones[0].Records) != 1 {
+		t.Fatalf("dns zones = %+v, want one zone with one record", m.DNSZones)
+	}
+	if r := m.DNSZones[0].Records[0]; r.Type != "A" || r.Content != "192.0.2.10" || r.TTL != 3600 {
+		t.Errorf("dns record wrong: %+v", r)
+	}
+	// Cron (crontab of the externalApp user).
+	if len(m.Cron) != 1 || m.Cron[0].Schedule != "30 3 * * *" || m.Cron[0].RunAs != "smoke6221" {
+		t.Fatalf("cron = %+v, want one job run as smoke6221", m.Cron)
+	}
+	if m.Cron[0].Command != "/usr/bin/php /home/smoke.jabalitest.com/public_html/cron.php" {
+		t.Errorf("cron command wrong: %q", m.Cron[0].Command)
+	}
+}
+
+func TestSplitCronLine(t *testing.T) {
+	sc, cmd := splitCronLine("30 3 * * * /usr/bin/php /app/cron.php")
+	if sc != "30 3 * * *" || cmd != "/usr/bin/php /app/cron.php" {
+		t.Errorf("5-field split = %q / %q", sc, cmd)
+	}
+	sc, cmd = splitCronLine("@daily /usr/bin/backup.sh")
+	if sc != "@daily" || cmd != "/usr/bin/backup.sh" {
+		t.Errorf("@-form split = %q / %q", sc, cmd)
+	}
+	if _, cmd := splitCronLine("PATH=/usr/bin"); cmd != "" {
+		t.Errorf("env assignment must yield no command, got %q", cmd)
 	}
 }
 
