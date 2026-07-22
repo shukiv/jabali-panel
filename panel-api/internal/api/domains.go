@@ -875,13 +875,13 @@ func (h *domainHandler) update(c *gin.Context) {
 
 	// GH #526: a non-admin owner may repoint their own domain's docroot within
 	// the domain's own tree (e.g. a framework's public/ subdir) when the admin
-	// has opted in (tenant_domain_options_enabled). Confined by
+	// has opted in (tenant_docroot_editable). Confined by
 	// validateTenantDocumentRoot; admins use the looser whole-home path above.
 	// Silently dropped when the opt-in is off so other fields still PATCH.
 	if !claims.IsAdmin && req.DocRoot != nil {
 		allowed := false
 		if h.cfg.ServerSettings != nil {
-			if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil && st.TenantDomainOptionsEnabled {
+			if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil && st.TenantDocrootEditable {
 				allowed = true
 			}
 		}

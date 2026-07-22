@@ -55,7 +55,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": ""})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": ""})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -86,6 +86,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		"docker_apps_user_enabled":      dockerUser,
 		"python_apps_enabled":           settings.PythonAppsEnabled,
 		"tenant_domain_options_enabled": settings.TenantDomainOptionsEnabled,
+		"tenant_docroot_editable":       settings.TenantDocrootEditable,
 		// M353 Phase 1 (GH #353): per-module flags the SPA gates nav + routes on.
 		"dns_enabled":      settings.DNSEnabled,
 		"mail_enabled":     settings.MailEnabled,

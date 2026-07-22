@@ -129,6 +129,7 @@ type updateServerSettingsRequest struct {
 	QuotaEnabled                 *bool   `json:"quota_enabled,omitempty"`
 	APIEnabled                   *bool   `json:"api_enabled,omitempty"`
 	TenantDomainOptionsEnabled   *bool   `json:"tenant_domain_options_enabled,omitempty"`
+	TenantDocrootEditable        *bool   `json:"tenant_docroot_editable,omitempty"`
 	RootTerminalEnabled          *bool   `json:"root_terminal_enabled,omitempty"`
 	BandwidthQuotaEnforceEnabled *bool   `json:"bandwidth_quota_enforce_enabled,omitempty"`
 	UploadMaxSizeMB              *uint32 `json:"upload_max_size_mb,omitempty"`
@@ -481,6 +482,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.TenantDomainOptionsEnabled != nil {
 		current.TenantDomainOptionsEnabled = *req.TenantDomainOptionsEnabled
+	}
+	if req.TenantDocrootEditable != nil {
+		current.TenantDocrootEditable = *req.TenantDocrootEditable
 	}
 	if req.RootTerminalEnabled != nil {
 		current.RootTerminalEnabled = *req.RootTerminalEnabled

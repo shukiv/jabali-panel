@@ -346,6 +346,10 @@ export const UserDomainList = () => {
                               icon: <ToolOutlined />,
                               onClick: () => setActiveModal({ domainId: r.id, type: "rewrite-rules" }),
                             },
+                          ]
+                        : []),
+                      ...(caps?.tenant_docroot_editable
+                        ? [
                             {
                               key: "document-root",
                               label: "Document root",

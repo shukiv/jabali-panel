@@ -113,6 +113,12 @@ type ServerSettings struct {
 	// nginx domain options (GH #307). Default off.
 	TenantDomainOptionsEnabled bool `gorm:"column:tenant_domain_options_enabled;type:tinyint(1);not null;default:0" json:"tenant_domain_options_enabled"`
 
+	// TenantDocrootEditable lets a non-admin owner repoint their own domain's
+	// document root within the domain's own tree (GH #526). Default OFF (admin
+	// opt-in); decoupled from TenantDomainOptionsEnabled so docroot editing can be
+	// enabled without unlocking the riskier raw nginx options.
+	TenantDocrootEditable bool `gorm:"column:tenant_docroot_editable;type:tinyint(1);not null;default:0" json:"tenant_docroot_editable"`
+
 	// DNSUserRecordPolicy — per-type create/edit/delete matrix for non-admin
 	// tenants (GH #466, ADR-0150). JSON object keyed by UPPERCASE record type.
 	DNSUserRecordPolicy DNSUserRecordPolicy `gorm:"column:dns_user_record_policy;type:longtext" json:"dns_user_record_policy"`
