@@ -113,7 +113,14 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		// persisted (the "allowlist silent drop" scar again).
 		"fpm_max_children_cap", "fpm_worker_mem_mb", "fpm_user_can_edit",
 		"fpm_advanced_mode", "fpm_version_defaults",
-		"nspawn_image_version", "updated_at",
+		"nspawn_image_version",
+		// GH #454: tenant backup entitlement columns. Added to the model + API
+		// update handler but missed here, so the admin's backup-limit changes
+		// reported success yet silently never persisted (reverted on reload) —
+		// the allowlist silent-drop scar exactly as warned above.
+		"max_backups", "scheduled_backups_enabled",
+		"allowed_backup_destination_kinds", "backup_retention_policy",
+		"updated_at",
 	).Updates(p).Error; err != nil {
 		return translate(err)
 	}

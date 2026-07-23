@@ -111,3 +111,15 @@ func TestPackage_Update_PersistsDockerAppSlugs(t *testing.T) {
 func TestPackage_Update_PersistsPHPExecEnabled(t *testing.T) {
 	updatePersistsColumn(t, "php_exec_enabled")
 }
+
+// GH #454: the tenant-backup entitlement columns were added to the model + API
+// update handler but missed from the Update Select allowlist, so admins saw a
+// success toast yet the backup limits never persisted (reverted on reload) —
+// tenants never received the backup permissions. Guard every backup column
+// appears in the emitted UPDATE (each would be absent with the old allowlist).
+func TestPackage_Update_PersistsBackupLimits(t *testing.T) {
+	updatePersistsColumn(t, "max_backups")
+	updatePersistsColumn(t, "scheduled_backups_enabled")
+	updatePersistsColumn(t, "allowed_backup_destination_kinds")
+	updatePersistsColumn(t, "backup_retention_policy")
+}
