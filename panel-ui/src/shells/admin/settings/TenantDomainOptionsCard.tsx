@@ -10,7 +10,7 @@ import { apiClient } from "../../../apiClient";
 export const TenantDomainOptionsCard = () => {
   const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
-  const [docroot, setDocroot] = useState(false);
+  const [docroot, setDocroot] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingDocroot, setSavingDocroot] = useState(false);
@@ -22,7 +22,7 @@ export const TenantDomainOptionsCard = () => {
         const resp = await apiClient.get<{ tenant_domain_options_enabled?: boolean; tenant_docroot_editable?: boolean }>("/admin/settings");
         if (!cancelled) {
           setEnabled(resp.data.tenant_domain_options_enabled === true);
-          setDocroot(resp.data.tenant_docroot_editable === true);
+          setDocroot(resp.data.tenant_docroot_editable !== false);
         }
       } catch {
         if (!cancelled) notification.error({ message: "Failed to load tenant domain options setting" });
@@ -73,7 +73,7 @@ export const TenantDomainOptionsCard = () => {
       <Typography.Paragraph type="secondary" style={{ marginTop: 20, marginBottom: 8 }}>
         Let non-admin users repoint their own domain&apos;s <strong>document root</strong> to a folder inside that
         domain (e.g. a framework&apos;s <code>public/</code> subdir). Confined server-side to the domain&apos;s own
-        tree — it can&apos;t escape into another domain or elsewhere. Off by default.
+        tree — it can&apos;t escape into another domain or elsewhere. On by default.
       </Typography.Paragraph>
       <Switch checked={docroot} loading={savingDocroot} onChange={onToggleDocroot} checkedChildren="On" unCheckedChildren="Off" />
     </Card>

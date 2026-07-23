@@ -114,10 +114,12 @@ type ServerSettings struct {
 	TenantDomainOptionsEnabled bool `gorm:"column:tenant_domain_options_enabled;type:tinyint(1);not null;default:0" json:"tenant_domain_options_enabled"`
 
 	// TenantDocrootEditable lets a non-admin owner repoint their own domain's
-	// document root within the domain's own tree (GH #526). Default OFF (admin
-	// opt-in); decoupled from TenantDomainOptionsEnabled so docroot editing can be
-	// enabled without unlocking the riskier raw nginx options.
-	TenantDocrootEditable bool `gorm:"column:tenant_docroot_editable;type:tinyint(1);not null;default:0" json:"tenant_docroot_editable"`
+	// document root within the domain's own tree (GH #526). Default ON — the
+	// edit is confined to /home/<user>/domains/<domain>/, many apps (Laravel et
+	// al.) need a subdir docroot, and peer panels expose it by default; admins
+	// can still toggle it off. Decoupled from TenantDomainOptionsEnabled so it
+	// stands apart from the riskier raw nginx options.
+	TenantDocrootEditable bool `gorm:"column:tenant_docroot_editable;type:tinyint(1);not null;default:1" json:"tenant_docroot_editable"`
 
 	// DNSUserRecordPolicy — per-type create/edit/delete matrix for non-admin
 	// tenants (GH #466, ADR-0150). JSON object keyed by UPPERCASE record type.
