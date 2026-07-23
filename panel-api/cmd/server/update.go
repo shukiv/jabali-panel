@@ -640,10 +640,10 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-disk-maintenance.timer /e
 # self-restart fix from ever reaching deployed hosts.
 install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 install -m 0755 ` + repoDir + `/install/letsencrypt/jabali-panel-cert.sh /etc/letsencrypt/renewal-hooks/deploy/jabali-panel-cert.sh
-# jabali-stalwart-push-cert: install.sh only refreshes this inside
-# _install_stalwart_cli, which jabali update never calls (the cli is
-# already at the pinned version, so that function isn't in the update
-# path). Without re-copying here, hosts keep the pre-M6.6 hardcoded-
+# jabali-stalwart-push-cert: install.sh refreshes this inside
+# _install_stalwart_cli, which provision_new_software now re-runs on
+# update (version-gated) — but provision is best-effort, so re-copy it
+# here too as a belt-and-suspenders. Without it, hosts keep the pre-M6.6 hardcoded-
 # path push-cert that ignores the JABALI_STALWART_CERT_* env the
 # mail-domain deploy-hook exports — so per-domain mail certs (GH #132)
 # got pushed under the PANEL cert name and Stalwart served the panel

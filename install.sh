@@ -13229,6 +13229,18 @@ EOF
     install_malware_stack
   fi
 
+  # stalwart-cli: historically installed only on fresh installs, so a
+  # cli_version bump never reached existing hosts on `jabali update` (the CLI
+  # speaks Stalwart's JMAP management API). Re-run the version-gated installer
+  # here so a bump deploys. It's a no-op when already current (--version skip);
+  # the subshell + `|| _warn` isolates its _die on a transient download/sha
+  # failure so it can't skip the rest of provision (provision is best-effort —
+  # update.go continues on a provision failure).
+  if declare -f _install_stalwart_cli >/dev/null 2>&1; then
+    _log "provision: ensuring stalwart-cli at the pinned version"
+    ( _install_stalwart_cli ) || _warn "provision: stalwart-cli install failed (will retry next update)"
+  fi
+
   # logrotate drop-in — refreshed every update so new log paths added in
   # later releases land on existing hosts. Cheap: cmp -s short-circuits
   # when the file is byte-identical.
