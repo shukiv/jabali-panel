@@ -214,19 +214,24 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 		needsRestart = true
 	}
 
-	// 3) EnvironmentFile (root-owned 0640; values never logged). Write only on
-	// change so an unchanged env doesn't count as a restart trigger.
+	// 3) EnvironmentFile (root-owned 0640; values never logged). ALWAYS write it
+	// so the file the unit references exists — renderEnvFile is empty for a
+	// minimal ASGI app with no env vars, and systemd hard-fails the unit
+	// ("Failed to load environment files: No such file or directory") when the
+	// EnvironmentFile is missing. A content change OR a previously-absent file
+	// counts as a restart trigger (the latter recovers an app broken by that
+	// missing file); an unchanged, present env is a no-op restart-wise.
 	envPath := filepath.Join(pythonAppEnvDir, p.AppID+".env")
 	envContent := renderEnvFile(p)
-	if prev, _ := os.ReadFile(envPath); string(prev) != envContent {
-		if err := os.WriteFile(envPath, []byte(envContent), 0o640); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write env file: %v", err)}
-		}
+	if prev, rerr := os.ReadFile(envPath); os.IsNotExist(rerr) || string(prev) != envContent {
 		needsRestart = true
 	}
+	if err := os.WriteFile(envPath, []byte(envContent), 0o640); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write env file: %v", err)}
+	}
 
-	// 4) systemd unit — write only on change; a changed unit also needs a
-	// daemon-reload before restart.
+	// 4) systemd unit — always write so it exists; a changed (or absent) unit
+	// also needs a daemon-reload before restart.
 	start := p.StartCommand
 	if strings.TrimSpace(start) == "" {
 		start = derivePythonStart(venv, p, server)
@@ -234,12 +239,12 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	unitPath := filepath.Join(pythonAppUnitDir, pythonAppUnitName(p.AppID))
 	unitContent := renderPythonUnit(p, appRoot, envPath, start)
 	unitChanged := false
-	if prev, _ := os.ReadFile(unitPath); string(prev) != unitContent {
-		if err := os.WriteFile(unitPath, []byte(unitContent), 0o644); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write unit: %v", err)}
-		}
+	if prev, rerr := os.ReadFile(unitPath); os.IsNotExist(rerr) || string(prev) != unitContent {
 		unitChanged = true
 		needsRestart = true
+	}
+	if err := os.WriteFile(unitPath, []byte(unitContent), 0o644); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write unit: %v", err)}
 	}
 
 	// 5) reload (only on unit change) + enable (idempotent) + restart (only when
