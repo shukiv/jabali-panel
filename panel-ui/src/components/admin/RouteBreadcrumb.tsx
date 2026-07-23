@@ -7,6 +7,7 @@
 // entity page that wants "Users > alice > Edit" supplies that via
 // useSetBreadcrumbs instead.
 import { useLocation } from "react-router";
+import { useTranslation } from "react-i18next";
 
 import type { NavItem } from "../../nav";
 import { AdminBreadcrumb } from "./AdminBreadcrumb";
@@ -73,7 +74,15 @@ export function RouteBreadcrumb({
 }) {
   const override = useBreadcrumbOverride();
   const { pathname } = useLocation();
-  const items = override && override.length > 0 ? override : deriveCrumbs(pathname, nav, homePath, homeLabel);
+  const { t } = useTranslation();
+  // GH #455: nav labels are i18n KEYS (e.g. "nav.admin.users"); the sidebar runs
+  // them through t() but the auto breadcrumb used them verbatim, so after the
+  // multi-language update the trail showed the raw keys. Translate the nav
+  // labels (and homeLabel) before deriving. t() on an already-plain string is a
+  // no-op, so entity overrides and the tests are unaffected.
+  const translatedNav = nav.map((n) => ({ ...n, label: t(n.label) }));
+  const items =
+    override && override.length > 0 ? override : deriveCrumbs(pathname, translatedNav, homePath, t(homeLabel));
   if (items.length === 0) return null;
   return <AdminBreadcrumb items={items} />;
 }
