@@ -1,9 +1,9 @@
-# Bulwark Webmail 1.7.7 standalone tarball SHA-256.
-# Source: https://github.com/bulwarkmail/webmail/releases/tag/1.7.7
-#   asset: bulwark-standalone-1.7.7-linux-amd64.tar.gz
-# Captured 2026-07-11 directly from the GitHub release artifact (GH #349 / bump #372;
-# 1.7.7 "Composer: Preselect the identity of the active mailbox for new messages"
-# fixes shared-mailbox compose defaulting to the wrong From).
+# Bulwark Webmail 1.7.8 standalone tarball SHA-256.
+# Source: https://github.com/bulwarkmail/webmail/releases/tag/1.7.8
+#   asset: bulwark-standalone-1.7.8-linux-amd64.tar.gz
+# Captured 2026-07-23 directly from the GitHub release artifact (monthly review
+# #625). 1.7.8 (2026-07-22): Unified Mailbox, Category Tabs, Collapsible Quoted
+# Replies, Arabic translation, expanded plugin APIs.
 #
 # Bulwark ships a prebuilt "standalone" Next.js tarball (server.js +
 # node_modules + .next), so we no longer git-clone + `npm ci` +
@@ -14,4 +14,4 @@
 #   curl -sSL https://github.com/bulwarkmail/webmail/releases/download/<v>/bulwark-standalone-<v>-linux-amd64.tar.gz | sha256sum
 # Paste the returned 64-char hex below. install.sh `_die`s if the
 # placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY survives.
-38d3178bfacd841e1899b6d483ff09b0df32af3e75cd12c11d6c47a67e2af962
+db461aec112b071b2db69a9a0b5b29c2ec53f692cb8a500b221cb95c85fcefb7
