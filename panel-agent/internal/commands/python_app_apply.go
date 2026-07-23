@@ -3,8 +3,11 @@ package commands
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,45 +165,96 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	}
 
 	// 2) deps + app server (as the user). requirements.txt is optional.
+	//
+	// GH #357: the reconciler re-applies every app on every ~60s tick, so each
+	// step here MUST be idempotent/convergent — otherwise a healthy app re-pips
+	// and `systemctl restart`s every minute (dropping in-flight requests and
+	// resetting systemd's Restart=on-failure backoff), and a doomed app storms
+	// pip forever. Gate each expensive/disruptive step on real change and only
+	// restart when something actually changed. `needsRestart` accumulates that.
+	needsRestart := false
 	server := "gunicorn"
 	if p.AppType == "asgi" {
 		server = "uvicorn"
 	}
 	pip := filepath.Join(venv, "bin", "pip")
-	if _, err := os.Stat(filepath.Join(appRoot, "requirements.txt")); err == nil {
-		if out, err := runAsUser(ctx, p.Username, pip, "install", "-q", "-r", filepath.Join(appRoot, "requirements.txt")); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install requirements: %v: %s", err, lastLines(out, 12))}
-		}
-	}
-	if out, err := runAsUser(ctx, p.Username, pip, "install", "-q", server); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install %s: %v: %s", server, err, lastLines(out, 8))}
-	}
 
-	// 3) EnvironmentFile (root-owned 0640; values never logged).
+	// The per-app root-owned state dir holds the EnvironmentFile and the
+	// requirements-hash marker. Created before pip so the marker can be written.
 	if err := os.MkdirAll(pythonAppEnvDir, 0o750); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir env dir: %v", err)}
 	}
-	envPath := filepath.Join(pythonAppEnvDir, p.AppID+".env")
-	if err := os.WriteFile(envPath, []byte(renderEnvFile(p)), 0o640); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write env file: %v", err)}
+
+	// requirements.txt (optional): only (re)install when its content changed
+	// since the last SUCCESSFUL install. The marker records the sha256 we last
+	// installed; a converged app skips pip entirely, and the tenant editing
+	// requirements.txt is what re-triggers it.
+	reqPath := filepath.Join(appRoot, "requirements.txt")
+	reqMarker := filepath.Join(pythonAppEnvDir, p.AppID+".reqsha")
+	if _, statErr := os.Stat(reqPath); statErr == nil {
+		sum, herr := fileSHA256(reqPath)
+		if herr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("hash requirements.txt: %v", herr)}
+		}
+		prev, _ := os.ReadFile(reqMarker)
+		if strings.TrimSpace(string(prev)) != sum {
+			if out, err := runAsUser(ctx, p.Username, pip, "install", "-q", "-r", reqPath); err != nil {
+				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install requirements: %v: %s", err, lastLines(out, 12))}
+			}
+			_ = os.WriteFile(reqMarker, []byte(sum), 0o640)
+			needsRestart = true
+		}
 	}
 
-	// 4) systemd unit.
+	// App server: install only when its binary is missing from the venv.
+	if _, err := os.Stat(filepath.Join(venv, "bin", server)); err != nil {
+		if out, err := runAsUser(ctx, p.Username, pip, "install", "-q", server); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install %s: %v: %s", server, err, lastLines(out, 8))}
+		}
+		needsRestart = true
+	}
+
+	// 3) EnvironmentFile (root-owned 0640; values never logged). Write only on
+	// change so an unchanged env doesn't count as a restart trigger.
+	envPath := filepath.Join(pythonAppEnvDir, p.AppID+".env")
+	envContent := renderEnvFile(p)
+	if prev, _ := os.ReadFile(envPath); string(prev) != envContent {
+		if err := os.WriteFile(envPath, []byte(envContent), 0o640); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write env file: %v", err)}
+		}
+		needsRestart = true
+	}
+
+	// 4) systemd unit — write only on change; a changed unit also needs a
+	// daemon-reload before restart.
 	start := p.StartCommand
 	if strings.TrimSpace(start) == "" {
 		start = derivePythonStart(venv, p, server)
 	}
 	unitPath := filepath.Join(pythonAppUnitDir, pythonAppUnitName(p.AppID))
-	if err := os.WriteFile(unitPath, []byte(renderPythonUnit(p, appRoot, envPath, start)), 0o644); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write unit: %v", err)}
+	unitContent := renderPythonUnit(p, appRoot, envPath, start)
+	unitChanged := false
+	if prev, _ := os.ReadFile(unitPath); string(prev) != unitContent {
+		if err := os.WriteFile(unitPath, []byte(unitContent), 0o644); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write unit: %v", err)}
+		}
+		unitChanged = true
+		needsRestart = true
 	}
 
-	// 5) reload + enable + restart.
-	_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+	// 5) reload (only on unit change) + enable (idempotent) + restart (only when
+	// something changed). When nothing changed we leave the running process
+	// alone — systemd's Restart=on-failure owns crash recovery, and the Restart
+	// button drives a separate app.python.control call.
 	unit := pythonAppUnitName(p.AppID)
+	if unitChanged {
+		_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+	}
 	_ = exec.CommandContext(ctx, "systemctl", "enable", "--quiet", unit).Run()
-	if out, err := exec.CommandContext(ctx, "systemctl", "restart", unit).CombinedOutput(); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))}
+	if needsRestart {
+		if out, err := exec.CommandContext(ctx, "systemctl", "restart", unit).CombinedOutput(); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))}
+		}
 	}
 
 	active := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run() == nil
@@ -321,6 +375,22 @@ func validEnvKey(k string) bool {
 		}
 	}
 	return true
+}
+
+// fileSHA256 returns the hex sha256 of a file's contents. Used to skip
+// re-running `pip install -r requirements.txt` when the file is unchanged
+// since the last successful install (GH #357 per-tick pip storm).
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func lastLines(s string, n int) string {
