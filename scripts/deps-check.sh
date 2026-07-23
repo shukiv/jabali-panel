@@ -66,9 +66,22 @@ current_pin() {
 }
 
 # latest_release repo tag_prefix -> bare latest version, or "" on failure.
+# Prefers gh (authenticated locally); falls back to curl + the REST API so it
+# also works on the self-hosted CI runner, which has curl + a token but no gh.
 latest_release() {
-  local repo="$1" prefix="$2" tag
-  tag="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' 2>/dev/null)" || return 0
+  local repo="$1" prefix="$2" tag=""
+  if command -v gh >/dev/null 2>&1; then
+    tag="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' 2>/dev/null)"
+  fi
+  if [[ -z "$tag" ]]; then
+    local -a auth=()
+    local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    [[ -n "$tok" ]] && auth=(-H "Authorization: Bearer ${tok}")
+    tag="$(curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
+      | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 \
+      | sed -E 's/.*"([^"]+)"$/\1/')"
+  fi
   [[ -z "$tag" ]] && return 0
   # phpMyAdmin tags are RELEASE_5_2_3 -> 5.2.3; underscores to dots after strip.
   tag="${tag#"$prefix"}"
