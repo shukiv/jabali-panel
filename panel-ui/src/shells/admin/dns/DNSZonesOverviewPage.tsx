@@ -59,7 +59,9 @@ const ZonesTab = () => {
             domainId: domain.id,
             provisioned: !!res.data?.zone?.id,
             recordCount: res.data?.record_count as number | undefined,
-            ttl: (res.data?.zone?.minimum_ttl ?? null) as number | null,
+            // GH #527: show the effective default record TTL (what records
+            // use), not the SOA minimum_ttl (negative-cache timer, fixed 3600).
+            ttl: (res.data?.effective_ttl ?? null) as number | null,
           };
         } catch {
           return { domainId: domain.id, provisioned: false, recordCount: undefined, ttl: null };

@@ -142,7 +142,15 @@ func (h *dnsHandler) getZone(c *gin.Context) {
 			recordCount = len(recs)
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"zone": zone, "record_count": recordCount})
+	// GH #527: the effective default record TTL (server_settings.default_dns_ttl)
+	// — what auto-records + new records use. Surfaced so the DNS Zones overview
+	// shows the configured default (e.g. 300) rather than the SOA minimum_ttl
+	// (a negative-cache timer that stays fixed at 3600 by design).
+	c.JSON(http.StatusOK, gin.H{
+		"zone":          zone,
+		"record_count":  recordCount,
+		"effective_ttl": h.defaultRecordTTL(c.Request.Context()),
+	})
 }
 
 func (h *dnsHandler) updateZone(c *gin.Context) {
