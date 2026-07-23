@@ -9032,8 +9032,8 @@ install_malware_stack() {
   #   - post_scan_hook system (replaces our 5s sessionwatcher polling)
   #   - 43x faster native scan (Aho-Corasick parallel workers)
   # Pin bumps require a PR review of both LMD_VERSION and LMD_SHA256.
-  local LMD_VERSION="2.0.1-rc4"
-  local LMD_SHA256="933831a5addc975de030928c2ede108d211471f8ed739e88433e9ca0b2c70213"
+  local LMD_VERSION="2.0.1"
+  local LMD_SHA256="f60171c6b095aaacd0a509199d417abf5bf768ec941b94e000e3b12439565192"
   local lmd_marker="/usr/local/maldetect/.jabali-installed-${LMD_VERSION}"
 
   if [[ -f "$lmd_marker" ]] && command -v maldet >/dev/null 2>&1; then
@@ -9065,8 +9065,8 @@ install_malware_stack() {
   # YARA-X (the `yr` binary) — Rust rewrite of YARA, full module support
   # including the `hash` module that libclamav YARA can't load. maldet
   # 2.0.1+ prefers `yr` over libyara when both are present.
-  local YARAX_VERSION="1.17.0"
-  local YARAX_SHA256="db83e2a56792ff7a1658f91f7f173133cabac4c209ae68aaae51a313cbfaf6b7"
+  local YARAX_VERSION="1.19.0"
+  local YARAX_SHA256="a97d78189e3548797ac45b7b4a5fd8975783861875c594f772ec9b8bb5fa4d72"
   if ! command -v yr >/dev/null 2>&1 || \
      [[ "$(yr --version 2>/dev/null | awk '{print $2}')" != "$YARAX_VERSION" ]]; then
     local tmp_yrx
@@ -11457,7 +11457,7 @@ _install_stalwart_binary() {
 # speaks the v0.16 JMAP management API, used by install.sh bootstrap and
 # the reconciler. Idempotent against version reported by --version.
 _install_stalwart_cli() {
-  local cli_version="1.0.8"
+  local cli_version="1.0.11"
   local cli_binary="/usr/local/bin/stalwart-cli"
   local arch="x86_64-unknown-linux-gnu"
   local tarball="stalwart-cli-${arch}.tar.xz"
