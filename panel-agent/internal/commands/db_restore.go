@@ -7,6 +7,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -77,6 +78,15 @@ func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	})
 	if scErr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("scope: %v", scErr)}
+	}
+	// GH #530: /var/lib/jabali-migrations is a compat symlink to
+	// /var/lib/jabali/migrations (GH #327). filesafe's openat2 RESOLVE_BENEATH
+	// refuses to traverse the symlink component, so a p.Path routed through it
+	// fails the .sql open with ENOTDIR and would silently restore nothing (same
+	// class as the mail-import ENOTDIR). Canonicalize first; the resolved path
+	// still lives under the real /var/lib/jabali/migrations root in the scope.
+	if resolved, rerr := filepath.EvalSymlinks(p.Path); rerr == nil {
+		p.Path = resolved
 	}
 	f, err := restoreScope.Open(p.Path, os.O_RDONLY, 0)
 	if err != nil {
