@@ -7,6 +7,7 @@ import { downloadUrl } from "../../utils/download";
 import { Button, Card, Grid, Select, Space, Table, Tag, Typography, message } from "antd";
 import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
+import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
 import { RowActions } from "../../components/RowActions";
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SaveOutlined } from "@icons";
 import { useState } from "react";
@@ -21,6 +22,7 @@ import { RestoreDrawer } from "./RestoreDrawer";
 type MyBackup = {
   id: string;
   status: string;
+  content?: string;
   bytes_total: number;
   bytes_added: number;
   created_at: string;
@@ -164,6 +166,18 @@ export const MyProfileBackupCard = () => {
             title: "Created",
             dataIndex: "created_at",
             render: (t: string) => shortDateTime(t),
+          },
+          {
+            // GH #454: show what each backup captured (full / database / files).
+            // Tenant backups are always account_backup, so the label is
+            // content-driven.
+            title: "Type",
+            dataIndex: "content",
+            render: (_: unknown, row: MyBackup) => (
+              <Tag color={backupTypeColor("account_backup", row.content)}>
+                {backupTypeLabel("account_backup", row.content)}
+              </Tag>
+            ),
           },
           {
             title: "Status",

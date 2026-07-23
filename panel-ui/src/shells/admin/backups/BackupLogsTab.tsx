@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
+import { backupTypeColor, backupTypeLabel } from "../../../utils/backupType";
 import {
   Alert,
   DatePicker,
@@ -22,6 +23,7 @@ import { apiClient } from "../../../apiClient";
 interface BackupLogEntry {
   id: string;
   kind: string;
+  content?: string;
   status: string;
   user_id: string;
   destination_id?: string;
@@ -127,15 +129,6 @@ export const BackupLogsTab = () => {
     }
   };
 
-  const renderKindTag = (kind: string) => {
-    const colorMap: Record<string, string> = {
-      account_backup: "blue",
-      account_restore: "green",
-      system_backup: "purple",
-      system_restore: "orange",
-    };
-    return <Tag color={colorMap[kind] || "default"}>{kind.replace("_", " ")}</Tag>;
-  };
 
   const renderStatusTag = (status: string) => {
     const colorMap: Record<string, string> = {
@@ -235,10 +228,15 @@ export const BackupLogsTab = () => {
             ),
           },
           {
-            title: "Kind",
+            // GH #454: show what the backup CAPTURED (kind + content), so a
+            // database-only account backup reads "Database Backup", not the bare
+            // "account backup" kind.
+            title: "Type",
             dataIndex: "kind",
-            width: 140,
-            render: renderKindTag,
+            width: 160,
+            render: (_: unknown, row: BackupLogEntry) => (
+              <Tag color={backupTypeColor(row.kind, row.content)}>{backupTypeLabel(row.kind, row.content)}</Tag>
+            ),
           },
           {
             title: "Status",
