@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   Alert,
   Button,
+  Checkbox,
   Drawer,
   Form,
   Input,
@@ -352,9 +353,22 @@ function TarballStep({ jobId, onDone }: { jobId: string; onDone: () => void }) {
 
 function ImportStep({ jobId, onDone }: { jobId: string; onDone: () => void }) {
   const [form] = Form.useForm<ImportInput>();
+  // GH #633/#634: opt-in to carrying source passwords, reachable from the
+  // quick-create drawer too (not just the wizard). Off by default.
+  const [preservePasswords, setPreservePasswords] = useState(false);
 
   const mut = useMutation({
     mutationFn: async (vals: ImportInput) => {
+      // Only write a plan when preserving — otherwise leave the job plan-less so
+      // the import keeps its default (import every area). A plan with `preserve`
+      // but no `areas` would import NOTHING (zero areas = nothing), so include
+      // all areas explicitly here.
+      if (preservePasswords) {
+        await apiClient.put(`/admin/migrations/${jobId}/plan`, {
+          areas: { websites: true, databases: true, mailboxes: true, dns: true, ssl: true, cron: true },
+          preserve: { credentials: true },
+        });
+      }
       await apiClient.post(`/admin/migrations/${jobId}/import`, vals);
     },
     onSuccess: () => {
@@ -394,6 +408,20 @@ function ImportStep({ jobId, onDone }: { jobId: string; onDone: () => void }) {
       <Form.Item name="target_package_id" label="Package ID (optional)">
         <Input placeholder="leave blank for default package" />
       </Form.Item>
+      <Checkbox
+        checked={preservePasswords}
+        onChange={(e) => setPreservePasswords(e.target.checked)}
+        style={{ marginBottom: 8 }}
+      >
+        Carry over source passwords (mailboxes + database users)
+      </Checkbox>
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="Off by default"
+        description="Leave off unless this is a trusted, same-owner migration. When on, each mailbox and MySQL user keeps its ORIGINAL password (carried as a hash), so mail clients and apps that rely on the DB config keep working without a reset."
+      />
       <Button type="primary" htmlType="submit" loading={mut.isPending}>
         Start import
       </Button>
