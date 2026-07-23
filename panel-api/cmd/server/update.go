@@ -425,8 +425,12 @@ chmod 0750 "$WR"`)
 				missingOut2, _ := exec.Command("sudo", "-u", serviceUser,
 					"git", "-C", repoDir, "ls-files", "--deleted").Output()
 				if still := strings.TrimSpace(string(missingOut2)); still != "" {
+					// A corrupt .git worktree POINTER can't be fixed by a forced
+					// checkout (git operates through the broken pointer). The repair
+					// that heals it re-clones the tree, which is DESTRUCTIVE, so
+					// `--auto` skips it — the operator needs `--all --yes` (GH #606).
 					return fmt.Errorf("working tree at %s is still missing tracked files after a forced checkout "+
-						"(corrupt git worktree pointer) — run `jabali repair --auto` to rebuild the checkout, then re-run `jabali update`; missing:\n%s",
+						"(corrupt git worktree pointer) — run `jabali repair --all --yes` to re-clone the checkout (--auto skips this destructive fix), then re-run `jabali update`; missing:\n%s",
 						repoDir, still)
 				}
 			}
