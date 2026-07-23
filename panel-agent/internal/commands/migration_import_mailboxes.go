@@ -100,6 +100,19 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 			Code: agentwire.CodeInvalidArgument, Message: "src_mail_dir not absolute: " + err.Error(),
 		}
 	}
+	// GH #530: /var/lib/jabali-migrations is a compat SYMLINK to
+	// /var/lib/jabali/migrations on hosts moved to the config-driven
+	// working-folder scheme (GH #327). filesafe opens message files with
+	// openat2 RESOLVE_BENEATH, which refuses to traverse a symlink component —
+	// so a src_mail_dir routed THROUGH that symlink fails every blob/upload with
+	// ENOTDIR ("not a directory"). The Maildir walk (plain os.ReadDir) still
+	// follows the symlink and finds messages, producing the exact
+	// messages_found>0 / messages_pushed=0 symptom. Canonicalize so no filesafe
+	// op crosses the symlink; the resolved path still lives under the real
+	// /var/lib/jabali/migrations root already in migrationStagingRoots.
+	if resolved, rerr := filepath.EvalSymlinks(srcAbs); rerr == nil {
+		srcAbs = resolved
+	}
 	allowedRoots := migrationStagingRoots
 	if p.DestUser != "" {
 		if strings.Contains(p.DestUser, "/") || strings.Contains(p.DestUser, "..") {
