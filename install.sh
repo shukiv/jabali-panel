@@ -13280,6 +13280,16 @@ EOF
   if declare -f ensure_jabali_in_mysql_group >/dev/null 2>&1; then
     ensure_jabali_in_mysql_group
   fi
+  # wp-cli: ensure the PINNED phar is present so a wp_version bump deploys on
+  # update. ensure_wpcli_symlink (below) only heals a missing/dangling symlink —
+  # with an intact old symlink a bumped version never downloaded, so wp stayed
+  # on the old version on existing hosts (the same fresh-install-only gap as
+  # stalwart-cli). install_wp_cli is version-gated (downloads only when the
+  # pinned phar is absent), subshell-isolated so its _die on a transient
+  # download failure can't skip the rest of provision.
+  if declare -f install_wp_cli >/dev/null 2>&1; then
+    ( install_wp_cli ) || _warn "provision: wp-cli install failed (will retry next update)"
+  fi
   if declare -f ensure_wpcli_symlink >/dev/null 2>&1; then
     ensure_wpcli_symlink
   fi
