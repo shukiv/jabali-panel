@@ -59,6 +59,38 @@ var migrationStagingRoots = []string{
 	"/var/lib/jabali/migrations",
 }
 
+// canonicalizeStagingRootPrefix rewrites ONLY the /var/lib/jabali-migrations
+// compat-symlink ROOT prefix of a staging path to its real target
+// (/var/lib/jabali/migrations, GH #327), leaving the remainder untouched.
+//
+// filesafe opens files with openat2 RESOLVE_BENEATH, which refuses to traverse
+// ANY symlink component — so a path whose root prefix is the compat symlink
+// fails every open with ENOTDIR ("not a directory"), silently importing nothing
+// (GH #530). We resolve ONLY the known system-owned root symlink; the tenant-
+// extractable remainder is passed through verbatim so RESOLVE_BENEATH still
+// governs every component of it atomically — a symlink planted in the staged
+// tree is still rejected, and the anti-traversal protection stays intact.
+// No-op when the path isn't under the legacy root, or the root isn't a symlink.
+func canonicalizeStagingRootPrefix(path string) string {
+	return canonicalizeRootPrefix(path, migrationStagingRoot)
+}
+
+// canonicalizeRootPrefix is the testable core: it EvalSymlinks-resolves ONLY
+// legacyRoot (a system-owned path) and swaps it for the head of `path`,
+// preserving the remainder byte-for-byte. It never calls EvalSymlinks on the
+// remainder, so a symlink there survives into the returned path and is left for
+// the caller's RESOLVE_BENEATH open to reject.
+func canonicalizeRootPrefix(path, legacyRoot string) string {
+	if path != legacyRoot && !strings.HasPrefix(path, legacyRoot+"/") {
+		return path
+	}
+	real, err := filepath.EvalSymlinks(legacyRoot)
+	if err != nil || real == "" || real == legacyRoot {
+		return path
+	}
+	return real + strings.TrimPrefix(path, legacyRoot)
+}
+
 // migrationHomeExcludes is the rsync --exclude pattern set. .ssh/ is
 // excluded because the panel's ssh_keys table is the truth on
 // authorized_keys (reconciler writes); .cpanel/ is cPanel-only

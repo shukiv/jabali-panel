@@ -107,12 +107,11 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 	// so a src_mail_dir routed THROUGH that symlink fails every blob/upload with
 	// ENOTDIR ("not a directory"). The Maildir walk (plain os.ReadDir) still
 	// follows the symlink and finds messages, producing the exact
-	// messages_found>0 / messages_pushed=0 symptom. Canonicalize so no filesafe
-	// op crosses the symlink; the resolved path still lives under the real
-	// /var/lib/jabali/migrations root already in migrationStagingRoots.
-	if resolved, rerr := filepath.EvalSymlinks(srcAbs); rerr == nil {
-		srcAbs = resolved
-	}
+	// messages_found>0 / messages_pushed=0 symptom. Rewrite ONLY the known
+	// compat-symlink root prefix (NOT any tenant-extractable component of the
+	// remainder, which RESOLVE_BENEATH must still govern); the result stays
+	// under the real /var/lib/jabali/migrations root in migrationStagingRoots.
+	srcAbs = canonicalizeStagingRootPrefix(srcAbs)
 	allowedRoots := migrationStagingRoots
 	if p.DestUser != "" {
 		if strings.Contains(p.DestUser, "/") || strings.Contains(p.DestUser, "..") {
