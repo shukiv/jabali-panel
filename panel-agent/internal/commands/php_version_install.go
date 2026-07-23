@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -54,6 +55,58 @@ var isFPMAlreadyInstalledFunc = func(version string) bool {
 func isFPMAlreadyInstalled(version string) bool {
 	return isFPMAlreadyInstalledFunc(version)
 }
+
+// phpRequiredExts are the extension packages every supported one-click app
+// (WordPress, Drupal, Joomla, MediaWiki) and most migrated sites need. mysql
+// provides mysqli + pdo_mysql; a version installed without it 500s on every
+// mysqli_connect() (GH #531).
+var phpRequiredExts = []string{"mysql", "mbstring", "zip", "gd", "curl", "xml"}
+
+// isPkgInstalled reports whether a dpkg package is installed and fully
+// configured. Used to backfill only the missing required extensions instead of
+// shelling out to apt when a version is already complete.
+func isPkgInstalled(pkg string) bool {
+	out, err := exec.Command("dpkg-query", "-W", "-f=${Status}", pkg).Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "install ok installed")
+}
+
+// ensureRequiredPHPExts installs any mandatory extension package (php<v>-mysql
+// etc.) that is missing for an ALREADY-installed version. isFPMAlreadyInstalled
+// only checks for php<v> on PATH, so a version pulled in as a dependency,
+// apt-installed by hand without -mysql, or left partial by an interrupted
+// install can satisfy that check yet still lack mysqli — and a migrated domain
+// binding to its pool then 500s (GH #531). dpkg-checks each package first so a
+// complete version is a no-op (no apt invocation).
+func ensureRequiredPHPExts(ctx context.Context, version string) error {
+	var missing []string
+	for _, ext := range phpRequiredExts {
+		pkg := fmt.Sprintf("php%s-%s", version, ext)
+		if isPkgInstalled(pkg) {
+			continue
+		}
+		if !probePackage(pkg) {
+			continue // not in apt sources for this version — mirror base-install skip
+		}
+		missing = append(missing, pkg)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- installPackages(missing) }()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("timeout installing %v", missing)
+	case err := <-done:
+		return err
+	}
+}
+
+// ensureRequiredPHPExtsFunc is a seam for tests.
+var ensureRequiredPHPExtsFunc = ensureRequiredPHPExts
 
 // probePackage checks if an apt package exists via apt-cache show.
 func probePackage(pkg string) bool {
@@ -209,8 +262,17 @@ func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
-	// If already installed, return current status
+	// If already installed, return current status — but first backfill any
+	// missing required extension. isFPMAlreadyInstalled only proves php<v> is
+	// on PATH; the runtime can still be incomplete (no php<v>-mysql), which is
+	// exactly how a migrated domain ends up 500ing on mysqli (GH #531).
 	if isFPMAlreadyInstalled(p.Version) {
+		if err := ensureRequiredPHPExtsFunc(ctx, p.Version); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("ensure required extensions for php%s: %v", p.Version, err),
+			}
+		}
 		return phpVersionInstallResponse{
 			Version:    p.Version,
 			Installed:  isInstalledPHPVersion(p.Version),
@@ -239,7 +301,7 @@ func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any,
 		fmt.Sprintf("php%s-fpm", p.Version),
 		fmt.Sprintf("php%s-cli", p.Version),
 	}
-	requiredExts := []string{"mysql", "mbstring", "zip", "gd", "curl", "xml"}
+	requiredExts := phpRequiredExts
 	var missingRequired []string
 	for _, ext := range requiredExts {
 		pkg := fmt.Sprintf("php%s-%s", p.Version, ext)

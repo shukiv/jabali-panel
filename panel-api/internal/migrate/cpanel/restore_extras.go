@@ -235,6 +235,21 @@ func ImportExtras(
 					continue
 				}
 			}
+			// Ensure the source PHP version — and its required extensions,
+			// notably php<v>-mysql — is actually installed before applying the
+			// pool. php.pool.apply only writes FPM config and hard-fails if the
+			// version dir is absent; and even a present version can lack mysqli,
+			// which 500s every migrated site's mysqli_connect() (GH #531).
+			// php.version.install is idempotent and backfills missing exts, so a
+			// migrated Hestia/cPanel domain on e.g. 8.2 gets a complete runtime
+			// even when the box shipped only the default version. Non-fatal:
+			// pool.apply below still reports a clear error if the version is
+			// genuinely uninstallable.
+			if _, err := agentCli.Call(ctx, "php.version.install", map[string]any{
+				"version": version,
+			}); err != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("php_version_install_skip:%s:%v", version, err))
+			}
 			// Ensure FPM pool exists at OS level.
 			if _, err := agentCli.Call(ctx, "php.pool.apply", map[string]any{
 				"username":        targetUsername,
