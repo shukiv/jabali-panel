@@ -1,0 +1,50 @@
+# Monthly dependency review (GH #613/#614). Instead of reactive per-library
+# "bump X" issues, this opens ONE consolidated review issue on the 1st of each
+# month covering all three pinning surfaces (install.sh pins + go.mod + npm).
+# It only REPORTS — a human still bumps + E2Es + merges. See scripts/deps-check.sh.
+name: Monthly dependency review
+
+on:
+  schedule:
+    - cron: "0 6 1 * *" # 06:00 UTC on the 1st of every month
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  review:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate dependency report
+        run: bash scripts/deps-check.sh --markdown > "$RUNNER_TEMP/deps-report.md"
+
+      - name: Open or update the monthly review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          MONTH="$(date -u +'%Y-%m')"
+          TITLE="Monthly dependency review — $MONTH"
+          BODY="$RUNNER_TEMP/deps-body.md"
+          {
+            echo "_Auto-generated on $(date -u +'%Y-%m-%d') by \`.github/workflows/monthly-deps.yml\`. Bump each upgrade, E2E on a box (framework bumps especially), then merge. Roll open \`deps\`-labelled bump requests into this._"
+            echo
+            cat "$RUNNER_TEMP/deps-report.md"
+          } > "$BODY"
+
+          # Idempotent label so a fresh repo doesn't fail the create.
+          gh label create deps --repo "$GITHUB_REPOSITORY" --color 0e8a16 --description "Dependency upgrades" 2>/dev/null || true
+
+          # Update the same month's issue if a re-run finds one, else create.
+          NUM="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" \
+                   --json number,title --jq "[.[] | select(.title==\"$TITLE\") | .number] | first // empty")"
+          if [[ -n "$NUM" ]]; then
+            gh issue edit "$NUM" --repo "$GITHUB_REPOSITORY" --body-file "$BODY"
+            echo "Updated existing review issue #$NUM"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$BODY" --label deps
+          fi
