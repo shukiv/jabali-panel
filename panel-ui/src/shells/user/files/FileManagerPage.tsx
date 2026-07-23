@@ -85,6 +85,7 @@ import {
   filesTree,
   filesWrite,
 } from "./filesApi";
+import { isTextEditable } from "./editability";
 import { UploadDrawer } from "./UploadDrawer";
 import type { UploadDrawerHandle } from "./UploadDrawer";
 // Monaco is ~500KB gzipped of the bundle; lazy-load it so the initial
@@ -184,21 +185,6 @@ function isImagePath(name: string): boolean {
   const i = name.lastIndexOf(".");
   if (i < 0) return false;
   return imageExtensions.has(name.slice(i).toLowerCase());
-}
-
-// EDIT_MAX_BYTES matches the server preview cap (files.read default 1 MiB).
-// Gating Edit at this size means the editor always loads the FULL file, so a
-// save can never truncate a larger file on disk.
-const EDIT_MAX_BYTES = 1024 * 1024;
-
-// isTextEditable decides whether to OFFER the per-row "Edit" item. It allows
-// ANY file small enough to load fully — dotfiles (.bashrc, .htaccess) and
-// extensionless configs included, not just whitelisted extensions. openEditor
-// still refuses real binaries (mime sniff + NUL bytes), so an accidental Edit
-// on a binary fails gracefully rather than corrupting it.
-function isTextEditable(entry: FileEntry): boolean {
-  if (entry.is_dir || entry.is_symlink) return false;
-  return entry.size > 0 && entry.size < EDIT_MAX_BYTES;
 }
 
 // Monaco language key by extension. Only common ones are mapped; other
