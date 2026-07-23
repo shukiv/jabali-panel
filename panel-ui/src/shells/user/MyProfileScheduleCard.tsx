@@ -12,7 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../apiClient";
 import { extractApiError } from "../../apiErrors";
-import { shortDateTime } from "../../utils/datetime";
+import { shortDateTimeUTC } from "../../utils/datetime";
 
 type ScheduleView = {
   exists: boolean;
@@ -99,7 +99,7 @@ export const MyProfileScheduleCard = () => {
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             {nextRun ? (
               <>
-                Your host runs your scheduled backup next at <strong>{shortDateTime(nextRun)}</strong>.
+                Your host runs your scheduled backup next at <strong>{shortDateTimeUTC(nextRun)}</strong>.
               </>
             ) : (
               <>Your host sets when scheduled backups run.</>

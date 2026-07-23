@@ -81,6 +81,7 @@ export const BackupSettingsTab = () => {
           label={t("backupsettingstab.tenant_scheduled_backup_time_cron")}
           tooltip={t("backupsettingstab.tenants_choose_what_to_back_up_and_where_you")}
           rules={[{ required: true, message: "A cron expression is required" }]}
+          extra="Runs in UTC (server time) — e.g. 0 3 * * * fires at 03:00 UTC. The tenant view shows the same UTC time."
         >
           <Input placeholder="0 3 * * *" style={{ fontFamily: "monospace" }} />
         </Form.Item>
