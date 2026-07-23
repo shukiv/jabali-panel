@@ -123,10 +123,16 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
   const [areas, setAreas] = useState<Record<string, boolean>>({
     websites: true, databases: true, mailboxes: true, dns: true, ssl: true, cron: true,
   });
+  // GH #633/#634: opt-in to carrying source passwords (mailboxes + MySQL users).
+  // Off by default (secure); the import reads plan.preserve.credentials.
+  const [preservePasswords, setPreservePasswords] = useState(false);
   const savePlan = async () => {
     if (!draftId) return;
     try {
-      await apiClient.put(`/admin/migrations/${draftId}/plan`, { areas });
+      await apiClient.put(`/admin/migrations/${draftId}/plan`, {
+        areas,
+        preserve: { credentials: preservePasswords },
+      });
     } catch {
       /* best-effort — import defaults to all areas if the plan didn't save */
     }
@@ -752,6 +758,22 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 Website files + databases are always imported (the site needs them). Uncheck any of the rest to skip it.
               </Typography.Text>
+            </Card>
+          )}
+          {sourceKind !== "wordpress_ssh" && sourceKind !== "wordpress_plugin" && (
+            // GH #633 (MySQL user passwords) + #634 (mailbox passwords): make the
+            // credential carry-over reachable from the wizard. Off by default.
+            <Card size="small" title="Passwords" style={{ marginTop: 12 }}>
+              <Checkbox checked={preservePasswords} onChange={(e) => setPreservePasswords(e.target.checked)}>
+                Carry over source passwords (mailboxes + database users)
+              </Checkbox>
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginTop: 8 }}
+                message="Off by default"
+                description="Leave off unless this is a trusted, same-owner migration. When on, each mailbox and MySQL user keeps its ORIGINAL password (carried as a hash), so mail clients and apps that rely on the DB config keep working without a reset. When off, they get fresh passwords the owner must reset."
+              />
             </Card>
           )}
           <Collapse
