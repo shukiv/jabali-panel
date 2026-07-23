@@ -64,6 +64,14 @@ jobs:
         run: cd panel-ui && npm run lint
       - name: vitest
         run: cd panel-ui && npm test
+      # Production build gate. vitest uses its own transform and never runs the
+      # rollup/vite production build, so a build-only break — e.g. a bumped
+      # dep that breaks `monaco-editor/…editor.worker?worker` resolution — passes
+      # vitest yet fails the real build (caught only at deploy). The Playwright
+      # job does build the SPA, but that job is slower and can be skipped under
+      # runner contention; gate the build here too so it fails fast and always.
+      - name: build (production)
+        run: cd panel-ui && NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
   e2e:
     name: Playwright E2E
