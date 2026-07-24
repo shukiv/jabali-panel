@@ -1248,6 +1248,19 @@ jabali db root-password [flags]
 
 - `--engine` — mariadb|postgres (default `mariadb`)
 
+#### `jabali db sso`
+
+Mint a single-use phpMyAdmin/Adminer SSO login URL for a database
+
+```
+jabali db sso --database <id> [--engine mariadb|postgres] [flags]
+```
+
+**Flags:**
+
+- `--database` — database id (ULID)
+- `--engine` — optional engine guard: mariadb|postgres (defaults to the database's engine)
+
 #### `jabali db user`
 
 Manage database users (mariadb / postgres)
