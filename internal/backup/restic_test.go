@@ -5,10 +5,63 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
+
+// exit3Err returns a genuine *exec.ExitError with code 3 (what restic
+// returns when at least one source file could not be read).
+func exit3Err(t *testing.T) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit 3").Run()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 3 {
+		t.Fatalf("could not synthesize an exit-3 error: %v", err)
+	}
+	return err
+}
+
+// GH #454: restic exit 3 (unreadable file) still produces a valid snapshot
+// + summary. Backup must return that summary as success-with-warnings, not
+// discard the whole stage.
+func TestBackup_Exit3IsPartialReadNotFailure(t *testing.T) {
+	stdout := `{"message_type":"error","error":{"Op":"open","Path":"/home/u/secret","Err":13},"item":"/home/u/secret"}` + "\n" +
+		`{"message_type":"summary","data_added":2002159,"total_bytes_processed":2000009,"snapshot_id":"abc123"}` + "\n"
+	r := &fakeRunner{stdout: []byte(stdout), err: exit3Err(t)}
+	c := newClient(t, r)
+
+	s, err := c.Backup(context.Background(), BackupOpts{Paths: []string{"/home/u"}})
+	if err != nil {
+		t.Fatalf("exit 3 should not be a hard error, got %v", err)
+	}
+	if s.TotalBytesProcessed != 2000009 || s.SnapshotID != "abc123" {
+		t.Errorf("summary not parsed from exit-3 output: %+v", s)
+	}
+	if len(s.Warnings) == 0 {
+		t.Error("expected read warnings on a partial-read backup")
+	}
+}
+
+// Exit 3 with no summary means no snapshot was created — a real failure.
+func TestBackup_Exit3NoSummaryFails(t *testing.T) {
+	r := &fakeRunner{stdout: []byte(`{"message_type":"status"}` + "\n"), err: exit3Err(t)}
+	c := newClient(t, r)
+	if _, err := c.Backup(context.Background(), BackupOpts{Paths: []string{"/x"}}); err == nil {
+		t.Error("exit 3 with no summary must fail")
+	}
+}
+
+// Any other non-zero exit (e.g. fatal error) stays a failure.
+func TestBackup_NonExit3StaysFailure(t *testing.T) {
+	summary := `{"message_type":"summary","total_bytes_processed":10,"snapshot_id":"x"}` + "\n"
+	r := &fakeRunner{stdout: []byte(summary), err: errors.New("restic died")}
+	c := newClient(t, r)
+	if _, err := c.Backup(context.Background(), BackupOpts{Paths: []string{"/x"}}); err == nil {
+		t.Error("a non-exit-3 runner error must propagate even if stdout has a summary")
+	}
+}
 
 // fakeRunner records every Run call and returns canned responses.
 type fakeRunner struct {

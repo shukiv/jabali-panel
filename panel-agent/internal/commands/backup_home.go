@@ -41,11 +41,12 @@ type backupHomeParams struct {
 }
 
 type backupHomeResult struct {
-	SnapshotID     string `json:"snapshot_id"`
-	ParentSnapshot string `json:"parent_snapshot,omitempty"`
-	BytesAdded     uint64 `json:"bytes_added"`
-	BytesTotal     uint64 `json:"bytes_total"`
-	LogicalBytes   uint64 `json:"logical_bytes"`
+	SnapshotID     string   `json:"snapshot_id"`
+	ParentSnapshot string   `json:"parent_snapshot,omitempty"`
+	BytesAdded     uint64   `json:"bytes_added"`
+	BytesTotal     uint64   `json:"bytes_total"`
+	LogicalBytes   uint64   `json:"logical_bytes"`
+	Warnings       []string `json:"warnings,omitempty"`
 }
 
 func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -127,6 +128,7 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		BytesAdded:   summary.DataAdded,
 		BytesTotal:   summary.TotalBytesProcessed,
 		LogicalBytes: logical,
+		Warnings:     summary.Warnings,
 	}, nil
 }
 

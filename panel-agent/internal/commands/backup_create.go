@@ -282,6 +282,10 @@ func runHomeStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 	st.SnapshotID = res.SnapshotID
 	st.BytesAdded = res.BytesAdded
 	st.BytesTotal = res.BytesTotal
+	// restic exit 3 (unreadable files) is captured as a usable snapshot
+	// with warnings, not a stage failure (GH #454). Surface which files
+	// were skipped so the tenant knows the backup is complete-but-partial.
+	st.Warnings = res.Warnings
 	return st
 }
 

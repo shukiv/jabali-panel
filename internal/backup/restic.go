@@ -187,6 +187,10 @@ type BackupSummary struct {
 	TotalBytesProcessed uint64  `json:"total_bytes_processed"`
 	TotalDuration       float64 `json:"total_duration"`
 	SnapshotID          string  `json:"snapshot_id"`
+	// Warnings is populated by us (not restic JSON) when restic exits 3
+	// — "at least one source file could not be read". The snapshot is
+	// still created and usable; these name the files that were skipped.
+	Warnings []string `json:"-"`
 }
 
 // BackupOpts controls one `restic backup` invocation.
@@ -228,35 +232,73 @@ func (c *Client) Backup(ctx context.Context, opts BackupOpts) (*BackupSummary, e
 		args = append(args, opts.Paths...)
 	}
 	stdout, _, err := c.run(ctx, args, opts.Stdin)
+	// restic exit code 3 means "at least one source file could not be
+	// read" (permission denied, a file that vanished or changed mid-read,
+	// a socket/pipe, …). Crucially the snapshot IS still created and the
+	// summary IS emitted — the backup is complete for every readable file.
+	// Treat it as success-with-warnings so a single unreadable file in a
+	// tenant's home does not discard the entire (valid) home snapshot and
+	// make a full account backup silently drop its files (GH #454). Any
+	// other non-zero exit is a real failure.
+	partialRead := false
 	if err != nil {
-		return nil, err
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 3 {
+			partialRead = true
+		} else {
+			return nil, err
+		}
 	}
 	// `backup --json` emits one JSON object per line; the last line is
-	// the summary. Walk lines until we find message_type=summary.
+	// the summary. Walk lines until we find message_type=summary and
+	// collect message_type=error items as read warnings.
 	var summary *BackupSummary
+	var readWarnings []string
 	for _, line := range bytes.Split(stdout, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
 		var probe struct {
 			MessageType string `json:"message_type"`
+			Item        string `json:"item"`
 		}
 		if err := json.Unmarshal(line, &probe); err != nil {
 			continue // skip non-JSON debug lines
 		}
-		if probe.MessageType == "summary" {
+		switch probe.MessageType {
+		case "summary":
 			var s BackupSummary
 			if err := json.Unmarshal(line, &s); err != nil {
 				return nil, fmt.Errorf("parse backup summary: %w", err)
 			}
 			summary = &s
+		case "error":
+			if probe.Item != "" && len(readWarnings) < maxReadWarnings {
+				readWarnings = append(readWarnings, "could not read "+probe.Item)
+			}
 		}
 	}
 	if summary == nil {
+		// No summary even on exit 3 means restic did not complete a
+		// snapshot — that is a genuine failure, not a partial read.
+		if partialRead {
+			return nil, errors.New("backup: restic exited 3 with no summary (no snapshot created)")
+		}
 		return nil, errors.New("backup: no summary line in restic --json output")
+	}
+	if partialRead {
+		if len(readWarnings) == 0 {
+			readWarnings = []string{"at least one source file could not be read"}
+		}
+		summary.Warnings = readWarnings
 	}
 	return summary, nil
 }
+
+// maxReadWarnings caps how many unreadable-file paths we attach to a
+// partial-read summary so a home dir with thousands of unreadable files
+// (e.g. a broken mount) can't bloat the manifest.
+const maxReadWarnings = 25
 
 // RestoreOpts controls one `restic restore` invocation.
 type RestoreOpts struct {
