@@ -324,17 +324,39 @@ func insertOneMailboxRow(
 	if exErr != nil {
 		return []string{fmt.Sprintf("mailbox_rows: exists check %s@%s: %v", localPart, domainName, exErr)}
 	}
-	if exists {
-		return []string{fmt.Sprintf("mailbox_rows: %s@%s already exists", localPart, domainName)}
-	}
 	// JAB-88: preserve the source mailbox password when the operator opted in
 	// (--preserve-source-state) AND the source carries a Stalwart-verifiable
 	// bcrypt hash (Hestia stores {BLF-CRYPT}$2y$… — Stalwart's SQL directory
 	// authenticates $2a/$2b/$2y bcrypt, live-verified). Otherwise set a fresh
 	// random password and warn LOUDLY: the tenant is locked out until reset, and
 	// silent lockout was the reported bug.
-	passwordHash := srcHash
 	preserved := preserveCreds && srcHash != ""
+	if exists {
+		// GH #634: an earlier migration — or a run before the operator ticked
+		// "carry over source passwords" — already created this mailbox with a
+		// FRESH random password. Skipping here meant re-running the migration with
+		// --preserve-source-state was a no-op: the tenant stayed locked out of
+		// their ORIGINAL password (johnnyq's report). When preserve is now on and
+		// the source carries a verifiable hash, retrofit it onto the existing row
+		// instead of skipping.
+		if !preserved {
+			return []string{fmt.Sprintf("mailbox_rows: %s@%s already exists", localPart, domainName)}
+		}
+		cur, fErr := mbRepo.FindByEmail(ctx, localPart+"@"+domainName)
+		if fErr != nil || cur == nil {
+			return []string{fmt.Sprintf("mailbox_rows: %s@%s exists but password retrofit lookup failed: %v", localPart, domainName, fErr)}
+		}
+		if cur.PasswordHash == srcHash {
+			return []string{fmt.Sprintf("mailbox_rows: %s@%s already exists with the SOURCE password", localPart, domainName)}
+		}
+		if uErr := mbRepo.UpdatePasswordHash(ctx, cur.ID, srcHash); uErr != nil {
+			return []string{fmt.Sprintf("mailbox_rows: %s@%s exists; SOURCE-password retrofit failed: %v", localPart, domainName, uErr)}
+		}
+		return []string{fmt.Sprintf(
+			"mailbox_rows: %s@%s already existed — SOURCE password RE-APPLIED (--preserve-source-state); the tenant's original mail password now works",
+			localPart, domainName)}
+	}
+	passwordHash := srcHash
 	if !preserved {
 		tempPwd := ids.NewULID()
 		hash, hErr := bcrypt.GenerateFromPassword([]byte(tempPwd), bcrypt.DefaultCost)

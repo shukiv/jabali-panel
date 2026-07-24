@@ -68,6 +68,13 @@ type ParsedTarball struct {
 	// not in scope here, etc.). Used to populate the manifest's
 	// Warnings slice.
 	Skipped []string
+	// CompatUsers, when set by a source adapter, are the ORIGINAL source
+	// MySQL users to recreate with their native password hash (preserve-gated
+	// in ImportDatabases). cPanel/WHM/CloudPanel/Plesk read these from the
+	// cpmove `mysql.sql` grants inline; HestiaCP has no mysql.sql, so its
+	// adapter pre-populates this from the backup's per-DB db.conf MD5= hashes
+	// (GH #633).
+	CompatUsers []CompatUser
 }
 
 // Limits parser behaviour. Tarballs from a malicious source could

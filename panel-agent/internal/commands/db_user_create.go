@@ -84,8 +84,19 @@ func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		// Migration-compat path. Hash format already validated above;
 		// no escaping needed (hex + '*' is shell+SQL-safe and the
 		// MariaDB grammar requires literal single-quotes around it).
+		//
+		// CREATE ... IF NOT EXISTS keeps resume idempotent, but on its own it
+		// LEAVES an existing user's password untouched — and jabali's own dump
+		// loop may have already created a panel-managed user of the SAME name
+		// (whenever the target jabali username matches the source account
+		// prefix, e.g. johnnyq_wp -> johnnyq_wp). Without the ALTER the source
+		// hash then never lands and the migrated app authenticates with a fresh
+		// random password instead of its original one (GH #633). ALTER forces
+		// the hash on whether the user was just created or pre-existed; it is a
+		// harmless re-set in the freshly-created case.
 		sql = fmt.Sprintf(
-			"CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY PASSWORD '%s'",
+			"CREATE USER IF NOT EXISTS %[1]s@'localhost' IDENTIFIED BY PASSWORD '%[2]s'; "+
+				"ALTER USER %[1]s@'localhost' IDENTIFIED BY PASSWORD '%[2]s'",
 			escapedUsername,
 			p.PasswordHash,
 		)

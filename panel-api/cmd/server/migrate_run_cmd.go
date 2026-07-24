@@ -577,6 +577,21 @@ failed stage. Already-done stages are skipped.`,
 								"/home", *user.Username, "domains", name, "public_html")
 						}
 					}
+					// GH #633: HestiaCP keeps each DB user's mysql_native_password
+					// hash in db/<db>/hestia/db.conf (MD5= field). Recreate the
+					// ORIGINAL DB users with those hashes (preserve-gated in
+					// restore_dbs) so migrated apps keep their hardcoded db creds.
+					if creds := hestiacp.ParseDBCredentials(extractDir); len(creds) > 0 {
+						parsed.CompatUsers = make([]cpanel.CompatUser, 0, len(creds))
+						for _, c := range creds {
+							parsed.CompatUsers = append(parsed.CompatUsers, cpanel.CompatUser{
+								Name:  c.User,
+								Host:  "localhost",
+								Hash:  c.Hash,
+								Grant: []cpanel.CompatGrant{{SourceDB: c.DBName, Privs: []string{"ALL"}}},
+							})
+						}
+					}
 				} else if _, statErr := os.Stat(hTarPath); statErr == nil {
 					// GH #327: the tar is PRESENT but unparseable — do NOT
 					// silently fall through to an empty import + mark the job

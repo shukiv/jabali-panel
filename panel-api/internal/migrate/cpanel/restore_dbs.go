@@ -313,12 +313,22 @@ func ImportDatabases(
 	// Only recreate the original-hash compatibility users when the operator opts
 	// in (preserve.Credentials / --preserve-source-state) — for apps with
 	// hardcoded original creds. Default: quarantine (record, don't create).
+	// Source compat users come from the cpmove `mysql.sql` grants
+	// (cPanel/WHM/CloudPanel/Plesk) OR, when a source adapter pre-populated
+	// them, parsed.CompatUsers — HestiaCP keeps the native password hash in the
+	// backup's per-DB db.conf MD5= field, not a mysql.sql (GH #633).
 	grantsPath := filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "mysql.sql")
-	if compatUsers, gerr := ParseMySQLGrants(grantsPath); gerr == nil && len(compatUsers) > 0 && !preserveCredentials {
+	compatUsers := parsed.CompatUsers
+	if len(compatUsers) == 0 {
+		if cu, gerr := ParseMySQLGrants(grantsPath); gerr == nil {
+			compatUsers = cu
+		}
+	}
+	if len(compatUsers) > 0 && !preserveCredentials {
 		res.Skipped = append(res.Skipped, fmt.Sprintf(
 			"compat_users: %d source MySQL user(s) with original password hashes NOT recreated (opt in with --preserve-source-state; apps using the panel-managed user are unaffected)",
 			len(compatUsers)))
-	} else if compatUsers, gerr := ParseMySQLGrants(grantsPath); gerr == nil && len(compatUsers) > 0 {
+	} else if len(compatUsers) > 0 {
 		compatCreated := 0
 		for _, u := range compatUsers {
 			if !IsNativePasswordHash(u.Hash) {
