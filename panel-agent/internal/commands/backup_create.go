@@ -500,6 +500,12 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		// at top level) or when the manifest can't be read.
 		BytesAdded uint64 `json:"bytes_added,omitempty"`
 		BytesTotal uint64 `json:"bytes_total,omitempty"`
+		// FailedStages names the manifest stages whose status=failed so the
+		// finalizer can downgrade the job to "partial" instead of reporting
+		// a full "succeeded" backup that is silently missing its home dir
+		// (GH #454). Warnings carries the per-stage failure reasons.
+		FailedStages []string `json:"failed_stages,omitempty"`
+		Warnings     []string `json:"warnings,omitempty"`
 	}{
 		JobID:     req.JobID,
 		Snapshots: snaps,
@@ -538,10 +544,14 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 				} `json:"restic"`
 				// stages[] also carries per-stage byte counts; sum them as
 				// a fallback when Restic.BytesAdded is zero (some older
-				// backup paths leave the top-level zero).
+				// backup paths leave the top-level zero). name/status/warnings
+				// let us detect a failed stage (GH #454).
 				Stages []struct {
-					BytesAdded uint64 `json:"bytes_added"`
-					BytesTotal uint64 `json:"bytes_total"`
+					Name       string   `json:"name"`
+					Status     string   `json:"status"`
+					Warnings   []string `json:"warnings"`
+					BytesAdded uint64   `json:"bytes_added"`
+					BytesTotal uint64   `json:"bytes_total"`
 				} `json:"stages"`
 			}
 			if err := json.Unmarshal(stripTar(raw), &m); err == nil {
@@ -551,6 +561,17 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 					for _, st := range m.Stages {
 						resp.BytesAdded += st.BytesAdded
 						resp.BytesTotal += st.BytesTotal
+					}
+				}
+				// A "skipped" stage is intentional (e.g. mail with no
+				// mailboxes, or home under content=database) — only a
+				// "failed" stage means the backup is incomplete.
+				for _, st := range m.Stages {
+					if st.Status == backup.StageStatusFailed {
+						resp.FailedStages = append(resp.FailedStages, st.Name)
+						for _, w := range st.Warnings {
+							resp.Warnings = append(resp.Warnings, st.Name+": "+w)
+						}
 					}
 				}
 			}

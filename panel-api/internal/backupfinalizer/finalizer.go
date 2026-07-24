@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
@@ -81,6 +82,11 @@ type agentStatus struct {
 	} `json:"snapshots"`
 	BytesAdded uint64 `json:"bytes_added"`
 	BytesTotal uint64 `json:"bytes_total"`
+	// FailedStages names manifest stages whose status=failed. A backup
+	// whose manifest snapshot exists but whose home/db/mail stage failed
+	// is incomplete and must NOT report a plain "succeeded" (GH #454).
+	FailedStages []string `json:"failed_stages"`
+	Warnings     []string `json:"warnings"`
 }
 
 func (f *Finalizer) tickOnce(ctx context.Context) {
@@ -157,11 +163,26 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 			break
 		}
 	}
+	// A failed stage (e.g. the home dir under a repo lock) leaves the
+	// manifest snapshot present but the backup incomplete. Downgrade to
+	// "partial" and record why, so a tenant never trusts + restores a
+	// full backup that is silently missing its files (GH #454).
+	status := models.BackupJobStatusSucceeded
+	var warningsJSON json.RawMessage
+	errText := ""
+	if len(st.FailedStages) > 0 {
+		status = models.BackupJobStatusPartial
+		errText = "incomplete backup — stage(s) failed: " + strings.Join(st.FailedStages, ", ")
+		if b, mErr := json.Marshal(st.Warnings); mErr == nil {
+			warningsJSON = b
+		}
+	}
 	if err := f.deps.Jobs.MarkFinished(ctx, j.ID,
-		models.BackupJobStatusSucceeded,
-		manifestSnapID, "", st.BytesAdded, st.BytesTotal, nil, nil, ""); err != nil {
-		logger.Error("mark succeeded failed", "err", err)
+		status,
+		manifestSnapID, "", st.BytesAdded, st.BytesTotal, nil, warningsJSON, errText); err != nil {
+		logger.Error("mark finished failed", "err", err, "status", status)
 		return
 	}
-	logger.Info("backup finalized", "snapshot_id", manifestSnapID)
+	logger.Info("backup finalized", "snapshot_id", manifestSnapID,
+		"status", status, "failed_stages", st.FailedStages)
 }

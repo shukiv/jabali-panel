@@ -4,12 +4,12 @@
 // scoped via /me/backups (auth-gated to caller's user_id).
 import { useTranslation } from "react-i18next";
 import { downloadUrl } from "../../utils/download";
-import { Button, Card, Grid, Select, Space, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Grid, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
 import { RowActions } from "../../components/RowActions";
-import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SaveOutlined } from "@icons";
+import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from "@icons";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -26,6 +26,7 @@ type MyBackup = {
   bytes_total: number;
   bytes_added: number;
   created_at: string;
+  error_text?: string;
 };
 
 const statusColor = (status: string): string => {
@@ -180,9 +181,21 @@ export const MyProfileBackupCard = () => {
             ),
           },
           {
+            // A "partial" backup completed but a stage (e.g. the home dir)
+            // failed — surface the reason so a tenant doesn't restore an
+            // incomplete backup thinking it is whole (GH #454).
             title: "Status",
             dataIndex: "status",
-            render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag>,
+            render: (s: string, row: MyBackup) => (
+              <Space size={4}>
+                <Tag color={statusColor(s)}>{s}</Tag>
+                {row.error_text && (
+                  <Tooltip title={row.error_text}>
+                    <WarningOutlined style={{ color: "#faad14" }} />
+                  </Tooltip>
+                )}
+              </Space>
+            ),
           },
           {
             title: "Size",
