@@ -36,6 +36,10 @@ volumes:
     container_path: /home/frappe/frappe-bench/sites
   - name: logs
     container_path: /home/frappe/frappe-bench/logs
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
   - name: db-data
     container_path: /var/lib/mysql
   - name: redis-queue-data

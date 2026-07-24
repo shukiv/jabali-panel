@@ -26,6 +26,10 @@ volumes:
     container_path: /flarum/app/extensions
   - name: storagelogs
     container_path: /flarum/app/storage/logs
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
   - name: db
     container_path: /var/lib/mysql
 

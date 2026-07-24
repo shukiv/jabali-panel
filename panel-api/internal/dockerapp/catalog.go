@@ -93,6 +93,23 @@ type Resources struct {
 type Volume struct {
 	Name          string `yaml:"name" json:"name"`
 	ContainerPath string `yaml:"container_path" json:"container_path"`
+	// Rotate marks this volume as a persistent LOG directory whose files
+	// bypass Docker's journald driver + the host logrotate drop-in and so
+	// grow tenant disk unbounded (JAB-121). When set, the agent writes a host
+	// logrotate snippet for <DataRoot>/<name>/*.log at install time.
+	Rotate *VolumeRotate `yaml:"rotate,omitempty" json:"rotate,omitempty"`
+}
+
+// VolumeRotate is a persistent log volume's retention policy (JAB-121).
+type VolumeRotate struct {
+	// RetentionDays is how many rotated files logrotate keeps (its `rotate`).
+	RetentionDays int `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
+	// MaxSize forces rotation when a single log exceeds this size (logrotate
+	// `maxsize`, e.g. "50M"); empty = daily-only.
+	MaxSize string `yaml:"max_size,omitempty" json:"max_size,omitempty"`
+	// Mode is "copytruncate" (default — safe while a container holds the log
+	// file open) or "create".
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
 type PortSpec struct {

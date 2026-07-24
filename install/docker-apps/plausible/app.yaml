@@ -27,6 +27,10 @@ volumes:
     container_path: /var/lib/clickhouse
   - name: clickhouse-logs
     container_path: /var/log/clickhouse-server
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
 
 ports:
   - name: http

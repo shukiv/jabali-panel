@@ -32,6 +32,10 @@ volumes:
     container_path: /var/lib/postgresql
   - name: logs
     container_path: /var/log/onlyoffice
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
 
 ports:
   - name: http

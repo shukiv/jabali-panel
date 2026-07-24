@@ -602,8 +602,19 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 	if h.cfg.Agent != nil {
 		_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusInstalling, nil)
 		volumeNames := make([]string, 0, len(entry.Volumes))
+		logRotate := make([]map[string]any, 0)
 		for _, v := range entry.Volumes {
 			volumeNames = append(volumeNames, v.Name)
+			// JAB-121: declared persistent log volumes get a host logrotate
+			// snippet so their file logs (which bypass journald) stay bounded.
+			if v.Rotate != nil {
+				logRotate = append(logRotate, map[string]any{
+					"volume":         v.Name,
+					"retention_days": v.Rotate.RetentionDays,
+					"max_size":       v.Rotate.MaxSize,
+					"mode":           v.Rotate.Mode,
+				})
+			}
 		}
 		installParams := map[string]any{
 			"slug":                        instanceSlug,
@@ -611,6 +622,7 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 			"env_file":                    buildEnvFile(envMap),
 			"volumes":                     volumeNames,
 			"volume_owner":                entry.VolumeOwner,
+			"log_rotate":                  logRotate,
 			"wait_healthy":                true,
 			"healthcheck_timeout_seconds": 300,
 		}

@@ -73,7 +73,19 @@ type dockerAppInstallParams struct {
 	TenantValidate bool     `json:"tenant_validate,omitempty"`
 	TenantCaps     []string `json:"tenant_caps,omitempty"`
 	// TenantCgroup is the exact owner slice the compose must declare (Gitea #525).
-	TenantCgroup   string   `json:"tenant_cgroup,omitempty"`
+	TenantCgroup string `json:"tenant_cgroup,omitempty"`
+	// LogRotate (JAB-121) lists persistent log volumes to cover with a host
+	// logrotate snippet at install so their file logs — which bypass Docker's
+	// journald driver — stay bounded on tenant disk. Empty = no snippet.
+	LogRotate []dockerAppLogRotate `json:"log_rotate,omitempty"`
+}
+
+// dockerAppLogRotate is one persistent log volume's retention policy (JAB-121).
+type dockerAppLogRotate struct {
+	Volume        string `json:"volume"`
+	RetentionDays int    `json:"retention_days,omitempty"`
+	MaxSize       string `json:"max_size,omitempty"`
+	Mode          string `json:"mode,omitempty"`
 }
 
 type dockerAppInstallResponse struct {
@@ -122,6 +134,15 @@ func dockerAppInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		if err := os.MkdirAll(vd, 0o750); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v", vd, err)}
 		}
+	}
+
+	// JAB-121: install a host logrotate snippet for declared persistent log
+	// volumes so their file logs (which bypass Docker's journald driver) stay
+	// bounded on tenant disk. Best-effort: a logrotate write failure must NOT
+	// fail the install — the app still works, the logs just are not rotated yet
+	// (a re-install/update re-asserts the snippet).
+	if err := writeDockerAppLogrotate(p.Slug, dir, p.LogRotate); err != nil {
+		fmt.Fprintf(os.Stderr, "docker_app.install: logrotate snippet for %s: %v\n", p.Slug, err)
 	}
 
 	// Chown the data root + each volume subdir so the container can write its
@@ -236,7 +257,7 @@ type dockerAppLifecycleParams struct {
 	TenantValidate bool     `json:"tenant_validate,omitempty"`
 	TenantCaps     []string `json:"tenant_caps,omitempty"`
 	// TenantCgroup is the exact owner slice the compose must declare (Gitea #525).
-	TenantCgroup   string   `json:"tenant_cgroup,omitempty"`
+	TenantCgroup string `json:"tenant_cgroup,omitempty"`
 }
 
 type dockerAppLifecycleResponse struct {
@@ -304,6 +325,8 @@ func dockerAppDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, err
 	}
 	dir := filepath.Join(dockerAppDataRoot, p.Slug)
+	// JAB-121: drop this app's host logrotate snippet (best-effort).
+	removeDockerAppLogrotate(p.Slug)
 	// docker compose down. -v removes named volumes too; we use bind
 	// mounts under DataRoot so this is mostly defensive. A `down` failure
 	// is remembered, NOT returned early: a failed/half-broken install still
