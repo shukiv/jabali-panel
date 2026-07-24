@@ -266,3 +266,27 @@ export async function filesDelete(path: string, recursive = false): Promise<void
     params: { path, ...(recursive ? { recursive: "true" } : {}) },
   });
 }
+
+// filesDu computes REAL recursive sizes (GH #657) for a directory's children —
+// unlike files.list, which reports a folder's inode size. On-demand only
+// (expensive on large trees). Reuses the disk-usage endpoint, which runs the
+// same filesafe-scoped `files.du` agent verb, so no new route is needed.
+export type FilesDuEntry = {
+  name: string;
+  is_dir: boolean;
+  size: number;
+  has_subdirs: boolean;
+};
+
+export type FilesDuResponse = {
+  path: string;
+  total: number;
+  entries: FilesDuEntry[];
+};
+
+export async function filesDu(path: string): Promise<FilesDuResponse> {
+  const r = await apiClient.get<FilesDuResponse>("/me/disk-usage/files", {
+    params: { path },
+  });
+  return r.data;
+}

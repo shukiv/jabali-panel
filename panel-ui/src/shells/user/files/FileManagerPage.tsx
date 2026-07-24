@@ -33,6 +33,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Tree,
   Typography,
   message,
@@ -60,6 +61,7 @@ import {
   FolderAddOutlined,
   FolderOpenOutlined,
   FolderOutlined,
+  HddOutlined,
   LockOutlined,
   MoreOutlined,
   PlusOutlined,
@@ -84,6 +86,7 @@ import {
   filesRename,
   filesTree,
   filesWrite,
+  filesDu,
 } from "./filesApi";
 import { isTextEditable } from "./editability";
 import { UploadDrawer } from "./UploadDrawer";
@@ -328,6 +331,13 @@ export const FileManagerPage = () => {
     [setSearchParams],
   );
   const [entries, setEntries] = useState<FileEntry[]>([]);
+  // GH #657: on-demand folder sizes. Keyed by absolute path so a value
+  // survives re-sorts; cleared on navigation (sizes are per-directory).
+  // sizingAll drives the toolbar-button spinner; sizingPaths drives the
+  // per-row spinner for a single "Calculate size" action.
+  const [folderSizes, setFolderSizes] = useState<Record<string, number>>({});
+  const [sizingAll, setSizingAll] = useState(false);
+  const [sizingPaths, setSizingPaths] = useState<Set<string>>(new Set());
   const [listLoading, setListLoading] = useState(false);
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
@@ -439,7 +449,50 @@ export const FileManagerPage = () => {
     // Moving between folders wipes the selection — holding it would mean
     // a "Delete 3 items" button that referenced rows you could no longer see.
     setSelectedNames([]);
+    // Folder sizes are per-directory; drop them so a new folder starts blank.
+    setFolderSizes({});
   }, [currentPath, reloadList]);
+
+  // GH #657: compute REAL recursive sizes for every folder in the current
+  // directory in one pass (files.du returns each child's size + a total).
+  const calculateFolderSizes = useCallback(async () => {
+    if (!currentPath) return;
+    setSizingAll(true);
+    try {
+      const resp = await filesDu(currentPath);
+      const next: Record<string, number> = {};
+      for (const e of resp.entries) {
+        if (e.is_dir) next[joinPath(currentPath, e.name)] = e.size;
+      }
+      setFolderSizes((prev) => ({ ...prev, ...next }));
+    } catch (err) {
+      message.error(`Size calculation failed: ${errMessage(err)}`);
+    } finally {
+      setSizingAll(false);
+    }
+  }, [currentPath]);
+
+  // Size a single folder on demand (its recursive total).
+  const calculateOneFolder = useCallback(
+    async (entry: FileEntry) => {
+      if (!currentPath) return;
+      const full = joinPath(currentPath, entry.name);
+      setSizingPaths((prev) => new Set(prev).add(full));
+      try {
+        const resp = await filesDu(full);
+        setFolderSizes((prev) => ({ ...prev, [full]: resp.total }));
+      } catch (err) {
+        message.error(`Size calculation failed: ${errMessage(err)}`);
+      } finally {
+        setSizingPaths((prev) => {
+          const n = new Set(prev);
+          n.delete(full);
+          return n;
+        });
+      }
+    },
+    [currentPath],
+  );
 
   // Esc clears the selection — matches every desktop file manager.
   useEffect(() => {
@@ -922,6 +975,16 @@ export const FileManagerPage = () => {
   };
 
   const buildRowMenuItems = (entry: FileEntry) => [
+    ...(entry.is_dir
+      ? [
+          {
+            key: "calc-size",
+            icon: <HddOutlined />,
+            label: "Calculate size",
+            onClick: () => void calculateOneFolder(entry),
+          },
+        ]
+      : []),
     ...(!entry.is_dir
       ? [
           {
@@ -1121,7 +1184,14 @@ export const FileManagerPage = () => {
       dataIndex: "size",
       key: "size",
       width: 120,
-      render: (_: number, entry: FileEntry) => (entry.is_dir ? "—" : formatBytes(entry.size)),
+      render: (_: number, entry: FileEntry) => {
+        if (!entry.is_dir) return formatBytes(entry.size);
+        // GH #657: folders show a real size only once calculated on demand.
+        const full = currentPath ? joinPath(currentPath, entry.name) : "";
+        if (sizingPaths.has(full)) return <Spin size="small" />;
+        const computed = folderSizes[full];
+        return computed === undefined ? "—" : formatBytes(computed);
+      },
     },
     {
       title: "Perms",
@@ -1239,6 +1309,15 @@ export const FileManagerPage = () => {
               New <DownOutlined />
             </Button>
           </Dropdown>
+          <Tooltip title="Calculate the real size of every folder in this directory">
+            <Button
+              icon={<HddOutlined />}
+              loading={sizingAll}
+              onClick={() => void calculateFolderSizes()}
+            >
+              Folder sizes
+            </Button>
+          </Tooltip>
           <Button icon={<ReloadOutlined />} onClick={handleRefresh} />
         </Space>
       </div>
