@@ -4739,6 +4739,73 @@ jabali ssl set-custom [flags]
 - `--domain` — domain name or id (required)
 - `--key` — path to the private key PEM file (required)
 
+#### `jabali ssl shared`
+
+Manage shared wildcard/multi-SAN certificates (upload once, serve many domains)
+
+```
+jabali ssl shared
+```
+
+##### `jabali ssl shared attach`
+
+Attach a domain to a shared certificate (must cover the domain)
+
+```
+jabali ssl shared attach --domain <name> --cert-id <id> [flags]
+```
+
+**Flags:**
+
+- `--cert-id` — shared certificate id
+- `--domain` — domain name
+
+##### `jabali ssl shared delete`
+
+Delete a shared certificate (fails if domains are still attached)
+
+```
+jabali ssl shared delete --id <id> [flags]
+```
+
+**Flags:**
+
+- `--id` — shared certificate id
+
+##### `jabali ssl shared detach`
+
+Detach a domain from its shared certificate (reverts to LE)
+
+```
+jabali ssl shared detach --domain <name> [flags]
+```
+
+**Flags:**
+
+- `--domain` — domain name
+
+##### `jabali ssl shared list`
+
+List shared certificates + their attached-domain counts
+
+```
+jabali ssl shared list
+```
+
+##### `jabali ssl shared upload`
+
+Upload a server-wide shared certificate (agent validates + writes it)
+
+```
+jabali ssl shared upload --name <name> --cert <fullchain.pem> --key <privkey.pem> [flags]
+```
+
+**Flags:**
+
+- `--cert` — path to fullchain PEM
+- `--key` — path to private key PEM
+- `--name` — human-readable name
+
 ### `jabali sso`
 
 SSO (Single Sign-On) management commands
