@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -1633,7 +1634,12 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// only state we deliberately skip is 'revoked' — those rows have their
 	// cert_path cleared by sslRevokeForDomain so the check is belt-and-
 	// braces.
-	if r.sslCerts != nil {
+	// JAB-170: a shared-cert domain serves the ONE shared pair by path,
+	// independent of any per-domain ssl_certificates row. The agent stats the
+	// path and falls back to HTTP if the shared cert is not on disk yet.
+	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" {
+		params["ssl_cert_path"], params["ssl_key_path"] = sharedCertPaths(*domain.SharedCertificateID)
+	} else if r.sslCerts != nil {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
 		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
 		sslCancel()
@@ -1654,6 +1660,19 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain", domain.Name,
 			"err", err)
 	}
+}
+
+// sharedCertDir mirrors the agent's sslSharedRoot: /etc/jabali/ssl/shared/<id>
+// holds the ONE cert/key pair a shared certificate serves from every attached
+// domain (JAB-170).
+const sharedCertDir = "/etc/jabali/ssl/shared"
+
+// sharedCertPaths returns the on-disk fullchain + privkey paths for a shared
+// certificate id. The agent stat-guards them, so an id whose cert has not been
+// installed yet renders as HTTP-only rather than a broken :443 block.
+func sharedCertPaths(id string) (certPath, keyPath string) {
+	dir := filepath.Join(sharedCertDir, id)
+	return filepath.Join(dir, "fullchain.pem"), filepath.Join(dir, "privkey.pem")
 }
 
 // reconcileDockerAppDomain renders the proxy-only nginx vhost for a
@@ -1704,7 +1723,9 @@ func (r *Reconciler) reconcileDockerAppDomain(ctx context.Context, domain *model
 	// self-signed fallback on every ACME failure, so this populates
 	// within a tick of the domain appearing.
 	var certPath, keyPath string
-	if r.sslCerts != nil {
+	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" {
+		certPath, keyPath = sharedCertPaths(*domain.SharedCertificateID)
+	} else if r.sslCerts != nil {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
 		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
 		sslCancel()
