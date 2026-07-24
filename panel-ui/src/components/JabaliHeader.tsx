@@ -38,7 +38,7 @@ import { useTranslation } from "react-i18next";
 
 import { apiClient } from "../apiClient";
 import { useAuth } from "../auth/AuthContext";
-import { LANGUAGE_LABELS, SUPPORTED, setLanguage } from "../i18n";
+import { DISPLAY_ORDER, LANGUAGE_LABELS, setLanguage } from "../i18n";
 import { adminNav, userNav } from "../nav";
 import { JabaliTitle } from "./JabaliTitle";
 import { InstallAppButton } from "./InstallAppButton";
@@ -290,7 +290,7 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
       // someone who cannot read the language the panel is currently in. The
       // checkmark marks the active one; the others get an equal-width spacer
       // so the labels stay on a single left edge.
-      children: SUPPORTED.map((lng) => ({
+      children: DISPLAY_ORDER.map((lng) => ({
         key: `lang:${lng}`,
         label: LANGUAGE_LABELS[lng],
         icon:

@@ -501,24 +501,7 @@ function JabaliPanelCard({ check }: { check: ReturnType<typeof useJabaliCheck> }
                     key: "included",
                     label: `Included in this update (${behind})`,
                     children: (
-                      <>
-                        <ul style={{ margin: 0, paddingLeft: 18 }}>
-                          {pending.map((c) => (
-                            <li key={c.sha} style={{ marginBottom: 4 }}>
-                              <Text>{c.subject}</Text>{" "}
-                              <Text type="secondary" code style={{ fontSize: 11 }}>{c.sha}</Text>{" "}
-                              <Text type="secondary" style={{ fontSize: 11 }}>
-                                {c.date ? dayjs(c.date).format("MMM D") : ""}
-                              </Text>
-                            </li>
-                          ))}
-                        </ul>
-                        {behind > pending.length ? (
-                          <Text type="secondary" style={{ fontSize: 11 }}>
-                            + {behind - pending.length} more…
-                          </Text>
-                        ) : null}
-                      </>
+                      <CommitList commits={pending} truncatedMore={behind - pending.length} />
                     ),
                   },
                 ]
@@ -528,19 +511,7 @@ function JabaliPanelCard({ check }: { check: ReturnType<typeof useJabaliCheck> }
                   {
                     key: "recent",
                     label: "Recent changes",
-                    children: (
-                      <ul style={{ margin: 0, paddingLeft: 18 }}>
-                        {commits.map((c) => (
-                          <li key={c.sha} style={{ marginBottom: 4 }}>
-                            <Text>{c.subject}</Text>{" "}
-                            <Text type="secondary" code style={{ fontSize: 11 }}>{c.sha}</Text>{" "}
-                            <Text type="secondary" style={{ fontSize: 11 }}>
-                              {c.date ? dayjs(c.date).format("MMM D") : ""}
-                            </Text>
-                          </li>
-                        ))}
-                      </ul>
-                    ),
+                    children: <CommitList commits={commits} />,
                   },
                 ]
               : []),
@@ -548,6 +519,57 @@ function JabaliPanelCard({ check }: { check: ReturnType<typeof useJabaliCheck> }
         />
       ) : null}
     </Card>
+  );
+}
+
+// CommitList (JAB-172) renders a pending/recent commit list capped at `cap`
+// with an in-place Show more/less toggle, so a host that has drifted weeks
+// behind does not bury the rest of the Updates page under a wall of commits.
+// `truncatedMore` is the SEPARATE server-side truncation count (commits beyond
+// pendingCommits() git log -50 cap); it renders only once the full available
+// list is shown, so the two never double-count.
+function CommitList({
+  commits,
+  cap = 5,
+  truncatedMore = 0,
+}: {
+  commits: { sha: string; subject: string; date?: string | null }[];
+  cap?: number;
+  truncatedMore?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? commits : commits.slice(0, cap);
+  return (
+    <>
+      <ul style={{ margin: 0, paddingLeft: 18 }}>
+        {shown.map((c) => (
+          <li key={c.sha} style={{ marginBottom: 4 }}>
+            <Text>{c.subject}</Text>{" "}
+            <Text type="secondary" code style={{ fontSize: 11 }}>
+              {c.sha}
+            </Text>{" "}
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {c.date ? dayjs(c.date).format("MMM D") : ""}
+            </Text>
+          </li>
+        ))}
+      </ul>
+      {commits.length > cap ? (
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, height: "auto", fontSize: 11 }}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Show less" : `Show more (${commits.length - cap})…`}
+        </Button>
+      ) : null}
+      {truncatedMore > 0 && (expanded || commits.length <= cap) ? (
+        <Text type="secondary" style={{ fontSize: 11, display: "block" }}>
+          + {truncatedMore} more…
+        </Text>
+      ) : null}
+    </>
   );
 }
 

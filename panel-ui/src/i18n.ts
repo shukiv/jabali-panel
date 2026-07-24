@@ -100,6 +100,20 @@ export const LANGUAGE_LABELS: Record<SupportedLng, string> = {
 /** Right-to-left scripts. Drives AntD's `direction` + the <html dir> attribute. */
 const RTL = new Set<string>(["he", "ar", "fa", "ur"]);
 
+// DISPLAY_ORDER (JAB-173) is the language-switcher render order: English
+// first (the source language), then the LTR locales in SUPPORTED order, then
+// the RTL locales (he/ar/…) grouped at the end. Derived from SUPPORTED + RTL
+// so adding a locale needs no second edit and a future RTL locale lands in the
+// trailing group automatically. SUPPORTED itself must NOT be reordered for a
+// menu concern — it backs normalise()/ANTD_LOCALES/DAYJS_LOCALES/supportedLngs.
+export const DISPLAY_ORDER: SupportedLng[] = [...SUPPORTED].sort((a, b) => {
+  if (a === DEFAULT_LNG) return -1;
+  if (b === DEFAULT_LNG) return 1;
+  const ar = RTL.has(a) ? 1 : 0;
+  const br = RTL.has(b) ? 1 : 0;
+  return ar - br; // LTR (0) before RTL (1); stable sort keeps SUPPORTED order within a group
+});
+
 const ANTD_LOCALES: Record<SupportedLng, AntdLocale> = {
   en: enUS,
   he: heIL,
