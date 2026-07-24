@@ -139,12 +139,15 @@ const (
 	SSLModeSelf   = "self"
 	SSLModeCustom = "custom"
 	SSLModeNone   = "none"
+	// SSLModeShared: a shared wildcard/multi-SAN cert (JAB-170) attached via
+	// domains.shared_certificate_id. Operator-managed like custom (no ACME).
+	SSLModeShared = "shared"
 )
 
 // ValidSSLMode reports whether s is a recognised TLS cert mode.
 func ValidSSLMode(s string) bool {
 	switch s {
-	case SSLModeLE, SSLModeSelf, SSLModeCustom, SSLModeNone:
+	case SSLModeLE, SSLModeSelf, SSLModeCustom, SSLModeNone, SSLModeShared:
 		return true
 	}
 	return false
@@ -225,7 +228,12 @@ type Domain struct {
 	// SSLEnabled is a derived shadow (mode != 'none') kept in sync on every
 	// write; the reconciler switches on SSLMode. Pinned column tag to match
 	// the other toggles.
-	SSLMode string `gorm:"column:ssl_mode;type:enum('le','self','custom','none');not null;default:'le'" json:"ssl_mode"`
+	SSLMode string `gorm:"column:ssl_mode;type:enum('le','self','custom','none','shared');not null;default:'le'" json:"ssl_mode"`
+
+	// SharedCertificateID attaches this domain to a shared wildcard/multi-SAN
+	// cert (JAB-170) when ssl_mode='shared'; NULL otherwise. FK →
+	// shared_certificates(id) ON DELETE SET NULL.
+	SharedCertificateID *string `gorm:"column:shared_certificate_id;type:char(26)" json:"shared_certificate_id,omitempty"`
 
 	// SSLState is a computed field (not persisted) that represents the actual SSL
 	// certificate state. Values: "active_le" (valid LE cert), "self_signed", "pending",
