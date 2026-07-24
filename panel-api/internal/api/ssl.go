@@ -73,6 +73,8 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 		domains.DELETE("/ssl", h.disableSSL)
 		domains.POST("/ssl/renew", h.renewSSL)
 		domains.PUT("/ssl/custom", h.installCustomSSL)
+		domains.POST("/ssl/shared", h.attachSharedCert)
+		domains.DELETE("/ssl/shared", h.detachSharedCert)
 		domains.POST("/ssl/retry", h.retrySSL)
 	}
 
@@ -84,6 +86,7 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 	// wildcard/multi-SAN cert served from many domains.
 	g.POST("/admin/certificates/shared", middleware.RequireAdmin(), h.uploadSharedCert)
 	g.GET("/admin/certificates/shared", middleware.RequireAdmin(), h.listSharedCerts)
+	g.PUT("/admin/certificates/shared/:id", middleware.RequireAdmin(), h.replaceSharedCert)
 	g.DELETE("/admin/certificates/shared/:id", middleware.RequireAdmin(), h.deleteSharedCert)
 }
 

@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -41,7 +42,7 @@ type sslInstallSharedResponse struct {
 	ExpiresAt string   `json:"expires_at"` // RFC3339
 }
 
-func sslInstallSharedHandler(_ context.Context, params json.RawMessage) (any, error) {
+func sslInstallSharedHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p sslInstallSharedParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "parse params: " + err.Error()}
@@ -71,6 +72,13 @@ func sslInstallSharedHandler(_ context.Context, params json.RawMessage) (any, er
 	}
 	if err := writeAtomic(keyPath, []byte(strings.TrimSpace(p.KeyPEM)+"\n"), 0o600); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "write key: " + err.Error()}
+	}
+
+	// Reload nginx so already-attached domains pick up the (re)uploaded pair —
+	// the "one action renews N domains" payoff. Best-effort; the vhost paths
+	// are unchanged so nginx -t stays green.
+	if testCmd := exec.CommandContext(ctx, "nginx", "-t"); testCmd.Run() == nil {
+		_ = exec.CommandContext(ctx, "nginx", "-s", "reload").Run()
 	}
 
 	return sslInstallSharedResponse{

@@ -98,7 +98,9 @@ func (m *MockSSLCertificateRepository) UpdateSelfSigned(ctx context.Context, id 
 	return args.Error(0)
 }
 
-func (m *MockSSLCertificateRepository) UpdateCustom(context.Context, string, string, string, time.Time) error { return nil }
+func (m *MockSSLCertificateRepository) UpdateCustom(context.Context, string, string, string, time.Time) error {
+	return nil
+}
 
 func (m *MockSSLCertificateRepository) UpdateAfterACMEFailure(ctx context.Context, id string, lastError string, nextRetryAt time.Time, retryCount int, fallbackCertPath, fallbackKeyPath *string, fallbackExpiresAt *time.Time) error {
 	args := m.Called(ctx, id, lastError, nextRetryAt, retryCount, fallbackCertPath, fallbackKeyPath, fallbackExpiresAt)
@@ -141,10 +143,12 @@ func (m *MockDomainRepository) FindByID(ctx context.Context, id string) (*models
 }
 
 func (m *MockDomainRepository) UpdateSSLMode(context.Context, string, string) error { return nil }
+func (m *MockDomainRepository) SetSharedCertificate(context.Context, string, *string, string) error {
+	return nil
+}
 func (m *MockDomainRepository) FindByIDs(context.Context, []string) ([]models.Domain, error) {
 	return nil, nil
 }
-
 
 func (m *MockDomainRepository) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) {
 	return 0, nil
@@ -249,7 +253,7 @@ func (m *MockDomainRepository) UpdateCacheEnabled(ctx context.Context, id string
 	return args.Error(0)
 }
 
-func (m *MockDomainRepository) UpdateCachePath(_ context.Context, _, _ string) error { return nil }
+func (m *MockDomainRepository) UpdateCachePath(_ context.Context, _, _ string) error    { return nil }
 func (m *MockDomainRepository) UpdateCacheTTL(_ context.Context, _ string, _ int) error { return nil }
 func (m *MockDomainRepository) UpdateCacheQueryAllowlist(_ context.Context, _, _ string) error {
 	return nil

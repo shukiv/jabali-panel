@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -157,4 +159,158 @@ func (h *sslHandler) deleteSharedCert(c *gin.Context) {
 	}
 	_, _ = h.cfg.Agent.Call(ctx, "ssl.delete_shared", map[string]any{"id": id})
 	c.JSON(http.StatusOK, gin.H{"deleted": id})
+}
+
+// --- attach / detach / replace (JAB-170 phase 4b) ---
+
+type attachSharedRequest struct {
+	SharedCertificateID string `json:"shared_certificate_id"`
+}
+
+// hostMatchesSAN reports whether a cert SAN covers host — x509.VerifyHostname
+// semantics: exact match, or a single-label wildcard (*.example.com matches
+// sub.example.com but NOT example.com or a.b.example.com).
+func hostMatchesSAN(san, host string) bool {
+	san = strings.ToLower(strings.TrimSpace(san))
+	host = strings.ToLower(strings.TrimSpace(host))
+	if san == "" || host == "" {
+		return false
+	}
+	if san == host {
+		return true
+	}
+	if strings.HasPrefix(san, "*.") {
+		base := san[2:]
+		if i := strings.IndexByte(host, '.'); i > 0 && host[i+1:] == base {
+			return true
+		}
+	}
+	return false
+}
+
+func sharedCertCoversHost(sansJSON *string, host string) bool {
+	if sansJSON == nil {
+		return false
+	}
+	var sans []string
+	if json.Unmarshal([]byte(*sansJSON), &sans) != nil {
+		return false
+	}
+	for _, sn := range sans {
+		if hostMatchesSAN(sn, host) {
+			return true
+		}
+	}
+	return false
+}
+
+// attachSharedCert points a domain at a shared cert (ssl_mode=shared). Ownership:
+// the caller must own the domain (loadDomainOwned) AND the cert must be
+// server-wide or theirs; the cert's SANs must cover the domain.
+func (h *sslHandler) attachSharedCert(c *gin.Context) {
+	if h.cfg.SharedCerts == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "unavailable"})
+		return
+	}
+	domain := h.loadDomainOwned(c, c.Param("id"))
+	if domain == nil {
+		return
+	}
+	var req attachSharedRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.SharedCertificateID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "shared_certificate_id_required"})
+		return
+	}
+	ctx := c.Request.Context()
+	cert, err := h.cfg.SharedCerts.FindByID(ctx, req.SharedCertificateID)
+	if err != nil || cert == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "certificate_not_found"})
+		return
+	}
+	claims := ginctx.Claims(c)
+	if cert.UserID != nil && (claims == nil || (!claims.IsAdmin && *cert.UserID != claims.UserID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "detail": "not your certificate"})
+		return
+	}
+	if !sharedCertCoversHost(cert.SANs, domain.Name) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cert_domain_mismatch", "detail": fmt.Sprintf("certificate does not cover %s", domain.Name)})
+		return
+	}
+	id := cert.ID
+	if err := h.cfg.Domains.SetSharedCertificate(ctx, domain.ID, &id, models.SSLModeShared); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if h.cfg.Reconciler != nil {
+		h.cfg.Reconciler.Schedule(domain.ID)
+	}
+	c.JSON(http.StatusOK, gin.H{"attached": true, "shared_certificate_id": id})
+}
+
+// detachSharedCert reverts a domain off its shared cert back to LE mode.
+func (h *sslHandler) detachSharedCert(c *gin.Context) {
+	domain := h.loadDomainOwned(c, c.Param("id"))
+	if domain == nil {
+		return
+	}
+	if err := h.cfg.Domains.SetSharedCertificate(c.Request.Context(), domain.ID, nil, models.SSLModeLE); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if h.cfg.Reconciler != nil {
+		h.cfg.Reconciler.Schedule(domain.ID)
+	}
+	c.JSON(http.StatusOK, gin.H{"detached": true})
+}
+
+// replaceSharedCert re-uploads the cert/key for an existing shared cert. The
+// agent overwrites the pair at the same path and reloads nginx, so every
+// attached domain serves the new cert in one action. Admin.
+func (h *sslHandler) replaceSharedCert(c *gin.Context) {
+	if h.cfg.SharedCerts == nil || h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "unavailable"})
+		return
+	}
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	cert, err := h.cfg.SharedCerts.FindByID(ctx, id)
+	if err != nil || cert == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	var req sharedCertUploadRequest // reuse shape; name ignored on replace
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
+		return
+	}
+	if strings.TrimSpace(req.CertPEM) == "" || strings.TrimSpace(req.KeyPEM) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cert_and_key_required"})
+		return
+	}
+	if _, _, perr := parseLeafNotAfter(req.CertPEM); perr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_cert", "detail": perr.Error()})
+		return
+	}
+	raw, err := h.cfg.Agent.Call(ctx, "ssl.install_shared", map[string]any{"id": id, "cert_pem": req.CertPEM, "key_pem": req.KeyPEM})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "install_failed", "detail": firstLineSSL(err.Error())})
+		return
+	}
+	var res struct {
+		CertPath  string   `json:"cert_path"`
+		KeyPath   string   `json:"key_path"`
+		SANs      []string `json:"sans"`
+		ExpiresAt string   `json:"expires_at"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil || res.CertPath == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	expiresAt, _ := time.Parse(time.RFC3339, res.ExpiresAt)
+	sansJSON, _ := json.Marshal(res.SANs)
+	if err := h.cfg.SharedCerts.UpdateInstalled(ctx, id, res.CertPath, res.KeyPath, string(sansJSON), expiresAt); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": id, "sans": res.SANs, "expires_at": res.ExpiresAt})
 }

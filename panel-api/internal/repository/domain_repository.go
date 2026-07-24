@@ -70,6 +70,9 @@ type DomainRepository interface {
 	// (GH #246). Dedicated method, not the Select-allowlist Update, to avoid
 	// silent column drops.
 	UpdateSSLMode(ctx context.Context, id string, mode string) error
+	// SetSharedCertificate attaches (sharedCertID non-nil, mode 'shared') or
+	// detaches (nil, mode 'le') a domain from a JAB-170 shared certificate.
+	SetSharedCertificate(ctx context.Context, id string, sharedCertID *string, mode string) error
 	// FindPanelPrimary returns the single is_panel_primary=1 row, or
 	// ErrPanelPrimaryNotFound if no such row exists. ADR-0048.
 	FindPanelPrimary(ctx context.Context) (*models.Domain, error)
@@ -503,6 +506,24 @@ type DomainMailProvider struct {
 	SkipAutoSAN     bool
 	M365Onmicrosoft *string
 	GoogleDKIM      *string
+}
+
+func (r *domainRepo) SetSharedCertificate(ctx context.Context, id string, sharedCertID *string, mode string) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"ssl_mode":              mode,
+			"ssl_enabled":           models.SSLEnabledForMode(mode),
+			"shared_certificate_id": sharedCertID,
+			"updated_at":            time.Now().UTC(),
+		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *domainRepo) UpdateSSLMode(ctx context.Context, id string, mode string) error {

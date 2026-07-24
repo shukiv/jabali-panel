@@ -155,3 +155,36 @@ func TestDeleteSharedCert_OK(t *testing.T) {
 	require.Equal(t, []string{"C1"}, repo.deleted)
 	require.Equal(t, []string{"C1"}, ag.deleteCalls)
 }
+
+// JAB-170 phase 4b: wildcard-aware SAN matching (x509.VerifyHostname semantics).
+// A bug here would serve the wrong cert, so it's exhaustively tabled.
+func TestHostMatchesSAN(t *testing.T) {
+	for _, c := range []struct {
+		san, host string
+		want      bool
+	}{
+		{"example.com", "example.com", true},
+		{"Example.com", "example.COM", true},        // case-insensitive
+		{"*.example.com", "sub.example.com", true},  // single-label wildcard
+		{"*.example.com", "example.com", false},     // wildcard does NOT cover the apex
+		{"*.example.com", "a.b.example.com", false}, // wildcard is one label only
+		{"*.example.com", "sub.other.com", false},   // different base
+		{"example.com", "sub.example.com", false},   // exact SAN doesn't cover subdomain
+		{"", "example.com", false},
+		{"*.example.com", ".example.com", false}, // empty leftmost label
+	} {
+		if got := hostMatchesSAN(c.san, c.host); got != c.want {
+			t.Errorf("hostMatchesSAN(%q,%q)=%v want %v", c.san, c.host, got, c.want)
+		}
+	}
+}
+
+func TestSharedCertCoversHost(t *testing.T) {
+	sans := `["*.example.com","example.com"]`
+	require.True(t, sharedCertCoversHost(&sans, "sub.example.com"))
+	require.True(t, sharedCertCoversHost(&sans, "example.com"))
+	require.False(t, sharedCertCoversHost(&sans, "other.com"))
+	require.False(t, sharedCertCoversHost(nil, "x.com"))
+	bad := `not json`
+	require.False(t, sharedCertCoversHost(&bad, "example.com"))
+}

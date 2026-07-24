@@ -179,6 +179,9 @@ func (f *fakeDomainRepo) UpdateMailProvider(_ context.Context, _ string, _ repos
 }
 
 func (f *fakeDomainRepo) UpdateSSLMode(context.Context, string, string) error { return nil }
+func (f *fakeDomainRepo) SetSharedCertificate(context.Context, string, *string, string) error {
+	return nil
+}
 
 func (f *fakeDomainRepo) UpdateEmailState(ctx context.Context, id string, state repository.DomainEmailState) error {
 	for i, d := range f.domains {

@@ -4554,9 +4554,25 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
   /admin/certificates/shared/{id}:
+    put:
+      tags: [Ssl Certificates]
+      summary: Replace (re-upload) a shared certificate
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
     delete:
       tags: [Ssl Certificates]
       summary: Delete a shared certificate
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+  /domains/{id}/ssl/shared:
+    post:
+      tags: [Ssl Certificates]
+      summary: Attach a shared certificate to a domain
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [Ssl Certificates]
+      summary: Detach a shared certificate from a domain
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
