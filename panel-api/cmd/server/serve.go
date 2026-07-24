@@ -191,6 +191,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		dnsZoneRepo := repository.NewDNSZoneRepository(sharedDB)
 		dnsRecordRepo := repository.NewDNSRecordRepository(sharedDB)
 		sslCertRepo := repository.NewSSLCertificateRepository(sharedDB)
+		sharedCertRepo := repository.NewSharedCertificateRepository(sharedDB)
 		mailRBLStateRepo := repository.NewMailRBLStateRepository(sharedDB)
 		dmarcAggregateRepo := repository.NewDMARCAggregateRepository(sharedDB)
 		tlsRptAggregateRepo := repository.NewTLSRPTAggregateRepository(sharedDB)
@@ -365,6 +366,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo
 		deps.SSLCerts = sslCertRepo
+		deps.SharedCerts = sharedCertRepo
 		deps.MailRBLStates = mailRBLStateRepo
 		deps.DMARCAggregate = dmarcAggregateRepo
 		deps.TLSRPTAggregate = tlsRptAggregateRepo

@@ -62,6 +62,7 @@ type Deps struct {
 	DNSZones                  repository.DNSZoneRepository
 	DNSRecords                repository.DNSRecordRepository
 	SSLCerts                  repository.SSLCertificateRepository
+	SharedCerts               repository.SharedCertificateRepository
 	// MailRBLStates (M47 Wave 5) backs the curated-RBL eventsource
 	// that probes the server's outbound IPv4 against a free RBL
 	// baseline and fires mail.rbl.{listed,cleared} on transitions.
@@ -813,6 +814,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSSLRoutes(v1, api.SSLHandlerConfig{
 				Domains:        deps.Domains,
 				SSLCerts:       deps.SSLCerts,
+				SharedCerts:    deps.SharedCerts,
 				Agent:          deps.Agent,
 				PanelCerts:     deps.PanelCerts,
 				MailCerts:      deps.MailCerts,

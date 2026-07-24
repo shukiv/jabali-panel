@@ -30,6 +30,7 @@ type SSLScheduler interface {
 type SSLHandlerConfig struct {
 	Domains        repository.DomainRepository
 	SSLCerts       repository.SSLCertificateRepository
+	SharedCerts    repository.SharedCertificateRepository
 	PanelCerts     repository.PanelCertificateRepository
 	MailCerts      repository.MailCertificateRepository
 	ServerSettings repository.ServerSettingsRepository
@@ -78,6 +79,12 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 	// List endpoints
 	g.GET("/admin/ssl-certificates", middleware.RequireAdmin(), h.listAllSSL)
 	g.GET("/ssl-certificates", h.listUserSSL)
+
+	// Shared certificates (JAB-170): admin upload/list/delete of a
+	// wildcard/multi-SAN cert served from many domains.
+	g.POST("/admin/certificates/shared", middleware.RequireAdmin(), h.uploadSharedCert)
+	g.GET("/admin/certificates/shared", middleware.RequireAdmin(), h.listSharedCerts)
+	g.DELETE("/admin/certificates/shared/:id", middleware.RequireAdmin(), h.deleteSharedCert)
 }
 
 // getSSL retrieves the current SSL certificate status for a domain.

@@ -4542,6 +4542,24 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/certificates/shared:
+    post:
+      tags: [Ssl Certificates]
+      summary: Upload a shared wildcard/multi-SAN certificate
+      security: [ { KratosSession: [] } ]
+      responses: { "201": { description: Created } }
+    get:
+      tags: [Ssl Certificates]
+      summary: List shared certificates
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+  /admin/certificates/shared/{id}:
+    delete:
+      tags: [Ssl Certificates]
+      summary: Delete a shared certificate
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /ssl-certificates:
     get:
       tags: [Ssl Certificates]
