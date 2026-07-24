@@ -19,6 +19,9 @@ type SharedCertificateRepository interface {
 	ListAll(ctx context.Context) ([]models.SharedCertificate, error)
 	// ListByUserID returns a tenant's own shared certs, newest first.
 	ListByUserID(ctx context.Context, userID string) ([]models.SharedCertificate, error)
+	// ListServerWideAndOwned returns candidates a domain owned by ownerID may
+	// auto-attach: server-wide certs (user_id NULL) plus the owner's own.
+	ListServerWideAndOwned(ctx context.Context, ownerID string) ([]models.SharedCertificate, error)
 	// UpdateInstalled records the on-disk paths + parsed SANs + expiry after a
 	// (re)upload landed the pair on disk.
 	UpdateInstalled(ctx context.Context, id, certPath, keyPath, sansJSON string, expiresAt time.Time) error
@@ -58,6 +61,12 @@ func (r *sharedCertificateRepo) ListAll(ctx context.Context) ([]models.SharedCer
 func (r *sharedCertificateRepo) ListByUserID(ctx context.Context, userID string) ([]models.SharedCertificate, error) {
 	var cs []models.SharedCertificate
 	err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at DESC").Find(&cs).Error
+	return cs, err
+}
+
+func (r *sharedCertificateRepo) ListServerWideAndOwned(ctx context.Context, ownerID string) ([]models.SharedCertificate, error) {
+	var cs []models.SharedCertificate
+	err := r.db.WithContext(ctx).Where("user_id IS NULL OR user_id = ?", ownerID).Find(&cs).Error
 	return cs, err
 }
 

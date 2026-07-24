@@ -565,12 +565,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainRoutes(v1, api.DomainHandlerConfig{
-				Domains:    deps.Domains,
-				Users:      deps.Users,
-				Packages:   deps.Packages,
-				Agent:      deps.Agent,
-				Reconciler: deps.Reconciler,
-				SSLCerts:   deps.SSLCerts,
+				Domains:     deps.Domains,
+				Users:       deps.Users,
+				Packages:    deps.Packages,
+				Agent:       deps.Agent,
+				Reconciler:  deps.Reconciler,
+				SSLCerts:    deps.SSLCerts,
+				SharedCerts: deps.SharedCerts,
 				// DNS repos feed the auto-enable-email path in create.
 				// Panel profiles without PowerDNS leave these nil and
 				// create still works — auto-enable is skipped cleanly.

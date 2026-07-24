@@ -88,6 +88,13 @@ func (r *fakeSharedRepo) ListAll(_ context.Context) ([]models.SharedCertificate,
 func (r *fakeSharedRepo) ListByUserID(_ context.Context, _ string) ([]models.SharedCertificate, error) {
 	return nil, nil
 }
+func (r *fakeSharedRepo) ListServerWideAndOwned(_ context.Context, _ string) ([]models.SharedCertificate, error) {
+	out := make([]models.SharedCertificate, 0, len(r.created))
+	for _, c := range r.created {
+		out = append(out, *c)
+	}
+	return out, nil
+}
 func (r *fakeSharedRepo) UpdateInstalled(_ context.Context, _, _, _, _ string, _ time.Time) error {
 	return nil
 }

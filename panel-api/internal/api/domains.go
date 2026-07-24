@@ -27,12 +27,13 @@ import (
 )
 
 type DomainHandlerConfig struct {
-	Domains    repository.DomainRepository
-	Users      repository.UserRepository
-	SSLCerts   repository.SSLCertificateRepository
-	Packages   repository.PackageRepository
-	Agent      agent.AgentInterface
-	Reconciler *reconciler.Reconciler
+	Domains     repository.DomainRepository
+	Users       repository.UserRepository
+	SSLCerts    repository.SSLCertificateRepository
+	SharedCerts repository.SharedCertificateRepository
+	Packages    repository.PackageRepository
+	Agent       agent.AgentInterface
+	Reconciler  *reconciler.Reconciler
 	// DNSZones + DNSRecords feed the auto-enable-email path on create.
 	// Both optional — when unset, create proceeds without flipping email
 	// on (matches the pre-auto-enable behaviour). The explicit
@@ -541,6 +542,24 @@ func (h *domainHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, h.enrichDomainResponse(c.Request.Context(), *domain))
 }
 
+// findCoveringSharedCert returns a shared cert (server-wide or owned by
+// ownerID) whose SANs cover host, or nil (JAB-170 phase 5 auto-attach).
+func (h *domainHandler) findCoveringSharedCert(ctx context.Context, host, ownerID string) *models.SharedCertificate {
+	if h.cfg.SharedCerts == nil {
+		return nil
+	}
+	certs, err := h.cfg.SharedCerts.ListServerWideAndOwned(ctx, ownerID)
+	if err != nil {
+		return nil
+	}
+	for i := range certs {
+		if sharedCertCoversHost(certs[i].SANs, host) {
+			return &certs[i]
+		}
+	}
+	return nil
+}
+
 func (h *domainHandler) create(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -678,6 +697,10 @@ func (h *domainHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ssl_mode_custom_requires_upload", "detail": "create the domain with le/self/none, then upload a custom cert via the SSL settings"})
 		return
 	}
+	if sslMode == models.SSLModeShared {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ssl_mode_shared_requires_attach", "detail": "create the domain with le/self/none, then attach a shared cert via POST /domains/:id/ssl/shared"})
+		return
+	}
 
 	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
 	// Email-enabled + no TLS is contradictory (MTA-STS / autoconfig need HTTPS).
@@ -721,9 +744,26 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
+	// JAB-170 phase 5: if a shared cert (server-wide or the owner's) covers the
+	// new hostname, auto-attach so a matching subdomain gets HTTPS instantly —
+	// no ACME, no upload — and skip the ACME inline below.
+	attachedShared := false
+	if h.cfg.SharedCerts != nil {
+		if cert := h.findCoveringSharedCert(ctx, domain.Name, domain.UserID); cert != nil {
+			if err := h.cfg.Domains.SetSharedCertificate(ctx, domain.ID, &cert.ID, models.SSLModeShared); err == nil {
+				domain.SSLMode = models.SSLModeShared
+				domain.SharedCertificateID = &cert.ID
+				attachedShared = true
+				if h.cfg.Reconciler != nil {
+					h.cfg.Reconciler.Schedule(domain.ID)
+				}
+			}
+		}
+	}
+
 	// Attempt SSL inline (30s timeout): try ACME first with fallback to self-signed.
 	// Never errors out — just logs; cert state is already in DB.
-	if h.cfg.Reconciler != nil {
+	if !attachedShared && h.cfg.Reconciler != nil {
 		inlineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		h.cfg.Reconciler.ReconcileSSLInline(inlineCtx, domain)
 		cancel()
