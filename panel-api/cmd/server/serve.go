@@ -424,6 +424,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// handler for opt-in / opt-out + status read.
 		mailCertRepo := repository.NewMailCertificateRepository(sharedDB)
 		rec.WithMailCertificates(mailCertRepo)
+		rec.WithSharedCerts(sharedCertRepo)
 		deps.MailCerts = mailCertRepo
 
 		// M33 (ADR-0072): malware detection repos. Five repos wired

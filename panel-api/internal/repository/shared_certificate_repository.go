@@ -26,6 +26,9 @@ type SharedCertificateRepository interface {
 	// (re)upload landed the pair on disk.
 	UpdateInstalled(ctx context.Context, id, certPath, keyPath, sansJSON string, expiresAt time.Time) error
 	Delete(ctx context.Context, id string) error
+	// ListExpiring returns shared certs whose expires_at is before `before`
+	// (soonest first) — the expiry-warning source.
+	ListExpiring(ctx context.Context, before time.Time) ([]models.SharedCertificate, error)
 	// CountAttachedDomains reports how many domains currently point at this cert
 	// (so delete can refuse to strand attached domains).
 	CountAttachedDomains(ctx context.Context, id string) (int64, error)
@@ -82,6 +85,12 @@ func (r *sharedCertificateRepo) UpdateInstalled(ctx context.Context, id, certPat
 
 func (r *sharedCertificateRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.SharedCertificate{}).Error
+}
+
+func (r *sharedCertificateRepo) ListExpiring(ctx context.Context, before time.Time) ([]models.SharedCertificate, error) {
+	var cs []models.SharedCertificate
+	err := r.db.WithContext(ctx).Where("expires_at IS NOT NULL AND expires_at < ?", before).Order("expires_at ASC").Find(&cs).Error
+	return cs, err
 }
 
 func (r *sharedCertificateRepo) CountAttachedDomains(ctx context.Context, id string) (int64, error) {

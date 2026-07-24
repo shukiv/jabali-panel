@@ -89,6 +89,10 @@ type Reconciler struct {
 	// logScanned tracks docker apps whose log dirs the reconciler has scanned
 	// for unmanaged/oversized growth this panel-api lifetime (JAB-121 phase 3).
 	logScanned sync.Map
+	// sharedCerts backs the JAB-170 shared-cert expiry warning (optional/nil-safe).
+	sharedCerts repository.SharedCertificateRepository
+	// sharedCertExpiryChecked gates the expiry warn to once per panel-api boot.
+	sharedCertExpiryChecked atomic.Bool
 	// M18 — hosting packages + per-user overrides + /home mount path.
 	packages       repository.PackageRepository
 	limitOverrides repository.UserLimitOverrideRepository
@@ -186,6 +190,43 @@ type Reconciler struct {
 func (r *Reconciler) WithMailCertificates(repo repository.MailCertificateRepository) *Reconciler {
 	r.mailCerts = repo
 	return r
+}
+
+func (r *Reconciler) WithSharedCerts(repo repository.SharedCertificateRepository) *Reconciler {
+	r.sharedCerts = repo
+	return r
+}
+
+// checkSharedCertExpiry (JAB-170 phase 7) warns once per boot about shared
+// certs expiring within 14 days or already expired — one expired shared cert
+// takes down EVERY attached domain, so the alert must be loud + early.
+func (r *Reconciler) checkSharedCertExpiry(ctx context.Context) {
+	if r.sharedCerts == nil {
+		return
+	}
+	if r.sharedCertExpiryChecked.Swap(true) {
+		return
+	}
+	certs, err := r.sharedCerts.ListExpiring(ctx, time.Now().Add(14*24*time.Hour))
+	if err != nil {
+		r.sharedCertExpiryChecked.Store(false) // retry next pass
+		return
+	}
+	now := time.Now()
+	for i := range certs {
+		n, _ := r.sharedCerts.CountAttachedDomains(ctx, certs[i].ID)
+		exp := ""
+		if certs[i].ExpiresAt != nil {
+			exp = certs[i].ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		if certs[i].ExpiresAt != nil && certs[i].ExpiresAt.Before(now) {
+			r.log.Warn("shared cert EXPIRED — every attached domain is serving an expired cert; replace it now (one re-upload renews them all)",
+				"id", certs[i].ID, "name", certs[i].Name, "expires_at", exp, "attached_domains", n)
+		} else {
+			r.log.Warn("shared cert expiring within 14 days — replace it (one re-upload renews all attached domains)",
+				"id", certs[i].ID, "name", certs[i].Name, "expires_at", exp, "attached_domains", n)
+		}
+	}
 }
 
 func (r *Reconciler) WithPanelCertificate(repo repository.PanelCertificateRepository, rout *services.PanelCertRoutability) *Reconciler {
@@ -809,6 +850,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// M48 docker apps: dispatch installs + status-poll.
 	r.reconcileDockerApps(ctx)
 	r.reconcilePythonApps(ctx)
+	r.checkSharedCertExpiry(ctx)
 
 	r.reconcileSSHKeysForAllUsers(ctx)
 	// Reconcile SSH keys: sync authorized_keys files for all users.

@@ -106,6 +106,9 @@ func (r *fakeSharedRepo) Delete(_ context.Context, id string) error {
 func (r *fakeSharedRepo) CountAttachedDomains(_ context.Context, id string) (int64, error) {
 	return r.attached[id], nil
 }
+func (r *fakeSharedRepo) ListExpiring(_ context.Context, _ time.Time) ([]models.SharedCertificate, error) {
+	return nil, nil
+}
 
 // JAB-170 phase 4: upload validates + installs, stores the parsed SANs + expiry.
 func TestUploadSharedCert(t *testing.T) {
