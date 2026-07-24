@@ -319,6 +319,9 @@ func (r *Reconciler) reconcileOneDockerApp(ctx context.Context, app *models.Dock
 		// panel-api lifetime, so apps installed before the retention feature
 		// converge to bounded logs without a reinstall.
 		r.ensureLogrotate(ctx, app)
+		// JAB-121 phase 3: report (never delete) log dirs that grow unmanaged
+		// or oversized, once per panel-api lifetime.
+		r.scanLogs(ctx, app)
 		// M48 Phase 7 follow-up: image-digest poll. Cheap (~1 HTTP
 		// HEAD via `docker manifest inspect`) but gated by
 		// last_check_at so each app gets checked at most once per
@@ -517,6 +520,68 @@ func (r *Reconciler) ensureLogrotate(ctx context.Context, app *models.DockerApp)
 		return // leave unmarked so the next tick retries
 	}
 	r.logrotateEnsured.Store(app.ID, true)
+}
+
+// dockerAppLogWarnBytes is the size at which a ROTATED log dir is flagged —
+// this large despite a rotate policy means logrotate isn't running or can't
+// keep up. 1 GiB is deliberately generous (rotation keeps a handful of
+// compressed generations).
+const dockerAppLogWarnBytes int64 = 1 << 30
+
+// scanLogs (JAB-121 phase 3) is the read-only fallback scanner: it asks the
+// agent for the size of each DataRoot subdir + whether it holds *.log files,
+// then WARNS (never deletes) about log dirs that are unmanaged (hold logs but
+// have no catalog rotate policy) or oversized (rotated yet huge). Runs once
+// per app per panel-api lifetime; the operator sees the slug + dir + bytes in
+// the panel-api log.
+func (r *Reconciler) scanLogs(ctx context.Context, app *models.DockerApp) {
+	if app == nil || r.dockerCatalog == nil || r.agent == nil {
+		return
+	}
+	if _, done := r.logScanned.Load(app.ID); done {
+		return
+	}
+	entry, ok := r.dockerCatalog.Get(app.Slug)
+	if !ok {
+		return
+	}
+	declared := map[string]bool{}
+	for _, v := range entry.Volumes {
+		if v.Rotate != nil {
+			declared[v.Name] = true
+		}
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	raw, err := r.agent.Call(callCtx, "docker_app.log_scan", map[string]any{"slug": app.EffectiveSlug()})
+	if err != nil {
+		return // unmarked → retry next tick
+	}
+	var res struct {
+		Entries []struct {
+			Name    string `json:"name"`
+			Bytes   int64  `json:"bytes"`
+			HasLogs bool   `json:"has_logs"`
+		} `json:"entries"`
+	}
+	if json.Unmarshal(raw, &res) != nil {
+		r.logScanned.Store(app.ID, true)
+		return
+	}
+	for _, e := range res.Entries {
+		if !e.HasLogs {
+			continue
+		}
+		switch {
+		case !declared[e.Name]:
+			r.log.Warn("dockerapp: UNMANAGED log dir (no rotate policy) — declare rotate in the catalog or investigate",
+				"slug", app.Slug, "instance", app.EffectiveSlug(), "dir", e.Name, "bytes", e.Bytes)
+		case e.Bytes >= dockerAppLogWarnBytes:
+			r.log.Warn("dockerapp: rotated log dir is oversized — logrotate may not be running or keeping up",
+				"slug", app.Slug, "instance", app.EffectiveSlug(), "dir", e.Name, "bytes", e.Bytes)
+		}
+	}
+	r.logScanned.Store(app.ID, true)
 }
 
 // dockerAppCheckInterval is the per-app poll cadence for upstream

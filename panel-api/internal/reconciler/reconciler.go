@@ -85,6 +85,9 @@ type Reconciler struct {
 	// Cleared on process restart, so a `jabali update` re-converges every
 	// installed app's snippet exactly once.
 	logrotateEnsured sync.Map
+	// logScanned tracks docker apps whose log dirs the reconciler has scanned
+	// for unmanaged/oversized growth this panel-api lifetime (JAB-121 phase 3).
+	logScanned sync.Map
 	// M18 — hosting packages + per-user overrides + /home mount path.
 	packages       repository.PackageRepository
 	limitOverrides repository.UserLimitOverrideRepository
