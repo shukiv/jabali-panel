@@ -85,7 +85,10 @@ func writeDockerAppLogrotate(slug, dataDir string, specs []dockerAppLogRotate) e
 		}
 	}
 	if valid == 0 {
-		removeDockerAppLogrotate(slug)
+		// No usable specs → leave any existing snippet ALONE. Removal is the
+		// delete handler's job (removeDockerAppLogrotate); a minimal-payload
+		// install or a logrotate_ensure with empty specs (recovery) must never
+		// nuke a snippet a prior real install wrote (JAB-121 phase 2).
 		return nil
 	}
 	// logrotate parses every file in /etc/logrotate.d; write directly (0644

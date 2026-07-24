@@ -3,35 +3,35 @@
 //
 // State machine (see ADR-0116 + plans/m48-docker-app-marketplace.md):
 //
-//   pending      -> dispatch docker_app.install; on success move to
-//                   `running` (or `unhealthy` if healthchecks failed
-//                   within the install verb's wait_healthy budget)
-//   installing   -> in-flight install; status-poll to find out
-//                   whether it landed in `running` / `failed`
-//   running      -> status-poll; if the agent says not-running,
-//                   move to `failed` (a crashed-after-install case)
-//   stopped      -> no-op; operator owns the next move
-//   failed       -> no-op; operator clicks "Retry" to flip back to
-//                   pending
-//   updating, rolling_back, deleted -> not handled in Phase 3
-//                   (Phase 7 ships update/rollback; deletion is
-//                   synchronous in the REST handler).
+//	pending      -> dispatch docker_app.install; on success move to
+//	                `running` (or `unhealthy` if healthchecks failed
+//	                within the install verb's wait_healthy budget)
+//	installing   -> in-flight install; status-poll to find out
+//	                whether it landed in `running` / `failed`
+//	running      -> status-poll; if the agent says not-running,
+//	                move to `failed` (a crashed-after-install case)
+//	stopped      -> no-op; operator owns the next move
+//	failed       -> no-op; operator clicks "Retry" to flip back to
+//	                pending
+//	updating, rolling_back, deleted -> not handled in Phase 3
+//	                (Phase 7 ships update/rollback; deletion is
+//	                synchronous in the REST handler).
 //
 // The reconciler only DISPATCHES work; it never blocks waiting for
 // the docker daemon. The agent verbs have their own deadlines.
 package reconciler
 
 import (
-	"strings"
-	"sort"
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -315,6 +315,10 @@ func (r *Reconciler) reconcileOneDockerApp(ctx context.Context, app *models.Dock
 		// outside the panel -- otherwise the UI shows stale "stopped"
 		// indefinitely.
 		r.statusPoll(ctx, app)
+		// JAB-121 phase 2: (re)assert this app's host logrotate snippet once per
+		// panel-api lifetime, so apps installed before the retention feature
+		// converge to bounded logs without a reinstall.
+		r.ensureLogrotate(ctx, app)
 		// M48 Phase 7 follow-up: image-digest poll. Cheap (~1 HTTP
 		// HEAD via `docker manifest inspect`) but gated by
 		// last_check_at so each app gets checked at most once per
@@ -353,10 +357,10 @@ func (r *Reconciler) dispatchInstall(ctx context.Context, app *models.DockerApp)
 	// compose.yml from disk and brings it up. The full install
 	// payload is set by the REST handler on first dispatch.
 	raw, err := r.agent.Call(callCtx, "docker_app.install", map[string]any{
-		"slug":          app.EffectiveSlug(),
-		"compose_yml":   "RECOVERY",                       // sentinel: agent recovery path reads compose.yml from disk
-		"volumes":       []string{},
-		"wait_healthy":  false,
+		"slug":                        app.EffectiveSlug(),
+		"compose_yml":                 "RECOVERY", // sentinel: agent recovery path reads compose.yml from disk
+		"volumes":                     []string{},
+		"wait_healthy":                false,
 		"healthcheck_timeout_seconds": 0,
 	})
 	if err != nil {
@@ -471,6 +475,49 @@ func (r *Reconciler) WithDockerCatalog(cat *dockerapp.Catalog) *Reconciler {
 // stringification in future Phase 7 work.
 var _ = fmt.Sprintf
 
+// ensureLogrotate (JAB-121 phase 2) asks the agent to (re)write this app's
+// host logrotate snippet from its catalog rotate policy. Runs at most once per
+// app per panel-api lifetime (the in-memory set clears on restart, so a jabali
+// update re-converges every installed app). Apps with no log volumes are
+// marked done without an agent round-trip.
+func (r *Reconciler) ensureLogrotate(ctx context.Context, app *models.DockerApp) {
+	if app == nil || r.dockerCatalog == nil || r.agent == nil {
+		return
+	}
+	if _, done := r.logrotateEnsured.Load(app.ID); done {
+		return
+	}
+	entry, ok := r.dockerCatalog.Get(app.Slug)
+	if !ok {
+		return
+	}
+	specs := make([]map[string]any, 0)
+	for _, v := range entry.Volumes {
+		if v.Rotate != nil {
+			specs = append(specs, map[string]any{
+				"volume":         v.Name,
+				"retention_days": v.Rotate.RetentionDays,
+				"max_size":       v.Rotate.MaxSize,
+				"mode":           v.Rotate.Mode,
+			})
+		}
+	}
+	// Nothing to rotate → mark done (no per-tick re-check) and skip the agent.
+	if len(specs) == 0 {
+		r.logrotateEnsured.Store(app.ID, true)
+		return
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if _, err := r.agent.Call(callCtx, "docker_app.logrotate_ensure", map[string]any{
+		"slug":       app.EffectiveSlug(),
+		"log_rotate": specs,
+	}); err != nil {
+		r.log.Warn("dockerapp: logrotate ensure failed", "id", app.ID, "slug", app.Slug, "err", err)
+		return // leave unmarked so the next tick retries
+	}
+	r.logrotateEnsured.Store(app.ID, true)
+}
 
 // dockerAppCheckInterval is the per-app poll cadence for upstream
 // image digests. 6h is conservative; busy registries (docker hub
@@ -576,7 +623,6 @@ func (r *Reconciler) pollImageUpdate(ctx context.Context, app *models.DockerApp)
 		}
 	}
 }
-
 
 // shortDigest trims a `sha256:abcdef...` to a 12-char view for
 // notifications and log lines.

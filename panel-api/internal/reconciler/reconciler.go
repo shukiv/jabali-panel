@@ -80,6 +80,11 @@ type Reconciler struct {
 	// image-update poller to resolve a docker_apps row to its
 	// catalog entry's image_channel. Optional.
 	dockerCatalog *dockerapp.Catalog
+	// logrotateEnsured tracks docker apps whose host logrotate snippet the
+	// reconciler has (re)asserted this panel-api lifetime (JAB-121 phase 2).
+	// Cleared on process restart, so a `jabali update` re-converges every
+	// installed app's snippet exactly once.
+	logrotateEnsured sync.Map
 	// M18 — hosting packages + per-user overrides + /home mount path.
 	packages       repository.PackageRepository
 	limitOverrides repository.UserLimitOverrideRepository
