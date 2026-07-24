@@ -66,9 +66,6 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("path validation failed: %v", err)}
 	}
 
-	// One `du` call gives every immediate subdir's recursive size (+ the dir
-	// itself). -b = apparent size in bytes; --max-depth=1 = this level only.
-	dirSizes := map[string]int64{}
 	// GH #653: run du against an ESCAPE-PROOF dir fd instead of the resolvable
 	// string path. The fd is passed to the child via ExtraFiles (fd 3) so du
 	// traverses the pinned inode (/proc/self/fd/3) — a parent-directory swap
@@ -77,29 +74,8 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	if derr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("open dir: %v", derr)}
 	}
-	duCmd := exec.CommandContext(ctx, "du", "-b", "--max-depth=1", "/proc/self/fd/3")
-	duCmd.ExtraFiles = []*os.File{df}
-	out, _ := duCmd.Output()
+	dirSizes := duSubdirSizes(ctx, df, resolved)
 	df.Close()
-	const procPfx = "/proc/self/fd/3"
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		tab := strings.IndexByte(line, '\t')
-		if tab <= 0 {
-			continue
-		}
-		sz, perr := strconv.ParseInt(strings.TrimSpace(line[:tab]), 10, 64)
-		if perr != nil {
-			continue
-		}
-		path := strings.TrimSpace(line[tab+1:])
-		// remap the fd path back to the canonical path for the size lookups.
-		if path == procPfx {
-			path = resolved
-		} else if strings.HasPrefix(path, procPfx+"/") {
-			path = resolved + path[len(procPfx):]
-		}
-		dirSizes[path] = sz
-	}
 
 	entries, err := scope.ReadDirInScope(resolved)
 	if err != nil {
@@ -125,6 +101,42 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	sort.SliceStable(result, func(i, j int) bool { return result[i].Size > result[j].Size })
 
 	return &filesDuResponse{Path: resolved, Total: dirSizes[resolved], Entries: result}, nil
+}
+
+// duSubdirSizes runs one `du -b -D --max-depth=1` against the pinned directory
+// fd (passed as child fd 3 via ExtraFiles) and returns a map of canonical path
+// → recursive apparent size for the directory itself and each immediate child.
+//
+// -b = apparent size in bytes; --max-depth=1 = this level only; -D = follow the
+// /proc/self/fd/3 magic symlink to the pinned inode (WITHOUT it, du measures the
+// symlink node and reports no children, so every folder came back 0 — GH #657).
+// -D dereferences only the command-line arg; in-tree symlinks are still not
+// followed, preserving the GH #653 escape-proofing. The child's fd-relative
+// output paths are remapped back onto `canonical` for the caller's lookups.
+func duSubdirSizes(ctx context.Context, dirFd *os.File, canonical string) map[string]int64 {
+	dirSizes := map[string]int64{}
+	duCmd := exec.CommandContext(ctx, "du", "-b", "-D", "--max-depth=1", "/proc/self/fd/3")
+	duCmd.ExtraFiles = []*os.File{dirFd}
+	out, _ := duCmd.Output()
+	const procPfx = "/proc/self/fd/3"
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		tab := strings.IndexByte(line, '\t')
+		if tab <= 0 {
+			continue
+		}
+		sz, perr := strconv.ParseInt(strings.TrimSpace(line[:tab]), 10, 64)
+		if perr != nil {
+			continue
+		}
+		path := strings.TrimSpace(line[tab+1:])
+		if path == procPfx {
+			path = canonical
+		} else if strings.HasPrefix(path, procPfx+"/") {
+			path = canonical + path[len(procPfx):]
+		}
+		dirSizes[path] = sz
+	}
+	return dirSizes
 }
 
 func init() {
