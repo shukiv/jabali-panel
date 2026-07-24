@@ -53,11 +53,40 @@ function daysUntil(iso?: string): number | null {
 
 type Props = {
   domainId: string;
+  domainName: string;
   sslEnabled: boolean;
   onToggled: () => void;
 };
 
-export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => {
+// Shared wildcard/multi-SAN certificate (JAB-170) — a server-wide or
+// tenant-owned cert an admin uploaded once via the SSL Manager page.
+type SharedCert = {
+  id: string;
+  name: string;
+  sans: string[];
+  expires_at?: string;
+};
+
+// hostMatchesSAN mirrors the API's wildcard-aware matcher (x509.VerifyHostname
+// semantics): exact, or a single-label wildcard. The server re-checks on
+// attach; this just filters the picker to covering certs.
+function hostMatchesSAN(san: string, host: string): boolean {
+  const s = san.trim().toLowerCase();
+  const h = host.trim().toLowerCase();
+  if (!s || !h) return false;
+  if (s === h) return true;
+  if (s.startsWith("*.")) {
+    const base = s.slice(2);
+    const dot = h.indexOf(".");
+    if (dot > 0 && h.slice(dot + 1) === base) return true;
+  }
+  return false;
+}
+
+const certCoversHost = (cert: SharedCert, host: string): boolean =>
+  (cert.sans ?? []).some((s) => hostMatchesSAN(s, host));
+
+export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }: Props) => {
   const { t } = useTranslation();
   const [cert, setCert] = useState<SSLCertificate | null>(null);
   const [certMissing, setCertMissing] = useState(false);
@@ -70,6 +99,11 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
   const [certPem, setCertPem] = useState("");
   const [keyPem, setKeyPem] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [sharedCertId, setSharedCertId] = useState<string | undefined>(undefined);
+  const [sharedPickerOpen, setSharedPickerOpen] = useState(false);
+  const [covering, setCovering] = useState<SharedCert[]>([]);
+  const [selectedShared, setSelectedShared] = useState<string | undefined>(undefined);
+  const [sharedBusy, setSharedBusy] = useState(false);
 
   const fetchCert = useCallback(async () => {
     setLoading(true);
@@ -97,15 +131,75 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
       .then((res) => setAdminEmail(res.data?.settings?.admin_email))
       .catch(() => undefined);
     apiClient
-      .get<{ ssl_mode?: string }>(`/domains/${domainId}`)
-      .then((res) => setSslMode(res.data?.ssl_mode ?? "le"))
+      .get<{ ssl_mode?: string; shared_certificate_id?: string }>(`/domains/${domainId}`)
+      .then((res) => {
+        setSslMode(res.data?.ssl_mode ?? "le");
+        setSharedCertId(res.data?.shared_certificate_id);
+      })
       .catch(() => undefined);
   }, [fetchCert, domainId]);
 
 
+  const openSharedPicker = async () => {
+    setSelectedShared(undefined);
+    setSharedPickerOpen(true);
+    try {
+      const res = await apiClient.get("/admin/certificates/shared");
+      const all = (res.data?.data ?? []) as SharedCert[];
+      setCovering(all.filter((c) => certCoversHost(c, domainName)));
+    } catch {
+      setCovering([]);
+      message.error("Failed to load shared certificates");
+    }
+  };
+
+  const attachShared = async () => {
+    if (!selectedShared) {
+      message.error("Choose a shared certificate");
+      return;
+    }
+    setSharedBusy(true);
+    try {
+      await apiClient.post(`/domains/${domainId}/ssl/shared`, {
+        shared_certificate_id: selectedShared,
+      });
+      setSslMode("shared");
+      setSharedCertId(selectedShared);
+      setSharedPickerOpen(false);
+      message.success("Shared certificate attached");
+      onToggled();
+      await fetchCert();
+    } catch (err: unknown) {
+      const resp = (err as { response?: { data?: { error?: string; detail?: string } } })?.response?.data;
+      message.error(resp?.detail ?? "Failed to attach shared certificate");
+    } finally {
+      setSharedBusy(false);
+    }
+  };
+
+  const detachShared = async () => {
+    setSharedBusy(true);
+    try {
+      await apiClient.delete(`/domains/${domainId}/ssl/shared`);
+      setSslMode("le");
+      setSharedCertId(undefined);
+      message.success("Shared certificate detached (reverted to Let's Encrypt)");
+      onToggled();
+      await fetchCert();
+    } catch {
+      message.error("Failed to detach shared certificate");
+    } finally {
+      setSharedBusy(false);
+    }
+  };
+
   const applyMode = async (mode: string) => {
     if (mode === "custom") {
       setCustomOpen(true);
+      return;
+    }
+    if (mode === "shared") {
+      await openSharedPicker();
       return;
     }
     setModeChanging(true);
@@ -236,10 +330,26 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
             { value: "le", label: "Let's Encrypt", disabled: !adminEmail && sslMode !== "le" },
             { value: "self", label: "Self-signed" },
             { value: "custom", label: "Custom (upload)" },
+            { value: "shared", label: "Shared certificate" },
             { value: "none", label: "None (HTTP only)" },
           ]}
         />
         <span>TLS certificate</span>
+
+        {sslMode === "shared" && (
+          <>
+            <Tooltip title={sharedCertId ? `Certificate ${sharedCertId}` : undefined}>
+              <Tag color="geekblue">shared</Tag>
+            </Tooltip>
+            <Button
+              size="small"
+              loading={sharedBusy}
+              onClick={detachShared}
+            >
+              Detach
+            </Button>
+          </>
+        )}
 
         {certMissing && sslEnabled && (
           <Tag color="default">pending issuance</Tag>
@@ -305,6 +415,50 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
               style={{ fontFamily: "monospace" }}
             />
           </div>
+        </Space>
+      </Modal>
+
+      <Modal
+        open={sharedPickerOpen}
+        title={t("domainsslsection.attach_shared_certificate")}
+        okText={t("domainsslsection.attach")}
+        okButtonProps={{ disabled: !selectedShared }}
+        confirmLoading={sharedBusy}
+        onOk={attachShared}
+        onCancel={() => setSharedPickerOpen(false)}
+        width={560}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message={t("domainsslsection.only_shared_certificates_that_cover_this_dom")}
+          />
+          {covering.length === 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={
+                <>
+                  No shared certificate covers <strong>{domainName}</strong>. Upload
+                  one from{" "}
+                  <Link to="/jabali-admin/ssl">SSL Manager</Link>.
+                </>
+              }
+            />
+          ) : (
+            <Select
+              value={selectedShared}
+              style={{ width: "100%" }}
+              placeholder="Choose a covering certificate"
+              onChange={(v) => setSelectedShared(v)}
+              options={covering.map((c) => ({
+                value: c.id,
+                label: `${c.name} — ${(c.sans ?? []).join(", ")}`,
+              }))}
+            />
+          )}
         </Space>
       </Modal>
     </Space>

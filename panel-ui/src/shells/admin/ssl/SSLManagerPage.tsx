@@ -3,6 +3,7 @@ import { Card, Typography } from "antd";
 import { ShieldCheckOutlined } from "@icons";
 
 import { SSLManagerTable } from "../../../components/ssl/SSLManagerTable";
+import { SharedCertificatesCard } from "../../../components/ssl/SharedCertificatesCard";
 import { PanelSSLCard } from "../settings/PanelSSLCard";
 
 export const SSLManagerPage = () => {
@@ -21,12 +22,17 @@ export const SSLManagerPage = () => {
         <PanelSSLCard />
       </div>
 
-      <Card title={t("sslmanagerpage.domain_certificates")}>
+      <Card title={t("sslmanagerpage.domain_certificates")} style={{ marginBottom: 16 }}>
         <SSLManagerTable
           endpoint="/admin/ssl-certificates"
           showOwner={true}
         />
       </Card>
+
+      {/* Shared wildcard/multi-SAN certificates (JAB-170): upload once,
+          attach to many covering domains from each domain's SSL tab.
+          Owns its own data loading + upload/delete state. */}
+      <SharedCertificatesCard />
     </div>
   );
 };

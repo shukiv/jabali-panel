@@ -164,6 +164,7 @@ export const DomainEdit = () => {
       <Space direction="vertical" style={{ width: "100%" }} size="large">
         <DomainSSLSection
           domainId={domain.id}
+          domainName={domain.name}
           sslEnabled={!!domain.ssl_enabled}
           onToggled={() =>
             qc.invalidateQueries({ queryKey: ["one", "domains", id] })

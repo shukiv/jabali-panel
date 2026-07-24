@@ -508,6 +508,9 @@
   },
   "domainsslsection": {
     "acme_issuance_failed": "ACME issuance failed",
+    "attach": "Attach",
+    "attach_shared_certificate": "Attach shared certificate",
+    "only_shared_certificates_that_cover_this_dom": "Only shared certificates that cover this domain are listed. The reconciler re-renders the vhost within a tick of attaching.",
     "install": "Install",
     "paste_the_full_chain_certificate_leaf_interm": "Paste the full-chain certificate (leaf + intermediates) and the matching private key in PEM format. The key is stored on the server and never shown again.",
     "set_an_admin_email_to_use_ssl": "Set an admin email to use SSL",
@@ -517,6 +520,9 @@
   },
   "domainskipautosantoggle": {
     "skip_auto_added_san_names": "Skip auto-added SAN names"
+  },
+  "sharedcertificates": {
+    "title": "Shared Certificates"
   },
   "adminiplist": {
     "actions": "Actions",
