@@ -43,6 +43,28 @@ type Config struct {
 	SSO       SSOConfig       `toml:"sso"`
 	WordPress WordPressConfig `toml:"wordpress"`
 	Redis     RedisConfig     `toml:"redis"`
+	Demo      DemoConfig      `toml:"demo"`
+}
+
+// DemoConfig enables read-only public-demo mode (JAB-159). When Enabled, the
+// demo build's middleware short-circuits every non-idempotent /api/v1/* request
+// with 403 {"error":"demo_mode"} and the /info payload carries the seeded demo
+// identities so the SPA can render a DEMO banner + "Enter as admin/user" login
+// buttons. The credential-exposing surface only exists in a `-tags demo` build,
+// so a production binary carries none of it regardless of this config.
+//
+// Operator responsibility on a demo host: create the demo identities (admin +
+// regular user in Kratos) and point a read-only DB user at panel-api as
+// defense-in-depth beyond the write-block.
+type DemoConfig struct {
+	Enabled       bool   `toml:"enabled"`
+	AdminEmail    string `toml:"admin_email"`
+	AdminPassword string `toml:"admin_password"`
+	UserEmail     string `toml:"user_email"`
+	UserPassword  string `toml:"user_password"`
+	// Banner is the operator-overridable copy shown in the SPA banner.
+	// Empty falls back to the SPA default.
+	Banner string `toml:"banner"`
 }
 
 // ServerConfig controls HTTP listener and runtime mode.

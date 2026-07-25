@@ -304,7 +304,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	r.Use(middleware.NoCacheAPI())
 	r.Use(middleware.RequireContentType())
 
-	api.RegisterServiceInfoRoute(r)
+	// /info registration + the demo write-gate live behind a build tag (JAB-159):
+	// in a production build this just registers the base /info; in a `-tags demo`
+	// build it mounts the write-block middleware and the credential-carrying /info
+	// when cfg.Demo.Enabled. See app/demo_off.go and app/demo_on.go.
+	setupDemoAndInfo(r, cfg)
 	api.RegisterHealthRoutes(r)
 	if deps.Agent != nil {
 		api.RegisterAgentHealthRoute(r, deps.Agent)

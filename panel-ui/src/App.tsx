@@ -39,6 +39,7 @@ import { useApplyBrandingToTitle, useBranding } from "./hooks/useBranding";
 import { PANEL_COLORS } from "./lib/panelColors";
 import { CapabilityRoute } from "./components/CapabilityRoute";
 import { LoginPage } from "./pages/Login";
+import { DemoBanner } from "./components/DemoBanner";
 
 // JAB-145: route-level code splitting — each page is its own lazy chunk
 // so the initial bundle no longer eagerly pulls all ~55 pages. Layouts,
@@ -188,6 +189,9 @@ const ThemedApp = () => {
         renderEmpty={() => <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
       >
         <AntdApp>
+        {/* JAB-159: renders nothing unless /info reports demo mode (prod /info
+            never does, since the cred-exposing route is compiled out). */}
+        <DemoBanner />
         <BrandingTitleApplier />
         <Suspense
           fallback={

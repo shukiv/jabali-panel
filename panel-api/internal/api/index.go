@@ -15,7 +15,7 @@ func RegisterServiceInfoRoute(r *gin.Engine) {
 }
 
 func infoHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"service": "jabali-panel",
 		"version": Version,
 		"status":  "ok",
@@ -25,7 +25,11 @@ func infoHandler(c *gin.Context) {
 			"ui":     "/ (SPA)",
 		},
 		"docs": "https://github.com/shukiv/jabali-panel",
-	})
+	}
+	// injectDemo is a no-op in production builds and adds the seeded-credential
+	// "demo" block only in a `-tags demo` build (JAB-159). See index_demo_*.go.
+	injectDemo(resp)
+	c.JSON(http.StatusOK, resp)
 }
 
 // RegisterMethodNotAllowedHandler installs a JSON response for NoMethod.
