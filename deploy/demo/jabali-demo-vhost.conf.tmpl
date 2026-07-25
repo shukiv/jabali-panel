@@ -1,0 +1,144 @@
+# Jabali PUBLIC-DEMO vhost (JAB-159).
+#
+# Drop-in REPLACEMENT for jabali-panel-vhost.conf on a DISPOSABLE demo host.
+# panel-api runs 100% STOCK main (no demo code in the program) — the demo
+# behaviour is entirely in this nginx layer, so the demo host stays current
+# with `main` via a normal `jabali update`.
+#
+# THREAT MODEL: a public demo hands anonymous visitors an admin session on a
+# real panel. This vhost is ~30% of the safety; the rest is host hardening
+# (see deploy/demo/README.md): DISPOSABLE box, READ-ONLY MySQL user, neutered
+# agent, no real data. Do NOT run this in front of a panel that holds anything.
+#
+# Substitutes (same as the panel vhost, plus demo fields):
+#   ${SSL_CERT_PATH} ${SSL_KEY_PATH} ${PANEL_DIST_DIR}
+#   ${DEMO_BANNER_HTML} — pre-escaped HTML injected before </body>
+#
+# Differences from jabali-panel-vhost.conf, all defence-oriented:
+#   1. /api/v1/ write-block (covers every mutation incl. the POST SSO-mint routes)
+#   2. /phpmyadmin/ + /jabali-adminer/ return 403 (no DB console, ever)
+#   3. Kratos /self-service/{settings,recovery} POST blocked (no account takeover;
+#      login stays open)
+#   4. DEMO banner injected into the SPA HTML via sub_filter
+#   5. anon rate-limit
+
+upstream jabali_panel_api {
+  server unix:/run/jabali-panel/api.sock;
+}
+
+# Anon browsing rate-limit (per-IP). Zone declared here; if nginx complains
+# about a duplicate zone, move this limit_req_zone line to http{} (nginx.conf).
+limit_req_zone $binary_remote_addr zone=jabali_demo:10m rate=20r/s;
+
+server {
+  listen 8443 ssl${NGX_H2_PARAM};
+  listen [::]:8443 ssl${NGX_H2_PARAM};
+  ${NGX_H2_DIR}
+  server_name _;
+
+  error_page 497 =301 https://$host:8443$request_uri;
+
+  ssl_certificate     ${SSL_CERT_PATH};
+  ssl_certificate_key ${SSL_KEY_PATH};
+  ssl_protocols       TLSv1.2 TLSv1.3;
+  ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+  ssl_prefer_server_ciphers on;
+
+  client_max_body_size 32m;   # demo has no real uploads; keep it small
+
+  gzip on;
+  gzip_proxied any;
+  gzip_vary on;
+  gzip_min_length 1024;
+  gzip_types application/javascript text/javascript text/css application/json image/svg+xml application/manifest+json;
+
+  access_log /var/log/nginx/jabali-demo.access.log;
+  error_log  /var/log/nginx/jabali-demo.error.log;
+
+  add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+  limit_req zone=jabali_demo burst=40 nodelay;
+
+  # (1b) DB consoles are OFF on a demo — return 403 before anything else can
+  # route here. Deliberately do NOT include the phpmyadmin/adminer snippets.
+  location ^~ /phpmyadmin/    { return 403; }
+  location ^~ /jabali-adminer/ { return 403; }
+
+  # (2) Kratos account-mutation flows: block the submit (POST) for settings +
+  # recovery so a visitor can't change the shared demo account's password or
+  # recovery email. Login + the flow-init GETs stay open. These paths arrive
+  # under /.ory/ (panel-api proxies Kratos in-process); match by substring.
+  location ~ /self-service/(settings|recovery) {
+    limit_except GET HEAD OPTIONS { deny all; }
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+  }
+
+  # (3) /api/v1 write-block. Every mutation (POST/PUT/PATCH/DELETE), including
+  # the POST SSO-mint routes (/api/v1/sso/*), is refused. GET reads proxy
+  # through so visitors browse the whole read surface. Less specific than the
+  # logs/stream location below, which keeps working for the WS GET.
+  location ^~ /api/v1/ {
+    limit_except GET HEAD OPTIONS { deny all; }
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+  }
+
+  # Log-stream WS (GET) — unchanged from the panel vhost.
+  location ^~ /api/v1/logs/stream/ {
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 3600s;
+  }
+
+  # Content-hashed assets from disk (same as panel vhost).
+  location ^~ /assets/ {
+    root ${PANEL_DIST_DIR};
+    try_files $uri @panel_assets_embed;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+  }
+  location @panel_assets_embed {
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $http_host;
+    proxy_http_version 1.1;
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+  }
+
+  # (4) SPA + everything else → panel-api. Disable upstream compression so
+  # sub_filter can inject the DEMO banner into index.html; nginx re-gzips.
+  location / {
+    proxy_pass http://jabali_panel_api/;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header Accept-Encoding "";
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 3600s;
+
+    sub_filter_once off;
+    sub_filter '</body>' '${DEMO_BANNER_HTML}</body>';
+  }
+}
