@@ -14,7 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifsecret"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // --- helpers ---
@@ -98,6 +100,8 @@ func (f *fakeChannels) FindEnabledAll(ctx context.Context) ([]models.Notificatio
 // FindEnabledServerWide returns only the global (user_id IS NULL) enabled
 // channels — mirrors the SQL filter so dispatcher tests can assert tenant-owned
 // channels are excluded from broadcast/server fan-out (JAB-171).
+func (f *fakeChannels) SealAllPlaintext(ctx context.Context) (int, error) { return 0, nil }
+
 func (f *fakeChannels) FindEnabledServerWide(ctx context.Context) ([]models.NotificationChannel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -529,5 +533,37 @@ func TestResolveTargets_PerUserRouting(t *testing.T) {
 	m = ids(got)
 	if !m["G1"] || m["A1"] || m["B1"] {
 		t.Errorf("userA unrouted event: want {G1}, got %v", m)
+	}
+}
+
+// JAB-171 phase 3: the dispatcher opens a sealed secret just before the sender
+// reads it — the sender must see plaintext, never the enc:1: envelope.
+func TestSendOne_OpensSealedSecret(t *testing.T) {
+	var key ssokey.Key
+	for i := range key {
+		key[i] = byte(i + 7)
+	}
+	var gotToken string
+	fs := &fakeSender{kind: "telegram", hookErr: func(ch models.NotificationChannel, env Envelope) error {
+		gotToken = ch.Config.BotToken
+		return nil
+	}}
+	d, _, _, _, _ := newFixture(t, fs)
+	d.WithSecretKey(&key)
+
+	cfg := models.NotificationChannelConfig{BotToken: "123:PLAINTEXT-TOKEN"}
+	if err := notifsecret.Seal(&cfg, key); err != nil {
+		t.Fatal(err)
+	}
+	if gotToken := cfg.BotToken; gotToken == "123:PLAINTEXT-TOKEN" {
+		t.Fatal("precondition: config should be sealed")
+	}
+	ch := models.NotificationChannel{ID: "c1", Kind: "telegram", Enabled: true, Config: cfg}
+
+	if err := d.sendOne(context.Background(), ch, Envelope{EventKind: "x", StreamID: "s1"}); err != nil {
+		t.Fatalf("sendOne: %v", err)
+	}
+	if gotToken != "123:PLAINTEXT-TOKEN" {
+		t.Errorf("sender saw %q, want the opened plaintext token", gotToken)
 	}
 }

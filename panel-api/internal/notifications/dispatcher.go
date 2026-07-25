@@ -14,7 +14,9 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifsecret"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // Config tunes the dispatcher's loop behaviours. Zero values pick
@@ -86,8 +88,12 @@ type Dispatcher struct {
 	// pre-JAB-171 behaviour). When set, a user-scoped envelope also reaches
 	// the recipient's OWN channels that they routed this event kind to.
 	userRoutes repository.UserNotificationRouteRepository
-	log        *slog.Logger
-	consumer   string
+	// secretKey opens sealed channel secrets (tokens/passwords) just before a
+	// sender is invoked (JAB-171). Optional — when nil, configs are used as
+	// stored (fine for pre-seal rows / tests).
+	secretKey *ssokey.Key
+	log       *slog.Logger
+	consumer  string
 
 	wg      sync.WaitGroup
 	stopped chan struct{}
@@ -115,6 +121,14 @@ func (d *Dispatcher) WithUsers(r repository.UserRepository) *Dispatcher {
 // is unchanged (server-wide channels only).
 func (d *Dispatcher) WithUserRoutes(r repository.UserNotificationRouteRepository) *Dispatcher {
 	d.userRoutes = r
+	return d
+}
+
+// WithSecretKey injects the SSO key so sealed channel secrets are opened just
+// before delivery (JAB-171 phase 3). Without it, configs are passed to senders
+// as stored — fine for legacy plaintext rows and tests.
+func (d *Dispatcher) WithSecretKey(key *ssokey.Key) *Dispatcher {
+	d.secretKey = key
 	return d
 }
 
@@ -448,6 +462,13 @@ func (d *Dispatcher) recipientRoutedChannels(ctx context.Context, userID, eventK
 // updates the webhook_endpoints retry state, and trips the circuit
 // breaker when consecutive failures reach the limit.
 func (d *Dispatcher) sendOne(ctx context.Context, ch models.NotificationChannel, env Envelope) error {
+	// Open sealed secrets on this local copy just before the sender reads them.
+	// ch is passed by value, so the plaintext never escapes this call.
+	if d.secretKey != nil {
+		if err := notifsecret.Open(&ch.Config, *d.secretKey); err != nil {
+			return fmt.Errorf("open channel secrets: %w", err)
+		}
+	}
 	hist := &models.NotificationHistory{
 		ID:        ulid.Make().String(),
 		ChannelID: strPtr(ch.ID),

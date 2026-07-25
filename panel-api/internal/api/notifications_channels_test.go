@@ -88,6 +88,8 @@ func (f *fakeChannelsRepo) FindEnabledServerWide(context.Context) ([]models.Noti
 	return nil, nil
 }
 
+func (f *fakeChannelsRepo) SealAllPlaintext(context.Context) (int, error) { return 0, nil }
+
 // --- test plumbing ---
 
 func newAdminCtx() gin.HandlerFunc {
@@ -304,4 +306,32 @@ func TestChannels_Broadcast_BadSeverityIs422(t *testing.T) {
 		"severity": "hmm",
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+// JAB-171 phase 3: a channel's secret is never echoed by create or list.
+func TestChannels_Create_SecretNotEchoed(t *testing.T) {
+	t.Parallel()
+	repo := &fakeChannelsRepo{}
+	r := newChannelsRouter(t, repo, nil, newAdminCtx())
+	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/admin/notifications/channels", map[string]any{
+		"name":   "tg",
+		"kind":   "telegram",
+		"config": map[string]any{"bot_token": "123:SUPER-SECRET", "chat_id": "42"},
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "SUPER-SECRET", "create must not echo the bot token")
+	require.NotContains(t, rec.Body.String(), "bot_token")
+}
+
+func TestChannels_List_SecretNotEchoed(t *testing.T) {
+	t.Parallel()
+	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{
+		"a": {ID: "a", Name: "tg", Kind: "telegram", Enabled: true,
+			Config: models.NotificationChannelConfig{BotToken: "enc:1:sealedvalue", ChatID: "42"}},
+	}}
+	r := newChannelsRouter(t, repo, nil, newAdminCtx())
+	rec := doNotifJSON(t, r, http.MethodGet, "/api/v1/admin/notifications/channels", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), "sealedvalue", "list must not echo the sealed secret")
+	require.Contains(t, rec.Body.String(), "\"chat_id\":\"42\"", "public config fields should still appear")
 }

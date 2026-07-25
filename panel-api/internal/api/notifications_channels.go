@@ -14,7 +14,9 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifsecret"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // NotificationsChannelsHandlerConfig wires the admin-facing
@@ -31,6 +33,18 @@ type NotificationsChannelsHandlerConfig struct {
 	Registry        *notifications.Registry
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
+	// SSOKey opens sealed channel secrets for the synchronous "Send test"
+	// path (JAB-171). Nil = secrets used as stored (legacy plaintext).
+	SSOKey *ssokey.Key
+}
+
+// redactChannelSecrets blanks every secret field on each channel's config so a
+// GET never echoes a token/password (JAB-171). Operates on the passed rows,
+// which are response-local copies loaded from the DB.
+func redactChannelSecrets(rows []models.NotificationChannel) {
+	for i := range rows {
+		notifsecret.Redact(&rows[i].Config)
+	}
 }
 
 // RegisterNotificationsChannelsRoutes mounts:
@@ -98,6 +112,7 @@ func (h *notificationsChannelsHandler) list(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "list failed"})
 		return
 	}
+	redactChannelSecrets(rows)
 	c.JSON(http.StatusOK, channelListResponse{Data: rows, Total: int(total), Page: page, PageSize: pageSize})
 }
 
@@ -138,6 +153,7 @@ func (h *notificationsChannelsHandler) create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create failed"})
 		return
 	}
+	notifsecret.Redact(&row.Config)
 	c.JSON(http.StatusCreated, row)
 }
 
@@ -172,11 +188,18 @@ func (h *notificationsChannelsHandler) update(c *gin.Context) {
 		existing.Name = *req.Name
 	}
 	if req.Config != nil {
-		if err := validateChannelKindAndConfig(existing.Kind, *req.Config); err != nil {
+		// Write-only secrets: a secret left empty in the request keeps its
+		// stored (sealed) value, so editing a channel after a redacted GET
+		// doesn't wipe the token/password (JAB-171). Validate the MERGED
+		// config so a secret-presence rule (e.g. webhook hmac_secret) still
+		// passes on a preserved secret.
+		merged := *req.Config
+		notifsecret.PreserveEmptySecrets(&merged, existing.Config)
+		if err := validateChannelKindAndConfig(existing.Kind, merged); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 			return
 		}
-		existing.Config = *req.Config
+		existing.Config = merged
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
@@ -186,6 +209,7 @@ func (h *notificationsChannelsHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
 	}
+	notifsecret.Redact(&existing.Config)
 	c.JSON(http.StatusOK, existing)
 }
 
@@ -236,6 +260,12 @@ func (h *notificationsChannelsHandler) test(c *gin.Context) {
 	// Synchronous send (GH #322): deliver now and report the real result so a
 	// misconfigured channel (e.g. SMTP auth failure) surfaces immediately
 	// instead of failing silently in the async dispatcher.
+	if h.cfg.SSOKey != nil {
+		if oerr := notifsecret.Open(&ch.Config, *h.cfg.SSOKey); oerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "open channel secrets"})
+			return
+		}
+	}
 	if h.cfg.Registry != nil {
 		sender, lerr := h.cfg.Registry.Lookup(ch.Kind)
 		if lerr != nil {

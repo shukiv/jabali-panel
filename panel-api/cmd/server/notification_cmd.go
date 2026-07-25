@@ -40,6 +40,26 @@ func newNotificationChannelsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "channels", Short: "Notification channels"}
 	cmd.AddCommand(newNotificationChannelCreateCmd(), newNotificationChannelDeleteCmd(), newNotificationChannelTestCmd())
 	cmd.AddCommand(&cobra.Command{
+		Use:     "seal-secrets",
+		Short:   "Encrypt any plaintext channel secrets at rest (JAB-171 one-time backfill)",
+		PreRunE: requireDB,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := ssoKeyForCLI()
+			if key == nil {
+				return fmt.Errorf("SSO signing key not configured; cannot seal secrets")
+			}
+			repo := repository.NewNotificationChannelRepository(sharedDB, repository.WithSealKey(*key))
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			defer cancel()
+			n, err := repo.SealAllPlaintext(ctx)
+			if err != nil {
+				return fmt.Errorf("seal secrets: %w", err)
+			}
+			fmt.Printf("Sealed %d channel(s) that had plaintext secrets.\n", n)
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:     "list",
 		Short:   "List configured notification channels",
 		Args:    cobra.NoArgs,

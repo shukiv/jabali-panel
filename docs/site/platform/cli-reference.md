@@ -3473,6 +3473,14 @@ List configured notification channels
 jabali notification channels list
 ```
 
+##### `jabali notification channels seal-secrets`
+
+Encrypt any plaintext channel secrets at rest (JAB-171 one-time backfill)
+
+```
+jabali notification channels seal-secrets
+```
+
 ##### `jabali notification channels test`
 
 Send a synthetic test notification to one channel

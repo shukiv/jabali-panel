@@ -282,7 +282,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// from deps. Dispatcher only starts when cfg.Redis.URL resolved
 		// and at least one ChannelSender is registered (Step 3 adds the
 		// concrete senders — slack, ntfy, webhook, webpush, email).
-		deps.NotificationChannels = repository.NewNotificationChannelRepository(sharedDB)
+		// Seal channel secrets at rest (JAB-171): tokens/passwords in
+		// config_json are encrypted with the SSO key before persist. Without
+		// a key configured, the repo stores configs verbatim (unchanged).
+		var channelRepoOpts []repository.ChannelRepoOption
+		if ssoKeyPtr != nil {
+			channelRepoOpts = append(channelRepoOpts, repository.WithSealKey(*ssoKeyPtr))
+		}
+		deps.NotificationChannels = repository.NewNotificationChannelRepository(sharedDB, channelRepoOpts...)
 		deps.NotificationHistory = repository.NewNotificationHistoryRepository(sharedDB)
 		deps.UserNotificationRoutes = repository.NewUserNotificationRouteRepository(sharedDB)
 		deps.WebhookEndpoints = repository.NewWebhookEndpointRepository(sharedDB)
@@ -1195,6 +1202,9 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 	}
 	if err == nil && deps.UserNotificationRoutes != nil {
 		d.WithUserRoutes(deps.UserNotificationRoutes)
+	}
+	if err == nil && deps.SSOKey != nil {
+		d.WithSecretKey(deps.SSOKey)
 	}
 	if err != nil {
 		log.Error("notifications dispatcher: construction failed", "err", err)

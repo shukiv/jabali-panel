@@ -25,6 +25,11 @@ import (
 )
 
 func notificationChannelRepoFromDB() repository.NotificationChannelRepository {
+	// Seal channel secrets at rest when a key is available (JAB-171), so a
+	// CLI-created channel stores its token/password encrypted just like the API.
+	if key := ssoKeyForCLI(); key != nil {
+		return repository.NewNotificationChannelRepository(sharedDB, repository.WithSealKey(*key))
+	}
 	return repository.NewNotificationChannelRepository(sharedDB)
 }
 

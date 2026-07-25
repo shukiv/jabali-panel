@@ -7,6 +7,8 @@ import (
 	"gorm.io/gorm"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifsecret"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // NotificationChannelRepository covers the notification_channels table
@@ -34,20 +36,79 @@ type NotificationChannelRepository interface {
 	// dispatcher uses this as the base fan-out set so a tenant-owned channel
 	// never receives a broadcast/server event (JAB-171).
 	FindEnabledServerWide(ctx context.Context) ([]models.NotificationChannel, error)
+
+	// SealAllPlaintext encrypts any unsealed secret fields across every row
+	// (the one-time JAB-171 backfill for pre-existing admin channels). Returns
+	// how many rows were re-sealed. No-op when the repo has no seal key.
+	SealAllPlaintext(ctx context.Context) (int, error)
 }
 
-type notificationChannelRepo struct{ db *gorm.DB }
+type notificationChannelRepo struct {
+	db      *gorm.DB
+	sealKey *ssokey.Key
+}
 
-func NewNotificationChannelRepository(db *gorm.DB) NotificationChannelRepository {
-	return &notificationChannelRepo{db: db}
+// ChannelRepoOption configures the channel repo (JAB-171). Variadic so existing
+// NewNotificationChannelRepository(db) call sites keep compiling.
+type ChannelRepoOption func(*notificationChannelRepo)
+
+// WithSealKey enables secret-at-rest encryption: Create/Update seal the config's
+// secret fields before persisting. Without it (tests, CLI without a key) the
+// repo stores configs verbatim.
+func WithSealKey(key ssokey.Key) ChannelRepoOption {
+	return func(r *notificationChannelRepo) { k := key; r.sealKey = &k }
+}
+
+func NewNotificationChannelRepository(db *gorm.DB, opts ...ChannelRepoOption) NotificationChannelRepository {
+	r := &notificationChannelRepo{db: db}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
 }
 
 func (r *notificationChannelRepo) Create(ctx context.Context, ch *models.NotificationChannel) error {
+	if r.sealKey != nil {
+		if err := notifsecret.Seal(&ch.Config, *r.sealKey); err != nil {
+			return err
+		}
+	}
 	return r.db.WithContext(ctx).Create(ch).Error
 }
 
 func (r *notificationChannelRepo) Update(ctx context.Context, ch *models.NotificationChannel) error {
+	if r.sealKey != nil {
+		if err := notifsecret.Seal(&ch.Config, *r.sealKey); err != nil {
+			return err
+		}
+	}
 	return r.db.WithContext(ctx).Save(ch).Error
+}
+
+func (r *notificationChannelRepo) SealAllPlaintext(ctx context.Context) (int, error) {
+	if r.sealKey == nil {
+		return 0, errors.New("seal key not configured")
+	}
+	var rows []models.NotificationChannel
+	if err := r.db.WithContext(ctx).Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	sealed := 0
+	for i := range rows {
+		if !notifsecret.HasPlaintextSecret(&rows[i].Config) {
+			continue
+		}
+		if err := notifsecret.Seal(&rows[i].Config, *r.sealKey); err != nil {
+			return sealed, err
+		}
+		if err := r.db.WithContext(ctx).Model(&models.NotificationChannel{}).
+			Where("id = ?", rows[i].ID).
+			Update("config_json", rows[i].Config).Error; err != nil {
+			return sealed, err
+		}
+		sealed++
+	}
+	return sealed, nil
 }
 
 func (r *notificationChannelRepo) Delete(ctx context.Context, id string) error {

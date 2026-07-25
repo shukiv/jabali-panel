@@ -913,6 +913,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Registry:        deps.NotificationRegistry,
 				Log:             deps.Log,
 				StrictRateLimit: rl.Strict(),
+				SSOKey:          deps.SSOKey,
 			})
 		}
 		// M31.1 follow-up — DLQ inspector (list / replay / drop / clear).
