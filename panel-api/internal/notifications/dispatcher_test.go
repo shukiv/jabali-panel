@@ -548,6 +548,66 @@ func TestResolveTargets_PerUserRouting(t *testing.T) {
 	}
 }
 
+// fakeSettings is a minimal ServerSettingsRepository for gate tests.
+type fakeSettings struct {
+	st  *models.ServerSettings
+	err error
+}
+
+func (f *fakeSettings) Get(context.Context) (*models.ServerSettings, error) { return f.st, f.err }
+func (f *fakeSettings) Upsert(context.Context, *models.ServerSettings) error { return nil }
+func (f *fakeSettings) EnsureVAPID(context.Context, string) (bool, error)    { return false, nil }
+
+// JAB-171 phase 4e: the master gate + kind allowlist are a LIVE delivery kill
+// switch, not just a create-time gate.
+func TestResolveTargets_TenantGate(t *testing.T) {
+	g1 := models.NotificationChannel{ID: "G1", Enabled: true, UserID: nil}
+	a1 := models.NotificationChannel{ID: "A1", Kind: "ntfy", Enabled: true, UserID: ptr("userA")}
+	newFC := func() *fakeChannels {
+		return &fakeChannels{
+			byID:    map[string]*models.NotificationChannel{"G1": &g1, "A1": &a1},
+			enabled: []models.NotificationChannel{g1, a1},
+		}
+	}
+	fr := &fakeUserRoutes{routes: map[string]map[string][]string{"userA": {"backup.done": {"A1"}}}}
+	env := Envelope{EventKind: "backup.done", UserID: "userA"}
+	ctx := context.Background()
+
+	// Gate OFF → tenant channel A1 excluded (only server-wide G1 delivered).
+	dOff := &Dispatcher{channels: newFC(), userRoutes: fr,
+		serverSettings: &fakeSettings{st: &models.ServerSettings{TenantNotificationsEnabled: false}}}
+	got, err := dOff.resolveTargets(ctx, env)
+	require.NoError(t, err)
+	m := ids(got)
+	require.True(t, m["G1"])
+	require.False(t, m["A1"], "gate OFF must exclude tenant channels from delivery")
+
+	// Settings read error → fail CLOSED (tenant excluded).
+	dErr := &Dispatcher{channels: newFC(), userRoutes: fr,
+		serverSettings: &fakeSettings{err: context.DeadlineExceeded}}
+	got, _ = dErr.resolveTargets(ctx, env)
+	require.False(t, ids(got)["A1"], "settings read error must fail closed")
+
+	// Gate ON, allowlist excludes ntfy → A1 excluded (live kind revocation).
+	dRevoked := &Dispatcher{channels: newFC(), userRoutes: fr,
+		serverSettings: &fakeSettings{st: &models.ServerSettings{
+			TenantNotificationsEnabled: true,
+			TenantNotificationKinds:    models.TenantNotificationKinds{"telegram"},
+		}}}
+	got, _ = dRevoked.resolveTargets(ctx, env)
+	require.False(t, ids(got)["A1"], "a kind removed from the allowlist must stop delivering")
+
+	// Gate ON, allowlist includes ntfy → A1 delivered.
+	dOn := &Dispatcher{channels: newFC(), userRoutes: fr,
+		serverSettings: &fakeSettings{st: &models.ServerSettings{
+			TenantNotificationsEnabled: true,
+			TenantNotificationKinds:    models.TenantNotificationKinds{"ntfy"},
+		}}}
+	got, err = dOn.resolveTargets(ctx, env)
+	require.NoError(t, err)
+	require.True(t, ids(got)["A1"], "gate ON + kind allowed must deliver")
+}
+
 // JAB-171 phase 3: the dispatcher opens a sealed secret just before the sender
 // reads it — the sender must see plaintext, never the enc:1: envelope.
 func TestSendOne_OpensSealedSecret(t *testing.T) {

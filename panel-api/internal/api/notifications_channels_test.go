@@ -256,6 +256,23 @@ func TestChannels_Update_Partial(t *testing.T) {
 	require.Equal(t, "Ops", row.Name) // untouched
 }
 
+// JAB-171 phase 4e: an admin can disable ANY channel, including a tenant-owned
+// one (admin override) — the admin surface is not ownership-scoped.
+func TestChannels_AdminCanDisableTenantChannel(t *testing.T) {
+	t.Parallel()
+	uid := "tenant1"
+	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{
+		"t": {ID: "t", Name: "TenantNtfy", Kind: "ntfy", Enabled: true, UserID: &uid, Config: models.NotificationChannelConfig{URL: "https://ntfy.sh/x"}},
+	}}
+	r := newChannelsRouter(t, repo, nil, newAdminCtx())
+	rec := doNotifJSON(t, r, http.MethodPatch, "/api/v1/admin/notifications/channels/t", map[string]any{"enabled": false})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	row, err := repo.FindByID(context.Background(), "t")
+	require.NoError(t, err)
+	require.False(t, row.Enabled, "admin must be able to disable a tenant channel")
+	require.NotNil(t, row.UserID)
+}
+
 func TestChannels_Delete(t *testing.T) {
 	t.Parallel()
 	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{

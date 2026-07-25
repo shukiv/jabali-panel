@@ -92,7 +92,14 @@ type Dispatcher struct {
 	// sender is invoked (JAB-171). Optional — when nil, configs are used as
 	// stored (fine for pre-seal rows / tests).
 	secretKey *ssokey.Key
-	log       *slog.Logger
+	// serverSettings makes the tenant surface's master gate + kind allowlist a
+	// real DELIVERY kill switch (JAB-171 phase 4e), not just a create-time gate:
+	// when TenantNotificationsEnabled is off, tenant-owned channels receive
+	// nothing; a channel whose kind is no longer in the allowlist stops
+	// delivering even if the row survives. Optional — when nil, no gate is
+	// applied (pre-phase-4e behaviour, used by tests).
+	serverSettings repository.ServerSettingsRepository
+	log            *slog.Logger
 	consumer  string
 
 	wg      sync.WaitGroup
@@ -129,6 +136,15 @@ func (d *Dispatcher) WithUserRoutes(r repository.UserNotificationRouteRepository
 // as stored — fine for legacy plaintext rows and tests.
 func (d *Dispatcher) WithSecretKey(key *ssokey.Key) *Dispatcher {
 	d.secretKey = key
+	return d
+}
+
+// WithServerSettings injects the settings repo so the tenant surface's master
+// gate + kind allowlist govern LIVE delivery, not just channel creation
+// (JAB-171 phase 4e). Without it, tenant channels resolve unconditionally
+// (pre-phase-4e behaviour).
+func (d *Dispatcher) WithServerSettings(r repository.ServerSettingsRepository) *Dispatcher {
+	d.serverSettings = r
 	return d
 }
 
@@ -400,11 +416,21 @@ func (d *Dispatcher) resolveTargets(ctx context.Context, env Envelope) ([]models
 		// here (channel.UserID == recipient) so a stray route can never
 		// deliver another user's — or a global admin — channel.
 		if env.UserID != "" && d.userRoutes != nil {
-			userChans, err := d.recipientRoutedChannels(ctx, env.UserID, env.EventKind)
-			if err != nil {
-				return nil, err
+			allowTenant, allowedKinds := d.tenantDeliveryPolicy(ctx)
+			if allowTenant {
+				userChans, err := d.recipientRoutedChannels(ctx, env.UserID, env.EventKind)
+				if err != nil {
+					return nil, err
+				}
+				for _, ch := range userChans {
+					// Live allowlist: a kind removed from the tenant allowlist
+					// stops delivering even though the channel row survives.
+					if allowedKinds != nil && !allowedKinds.Allows(ch.Kind) {
+						continue
+					}
+					targets = append(targets, ch)
+				}
 			}
-			targets = append(targets, userChans...)
 		}
 		return targets, nil
 	}
@@ -425,6 +451,24 @@ func (d *Dispatcher) resolveTargets(ctx context.Context, env Envelope) ([]models
 		out = append(out, *ch)
 	}
 	return out, nil
+}
+
+// tenantDeliveryPolicy reads the master gate + kind allowlist that govern
+// whether tenant-owned channels receive anything (JAB-171 phase 4e). Returns
+// (allow, allowedKinds):
+//   - serverSettings unset → (true, nil): no gate, deliver as before (tests).
+//   - gate off, nil settings, or a read error → (false, nil): fail CLOSED, the
+//     master switch is a real kill switch and a DB blip can't bypass it.
+//   - gate on → (true, effective allowlist) so callers filter by channel kind.
+func (d *Dispatcher) tenantDeliveryPolicy(ctx context.Context) (bool, models.TenantNotificationKinds) {
+	if d.serverSettings == nil {
+		return true, nil
+	}
+	st, err := d.serverSettings.Get(ctx)
+	if err != nil || st == nil || !st.TenantNotificationsEnabled {
+		return false, nil
+	}
+	return true, st.TenantNotificationKinds.OrDefault()
 }
 
 // recipientRoutedChannels returns the recipient's OWN enabled channels that

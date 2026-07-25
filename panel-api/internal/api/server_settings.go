@@ -137,11 +137,13 @@ type updateServerSettingsRequest struct {
 	TenantDomainOptionsEnabled   *bool   `json:"tenant_domain_options_enabled,omitempty"`
 	TenantDocrootEditable        *bool   `json:"tenant_docroot_editable,omitempty"`
 	// TenantNotificationKinds — admin-configurable tenant channel-kind allowlist
-	// (phase 4b). The master TenantNotificationsEnabled toggle is deliberately
-	// NOT exposed here: it stays un-flippable until phase 4e, after rate limits
-	// and email-verify land (do-not-ship gate). Editing the allowlist while the
-	// surface is off is harmless.
+	// (phase 4b).
 	TenantNotificationKinds *models.TenantNotificationKinds `json:"tenant_notification_kinds,omitempty"`
+	// TenantNotificationsEnabled — master switch for the whole /me/notifications
+	// surface (phase 4e). Now exposed: the abuse controls it gated on (SSRF 4a,
+	// allowlist 4b, quota+rate-limit 4c, email-to-own 4d) have all landed, and
+	// the dispatcher honours this flag as a live delivery kill switch.
+	TenantNotificationsEnabled *bool `json:"tenant_notifications_enabled,omitempty"`
 	RootTerminalEnabled          *bool   `json:"root_terminal_enabled,omitempty"`
 	BandwidthQuotaEnforceEnabled *bool   `json:"bandwidth_quota_enforce_enabled,omitempty"`
 	UploadMaxSizeMB              *uint32 `json:"upload_max_size_mb,omitempty"`
@@ -499,9 +501,12 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		current.TenantDocrootEditable = *req.TenantDocrootEditable
 	}
 	if req.TenantNotificationKinds != nil {
-		// Sanitize drops unknown / not-yet-safe kinds (e.g. email), so a PATCH
-		// can never smuggle an unsupported kind into the tenant allowlist.
+		// Sanitize drops unknown kinds, so a PATCH can never smuggle an
+		// unsupported kind into the tenant allowlist.
 		current.TenantNotificationKinds = req.TenantNotificationKinds.Sanitize()
+	}
+	if req.TenantNotificationsEnabled != nil {
+		current.TenantNotificationsEnabled = *req.TenantNotificationsEnabled
 	}
 	if req.RootTerminalEnabled != nil {
 		current.RootTerminalEnabled = *req.RootTerminalEnabled

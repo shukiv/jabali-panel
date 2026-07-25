@@ -229,6 +229,21 @@ func TestServerSettingsPatch_TenantNotificationKinds_SanitizesUnknown(t *testing
 	require.ElementsMatch(t, []string{"webhook", "email"}, []string(mockRepo.getResult.TenantNotificationKinds))
 }
 
+func TestServerSettingsPatch_TenantNotificationsToggle(t *testing.T) {
+	t.Parallel()
+	mockRepo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22}}
+	r := settingsRouter(true, mockRepo, agent.NewMockClient())
+
+	payload := map[string]any{"tenant_notifications_enabled": true}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.True(t, mockRepo.getResult.TenantNotificationsEnabled, "toggle must persist")
+}
+
 func TestServerSettingsGet_TenantNotificationKinds_EffectiveDefault(t *testing.T) {
 	t.Parallel()
 	// Empty column → GET surfaces the safe default set, not a blank list.

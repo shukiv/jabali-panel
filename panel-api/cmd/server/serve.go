@@ -1206,6 +1206,11 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 	if err == nil && deps.SSOKey != nil {
 		d.WithSecretKey(deps.SSOKey)
 	}
+	if err == nil && deps.ServerSettings != nil {
+		// JAB-171 phase 4e: master gate + kind allowlist govern live tenant
+		// delivery, so the admin toggle is a real kill switch.
+		d.WithServerSettings(deps.ServerSettings)
+	}
 	if err != nil {
 		log.Error("notifications dispatcher: construction failed", "err", err)
 		return nil, nil
