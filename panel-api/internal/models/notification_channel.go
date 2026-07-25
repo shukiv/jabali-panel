@@ -27,7 +27,11 @@ const (
 // layer validates per-kind before persistence; the DB only enforces
 // well-formed JSON.
 type NotificationChannel struct {
-	ID        string                    `gorm:"type:char(26);primaryKey" json:"id"`
+	ID string `gorm:"type:char(26);primaryKey" json:"id"`
+	// UserID scopes ownership (JAB-171): NULL = server-wide (admin-owned,
+	// existing behaviour); set = owned by that tenant. The dispatcher filters
+	// on this from phase 2 onward.
+	UserID    *string                   `gorm:"column:user_id;type:char(26)" json:"user_id,omitempty"`
 	Name      string                    `gorm:"type:varchar(120);not null" json:"name"`
 	Kind      string                    `gorm:"type:varchar(16);not null;index:idx_notification_channels_kind_enabled,priority:1" json:"kind"`
 	Config    NotificationChannelConfig `gorm:"column:config_json;type:json;not null" json:"config"`
