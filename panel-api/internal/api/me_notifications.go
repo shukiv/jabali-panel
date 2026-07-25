@@ -84,6 +84,26 @@ func RegisterMeNotificationsRoutes(g *gin.RouterGroup, cfg MeNotificationsConfig
 	grp.GET("/routes", h.listRoutes)
 	grp.POST("/routes", h.createRoute)
 	grp.DELETE("/routes/:id", h.deleteRoute)
+	grp.GET("/event-catalog", h.eventCatalog)
+}
+
+// tenantRelevantEventKinds is the subset of the notification event catalog that
+// fires per-user and is therefore meaningful for a tenant to route to their own
+// channels. Server-only events (crowdsec, postgres, reconciler, admin.login, …)
+// are excluded so a tenant isn't offered events that would never reach them.
+var tenantRelevantEventKinds = map[string]bool{
+	"cert.renew.fail":                       true,
+	"cert.renew.ok":                         true,
+	"domain.expiry.7d":                      true,
+	"domain.expiry.1d":                      true,
+	"disk.quota.warn":                       true,
+	"backup.fail":                           true,
+	"backup.limit.reached":                  true,
+	"docker_app.update_available":           true,
+	"ssh.login":                             true,
+	"snuffleupagus.incident.detected":       true,
+	"notifications.channel.auto_disabled":   true,
+	"panel.welcome":                         true,
 }
 
 // Per-user anti-abuse limits (JAB-171 phase 4c). Consts, not admin-configurable
@@ -424,6 +444,15 @@ func (h *meNotificationsHandler) createRoute(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
+	// Only routable (tenant-relevant) event kinds — a server-only kind would
+	// never fire for this user, so reject it rather than store a dead route.
+	if !tenantRelevantEventKinds[req.EventKind] {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":   "unroutable_event_kind",
+			"message": "that event kind is not available for per-user routing",
+		})
+		return
+	}
 	// The target channel must exist AND be owned by the caller — this is what
 	// stops a tenant from routing their events at someone else's channel.
 	if _, ok := h.loadOwnedChannel(c, req.ChannelID, claims.UserID); !ok {
@@ -480,6 +509,41 @@ func (h *meNotificationsHandler) deleteRoute(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// eventCatalogEntry is the tenant-facing view of a routable event kind: enough
+// to render a friendly picker, without the admin's global enable state.
+type eventCatalogEntry struct {
+	EventKind   string `json:"event_kind"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
+}
+
+// eventCatalog lists the event kinds a tenant may route to their own channels
+// (the per-user-relevant subset), so the UI offers labelled events instead of a
+// raw event-kind string.
+func (h *meNotificationsHandler) eventCatalog(c *gin.Context) {
+	if !h.gateOpen(c) {
+		return
+	}
+	if _, ok := requireBrowserAuth(c); !ok {
+		return
+	}
+	out := make([]eventCatalogEntry, 0, len(tenantRelevantEventKinds))
+	for i := range models.AllNotificationEventKinds {
+		m := models.AllNotificationEventKinds[i]
+		if !tenantRelevantEventKinds[m.Kind] {
+			continue
+		}
+		out = append(out, eventCatalogEntry{
+			EventKind:   m.Kind,
+			Label:       m.Label,
+			Description: m.Description,
+			Severity:    m.Severity,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
 // --- validation helpers ---

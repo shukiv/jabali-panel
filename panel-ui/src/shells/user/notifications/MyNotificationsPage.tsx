@@ -4,11 +4,10 @@
 // admin switch; when it's off every call returns 403 and we render a calm
 // "not enabled" state rather than an error.
 //
-// Wire paths:
-//   GET/POST/PATCH/DELETE  /me/notifications/channels[/:id]
-//   POST                   /me/notifications/channels/:id/test
-//   GET/POST/DELETE        /me/notifications/routes[/:id]
-import { useState } from "react";
+// Routing is a matrix: the server hands back a labelled catalog of the events
+// that fire for this user (GET .../event-catalog), and for each the tenant picks
+// which of their channels should receive it — no raw event-kind typing.
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,8 +15,6 @@ import {
   Button,
   Card,
   Empty,
-  Form,
-  Input,
   Popconfirm,
   Select,
   Space,
@@ -37,12 +34,27 @@ import { MyChannelDrawer, type MyChannel } from "./MyChannelDrawer";
 
 const CH_RESOURCE = "me/notifications/channels";
 const RT_RESOURCE = "me/notifications/routes";
+const CATALOG_RESOURCE = "me/notifications/event-catalog";
 
 type Route = {
   id: string;
   user_id: string;
   event_kind: string;
   channel_id: string;
+};
+
+type CatalogEntry = {
+  event_kind: string;
+  label: string;
+  description: string;
+  severity: "info" | "warning" | "error" | "critical";
+};
+
+const severityColor: Record<CatalogEntry["severity"], string> = {
+  info: "blue",
+  warning: "gold",
+  error: "red",
+  critical: "magenta",
 };
 
 function statusOf(err: unknown): number | undefined {
@@ -64,6 +76,8 @@ export function MyNotificationsPage(): JSX.Element {
     retry: false,
   });
 
+  const disabled = statusOf(channelsQ.error) === 403;
+
   const routesQ = useQuery<Route[]>({
     queryKey: ["list", RT_RESOURCE],
     queryFn: async () => {
@@ -71,17 +85,35 @@ export function MyNotificationsPage(): JSX.Element {
       return data.items ?? [];
     },
     retry: false,
-    // The channels query already surfaces the disabled state; keep this quiet.
-    enabled: statusOf(channelsQ.error) !== 403,
+    enabled: !disabled,
   });
 
-  const disabled = statusOf(channelsQ.error) === 403;
+  const catalogQ = useQuery<CatalogEntry[]>({
+    queryKey: ["list", CATALOG_RESOURCE],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ items: CatalogEntry[] }>(`/${CATALOG_RESOURCE}`);
+      return data.items ?? [];
+    },
+    retry: false,
+    enabled: !disabled,
+  });
 
   const updateMutation = useUpdateMutation<MyChannel, { enabled: boolean }>({ resource: CH_RESOURCE });
   const deleteMutation = useDeleteMutation({ resource: CH_RESOURCE });
 
   const channels = channelsQ.data ?? [];
-  const channelName = (id: string) => channels.find((c) => c.id === id)?.name ?? id;
+
+  // event_kind -> [{channelId, routeId}] so the matrix can show current
+  // selections and delete the right route row when a channel is unpicked.
+  const routesByEvent = useMemo(() => {
+    const m = new Map<string, { channelId: string; routeId: string }[]>();
+    for (const r of routesQ.data ?? []) {
+      const arr = m.get(r.event_kind) ?? [];
+      arr.push({ channelId: r.channel_id, routeId: r.id });
+      m.set(r.event_kind, arr);
+    }
+    return m;
+  }, [routesQ.data]);
 
   const toggleEnabled = async (row: MyChannel, next: boolean) => {
     try {
@@ -110,6 +142,27 @@ export function MyNotificationsPage(): JSX.Element {
     }
   };
 
+  // Reconcile a row's channel multi-select against the stored routes: POST the
+  // added channels, DELETE the removed ones, then refetch.
+  const applyRoute = async (eventKind: string, nextIds: string[]) => {
+    const current = routesByEvent.get(eventKind) ?? [];
+    const currentIds = current.map((r) => r.channelId);
+    const toAdd = nextIds.filter((id) => !currentIds.includes(id));
+    const toRemove = current.filter((r) => !nextIds.includes(r.channelId));
+    try {
+      for (const id of toAdd) {
+        await apiClient.post(`/${RT_RESOURCE}`, { event_kind: eventKind, channel_id: id });
+      }
+      for (const r of toRemove) {
+        await apiClient.delete(`/${RT_RESOURCE}/${r.routeId}`);
+      }
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Routing update failed");
+    } finally {
+      routesQ.refetch();
+    }
+  };
+
   if (disabled) {
     return (
       <Card>
@@ -122,6 +175,8 @@ export function MyNotificationsPage(): JSX.Element {
       </Card>
     );
   }
+
+  const channelOptions = channels.map((c) => ({ value: c.id, label: c.name }));
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -205,37 +260,53 @@ export function MyNotificationsPage(): JSX.Element {
 
       <Card title="Event routing">
         <Typography.Paragraph type="secondary">
-          Route a server event to one of your channels. When that event fires for you, the channel is notified.
+          Pick which of your channels should be notified for each event. Events fire for your own
+          account (your certs, backups, quota, and so on).
         </Typography.Paragraph>
-        <RouteAdder channels={channels} onAdded={() => routesQ.refetch()} />
-        <Table<Route>
-          rowKey="id"
-          style={{ marginTop: 16 }}
-          loading={routesQ.isLoading}
-          dataSource={routesQ.data ?? []}
+        <Table<CatalogEntry>
+          rowKey="event_kind"
+          loading={catalogQ.isLoading}
+          dataSource={catalogQ.data ?? []}
           pagination={false}
-          locale={{ emptyText: <Empty description="No routes yet." /> }}
+          locale={{ emptyText: <Empty description="No routable events." /> }}
           scroll={{ x: "max-content" }}
         >
-          <Table.Column dataIndex="event_kind" title="Event" render={(e: string) => <Tag>{e}</Tag>} />
-          <Table.Column dataIndex="channel_id" title="Channel" render={(id: string) => channelName(id)} />
-          <Table.Column
-            title="Actions"
-            key="actions"
-            render={(_: unknown, row: Route) => (
-              <Popconfirm
-                title="Remove this route?"
-                onConfirm={async () => {
-                  try {
-                    await apiClient.delete(`/${RT_RESOURCE}/${row.id}`);
-                    routesQ.refetch();
-                  } catch (err) {
-                    message.error(err instanceof Error ? err.message : "Remove failed");
-                  }
-                }}
-              >
-                <Button size="small" danger icon={<DeleteOutlined />} />
-              </Popconfirm>
+          <Table.Column<CatalogEntry>
+            title="Event"
+            dataIndex="label"
+            render={(label: string, row) => (
+              <div>
+                <Typography.Text strong>{label}</Typography.Text>
+                <div>
+                  <Tag color={severityColor[row.severity]} style={{ marginTop: 4 }}>
+                    {row.severity}
+                  </Tag>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    <code>{row.event_kind}</code>
+                  </Typography.Text>
+                </div>
+                <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                  {row.description}
+                </Typography.Paragraph>
+              </div>
+            )}
+          />
+          <Table.Column<CatalogEntry>
+            title="Deliver to"
+            key="deliver"
+            width={340}
+            render={(_: unknown, row) => (
+              <Select
+                mode="multiple"
+                allowClear
+                style={{ minWidth: 260, width: "100%" }}
+                placeholder={channels.length ? "No channels — event ignored" : "Add a channel first"}
+                disabled={channels.length === 0}
+                value={(routesByEvent.get(row.event_kind) ?? []).map((r) => r.channelId)}
+                onChange={(ids: string[]) => applyRoute(row.event_kind, ids)}
+                options={channelOptions}
+                loading={routesQ.isFetching}
+              />
             )}
           />
         </Table>
@@ -245,50 +316,5 @@ export function MyNotificationsPage(): JSX.Element {
       {/* t() kept referenced for future i18n of this page */}
       <span style={{ display: "none" }}>{t("nav.user.notifications", "Notifications")}</span>
     </Space>
-  );
-}
-
-function RouteAdder({ channels, onAdded }: { channels: MyChannel[]; onAdded: () => void }): JSX.Element {
-  const [form] = Form.useForm<{ event_kind: string; channel_id: string }>();
-  const [saving, setSaving] = useState(false);
-
-  const submit = async (v: { event_kind: string; channel_id: string }) => {
-    setSaving(true);
-    try {
-      await apiClient.post(`/${RT_RESOURCE}`, {
-        event_kind: v.event_kind.trim(),
-        channel_id: v.channel_id,
-      });
-      message.success("Route added");
-      form.resetFields();
-      onAdded();
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : "Add route failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Form form={form} layout="inline" onFinish={submit}>
-      <Form.Item
-        name="event_kind"
-        rules={[{ required: true, message: "Event kind required" }]}
-        style={{ minWidth: 220 }}
-      >
-        <Input placeholder="event kind, e.g. backup.completed" />
-      </Form.Item>
-      <Form.Item name="channel_id" rules={[{ required: true, message: "Pick a channel" }]} style={{ minWidth: 200 }}>
-        <Select
-          placeholder="Channel"
-          options={channels.map((c) => ({ value: c.id, label: c.name }))}
-        />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" htmlType="submit" loading={saving} icon={<PlusOutlined />}>
-          Add route
-        </Button>
-      </Form.Item>
-    </Form>
   );
 }

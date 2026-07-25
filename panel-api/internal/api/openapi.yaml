@@ -3800,6 +3800,15 @@ paths:
         "403": { description: Tenant notifications disabled }
         "404": { description: No such route (or owned by another user) }
 
+  /me/notifications/event-catalog:
+    get:
+      tags: [Notifications]
+      summary: List the event kinds a tenant may route (labelled)
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: OK }
+        "403": { description: Tenant notifications disabled }
+
   /admin/notifications/dlq:
     delete:
       tags: [Notifications]

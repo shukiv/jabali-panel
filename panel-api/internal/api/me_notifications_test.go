@@ -232,7 +232,7 @@ func TestMeNotif_RouteToUnownedChannel_Is404(t *testing.T) {
 	routes := &fakeUserRoutesRepo{}
 	r := newMeNotifRouter(t, meNotifSettings(true), repo, routes, newUserCtxID("u1"))
 	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/me/notifications/routes", map[string]any{
-		"event_kind": "backup.completed",
+		"event_kind": "backup.fail",
 		"channel_id": theirs.ID,
 	})
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
@@ -248,7 +248,7 @@ func TestMeNotif_RouteHappyThenDeleteOwnership(t *testing.T) {
 	r := newMeNotifRouter(t, meNotifSettings(true), repo, routes, newUserCtxID("u1"))
 
 	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/me/notifications/routes", map[string]any{
-		"event_kind": "backup.completed",
+		"event_kind": "backup.fail",
 		"channel_id": mine.ID,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -386,6 +386,36 @@ func TestMeNotif_EmailChannel_UpdateCannotRepointDestination(t *testing.T) {
 	require.Equal(t, "u1@example.com", repo.rows[existing.ID].Config.ToEmail, "edit must not repoint to_email")
 	require.Equal(t, "local", repo.rows[existing.ID].Config.SMTPMode)
 	require.Empty(t, repo.rows[existing.ID].Config.SMTPHost)
+}
+
+func TestMeNotif_EventCatalog_ReturnsTenantRelevantLabelled(t *testing.T) {
+	t.Parallel()
+	r := newMeNotifRouter(t, meNotifSettings(true), &fakeChannelsRepo{}, &fakeUserRoutesRepo{}, newUserCtxID("u1"))
+	rec := doNotifJSON(t, r, http.MethodGet, "/api/v1/me/notifications/event-catalog", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	// A tenant-relevant kind is present with its friendly label...
+	require.Contains(t, body, "backup.fail")
+	require.Contains(t, body, "label")
+	// ...and a server-only kind is not offered.
+	require.NotContains(t, body, "crowdsec.ban.spike")
+	require.NotContains(t, body, "reconciler.error")
+}
+
+func TestMeNotif_RouteRejectsServerOnlyKind(t *testing.T) {
+	t.Parallel()
+	repo := &fakeChannelsRepo{}
+	mine := ownedChannel("u1", "ntfy", models.NotificationChannelConfig{URL: "https://ntfy.sh/a"})
+	_ = repo.Create(context.Background(), mine)
+	routes := &fakeUserRoutesRepo{}
+	r := newMeNotifRouter(t, meNotifSettings(true), repo, routes, newUserCtxID("u1"))
+	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/me/notifications/routes", map[string]any{
+		"event_kind": "crowdsec.ban.spike", // server-only — never fires per-user
+		"channel_id": mine.ID,
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "unroutable_event_kind")
+	require.Empty(t, routes.rows)
 }
 
 func TestMeNotif_InvalidEventKind_Is422(t *testing.T) {
