@@ -94,6 +94,10 @@ func newUserCtxID(userID string) gin.HandlerFunc {
 }
 
 func newMeNotifRouter(t *testing.T, settings repository.ServerSettingsRepository, channels repository.NotificationChannelRepository, routes repository.UserNotificationRouteRepository, authFn gin.HandlerFunc) *gin.Engine {
+	return newMeNotifRouterU(t, settings, channels, routes, nil, authFn)
+}
+
+func newMeNotifRouterU(t *testing.T, settings repository.ServerSettingsRepository, channels repository.NotificationChannelRepository, routes repository.UserNotificationRouteRepository, users repository.UserRepository, authFn gin.HandlerFunc) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -105,6 +109,7 @@ func newMeNotifRouter(t *testing.T, settings repository.ServerSettingsRepository
 		Channels:       channels,
 		Routes:         routes,
 		ServerSettings: settings,
+		Users:          users,
 	})
 	return r
 }
@@ -326,6 +331,61 @@ func TestMeNotif_TestSendRateLimited_After5PerMin(t *testing.T) {
 		last = rec.Code
 	}
 	require.Equal(t, http.StatusTooManyRequests, last, "6th test-send within a minute must be 429")
+}
+
+func TestMeNotif_EmailChannel_ForcesOwnAddressAndLocalMode(t *testing.T) {
+	t.Parallel()
+	settings := &mockServerSettingsRepo{getResult: &models.ServerSettings{
+		TenantNotificationsEnabled: true,
+		TenantNotificationKinds:    models.TenantNotificationKinds{"email"},
+	}}
+	users := &fakeUserRepo{user: &models.User{ID: "u1", Email: "u1@example.com"}}
+	repo := &fakeChannelsRepo{}
+	r := newMeNotifRouterU(t, settings, repo, &fakeUserRoutesRepo{}, users, newUserCtxID("u1"))
+
+	// Attacker-supplied destination + custom SMTP host must be discarded.
+	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/me/notifications/channels", map[string]any{
+		"name": "mail me",
+		"kind": "email",
+		"config": map[string]any{
+			"to_email":   "victim@evil.com",
+			"from_email": "spoof@evil.com",
+			"smtp_mode":  "smtp",
+			"smtp_host":  "169.254.169.254",
+			"smtp_port":  25,
+		},
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.Len(t, repo.rows, 1)
+	for _, row := range repo.rows {
+		require.Equal(t, "u1@example.com", row.Config.ToEmail, "to_email must be forced to the account address")
+		require.Equal(t, "local", row.Config.SMTPMode, "smtp_mode must be forced local")
+		require.Empty(t, row.Config.SMTPHost, "custom smtp host must be discarded")
+		require.NotEqual(t, "victim@evil.com", row.Config.ToEmail)
+	}
+	require.NotContains(t, rec.Body.String(), "evil.com", "no attacker destination echoed")
+}
+
+func TestMeNotif_EmailChannel_UpdateCannotRepointDestination(t *testing.T) {
+	t.Parallel()
+	settings := &mockServerSettingsRepo{getResult: &models.ServerSettings{
+		TenantNotificationsEnabled: true,
+		TenantNotificationKinds:    models.TenantNotificationKinds{"email"},
+	}}
+	users := &fakeUserRepo{user: &models.User{ID: "u1", Email: "u1@example.com"}}
+	repo := &fakeChannelsRepo{}
+	// Seed an existing email channel owned by u1.
+	existing := ownedChannel("u1", "email", models.NotificationChannelConfig{ToEmail: "u1@example.com", FromEmail: "u1@example.com", SMTPMode: "local"})
+	_ = repo.Create(context.Background(), existing)
+	r := newMeNotifRouterU(t, settings, repo, &fakeUserRoutesRepo{}, users, newUserCtxID("u1"))
+
+	rec := doNotifJSON(t, r, http.MethodPatch, "/api/v1/me/notifications/channels/"+existing.ID, map[string]any{
+		"config": map[string]any{"to_email": "victim@evil.com", "smtp_mode": "smtp", "smtp_host": "10.0.0.1"},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "u1@example.com", repo.rows[existing.ID].Config.ToEmail, "edit must not repoint to_email")
+	require.Equal(t, "local", repo.rows[existing.ID].Config.SMTPMode)
+	require.Empty(t, repo.rows[existing.ID].Config.SMTPHost)
 }
 
 func TestMeNotif_InvalidEventKind_Is422(t *testing.T) {

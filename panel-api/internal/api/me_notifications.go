@@ -55,7 +55,10 @@ type MeNotificationsConfig struct {
 	ServerSettings repository.ServerSettingsRepository
 	Registry       *notifications.Registry
 	SSOKey         *ssokey.Key
-	Log            *slog.Logger
+	// Users resolves the caller's own account email for tenant email channels
+	// (phase 4d). Required only for the email kind; nil → email create/update 503.
+	Users repository.UserRepository
+	Log   *slog.Logger
 }
 
 // RegisterMeNotificationsRoutes mounts the /me/notifications/* surface. Auth
@@ -185,6 +188,15 @@ func (h *meNotificationsHandler) createChannel(c *gin.Context) {
 		})
 		return
 	}
+	// Tenant email channels are forced to deliver only to the caller's own
+	// account address over the local submission path — no arbitrary destination
+	// (open relay) and no custom SMTP host (SSRF). Applied before validation so
+	// the forced fields satisfy the email config rules.
+	if req.Kind == models.NotificationChannelKindEmail {
+		if !h.forceOwnEmailConfig(c, claims.UserID, &req.Config) {
+			return
+		}
+	}
 	if err := validateChannelKindAndConfig(req.Kind, req.Config); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
@@ -262,6 +274,13 @@ func (h *meNotificationsHandler) updateChannel(c *gin.Context) {
 		// Validate the MERGED config so presence rules pass on preserved secrets.
 		merged := *req.Config
 		notifsecret.PreserveEmptySecrets(&merged, existing.Config)
+		// Re-force own-address + local mode on every email edit so a tenant can't
+		// PATCH to_email to an arbitrary destination after create (phase 4d).
+		if existing.Kind == models.NotificationChannelKindEmail {
+			if !h.forceOwnEmailConfig(c, claims.UserID, &merged) {
+				return
+			}
+		}
 		if err := validateChannelKindAndConfig(existing.Kind, merged); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 			return
@@ -464,6 +483,38 @@ func (h *meNotificationsHandler) deleteRoute(c *gin.Context) {
 }
 
 // --- validation helpers ---
+
+// forceOwnEmailConfig rewrites a tenant email channel's config so it can only
+// deliver to the caller's OWN account address over the local submission path.
+// This is the phase-4d safety property: no arbitrary destination (open relay)
+// and no tenant-supplied SMTP host (SSRF). Returns false (and writes the
+// response) when the user can't be resolved. Any body-supplied to_email /
+// smtp_host / smtp_mode is discarded.
+func (h *meNotificationsHandler) forceOwnEmailConfig(c *gin.Context, userID string, cfg *models.NotificationChannelConfig) bool {
+	if h.cfg.Users == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "email channels unavailable"})
+		return false
+	}
+	u, err := h.cfg.Users.FindByID(c.Request.Context(), userID)
+	if err != nil || u == nil || u.Email == "" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":   "no_account_email",
+			"message": "your account has no email address to deliver to",
+		})
+		return false
+	}
+	// Preserve only the non-destination display/formatting fields; hard-set the
+	// destination + transport to the safe own-account/local values.
+	cfg.ToEmail = u.Email
+	cfg.FromEmail = u.Email
+	cfg.SMTPMode = "local"
+	cfg.SMTPHost = ""
+	cfg.SMTPPort = 0
+	cfg.SMTPTLS = ""
+	cfg.SMTPUsername = ""
+	cfg.SMTPPassword = ""
+	return true
+}
 
 // validateEventKind bounds the routed event kind. A stricter allowlist of
 // routable kinds is a later phase; here we only guard shape.

@@ -25,13 +25,13 @@ func TestTenantNotificationKinds_DefaultExcludesRisky(t *testing.T) {
 	require.True(t, def.Allows("ntfy"))
 }
 
-func TestTenantNotificationKinds_SanitizeDropsUnsafe(t *testing.T) {
+func TestTenantNotificationKinds_SanitizeDropsUnknown(t *testing.T) {
 	t.Parallel()
-	// email is never configurable (phase 4d); "bogus" is unknown; dupes collapse.
+	// "bogus" is unknown and dropped; known kinds (incl. email, phase 4d) are
+	// kept, lowercased/trimmed; dupes collapse.
 	in := TenantNotificationKinds{"NTFY", "email", "webhook", "bogus", "webhook", " discord "}
 	out := in.Sanitize()
-	require.ElementsMatch(t, []string{"ntfy", "webhook", "discord"}, []string(out))
-	require.NotContains(t, []string(out), "email")
+	require.ElementsMatch(t, []string{"ntfy", "email", "webhook", "discord"}, []string(out))
 	require.NotContains(t, []string(out), "bogus")
 }
 

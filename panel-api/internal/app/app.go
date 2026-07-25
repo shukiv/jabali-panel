@@ -513,6 +513,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			ServerSettings: deps.ServerSettings,
 			Registry:       deps.NotificationRegistry,
 			SSOKey:         deps.SSOKey,
+			Users:          deps.Users,
 			Log:            deps.Log,
 		})
 

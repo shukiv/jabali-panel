@@ -18,9 +18,9 @@ import (
 // not by an empty allowlist.
 
 // TenantConfigurableKinds is the closed set of kinds an admin MAY place in the
-// allowlist. email is deliberately absent until phase 4d ships verified-address
-// / local-only plumbing (an arbitrary to_email is an open-relay risk); it must
-// not become tenant-creatable before then.
+// allowlist. email is admin opt-in like webhook/slack/sms: a tenant email
+// channel is forced to deliver only to the caller's own account address over the
+// local submission path (phase 4d), so it carries no open-relay / SSRF risk.
 var TenantConfigurableKinds = []string{
 	NotificationChannelKindNtfy,
 	NotificationChannelKindTelegram,
@@ -29,6 +29,7 @@ var TenantConfigurableKinds = []string{
 	NotificationChannelKindWebhook,
 	NotificationChannelKindSlack,
 	NotificationChannelKindSMS,
+	NotificationChannelKindEmail,
 }
 
 // safeDefaultTenantKinds is the allowlist assumed when none is stored: the

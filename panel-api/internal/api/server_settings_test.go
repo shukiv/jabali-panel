@@ -211,12 +211,12 @@ func TestServerSettingsPatch_InvalidJSON(t *testing.T) {
 	assert.Equal(t, "validation_failed", respBody["error"])
 }
 
-func TestServerSettingsPatch_TenantNotificationKinds_SanitizesEmail(t *testing.T) {
+func TestServerSettingsPatch_TenantNotificationKinds_SanitizesUnknown(t *testing.T) {
 	t.Parallel()
 	mockRepo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22}}
 	r := settingsRouter(true, mockRepo, agent.NewMockClient())
 
-	// Admin tries to add email (never tenant-configurable) alongside webhook.
+	// email is admin opt-in (phase 4d); "bogus" is unknown and dropped.
 	payload := map[string]any{"tenant_notification_kinds": []string{"webhook", "email", "bogus"}}
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/settings", bytes.NewReader(body))
@@ -225,8 +225,8 @@ func TestServerSettingsPatch_TenantNotificationKinds_SanitizesEmail(t *testing.T
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	// Persisted set must have dropped email + bogus, kept webhook.
-	require.ElementsMatch(t, []string{"webhook"}, []string(mockRepo.getResult.TenantNotificationKinds))
+	// Persisted set: webhook + email kept, bogus dropped.
+	require.ElementsMatch(t, []string{"webhook", "email"}, []string(mockRepo.getResult.TenantNotificationKinds))
 }
 
 func TestServerSettingsGet_TenantNotificationKinds_EffectiveDefault(t *testing.T) {
