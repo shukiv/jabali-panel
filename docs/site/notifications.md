@@ -57,3 +57,37 @@ Stub sources defined but not yet wired: `domain-registrar`, `backup-future-warni
 Users can opt **in** for `cron_failed`, `backup_succeeded`, `backup_failed`, `mail_quarantined` notifications to their own email — `/jabali-panel/profile` → Notifications.
 
 Per-event subscription scope is bounded by ownership: a user cannot subscribe to `crowdsec_spike` for the whole server, only to events affecting their own account.
+
+## Per-user (tenant) channels — JAB-171
+
+Tenants can own their own channels and route their own events to them at
+**`/jabali-panel/notifications`**. This is separate from (and additive to) the
+server-wide admin channels above. See ADR-0159 for the full design + security model.
+
+**Off by default.** The whole surface is gated behind a master switch an admin flips at
+**Server Settings → General → Tenant notifications**. Until then every `/me/notifications/*`
+call returns 403 and the tenant page shows a "not enabled" state. Turning it off again is a
+**live kill switch** — tenant channels immediately stop receiving anything.
+
+**What a tenant can do (when enabled):**
+
+- Create/edit/delete their own channels (name, kind, config, enabled), and send a test.
+- Route an event kind to one of their own channels; the event then also fans out to that
+  channel when it fires *for that tenant*.
+
+**Guardrails (all enforced server-side):**
+
+| Control | Behaviour |
+|---|---|
+| **Ownership** | A tenant only ever sees/manages their own channels + routes; another user's id returns 404, never 403. |
+| **Kind allowlist** | Admin-controlled (Server Settings → General). Empty = safe default set (ntfy/telegram/discord/webpush). webhook/slack/sms/email are admin opt-in. Governs creation **and** live delivery. |
+| **SSRF** | Tenant channel URLs (ntfy/discord/webhook/slack/sms) resolve-and-pin their dial and refuse loopback / cloud-metadata / private ranges. |
+| **Secrets** | Encrypted at rest, never returned on GET, write-only on edit. |
+| **Email** | Forced to the tenant's **own account address** over local delivery — no arbitrary destination, no custom SMTP host. |
+| **Limits** | 10 channels/user; 5 test-sends/min/user. |
+
+**Admin view.** The admin channels tab (`/jabali-admin/notifications/channels`) shows an
+**Owner** column (Tenant vs Server-wide) and can disable or delete any tenant channel.
+
+**CLI.** `jabali notification channels create --user <id> …` provisions a tenant-owned channel
+from the box (omit `--user` for a server-wide channel).

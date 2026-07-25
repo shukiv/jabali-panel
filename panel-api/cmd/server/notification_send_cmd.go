@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -34,7 +35,7 @@ func notificationChannelRepoFromDB() repository.NotificationChannelRepository {
 }
 
 func newNotificationChannelCreateCmd() *cobra.Command {
-	var name, kind, configJSON string
+	var name, kind, configJSON, userID string
 	var disabled bool
 	cmd := &cobra.Command{
 		Use:     "create --name <n> --kind <email|slack|discord|ntfy|webhook|webpush|sms> --config <json>",
@@ -66,15 +67,25 @@ func newNotificationChannelCreateCmd() *cobra.Command {
 				Config:  cfg,
 				Enabled: !disabled,
 			}
+			// --user makes the channel tenant-owned (JAB-171); omit for a
+			// server-wide admin channel. The users FK rejects an unknown id.
+			if uid := strings.TrimSpace(userID); uid != "" {
+				row.UserID = &uid
+			}
 			if err := notificationChannelRepoFromDB().Create(ctx, row); err != nil {
 				cliAuditErr(ctx, "notification_channel.create", "notification_channel", row.ID, nil)
 				return fmt.Errorf("create channel: %w", err)
 			}
 			cliAuditOK(ctx, "notification_channel.create", "notification_channel", row.ID, nil)
-			fmt.Printf("created %s channel %q (%s)\n", kind, name, row.ID)
+			owner := "server-wide"
+			if row.UserID != nil {
+				owner = "user " + *row.UserID
+			}
+			fmt.Printf("created %s channel %q (%s, %s)\n", kind, name, row.ID, owner)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&userID, "user", "", "owner user id (tenant-owned channel; omit for server-wide)")
 	cmd.Flags().StringVar(&name, "name", "", "channel name (required)")
 	cmd.Flags().StringVar(&kind, "kind", "", "email|slack|discord|ntfy|webhook|webpush|sms (required)")
 	cmd.Flags().StringVar(&configJSON, "config", "", "per-kind config JSON (e.g. '{\"url\":\"https://…\"}')")

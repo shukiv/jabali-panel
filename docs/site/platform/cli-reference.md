@@ -3452,6 +3452,7 @@ jabali notification channels create --name <n> --kind <email|slack|discord|ntfy|
 - `--disabled` — create in the disabled state
 - `--kind` — email|slack|discord|ntfy|webhook|webpush|sms (required)
 - `--name` — channel name (required)
+- `--user` — owner user id (tenant-owned channel; omit for server-wide)
 
 ##### `jabali notification channels delete`
 
