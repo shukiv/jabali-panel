@@ -1007,7 +1007,17 @@ prompt_server_settings() {
   _log "detecting primary interface IPv4…"
   detected_ipv4="$(_detect_public_ipv4 || true)"
   if [[ -z "$detected_ipv4" ]]; then
-    _die "could not auto-detect an IPv4 address. Set JABALI_PUBLIC_IPV4 and re-run."
+    # Auto-detect can come up empty on hosts with no default route or only
+    # non-global addresses (bridged containers, some VPS setups). The error
+    # told the operator to set JABALI_PUBLIC_IPV4 — so honour it here instead
+    # of dying before it is ever read (the value is otherwise consumed below at
+    # inp_ipv4="${JABALI_PUBLIC_IPV4:-$detected_ipv4}").
+    if [[ -n "${JABALI_PUBLIC_IPV4:-}" ]]; then
+      _warn "could not auto-detect an IPv4 address — using JABALI_PUBLIC_IPV4=${JABALI_PUBLIC_IPV4}"
+      detected_ipv4="$JABALI_PUBLIC_IPV4"
+    else
+      _die "could not auto-detect an IPv4 address. Set JABALI_PUBLIC_IPV4 and re-run."
+    fi
   fi
   _ok "primary IPv4: $detected_ipv4"
 
