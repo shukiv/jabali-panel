@@ -119,7 +119,7 @@ REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 # owns /etc/resolv.conf and pdns-recursor recurses through 1.1.1.1 +
 # 9.9.9.9 via UDP.
 DNS_FORWARDER="${JABALI_DNS_FORWARDER:-}"
-GO_VERSION="${JABALI_GO_VERSION:-1.26.4}"
+GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
@@ -4313,9 +4313,23 @@ install_go() {
 
   _log "installing Go $GO_VERSION ($GO_ARCH)"
   local tarball="/tmp/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 -o "$tarball" \
-    "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"; then
-    _die "failed to download Go $GO_VERSION from go.dev — check egress to go.dev from this host"
+  local go_curl=(curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30)
+  if ! "${go_curl[@]}" -o "$tarball" "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"; then
+    # GH #670: the pinned GO_VERSION can be AHEAD of what go.dev has published
+    # (a version bump that landed before the Go release, or a CDN propagation
+    # gap) — that returns 404 and must NOT brick the whole install. Fall back to
+    # the current published stable instead of dying on the pin.
+    _warn "Go $GO_VERSION not downloadable from go.dev (unpublished pin or propagation gap) — falling back to current stable"
+    local go_stable
+    go_stable="$("${go_curl[@]}" "https://go.dev/VERSION?m=text" 2>/dev/null | head -n1 | sed 's/^go//')"
+    if [[ -n "$go_stable" && "$go_stable" != "$GO_VERSION" ]]; then
+      _log "current stable is go${go_stable} — retrying with it"
+      GO_VERSION="$go_stable"
+      tarball="/tmp/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    fi
+    if ! "${go_curl[@]}" -o "$tarball" "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"; then
+      _die "failed to download Go (pinned + stable fallback both failed) from go.dev — check egress to go.dev from this host"
+    fi
   fi
   tar -C /usr/local -xzf "$tarball"
   rm -f "$tarball"
