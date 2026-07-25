@@ -211,6 +211,39 @@ func TestServerSettingsPatch_InvalidJSON(t *testing.T) {
 	assert.Equal(t, "validation_failed", respBody["error"])
 }
 
+func TestServerSettingsPatch_TenantNotificationKinds_SanitizesEmail(t *testing.T) {
+	t.Parallel()
+	mockRepo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22}}
+	r := settingsRouter(true, mockRepo, agent.NewMockClient())
+
+	// Admin tries to add email (never tenant-configurable) alongside webhook.
+	payload := map[string]any{"tenant_notification_kinds": []string{"webhook", "email", "bogus"}}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// Persisted set must have dropped email + bogus, kept webhook.
+	require.ElementsMatch(t, []string{"webhook"}, []string(mockRepo.getResult.TenantNotificationKinds))
+}
+
+func TestServerSettingsGet_TenantNotificationKinds_EffectiveDefault(t *testing.T) {
+	t.Parallel()
+	// Empty column → GET surfaces the safe default set, not a blank list.
+	mockRepo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1}}
+	r := settingsRouter(true, mockRepo, agent.NewMockClient())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp models.ServerSettings
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.ElementsMatch(t, []string{"ntfy", "telegram", "discord", "webpush"},
+		[]string(resp.TenantNotificationKinds))
+}
+
 func TestServerSettingsPatch_PartialUpdate(t *testing.T) {
 	t.Parallel()
 

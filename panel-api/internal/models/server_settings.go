@@ -130,6 +130,13 @@ type ServerSettings struct {
 	// row keeps the surface off. Security-sensitive tenant cap → default OFF.
 	TenantNotificationsEnabled bool `gorm:"column:tenant_notifications_enabled;type:tinyint(1);not null;default:0" json:"tenant_notifications_enabled"`
 
+	// TenantNotificationKinds is the admin-configurable allowlist of channel
+	// kinds a tenant may create (JAB-171 phase 4b). Empty column = safe default
+	// set (ntfy/telegram/discord/webpush); webhook/slack/sms are admin opt-in.
+	// Enforcement substitutes the default via OrDefault(); "deny all" is the
+	// master TenantNotificationsEnabled switch, not an empty list.
+	TenantNotificationKinds TenantNotificationKinds `gorm:"column:tenant_notification_kinds;type:longtext" json:"tenant_notification_kinds"`
+
 	// DNSUserRecordPolicy — per-type create/edit/delete matrix for non-admin
 	// tenants (GH #466, ADR-0150). JSON object keyed by UPPERCASE record type.
 	DNSUserRecordPolicy DNSUserRecordPolicy `gorm:"column:dns_user_record_policy;type:longtext" json:"dns_user_record_policy"`

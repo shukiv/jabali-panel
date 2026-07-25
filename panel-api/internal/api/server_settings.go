@@ -80,6 +80,12 @@ func (h *serverSettingsHandler) get(c *gin.Context) {
 		}
 	}
 
+	// Surface the EFFECTIVE tenant channel-kind allowlist: an empty column means
+	// "safe defaults", so show them rather than a blank list. Doesn't write back.
+	if len(s.TenantNotificationKinds) == 0 {
+		s.TenantNotificationKinds = models.DefaultTenantNotificationKinds()
+	}
+
 	c.JSON(http.StatusOK, s)
 }
 
@@ -130,6 +136,12 @@ type updateServerSettingsRequest struct {
 	APIEnabled                   *bool   `json:"api_enabled,omitempty"`
 	TenantDomainOptionsEnabled   *bool   `json:"tenant_domain_options_enabled,omitempty"`
 	TenantDocrootEditable        *bool   `json:"tenant_docroot_editable,omitempty"`
+	// TenantNotificationKinds — admin-configurable tenant channel-kind allowlist
+	// (phase 4b). The master TenantNotificationsEnabled toggle is deliberately
+	// NOT exposed here: it stays un-flippable until phase 4e, after rate limits
+	// and email-verify land (do-not-ship gate). Editing the allowlist while the
+	// surface is off is harmless.
+	TenantNotificationKinds *models.TenantNotificationKinds `json:"tenant_notification_kinds,omitempty"`
 	RootTerminalEnabled          *bool   `json:"root_terminal_enabled,omitempty"`
 	BandwidthQuotaEnforceEnabled *bool   `json:"bandwidth_quota_enforce_enabled,omitempty"`
 	UploadMaxSizeMB              *uint32 `json:"upload_max_size_mb,omitempty"`
@@ -485,6 +497,11 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.TenantDocrootEditable != nil {
 		current.TenantDocrootEditable = *req.TenantDocrootEditable
+	}
+	if req.TenantNotificationKinds != nil {
+		// Sanitize drops unknown / not-yet-safe kinds (e.g. email), so a PATCH
+		// can never smuggle an unsupported kind into the tenant allowlist.
+		current.TenantNotificationKinds = req.TenantNotificationKinds.Sanitize()
 	}
 	if req.RootTerminalEnabled != nil {
 		current.RootTerminalEnabled = *req.RootTerminalEnabled

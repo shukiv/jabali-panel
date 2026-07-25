@@ -18,11 +18,11 @@
 // existence never leaks. Secrets are sealed at rest (notifsecret) and redacted on
 // every response; edits are write-only (empty secret keeps the stored one).
 //
-// The tenant-creatable kind allowlist is a STUB: only ntfy/telegram/discord/
-// webpush in phase 3b. email (needs verified-address plumbing), webhook, sms and
-// slack are rejected until phase 4 adds SSRF + email-verify + the admin-controlled
-// allowlist. Because ntfy/discord carry a user-supplied URL that is NOT yet
-// SSRF-guarded, the master flag MUST stay off until phase 4 — the two land together.
+// The tenant-creatable kind allowlist is admin-configurable
+// (ServerSettings.TenantNotificationKinds, phase 4b): empty → the safe default
+// set (ntfy/telegram/discord/webpush); webhook/slack/sms are admin opt-in and
+// SSRF-guarded (phase 4a). email stays out until phase 4d ships verified-address
+// plumbing.
 
 package api
 
@@ -57,17 +57,6 @@ type MeNotificationsConfig struct {
 	Log            *slog.Logger
 }
 
-// tenantChannelKinds is the phase-3b allowlist of kinds a tenant may create.
-// Deliberately narrow: email/webhook/sms/slack are withheld until phase 4 adds
-// SSRF guarding, the admin-controlled allowlist and email verified-address
-// plumbing. See the file header.
-var tenantChannelKinds = map[string]struct{}{
-	models.NotificationChannelKindNtfy:     {},
-	models.NotificationChannelKindTelegram: {},
-	models.NotificationChannelKindDiscord:  {},
-	models.NotificationChannelKindWebpush:  {},
-}
-
 // RegisterMeNotificationsRoutes mounts the /me/notifications/* surface. Auth
 // comes from the parent group; handlers resolve the caller from the session and
 // enforce ownership + the master gate themselves.
@@ -94,19 +83,26 @@ type meNotificationsHandler struct {
 	cfg MeNotificationsConfig
 }
 
-// gateOpen reports whether the tenant surface is enabled. Fails CLOSED: a nil
-// repo, a read error, or the flag being off all yield false, and the caller
-// aborts with 403. Security-sensitive — never fail open here.
-func (h *meNotificationsHandler) gateOpen(c *gin.Context) bool {
+// loadSettings loads server settings and enforces the master gate. Fails
+// CLOSED: a nil repo, a read error, or the flag being off all abort with 403.
+// Security-sensitive — never fail open here. The returned settings are reused by
+// createChannel for the kind allowlist so the gate + allowlist share one read.
+func (h *meNotificationsHandler) loadSettings(c *gin.Context) (*models.ServerSettings, bool) {
 	st, err := h.cfg.ServerSettings.Get(c.Request.Context())
 	if err != nil || st == nil || !st.TenantNotificationsEnabled {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"error":   "tenant_notifications_disabled",
 			"message": "per-user notification channels are not enabled on this server",
 		})
-		return false
+		return nil, false
 	}
-	return true
+	return st, true
+}
+
+// gateOpen is the master-gate check for handlers that don't need the settings.
+func (h *meNotificationsHandler) gateOpen(c *gin.Context) bool {
+	_, ok := h.loadSettings(c)
+	return ok
 }
 
 // loadOwnedChannel fetches a channel and enforces tenant ownership. Any miss —
@@ -147,7 +143,8 @@ type meChannelCreateReq struct {
 }
 
 func (h *meNotificationsHandler) createChannel(c *gin.Context) {
-	if !h.gateOpen(c) {
+	st, ok := h.loadSettings(c)
+	if !ok {
 		return
 	}
 	claims, ok := requireBrowserAuth(c)
@@ -163,8 +160,12 @@ func (h *meNotificationsHandler) createChannel(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
-	if err := requireTenantKind(req.Kind); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+	// Admin-configurable kind allowlist (empty settings → safe default set).
+	if !st.TenantNotificationKinds.OrDefault().Allows(req.Kind) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":   "kind_not_allowed_for_tenant",
+			"message": "channel kind " + req.Kind + " is not permitted for tenant channels on this server",
+		})
 		return
 	}
 	if err := validateChannelKindAndConfig(req.Kind, req.Config); err != nil {
@@ -422,14 +423,6 @@ func (h *meNotificationsHandler) deleteRoute(c *gin.Context) {
 }
 
 // --- validation helpers ---
-
-// requireTenantKind gates channel creation to the phase-3b tenant allowlist.
-func requireTenantKind(kind string) error {
-	if _, ok := tenantChannelKinds[kind]; !ok {
-		return fmt.Errorf("channel kind %q is not available for tenant channels yet (allowed: ntfy, telegram, discord, webpush)", kind)
-	}
-	return nil
-}
 
 // validateEventKind bounds the routed event kind. A stricter allowlist of
 // routable kinds is a later phase; here we only guard shape.

@@ -265,6 +265,37 @@ func TestMeNotif_RouteHappyThenDeleteOwnership(t *testing.T) {
 	require.Empty(t, routes.rows)
 }
 
+func TestMeNotif_KindAllowlist_DefaultBlocksWebhook_AdminOptInAllows(t *testing.T) {
+	t.Parallel()
+	body := map[string]any{
+		"name":   "wh",
+		"kind":   "webhook",
+		"config": map[string]any{"url": "https://example.com/hook", "hmac_secret": "0123456789abcdef"},
+	}
+
+	// Default allowlist (empty settings → safe set) blocks webhook.
+	rDefault := newMeNotifRouter(t, meNotifSettings(true), &fakeChannelsRepo{}, &fakeUserRoutesRepo{}, newUserCtxID("u1"))
+	recBlocked := doNotifJSON(t, rDefault, http.MethodPost, "/api/v1/me/notifications/channels", body)
+	require.Equal(t, http.StatusUnprocessableEntity, recBlocked.Code, recBlocked.Body.String())
+	require.Contains(t, recBlocked.Body.String(), "kind_not_allowed_for_tenant")
+
+	// Admin opts webhook into the allowlist → tenant may now create it.
+	settings := &mockServerSettingsRepo{getResult: &models.ServerSettings{
+		TenantNotificationsEnabled: true,
+		TenantNotificationKinds:    models.TenantNotificationKinds{"ntfy", "webhook"},
+	}}
+	repo := &fakeChannelsRepo{}
+	rAllowed := newMeNotifRouter(t, settings, repo, &fakeUserRoutesRepo{}, newUserCtxID("u1"))
+	recOK := doNotifJSON(t, rAllowed, http.MethodPost, "/api/v1/me/notifications/channels", body)
+	require.Equal(t, http.StatusCreated, recOK.Code, recOK.Body.String())
+	require.Len(t, repo.rows, 1)
+	for _, row := range repo.rows {
+		require.Equal(t, "webhook", row.Kind)
+		require.NotNil(t, row.UserID)
+		require.Equal(t, "u1", *row.UserID)
+	}
+}
+
 func TestMeNotif_InvalidEventKind_Is422(t *testing.T) {
 	t.Parallel()
 	repo := &fakeChannelsRepo{}
