@@ -119,6 +119,19 @@ export const ChannelsTab = () => {
           )}
         />
         <Table.Column
+          dataIndex="user_id"
+          title="Owner"
+          render={(userID: string | null | undefined) =>
+            userID ? (
+              <Tag color="blue" title={userID}>
+                Tenant
+              </Tag>
+            ) : (
+              <Tag>Server-wide</Tag>
+            )
+          }
+        />
+        <Table.Column
           dataIndex="enabled"
           title={t("channelstab.enabled")}
           render={(enabled: boolean, row: NotificationChannel) => (

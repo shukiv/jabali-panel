@@ -33,6 +33,9 @@ export type NotificationChannel = {
   kind: ChannelKind;
   config: ChannelFormConfig;
   enabled: boolean;
+  // user_id is set for tenant-owned channels (JAB-171); null/undefined = a
+  // server-wide admin channel.
+  user_id?: string | null;
   created_at?: string;
   updated_at?: string;
 };

@@ -73,6 +73,7 @@ import { PanelSSLCard } from "./PanelSSLCard";
 import { NspawnImagesCard } from "./NspawnImagesCard";
 import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
 import { TenantDomainOptionsCard } from "./TenantDomainOptionsCard";
+import { TenantNotificationsCard } from "./TenantNotificationsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
 import { LogRetentionCard } from "./LogRetentionCard";
 
@@ -1058,7 +1059,12 @@ export const ServerSettingsPage = () => {
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as SettingsTabKey)}
       >
-        {activeTab === "general" && <GeneralSettingsTab />}
+        {activeTab === "general" && (
+          <>
+            <GeneralSettingsTab />
+            <TenantNotificationsCard />
+          </>
+        )}
         {activeTab === "ssh" && <SSHSettingsTab />}
         {activeTab === "storage" && <StorageSettingsTab />}
         {activeTab === "dns" && <DNSSettingsTab />}
