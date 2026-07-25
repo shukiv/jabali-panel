@@ -518,7 +518,7 @@ func (m Model) View() string {
 		} else {
 			b.WriteString(onStyle.Render("✓ Install complete"))
 			if len(m.summary) > 0 {
-				b.WriteString("\n\n" + renderSummaryCard(m.summary) + "\n")
+				b.WriteString("\n\n" + renderSummaryCard(m.summary, m.width) + "\n")
 			} else {
 				b.WriteString("\n\n" + helpStyle.Render("Log in at the panel URL printed above.") + "\n")
 			}
@@ -679,7 +679,7 @@ var (
 // renderSummaryCard turns the captured install summary lines into a styled
 // "Panel access" card: URL/Username/Password as aligned coloured fields, and
 // the "> ..." advisory lines as a dim note block below.
-func renderSummaryCard(lines []string) string {
+func renderSummaryCard(lines []string, width int) string {
 	var fields []string
 	var notes []string
 	for _, ln := range lines {
@@ -704,11 +704,19 @@ func renderSummaryCard(lines []string) string {
 	body.WriteString(cardTitleStyle.Render("Panel access") + "\n\n")
 	body.WriteString(strings.Join(fields, "\n"))
 	if len(notes) > 0 {
-		body.WriteString("\n\n" + helpStyle.Render(strings.Join(notes, "\n")))
+		// Word-wrap the advisory notes to the viewport width at WORD boundaries.
+		// Relying on the terminal to soft-wrap long lines (the old behaviour) broke
+		// them mid-word ("co\nuld not reach") and mid-URL; lipgloss .Width wraps on
+		// spaces instead. Subtract appStyle's Padding(1,2) so wrapped lines don't
+		// run under the right padding.
+		noteW := width - 4
+		if noteW < 32 {
+			noteW = 76
+		}
+		body.WriteString("\n\n" + helpStyle.Width(noteW).Render(strings.Join(notes, "\n")))
 	}
-	// No border: the advisory notes are long, unwrapped lines that overflowed the
-	// bordered box and scattered its pipes mid-line. Plain left-aligned text reads
-	// cleanly and lets the terminal soft-wrap long lines.
+	// No border: the bordered box scattered its pipes when content overflowed. Plain
+	// left-aligned text with explicit note wrapping (above) reads cleanly.
 	return body.String()
 }
 
