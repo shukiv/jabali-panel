@@ -32,6 +32,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -67,7 +68,10 @@ func RegisterMeNotificationsRoutes(g *gin.RouterGroup, cfg MeNotificationsConfig
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	h := &meNotificationsHandler{cfg: cfg}
+	h := &meNotificationsHandler{
+		cfg:       cfg,
+		testLimit: newBroadcastLimit(time.Minute, tenantTestSendPerMinute),
+	}
 	grp := g.Group("/me/notifications")
 	grp.GET("/channels", h.listChannels)
 	grp.POST("/channels", h.createChannel)
@@ -79,8 +83,21 @@ func RegisterMeNotificationsRoutes(g *gin.RouterGroup, cfg MeNotificationsConfig
 	grp.DELETE("/routes/:id", h.deleteRoute)
 }
 
+// Per-user anti-abuse limits (JAB-171 phase 4c). Consts, not admin-configurable
+// — a conservative ceiling that a tenant can't tune. The quota bounds stored
+// state; the test-send limit bounds tenant-triggerable outbound traffic (real
+// events fire from system actions, not on tenant demand, so the test endpoint is
+// the only tenant-controllable send).
+const (
+	maxTenantChannelsPerUser = 10
+	tenantTestSendPerMinute  = 5
+)
+
 type meNotificationsHandler struct {
 	cfg MeNotificationsConfig
+	// testLimit is a per-user token bucket for the synchronous test-send,
+	// reusing the admin broadcast limiter (keyed by claims.UserID).
+	testLimit *perAdminBroadcastLimit
 }
 
 // loadSettings loads server settings and enforces the master gate. Fails
@@ -170,6 +187,21 @@ func (h *meNotificationsHandler) createChannel(c *gin.Context) {
 	}
 	if err := validateChannelKindAndConfig(req.Kind, req.Config); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	// Per-user channel quota — bound how many channels one tenant can create.
+	existing, err := h.cfg.Channels.ListByUser(c.Request.Context(), claims.UserID)
+	if err != nil {
+		h.cfg.Log.Error("count own channels failed", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "create_failed"})
+		return
+	}
+	if len(existing) >= maxTenantChannelsPerUser {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":   "too_many_channels",
+			"message": fmt.Sprintf("channel limit reached (%d per user)", maxTenantChannelsPerUser),
+			"max":     maxTenantChannelsPerUser,
+		})
 		return
 	}
 	enabled := true
@@ -281,6 +313,15 @@ func (h *meNotificationsHandler) testChannel(c *gin.Context) {
 	}
 	claims, ok := requireBrowserAuth(c)
 	if !ok {
+		return
+	}
+	// Per-user test-send rate limit — the test endpoint is the only
+	// tenant-triggerable outbound send, so cap it to blunt third-party spam.
+	if h.testLimit != nil && !h.testLimit.allow(claims.UserID) {
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+			"error":   "rate_limited",
+			"message": fmt.Sprintf("test-send rate limit exceeded (%d/min)", tenantTestSendPerMinute),
+		})
 		return
 	}
 	if h.cfg.Registry == nil {

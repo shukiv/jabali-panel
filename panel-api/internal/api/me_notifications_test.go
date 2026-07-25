@@ -296,6 +296,38 @@ func TestMeNotif_KindAllowlist_DefaultBlocksWebhook_AdminOptInAllows(t *testing.
 	}
 }
 
+func TestMeNotif_ChannelQuota_Is409WhenFull(t *testing.T) {
+	t.Parallel()
+	repo := &fakeChannelsRepo{}
+	// Seed the per-user cap worth of channels for u1.
+	for i := 0; i < 10; i++ {
+		_ = repo.Create(context.Background(), ownedChannel("u1", "ntfy", models.NotificationChannelConfig{URL: "https://ntfy.sh/a"}))
+	}
+	r := newMeNotifRouter(t, meNotifSettings(true), repo, &fakeUserRoutesRepo{}, newUserCtxID("u1"))
+	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/me/notifications/channels", map[string]any{
+		"name":   "one too many",
+		"kind":   "ntfy",
+		"config": map[string]any{"url": "https://ntfy.sh/b"},
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "too_many_channels")
+	require.Len(t, repo.rows, 10, "the 11th channel must not be persisted")
+}
+
+func TestMeNotif_TestSendRateLimited_After5PerMin(t *testing.T) {
+	t.Parallel()
+	// One router → one handler → one limiter shared across the requests.
+	r := newMeNotifRouter(t, meNotifSettings(true), &fakeChannelsRepo{}, &fakeUserRoutesRepo{}, newUserCtxID("u1"))
+	// Registry is nil, so an allowed call falls through to 503; the 6th call is
+	// refused by the rate limiter (5/min) BEFORE reaching that path.
+	var last int
+	for i := 0; i < 6; i++ {
+		rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/me/notifications/channels/anyid/test", nil)
+		last = rec.Code
+	}
+	require.Equal(t, http.StatusTooManyRequests, last, "6th test-send within a minute must be 429")
+}
+
 func TestMeNotif_InvalidEventKind_Is422(t *testing.T) {
 	t.Parallel()
 	repo := &fakeChannelsRepo{}
