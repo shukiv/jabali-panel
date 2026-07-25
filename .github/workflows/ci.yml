@@ -48,6 +48,19 @@ jobs:
       - name: Run lint
         run: tools/lint-install-sh.sh
 
+  pinned-downloads:
+    name: install.sh pinned downloads published
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned versions resolve to published artifacts
+        # Fails if any pinned third-party version in install.sh is AHEAD of
+        # upstream (tagged/not-yet-published) — catches the GH #670 class in the
+        # PR that bumps the pin, instead of bricking real installs.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/check-pinned-downloads.sh install.sh
+
   ui-unit:
     name: panel-ui unit tests (vitest)
     runs-on: self-hosted
