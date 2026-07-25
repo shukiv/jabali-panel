@@ -339,6 +339,12 @@ export const userNav: NavItem[] = [
     path: "/jabali-panel/api-tokens",
   },
   {
+    key: "notifications",
+    label: "nav.user.notifications",
+    icon: navIcon(BellOutlined),
+    path: "/jabali-panel/notifications",
+  },
+  {
     key: "dns",
     label: "nav.user.dns",
     icon: navIcon(CloudServerOutlined),

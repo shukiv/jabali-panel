@@ -88,6 +88,7 @@ const UserBackupsPage = lazy(() => import("./shells/user/backups/UserBackupsPage
 const UserLogsPage = lazy(() => import("./shells/user/logs/UserLogsPage").then((m) => ({ default: m.UserLogsPage })));
 const UserSSHKeysPage = lazy(() => import("./shells/user/ssh-keys/UserSSHKeysPage").then((m) => ({ default: m.UserSSHKeysPage })));
 const UserAPITokensPage = lazy(() => import("./shells/user/api-tokens/UserAPITokensPage").then((m) => ({ default: m.UserAPITokensPage })));
+const MyNotificationsPage = lazy(() => import("./shells/user/notifications/MyNotificationsPage").then((m) => ({ default: m.MyNotificationsPage })));
 const APIDocsPage = lazy(() => import("./shells/shared/APIDocsPage").then((m) => ({ default: m.APIDocsPage })));
 const UserCronList = lazy(() => import("./shells/user/cron/UserCronList").then((m) => ({ default: m.UserCronList })));
 const AdminCronList = lazy(() => import("./shells/admin/cron/AdminCronList").then((m) => ({ default: m.AdminCronList })));
@@ -392,6 +393,7 @@ const ThemedApp = () => {
               }
             />
             <Route path="api-docs" element={<APIDocsPage />} />
+            <Route path="notifications" element={<MyNotificationsPage />} />
             <Route path="cron" element={<UserCronList />} />
             <Route path="backups" element={<UserBackupsPage />} />
             <Route path="mail" element={<Navigate to="/jabali-panel/mail/mailboxes" replace />} />

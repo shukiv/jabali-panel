@@ -65,6 +65,7 @@
       "logs": "Logs & Statistics",
       "ssh-keys": "SSH Keys",
       "api-tokens": "Personal API Tokens",
+      "notifications": "Notifications",
       "dns": "DNS",
       "ssl": "SSL Manager",
       "php-settings": "PHP Settings",
