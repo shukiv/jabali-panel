@@ -503,6 +503,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			QuotaMount: deps.QuotaMount,
 			Snapshots:  repository.NewDiskUsageSnapshotRepository(deps.DB),
 		})
+		// JAB-171 phase 3b — tenant-facing notification channels + routing.
+		// Gated behind ServerSettings.TenantNotificationsEnabled (default OFF,
+		// no admin toggle until phase 4 lands the SSRF guard + email-verify),
+		// so registering the routes here does not expose them to tenants yet.
+		api.RegisterMeNotificationsRoutes(v1, api.MeNotificationsConfig{
+			Channels:       deps.NotificationChannels,
+			Routes:         deps.UserNotificationRoutes,
+			ServerSettings: deps.ServerSettings,
+			Registry:       deps.NotificationRegistry,
+			SSOKey:         deps.SSOKey,
+			Log:            deps.Log,
+		})
 
 		// ADR-0128 — admin act-as grant management (GH #183). Mounted on v1;
 		// ResolveImpersonation skips this path so it always runs as the real

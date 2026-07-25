@@ -102,6 +102,18 @@ func (f *fakeChannels) FindEnabledAll(ctx context.Context) ([]models.Notificatio
 // channels are excluded from broadcast/server fan-out (JAB-171).
 func (f *fakeChannels) SealAllPlaintext(ctx context.Context) (int, error) { return 0, nil }
 
+func (f *fakeChannels) ListByUser(_ context.Context, userID string) ([]models.NotificationChannel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]models.NotificationChannel, 0)
+	for _, ch := range f.enabled {
+		if ch.UserID != nil && *ch.UserID == userID {
+			out = append(out, ch)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeChannels) FindEnabledServerWide(ctx context.Context) ([]models.NotificationChannel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

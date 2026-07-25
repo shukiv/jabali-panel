@@ -121,6 +121,15 @@ type ServerSettings struct {
 	// stands apart from the riskier raw nginx options.
 	TenantDocrootEditable bool `gorm:"column:tenant_docroot_editable;type:tinyint(1);not null;default:1" json:"tenant_docroot_editable"`
 
+	// TenantNotificationsEnabled is the master switch for the tenant-facing
+	// notification surface (/me/notifications/*, JAB-171). Default OFF and, in
+	// phase 3b, there is NO admin API to flip it — the endpoints are built,
+	// ownership-scoped and secret-redacting but stay un-enablable until phase 4
+	// adds the SSRF guard, per-kind allowlist and email-verify. Handlers fail
+	// CLOSED on this flag (unlike the module guard), so an unreadable settings
+	// row keeps the surface off. Security-sensitive tenant cap → default OFF.
+	TenantNotificationsEnabled bool `gorm:"column:tenant_notifications_enabled;type:tinyint(1);not null;default:0" json:"tenant_notifications_enabled"`
+
 	// DNSUserRecordPolicy — per-type create/edit/delete matrix for non-admin
 	// tenants (GH #466, ADR-0150). JSON object keyed by UPPERCASE record type.
 	DNSUserRecordPolicy DNSUserRecordPolicy `gorm:"column:dns_user_record_policy;type:longtext" json:"dns_user_record_policy"`

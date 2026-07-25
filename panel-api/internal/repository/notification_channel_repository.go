@@ -22,6 +22,12 @@ type NotificationChannelRepository interface {
 	FindByID(ctx context.Context, id string) (*models.NotificationChannel, error)
 	ListAll(ctx context.Context, opts ListOptions) ([]models.NotificationChannel, int64, error)
 
+	// ListByUser returns every channel owned by one tenant (user_id = userID),
+	// newest first. Powers the ownership-scoped /me/notifications/channels list
+	// (JAB-171) — a tenant sees only their own channels, never server-wide or
+	// another user's rows. Secrets are returned sealed; the handler redacts.
+	ListByUser(ctx context.Context, userID string) ([]models.NotificationChannel, error)
+
 	// FindEnabledByKind returns every row with the given kind that has
 	// enabled=true. Used by the dispatcher at fanout time to resolve
 	// which concrete channels a kind (e.g. "slack") targets.
@@ -171,6 +177,15 @@ func (r *notificationChannelRepo) FindEnabledAll(ctx context.Context) ([]models.
 	err := r.db.WithContext(ctx).
 		Where("enabled = ?", true).
 		Order("kind asc, id asc").
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *notificationChannelRepo) ListByUser(ctx context.Context, userID string) ([]models.NotificationChannel, error) {
+	var rows []models.NotificationChannel
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("created_at DESC, id DESC").
 		Find(&rows).Error
 	return rows, err
 }

@@ -3719,6 +3719,87 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  # -------------------------------------------------- tenant notifications (JAB-171 phase 3b) ---
+  # Gated behind ServerSettings.TenantNotificationsEnabled (default OFF, no admin
+  # toggle until phase 4). All routes are ownership-scoped to the caller and
+  # return 404 (never 403) for another user's ids. Browser session only.
+  /me/notifications/channels:
+    get:
+      tags: [Notifications]
+      summary: List your own notification channels
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: OK }
+        "403": { description: Tenant notifications disabled }
+    post:
+      tags: [Notifications]
+      summary: Create an own notification channel (ntfy/telegram/discord/webpush only)
+      security: [ { KratosSession: [] } ]
+      responses:
+        "201": { description: Created }
+        "403": { description: Tenant notifications disabled }
+        "422": { description: Validation error / kind not allowed for tenants }
+
+  /me/notifications/channels/{id}:
+    patch:
+      tags: [Notifications]
+      summary: Update an own notification channel (write-only secrets)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: OK }
+        "403": { description: Tenant notifications disabled }
+        "404": { description: No such channel (or owned by another user) }
+    delete:
+      tags: [Notifications]
+      summary: Delete an own notification channel
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Tenant notifications disabled }
+        "404": { description: No such channel (or owned by another user) }
+
+  /me/notifications/channels/{id}/test:
+    post:
+      tags: [Notifications]
+      summary: Synchronous test-send to an own channel
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: Delivered }
+        "403": { description: Tenant notifications disabled }
+        "404": { description: No such channel (or owned by another user) }
+
+  /me/notifications/routes:
+    get:
+      tags: [Notifications]
+      summary: List your event→channel routes
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: OK }
+        "403": { description: Tenant notifications disabled }
+    post:
+      tags: [Notifications]
+      summary: Route an event kind to an own channel
+      security: [ { KratosSession: [] } ]
+      responses:
+        "201": { description: Created }
+        "403": { description: Tenant notifications disabled }
+        "404": { description: Target channel not found (or owned by another user) }
+        "409": { description: Route already exists }
+
+  /me/notifications/routes/{id}:
+    delete:
+      tags: [Notifications]
+      summary: Delete an own route
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Tenant notifications disabled }
+        "404": { description: No such route (or owned by another user) }
+
   /admin/notifications/dlq:
     delete:
       tags: [Notifications]

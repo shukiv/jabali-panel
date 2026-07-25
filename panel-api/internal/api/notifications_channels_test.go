@@ -88,6 +88,18 @@ func (f *fakeChannelsRepo) FindEnabledServerWide(context.Context) ([]models.Noti
 	return nil, nil
 }
 
+func (f *fakeChannelsRepo) ListByUser(_ context.Context, userID string) ([]models.NotificationChannel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]models.NotificationChannel, 0)
+	for _, r := range f.rows {
+		if r.UserID != nil && *r.UserID == userID {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeChannelsRepo) SealAllPlaintext(context.Context) (int, error) { return 0, nil }
 
 // --- test plumbing ---

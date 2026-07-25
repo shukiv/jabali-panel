@@ -99,6 +99,7 @@ func fullDeps() Deps {
 		UserEgressRequests: repository.NewUserEgressRequestRepository(db),
 		UserEgressDropSamples: repository.NewUserEgressDropSampleRepository(db),
 		NotificationChannels: repository.NewNotificationChannelRepository(db),
+		UserNotificationRoutes: repository.NewUserNotificationRouteRepository(db),
 		NotificationHistory: repository.NewNotificationHistoryRepository(db),
 		WebhookEndpoints: repository.NewWebhookEndpointRepository(db),
 		WebPushSubs: repository.NewWebPushSubscriptionRepository(db),
