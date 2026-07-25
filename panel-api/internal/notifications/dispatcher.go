@@ -80,9 +80,14 @@ type Dispatcher struct {
 	// users powers the broadcast → admin-bell fan-out. Optional —
 	// when nil, broadcast envelopes (env.UserID == "") get no bell rows.
 	// Non-broadcast envelopes always get a bell row regardless.
-	users    repository.UserRepository
-	log      *slog.Logger
-	consumer string
+	users repository.UserRepository
+	// userRoutes powers per-user event routing (JAB-171). Optional — when
+	// nil, user-scoped envelopes fan to server-wide channels only (the
+	// pre-JAB-171 behaviour). When set, a user-scoped envelope also reaches
+	// the recipient's OWN channels that they routed this event kind to.
+	userRoutes repository.UserNotificationRouteRepository
+	log        *slog.Logger
+	consumer   string
 
 	wg      sync.WaitGroup
 	stopped chan struct{}
@@ -101,6 +106,15 @@ func (d *Dispatcher) WithEventSettings(r repository.NotificationEventSettingRepo
 // surface in any admin's bell.
 func (d *Dispatcher) WithUsers(r repository.UserRepository) *Dispatcher {
 	d.users = r
+	return d
+}
+
+// WithUserRoutes injects the per-user routing repo (JAB-171). With it, a
+// user-scoped envelope (env.UserID set) additionally fans out to the
+// recipient's own channels routed for that event kind. Without it, behaviour
+// is unchanged (server-wide channels only).
+func (d *Dispatcher) WithUserRoutes(r repository.UserNotificationRouteRepository) *Dispatcher {
+	d.userRoutes = r
 	return d
 }
 
@@ -360,7 +374,25 @@ func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
 // Explicit ChannelIDs → load each by id. Empty → every enabled channel.
 func (d *Dispatcher) resolveTargets(ctx context.Context, env Envelope) ([]models.NotificationChannel, error) {
 	if len(env.ChannelIDs) == 0 {
-		return d.channels.FindEnabledAll(ctx)
+		// Base set = server-wide admin channels (user_id IS NULL). Using
+		// FindEnabledServerWide (not FindEnabledAll) keeps tenant-owned
+		// channels out of broadcast/server fan-out — JAB-171.
+		targets, err := d.channels.FindEnabledServerWide(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// Additively, a user-scoped envelope also reaches the recipient's
+		// OWN channels routed for this event kind. Ownership is re-checked
+		// here (channel.UserID == recipient) so a stray route can never
+		// deliver another user's — or a global admin — channel.
+		if env.UserID != "" && d.userRoutes != nil {
+			userChans, err := d.recipientRoutedChannels(ctx, env.UserID, env.EventKind)
+			if err != nil {
+				return nil, err
+			}
+			targets = append(targets, userChans...)
+		}
+		return targets, nil
 	}
 	out := make([]models.NotificationChannel, 0, len(env.ChannelIDs))
 	for _, id := range env.ChannelIDs {
@@ -374,6 +406,37 @@ func (d *Dispatcher) resolveTargets(ctx context.Context, env Envelope) ([]models
 			return nil, err
 		}
 		if !ch.Enabled {
+			continue
+		}
+		out = append(out, *ch)
+	}
+	return out, nil
+}
+
+// recipientRoutedChannels returns the recipient's OWN enabled channels that
+// they routed the given event kind to. Every candidate is ownership-checked
+// (channel.UserID == userID) so a route can only ever deliver a channel the
+// same user owns — never a global admin channel, never another tenant's.
+func (d *Dispatcher) recipientRoutedChannels(ctx context.Context, userID, eventKind string) ([]models.NotificationChannel, error) {
+	routes, err := d.userRoutes.ListByUserEvent(ctx, userID, eventKind)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]models.NotificationChannel, 0, len(routes))
+	for _, rt := range routes {
+		ch, err := d.channels.FindByID(ctx, rt.ChannelID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				continue // channel deleted since the route was written
+			}
+			return nil, err
+		}
+		if !ch.Enabled {
+			continue
+		}
+		if ch.UserID == nil || *ch.UserID != userID {
+			// Ownership guard: never deliver a global or other-user channel
+			// via a user route, even if a stale/forged route points at one.
 			continue
 		}
 		out = append(out, *ch)

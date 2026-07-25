@@ -184,7 +184,10 @@ type Deps struct {
 	// the dispatcher goroutine that drains the Redis stream.
 	NotificationChannels repository.NotificationChannelRepository
 	NotificationHistory  repository.NotificationHistoryRepository
-	WebhookEndpoints     repository.WebhookEndpointRepository
+	// UserNotificationRoutes powers per-user event routing (JAB-171): a
+	// user-scoped envelope also reaches the recipient's own routed channels.
+	UserNotificationRoutes repository.UserNotificationRouteRepository
+	WebhookEndpoints       repository.WebhookEndpointRepository
 	WebPushSubs          repository.WebPushSubscriptionRepository
 	// NotificationQueue is the dispatcher's publish end — the internal
 	// enqueue endpoint (RequireLocalhost) and in-process event sources

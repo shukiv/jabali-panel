@@ -284,6 +284,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// concrete senders — slack, ntfy, webhook, webpush, email).
 		deps.NotificationChannels = repository.NewNotificationChannelRepository(sharedDB)
 		deps.NotificationHistory = repository.NewNotificationHistoryRepository(sharedDB)
+		deps.UserNotificationRoutes = repository.NewUserNotificationRouteRepository(sharedDB)
 		deps.WebhookEndpoints = repository.NewWebhookEndpointRepository(sharedDB)
 		deps.WebPushSubs = repository.NewWebPushSubscriptionRepository(sharedDB)
 		if redisClient != nil {
@@ -1191,6 +1192,9 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 	}
 	if err == nil && deps.Users != nil {
 		d.WithUsers(deps.Users)
+	}
+	if err == nil && deps.UserNotificationRoutes != nil {
+		d.WithUserRoutes(deps.UserNotificationRoutes)
 	}
 	if err != nil {
 		log.Error("notifications dispatcher: construction failed", "err", err)

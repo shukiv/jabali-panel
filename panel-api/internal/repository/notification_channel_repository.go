@@ -28,6 +28,12 @@ type NotificationChannelRepository interface {
 	// FindEnabledAll returns every enabled channel across kinds. Used
 	// by broadcast-on-every-channel event handlers.
 	FindEnabledAll(ctx context.Context) ([]models.NotificationChannel, error)
+
+	// FindEnabledServerWide returns every enabled channel that is NOT owned
+	// by a tenant (user_id IS NULL) — the admin-configured channels. The
+	// dispatcher uses this as the base fan-out set so a tenant-owned channel
+	// never receives a broadcast/server event (JAB-171).
+	FindEnabledServerWide(ctx context.Context) ([]models.NotificationChannel, error)
 }
 
 type notificationChannelRepo struct{ db *gorm.DB }
@@ -103,6 +109,15 @@ func (r *notificationChannelRepo) FindEnabledAll(ctx context.Context) ([]models.
 	var rows []models.NotificationChannel
 	err := r.db.WithContext(ctx).
 		Where("enabled = ?", true).
+		Order("kind asc, id asc").
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *notificationChannelRepo) FindEnabledServerWide(ctx context.Context) ([]models.NotificationChannel, error) {
+	var rows []models.NotificationChannel
+	err := r.db.WithContext(ctx).
+		Where("enabled = ? AND user_id IS NULL", true).
 		Order("kind asc, id asc").
 		Find(&rows).Error
 	return rows, err

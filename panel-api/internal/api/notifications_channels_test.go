@@ -84,6 +84,10 @@ func (f *fakeChannelsRepo) FindEnabledAll(context.Context) ([]models.Notificatio
 	return nil, nil
 }
 
+func (f *fakeChannelsRepo) FindEnabledServerWide(context.Context) ([]models.NotificationChannel, error) {
+	return nil, nil
+}
+
 // --- test plumbing ---
 
 func newAdminCtx() gin.HandlerFunc {

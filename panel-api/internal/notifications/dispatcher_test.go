@@ -95,6 +95,21 @@ func (f *fakeChannels) FindEnabledAll(ctx context.Context) ([]models.Notificatio
 	return out, nil
 }
 
+// FindEnabledServerWide returns only the global (user_id IS NULL) enabled
+// channels — mirrors the SQL filter so dispatcher tests can assert tenant-owned
+// channels are excluded from broadcast/server fan-out (JAB-171).
+func (f *fakeChannels) FindEnabledServerWide(ctx context.Context) ([]models.NotificationChannel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]models.NotificationChannel, 0, len(f.enabled))
+	for _, ch := range f.enabled {
+		if ch.UserID == nil {
+			out = append(out, ch)
+		}
+	}
+	return out, nil
+}
+
 var errNotFound = errors.New("not found")
 
 // Upstream repo interface uses repository.ListOptions — we bridge via
@@ -436,4 +451,83 @@ func TestEnvelope_StreamRoundTrip(t *testing.T) {
 	out, err := envelopeFromStream(sm)
 	require.NoError(t, err)
 	require.Equal(t, in, out)
+}
+
+// --- JAB-171 phase 2: recipient-aware routing ---
+
+type fakeUserRoutes struct {
+	// keyed by userID -> eventKind -> channelIDs
+	routes map[string]map[string][]string
+}
+
+func (f *fakeUserRoutes) Create(ctx context.Context, r *models.UserNotificationRoute) error { return nil }
+func (f *fakeUserRoutes) ListByUser(ctx context.Context, userID string) ([]models.UserNotificationRoute, error) {
+	return nil, nil
+}
+func (f *fakeUserRoutes) ListByUserEvent(ctx context.Context, userID, eventKind string) ([]models.UserNotificationRoute, error) {
+	var out []models.UserNotificationRoute
+	for _, chID := range f.routes[userID][eventKind] {
+		out = append(out, models.UserNotificationRoute{UserID: userID, EventKind: eventKind, ChannelID: chID})
+	}
+	return out, nil
+}
+func (f *fakeUserRoutes) Delete(ctx context.Context, id string) error            { return nil }
+func (f *fakeUserRoutes) DeleteByChannel(ctx context.Context, channelID string) error { return nil }
+
+func ptr(s string) *string { return &s }
+
+func ids(chs []models.NotificationChannel) map[string]bool {
+	m := map[string]bool{}
+	for _, c := range chs {
+		m[c.ID] = true
+	}
+	return m
+}
+
+func TestResolveTargets_PerUserRouting(t *testing.T) {
+	g1 := models.NotificationChannel{ID: "G1", Enabled: true, UserID: nil}                 // server-wide
+	a1 := models.NotificationChannel{ID: "A1", Enabled: true, UserID: ptr("userA")}        // tenant A owns
+	b1 := models.NotificationChannel{ID: "B1", Enabled: true, UserID: ptr("userB")}        // tenant B owns
+	fc := &fakeChannels{
+		byID:    map[string]*models.NotificationChannel{"G1": &g1, "A1": &a1, "B1": &b1},
+		enabled: []models.NotificationChannel{g1, a1, b1},
+	}
+	fr := &fakeUserRoutes{routes: map[string]map[string][]string{
+		"userA": {"backup.done": {"A1", "B1"}}, // A1 owned; B1 is a forged/stale route to another user's channel
+	}}
+	d := &Dispatcher{channels: fc, userRoutes: fr}
+	ctx := context.Background()
+
+	// Server event (no UserID): server-wide channels only; tenant channels excluded.
+	got, err := d.resolveTargets(ctx, Envelope{EventKind: "backup.done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := ids(got)
+	if !m["G1"] || m["A1"] || m["B1"] {
+		t.Errorf("server event: want {G1}, got %v", m)
+	}
+
+	// User A event: server-wide G1 + A1 (owned+routed); B1 excluded by ownership guard.
+	got, err = d.resolveTargets(ctx, Envelope{EventKind: "backup.done", UserID: "userA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = ids(got)
+	if !m["G1"] || !m["A1"] {
+		t.Errorf("userA event: want G1+A1, got %v", m)
+	}
+	if m["B1"] {
+		t.Error("userA event MUST NOT include B1 (another tenant's channel) — ownership guard failed")
+	}
+
+	// User A, event with no route: server-wide only.
+	got, err = d.resolveTargets(ctx, Envelope{EventKind: "cert.renewed", UserID: "userA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = ids(got)
+	if !m["G1"] || m["A1"] || m["B1"] {
+		t.Errorf("userA unrouted event: want {G1}, got %v", m)
+	}
 }
