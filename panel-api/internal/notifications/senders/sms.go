@@ -86,7 +86,7 @@ func (s *SMS) Send(ctx context.Context, channel models.NotificationChannel, env 
 		req.Header.Set("Authorization", "Bearer "+channel.Config.Bearer)
 	}
 
-	resp, err := s.client.Do(req)
+	resp, err := clientForChannel(s.client, channel).Do(req)
 	if err != nil {
 		return fmt.Errorf("sms: post: %w", err)
 	}

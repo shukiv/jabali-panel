@@ -14,6 +14,9 @@ package senders
 import (
 	"net/http"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssrfguard"
 )
 
 // DefaultHTTPTimeout bounds outbound senders. Admin-configured URLs
@@ -38,4 +41,29 @@ const DefaultHTTPTimeout = 10 * time.Second
 func newHTTPClient() *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	return &http.Client{Timeout: DefaultHTTPTimeout, Transport: t}
+}
+
+// sharedGuardedClient is the SSRF-guarded client used for tenant-owned channels
+// (JAB-171 phase 4). Its transport resolves + pins every dial and rejects
+// loopback / link-local (cloud metadata) / private ranges, defeating a tenant
+// pointing an ntfy/discord/webhook URL at an internal address. Server-wide/admin
+// channels keep the normal client — an operator may legitimately target an
+// internal host. Package-level singleton: the guard holds no per-channel state.
+var sharedGuardedClient = newGuardedHTTPClient()
+
+func newGuardedHTTPClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = ssrfguard.GuardedDialContext
+	return &http.Client{Timeout: DefaultHTTPTimeout, Transport: t}
+}
+
+// clientForChannel returns the SSRF-guarded client for a tenant-owned channel
+// (UserID set) and the sender's default client for server-wide/admin channels.
+// Selecting on the channel itself makes the guard fail-closed per channel,
+// independent of which call site invoked Send.
+func clientForChannel(def *http.Client, channel models.NotificationChannel) *http.Client {
+	if channel.UserID != nil {
+		return sharedGuardedClient
+	}
+	return def
 }

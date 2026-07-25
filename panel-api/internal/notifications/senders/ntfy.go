@@ -48,7 +48,7 @@ func (n *Ntfy) Send(ctx context.Context, channel models.NotificationChannel, env
 	if env.Deeplink != "" {
 		req.Header.Set("Click", env.Deeplink)
 	}
-	resp, err := n.client.Do(req)
+	resp, err := clientForChannel(n.client, channel).Do(req)
 	if err != nil {
 		return fmt.Errorf("ntfy: post: %w", err)
 	}

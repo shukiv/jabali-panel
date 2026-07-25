@@ -70,7 +70,7 @@ func (d *Discord) Send(ctx context.Context, channel models.NotificationChannel, 
 		return fmt.Errorf("discord: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := d.client.Do(req)
+	resp, err := clientForChannel(d.client, channel).Do(req)
 	if err != nil {
 		return fmt.Errorf("discord: post: %w", err)
 	}

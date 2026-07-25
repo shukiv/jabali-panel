@@ -71,7 +71,7 @@ func (w *Webhook) Send(ctx context.Context, channel models.NotificationChannel, 
 	req.Header.Set("X-Jabali-Signature", sig)
 	req.Header.Set("User-Agent", "jabali-panel-webhook/1")
 
-	resp, err := w.client.Do(req)
+	resp, err := clientForChannel(w.client, channel).Do(req)
 	if err != nil {
 		return fmt.Errorf("webhook: post: %w", err)
 	}

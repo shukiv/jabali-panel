@@ -43,7 +43,7 @@ func (s *Slack) Send(ctx context.Context, channel models.NotificationChannel, en
 		return fmt.Errorf("slack: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client.Do(req)
+	resp, err := clientForChannel(s.client, channel).Do(req)
 	if err != nil {
 		return fmt.Errorf("slack: post: %w", err)
 	}
