@@ -48,32 +48,34 @@
 - Website: https://jabali-panel.com/
 - Demo: https://demo.jabali-panel.com
 
-### Demo mode (the `feat/demo-mode` branch)
+### Demo mode (build-tag gated, on `main`)
 
-The public demo at `https://demo.jabali-panel.com` runs **demo mode**, which
-lives on the long-lived **`feat/demo-mode`** branch (open PR, e.g. #103) and is
-**intentionally never merged to `main`**.
+The public demo at `https://demo.jabali-panel.com` runs **demo mode**. As of
+JAB-159 it lives on `main`, gated **out of production artifacts at compile time**
+(see [ADR-0160](docs/adr/0160-build-tag-demo-mode.md)). It is not a runtime toggle
+and there is no `feat/demo-mode` branch to rebase.
 
-What demo mode adds:
+What demo mode adds (present only in a demo build):
 
 - write-blocking middleware — every non-idempotent `/api/v1/*` request
   (POST/PUT/PATCH/DELETE) returns `403 {"error":"demo_mode"}`, so visitors can
   browse every read endpoint without ever reaching the agent or a DB write;
 - a `/info` endpoint that **exposes the seeded demo credentials**;
-- a fixed **DEMO banner** + "Enter as admin / Enter as user" buttons that
-  replace the real login form.
+- a fixed **DEMO banner** + "Enter as admin / Enter as user" buttons.
 
-It is config-gated off by default (`[demo] enabled = false`), so it is inert in
-a normal install. It is still kept off `main` on purpose: merging would ship the
-demo middleware, the DEMO banner/login override, and especially the
-credential-exposing `/info` endpoint into **every production binary + SPA** —
-one mis-set toggle away from leaking seeded creds on a real host. Keeping it on
-its own branch means production installs never carry that code at all.
+**Why this is safe on `main`.** The demo Go code carries `//go:build demo` and the
+demo UI is gated behind `import.meta.env.VITE_DEMO === "1"`, so a **production build
+contains none of it** — the write-block, the credential-exposing `/info`, and the
+banner/login override are physically absent from a non-demo binary and SPA bundle.
+CI proves it on every PR (`make demo-guard` + the `demo-guard` / `ui-unit` jobs
+assert a production build has no `demo_mode` / `jabali-demo-banner` markers while a
+demo build does). This is strictly stronger than the old "keep it off a branch and
+hope no one flips a flag" model.
 
-**Operating the demo:** deploy the `feat/demo-mode` branch to the demo host,
-rebase it on `main` when you want newer features, and leave the PR open as the
-deploy/tracking branch — do **not** merge it. Production fixes go to `main` and
-are picked up on the next rebase.
+**Operating the demo:** mark the host with `echo demo > /etc/jabali/deploy-profile`.
+`install.sh` and every `jabali update` then build the panel with `-tags demo` and the
+SPA with `VITE_DEMO=1` automatically — the demo tracks `main` with no rebasing.
+Production hosts leave the file absent (the default) and never carry demo code.
 
 ## Installation
 

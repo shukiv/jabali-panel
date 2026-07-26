@@ -160,6 +160,9 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0155](0155-php-fpm-performance-tiers.md) | PHP-FPM performance tiers (package-gated) | Accepted |
 | [0156](0156-send-as-delegation.md) | Send-as delegation (mustMatchSender expression) | Accepted |
 | [0157](0157-automation-write-endpoints.md) | Write-automation endpoints + write scopes (JAB-140) | Accepted |
+| [0158](0158-cacheable-query-param-allowlist.md) | Per-domain cacheable query-param allowlist | Accepted |
+| [0159](0159-per-user-notification-channels.md) | Per-user notification channels + routing (JAB-171) | Accepted |
+| [0160](0160-build-tag-demo-mode.md) | Build-tag-gated demo mode on main (JAB-159) | Accepted |
 <!-- 0133-0140: numbers reserved during planning, no ADR file was ever written (JAB-161). -->
 <!-- /AUTO-GENERATED -->
 
