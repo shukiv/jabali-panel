@@ -333,7 +333,8 @@ func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {
 		"name", "doc_root", "is_enabled", "nginx_custom_directives",
 		"nginx_rules", "nginx_safe_options",
 		"redirect_all_to", "redirect_all_type", "page_redirects",
-		"index_priority", "ssl_enabled", "is_quota_suspended", "webmail_enabled", "updated_at",
+		"index_priority", "ssl_enabled", "is_quota_suspended", "webmail_enabled",
+		"dmarc_np", "dmarc_testing", "updated_at",
 	).Updates(d).Error; err != nil {
 		return translate(err)
 	}

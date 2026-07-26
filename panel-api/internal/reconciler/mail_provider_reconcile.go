@@ -49,7 +49,7 @@ func (r *Reconciler) reconcileMailProviderRecords(ctx context.Context, zone *mod
 		r.deleteMailScope(ctx, existing, dnscompile.ApexMailManagedBy)
 		r.deleteMailScope(ctx, existing, dnscompile.ProviderMailManagedBy(models.MailProviderM365))
 		r.deleteMailScope(ctx, existing, dnscompile.ProviderMailManagedBy(models.MailProviderGoogle))
-		r.restoreBootstrapApex(ctx, zone, srv, existing, now)
+		r.restoreBootstrapApex(ctx, zone, domain, srv, existing, now)
 		return
 	}
 
@@ -188,9 +188,11 @@ func (r *Reconciler) pruneJabaliMailRecords(ctx context.Context, zone *models.DN
 // _dmarc when they are absent (e.g. after switching back from an external
 // provider that pruned them). Only inserts what's missing — never
 // duplicates an existing apex record.
-func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZone, srv *models.ServerSettings, existing []models.DNSRecord, now time.Time) {
+func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZone, domain *models.Domain, srv *models.ServerSettings, existing []models.DNSRecord, now time.Time) {
 	hasMX, hasSPF, hasDMARC := false, false, false
-	for _, e := range existing {
+	var dmarcRec *models.DNSRecord
+	for i := range existing {
+		e := existing[i]
 		switch {
 		case e.Name == "@" && e.Type == "MX":
 			hasMX = true
@@ -198,6 +200,7 @@ func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZ
 			hasSPF = true
 		case e.Name == "_dmarc" && e.Type == "TXT":
 			hasDMARC = true
+			dmarcRec = &existing[i]
 		}
 	}
 	mk := func(name, typ, content string, prio int) *models.DNSRecord {
@@ -216,9 +219,21 @@ func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZ
 			r.log.Warn("mail-provider reconcile: restore SPF", "err", err)
 		}
 	}
+	// GH #648: the canonical _dmarc reflects the domain's DMARCbis settings
+	// (np / testing). Create it when absent; re-render it when a
+	// jabali-authored record has drifted from the current settings. A
+	// fully operator-customised _dmarc (not a canonical variant) is left
+	// untouched.
+	expectedDMARC := dnscompile.BuildDMARCString(domain.DmarcNP, domain.DmarcTesting)
 	if !hasDMARC {
-		if err := r.dnsRecords.Create(ctx, mk("_dmarc", "TXT", `"v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r"`, 0)); err != nil {
+		if err := r.dnsRecords.Create(ctx, mk("_dmarc", "TXT", expectedDMARC, 0)); err != nil {
 			r.log.Warn("mail-provider reconcile: restore DMARC", "err", err)
+		}
+	} else if dmarcRec != nil && dnscompile.IsCanonicalDMARC(dmarcRec.Content) && dmarcRec.Content != expectedDMARC {
+		dmarcRec.Content = expectedDMARC
+		dmarcRec.UpdatedAt = now
+		if err := r.dnsRecords.Update(ctx, dmarcRec); err != nil {
+			r.log.Warn("mail-provider reconcile: re-render DMARC", "err", err)
 		}
 	}
 }

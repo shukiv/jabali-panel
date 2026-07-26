@@ -14,6 +14,7 @@ import {
   Button,
   Popconfirm,
   Card,
+  Select,
   Skeleton,
   Space,
   Switch,
@@ -54,7 +55,11 @@ export const DomainEmailSection = ({ domainId }: Props) => {
   const disableMutation = useDisableDomainEmail();
   const [flipping, setFlipping] = useState(false);
   const qc = useQueryClient();
-  const { data: domain } = useOneQuery<{ webmail_enabled: boolean }>({
+  const { data: domain } = useOneQuery<{
+    webmail_enabled: boolean;
+    dmarc_np?: string;
+    dmarc_testing?: boolean;
+  }>({
     resource: "domains",
     id: domainId,
   });
@@ -86,6 +91,21 @@ export const DomainEmailSection = ({ domainId }: Props) => {
       message.error("Failed to toggle webmail");
     } finally {
       setWmFlipping(false);
+    }
+  };
+
+  const [dmarcSaving, setDmarcSaving] = useState(false);
+  const saveDmarc = async (patch: { dmarc_np?: string; dmarc_testing?: boolean }) => {
+    setDmarcSaving(true);
+    try {
+      await apiClient.patch(`/domains/${domainId}`, patch);
+      qc.invalidateQueries({ queryKey: ["one", "domains", domainId] });
+      message.success("DMARC settings saved");
+    } catch (err) {
+      const resp = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data;
+      message.error(resp?.detail ?? resp?.error ?? "Failed to save DMARC settings");
+    } finally {
+      setDmarcSaving(false);
     }
   };
 
@@ -141,6 +161,48 @@ export const DomainEmailSection = ({ domainId }: Props) => {
             vhost; mail delivery is unaffected.
           </span>
         </Space>
+      )}
+
+      {enabled && (
+        <Card size="small" title="DMARC (DMARCbis)">
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Space align="center" wrap>
+              <span>Non-existent subdomain policy (np):</span>
+              <Select
+                style={{ minWidth: 240 }}
+                loading={dmarcSaving}
+                value={domain?.dmarc_np ?? ""}
+                onChange={(v) => void saveDmarc({ dmarc_np: v })}
+                options={[
+                  { value: "", label: "Inherit subdomain policy (sp)" },
+                  { value: "none", label: "none — monitor only" },
+                  { value: "quarantine", label: "quarantine" },
+                  { value: "reject", label: "reject — strictest" },
+                ]}
+              />
+            </Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              DMARCbis <Typography.Text code>np</Typography.Text> sets the policy for mail from{" "}
+              <em>non-existent</em> subdomains (phantom-subdomain protection). Empty = receivers fall
+              back to the subdomain policy (sp).
+            </Typography.Text>
+            <Space align="center" wrap>
+              <Switch
+                checked={domain?.dmarc_testing ?? false}
+                loading={dmarcSaving}
+                onChange={(v) => void saveDmarc({ dmarc_testing: v })}
+              />
+              <span>
+                Testing mode (<Typography.Text code>t=y</Typography.Text>) — receivers evaluate the
+                policy but treat it as monitoring.
+              </span>
+            </Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Applies to the panel-managed <Typography.Text code>_dmarc</Typography.Text> record; a
+              hand-edited DMARC record is left untouched.
+            </Typography.Text>
+          </Space>
+        </Card>
       )}
 
       {enabled && !dkim && (

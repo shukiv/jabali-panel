@@ -190,6 +190,10 @@ type updateDomainRequest struct {
 	NginxSafeOptions      *models.NginxSafeOptions `json:"nginx_safe_options,omitempty"`
 	IndexPriority         *string                  `json:"index_priority,omitempty"`
 	WebmailEnabled        *bool                    `json:"webmail_enabled,omitempty"`
+	// GH #648 (DMARCbis): per-domain settable np (non-existent subdomain
+	// policy) + t=y testing tag, folded into the canonical _dmarc record.
+	DmarcNP      *string `json:"dmarc_np,omitempty"`
+	DmarcTesting *bool   `json:"dmarc_testing,omitempty"`
 	// GH#181: mail provider + optional DKIM tokens. Pointers so an absent
 	// field in the PATCH leaves the columns untouched. When MailProvider is
 	// present, EmailEnabled + SkipAutoSAN are re-derived from it.
@@ -954,6 +958,19 @@ func (h *domainHandler) update(c *gin.Context) {
 			}
 			domain.RedirectAllTo = &trimmed
 		}
+	}
+
+	// GH #648: DMARCbis np + testing tags (any authorised domain manager).
+	if req.DmarcNP != nil {
+		np := strings.TrimSpace(*req.DmarcNP)
+		if !dnscompile.ValidDMARCNP(np) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "dmarc_np must be empty, none, quarantine, or reject"})
+			return
+		}
+		domain.DmarcNP = np
+	}
+	if req.DmarcTesting != nil {
+		domain.DmarcTesting = *req.DmarcTesting
 	}
 
 	if req.RedirectAllType != nil {

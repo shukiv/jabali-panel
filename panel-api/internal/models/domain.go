@@ -315,6 +315,13 @@ type Domain struct {
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`
 
+	// GH #648 (DMARCbis): operator-settable DMARC tags the reconciler folds
+	// into the canonical _dmarc record (jabali-mail domains only). DmarcNP is
+	// the non-existent-subdomain policy ("", none, quarantine, reject; empty =
+	// omit np -> receiver falls back to sp). DmarcTesting adds t=y.
+	DmarcNP      string `gorm:"column:dmarc_np;type:varchar(12);not null;default:''" json:"dmarc_np"`
+	DmarcTesting bool   `gorm:"column:dmarc_testing;type:tinyint(1);not null;default:0" json:"dmarc_testing"`
+
 	// IsPanelPrimary marks the single domain row auto-registered for the
 	// panel hostname (ADR-0048). Delete-protected at the repo and API
 	// layer; surfaced in Settings → Email. At-most-one is enforced in
