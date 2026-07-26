@@ -15,7 +15,7 @@ function entry(over: Partial<FileEntry>): FileEntry {
 
 describe("isTextEditable", () => {
   // GH #532: a freshly-created 0-byte file must be editable — the whole point
-  // of "create then edit" — even though it renders "—" and has size 0.
+  // of "create then edit" — even though it has size 0 (rendered as "0 B" — GH #657).
   it("allows empty (0-byte) files", () => {
     expect(isTextEditable(entry({ size: 0 }))).toBe(true);
   });

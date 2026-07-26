@@ -147,7 +147,9 @@ function parseDragPayload(raw: string): string[] {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "—";
+  // GH #657: a known 0 renders as "0 B"; "not yet calculated" is handled by the
+  // caller (undefined -> "—"), so 0 must not collapse to the same dash.
+  if (bytes === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
   let size = bytes;
   let i = 0;

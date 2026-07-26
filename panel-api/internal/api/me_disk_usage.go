@@ -226,7 +226,7 @@ func (h *meDiskUsageHandler) filesTree(c *gin.Context) {
 	if path == "" {
 		path = "/home/" + username
 	}
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, 55*time.Second)
 	defer cancel()
 	raw, derr := h.cfg.Agent.Call(cctx, "files.du", map[string]any{
 		"user_id":  claims.UserID,

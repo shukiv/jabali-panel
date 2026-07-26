@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestDuSubdirSizes_Recursive guards GH #657: du must follow the
@@ -34,7 +35,10 @@ func TestDuSubdirSizes_Recursive(t *testing.T) {
 	}
 	defer f.Close()
 
-	sizes := duSubdirSizes(context.Background(), f, root)
+	sizes, timedOut := duSubdirSizes(context.Background(), f, root)
+	if timedOut {
+		t.Fatal("unexpected timeout on a small tree")
+	}
 
 	// >= (not ==) tolerates the directory nodes' own apparent size, which
 	// varies by filesystem. The point is that they are NOT ~0 (the bug).
@@ -46,5 +50,22 @@ func TestDuSubdirSizes_Recursive(t *testing.T) {
 	}
 	if got := sizes[root]; got < 8_000_000 {
 		t.Errorf("root total = %d, want >= 8000000", got)
+	}
+}
+
+// TestDuSubdirSizes_Timeout guards GH #657: when du is killed by a fired
+// deadline (directory too large), duSubdirSizes must report timedOut=true so
+// the handler returns a clean error rather than silently-partial sizes.
+func TestDuSubdirSizes_Timeout(t *testing.T) {
+	root := t.TempDir()
+	f, err := os.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if _, timedOut := duSubdirSizes(ctx, f, root); !timedOut {
+		t.Fatal("expected timedOut=true for an already-expired context")
 	}
 }

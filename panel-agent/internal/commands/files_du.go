@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
@@ -74,8 +75,21 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	if derr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("open dir: %v", derr)}
 	}
-	dirSizes := duSubdirSizes(ctx, df, resolved)
+	// GH #657: bound the recursive `du` so a huge tree can't hang the request
+	// past the gateway timeout (Cloudflare ~100s) — which surfaced as an opaque
+	// "invalid or incomplete response" 520. A hard 45s budget (under the panel's
+	// call ctx) lets du finish for most trees; if it can't, return a clean,
+	// explicit error instead of silently-partial (wrong) sizes or a 520.
+	duCtx, duCancel := context.WithTimeout(ctx, 45*time.Second)
+	defer duCancel()
+	dirSizes, duTimedOut := duSubdirSizes(duCtx, df, resolved)
 	df.Close()
+	if duTimedOut {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeDeadlineExceeded,
+			Message: "size calculation timed out — this directory is too large to size within 45s; size a smaller subfolder instead",
+		}
+	}
 
 	entries, err := scope.ReadDirInScope(resolved)
 	if err != nil {
@@ -113,7 +127,7 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 // -D dereferences only the command-line arg; in-tree symlinks are still not
 // followed, preserving the GH #653 escape-proofing. The child's fd-relative
 // output paths are remapped back onto `canonical` for the caller's lookups.
-func duSubdirSizes(ctx context.Context, dirFd *os.File, canonical string) map[string]int64 {
+func duSubdirSizes(ctx context.Context, dirFd *os.File, canonical string) (map[string]int64, bool) {
 	dirSizes := map[string]int64{}
 	duCmd := exec.CommandContext(ctx, "du", "-b", "-D", "--max-depth=1", "/proc/self/fd/3")
 	duCmd.ExtraFiles = []*os.File{dirFd}
@@ -136,7 +150,10 @@ func duSubdirSizes(ctx context.Context, dirFd *os.File, canonical string) map[st
 		}
 		dirSizes[path] = sz
 	}
-	return dirSizes
+	// A fired deadline means du was killed mid-walk (directory too large); the
+	// caller turns this into an explicit error rather than shipping the partial
+	// (and therefore wrong) sizes we managed to parse.
+	return dirSizes, ctx.Err() == context.DeadlineExceeded
 }
 
 func init() {
