@@ -4325,29 +4325,32 @@ install_go() {
   local tarball="/tmp/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
   local go_curl=(curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30)
   if ! "${go_curl[@]}" -o "$tarball" "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"; then
-    # GH #670: the pinned GO_VERSION can be AHEAD of what go.dev has published
-    # (a version bump that landed before the Go release, or a CDN propagation
-    # gap) — that returns 404 and must NOT brick the whole install. Fall back to
-    # the current published stable instead of dying on the pin.
-    _warn "Go $GO_VERSION not downloadable from go.dev (unpublished pin or propagation gap) — falling back to the latest PUBLISHED stable"
-    local go_stable
-    # Resolve the fallback from the release LIST (go.dev/dl/?mode=json), NOT
-    # go.dev/VERSION. VERSION reports a version the instant it is tagged — before
-    # its CDN tarballs exist — so it would hand back the SAME unpublished version
-    # and 404 again (exactly the GH #670 regression). The dl list only contains
-    # releases whose files are actually published, so its newest entry is always
-    # downloadable.
-    go_stable="$("${go_curl[@]}" "https://go.dev/dl/?mode=json" 2>/dev/null \
-      | grep -oE '"version"[[:space:]]*:[[:space:]]*"go[0-9.]+"' | head -n1 \
-      | grep -oE 'go[0-9.]+' | sed 's/^go//')"
-    if [[ -n "$go_stable" && "$go_stable" != "$GO_VERSION" ]]; then
-      _log "latest published stable is go${go_stable} — retrying with it"
-      GO_VERSION="$go_stable"
-      tarball="/tmp/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-    fi
-    if ! "${go_curl[@]}" -o "$tarball" "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"; then
-      _die "failed to download Go (pinned + latest-published fallback both failed) from go.dev — check egress to go.dev from this host"
-    fi
+    # GH #670: the pinned tarball can 404 on a given host even though go.dev
+    # LISTS the version -- a regional dl.google.com CDN-propagation gap for a
+    # freshly-cut release. The earlier fallback resolved the "latest published
+    # stable", but for a pin-to-latest that IS $GO_VERSION, so it retried the
+    # identical failing URL and died. Instead, walk the published stable list
+    # (newest first) and take the FIRST version that (a) differs from the one
+    # that just failed and (b) actually downloads. go.mod needs only go 1.25.0,
+    # so an older published stable still builds the panel.
+    local failed_pin="$GO_VERSION" _ver _got=""
+    _warn "Go $failed_pin not downloadable from go.dev (unpublished pin or CDN propagation gap) -- trying other published stable releases"
+    # mode=json lists only releases whose files are actually published -- unlike
+    # go.dev/VERSION, which reports a version the instant it is tagged, before its
+    # tarballs exist (the original GH #670 regression).
+    local _go_list
+    _go_list="$("${go_curl[@]}" "https://go.dev/dl/?mode=json" 2>/dev/null \
+      | grep -oE '"version"[[:space:]]*:[[:space:]]*"go[0-9.]+"' \
+      | grep -oE 'go[0-9.]+' | sed 's/^go//' | awk '!seen[$0]++')"
+    for _ver in $_go_list; do
+      [[ "$_ver" == "$failed_pin" ]] && continue
+      _log "trying published stable go${_ver}"
+      tarball="/tmp/go${_ver}.linux-${GO_ARCH}.tar.gz"
+      if "${go_curl[@]}" -o "$tarball" "https://go.dev/dl/go${_ver}.linux-${GO_ARCH}.tar.gz"; then
+        GO_VERSION="$_ver"; _got=1; break
+      fi
+    done
+    [[ -n "$_got" ]] || _die "failed to download Go: pinned go${failed_pin} and every published stable fallback 404'd from go.dev -- check egress to go.dev / dl.google.com from this host"
   fi
   tar -C /usr/local -xzf "$tarball"
   rm -f "$tarball"
