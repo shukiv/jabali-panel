@@ -3,6 +3,7 @@
 // expandable to per-user children). Manual creates render flat.
 import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { downloadUrl } from "../../../utils/download";
+import { backupTypeColor, backupTypeLabel } from "../../../utils/backupType";
 import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { RowActions } from "../../../components/RowActions";
@@ -41,6 +42,7 @@ interface BackupJob {
   user_id: string;
   destination_id?: string;
   kind: string;
+  content?: string;
   status: string;
   systemd_unit: string;
   snapshot_id: string;
@@ -56,6 +58,7 @@ interface BackupRun {
   run_id: string;
   schedule_id?: string;
   kind: string;
+  content?: string;
   total: number;
   succeeded: number;
   failed: number;
@@ -107,21 +110,6 @@ const formatBytes = (n: number): string => {
     i += 1;
   }
   return `${v.toFixed(1)} ${units[i]}`;
-};
-
-const renderTypeTag = (k: string) => {
-  const label =
-    k === "system_backup"
-      ? "System Backup"
-      : k === "account_backup"
-        ? "Account Backup"
-        : k === "system_restore"
-          ? "System Restore"
-          : k === "account_restore"
-            ? "Account Restore"
-            : k;
-  const color = k.startsWith("system") ? "purple" : "blue";
-  return <Tag color={color}>{label}</Tag>;
 };
 
 // Run summary collapses 6 status counters into a single Tag stack so
@@ -538,8 +526,13 @@ export const AdminBackupsPage = () => {
               {
                 title: "Type",
                 sorter: (a, b) => (a.isRun ? a.run.kind : a.job.kind).localeCompare(b.isRun ? b.run.kind : b.job.kind),
-                render: (_: unknown, row: TableRow) =>
-                  renderTypeTag(row.isRun ? row.run.kind : row.job.kind),
+                render: (_: unknown, row: TableRow) => {
+                  const kind = row.isRun ? row.run.kind : row.job.kind;
+                  const content = row.isRun ? row.run.content : row.job.content;
+                  return (
+                    <Tag color={backupTypeColor(kind, content)}>{backupTypeLabel(kind, content)}</Tag>
+                  );
+                },
               },
               {
                 title: "Status",

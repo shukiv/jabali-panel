@@ -64,6 +64,7 @@ type BackupRunSummary struct {
 	RunID         string    `json:"run_id"`
 	ScheduleID    *string   `json:"schedule_id,omitempty"`
 	Kind          string    `json:"kind"`
+	Content       string    `json:"content"`
 	Total         int       `json:"total"`
 	Succeeded     int       `json:"succeeded"`
 	Failed        int       `json:"failed"`
@@ -180,6 +181,7 @@ func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]Back
 		RunID         string
 		ScheduleID    *string
 		Kind          string
+		Content       string
 		Total         int
 		Succeeded     int
 		Failed        int
@@ -197,6 +199,8 @@ func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]Back
 SELECT run_id                                                             AS run_id,
        MAX(schedule_id)                                                   AS schedule_id,
        MAX(kind)                                                          AS kind,
+       CASE WHEN COUNT(DISTINCT content) = 1 THEN MAX(content)
+            ELSE 'full' END                                              AS content,
        COUNT(*)                                                           AS total,
        SUM(status = 'succeeded')                                          AS succeeded,
        SUM(status = 'failed')                                             AS failed,
@@ -224,6 +228,7 @@ SELECT run_id                                                             AS run
 			RunID:         x.RunID,
 			ScheduleID:    x.ScheduleID,
 			Kind:          x.Kind,
+			Content:       x.Content,
 			Total:         x.Total,
 			Succeeded:     x.Succeeded,
 			Failed:        x.Failed,
