@@ -258,21 +258,20 @@ export const CreateMailboxWizardModal = ({
               <Checkbox>Send-only (SMTP submission, no inbox)</Checkbox>
             </Form.Item>
 
-            {domainGroups && domainGroups.length > 0 && (
-              <Form.Item
-                label={t("createmailboxwizardmodal.add_to_groups")}
-                name="group_ids"
-                tooltip={t("createmailboxwizardmodal.the_mailbox_joins_these_groups_and_gains_the")}
-              >
-                <Select
-                  mode="multiple"
-                  allowClear
-                  placeholder={t("createmailboxwizardmodal.select_groups_optional")}
-                  optionFilterProp="label"
-                  options={domainGroups.map((g) => ({ value: g.id, label: g.display_name || g.email }))}
-                />
-              </Form.Item>
-            )}
+            <Form.Item
+              label={t("createmailboxwizardmodal.add_to_groups")}
+              name="group_ids"
+              tooltip={t("createmailboxwizardmodal.the_mailbox_joins_these_groups_and_gains_the")}
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                disabled={!domainGroups || domainGroups.length === 0}
+                placeholder={t("createmailboxwizardmodal.select_groups_optional")}
+                optionFilterProp="label"
+                options={(domainGroups ?? []).map((g) => ({ value: g.id, label: g.display_name || g.email }))}
+              />
+            </Form.Item>
 
             <Form.Item
               label={t("createmailboxwizardmodal.aliases_optional")}
