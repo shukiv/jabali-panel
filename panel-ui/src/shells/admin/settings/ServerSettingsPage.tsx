@@ -955,7 +955,7 @@ export const ServerSettingsPage = () => {
   const [activeTab, setActiveTab] = useTabParam<SettingsTabKey>("general");
 
   return (
-    <div style={{ maxWidth: 960 }}>
+    <div>
       <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
         <SettingOutlined /> Server Settings
       </Typography.Title>
