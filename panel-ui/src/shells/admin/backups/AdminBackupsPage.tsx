@@ -359,8 +359,11 @@ export const AdminBackupsPage = () => {
           render: (_: unknown, row: BackupJob) => (
             <RowActions
               actions={[
-                { key: "log", label: "Log", icon: <FileTextOutlined />, onClick: () => setLogJob(row) },
+                // GH #502: Download is the most common action after a backup completes —
+                // make it the primary (first, visible) action; Log + the rest collapse
+                // into the overflow menu.
                 { key: "download", label: "Download", icon: <DownloadOutlined />, hidden: row.status !== "succeeded", onClick: () => handleDownload(row) },
+                { key: "log", label: "Log", icon: <FileTextOutlined />, onClick: () => setLogJob(row) },
                 {
                   key: "restore",
                   label: "Restore",
