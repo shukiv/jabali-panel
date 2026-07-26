@@ -157,6 +157,40 @@ type systemBackupRequest struct {
 	DestinationID   string `json:"destination_id,omitempty"`
 }
 
+// fanOutFullServerAccounts enqueues a queued account_backup job for every
+// non-admin user, sharing the given run_id + destination, so the backup
+// dispatcher backs up each account as part of a Full Server run (GH #502).
+// Best-effort: a per-user create failure is logged and skipped, never aborting
+// the run. Content is "full" (home + databases + mailboxes) per account.
+func (h *backupHandler) fanOutFullServerAccounts(ctx context.Context, destID, runID string) {
+	if h.cfg.Users == nil || h.cfg.Jobs == nil {
+		return
+	}
+	notAdmin := false
+	users, _, err := h.cfg.Users.List(ctx, repository.ListOptions{Limit: 10000, IsAdmin: &notAdmin})
+	if err != nil {
+		h.cfg.logErr("full-server fan-out: list users", err)
+		return
+	}
+	for i := range users {
+		u := &users[i]
+		dID, rID := destID, runID
+		acct := &models.BackupJob{
+			ID:            ids.NewULID(),
+			UserID:        u.ID,
+			DestinationID: &dID,
+			RunID:         &rID,
+			Kind:          models.BackupJobKindAccountBackup,
+			Content:       models.BackupContentFull,
+			CreatedAt:     time.Now().UTC(),
+			Status:        models.BackupJobStatusQueued,
+		}
+		if err := h.cfg.Jobs.Create(ctx, acct); err != nil {
+			h.cfg.logErr("full-server fan-out: create account job", err)
+		}
+	}
+}
+
 func (h *backupHandler) systemCreate(c *gin.Context) {
 	var req systemBackupRequest
 	_ = c.ShouldBindJSON(&req)
@@ -165,10 +199,12 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 		return
 	}
 	destID := dest.ID
+	runID := ids.NewULID()
 	job := &models.BackupJob{
 		ID:            ids.NewULID(),
 		UserID:        "system",
 		DestinationID: &destID,
+		RunID:         &runID,
 		Kind:          models.BackupJobKindSystemBackup,
 		CreatedAt:     time.Now().UTC(),
 		Status:        models.BackupJobStatusQueued,
@@ -177,6 +213,15 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 		h.cfg.logErr("create system backup", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
 		return
+	}
+	// GH #502: a Full Server backup (include_accounts) is the system backup
+	// PLUS a per-account backup for every hosting user, all sharing this run_id
+	// + destination so the repo holds the account snapshots restoreAccounts
+	// walks on a full restore. The agent's system.backup only covers system
+	// state; this account fan-out was missing, so "Full Server" previously
+	// backed up System only. The queued account jobs run via the dispatcher.
+	if req.IncludeAccounts {
+		h.fanOutFullServerAccounts(c.Request.Context(), destID, runID)
 	}
 	if h.cfg.Agent != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
