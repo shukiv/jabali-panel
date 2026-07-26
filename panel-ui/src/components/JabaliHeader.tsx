@@ -76,6 +76,22 @@ type JabaliHeaderProps = {
   onMenuClick?: () => void;
 };
 
+// navSearchOptions builds the "Pages" search results from the shell nav. GH #455:
+// nav labels are TRANSLATION KEYS (e.g. "menu.users"); both the substring filter
+// and the displayed label must run through t() so the search shows and matches the
+// localized text like the rest of the UI — not the raw key.
+export function navSearchOptions(
+  items: readonly { label: string; path: string }[],
+  query: string,
+  t: (key: string) => string,
+): SearchOption[] {
+  const trimmed = query.trim().toLowerCase();
+  const filtered = trimmed
+    ? items.filter((n) => t(n.label).toLowerCase().includes(trimmed))
+    : items;
+  return filtered.map((n) => ({ value: `page:${n.path}`, label: t(n.label) }));
+}
+
 export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHeaderProps = {}) {
   const { user, logout } = useAuth();
   const { t, i18n } = useTranslation();
@@ -128,20 +144,13 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
   // the AntD docs example for AutoComplete) shows every destination
   // in the current shell. When the user types, we substring-match the
   // label so unrelated pages drop out of the dropdown.
-  const pagesGroup = useMemo<OptionGroup>(() => {
-    const items = isAdminShell ? adminNav : userNav;
-    const trimmed = query.trim().toLowerCase();
-    const filtered = trimmed
-      ? items.filter((n) => n.label.toLowerCase().includes(trimmed))
-      : items;
-    return {
+  const pagesGroup = useMemo<OptionGroup>(
+    () => ({
       label: "Pages",
-      options: filtered.map((n) => ({
-        value: `page:${n.path}`,
-        label: n.label,
-      })),
-    };
-  }, [isAdminShell, query]);
+      options: navSearchOptions(isAdminShell ? adminNav : userNav, query, t),
+    }),
+    [isAdminShell, query, t],
+  );
 
   // Debounced remote fetch. 250ms is tight enough to feel live without
   // hammering the API; an empty/whitespace query keeps the Pages
