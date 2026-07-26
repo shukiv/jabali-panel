@@ -101,6 +101,16 @@ jobs:
       # runner contention; gate the build here too so it fails fast and always.
       - name: build (production)
         run: cd panel-ui && NODE_OPTIONS=--max-old-space-size=4096 npm run build
+      # JAB-159 phase 2: the prod SPA (just built above) must not contain the
+      # demo UI; a VITE_DEMO=1 build must. `jabali-demo-banner` is a DemoBanner
+      # string literal (CSS var + style id) that survives minification.
+      - name: demo UI stripped from prod bundle, present in demo build (JAB-159)
+        run: |
+          cd panel-ui
+          if grep -rq 'jabali-demo-banner' dist/; then echo 'FAIL: demo UI leaked into prod bundle'; exit 1; fi
+          VITE_DEMO=1 NODE_OPTIONS=--max-old-space-size=4096 npm run build
+          if ! grep -rq 'jabali-demo-banner' dist/; then echo 'FAIL: demo build missing demo UI'; exit 1; fi
+          echo 'SPA demo-gate OK: prod excludes demo UI, demo build includes it'
 
   e2e:
     name: Playwright E2E

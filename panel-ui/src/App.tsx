@@ -39,11 +39,19 @@ import { useApplyBrandingToTitle, useBranding } from "./hooks/useBranding";
 import { PANEL_COLORS } from "./lib/panelColors";
 import { CapabilityRoute } from "./components/CapabilityRoute";
 import { LoginPage } from "./pages/Login";
-import { DemoBanner } from "./components/DemoBanner";
 
 // JAB-145: route-level code splitting — each page is its own lazy chunk
 // so the initial bundle no longer eagerly pulls all ~55 pages. Layouts,
 // guards, and the public LoginPage stay eager (needed on first paint).
+// JAB-159 phase 2: demo-only UI, gated behind VITE_DEMO. The ternary
+// condition is a build-time constant (Vite define), so a non-demo build
+// dead-code-eliminates the import() and tree-shakes DemoBanner +
+// useServiceInfo out of the production bundle.
+const DemoBanner =
+  import.meta.env.VITE_DEMO === "1"
+    ? lazy(() => import("./components/DemoBanner").then((m) => ({ default: m.DemoBanner })))
+    : null;
+
 const Dashboard = lazy(() => import("./shells/admin/Dashboard").then((m) => ({ default: m.Dashboard })));
 const UserList = lazy(() => import("./shells/admin/users/UserList").then((m) => ({ default: m.UserList })));
 const AdminUserOverview = lazy(() => import("./shells/admin/users/AdminUserOverview").then((m) => ({ default: m.AdminUserOverview })));
@@ -189,9 +197,15 @@ const ThemedApp = () => {
         renderEmpty={() => <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
       >
         <AntdApp>
-        {/* JAB-159: renders nothing unless /info reports demo mode (prod /info
-            never does, since the cred-exposing route is compiled out). */}
-        <DemoBanner />
+        {/* JAB-159 phase 2: demo UI is compiled out of production bundles.
+            VITE_DEMO is statically replaced by Vite; when it is not "1" the
+            dynamic import above is tree-shaken, dropping DemoBanner +
+            useServiceInfo from the prod SPA entirely. */}
+        {DemoBanner ? (
+          <Suspense fallback={null}>
+            <DemoBanner />
+          </Suspense>
+        ) : null}
         <BrandingTitleApplier />
         <Suspense
           fallback={
