@@ -619,7 +619,7 @@ func loadSecret(path string) ([]ssh.AuthMethod, error) {
 		}
 		switch k {
 		case "SSH_PASSWORD":
-			auths = append(auths, ssh.Password(v))
+			auths = append(auths, migrate.SSHPasswordAuthMethods(v)...)
 		case "SSH_PRIVATE_KEY":
 			signer, perr := ssh.ParsePrivateKey([]byte(v))
 			if perr != nil {

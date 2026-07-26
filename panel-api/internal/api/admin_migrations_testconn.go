@@ -13,6 +13,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressplugin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressssh"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -32,6 +33,10 @@ func panelDiscoverer(kind string, allowPrivate bool) migrate.Discoverer {
 		return d
 	case models.MigrationSourceHestia:
 		d := hestiacp.New()
+		d.AllowPrivate = allowPrivate
+		return d
+	case models.MigrationSourcePlesk:
+		d := plesk.New()
 		d.AllowPrivate = allowPrivate
 		return d
 	}
@@ -115,6 +120,7 @@ func (h *adminMigrationsHandler) testConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_kind"})
 		return
 	}
+	migrate.ApplyPort(d, job.SourcePort) // GH #429: test/describe previously ignored the custom SSH port (only the run path applied it)
 	sess, err := d.Connect(ctx, job.SourceHost, sshUserOrRoot(job.SourceUser), secret)
 	if err != nil {
 		respondMigrateConnectErr(c, err)
@@ -154,6 +160,8 @@ func panelLabel(kind string) string {
 		return "DirectAdmin"
 	case models.MigrationSourceHestia:
 		return "HestiaCP"
+	case models.MigrationSourcePlesk:
+		return "Plesk"
 	}
 	return kind
 }
@@ -183,6 +191,7 @@ func (h *adminMigrationsHandler) describeAccount(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
 	defer cancel()
 	secret := migrate.SecretRef{Path: filepath.Join(migrate.SecretsDir, job.ID+".env")}
+	migrate.ApplyPort(d, job.SourcePort) // GH #429: test/describe previously ignored the custom SSH port (only the run path applied it)
 	sess, err := d.Connect(ctx, job.SourceHost, sshUserOrRoot(job.SourceUser), secret)
 	if err != nil {
 		respondMigrateConnectErr(c, err)
