@@ -61,6 +61,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/check-pinned-downloads.sh install.sh
 
+  demo-guard:
+    name: demo anti-leak guard
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      # JAB-159: the security guarantee for merging demo code to main is that a
+      # production (untagged) build physically excludes it. Assert the prod
+      # binary carries no demo_mode marker while the -tags demo build does, and
+      # run the demo write-block test under the demo tag.
+      - name: prod build excludes demo, demo build includes it
+        run: make demo-guard
+
   ui-unit:
     name: panel-ui unit tests (vitest)
     runs-on: self-hosted

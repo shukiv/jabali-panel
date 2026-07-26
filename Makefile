@@ -1,5 +1,5 @@
 .PHONY: help build run test test-short test-coverage coverage-check lint fmt vet tidy clean \
-	test-ui test-e2e test-all ui-install ui-build
+	test-ui test-e2e test-all ui-install ui-build demo-guard
 
 GO         := go
 API_PKG    := ./panel-api/...
@@ -19,6 +19,15 @@ build: ## Compile both binaries (panel + agent)
 	$(GO) build -o $(BIN) ./panel-api/cmd/server
 	$(GO) build -o $(AGENT_BIN) ./panel-agent/cmd/jabali-agent
 	$(GO) build -o bin/jabali-installer ./installer/cmd/jabali-installer
+
+demo-guard: ## JAB-159: prod build must EXCLUDE demo code; demo build must INCLUDE it
+	mkdir -p bin
+	$(GO) build -tags demo -o bin/jabali-demo ./panel-api/cmd/server
+	$(GO) build -o bin/jabali-prod ./panel-api/cmd/server
+	@grep -aq 'demo_mode' bin/jabali-demo || { echo 'FAIL: demo build missing demo_mode marker'; exit 1; }
+	@if grep -aq 'demo_mode' bin/jabali-prod; then echo 'FAIL: prod build leaked demo_mode symbol'; exit 1; fi
+	@echo 'demo-guard OK: prod excludes demo_mode, demo build includes it'
+	$(GO) test -tags demo -count=1 ./panel-api/internal/middleware/
 
 run: ## Run the panel server (dev)
 	$(GO) run ./panel-api/cmd/server
