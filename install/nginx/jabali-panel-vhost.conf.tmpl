@@ -173,6 +173,7 @@ server {
   # /.ory/* is handled by panel-api itself (in-process reverse proxy
   # to the Kratos public socket). nginx just forwards to the panel
   # upstream — no special-case for /.ory/.
+  # __JAB159_DEMO_SELFSERVICE_GUARD__ (rendered by install_nginx_panel_vhost when deploy-profile=demo)
   location / {
     proxy_pass http://jabali_panel_api/;
     # Use $http_host to preserve port number (mx.jabali-panel.local:8443)

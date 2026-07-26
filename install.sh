@@ -6019,6 +6019,34 @@ install_nginx_panel_vhost() {
     _die "unsubstituted \${VAR} placeholders left in $panel_vhost_file — template drift?"
   fi
 
+  # JAB-159 phase 6: on a demo host, block Kratos self-service credential +
+  # recovery WRITES. The Go demo middleware only guards /api/v1; /.ory is
+  # reverse-proxied to Kratos, so without this a shared-cred demo visitor could
+  # change the password (bricking login) or trigger recovery. Reads (viewing the
+  # settings page) still work. A regex location wins over the prefix `location /`.
+  if [[ "$(_deploy_profile)" == "demo" ]]; then
+    local guard_file; guard_file="$(mktemp)"
+    cat > "$guard_file" <<'GUARD'
+  location ~ ^/\.ory/self-service/(settings|recovery) {
+    limit_except GET HEAD OPTIONS { deny all; }
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_http_version 1.1;
+  }
+GUARD
+    sed -i -e "/# __JAB159_DEMO_SELFSERVICE_GUARD__/{r ${guard_file}
+d}" "$panel_vhost_file"
+    rm -f "$guard_file"
+    _log "demo profile: nginx blocks Kratos self-service settings/recovery writes"
+  else
+    sed -i '/# __JAB159_DEMO_SELFSERVICE_GUARD__/d' "$panel_vhost_file"
+  fi
+
   ln -sf "$panel_vhost_file" "${nginx_enabled_dir}/jabali-panel.conf"
 
   # The vhost template hard-`include`s the phpMyAdmin + Adminer snippets.
