@@ -66,6 +66,12 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
+	// GH #686: tear down the user's FPM pool(s) before removing the account so
+	// no orphaned version-pin file / jabali-fpm@<user> master is left behind (a
+	// stale pin file inflates the PHP Manager "FPM workers" count). Best-effort;
+	// the reconciler's orphan reaper (php.pool.reap-orphans) is the backstop.
+	reapUserFPMPools(ctx, p.Username)
+
 	// Remove the per-user slice BEFORE userdel so systemd can still resolve the UID
 	// while stopping user@<uid>.service.
 	sliceParams, _ := json.Marshal(map[string]string{"username": p.Username}) // GH #694: Marshal, not string-concat

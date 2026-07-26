@@ -594,6 +594,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// orphans). No-op when no user has a non-default pool.
 	r.reconcileVersionedPHPPools(ctx)
 
+	// GH #686: garbage-collect FPM pools orphaned by a deleted user. user.delete
+	// tears them down inline; this backstop self-heals pools orphaned before that
+	// fix (or by a failed teardown). Bounded + guarded agent-side.
+	r.reconcileOrphanFPMPools(ctx)
+
 	// M24: managed IPs BEFORE the domain loop. If a domain is bound to a
 	// secondary IP that fell off the kernel (host reboot, netplan drop),
 	// re-bind it first so the vhost render later in the loop can find
@@ -1190,6 +1195,45 @@ func (r *Reconciler) reapVersionedPool(ctx context.Context, user *models.User, p
 		return
 	}
 	r.log.Info("reaped orphan versioned PHP pool", "pool_id", pool.ID, "slug", slug)
+}
+
+// reconcileOrphanFPMPools garbage-collects FPM pools whose owning user was
+// deleted (GH #686). user.delete tears down a deleted user's pool inline, but
+// this backstop also self-heals pools orphaned before that fix shipped (or by a
+// failed teardown). It hands the agent the authoritative set of live usernames;
+// the agent reaps only pools whose owner is absent from that set AND has no
+// surviving OS account (see php.pool.reap-orphans).
+func (r *Reconciler) reconcileOrphanFPMPools(ctx context.Context) {
+	if r.agent == nil || r.users == nil {
+		return
+	}
+	users, _, err := r.users.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		r.log.Error("orphan FPM reap: failed to list users", "err", err)
+		return
+	}
+	keep := make([]string, 0, len(users))
+	for i := range users {
+		if users[i].Username != nil && *users[i].Username != "" {
+			keep = append(keep, *users[i].Username)
+		}
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	raw, err := r.agent.Call(callCtx, "php.pool.reap-orphans", map[string]any{
+		"keep_usernames": keep,
+	})
+	if err != nil {
+		r.log.Warn("orphan FPM reap: agent call failed; will retry next tick", "err", err)
+		return
+	}
+	var resp struct {
+		Reaped []string `json:"reaped"`
+	}
+	if json.Unmarshal(raw, &resp) == nil && len(resp.Reaped) > 0 {
+		r.log.Info("reaped orphan FPM pools", "count", len(resp.Reaped), "slugs", resp.Reaped)
+	}
 }
 
 // reconcileMysqlAdminShadow ensures all active users have mysqladmin shadow accounts.
