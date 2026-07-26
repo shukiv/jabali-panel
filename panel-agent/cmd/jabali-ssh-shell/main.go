@@ -57,6 +57,14 @@ func main() {
 }
 
 func run() error {
+	// GH #658: uid 0 (root) must never be trapped in the tenant sandbox. If
+	// this wrapper is ever root's login shell — e.g. a mis-created "root"
+	// panel user (GH #429) chsh'd root here — hand root a real login shell
+	// instead of the sandbox/nologin path, so a chsh mistake can't lock the
+	// operator out of SSH. The sandbox is only ever for hosting tenants.
+	if os.Getuid() == 0 {
+		return execRootLoginShell()
+	}
 	mode, err := readMode()
 	if err != nil {
 		return execNologin(fmt.Sprintf("read mode: %v", err))
@@ -443,6 +451,26 @@ func currentUser() (name string, uid, gid int, home string, err error) {
 func currentUsername() (string, error) {
 	name, _, _, _, err := currentUser()
 	return name, err
+}
+
+// rootShellArgv builds the argv for root's real login shell, preserving
+// sshd's invocation: a remote command (`shell -c "cmd"`, len(osArgs) > 1) keeps
+// its args under a plain argv0; an interactive login gets a leading-dash argv0.
+func rootShellArgv(base string, osArgs []string) []string {
+	if len(osArgs) > 1 {
+		return append([]string{base}, osArgs[1:]...)
+	}
+	return []string{"-" + base}
+}
+
+// execRootLoginShell replaces the process with a real root login shell
+// (GH #658). Prefers /bin/bash, falls back to /bin/sh.
+func execRootLoginShell() error {
+	shell, base := "/bin/bash", "bash"
+	if _, err := os.Stat(shell); err != nil {
+		shell, base = "/bin/sh", "sh"
+	}
+	return syscall.Exec(shell, rootShellArgv(base, os.Args), os.Environ())
 }
 
 // execNologin replaces the current process with /usr/sbin/nologin.

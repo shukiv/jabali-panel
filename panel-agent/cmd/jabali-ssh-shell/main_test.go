@@ -98,3 +98,16 @@ func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 		t.Errorf("command mode should forward `-c`, got %v", tail)
 	}
 }
+
+// TestRootShellArgv guards GH #658: root's real login shell must preserve
+// sshd's invocation — a leading-dash argv0 for an interactive login, and the
+// passed args (e.g. `-c "cmd"`) for a remote command.
+func TestRootShellArgv(t *testing.T) {
+	if got := rootShellArgv("bash", []string{"-jabali-ssh-shell"}); len(got) != 1 || got[0] != "-bash" {
+		t.Fatalf("interactive: got %v, want [-bash]", got)
+	}
+	got := rootShellArgv("bash", []string{"jabali-ssh-shell", "-c", "id"})
+	if len(got) != 3 || got[0] != "bash" || got[1] != "-c" || got[2] != "id" {
+		t.Fatalf("command: got %v, want [bash -c id]", got)
+	}
+}

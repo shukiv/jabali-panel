@@ -57,6 +57,18 @@ func sshUserSetShellHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
+	// GH #658: never chsh a protected system account (root, the service
+	// user) into the tenant sandbox shell. A mis-created "root" panel user
+	// (GH #429) drove exactly this — jabali-ssh-shell then refused root's
+	// non-/home home and fell back to nologin, locking the operator out of
+	// SSH. Shells of system accounts are the OS's business, not the panel's.
+	if protectedUsers[p.Username] {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodePermissionDenied,
+			Message: fmt.Sprintf("refusing to change the login shell of protected system user %q", p.Username),
+		}
+	}
+
 	// Look up current shell from /etc/passwd. os/user.Lookup doesn't
 	// expose the shell field; fall back to getent.
 	cur, err := getentShell(ctx, p.Username)
