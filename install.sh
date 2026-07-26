@@ -4684,6 +4684,13 @@ ensure_swap() {
   _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
 }
 
+# JAB-159 phase 3: echo the host deploy profile. "demo" selects a demo build
+# (-tags demo + VITE_DEMO=1); absent/unreadable = production (empty output).
+_deploy_profile() {
+  local f=/etc/jabali/deploy-profile
+  [ -r "$f" ] && tr -d "[:space:]" < "$f" 2>/dev/null || true
+}
+
 build_frontend() {
   ensure_swap
   _log "building panel-ui (npm ci + npm run build)"
@@ -4712,10 +4719,13 @@ build_frontend() {
   # service installs (MariaDB postinst, CrowdSec hub-data fetch,
   # PHP-FPM enable) win contention. Adds ~5-10s to total build
   # time on a fully-loaded box; ~0s on an idle one.
+  local vite_demo=""
+  [ "$(_deploy_profile)" = "demo" ] && { vite_demo="VITE_DEMO=1"; _log "demo profile active: building panel-ui with VITE_DEMO=1"; }
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
     NODE_OPTIONS="--max-old-space-size=2048" \
+    $vite_demo \
     bash -c "cd '$REPO_DIR/panel-ui' && nice -n 19 ionice -c 3 npm run build"
   _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
 
@@ -4781,6 +4791,8 @@ build_backend() {
   # update.go (gitRevParseAsUser + ldflagsAPI) so the version string
   # survives both install.sh AND every `jabali update` cycle.
   local panel_ld="-s -w"
+  local panel_tags=""
+  [ "$(_deploy_profile)" = "demo" ] && { panel_tags="-tags demo"; _log "demo profile active: building panel-api with -tags demo"; }
   panel_ld+=" -X git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api.Version=$version"
   panel_ld+=" -X git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api.Commit=$full_sha"
   panel_ld+=" -X git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api.BuildTime=$btime"
@@ -4792,7 +4804,7 @@ build_backend() {
     GOCACHE="$REPO_DIR/.cache/go-build" \
     GOMODCACHE="$REPO_DIR/.cache/go-mod" \
     bash -c "cd '$REPO_DIR' && \
-      go build -trimpath -ldflags '$panel_ld' -o '$tmp_panel' ./panel-api/cmd/server && \
+      go build -trimpath $panel_tags -ldflags '$panel_ld' -o '$tmp_panel' ./panel-api/cmd/server && \
       go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_agent' ./panel-agent/cmd/jabali-agent && \
       go build -trimpath -ldflags '-s -w' -o '$tmp_sshshell' ./panel-agent/cmd/jabali-ssh-shell && \
       go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_mailhook' ./panel-agent/cmd/jabali-mailhook"

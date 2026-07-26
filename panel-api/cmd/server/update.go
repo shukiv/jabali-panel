@@ -585,6 +585,16 @@ source ` + installSh + ` && install_nginx_default_vhost && install_nginx_websock
 
 	// Build/apply steps — run only when HEAD moved OR --force was passed.
 	// Keep in lockstep with the install.sh counterparts they mirror.
+	// JAB-159 phase 3: /etc/jabali/deploy-profile == "demo" selects a demo
+	// build (-tags demo + VITE_DEMO=1). Absent/other = production. Read once
+	// and folded into the per-artifact rebuild hashes below so flipping the
+	// profile forces a rebuild of the affected artifacts.
+	demoProfile := ""
+	if b, err := os.ReadFile("/etc/jabali/deploy-profile"); err == nil {
+		demoProfile = strings.TrimSpace(string(b))
+	}
+	demoBuild := demoProfile == "demo"
+
 	buildSteps := []struct {
 		name string
 		fn   func() error
@@ -1084,6 +1094,7 @@ test -x node_modules/.bin/tsc || {
 				"panel-ui/tsconfig.node.json",
 				"panel-ui/package-lock.json",
 			)
+			want += "|profile:" + demoProfile
 			if artifactUnchanged("vite", want, repoDir+"/panel-ui/dist/index.html") {
 				fmt.Println("  (vite build skipped: src + config + lockfile unchanged + dist intact)")
 				return nil
@@ -1110,7 +1121,11 @@ test -x node_modules/.bin/tsc || {
 			// node within budget; transient garbage pressure rises but
 			// the build actually completes.
 			viteBuild := func() error {
-				bashCmd := "NODE_OPTIONS=\"--max-old-space-size=$(awk '/MemTotal/{print int($2*0.5/1024)}' /proc/meminfo)\" npm run build"
+				viteEnv := ""
+				if demoBuild {
+					viteEnv = "VITE_DEMO=1 "
+				}
+				bashCmd := viteEnv + "NODE_OPTIONS=\"--max-old-space-size=$(awk '/MemTotal/{print int($2*0.5/1024)}' /proc/meminfo)\" npm run build"
 				return asUser(repoDir+"/panel-ui", "bash", "-c", bashCmd)
 			}
 			buildErr := viteBuild()
@@ -1178,6 +1193,7 @@ test -x node_modules/.bin/tsc || {
 			// and the binary is skipped — shipping a stale binary against
 			// a new unit/config. Same failure mode #255 fixed for dist.
 			apiInputs := compositeSHA("panel-api", "agentwire", "internal", "go.mod", "go.sum", "panel-ui/dist/index.html")
+			apiInputs += "|profile:" + demoProfile
 			agentInputs := compositeSHA("panel-agent", "agentwire", "internal", "go.mod", "go.sum")
 			apiSkip := artifactUnchanged("panel-api-bin", apiInputs, defaultPanelBinPath)
 			agentSkip := artifactUnchanged("panel-agent-bin", agentInputs, defaultAgentBinPath)
@@ -1210,8 +1226,12 @@ test -x node_modules/.bin/tsc || {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					apiErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAPI,
-						"-o", repoDir+"/bin/jabali-panel.new", "./panel-api/cmd/server")
+					apiArgs := []string{"build", "-trimpath"}
+					if demoBuild {
+						apiArgs = append(apiArgs, "-tags", "demo")
+					}
+					apiArgs = append(apiArgs, "-ldflags", ldflagsAPI, "-o", repoDir+"/bin/jabali-panel.new", "./panel-api/cmd/server")
+					apiErr = asUser(repoDir, goBin, apiArgs...)
 				}()
 			}
 			if !agentSkip {
