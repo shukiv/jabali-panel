@@ -107,9 +107,9 @@ jobs:
       - name: demo UI stripped from prod bundle, present in demo build (JAB-159)
         run: |
           cd panel-ui
-          if grep -rq 'jabali-demo-banner' dist/; then echo 'FAIL: demo UI leaked into prod bundle'; exit 1; fi
+          if grep -rq 'jabali-demo-' dist/; then echo 'FAIL: demo UI leaked into prod bundle'; exit 1; fi
           VITE_DEMO=1 NODE_OPTIONS=--max-old-space-size=4096 npm run build
-          if ! grep -rq 'jabali-demo-banner' dist/; then echo 'FAIL: demo build missing demo UI'; exit 1; fi
+          if ! grep -rq 'jabali-demo-' dist/; then echo 'FAIL: demo build missing demo UI'; exit 1; fi
           echo 'SPA demo-gate OK: prod excludes demo UI, demo build includes it'
 
   e2e:

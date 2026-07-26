@@ -12,7 +12,7 @@
 // new group (usually "totp"). The renderer reads node.group and groups
 // the form visually — each non-default group becomes its own submit
 // button, matching the M5c behaviour the legacy panel had.
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Alert,
@@ -51,6 +51,14 @@ import {
   type KratosFlow,
   type RenderableField,
 } from "../kratos";
+
+// JAB-159: demo-only quick-enter buttons. VITE_DEMO is a build-time
+// constant, so a non-demo build dead-code-eliminates the import() and
+// tree-shakes DemoQuickEnter out of the production bundle.
+const DemoQuickEnter =
+  import.meta.env.VITE_DEMO === "1"
+    ? lazy(() => import("../components/DemoQuickEnter").then((m) => ({ default: m.DemoQuickEnter })))
+    : null;
 
 export const LoginPage = () => {
   const { t } = useTranslation();
@@ -241,6 +249,15 @@ export const LoginPage = () => {
             </div>
           )}
 
+          {DemoQuickEnter && flow ? (
+            <Suspense fallback={null}>
+              <DemoQuickEnter
+                onEnter={(identifier, password) =>
+                  void onFinish("password", { identifier, password })
+                }
+              />
+            </Suspense>
+          ) : null}
           {flow && <FlowForm flow={flow} onFinish={onFinish} />}
         </Space>
       </Card>
