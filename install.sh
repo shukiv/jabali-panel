@@ -12251,15 +12251,37 @@ install_kratos() {
     _die "Kratos template not found at ${REPO_DIR}/install/kratos.yml.tmpl"
   fi
 
-  # Resolve the panel hostname. Fresh install: prompt_server_settings set
-  # $JABALI_SRV_HOSTNAME. Re-run after config.toml is seeded: pull from
-  # the existing config. Last resort: hostname -f.
+  # Resolve the panel config for hostname + public port. The authoritative
+  # config the panel reads is /etc/jabali/config.toml (main.go defaultConfigPath);
+  # keep the legacy /etc/jabali-panel/config.toml path as a fallback.
+  local panel_cfg=""
+  if [[ -f /etc/jabali/config.toml ]]; then
+    panel_cfg="/etc/jabali/config.toml"
+  elif [[ -f /etc/jabali-panel/config.toml ]]; then
+    panel_cfg="/etc/jabali-panel/config.toml"
+  fi
+
   local panel_hostname="${JABALI_SRV_HOSTNAME:-}"
-  if [[ -z "$panel_hostname" && -f /etc/jabali-panel/config.toml ]]; then
-    panel_hostname="$(awk -F'[= "]+' '/^[[:space:]]*hostname[[:space:]]*=/{print $2; exit}' /etc/jabali-panel/config.toml)"
+  if [[ -z "$panel_hostname" && -n "$panel_cfg" ]]; then
+    panel_hostname="$(awk -F'[= "]+' '/^[[:space:]]*hostname[[:space:]]*=/{print $2; exit}' "$panel_cfg")"
   fi
   if [[ -z "$panel_hostname" ]]; then
     panel_hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo 'localhost')"
+  fi
+
+  # GH #429: public port. When the panel is fronted by a reverse proxy on 443
+  # (e.g. a Cloudflare tunnel), Kratos must emit PORT-LESS URLs so the browser's
+  # flow/return/redirect URLs resolve on :443, not the origin :8443. Controlled
+  # by [server] public_port in config.toml; absent keeps the default :8443.
+  local panel_port_suffix=":8443"
+  if [[ -n "$panel_cfg" ]]; then
+    local pub_port
+    pub_port="$(awk -F'[= "]+' '/^[[:space:]]*public_port[[:space:]]*=/{print $2; exit}' "$panel_cfg")"
+    if [[ "$pub_port" == "443" ]]; then
+      panel_port_suffix=""
+    elif [[ "$pub_port" =~ ^[0-9]+$ ]]; then
+      panel_port_suffix=":$pub_port"
+    fi
   fi
 
   # None of these values contain `|`, so we use it as the sed delimiter
@@ -12271,6 +12293,7 @@ install_kratos() {
     -e "s|{{\.KratosDatabasePassword}}|${kratos_db_pass}|g" \
     -e "s|{{\.KratosDatabaseName}}|${kratos_db_name}|g" \
     -e "s|{{\.PanelHostname}}|${panel_hostname}|g" \
+    -e "s|{{\.PanelPortSuffix}}|${panel_port_suffix}|g" \
     -e "s|{{\.KratosSecretDefault}}|${kratos_secret_default}|g" \
     -e "s|{{\.KratosCookieSecret}}|${kratos_secret_cookie}|g" \
     "${REPO_DIR}/install/kratos.yml.tmpl" > "$kratos_config"

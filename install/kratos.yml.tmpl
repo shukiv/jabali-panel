@@ -8,7 +8,7 @@ dsn: "mysql://{{.KratosDatabaseUser}}:{{.KratosDatabasePassword}}@unix(/var/run/
 
 serve:
   public:
-    base_url: "https://{{.PanelHostname}}:8443/.ory/"
+    base_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/.ory/"
     # M25 Step 3: public API listens on a Unix-domain socket. panel-api
     # reverse-proxies /.ory/* through this socket via the in-process
     # kratosclient.NewReverseProxyTransport (panel-api/internal/app/
@@ -29,7 +29,7 @@ serve:
     cors:
       enabled: true
       allowed_origins:
-        - "https://{{.PanelHostname}}:8443"
+        - "https://{{.PanelHostname}}{{.PanelPortSuffix}}"
       allowed_methods:
         - GET
         - POST
@@ -68,21 +68,21 @@ serve:
       group: "jabali-sockets"
 
 selfservice:
-  default_browser_return_url: "https://{{.PanelHostname}}:8443/dashboard"
+  default_browser_return_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/dashboard"
   allowed_return_urls:
-    - "https://{{.PanelHostname}}:8443"
-    - "https://{{.PanelHostname}}:8443/dashboard"
-    - "https://{{.PanelHostname}}:8443/login"
-    - "https://{{.PanelHostname}}:8443/admin"
+    - "https://{{.PanelHostname}}{{.PanelPortSuffix}}"
+    - "https://{{.PanelHostname}}{{.PanelPortSuffix}}/dashboard"
+    - "https://{{.PanelHostname}}{{.PanelPortSuffix}}/login"
+    - "https://{{.PanelHostname}}{{.PanelPortSuffix}}/admin"
     # Shell roots — trailing slash makes Kratos treat these as prefix
     # matches, so /jabali-admin/profile, /jabali-panel/profile?flow=…
     # etc. all qualify. Without these, Kratos drops the return_to and
     # falls back to default_browser_return_url (/dashboard) — which
     # broke the M20.1 settings-refresh flow (login w/ refresh=true
     # returned the user to the dashboard instead of /profile).
-    - "https://{{.PanelHostname}}:8443/jabali-admin/"
-    - "https://{{.PanelHostname}}:8443/jabali-panel/"
-    - "https://{{.PanelHostname}}:8443/settings"
+    - "https://{{.PanelHostname}}{{.PanelPortSuffix}}/jabali-admin/"
+    - "https://{{.PanelHostname}}{{.PanelPortSuffix}}/jabali-panel/"
+    - "https://{{.PanelHostname}}{{.PanelPortSuffix}}/settings"
 
   methods:
     password:
@@ -125,12 +125,12 @@ selfservice:
 
   flows:
     login:
-      ui_url: "https://{{.PanelHostname}}:8443/login"
+      ui_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/login"
       lifespan: 1h
 
     registration:
       enabled: false
-      ui_url: "https://{{.PanelHostname}}:8443/register"
+      ui_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/register"
       lifespan: 1h
       after:
         password:
@@ -138,23 +138,23 @@ selfservice:
             - hook: session
 
     settings:
-      ui_url: "https://{{.PanelHostname}}:8443/settings"
+      ui_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/settings"
       privileged_session_max_age: 15m
       lifespan: 1h
 
     recovery:
       enabled: true
-      ui_url: "https://{{.PanelHostname}}:8443/recovery"
+      ui_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/recovery"
       lifespan: 1h
 
     verification:
       enabled: true
-      ui_url: "https://{{.PanelHostname}}:8443/verify"
+      ui_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/verify"
       lifespan: 24h
 
     logout:
       after:
-        default_browser_return_url: "https://{{.PanelHostname}}:8443/login"
+        default_browser_return_url: "https://{{.PanelHostname}}{{.PanelPortSuffix}}/login"
 
 identity:
   default_schema_id: default
