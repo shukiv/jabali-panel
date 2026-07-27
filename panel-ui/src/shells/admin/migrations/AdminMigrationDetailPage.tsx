@@ -11,6 +11,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Collapse,
   Descriptions,
   Empty,
@@ -846,7 +847,10 @@ function FailedCard({ jobId, onDestroyed }: { jobId: string; onDestroyed: () => 
  * 409 anyway, but UI omitting the buttons is clearer than a flashing
  * error.
  */
-function DriveCard({
+// Exported for AdminMigrationDetailPage.driveimport.test.tsx (GH #633/#634):
+// locks the SSH-import wire contract so the preserve-passwords plan write can't
+// regress back to a plan-less import.
+export function DriveCard({
   jobId,
   jobState,
   jobSourceKind,
@@ -858,6 +862,13 @@ function DriveCard({
   const queryClient = useQueryClient();
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // GH #633/#634: carry source mailbox + DB-user passwords across. Off by
+  // default (trusted same-owner migrations only). The SSH/pull-source flow had
+  // no such control — the checkbox lived only in CreateMigrationDrawer — so
+  // live-SSH imports always ran preserve=OFF regardless of intent. Writing the
+  // plan's `preserve.credentials` here is what the import's migrationPlanPreserve
+  // reads at restore time.
+  const [importPreservePasswords, setImportPreservePasswords] = useState(false);
   const [credKind, setCredKind] = useState<"password" | "private_key">(
     "password",
   );
@@ -919,6 +930,23 @@ function DriveCard({
       target_password?: string;
       target_package_id?: string;
     }) => {
+      // GH #633/#634: when carrying source passwords, write the plan's
+      // `preserve.credentials` BEFORE dispatching the import — the import unit
+      // reads it via migrationPlanPreserve at restore time. A plan with
+      // `preserve` but no `areas` would import NOTHING, so include every area.
+      if (importPreservePasswords) {
+        await apiClient.put(`/admin/migrations/${jobId}/plan`, {
+          areas: {
+            websites: true,
+            databases: true,
+            mailboxes: true,
+            dns: true,
+            ssl: true,
+            cron: true,
+          },
+          preserve: { credentials: true },
+        });
+      }
       const { data } = await apiClient.post(
         `/admin/migrations/${jobId}/import`,
         vals,
@@ -931,6 +959,7 @@ function DriveCard({
       );
       setImportOpen(false);
       importForm.resetFields();
+      setImportPreservePasswords(false);
       refresh();
     },
     onError: (e: unknown) => {
@@ -1166,6 +1195,20 @@ function DriveCard({
           >
             <Input placeholder="ULID — leave blank for default package" />
           </Form.Item>
+          <Checkbox
+            checked={importPreservePasswords}
+            onChange={(e) => setImportPreservePasswords(e.target.checked)}
+            style={{ marginBottom: 8 }}
+          >
+            Carry over source passwords (mailboxes + database users)
+          </Checkbox>
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 8 }}
+            message="Off by default"
+            description="Only for trusted, same-owner migrations. When on, migrated mailboxes and MySQL users keep their ORIGINAL passwords so DB-backed apps (config.php / wp-config.php) keep working with no reset. When off, everything gets fresh passwords."
+          />
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Auto-create requires email + password. Pre-existing target
             user matched by username works without these.
