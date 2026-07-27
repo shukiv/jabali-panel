@@ -303,8 +303,13 @@ export const DomainRedirectsButton = ({
         body.redirect_all_to = url;
         body.redirect_all_type = wholeType;
       } else {
-        body.redirect_all_to = null;
-        body.redirect_all_type = null;
+        // GH #717: send an empty string, NOT null, to CLEAR the whole-domain
+        // redirect. The API's *string field can't tell a JSON `null` apart from
+        // an omitted field — both unmarshal to a nil pointer, which the handler
+        // treats as "no change", so the redirect never got removed. An empty
+        // string is a non-nil pointer the handler clears on.
+        body.redirect_all_to = "";
+        body.redirect_all_type = "";
       }
 
       const clean = pageRedirects.map((pr) => ({
