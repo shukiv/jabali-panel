@@ -479,7 +479,7 @@ jabali-panel/
 │                       # letsencrypt deploy hooks, bulwark env, ...)
 ├── docs/               # CONVENTIONS, BLUEPRINT, adr/, runbooks/, KNOWN_ISSUES
 ├── plans/              # per-milestone implementation blueprints
-├── .gitea/workflows/   # CI (Go + vitest + E2E)
+├── .github/workflows/  # CI (Go + vitest + E2E)
 ├── install.sh          # single-supported install path (curl | sudo bash)
 ├── config.example.toml # reference config (copied to /etc/jabali-panel/)
 ├── Makefile            # build / test / lint targets

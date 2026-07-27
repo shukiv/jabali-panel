@@ -51,7 +51,7 @@ projects are Chromium-only by design — check `playwright.config.ts`
 and make sure you're extending `devices["Desktop Chrome"]` with a
 viewport override, not `devices["iPhone 13"]` or `devices["iPad Mini"]`.
 
-Both projects run in CI under `.gitea/workflows/ci.yml` alongside the
+Both projects run in CI under `.github/workflows/ci.yml` alongside the
 desktop project; nothing extra to wire if your spec matches the
 `testMatch: /responsive\.spec\.ts/` filter.
 

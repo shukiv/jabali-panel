@@ -8,7 +8,7 @@
 #   3. Creates a `jabali` system user (no login) + /opt/jabali-panel state dir.
 #   4. Clones (or pulls) https://github.com/shukiv/jabali-panel
 #      into /opt/jabali-panel. If the repo is private, pass a Gitea token via
-#      JABALI_GITEA_TOKEN env var or the first positional arg.
+#      JABALI_GITHUB_TOKEN env var or the first positional arg.
 #   5. Builds panel-api and installs the binary at /usr/local/bin/jabali-panel.
 #   6. Writes + starts the `jabali-panel.service` systemd unit bound to
 #      127.0.0.1:8443 (configurable via PANEL_ADDR in /etc/jabali/panel.env).
@@ -24,8 +24,8 @@
 # Flags (all optional, can be combined):
 #   --hostname <fqdn>  Server hostname; skips the TTY prompt. Equivalent
 #                      to setting JABALI_HOSTNAME. --hostname=<fqdn> also works.
-#   --token <gitea>    Private-repo access token. Equivalent to
-#                      setting JABALI_GITEA_TOKEN.
+#   --token <github>   Private-repo access token. Equivalent to
+#                      setting JABALI_GITHUB_TOKEN.
 #   --debug            Verbose mode: disable the _spin progress spinner
 #                      (stream every wrapped command's stdout+stderr live
 #                      so you can see exactly where apt / systemctl / curl
@@ -36,9 +36,9 @@
 #
 # Examples:
 #   curl -fsSL <...>/install.sh | bash -s -- --hostname=panel.example.com
-#   curl -fsSL <...>/install.sh | bash -s -- --hostname panel.example.com --token <GITEA_TOKEN>
+#   curl -fsSL <...>/install.sh | bash -s -- --hostname panel.example.com --token <GITHUB_TOKEN>
 #
-# Legacy: `bash -s -- <GITEA_TOKEN>` (positional token) still works.
+# Legacy: `bash -s -- <GITHUB_TOKEN>` (positional token) still works.
 
 # ---------- locale: pin to C.UTF-8 (MUST run before anything else) --------
 # Operators SSH in with their own LANG (often a locale not yet generated on
@@ -145,7 +145,7 @@ ENV_FILE="/etc/jabali/panel.env"
 # ---------- CLI flag parsing ------------------------------------------------
 #
 # We support --hostname and --token as named flags, and keep the legacy
-# positional arg ($1 = gitea token) working by deferring it until after flag
+# positional arg ($1 = github token) working by deferring it until after flag
 # parsing. This way `bash -s -- --hostname=foo` and the old
 # `bash -s -- <TOKEN>` both do the right thing.
 
@@ -168,7 +168,7 @@ USAGE
 INSTALL FLAGS (all optional, combinable)
   --hostname <fqdn>    Server hostname; skips the TTY prompt.
                        (env: JABALI_HOSTNAME). --hostname=<fqdn> also works.
-  --token <gitea>      Private-repo access token (env: JABALI_GITEA_TOKEN).
+  --token <github>     Private-repo access token (env: JABALI_GITHUB_TOKEN).
                        Legacy: the first positional arg is also a token.
   --debug              Verbose: no spinner, stream wrapped commands,
                        set -x with line-tagged PS4 (env: JABALI_DEBUG=1).
@@ -186,7 +186,7 @@ UNINSTALL FLAGS
   -y, --yes            Skip the uninstall confirmation prompt.
 
 ENV EQUIVALENTS
-  JABALI_HOSTNAME, JABALI_GITEA_TOKEN, JABALI_DEBUG=1
+  JABALI_HOSTNAME, JABALI_GITHUB_TOKEN, JABALI_DEBUG=1
 
 EXAMPLES
   curl -fsSL <repo>/install.sh | bash -s -- --hostname=panel.example.com
@@ -233,8 +233,8 @@ if [[ -n "$_cli_hostname" ]]; then
   export JABALI_HOSTNAME
 fi
 
-# --token precedence: CLI flag > JABALI_GITEA_TOKEN env > legacy positional.
-GITEA_TOKEN="${_cli_token:-${JABALI_GITEA_TOKEN:-${_positional[0]:-}}}"
+# --token precedence: CLI flag > JABALI_GITHUB_TOKEN env (JABALI_GITEA_TOKEN = deprecated alias) > legacy positional.
+REPO_TOKEN="${_cli_token:-${JABALI_GITHUB_TOKEN:-${JABALI_GITEA_TOKEN:-${_positional[0]:-}}}}"
 
 # --debug: CLI flag > JABALI_DEBUG env. Exported so any sub-shell scripts
 # this installer invokes can honour it too. When set, _spin below skips
@@ -4567,11 +4567,11 @@ clone_or_update_repo() {
   # helper instead of baking it into the saved remote URL. That keeps
   # `git remote -v` and `.git/config` free of secrets.
   local git_args=()
-  if [[ -n "$GITEA_TOKEN" ]]; then
+  if [[ -n "$REPO_TOKEN" ]]; then
     # shellcheck disable=SC2016
     git_args+=(
       -c "credential.helper="
-      -c "credential.helper=!f() { echo username=oauth2; echo password=$GITEA_TOKEN; }; f"
+      -c "credential.helper=!f() { echo username=oauth2; echo password=$REPO_TOKEN; }; f"
     )
   fi
 
