@@ -142,3 +142,29 @@ describe("CreateMailboxWizardModal — submit routing", () => {
     expect(onCreated).not.toHaveBeenCalled();
   });
 });
+
+describe("CreateMailboxWizardModal — GH #529 tabbed drawer", () => {
+  it("renders Account / Forwarding / Groups / Send As tabs (parity with Edit)", async () => {
+    renderModal();
+    await screen.findByRole("tab", { name: /account/i });
+    expect(screen.getByRole("tab", { name: /forwarding/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /groups/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /send as/i })).toBeInTheDocument();
+  });
+
+  it("Send As tab explains the grant is available only after the mailbox exists", async () => {
+    renderModal();
+    // Send As can't be granted pre-creation (no mailbox id yet); the tab
+    // must point the operator at Edit rather than offer a dead control.
+    fireEvent.click(await screen.findByRole("tab", { name: /send as/i }));
+    await screen.findByText(/only be granted after this mailbox exists/i);
+  });
+
+  it("keeps the domain-first gating: account fields stay hidden until a domain is picked", async () => {
+    renderModal();
+    // The Account tab is active by default; its cascade must still be gated.
+    await screen.findByRole("tab", { name: /account/i });
+    expect(screen.queryByLabelText(/email address/i)).toBeNull();
+    expect(screen.queryByLabelText(/^Password$/i)).toBeNull();
+  });
+});
