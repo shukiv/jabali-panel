@@ -357,6 +357,44 @@ run_if_module() {
   fi
 }
 
+# mail_module_active — is the mail stack actually meant to run on THIS host?
+# GH #727: run_if_module reads JABALI_MODULES, which is UNSET on `jabali update`
+# and therefore treats every module as enabled. On a host installed WITHOUT mail
+# (e.g. the Basic profile) that made `jabali update` re-run the Stalwart
+# bootstrap, which died in _install_spam_rules at `install -g jabali-mail`
+# because the jabali-mail group never existed. The persisted truth on an
+# installed host is server_settings.mail_enabled (seed_module_flags wrote it
+# from the install selection); consult that instead. Fall back to the module
+# selection only when the DB has no opinion yet (fresh install before the
+# panel's server_settings row exists — where seed_module_flags has just made DB
+# truth and the selection agree anyway).
+mail_module_active() {
+  local db_val=""
+  if command -v mariadb >/dev/null 2>&1; then
+    # `|| true` mirrors converge_pdns_masking: on a fresh install the
+    # server_settings table may not exist yet, and a bare command-substitution
+    # failure under `set -e` + the err trap would kill the installer silently.
+    db_val="$(mariadb jabali_panel -N -B -e \
+      "SELECT mail_enabled FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+  fi
+  if [[ -n "$db_val" ]]; then
+    [[ "$db_val" == "0" ]] && return 1
+    return 0
+  fi
+  is_module_enabled mail
+}
+
+# run_if_mail <install-fn> [args…] — like run_if_module mail, but gated on the
+# host's actual mail state (mail_module_active) so `jabali update` on a no-mail
+# host does not re-run the mail bootstrap (GH #727).
+run_if_mail() {
+  if mail_module_active; then
+    "$@"
+  else
+    _log "mail module not active (server_settings.mail_enabled=0) — skipping ${1}"
+  fi
+}
+
 # install_module <key> — M353 runtime module install. Runs ONLY the given
 # module's install functions on an ALREADY-INSTALLED host (Server Settings ->
 # Modules toggles this via the agent: `install.sh --install-module <key>`). It
@@ -13794,15 +13832,15 @@ main() {
   # stalwart-cli, admin token, MariaDB password file, apply plan render,
   # unit file install). Safe to run after start_and_verify — doesn't
   # depend on the panel being up, just on the repo being cloned.
-  run_if_module mail install_stalwart
+  run_if_mail install_stalwart
   # Second-phase Stalwart bootstrap: needs jabali_panel.{mailboxes,domains}
   # to exist, which the panel service creates via migration 000054 on its
   # first start (inside start_and_verify). Must run after, never before.
-  run_if_module mail install_stalwart_apply
+  run_if_mail install_stalwart_apply
   # GH #233 / ADR-0143: loopback MTA-hook that appends disclaimers by
   # rewriting the MIME body. Needs the stalwart-ro DB creds + jabali_panel
   # schema (install_stalwart_apply) to be in place first.
-  run_if_module mail install_jabali_mailhook
+  run_if_mail install_jabali_mailhook
   # M6.4 (ADR-0048): auto-register the panel hostname as an email-enabled
   # domain. Ordering: after start_and_verify (admin user exists via
   # BootstrapAdmin) AND after bootstrap_pdns_self_zone (pdns zone row
@@ -13813,7 +13851,7 @@ main() {
   # Bulwark webmail. Part of the mail stack (JMAP client to Stalwart) — needs
   # the Stalwart admin token + a live JMAP backend, so gate it on the mail
   # module. Without mail there's no webmail to install.
-  run_if_module mail install_bulwark
+  run_if_mail install_bulwark
   # M25: jabali-webmail user now exists; second pass over the socket group
   # picks it up. Idempotent for SERVICE_USER + www-data which were added
   # earlier (post clone_or_update_repo).
