@@ -113,7 +113,15 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 	}
 
 	venv := filepath.Join(p.AppRoot, "venv")
-	pyBin := "/usr/bin/python" + p.PythonVersion
+	// GH #357: resolve the interpreter via the user's PATH (matching
+	// python_app_apply.go) rather than hardcoding /usr/bin. app.python.versions
+	// offers any python3.X found on PATH, so a version installed outside
+	// /usr/bin — e.g. a source `make altinstall` under /usr/local/bin, the
+	// only way to get an EOL interpreter like 3.8 on Debian 13 — would be
+	// offered + accepted, then die here with "no such file" and leave the app
+	// stuck pending. PATH resolution (as the user) fixes that + is consistent
+	// with the apply path.
+	pyBin := "python" + p.PythonVersion
 
 	// 1) venv (GH#357: python<ver>-venv package prerequisite).
 	if _, err := os.Stat(filepath.Join(venv, "bin", "python")); err != nil {
