@@ -116,8 +116,7 @@ func serviceDownPass(ctx context.Context, d Deps) {
 			// fresh install. service.down is for "should be running but
 			// isn't", not "is configured to start later".
 			enabled, _ := unitEnabled(ctx, unit)
-			switch enabled {
-			case "disabled", "static", "masked", "indirect", "alias", "linked-runtime", "transient":
+			if enabledStateSkips(enabled) {
 				continue
 			}
 		}
@@ -142,6 +141,22 @@ func serviceDownPass(ctx context.Context, d Deps) {
 		}
 		fireServiceDown(ctx, d, unit, state)
 	}
+}
+
+// enabledStateSkips reports whether a `systemctl is-enabled <unit>` result means
+// an inactive unit should NOT fire service.down. Beyond the operator-off states
+// (disabled/static/masked/...), it covers "not-found" and empty: a unit that
+// isn't installed at all. GH #726 -- a Custom install without mail/DNS/PostgreSQL
+// leaves those units absent (`is-enabled` -> "not-found", `is-active` ->
+// "inactive"), and the monitor flooded the inbox with service.down for modules
+// the operator never selected. service.down is for "an ENABLED unit that should
+// be running is down", not "this module was never installed".
+func enabledStateSkips(enabled string) bool {
+	switch enabled {
+	case "", "not-found", "disabled", "static", "masked", "indirect", "alias", "linked-runtime", "transient":
+		return true
+	}
+	return false
 }
 
 // unitEnabled returns the `systemctl is-enabled <unit>` string. Empty

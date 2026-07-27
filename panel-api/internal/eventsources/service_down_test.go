@@ -19,3 +19,26 @@ func TestServiceStateNotDown(t *testing.T) {
 		}
 	}
 }
+
+// TestEnabledStateSkips guards GH #726: a Custom install without mail/DNS/
+// PostgreSQL leaves those units absent, so `systemctl is-enabled` returns
+// "not-found". The monitor must SKIP them (not flood the inbox with
+// service.down for modules the operator never installed), while still firing
+// for a genuinely enabled unit that's down.
+func TestEnabledStateSkips(t *testing.T) {
+	// uninstalled / operator-off / transient-check-fail -> skip (no alert)
+	for _, s := range []string{
+		"", "not-found", "disabled", "static", "masked",
+		"indirect", "alias", "linked-runtime", "transient",
+	} {
+		if !enabledStateSkips(s) {
+			t.Errorf("enabledStateSkips(%q) = false, want true (uninstalled/disabled must not alert)", s)
+		}
+	}
+	// genuinely enabled (should be running) -> DO fire on inactive
+	for _, s := range []string{"enabled", "enabled-runtime", "generated"} {
+		if enabledStateSkips(s) {
+			t.Errorf("enabledStateSkips(%q) = true, want false (an enabled-but-down unit must alert)", s)
+		}
+	}
+}
