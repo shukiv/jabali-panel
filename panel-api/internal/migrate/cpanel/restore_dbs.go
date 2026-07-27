@@ -278,10 +278,28 @@ func ImportDatabases(
 								// config-rewrite step can splice values
 								// into wp-config.php / configuration.php /
 								// settings.php / app/etc/env.php files.
+								//
+								// GH #723: key this map by the SOURCE DB name
+								// (`base`), NOT the namespaced destination name
+								// (`finalName`). The app-config rewriters
+								// (rewriteWordPress/Joomla/Drupal/Magento) look
+								// the credential up by the DB name they read out
+								// of the config file — which is the source name
+								// (e.g. `notary_45635`). Keying by `finalName`
+								// (`<target>_45635`) only ever matched when the
+								// target account shared the source's name; for a
+								// multi-DB account migrated into a differently
+								// named account the lookup missed and the
+								// `len(creds)==1` fallback couldn't save it, so
+								// wp-config was left pointing at a DB that no
+								// longer exists → "Error establishing a database
+								// connection". The value still carries the
+								// namespaced DBName/DBUser so the rewrite writes
+								// the panel-managed destination credentials.
 								if res.Credentials == nil {
 									res.Credentials = map[string]DBCredential{}
 								}
-								res.Credentials[finalName] = DBCredential{
+								res.Credentials[base] = DBCredential{
 									DBName:   finalName,
 									DBUser:   finalName,
 									Password: plainPwd,
