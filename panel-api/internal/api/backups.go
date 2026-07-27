@@ -377,6 +377,18 @@ type createBackupRequest struct {
 // bad value can't reach the agent (restic has only off/auto/max — never gzip/xz).
 func validBackupContent(c string) bool { return models.ValidBackupContent(c) }
 
+// normalizeBackupContent maps the empty request default to "full" so the
+// job row records what the run actually captured (GH #454): the content
+// column drives the Type shown in the backup list. Previously the create
+// left Content unset -> GORM applied the column default 'full' -> every
+// account backup showed as "Account Backup" regardless of files/db choice.
+func normalizeBackupContent(c string) string {
+	if c == "" {
+		return models.BackupContentFull
+	}
+	return c
+}
+
 func validBackupCompression(c string) bool {
 	switch c {
 	case "", "off", "auto", "max":
@@ -418,6 +430,7 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 		UserID:        user.ID,
 		DestinationID: &destID,
 		Kind:          models.BackupJobKindAccountBackup,
+		Content:       normalizeBackupContent(req.Content),
 		SystemdUnit:   "",
 		CreatedAt:     time.Now().UTC(),
 		Status:        models.BackupJobStatusQueued,
@@ -1401,6 +1414,7 @@ func (h *meBackupHandler) create(c *gin.Context) {
 		ID:        ids.NewULID(),
 		UserID:    user.ID,
 		Kind:      models.BackupJobKindAccountBackup,
+		Content:   normalizeBackupContent(req.Content),
 		CreatedAt: time.Now().UTC(),
 		Status:    models.BackupJobStatusQueued,
 	}
