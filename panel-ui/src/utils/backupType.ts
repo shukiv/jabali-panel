@@ -5,15 +5,17 @@
 // "Account Backup". Combine both into one accurate label.
 
 // backupTypeLabel maps (kind, content) to a human "Type".
-//   system_backup           -> Full Server Backup
+//   system_backup (+accounts) -> Full Server Backup; alone -> System Backup
 //   account_backup + database -> Database Backup
 //   account_backup + files/folders -> Files Backup
 //   account_backup + full/""  -> Account Backup
 //   *_restore               -> "… Restore"
-export function backupTypeLabel(kind: string, content?: string | null): string {
+export function backupTypeLabel(kind: string, content?: string | null, hasAccounts?: boolean): string {
   switch (kind) {
     case "system_backup":
-      return "Full Server Backup";
+      // GH #502: a system_backup run that fanned out account backups is a Full
+      // Server backup; one on its own (include_accounts off) is System-only.
+      return hasAccounts ? "Full Server Backup" : "System Backup";
     case "system_restore":
       return "Server Restore";
     case "account_restore":

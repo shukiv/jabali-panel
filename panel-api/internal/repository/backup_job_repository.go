@@ -65,6 +65,7 @@ type BackupRunSummary struct {
 	ScheduleID    *string   `json:"schedule_id,omitempty"`
 	Kind          string    `json:"kind"`
 	Content       string    `json:"content"`
+	HasAccounts   bool      `json:"has_accounts"`
 	Total         int       `json:"total"`
 	Succeeded     int       `json:"succeeded"`
 	Failed        int       `json:"failed"`
@@ -182,6 +183,7 @@ func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]Back
 		ScheduleID    *string
 		Kind          string
 		Content       string
+		HasAccounts   bool
 		Total         int
 		Succeeded     int
 		Failed        int
@@ -201,6 +203,7 @@ SELECT run_id                                                             AS run
        MAX(kind)                                                          AS kind,
        CASE WHEN COUNT(DISTINCT content) = 1 THEN MAX(content)
             ELSE 'full' END                                              AS content,
+       SUM(kind = 'account_backup') > 0                                  AS has_accounts,
        COUNT(*)                                                           AS total,
        SUM(status = 'succeeded')                                          AS succeeded,
        SUM(status = 'failed')                                             AS failed,
@@ -229,6 +232,7 @@ SELECT run_id                                                             AS run
 			ScheduleID:    x.ScheduleID,
 			Kind:          x.Kind,
 			Content:       x.Content,
+			HasAccounts:   x.HasAccounts,
 			Total:         x.Total,
 			Succeeded:     x.Succeeded,
 			Failed:        x.Failed,
@@ -337,7 +341,6 @@ func (r *backupJobRepo) MarkFinished(
 	}
 	return nil
 }
-
 
 // ListByStatusSince implements BackupJobRepository.
 func (r *backupJobRepo) ListByStatusSince(ctx context.Context, status string, since time.Time, limit int) ([]models.BackupJob, error) {

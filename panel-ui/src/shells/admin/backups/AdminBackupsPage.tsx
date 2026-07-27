@@ -57,6 +57,7 @@ interface BackupJob {
 interface BackupRun {
   run_id: string;
   schedule_id?: string;
+  has_accounts?: boolean;
   kind: string;
   content?: string;
   total: number;
@@ -518,9 +519,14 @@ export const AdminBackupsPage = () => {
               },
               {
                 title: "Source",
-                sorter: (a, b) => Number(a.isRun) - Number(b.isRun),
+                // GH #502: manual vs scheduled is the run's schedule_id (set only
+                // by the scheduler) — NOT whether jobs are grouped into a run. A
+                // manual Full Server backup is a grouped run with no schedule_id,
+                // and was wrongly labelled "scheduled run" before.
+                sorter: (a, b) =>
+                  Number(a.isRun && !!a.run.schedule_id) - Number(b.isRun && !!b.run.schedule_id),
                 render: (_: unknown, row: TableRow) =>
-                  row.isRun ? (
+                  row.isRun && row.run.schedule_id ? (
                     <Tag color="geekblue">scheduled run</Tag>
                   ) : (
                     <Tag>manual</Tag>
@@ -532,8 +538,9 @@ export const AdminBackupsPage = () => {
                 render: (_: unknown, row: TableRow) => {
                   const kind = row.isRun ? row.run.kind : row.job.kind;
                   const content = row.isRun ? row.run.content : row.job.content;
+                  const hasAccounts = row.isRun ? row.run.has_accounts : false;
                   return (
-                    <Tag color={backupTypeColor(kind, content)}>{backupTypeLabel(kind, content)}</Tag>
+                    <Tag color={backupTypeColor(kind, content)}>{backupTypeLabel(kind, content, hasAccounts)}</Tag>
                   );
                 },
               },
