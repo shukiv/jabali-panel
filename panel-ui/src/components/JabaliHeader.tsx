@@ -74,6 +74,10 @@ type JabaliHeaderProps = {
    * the persistent <Sider> is hidden (mobile drawer mode). */
   showMenuButton?: boolean;
   onMenuClick?: () => void;
+  /** GH #455: the shell's capability-filtered nav, so the header search only
+   * offers pages that are actually enabled on this server (matching the
+   * sidebar). Falls back to the full static nav when omitted. */
+  searchNav?: readonly { label: string; path: string }[];
 };
 
 // navSearchOptions builds the "Pages" search results from the shell nav. GH #455:
@@ -92,7 +96,7 @@ export function navSearchOptions(
   return filtered.map((n) => ({ value: `page:${n.path}`, label: t(n.label) }));
 }
 
-export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHeaderProps = {}) {
+export function JabaliHeader({ showMenuButton = false, onMenuClick, searchNav }: JabaliHeaderProps = {}) {
   const { user, logout } = useAuth();
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
@@ -147,9 +151,9 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
   const pagesGroup = useMemo<OptionGroup>(
     () => ({
       label: "Pages",
-      options: navSearchOptions(isAdminShell ? adminNav : userNav, query, t),
+      options: navSearchOptions(searchNav ?? (isAdminShell ? adminNav : userNav), query, t),
     }),
-    [isAdminShell, query, t],
+    [isAdminShell, query, t, searchNav],
   );
 
   // Debounced remote fetch. 250ms is tight enough to feel live without

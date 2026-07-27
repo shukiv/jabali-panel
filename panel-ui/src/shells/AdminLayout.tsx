@@ -106,6 +106,7 @@ export function AdminLayout() {
       <JabaliHeader
         showMenuButton={!isDesktop}
         onMenuClick={() => setDrawerOpen(true)}
+        searchNav={visibleNav}
       />
       <Layout>
         {isDesktop ? (
