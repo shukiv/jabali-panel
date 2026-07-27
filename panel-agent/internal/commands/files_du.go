@@ -71,7 +71,13 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	// string path. The fd is passed to the child via ExtraFiles (fd 3) so du
 	// traverses the pinned inode (/proc/self/fd/3) — a parent-directory swap
 	// between resolve and du can no longer redirect root's du outside scope.
-	df, derr := scope.OpenInScope(resolved, os.O_RDONLY, 0)
+	// GH #657: use OpenDirInScope (not OpenInScope). OpenInScope refuses the
+	// docroot itself ("refusing to open docroot itself as a file"), so a du at
+	// the home root — which the "Folder sizes" button hits by default — 502'd
+	// instantly. OpenDirInScope allows rel=="." (the home root) and opens
+	// O_DIRECTORY, exactly what du needs; the sibling ReadDirInScope below
+	// already relies on it for the same path.
+	df, derr := scope.OpenDirInScope(resolved)
 	if derr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("open dir: %v", derr)}
 	}
