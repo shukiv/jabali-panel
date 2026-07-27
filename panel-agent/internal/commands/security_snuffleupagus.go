@@ -54,10 +54,12 @@ func snuffleupagusStatusHandler(ctx context.Context, _ json.RawMessage) (any, er
 	if data, err := os.ReadFile(snuffleupagusActiveRulesPath); err == nil {
 		sum := sha256.Sum256(data)
 		resp.ActiveRulesSha256 = hex.EncodeToString(sum[:])
-		// Heuristic mode read: file starts with "sp.global.enable(0);"
-		// in off mode; otherwise parse `mode=` header line.
+		// Mode read: off is a comment-only (empty) ruleset carrying the
+		// `# mode=off` header (GH #718 — `sp.global.enable(0);` fatals FPM and
+		// is no longer emitted). The legacy `sp.global.enable(0);` marker is
+		// still recognised so a host mid-update reports off correctly.
 		switch {
-		case bytes.Contains(data, []byte("sp.global.enable(0);")):
+		case bytes.Contains(data, []byte("# mode=off")) || bytes.Contains(data, []byte("sp.global.enable(0);")):
 			resp.Mode = "off"
 		case bytes.Contains(data, []byte(".simulation();")):
 			resp.Mode = "simulation"

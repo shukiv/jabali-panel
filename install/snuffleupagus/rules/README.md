@@ -13,7 +13,7 @@ by the panel reconciler into `/etc/jabali/snuffleupagus/active.rules`.
 
 ## Mode rendering
 
-- `mode=off`   →   reconciler emits `sp.global.enable(0);` only.
+- `mode=off`   →   comment-only empty ruleset (no directive; `sp.global.enable` is invalid in v0.13 and fatals PHP-FPM, GH #718).
 - `mode=simulation` → every rule above is wrapped with `.simulation()`
   so it logs without enforcing.
 - `mode=enforce` → rules apply as written.

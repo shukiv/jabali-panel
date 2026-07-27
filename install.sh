@@ -12715,9 +12715,11 @@ install_snuffleupagus() {
   install -d -m 0755 /etc/jabali/snuffleupagus
   if [[ ! -f /etc/jabali/snuffleupagus/active.rules ]]; then
     cat > /etc/jabali/snuffleupagus/active.rules <<'EOF_RULES'
-# Jabali Snuffleupagus — placeholder (mode=off). Reconciler overwrites
-# this file when the operator flips mode to simulation or enforce.
-sp.global.enable(0);
+# Jabali Snuffleupagus active rules -- RENDERED, do not edit.
+# mode=off
+# Placeholder empty ruleset. Snuffleupagus v0.13 has no master switch;
+# sp.global.enable is invalid and crashes PHP-FPM (GH #718). The reconciler
+# overwrites this file when the operator flips mode to simulation or enforce.
 EOF_RULES
     chmod 0644 /etc/jabali/snuffleupagus/active.rules
   fi

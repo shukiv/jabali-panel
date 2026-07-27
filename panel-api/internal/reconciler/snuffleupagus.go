@@ -93,7 +93,8 @@ func (r *SnuffleupagusReconciler) Reconcile(ctx context.Context) error {
 }
 
 // renderActiveRules composes the rule bundle for the given mode.
-//   - mode=off:        emit `sp.global.enable(0);` only.
+//   - mode=off:        comment-only (empty ruleset); no directive —
+//                      `sp.global.enable` is invalid in v0.13 and fatals FPM (GH #718).
 //   - mode=simulation: concat the bundle, wrap each rule with .simulation()
 //                      where the directive supports it (drop, default action).
 //   - mode=enforce:    concat the bundle as-is.
@@ -117,7 +118,12 @@ func renderActiveRules(mode models.SnuffleupagusMode, overrides []models.Snuffle
 	buf.WriteString(fmt.Sprintf("# mode=%s rendered_at=%s\n\n", mode, time.Now().UTC().Format(time.RFC3339)))
 
 	if mode == models.SnuffleupagusModeOff {
-		buf.WriteString("sp.global.enable(0);\n")
+		// Snuffleupagus v0.13 has NO master switch: `sp.global.enable(0)` is not
+		// a valid directive — it fatals "Unexpected keyword 'enable'", which
+		// crashes PHP-FPM and 500s every site on the pool (GH #718). "Off" is an
+		// EMPTY ruleset — the extension loads but enforces nothing. The
+		// `# mode=off` header written above is the marker the agent status
+		// handler reads to report the mode.
 		return buf.Bytes(), nil
 	}
 
