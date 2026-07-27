@@ -938,6 +938,19 @@ func (h *adminMigrationsHandler) bulkCreate(c *gin.Context) {
 		finalState = models.MigrationStatePending
 	}
 
+	// GH #633/#634: the wizard writes the import plan (selected areas +
+	// preserve.credentials) onto the discovery DRAFT job. Bulk children must
+	// INHERIT it — otherwise every multi-account import runs plan-less, so
+	// migrationPlanPreserve returns zero and source mailbox + MySQL-user
+	// passwords are silently reset. secrets_clone already carried the SSH creds
+	// across; the plan was the missing half.
+	var draftPlan *string
+	if req.SourceJobID != "" {
+		if draft, derr := h.cfg.Jobs.FindByID(c.Request.Context(), req.SourceJobID); derr == nil {
+			draftPlan = draft.PlanJSON
+		}
+	}
+
 	batchID := genULID()
 	out := make([]models.MigrationJob, 0, len(req.Accounts))
 	createdIDs := make([]string, 0, len(req.Accounts))
@@ -952,6 +965,7 @@ func (h *adminMigrationsHandler) bulkCreate(c *gin.Context) {
 			SourceHost: req.SourceHost,
 			SourceUser: acct,
 			State:      finalState,
+			PlanJSON:   draftPlan, // GH #633/#634: inherit the wizard's preserve plan
 		}
 		if req.AccountTargets != nil {
 			if t := strings.TrimSpace(req.AccountTargets[acct]); t != "" {

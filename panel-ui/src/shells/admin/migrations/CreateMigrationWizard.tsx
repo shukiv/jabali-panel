@@ -315,6 +315,11 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
   // ── Step 4: bulk create from selection (WHM) ────────────────────────
   const bulk = useMutation({
     mutationFn: async () => {
+      // GH #633/#634: persist the plan (selected areas + preserve.credentials)
+      // onto the draft FIRST, so the bulk handler can copy it into every child
+      // job. Without this the multi-account path drops the preserve checkbox and
+      // migrated mailbox/MySQL passwords silently reset.
+      await savePlan();
       const { data } = await apiClient.post<{ batch_id: string }>(
         "/admin/migrations/bulk",
         {
