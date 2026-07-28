@@ -4878,8 +4878,12 @@ jabali system
 Generate a redacted, encrypted diagnostic bundle for support handoff
 
 ```
-jabali system diagnostic
+jabali system diagnostic [flags]
 ```
+
+**Flags:**
+
+- `--json` — print the raw JSON result (for scripting)
 
 #### `jabali system info`
 
