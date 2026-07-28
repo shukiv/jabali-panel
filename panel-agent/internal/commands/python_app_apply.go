@@ -197,19 +197,37 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("hash requirements.txt: %v", herr)}
 		}
 		prev, _ := os.ReadFile(reqMarker)
+		reqFailMarker := filepath.Join(pythonAppEnvDir, p.AppID+".reqfail")
 		if strings.TrimSpace(string(prev)) != sum {
-			if out, err := runAsUser(ctx, p.Username, pip, "install", "-q", "-r", reqPath); err != nil {
-				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install requirements: %v: %s", err, lastLines(out, 12))}
+			// GH #357: a deterministically-failing build must not re-run pip on
+			// every converge tick (~60s) — one broken app stormed pip ~95
+			// times/hour. If the last FAILED attempt was for these SAME
+			// requirements and we're still inside the backoff, surface the
+			// cached error without touching pip. A requirements.txt edit (new
+			// sha) or the backoff elapsing retries.
+			if f := readReqFail(reqFailMarker); f.SHA == sum && time.Since(time.Unix(f.At, 0)) < pipRetryBackoff {
+				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: f.Error}
+			}
+			// No -q: quiet mode hides the "Collecting <pkg>" lines that name the
+			// package pip was building when it failed, so a build error came back
+			// as a bare traceback ("KeyError: '__version__'") with no clue which
+			// dependency broke (GH #357). Success output is discarded, so the
+			// only effect of dropping -q is a more useful failure message.
+			if out, err := runAsUser(ctx, p.Username, pip, "install", "-r", reqPath); err != nil {
+				msg := fmt.Sprintf("pip install requirements: %v: %s", err, pipFailureContext(out))
+				writeReqFail(reqFailMarker, sum, msg, time.Now())
+				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: msg}
 			}
 			_ = os.WriteFile(reqMarker, []byte(sum), 0o640)
+			_ = os.Remove(reqFailMarker) // clear the cached failure on success
 			needsRestart = true
 		}
 	}
 
 	// App server: install only when its binary is missing from the venv.
 	if _, err := os.Stat(filepath.Join(venv, "bin", server)); err != nil {
-		if out, err := runAsUser(ctx, p.Username, pip, "install", "-q", server); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install %s: %v: %s", server, err, lastLines(out, 8))}
+		if out, err := runAsUser(ctx, p.Username, pip, "install", server); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install %s: %v: %s", server, err, pipFailureContext(out))}
 		}
 		needsRestart = true
 	}
@@ -404,6 +422,67 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// pipRetryBackoff caps how often a DETERMINISTICALLY-failing `pip install` is
+// retried for the SAME requirements. Without it the reconciler re-ran pip every
+// converge tick (~60s) forever on an app whose deps can't build (GH #357: ~95
+// failures/hour observed). A requirements.txt edit clears the failure and
+// retries immediately regardless of this backoff.
+const pipRetryBackoff = 15 * time.Minute
+
+// reqFailState is the cached record of the last failed `pip install -r
+// requirements.txt`, so a re-converge for the same requirements can surface the
+// error without re-running pip (GH #357 pip-storm).
+type reqFailState struct {
+	SHA   string `json:"sha"`   // sha256 of requirements.txt at the failed attempt
+	Error string `json:"error"` // the message to surface while backed off
+	At    int64  `json:"at"`    // unix seconds of the last attempt
+}
+
+func readReqFail(path string) reqFailState {
+	var s reqFailState
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &s)
+	}
+	return s
+}
+
+func writeReqFail(path, sha, errText string, now time.Time) {
+	b, err := json.Marshal(reqFailState{SHA: sha, Error: errText, At: now.Unix()})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, b, 0o640)
+}
+
+// pipFailureContext pulls the package-identifying lines out of pip's output
+// (the "Collecting <pkg>" / "Building wheel for <pkg>" lines pip prints while
+// processing the dep it then failed on) and appends the tail, so the stored
+// error names WHICH dependency broke — the plain last-N-lines tail dropped it
+// (GH #357). Requires pip to run without -q (quiet hides those lines).
+func pipFailureContext(out string) string {
+	var ids []string
+	for _, ln := range strings.Split(out, "\n") {
+		l := strings.TrimSpace(ln)
+		if strings.HasPrefix(l, "Collecting ") ||
+			strings.HasPrefix(l, "Building wheel for ") ||
+			strings.HasPrefix(l, "Failed building wheel for ") ||
+			strings.HasPrefix(l, "ERROR: Could not build wheels for") ||
+			strings.Contains(l, "wheel for ") {
+			ids = append(ids, l)
+		}
+	}
+	// Keep the last few — pip processes deps in order, so the tail of this list
+	// is the package it was on when it failed.
+	if len(ids) > 4 {
+		ids = ids[len(ids)-4:]
+	}
+	tail := lastLines(out, 12)
+	if len(ids) == 0 {
+		return tail
+	}
+	return strings.Join(ids, "\n") + "\n...\n" + tail
 }
 
 func init() {
