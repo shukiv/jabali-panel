@@ -10,7 +10,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"strconv"
@@ -84,11 +86,46 @@ func newSystemResolverSetCmd() *cobra.Command {
 
 // ---- #581 support diagnostic ----
 
+// diagReport mirrors the system.diagnostic_report agent response (the shape the
+// CLI prints for support handoff).
+type diagReport struct {
+	URL            string `json:"url"`
+	Password       string `json:"password"`
+	NoteID         string `json:"note_id"`
+	ByteCount      int64  `json:"byte_count"`
+	GeneratedAt    string `json:"generated_at"`
+	RedactionCount int    `json:"redaction_count"`
+	FileCount      int    `json:"file_count"`
+}
+
+// printDiagReport renders a diagnostic bundle result as a human-readable block
+// instead of raw JSON. Kept separate from the command so it's unit-testable.
+func printDiagReport(w io.Writer, r diagReport) {
+	when := r.GeneratedAt
+	if t, err := time.Parse(time.RFC3339, r.GeneratedAt); err == nil {
+		when = t.UTC().Format("2006-01-02 15:04 MST")
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  ✓ Diagnostic bundle uploaded — encrypted, expires in 7 days.")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "    %d files · %s · %d redactions\n", r.FileCount, humanBytes(uint64(r.ByteCount)), r.RedactionCount)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  Give BOTH of these to Jabali support. Keep the password private —")
+	fmt.Fprintln(w, "  do NOT paste it into a public issue:")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "    Link       %s\n", r.URL)
+	fmt.Fprintf(w, "    Password   %s\n", r.Password)
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  Generated %s · note %s\n", when, r.NoteID)
+	fmt.Fprintln(w)
+}
+
 func newSystemDiagnosticCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:     "diagnostic",
 		Short:   "Generate a redacted, encrypted diagnostic bundle for support handoff",
-		Long:    "Collects + redacts host diagnostics and uploads an encrypted bundle. Prints the share URL and one-time password — hand them to support. The bundle is encrypted; the CLI never emails anything.",
+		Long:    "Collects + redacts host diagnostics and uploads an encrypted bundle. Prints the share link and one-time password — hand both to support. The bundle is encrypted; the CLI never emails anything. Use --json for the raw result.",
 		Args:    cobra.NoArgs,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -99,11 +136,26 @@ func newSystemDiagnosticCmd() *cobra.Command {
 				return fmt.Errorf("diagnostic report (agent timeout/upload failure?): %w", err)
 			}
 			cliAuditOK(ctx, "system.diagnostic_report", "system", "diagnostic", nil)
-			os.Stdout.Write(raw)
-			os.Stdout.Write([]byte{'\n'})
+
+			if asJSON {
+				os.Stdout.Write(raw)
+				os.Stdout.Write([]byte{'\n'})
+				return nil
+			}
+
+			var r diagReport
+			if jErr := json.Unmarshal(raw, &r); jErr != nil || r.URL == "" {
+				// Shape changed or partial — never hide the payload; fall back to raw.
+				os.Stdout.Write(raw)
+				os.Stdout.Write([]byte{'\n'})
+				return nil
+			}
+			printDiagReport(cmd.OutOrStdout(), r)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the raw JSON result (for scripting)")
+	return cmd
 }
 
 // ---- #566 admin process kill ----
