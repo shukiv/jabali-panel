@@ -60,7 +60,7 @@ func systemUnitStatusFor(unit string) func(context.Context, json.RawMessage) (an
 		resp := systemUnitStatusResponse{
 			Unit:      unit,
 			Status:    status,
-			LogTail:   string(journalOut),
+			LogTail:   stripTransientNoise(string(journalOut), unit),
 			FetchedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		}
 
@@ -76,6 +76,30 @@ func systemUnitStatusFor(unit string) func(context.Context, json.RawMessage) (an
 		}
 		return resp, nil
 	}
+}
+
+// stripTransientNoise drops systemd's own benign "Failed to open
+// /run/systemd/transient/<unit>: No such file or directory" lines from a unit's
+// journal tail (GH #739). We run apt/update in a `systemd-run --no-block`
+// transient unit; a package postinst's `systemctl daemon-reload` races the
+// cleanup of that transient unit, so systemd logs the open-failure while
+// re-reading the just-removed transient file. The update itself succeeds — the
+// lines are pure noise that made operators think a package update half-failed.
+// Scoped to this unit's transient path so unrelated log lines are untouched.
+func stripTransientNoise(logTail, unit string) string {
+	needle := "Failed to open /run/systemd/transient/" + unit
+	if !strings.Contains(logTail, needle) {
+		return logTail
+	}
+	lines := strings.Split(logTail, "\n")
+	kept := lines[:0]
+	for _, ln := range lines {
+		if strings.Contains(ln, needle) {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	return strings.Join(kept, "\n")
 }
 
 func init() {
