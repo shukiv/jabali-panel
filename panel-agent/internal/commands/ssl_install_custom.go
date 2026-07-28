@@ -72,6 +72,15 @@ func sslInstallCustomHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
+	// Switching a domain to a custom cert must de-track any certbot-managed
+	// lineage for it FIRST. Writing regular fullchain.pem/privkey.pem over the
+	// LE symlinks while leaving /etc/letsencrypt/renewal/<domain>.conf in place
+	// makes `certbot renew` load the lineage, hit the now-non-symlink file, and
+	// abort the ENTIRE run with "expected ... cert.pem to be a symlink" — so
+	// every domain on the box stops auto-renewing (GH #738). Runs only after
+	// cert/key validation above, so a bad upload never destroys a working cert.
+	cleanupCertbotLineage(ctx, sslLERoot, p.Domain)
+
 	liveDir := filepath.Join(sslLERoot, "live", p.Domain)
 	if err := os.MkdirAll(liveDir, 0o755); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "mkdir live: " + err.Error()}
@@ -96,6 +105,30 @@ func sslInstallCustomHandler(ctx context.Context, params json.RawMessage) (any, 
 	}
 
 	return sslInstallCustomResponse{CertPath: certPath, KeyPath: keyPath}, nil
+}
+
+// cleanupCertbotLineage de-tracks any certbot-managed lineage named `domain`
+// under `root` before a custom cert is dropped into root/live/<domain>/. See
+// the call site (GH #738): an orphaned root/renewal/<domain>.conf pointing at
+// non-symlink live files makes `certbot renew` abort box-wide. `certbot delete`
+// removes the live symlinks, archive, and renewal conf as a unit; if certbot is
+// absent — or the lineage is already half-broken and `certbot delete` itself
+// fails (exactly the #738 state) — we remove the renewal conf directly so the
+// renew run stops choking on it. No-op when the domain was never certbot-managed.
+func cleanupCertbotLineage(ctx context.Context, root, domain string) {
+	renewalConf := filepath.Join(root, "renewal", domain+".conf")
+	if _, err := os.Stat(renewalConf); err != nil {
+		return // no certbot-managed lineage for this name — nothing to clean
+	}
+	if certbot, err := exec.LookPath("certbot"); err == nil {
+		cmd := exec.CommandContext(ctx, certbot, "delete",
+			"--cert-name", domain, "--config-dir", root, "--non-interactive")
+		if cmd.Run() == nil {
+			return
+		}
+		// fall through: remove the conf directly as a floor.
+	}
+	_ = os.Remove(renewalConf)
 }
 
 func parseLeafCert(blob string) (*x509.Certificate, error) {
