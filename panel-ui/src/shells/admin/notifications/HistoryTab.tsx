@@ -7,8 +7,8 @@
 import { useTranslation } from "react-i18next";
 import { Button, Descriptions, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { CheckOutlined, DeleteOutlined, EyeOutlined } from "@icons";
 import { RowActionButton } from "../../../components/RowActionButton";
@@ -68,6 +68,11 @@ export const HistoryTab = () => {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
+  // GH #726: the notification bell links here with ?focus=<id> for alerts that
+  // have no dedicated destination. Scroll that row into view and highlight it.
+  const [searchParams] = useSearchParams();
+  const focusId = searchParams.get("focus");
+
   const listKey = ["notifications", "history", page, pageSize] as const;
 
   const query = useQuery<InboxListResponse>({
@@ -85,6 +90,14 @@ export const HistoryTab = () => {
   const rows = query.data?.data ?? [];
   const total = query.data?.total ?? 0;
   const unread = query.data?.unread ?? 0;
+
+  // Once the focused row is on the page (antd stamps data-row-key on each <tr>),
+  // scroll it into view. Recent alerts land on page 1, so this usually hits.
+  useEffect(() => {
+    if (!focusId || rows.length === 0) return;
+    const el = document.querySelector(`[data-row-key="${CSS.escape(focusId)}"]`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focusId, rows.length]);
 
   const markAllRead = async () => {
     try {
@@ -185,7 +198,14 @@ export const HistoryTab = () => {
           onClick: () => handleRowClick(row),
           style: {
             cursor: row.deeplink ? "pointer" : "default",
-            background: row.read_at ? undefined : "rgba(24,144,255,0.04)",
+            // GH #726: the notification the bell sent us to (?focus=<id>) gets a
+            // stronger amber tint so it stands out from the unread blue wash.
+            background:
+              row.id === focusId
+                ? "rgba(250,173,20,0.18)"
+                : row.read_at
+                  ? undefined
+                  : "rgba(24,144,255,0.04)",
           },
         })}
       >

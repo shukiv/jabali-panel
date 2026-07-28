@@ -17,6 +17,8 @@ import { cloneElement, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
+import { notificationTarget } from "../utils/notificationTarget";
+
 import { useAuth } from "../auth/AuthContext";
 
 import { BellOutlined, CheckOutlined, DeleteOutlined } from "@icons";
@@ -138,9 +140,10 @@ export function NotificationBell() {
     } catch {
       // Silent — clicking through shouldn't block navigation.
     }
-    if (row.deeplink) {
-      navigate(row.deeplink);
-    }
+    // GH #726: notifications without a dedicated deeplink (service.down and
+    // other Error alerts) used to dead-end on click; notificationTarget falls
+    // back to the History tab, focused on this row.
+    navigate(notificationTarget(row.id, row.deeplink));
   };
 
   const pushToggle = (() => {
