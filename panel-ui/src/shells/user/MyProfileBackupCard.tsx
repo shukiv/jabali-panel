@@ -4,13 +4,13 @@
 // scoped via /me/backups (auth-gated to caller's user_id).
 import { useTranslation } from "react-i18next";
 import { downloadUrl } from "../../utils/download";
-import { Button, Card, Grid, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Card, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
 import { RowActions } from "../../components/RowActions";
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from "@icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../apiClient";
@@ -72,6 +72,36 @@ export const MyProfileBackupCard = () => {
     ...(allowLocal ? [{ value: "", label: "Local (default)" }] : []),
     ...dests.map((d) => ({ value: d.id, label: `${d.name} (${d.kind})` })),
   ];
+
+  // GH #454: tenant-editable backup exclusions (~/.backupignore). Loaded from
+  // and saved to the caller's own home file; layered onto the global exclude
+  // list at backup time. `exclDirty` stops a background refetch from clobbering
+  // in-progress edits.
+  const [exclusions, setExclusions] = useState<string>("");
+  const [exclDirty, setExclDirty] = useState(false);
+  const [savingExcl, setSavingExcl] = useState(false);
+  const exclQuery = useQuery({
+    queryKey: ["me-backup-exclusions"],
+    queryFn: async () =>
+      (await apiClient.get<{ patterns: string }>("/me/backups/exclusions")).data,
+  });
+  useEffect(() => {
+    if (exclQuery.data && !exclDirty) setExclusions(exclQuery.data.patterns ?? "");
+  }, [exclQuery.data, exclDirty]);
+
+  const handleSaveExclusions = async () => {
+    setSavingExcl(true);
+    try {
+      await apiClient.put("/me/backups/exclusions", { patterns: exclusions });
+      message.success("Backup exclusions saved");
+      setExclDirty(false);
+      exclQuery.refetch();
+    } catch (err) {
+      message.error(extractApiError(err, "Save failed"));
+    } finally {
+      setSavingExcl(false);
+    }
+  };
 
   const handleCreate = async () => {
     setSubmitting(true);
@@ -228,6 +258,37 @@ export const MyProfileBackupCard = () => {
           },
         ]}
       />
+      <div style={{ marginTop: 20 }}>
+        <Typography.Text strong>Backup exclusions</Typography.Text>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 4, marginBottom: 8 }}>
+          Paths to skip in your backups — one pattern per line (restic exclude
+          syntax). Ideal for regenerable directories, e.g. <code>cache/</code>,{" "}
+          <code>node_modules/</code>, <code>vendor/</code>, <code>*.log</code>.
+          Saved to <code>~/.backupignore</code> and applied to every backup of
+          your account.
+        </Typography.Paragraph>
+        <Input.TextArea
+          rows={5}
+          value={exclusions}
+          onChange={(e) => {
+            setExclusions(e.target.value);
+            setExclDirty(true);
+          }}
+          placeholder={"cache/\nnode_modules/\nvendor/\n*.log"}
+          disabled={exclQuery.isLoading}
+          style={{ fontFamily: "monospace" }}
+        />
+        <div style={{ marginTop: 8 }}>
+          <Button
+            icon={<SaveOutlined />}
+            loading={savingExcl}
+            disabled={!exclDirty}
+            onClick={handleSaveExclusions}
+          >
+            Save exclusions
+          </Button>
+        </div>
+      </div>
       <RestoreDrawer
         backupId={restoreId}
         open={restoreId !== null}

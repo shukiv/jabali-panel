@@ -1217,6 +1217,10 @@ func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
 	g.GET("/:id/manifest", h.manifest)
 	g.POST("/:id/restore", h.restoreSelective)
 	g.GET("/destinations", h.destinations)
+	// GH #454: tenant-editable backup exclusions (~/.backupignore). Owner-scoped
+	// via the session user; layered onto the global exclude list at backup time.
+	g.GET("/exclusions", h.getExclusions)
+	g.PUT("/exclusions", h.putExclusions)
 	// Tenant scheduled-backup card (GH #454 Step 4). Mounted only when the
 	// schedule repo + server settings (the admin-owned cron time) are wired.
 	if cfg.Schedules != nil && cfg.Settings != nil {
@@ -1313,6 +1317,125 @@ func (h *meBackupHandler) delete(c *gin.Context) {
 	}
 	if err := h.cfg.Jobs.Delete(c.Request.Context(), jobID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_delete"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// backupIgnoreFilename is the per-account, tenant-editable restic exclude list
+// at the home root. Mirrors panel-agent commands.BackupIgnoreFile; kept as a
+// local literal to avoid importing the agent package (GH #454).
+const backupIgnoreFilename = ".backupignore"
+
+// maxBackupExclusionsBytes caps the .backupignore the tenant may save. A pattern
+// list is tiny; the agent's home backup ignores the file above 256 KiB anyway.
+const maxBackupExclusionsBytes = 64 * 1024
+
+// backupExclusionsFileNotFound reports whether an agent files.read error is just
+// "the file isn't there yet" (the common case for an account that never set
+// exclusions) — files.read collapses ENOENT into a generic CodeInternal
+// "failed to open file: … no such file or directory", so match on the message.
+func backupExclusionsFileNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "no such file") ||
+		strings.Contains(m, "does not exist") ||
+		strings.Contains(m, "enoent")
+}
+
+// getExclusions returns the caller's own ~/.backupignore contents (empty when
+// the file doesn't exist yet). Owner-scoped: the username is resolved from the
+// session user, never the request, so a tenant can only ever read their own file.
+func (h *meBackupHandler) getExclusions(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthenticated"})
+		return
+	}
+	user, err := h.cfg.Users.FindByID(c.Request.Context(), claims.UserID)
+	if err != nil || user == nil || user.Username == nil || *user.Username == "" {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "user_not_found"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
+		return
+	}
+	path := filepath.Join("/home", *user.Username, backupIgnoreFilename)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(ctx, "files.read", map[string]any{
+		"user_id":  claims.UserID,
+		"username": *user.Username,
+		"path":     path,
+	})
+	if err != nil {
+		if backupExclusionsFileNotFound(err) {
+			c.JSON(http.StatusOK, gin.H{"status": "ok", "patterns": ""})
+			return
+		}
+		status, body := translateAgentError(err)
+		c.JSON(status, body)
+		return
+	}
+	var r struct {
+		Content  string `json:"content"`
+		IsBinary bool   `json:"is_binary"`
+	}
+	_ = json.Unmarshal(raw, &r)
+	if r.IsBinary {
+		// A binary .backupignore is nonsense; surface empty so the editor can
+		// replace it rather than rendering garbage.
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "patterns": ""})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "patterns": r.Content})
+}
+
+// putExclusions overwrites the caller's own ~/.backupignore with the supplied
+// restic exclude patterns (owner-scoped, session-derived username). An empty
+// body clears the list (writes an empty file). The home backup layers this on
+// top of the global exclude list (GH #454).
+func (h *meBackupHandler) putExclusions(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthenticated"})
+		return
+	}
+	user, err := h.cfg.Users.FindByID(c.Request.Context(), claims.UserID)
+	if err != nil || user == nil || user.Username == nil || *user.Username == "" {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "user_not_found"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
+		return
+	}
+	var body struct {
+		Patterns string `json:"patterns"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body"})
+		return
+	}
+	if len(body.Patterns) > maxBackupExclusionsBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "too_large", "detail": "exclude list exceeds 64 KiB"})
+		return
+	}
+	path := filepath.Join("/home", *user.Username, backupIgnoreFilename)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(ctx, "files.write", map[string]any{
+		"user_id":  claims.UserID,
+		"username": *user.Username,
+		"path":     path,
+		"content":  body.Patterns,
+		"mode":     "overwrite",
+	}); err != nil {
+		status, respBody := translateAgentError(err)
+		c.JSON(status, respBody)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})

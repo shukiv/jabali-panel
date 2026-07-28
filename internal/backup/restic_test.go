@@ -256,3 +256,29 @@ func TestForgetIDs_EmptyIsNoop(t *testing.T) {
 		t.Fatalf("empty ids must not invoke restic, got %d calls", len(r.calls))
 	}
 }
+
+// TestBackup_ExtraExcludeFiles guards GH #454: a per-account exclude file
+// (~/.backupignore) is layered onto the global one as a second --exclude-file,
+// and empty entries are dropped.
+func TestBackup_ExtraExcludeFiles(t *testing.T) {
+	r := &fakeRunner{stdout: []byte(`{"message_type":"summary","snapshot_id":"s1","total_bytes_processed":1,"data_added":1}` + "\n")}
+	c := newClient(t, r)
+	_, _ = c.Backup(context.Background(), BackupOpts{
+		Paths:             []string{"/home/u"},
+		ExcludeFile:       "/etc/jabali-panel/restic-excludes.list",
+		ExtraExcludeFiles: []string{"/home/u/.backupignore", ""},
+	})
+	if len(r.calls) == 0 {
+		t.Fatal("restic was not invoked")
+	}
+	args := strings.Join(r.calls[0].args, " ")
+	if !strings.Contains(args, "--exclude-file /etc/jabali-panel/restic-excludes.list") {
+		t.Errorf("global exclude-file missing:\n%s", args)
+	}
+	if !strings.Contains(args, "--exclude-file /home/u/.backupignore") {
+		t.Errorf("per-account exclude-file missing (GH #454):\n%s", args)
+	}
+	if strings.HasSuffix(strings.TrimSpace(args), "--exclude-file") {
+		t.Errorf("empty ExtraExcludeFiles entry leaked a bare flag:\n%s", args)
+	}
+}

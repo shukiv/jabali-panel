@@ -866,6 +866,16 @@ paths:
       summary: List backup destinations your hosting plan allows
       responses: { "200": { description: OK } }
 
+  /me/backups/exclusions:
+    get:
+      tags: [Backups]
+      summary: Your backup exclude patterns (~/.backupignore)
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Backups]
+      summary: Set your backup exclude patterns (~/.backupignore)
+      responses: { "200": { description: OK } }
+
   /me/backup-schedule:
     get:
       tags: [Backups]

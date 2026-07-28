@@ -200,6 +200,11 @@ type BackupOpts struct {
 	StdinName    string    // virtual filename for stdin snapshots
 	Tags         []Tag     // appended via --tag flags
 	ExcludeFile  string    // path to --exclude-file
+	// ExtraExcludeFiles are additional --exclude-file paths appended after
+	// ExcludeFile. restic honours multiple --exclude-file flags; this lets a
+	// caller layer a per-account exclude list (e.g. a tenant's ~/.backupignore,
+	// GH #454) on top of the install-managed global list.
+	ExtraExcludeFiles []string
 	ExcludeArgs  []string  // additional --exclude=PATTERN
 	Hostname     string    // override --host (default: real hostname)
 }
@@ -216,6 +221,11 @@ func (c *Client) Backup(ctx context.Context, opts BackupOpts) (*BackupSummary, e
 	}
 	if opts.ExcludeFile != "" {
 		args = append(args, "--exclude-file", opts.ExcludeFile)
+	}
+	for _, f := range opts.ExtraExcludeFiles {
+		if f != "" {
+			args = append(args, "--exclude-file", f)
+		}
 	}
 	for _, p := range opts.ExcludeArgs {
 		args = append(args, "--exclude", p)

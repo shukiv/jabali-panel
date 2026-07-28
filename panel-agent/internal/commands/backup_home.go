@@ -25,6 +25,31 @@ import (
 // the file may not exist; missing exclude file is non-fatal).
 const HomeExcludeFile = "/etc/jabali-panel/restic-excludes.list"
 
+// BackupIgnoreFile is the per-account, tenant-editable exclude list at the home
+// root (GH #454). Patterns use restic's --exclude-file syntax; the tenant edits
+// it via the backup UI or drops it in like a .gitignore.
+const BackupIgnoreFile = ".backupignore"
+
+// homeBackupIgnoreFile returns <home>/.backupignore when it is a usable regular
+// file. It rejects a symlink, directory, or absurdly large file: the file is
+// user-writable and the backup agent reads it as root, so a symlink must never
+// redirect that read, and an exclude list is tiny. Absent/unusable => ("", false)
+// and the backup proceeds with only the global list.
+func homeBackupIgnoreFile(homePath string) (string, bool) {
+	p := filepath.Join(homePath, BackupIgnoreFile)
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return "", false
+	}
+	if !fi.Mode().IsRegular() {
+		return "", false
+	}
+	if fi.Size() > 256*1024 {
+		return "", false
+	}
+	return p, true
+}
+
 type backupHomeParams struct {
 	JobID          string   `json:"job_id"`
 	UserID         string   `json:"user_id"`
@@ -118,6 +143,12 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	}
 	if _, err := os.Stat(HomeExcludeFile); err == nil {
 		opts.ExcludeFile = HomeExcludeFile
+	}
+	// GH #454: layer the tenant's own ~/.backupignore on top of the global
+	// list so they can skip regenerable dirs (cache/, node_modules/, vendor/,
+	// *.log, …). Only a real regular file is honoured (see homeBackupIgnoreFile).
+	if userIgnore, ok := homeBackupIgnoreFile(homePath); ok {
+		opts.ExtraExcludeFiles = append(opts.ExtraExcludeFiles, userIgnore)
 	}
 	summary, err := c.Backup(ctx, opts)
 	if err != nil {
