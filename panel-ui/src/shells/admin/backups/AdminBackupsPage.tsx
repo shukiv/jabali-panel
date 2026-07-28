@@ -3,7 +3,7 @@
 // expandable to per-user children). Manual creates render flat.
 import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { downloadUrl } from "../../../utils/download";
-import { backupTypeColor, backupTypeLabel } from "../../../utils/backupType";
+import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
 import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { RowActions } from "../../../components/RowActions";
@@ -58,6 +58,7 @@ interface BackupRun {
   run_id: string;
   schedule_id?: string;
   has_accounts?: boolean;
+  accounts?: number;
   kind: string;
   content?: string;
   total: number;
@@ -539,8 +540,16 @@ export const AdminBackupsPage = () => {
                   const kind = row.isRun ? row.run.kind : row.job.kind;
                   const content = row.isRun ? row.run.content : row.job.content;
                   const hasAccounts = row.isRun ? row.run.has_accounts : false;
+                  const scope = row.isRun ? runScopeSummary(row.run.total, row.run.accounts ?? 0) : "";
                   return (
-                    <Tag color={backupTypeColor(kind, content)}>{backupTypeLabel(kind, content, hasAccounts)}</Tag>
+                    <Space direction="vertical" size={0}>
+                      <Tag color={backupTypeColor(kind, content)}>{backupTypeLabel(kind, content, hasAccounts)}</Tag>
+                      {scope && (
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {scope}
+                        </Typography.Text>
+                      )}
+                    </Space>
                   );
                 },
               },

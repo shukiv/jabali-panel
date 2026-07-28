@@ -66,6 +66,10 @@ type BackupRunSummary struct {
 	Kind          string    `json:"kind"`
 	Content       string    `json:"content"`
 	HasAccounts   bool      `json:"has_accounts"`
+	// Accounts is the number of per-account snapshots in the run (GH #502) — so
+	// the UI can label a Full Server run "system + N accounts" on the collapsed
+	// row instead of making the admin expand it to count.
+	Accounts      int       `json:"accounts"`
 	Total         int       `json:"total"`
 	Succeeded     int       `json:"succeeded"`
 	Failed        int       `json:"failed"`
@@ -184,6 +188,7 @@ func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]Back
 		Kind          string
 		Content       string
 		HasAccounts   bool
+		Accounts      int
 		Total         int
 		Succeeded     int
 		Failed        int
@@ -204,6 +209,7 @@ SELECT run_id                                                             AS run
        CASE WHEN COUNT(DISTINCT content) = 1 THEN MAX(content)
             ELSE 'full' END                                              AS content,
        SUM(kind = 'account_backup') > 0                                  AS has_accounts,
+       SUM(kind = 'account_backup')                                      AS accounts,
        COUNT(*)                                                           AS total,
        SUM(status = 'succeeded')                                          AS succeeded,
        SUM(status = 'failed')                                             AS failed,
@@ -233,6 +239,7 @@ SELECT run_id                                                             AS run
 			Kind:          x.Kind,
 			Content:       x.Content,
 			HasAccounts:   x.HasAccounts,
+			Accounts:      x.Accounts,
 			Total:         x.Total,
 			Succeeded:     x.Succeeded,
 			Failed:        x.Failed,

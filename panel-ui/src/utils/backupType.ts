@@ -33,6 +33,21 @@ export function backupTypeLabel(kind: string, content?: string | null, hasAccoun
   }
 }
 
+// runScopeSummary (GH #502): a one-line scope summary for a collapsed backup
+// RUN row, so a Full Server backup reads as one logical backup
+// ("system + N accounts") without expanding it to count the child snapshots.
+// `total` is all jobs in the run; `accounts` is the per-account snapshot count.
+export function runScopeSummary(total: number, accounts: number): string {
+  const hasSystem = total > accounts; // non-account jobs = the system backup
+  if (accounts > 0 && hasSystem) {
+    return `system + ${accounts} account${accounts === 1 ? "" : "s"}`;
+  }
+  if (accounts > 0) {
+    return `${accounts} account${accounts === 1 ? "" : "s"}`;
+  }
+  return ""; // system-only run — the type tag already says it
+}
+
 // backupTypeColor picks an AntD Tag color for the label.
 export function backupTypeColor(kind: string, content?: string | null): string {
   if (kind === "system_backup") return "purple";
