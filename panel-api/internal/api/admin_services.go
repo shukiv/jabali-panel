@@ -58,17 +58,23 @@ var (
 	// agent.
 	serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9._@-]+$`)
 
-	// panelSelfDestructUnits is the trio that, if stopped or disabled,
-	// would lock the operator out of the management plane mid-request:
+	// panelSelfDestructUnits are the units that, if stopped or disabled,
+	// lock the operator out of the management plane mid-request:
 	// jabali-panel hosts the very HTTP this request rode in on; the agent
 	// is the only path back to systemctl on the host; mariadb backs
-	// every panel session and DB-as-truth state. Reject these at the
-	// API layer so the agent stays a dumb obedient executor and never
-	// has to know about product-UX concerns.
+	// every panel session and DB-as-truth state; nginx is the reverse
+	// proxy the panel is served through (stop -> 502); redis-server is a
+	// hard dependency of jabali-panel (stop -> the panel process itself
+	// dies — GH #746). Reject these at the API layer so the agent stays a
+	// dumb obedient executor and never has to know about product-UX
+	// concerns. Keep this in sync with selfDestructUnits in the UI
+	// (ServicesSummaryCard.tsx) and jabaliUnits in service_down.go.
 	panelSelfDestructUnits = map[string]bool{
 		"jabali-panel": true,
 		"jabali-agent": true,
 		"mariadb":      true,
+		"nginx":        true,
+		"redis-server": true,
 	}
 	panelSelfDestructActions = map[string]bool{
 		"stop":    true,
@@ -91,7 +97,7 @@ func (h *adminServicesHandler) action(c *gin.Context) {
 	if panelSelfDestructUnits[name] && panelSelfDestructActions[action] {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error":   "self_destruct_blocked",
-			"details": "stop/disable on panel-critical units (jabali-panel, jabali-agent, mariadb) would brick the management plane",
+			"details": "stop/disable on panel-critical units (jabali-panel, jabali-agent, mariadb, nginx, redis-server) would brick the management plane — use systemctl from the shell if you really need to",
 		})
 		return
 	}

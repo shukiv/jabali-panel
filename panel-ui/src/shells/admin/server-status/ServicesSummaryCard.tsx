@@ -1,7 +1,8 @@
 // ServicesSummaryCard — compact Service / Status / Action table for the
 // Server Status top section. Action column is a row of icon-only
 // Buttons each wrapped in a Tooltip explaining the verb. Self-destruct
-// trio (jabali-panel, jabali-agent, mariadb) hides Stop+Disable —
+// panel-critical units (jabali-panel, jabali-agent, mariadb, nginx,
+// redis-server) hide Stop+Disable —
 // those requests are 403'd at the API anyway. Destructive verbs
 // (stop/disable/restart) show a confirm Modal first.
 import { useState } from "react";
@@ -40,10 +41,16 @@ const reloadCapable = new Set([
   "pdns-recursor.service",
 ]);
 
+// Panel-critical units: stopping/disabling any of these from the UI would make
+// the panel inaccessible (GH #746). Kept in sync with panelSelfDestructUnits in
+// panel-api/internal/api/admin_services.go. nginx is the reverse proxy (stop ->
+// 502); redis-server is a hard jabali-panel dependency (stop -> the panel dies).
 const selfDestructUnits = new Set([
   "jabali-panel.service",
   "jabali-agent.service",
   "mariadb.service",
+  "nginx.service",
+  "redis-server.service",
 ]);
 
 type Action = "restart" | "reload" | "start" | "stop" | "enable" | "disable";

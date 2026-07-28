@@ -51,10 +51,13 @@ func doPost(t *testing.T, r *gin.Engine, path string) *httptest.ResponseRecorder
 }
 
 func TestAdminServices_AllowedActions(t *testing.T) {
+	// cron is a non-panel-critical unit — every action is allowed on it.
+	// (nginx/redis-server used to stand in here but are now stop/disable-
+	// blocked, GH #746.)
 	for _, action := range []string{"restart", "start", "stop", "reload", "enable", "disable"} {
 		ag := &fakeAgent{}
 		r := newAdminServicesTestRouter(t, ag)
-		w := doPost(t, r, "/v1/admin/services/nginx/"+action)
+		w := doPost(t, r, "/v1/admin/services/cron/"+action)
 		if w.Code != http.StatusOK {
 			t.Errorf("action %s: got %d, want 200; body=%s", action, w.Code, w.Body.String())
 		}
@@ -91,6 +94,12 @@ func TestAdminServices_SelfDestructBlocked(t *testing.T) {
 		{"jabali-agent", "disable"},
 		{"mariadb", "stop"},
 		{"mariadb", "disable"},
+		// GH #746: nginx (reverse proxy -> 502) and redis-server (hard
+		// jabali-panel dep -> panel dies) are also panel-critical.
+		{"nginx", "stop"},
+		{"nginx", "disable"},
+		{"redis-server", "stop"},
+		{"redis-server", "disable"},
 	}
 	for _, c := range cases {
 		ag := &fakeAgent{}

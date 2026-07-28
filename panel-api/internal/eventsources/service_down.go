@@ -40,6 +40,17 @@ var jabaliUnits = []string{
 	"jabali-stalwart.service",
 	"pdns.service",
 	"pdns-recursor.service",
+	// Core panel dependencies (GH #746): these aren't jabali-* units but
+	// the panel is dead in the water without them, so an operator must be
+	// alerted when they go down. nginx = reverse proxy (its downtime is
+	// exactly when the 502 hides the UI, so the push/ntfy/email alert is
+	// the only signal); mariadb = DB-as-truth; redis-server = jabali-panel
+	// hard dep. (redis down also takes down the Redis-backed dispatcher +
+	// often jabali-panel itself, so that alert is best-effort — it fires
+	// only if the panel survives the tick.)
+	"nginx.service",
+	"mariadb.service",
+	"redis-server.service",
 }
 
 // runServiceDown polls systemctl is-active for each configured

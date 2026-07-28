@@ -86,7 +86,11 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
 				})
 				return
 			}
-			if selfDestructGuard && (name == "jabali-panel" || name == "jabali-agent") {
+			// Same panel-critical set as the /admin/services guard
+			// (panelSelfDestructUnits): stopping any of these bricks the
+			// management plane (GH #746: nginx -> 502, redis-server -> the
+			// panel process dies).
+			if selfDestructGuard && panelSelfDestructUnits[name] {
 				c.JSON(http.StatusConflict, gin.H{
 					"status": "error",
 					"error":  "self_destruct_refused",
