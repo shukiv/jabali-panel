@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1375,6 +1376,10 @@ test -x node_modules/.bin/tsc || {
 			if _, err := os.Stat(installSh); err != nil {
 				return nil // dev environment, no install.sh
 			}
+			if !mailModuleInstalled() {
+				fmt.Println("  (mail module not installed on this host — skipping)")
+				return nil
+			}
 			if err := run("", "bash", "-c", "source "+installSh+" && install_jabali_mailhook"); err != nil {
 				fmt.Printf("  (install_jabali_mailhook failed: %v — continuing)\n", err)
 			}
@@ -1440,6 +1445,10 @@ test -x node_modules/.bin/tsc || {
 			if _, err := os.Stat(installSh); err != nil {
 				return nil
 			}
+			if !mailModuleInstalled() {
+				fmt.Println("  (mail module not installed on this host — skipping)")
+				return nil
+			}
 			// Version-bump aware: install_bulwark writes the pinned version to
 			// /opt/jabali-webmail/VERSION. If the repo pins a newer Bulwark than
 			// what's installed, re-run the FULL install_bulwark (download + verify
@@ -1471,6 +1480,10 @@ test -x node_modules/.bin/tsc || {
 			if _, err := os.Stat(installSh); err != nil {
 				return nil
 			}
+			if !mailModuleInstalled() {
+				fmt.Println("  (mail module not installed on this host — skipping)")
+				return nil
+			}
 			if err := run("", "bash", "-c",
 				"source "+installSh+" && upgrade_stalwart_binary"); err != nil {
 				fmt.Printf("  (stalwart binary upgrade failed: %v — continuing)\n", err)
@@ -1493,6 +1506,10 @@ test -x node_modules/.bin/tsc || {
 			// converge that. Non-fatal here either way.
 			installSh := repoDir + "/install.sh"
 			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if !mailModuleInstalled() {
+				fmt.Println("  (mail module not installed on this host — skipping)")
 				return nil
 			}
 			if err := run("", "bash", "-c",
@@ -1769,6 +1786,26 @@ test -x node_modules/.bin/tsc || {
 
 // run executes a command with inherited stdout/stderr so the user sees
 // build output and errors in real time.
+// groupExists reports whether a system group of the given name resolves.
+// Split out from mailModuleInstalled so the gate logic is unit-testable
+// without provisioning a real group.
+func groupExists(name string) bool {
+	_, err := user.LookupGroup(name)
+	return err == nil
+}
+
+// mailModuleInstalled reports whether the Stalwart/mail module was provisioned
+// on this host. install_stalwart creates the jabali-mail group up front (its
+// service user's primary group) and every mail file is owned by it. On a
+// Custom / no-mail install the group never exists, so re-running the mail
+// convergence buildSteps (stalwart binary, spam-filter rules, mailhook,
+// bulwark) on `jabali update` dies at `install -g jabali-mail` (GH #727).
+// Update converges what is installed; enabling mail later is an explicit
+// `--install-module mail` via Server Settings, which creates the group itself.
+func mailModuleInstalled() bool {
+	return groupExists("jabali-mail")
+}
+
 func run(dir string, name string, args ...string) error {
 	c := exec.Command(name, args...)
 	if dir != "" {
