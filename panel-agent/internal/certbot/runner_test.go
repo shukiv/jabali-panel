@@ -371,6 +371,7 @@ func TestIssueAddsExpandWhenExistingCertMissesSAN(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(certDir, "fullchain.pem"), createTestCertPEM(t), 0644); err != nil {
 		t.Fatal(err)
 	}
+	writeManagedRenewalConf(t, filepath.Join(tmp, "letsencrypt"), "example.com")
 
 	_, err := r.Issue("example.com", "/var/www/example", "a@b.com", false,
 		[]string{"mail.example.com"})
@@ -407,6 +408,7 @@ func TestIssueSkipsExpandWhenExistingCertCovers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(certDir, "fullchain.pem"), certPEM, 0644); err != nil {
 		t.Fatal(err)
 	}
+	writeManagedRenewalConf(t, filepath.Join(tmp, "letsencrypt"), "example.com")
 
 	_, err := r.Issue("example.com", "/var/www/example", "a@b.com", false,
 		[]string{"mail.example.com"})

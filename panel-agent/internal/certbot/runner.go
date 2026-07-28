@@ -5,7 +5,9 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -52,6 +54,14 @@ func NewRunner() *Runner {
 // would silently reuse the narrower existing cert and the new
 // hostnames would never appear on the wire.
 func (r *Runner) Issue(domain, webroot, email string, staging bool, extraHostnames []string) (*Result, error) {
+	// A prior custom-cert install (ssl.install.custom) or a half-broken lineage
+	// can leave LERoot/live/<domain>/ as a plain dir with NO
+	// renewal/<domain>.conf. `certbot certonly --cert-name <domain>` then can't
+	// adopt that dir and issues a duplicate <domain>-0001 lineage instead
+	// (GH #738). Clear the stale live/archive dirs first — only when the name is
+	// NOT certbot-managed — so issuance lands under the exact name.
+	r.clearStaleLineageDir(domain)
+
 	args := []string{
 		"certonly",
 		// --cert-name pins the lineage explicitly. Without it certbot
@@ -342,6 +352,21 @@ func parsePEM(pemBytes []byte) (*x509.Certificate, error) {
 	}
 
 	return cert, nil
+}
+
+// clearStaleLineageDir removes a stale, non-certbot-managed live/archive dir
+// for `domain` under LERoot so `certbot certonly --cert-name <domain>` issues
+// under the exact name instead of spawning a <domain>-0001 duplicate (GH #738).
+// It only acts when there is NO renewal/<domain>.conf — a real certbot-managed
+// lineage is left untouched so certbot can renew/reuse it. Best-effort: removal
+// errors are non-fatal (issuance surfaces any real problem).
+func (r *Runner) clearStaleLineageDir(domain string) {
+	renewalConf := filepath.Join(r.LERoot, "renewal", domain+".conf")
+	if _, err := os.Stat(renewalConf); err == nil {
+		return // certbot-managed lineage — let certbot renew/reuse it
+	}
+	_ = os.RemoveAll(filepath.Join(r.LERoot, "live", domain))
+	_ = os.RemoveAll(filepath.Join(r.LERoot, "archive", domain))
 }
 
 // existingCertMissingAny reads the cert at certPath (if any) and returns

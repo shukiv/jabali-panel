@@ -379,6 +379,24 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
         )}
       </Space>
 
+      {/* GH #738: the "Let's Encrypt" option greys out with no explanation when
+          no admin email is set (it's the required ACME contact). Tell the
+          operator why + where to fix it, so they aren't stuck. */}
+      {!adminEmail && sslMode !== "le" && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: 12 }}
+          message={
+            <>
+              Let&apos;s Encrypt needs an admin email (the ACME contact address).
+              Set one in <Link to="/jabali-admin/settings">Server Settings</Link>,
+              then select Let&apos;s Encrypt here.
+            </>
+          }
+        />
+      )}
+
       <Modal
         open={customOpen}
         title={t("domainsslsection.upload_custom_certificate")}
