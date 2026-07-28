@@ -53,18 +53,28 @@ func (d *Discoverer) describeDomains(ctx context.Context, s *session, account st
 		}
 	}
 
+	// GH #429: read each domain's REAL docroot from psa `hosting.www_root`
+	// instead of assuming /var/www/vhosts/<dom>/httpdocs. Plesk keeps a whole
+	// subscription under ONE vhost dir keyed by the main domain, so a
+	// subdomain/addon has a custom root (e.g. .../<main>/site1) and a no-hosting
+	// (mail/parked) domain has none. The old assumption pointed the rsync at an
+	// empty/nonexistent path. The JOIN yields no row for a no-hosting domain, so
+	// it simply has no docroot. (Validated on Plesk Obsidian 18.0.79.)
+	docroots := pleskDocroots(ctx, d, s, domains)
+
 	rows := make([]migrate.DomainSpec, 0, len(domains))
 	for _, dom := range domains {
+		root := docroots[dom]
 		spec := migrate.DomainSpec{
 			Name:      dom,
-			DocRoot:   fmt.Sprintf("%s/%s/httpdocs", pleskVhostRoot, dom),
+			DocRoot:   root,       // "" when the domain has no physical hosting
 			IsPrimary: dom == account,
-			HasPHP:    true,
+			HasPHP:    root != "", // no hosting => no PHP; refined below
 		}
 		if out, err := s.run(ctx, d.CommandTimeout, "plesk bin domain --info "+shellQuote(dom)); err == nil {
 			di := parsePleskInfo(string(out))
 			// Real Plesk exposes "PHP support: Yes" (not "php"); PHP version
-			// isn't in this block. Docroot stays the standard vhost path.
+			// isn't in this block.
 			if v := firstNonEmpty(di["php support"], di["php"]); v != "" {
 				spec.HasPHP = truthy(v)
 			}
@@ -75,6 +85,37 @@ func (d *Discoverer) describeDomains(ctx context.Context, s *session, account st
 		rows = append(rows, spec)
 	}
 	return rows, nil
+}
+
+// pleskDocroots batch-reads the real docroot for each domain from psa
+// `hosting.www_root` (GH #429). Domains with no hosting are absent from the
+// result. Best-effort: a query failure yields an empty map and the caller
+// records empty docroots (better than a wrong path).
+func pleskDocroots(ctx context.Context, d *Discoverer, s *session, domains []string) map[string]string {
+	out := map[string]string{}
+	if len(domains) == 0 {
+		return out
+	}
+	quoted := make([]string, len(domains))
+	for i, dn := range domains {
+		quoted[i] = sqlQuote(dn)
+	}
+	sql := "SELECT d.name, h.www_root FROM domains d JOIN hosting h ON d.id=h.dom_id WHERE d.name IN (" +
+		strings.Join(quoted, ",") + ")"
+	raw, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote(sql))
+	if err != nil {
+		return out
+	}
+	for _, ln := range splitLines(string(raw)) {
+		parts := strings.SplitN(ln, "\t", 2)
+		if len(parts) == 2 {
+			name, root := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+			if name != "" && root != "" && root != "NULL" {
+				out[name] = root
+			}
+		}
+	}
+	return out
 }
 
 // describeDatabases lists the MySQL databases for each domain via

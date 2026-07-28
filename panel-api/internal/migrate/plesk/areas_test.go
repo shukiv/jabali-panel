@@ -65,7 +65,10 @@ func TestDescribeDomains_DocrootAndPHP(t *testing.T) {
 	s := fixtureSession(map[string]string{
 		// domains enumerated from the psa DB (primary + addon); key is a
 		// quote-free substring of the shell-escaped `plesk db` command.
-		"SELECT name FROM domains":          "example.com\naddon.example.net\n",
+		"SELECT name FROM domains": "example.com\naddon.example.net\n",
+		// GH #429: real docroots from psa hosting.www_root. The addon's root
+		// lives under the primary's vhost dir, not /var/www/vhosts/addon…/httpdocs.
+		"h.www_root FROM domains":           "example.com\t/var/www/vhosts/example.com/httpdocs\naddon.example.net\t/var/www/vhosts/example.com/addon\n",
 		"domain --info 'example.com'":       "PHP support:  Yes\n",
 		"domain --info 'addon.example.net'": "PHP support:  Yes\n",
 	})
@@ -80,13 +83,50 @@ func TestDescribeDomains_DocrootAndPHP(t *testing.T) {
 		t.Errorf("row0 primary/name wrong: %+v", rows[0])
 	}
 	if rows[0].DocRoot != "/var/www/vhosts/example.com/httpdocs" {
-		t.Errorf("primary docroot = %q, want default vhost path", rows[0].DocRoot)
+		t.Errorf("primary docroot = %q, want the real www_root", rows[0].DocRoot)
+	}
+	if rows[1].DocRoot != "/var/www/vhosts/example.com/addon" {
+		t.Errorf("addon docroot = %q, want the real www_root under the primary vhost", rows[1].DocRoot)
 	}
 	if !rows[0].HasPHP {
 		t.Error("primary should have PHP (PHP support: Yes)")
 	}
 	if rows[1].IsPrimary {
 		t.Error("addon domain must not be primary")
+	}
+}
+
+// TestDescribeDomains_RealPleskDocroots_GH429 uses the exact layout observed on
+// a live Plesk Obsidian 18.0.79 box (demolab.test): a subdomain's docroot is a
+// custom dir UNDER the main domain's vhost, and a second domain has NO hosting
+// (www_root NULL → excluded by the JOIN → empty docroot). The old
+// /var/www/vhosts/<dom>/httpdocs assumption silently dropped the subdomain's
+// web content and pointed the no-hosting domain at a nonexistent path.
+func TestDescribeDomains_RealPleskDocroots_GH429(t *testing.T) {
+	d := New()
+	s := fixtureSession(map[string]string{
+		"SELECT name FROM domains": "demolab.test\nshop.demolab.test\nsecond-demolab.test\n",
+		// The JOIN yields no row for second-demolab.test (no hosting).
+		"h.www_root FROM domains": "demolab.test\t/var/www/vhosts/demolab.test/httpdocs\n" +
+			"shop.demolab.test\t/var/www/vhosts/demolab.test/site1\n",
+		"domain --info": "PHP support: Yes\n",
+	})
+	rows, err := d.describeDomains(context.Background(), s, "demolab.test")
+	if err != nil {
+		t.Fatalf("describeDomains: %v", err)
+	}
+	byName := map[string]migrate.DomainSpec{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	if got := byName["shop.demolab.test"].DocRoot; got != "/var/www/vhosts/demolab.test/site1" {
+		t.Errorf("subdomain docroot = %q, want the real .../demolab.test/site1", got)
+	}
+	if got := byName["second-demolab.test"].DocRoot; got != "" {
+		t.Errorf("no-hosting domain docroot = %q, want empty (skip web)", got)
+	}
+	if got := byName["demolab.test"].DocRoot; got != "/var/www/vhosts/demolab.test/httpdocs" {
+		t.Errorf("primary docroot = %q", got)
 	}
 }
 

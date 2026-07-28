@@ -91,8 +91,15 @@ plesk db -Ne "SELECT db.name FROM data_bases db JOIN domains d ON db.dom_id=d.id
 plesk db -Ne "SELECT name FROM domains WHERE name='$SUB' OR webspace_id=(SELECT id FROM domains WHERE name='$SUB' LIMIT 1)" 2>/dev/null \
 | while read -r DOM; do
     [ -z "$DOM" ] && continue
-    DR="/var/www/vhosts/$DOM/httpdocs"
-    [ -d "$DR" ] && printf '%%s\t%%s\n' "$DOM" "$DR" >> "$TMP/cpmove-$SLUG/domains-paths.txt"
+    # GH #429: the docroot is NOT always /var/www/vhosts/<dom>/httpdocs. Plesk
+    # puts a whole subscription under ONE vhost dir keyed by the main domain,
+    # and a subdomain/addon has a custom root under it (e.g. .../<main>/site1);
+    # a no-hosting (mail/parked) domain has none. Read the real root from psa
+    # hosting.www_root — the JOIN yields nothing for no-hosting domains, so they
+    # are skipped. (Validated on Plesk Obsidian 18.0.79: shop.demolab.test ->
+    # /var/www/vhosts/demolab.test/site1, second-demolab.test -> NULL.)
+    DR=$(plesk db -Ne "SELECT h.www_root FROM domains d JOIN hosting h ON d.id=h.dom_id WHERE d.name='$DOM'" 2>/dev/null)
+    [ -n "$DR" ] && [ -d "$DR" ] && printf '%%s\t%%s\n' "$DOM" "$DR" >> "$TMP/cpmove-$SLUG/domains-paths.txt"
     touch "$TMP/cpmove-$SLUG/dnszones/$DOM.db"
   done
 
