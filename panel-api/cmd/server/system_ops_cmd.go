@@ -96,6 +96,7 @@ type diagReport struct {
 	GeneratedAt    string `json:"generated_at"`
 	RedactionCount int    `json:"redaction_count"`
 	FileCount      int    `json:"file_count"`
+	ClaimCode      string `json:"claim_code"`
 }
 
 // printDiagReport renders a diagnostic bundle result as a human-readable block
@@ -110,8 +111,19 @@ func printDiagReport(w io.Writer, r diagReport) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "    %d files · %s · %d redactions\n", r.FileCount, humanBytes(uint64(r.ByteCount)), r.RedactionCount)
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  Give BOTH of these to Jabali support. Keep the password private —")
-	fmt.Fprintln(w, "  do NOT paste it into a public issue:")
+	if r.ClaimCode != "" {
+		// Preferred hand-off: a short code that's useless without support-team
+		// auth, so it's safe to paste anywhere — even a public issue.
+		fmt.Fprintln(w, "  Give Jabali support this code (safe to share anywhere, even a public issue):")
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "      %s\n", r.ClaimCode)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "  Advanced — the raw link + password (keep the password private, do NOT")
+		fmt.Fprintln(w, "  paste it in a public issue):")
+	} else {
+		fmt.Fprintln(w, "  Give BOTH of these to Jabali support. Keep the password private —")
+		fmt.Fprintln(w, "  do NOT paste it into a public issue:")
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "    Link       %s\n", r.URL)
 	fmt.Fprintf(w, "    Password   %s\n", r.Password)

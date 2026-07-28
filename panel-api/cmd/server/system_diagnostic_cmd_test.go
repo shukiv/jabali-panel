@@ -49,3 +49,21 @@ func TestPrintDiagReport_BadTime(t *testing.T) {
 		t.Errorf("bad timestamp should be shown verbatim:\n%s", buf.String())
 	}
 }
+
+// TestPrintDiagReport_WithClaimCode: when a claim code is present, it leads as
+// the primary, public-safe hand-off (GH #357 claim-code).
+func TestPrintDiagReport_WithClaimCode(t *testing.T) {
+	var buf bytes.Buffer
+	printDiagReport(&buf, diagReport{
+		URL: "https://enclosed/#pw:k", Password: "pw", NoteID: "n1",
+		ByteCount: 1000, GeneratedAt: "2026-07-28T02:24:58Z", FileCount: 3,
+		ClaimCode: "JAB-7QX9K2P4",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "JAB-7QX9K2P4") {
+		t.Errorf("claim code not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "safe to share anywhere") {
+		t.Errorf("public-safe hint missing:\n%s", out)
+	}
+}

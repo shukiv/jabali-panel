@@ -119,6 +119,36 @@ export function DiagnosticReportModal({ open, onClose }: Props) {
             }
           />
 
+          {report.data.claim_code ? (
+            <Alert
+              type="success"
+              showIcon
+              message="Support claim code"
+              description={
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Typography.Paragraph style={{ margin: 0 }}>
+                    Give this code to Jabali support — it&apos;s safe to share
+                    anywhere, even a public issue. The link + password below are
+                    only a fallback.
+                  </Typography.Paragraph>
+                  <Space.Compact style={{ display: "flex" }}>
+                    <Input
+                      value={report.data.claim_code}
+                      readOnly
+                      style={{ fontFamily: "monospace", fontWeight: 600 }}
+                    />
+                    <Button
+                      icon={<CopyOutlined />}
+                      onClick={() => copy("Claim code", report.data!.claim_code!)}
+                    >
+                      Copy
+                    </Button>
+                  </Space.Compact>
+                </Space>
+              }
+            />
+          ) : null}
+
           <div>
             <Typography.Text strong>Link</Typography.Text>
             <Space.Compact style={{ display: "flex", marginTop: 4 }}>

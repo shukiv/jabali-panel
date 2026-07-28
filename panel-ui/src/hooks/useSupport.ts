@@ -18,6 +18,10 @@ export interface DiagnosticReport {
   generated_at: string;
   redaction_count: number;
   file_count: number;
+  // Short, public-safe hand-off code (GH #357 claim-code). Present only when the
+  // operator configured a support-claim service (JABALI_CLAIM_URL); empty
+  // otherwise, in which case the link + password are the hand-off.
+  claim_code?: string;
 }
 
 export function useDiagnosticReport() {

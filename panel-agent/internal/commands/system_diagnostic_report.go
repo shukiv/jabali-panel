@@ -37,6 +37,10 @@ type systemDiagnosticReportResponse struct {
 	GeneratedAt    string `json:"generated_at"`
 	RedactionCount int    `json:"redaction_count"`
 	FileCount      int    `json:"file_count"`
+	// ClaimCode is a short, public-safe hand-off code (JAB-XXXXXXXX) minted by
+	// the operator-run support-claim service, present only when JABALI_CLAIM_URL
+	// is configured and registration succeeded. Empty => share url+password.
+	ClaimCode string `json:"claim_code,omitempty"`
 }
 
 func systemDiagnosticReportHandler(ctx context.Context, _ json.RawMessage) (any, error) {
@@ -60,7 +64,7 @@ func systemDiagnosticReportHandler(ctx context.Context, _ json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("enclosed upload: %v", err)}
 	}
 
-	return systemDiagnosticReportResponse{
+	out := systemDiagnosticReportResponse{
 		URL:            res.URL,
 		Password:       res.Password,
 		NoteID:         res.NoteID,
@@ -68,7 +72,26 @@ func systemDiagnosticReportHandler(ctx context.Context, _ json.RawMessage) (any,
 		GeneratedAt:    bundle.GeneratedAt.Format(time.RFC3339),
 		RedactionCount: bundle.RedactionCount,
 		FileCount:      bundle.FileCount,
-	}, nil
+	}
+
+	// GH #357 follow-up: when a support-claim service is configured, register a
+	// short public-safe code so the user shares "JAB-XXXXXXXX" instead of the
+	// sensitive link+password. Best-effort — a failure just leaves ClaimCode
+	// empty and the caller falls back to url+password.
+	if base := claimBaseURL(); base != "" {
+		if code, cerr := registerSupportClaim(ctx, base, claimIssueRequest{
+			URL:      res.URL,
+			Password: res.Password,
+			Host:     hostname,
+			NoteID:   res.NoteID,
+			Bytes:    out.ByteCount,
+			Files:    out.FileCount,
+		}); cerr == nil {
+			out.ClaimCode = code
+		}
+	}
+
+	return out, nil
 }
 
 // safeHostname strips characters that would mess up a filename; falls
