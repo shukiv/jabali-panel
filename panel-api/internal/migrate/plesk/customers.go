@@ -241,3 +241,22 @@ func (d *Discoverer) AuthoritativeDomains(ctx context.Context, raw migrate.Sessi
 	}
 	return splitLines(string(out)), nil
 }
+
+// AuthoritativeDocroots returns the REAL filesystem docroot (psa
+// hosting.www_root) for every domain the subscription owns — the set the
+// migration home-rsync guard allowlists. GH #746: a Plesk docroot is NOT always
+// /var/www/vhosts/<dom>/httpdocs (e.g. shop.demolab.test -> .../demolab.test/
+// site1), so the httpdocs-by-assumption allowlist wrongly refused those real
+// docroots and no files migrated. Domains with no hosting (www_root NULL) are
+// absent. Returns domain -> www_root.
+func (d *Discoverer) AuthoritativeDocroots(ctx context.Context, raw migrate.Session, sub string) (map[string]string, error) {
+	doms, err := d.AuthoritativeDomains(ctx, raw, sub)
+	if err != nil {
+		return nil, err
+	}
+	s, ok := raw.(*session)
+	if !ok {
+		return nil, fmt.Errorf("AuthoritativeDocroots: wrong session type")
+	}
+	return pleskDocroots(ctx, d, s, doms), nil
+}

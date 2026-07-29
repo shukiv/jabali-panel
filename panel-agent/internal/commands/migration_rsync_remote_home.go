@@ -30,6 +30,7 @@ type migrationRsyncRemoteHomeParams struct {
 	SecretPath string `json:"secret_path"` // /etc/jabali-panel/migration-secrets/<job>.env
 	SrcPath    string `json:"src_path"`    // absolute source path, e.g. /home/<acct>/domains/<dom>/public_html
 	SrcAccount string `json:"src_account"` // source cPanel/DA account; src_path must live under /home/<src_account>/ (JAB-45)
+	SrcRoot    string `json:"src_root"`    // GH #746: caller-provided allowed source root (Plesk: /var/www/vhosts, not under /home). Empty → legacy /home/<src_account> guard.
 	DestPath   string `json:"dest_path"`   // absolute dest path on this host
 	DestUser   string `json:"dest_user"`   // chown target after rsync
 	Port       int    `json:"port"`        // source SSH port; 0 → 22 (GH #429)
@@ -44,6 +45,34 @@ type migrationRsyncRemoteHomeResult struct {
 
 func init() {
 	Default.Register("migration.rsync_remote_home", migrationRsyncRemoteHomeHandler)
+}
+
+// resolveRsyncSrcRoot returns the absolute source root the rsync src_path must
+// live under, or a non-empty error message. A caller-provided srcRoot (GH #746:
+// Plesk passes /var/www/vhosts, whose docroots are NOT under /home) is honored,
+// failing closed on traversal or a root of "/"; otherwise the JAB-45 legacy
+// /home/<srcAccount> scope applies (cPanel/DA/Hestia/CyberPanel). The panel
+// already scoped SrcPath to the subscription's real docroots — this is
+// defence-in-depth against a tampered manifest pulling arbitrary paths.
+func resolveRsyncSrcRoot(srcRoot, srcAccount string) (string, string) {
+	if srcRoot != "" {
+		if strings.Contains(srcRoot, "..") {
+			return "", "src_root must not contain .."
+		}
+		clean := filepath.Clean(srcRoot)
+		if clean == "/" || clean == "." {
+			return "", "src_root resolves to filesystem root"
+		}
+		return clean, ""
+	}
+	if srcAccount == "" || strings.Contains(srcAccount, "/") || strings.Contains(srcAccount, "..") {
+		return "", "src_account required and must be a bare account name (no / or ..)"
+	}
+	clean := filepath.Clean("/home/" + srcAccount)
+	if clean == "/home" || !strings.HasPrefix(clean, "/home/") {
+		return "", "src_account resolves outside /home"
+	}
+	return clean, ""
 }
 
 func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -68,19 +97,14 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 	// account home is /home/<domain> (e.g. /home/smoke.example.com), so a bare
 	// no-dots rule wrongly refused every CyberPanel home rsync. filepath.Clean
 	// on srcRoot below + the srcRoot-prefix check keep this traversal-safe.
-	if p.SrcAccount == "" || strings.Contains(p.SrcAccount, "/") || strings.Contains(p.SrcAccount, "..") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
-			Message: "src_account required and must be a bare account name (no / or ..)"}
-	}
-	srcRoot := filepath.Clean("/home/" + p.SrcAccount)
-	if srcRoot == "/home" || !strings.HasPrefix(srcRoot, "/home/") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
-			Message: "src_account resolves outside /home"}
+	srcRoot, rootErr := resolveRsyncSrcRoot(p.SrcRoot, p.SrcAccount)
+	if rootErr != "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: rootErr}
 	}
 	cleanSrc := filepath.Clean(p.SrcPath)
 	if cleanSrc != srcRoot && !strings.HasPrefix(cleanSrc, srcRoot+"/") {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
-			Message: "src_path must be under /home/<src_account> on source"}
+			Message: "src_path must be under the allowed source root (" + srcRoot + ")"}
 	}
 	p.SrcPath = cleanSrc
 	// Bind the destination to the destination user's own home and resolve it

@@ -502,6 +502,14 @@ failed stage. Already-done stages are skipped.`,
 							parsed.DocRoots[dom] = filepath.Join("/home", *user.Username, "domains", dom, "public_html")
 						}
 					}
+					// GH #746: the Plesk pull STREAMS each database dump into
+					// cpmove-<slug>/mysql/<db>.sql AFTER extraction, so they are
+					// NOT in the metadata-only tarball ParseTarball streamed —
+					// MySQLDumps came back empty and no database migrated. Glob
+					// the mysql/ dir so ImportDatabases has the dumps.
+					if dumps, gerr := filepath.Glob(filepath.Join(extractDir, "cpmove-"+slug, "mysql", "*.sql")); gerr == nil {
+						parsed.MySQLDumps = append(parsed.MySQLDumps, dumps...)
+					}
 				} else {
 					return failJob(fmt.Errorf("plesk cpmove parse %s: %w", pleskTar, perr))
 				}
@@ -1146,6 +1154,17 @@ func cpanelRestoreCallback(
 				}
 				totalBytes := int64(0)
 				domCount := 0
+				// GH #746: Plesk docroots live under /var/www/vhosts, not
+				// /home/<account>, so the agent's JAB-45 /home/<src_account>
+				// guard refused every Plesk file rsync. Tell the agent the
+				// allowed source root; the panel already scoped each SrcPath to
+				// the subscription's real docroots (pleskAuthorizedDocroots).
+				// Empty for other kinds → agent keeps the /home/<src_account>
+				// guard.
+				srcRootOverride := ""
+				if job.SourceKind == models.MigrationSourcePlesk {
+					srcRootOverride = "/var/www/vhosts"
+				}
 				for _, r := range rsyncRows {
 					destPath := filepath.Join("/home", p.targetUsername, "domains", r.Dom, "public_html")
 					rawResp, rerr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
@@ -1164,6 +1183,7 @@ func cpanelRestoreCallback(
 						"ssh_user":    remoteSSHUser,
 						"secret_path": secretPath,
 						"src_path":    r.SrcPath,
+						"src_root":    srcRootOverride,
 						"dest_path":   destPath,
 						"dest_user":   p.targetUsername,
 					})
@@ -1858,18 +1878,26 @@ func pleskAuthorizedDocroots(ctx context.Context, job *models.MigrationJob, db *
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 	defer func() { _ = d.Close(ctx, sess) }()
-	doms, err := d.AuthoritativeDomains(ctx, sess, job.SourceUser)
+	// GH #746: read each domain's REAL docroot from psa hosting.www_root, not
+	// the /httpdocs assumption — a subscription domain can live at
+	// /var/www/vhosts/<sub>/site1, which the old httpdocs-only allowlist
+	// refused, so no files migrated.
+	docroots, err := d.AuthoritativeDocroots(ctx, sess, job.SourceUser)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]bool{}
-	for _, dom := range doms {
-		if isHostnameLike(dom) { // defence-in-depth on psa output
-			out["/var/www/vhosts/"+dom+"/httpdocs"] = true
+	for _, root := range docroots {
+		cl := filepath.Clean(root)
+		// Defence-in-depth on (untrusted) psa output: only allowlist real
+		// docroots physically under the Plesk vhost root — never /etc, /root,
+		// … even if psa were tampered.
+		if strings.HasPrefix(cl, "/var/www/vhosts/") {
+			out[cl] = true
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("source psa reported no domains for subscription %q", job.SourceUser)
+		return nil, fmt.Errorf("source psa reported no hosted domains (with a docroot) for subscription %q", job.SourceUser)
 	}
 	return out, nil
 }
