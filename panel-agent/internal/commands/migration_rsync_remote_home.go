@@ -103,8 +103,14 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 	}
 	cleanSrc := filepath.Clean(p.SrcPath)
 	if cleanSrc != srcRoot && !strings.HasPrefix(cleanSrc, srcRoot+"/") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
-			Message: "src_path must be under the allowed source root (" + srcRoot + ")"}
+		// Keep the legacy /home/<src_account> wording for the JAB-45 path
+		// (existing callers + tests key on it); name the actual root for the
+		// caller-provided src_root case (GH #746).
+		msg := "src_path must be under /home/<src_account> on source"
+		if p.SrcRoot != "" {
+			msg = "src_path must be under the allowed source root (" + srcRoot + ")"
+		}
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: msg}
 	}
 	p.SrcPath = cleanSrc
 	// Bind the destination to the destination user's own home and resolve it
