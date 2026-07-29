@@ -26,6 +26,8 @@ func TestMigrationSSHUser(t *testing.T) {
 			&models.MigrationJob{SourceKind: models.MigrationSourceCloudPanel, SourceUser: "smokeuser"}, "root"},
 		{"cyberpanel account is the domain -> root (needs root for MySQL + /home read)",
 			&models.MigrationJob{SourceKind: models.MigrationSourceCyberPanel, SourceUser: "smoke.jabalitest.com"}, "root"},
+		{"plesk subscription is a domain, not an ssh login -> root (GH #746)",
+			&models.MigrationJob{SourceKind: models.MigrationSourcePlesk, SourceUser: "demolab.test"}, "root"},
 		{"cpanel account IS the ssh login",
 			&models.MigrationJob{SourceKind: models.MigrationSourceCpanel, SourceUser: "acct1"}, "acct1"},
 		{"directadmin uses the (pivoted) source user",

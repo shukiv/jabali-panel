@@ -1558,10 +1558,18 @@ func migrationSSHUser(job *models.MigrationJob) string {
 	// through this helper and inherited the account, so the online flow failed
 	// at `stage analyze: connect:` (verified end-to-end against a live CloudPanel
 	// source) even though pull-source succeeded as root.
+	//
+	// Plesk (GH #746, found in a live .88 E2E) is the SAME case and was the one
+	// panel left out of this switch: SourceUser is the subscription (a domain,
+	// e.g. "demolab.test"), and the `plesk` CLI needs a root/admin login. The
+	// pull forced root via --ssh-user, but the import's analyze inherited the
+	// subscription and died at `stage analyze: connect: plesk.Connect … [none
+	// publickey]` on a source where the account is not an SSH principal.
 	switch job.SourceKind {
 	case models.MigrationSourceHestia,
 		models.MigrationSourceCloudPanel,
-		models.MigrationSourceCyberPanel:
+		models.MigrationSourceCyberPanel,
+		models.MigrationSourcePlesk:
 		return "root"
 	}
 	if job.SourceUser != "" {

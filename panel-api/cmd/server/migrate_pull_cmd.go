@@ -249,9 +249,20 @@ live source SSH. Use scp directly for that kind.`,
 			if sharedAgent != nil {
 				kickCtx, kickCancel := context.WithTimeout(ctx, 10*time.Second)
 				defer kickCancel()
+				// Plesk SourceUser is a subscription (a domain, e.g.
+				// "demolab.test"); the agent rejects it as target_user
+				// ("looks unsafe" — dots aren't valid in a unix username), so
+				// auto-import was always blocked and the operator had to run
+				// import manually. Slug it into a valid username
+				// (demolab.test -> demolab_test) so the auto-kick lands (GH
+				// #746). Other panels' SourceUser is already a valid login.
+				autoTargetUser := job.SourceUser
+				if job.SourceKind == models.MigrationSourcePlesk {
+					autoTargetUser = plesk.Slug(job.SourceUser)
+				}
 				if _, err := sharedAgent.Call(kickCtx, "migration.import_run", map[string]any{
 					"job_id":      jobID,
-					"target_user": job.SourceUser,
+					"target_user": autoTargetUser,
 				}); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(),
 						"  (warning: could not auto-kick import: %v — run `jabali migrate import --job-id %s` manually)\n",
