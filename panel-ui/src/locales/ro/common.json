@@ -1,1666 +1,1666 @@
 {
-  "nav": {
-    "admin": {
-      "dashboard": "Tablou de bord",
-      "dashboard_desc": "",
-      "users": "Utilizatori",
-      "users_desc": "",
-      "domains": "Domenii",
-      "domains_desc": "",
-      "mail": "",
-      "mail_desc": "",
-      "packages": "",
-      "packages_desc": "",
-      "ssl": "",
-      "ssl_desc": "",
-      "applications": "",
-      "applications_desc": "",
-      "docker-apps": "",
-      "docker-apps_desc": "",
-      "settings": "",
-      "settings_desc": "",
-      "server-status": "",
-      "server-status_desc": "",
-      "cache": "",
-      "cache_desc": "",
-      "security": "Securitate",
-      "security_desc": "",
-      "backups": "Copii de rezervă",
-      "backups_desc": "",
-      "php-pools": "",
-      "php-pools_desc": "",
-      "dns": "",
-      "dns_desc": "",
-      "ips": "",
-      "ips_desc": "",
-      "notifications": "Notificări",
-      "notifications_desc": "",
-      "updates": "",
-      "updates_desc": "",
-      "automation": "",
-      "automation_desc": "",
-      "api-tokens": "",
-      "api-tokens_desc": "",
-      "migrations": "",
-      "migrations_desc": "",
-      "terminal": "",
-      "terminal_desc": "",
-      "logs": "",
-      "logs_desc": "",
-      "cron": "",
-      "cron_desc": "",
-      "support": "",
-      "support_desc": ""
+    "nav": {
+        "admin": {
+            "dashboard": "Tablou de bord",
+            "dashboard_desc": "",
+            "users": "Utilizatori",
+            "users_desc": "",
+            "domains": "Domenii",
+            "domains_desc": "",
+            "mail": "",
+            "mail_desc": "",
+            "packages": "",
+            "packages_desc": "",
+            "ssl": "",
+            "ssl_desc": "",
+            "applications": "Aplicații",
+            "applications_desc": "",
+            "docker-apps": "",
+            "docker-apps_desc": "",
+            "settings": "",
+            "settings_desc": "",
+            "server-status": "",
+            "server-status_desc": "",
+            "cache": "",
+            "cache_desc": "",
+            "security": "Securitate",
+            "security_desc": "",
+            "backups": "Copii de rezervă",
+            "backups_desc": "",
+            "php-pools": "",
+            "php-pools_desc": "",
+            "dns": "",
+            "dns_desc": "",
+            "ips": "",
+            "ips_desc": "",
+            "notifications": "Notificări",
+            "notifications_desc": "",
+            "updates": "",
+            "updates_desc": "",
+            "automation": "",
+            "automation_desc": "",
+            "api-tokens": "",
+            "api-tokens_desc": "",
+            "migrations": "",
+            "migrations_desc": "",
+            "terminal": "",
+            "terminal_desc": "",
+            "logs": "",
+            "logs_desc": "",
+            "cron": "",
+            "cron_desc": "",
+            "support": "",
+            "support_desc": ""
+        },
+        "user": {
+            "dashboard": "Tablou de bord",
+            "domains": "Domenii",
+            "mail": "",
+            "applications": "",
+            "python-apps": "",
+            "docker-apps": "",
+            "databases": "Baze de date",
+            "disk-usage": "Utilizare disc",
+            "files": "Fișiere",
+            "logs": "",
+            "ssh-keys": "Chei SSH",
+            "api-tokens": "",
+            "notifications": "Notificări",
+            "dns": "",
+            "ssl": "",
+            "php-settings": "",
+            "cron": "",
+            "backups": ""
+        }
     },
-    "user": {
-      "dashboard": "Tablou de bord",
-      "domains": "Domenii",
-      "mail": "",
-      "applications": "",
-      "python-apps": "",
-      "docker-apps": "",
-      "databases": "Baze de date",
-      "disk-usage": "Utilizare disc",
-      "files": "Fișiere",
-      "logs": "",
-      "ssh-keys": "Chei SSH",
-      "api-tokens": "",
-      "notifications": "Notificări",
-      "dns": "",
-      "ssl": "",
-      "php-settings": "",
-      "cron": "",
-      "backups": ""
+    "login": {
+        "flowError": "",
+        "hostnameWarningTitle": "",
+        "hostnameWarningDescription": "",
+        "noCredentialMethod": "",
+        "fieldRequired": "Obligatoriu",
+        "identifierHint": "",
+        "totpHint": "",
+        "backupCodeHint": "",
+        "webauthnHint": "",
+        "submitVerify": "Verifică",
+        "submitSignIn": "Autentificare"
+    },
+    "menu": {
+        "profile": "Profil",
+        "language": "Limbă",
+        "sign_out": "Deconectare"
+    },
+    "dashboard": {
+        "stats": {
+            "users": "",
+            "domains": "",
+            "mailboxes": "Căsuțe poștale"
+        },
+        "health": {
+            "healthy": "",
+            "critical": "",
+            "warning_one": "",
+            "warning_other": ""
+        },
+        "server_ip": "",
+        "summary": "",
+        "view_server_status": "",
+        "view_all": "Vezi tot",
+        "recent_users": "",
+        "recent_domains": "",
+        "recent_apps": "",
+        "packages": "",
+        "empty": {
+            "users": "Încă nu există utilizatori",
+            "domains": "Încă nu există domenii",
+            "apps": "",
+            "packages": ""
+        },
+        "col": {
+            "username": "Nume de utilizator",
+            "role": "Rol",
+            "domain": "Domeniu",
+            "name": "Nume",
+            "type": "Tip",
+            "ssh": ""
+        },
+        "role": {
+            "admin": "Administrator",
+            "user": "Utilizator"
+        },
+        "ssh": {
+            "on": "activat",
+            "off": "dezactivat"
+        },
+        "alert": {
+            "title_one": "",
+            "title_other": "",
+            "action": ""
+        }
+    },
+    "users": {
+        "actions": {
+            "login_as": "Autentificare ca utilizator",
+            "edit": "Editează",
+            "reset_2fa": "",
+            "reset_password": "Resetează parola",
+            "suspend": "Suspendă",
+            "unsuspend": "Reactivează",
+            "delete": "Șterge"
+        },
+        "error": {
+            "login_as": ""
+        },
+        "filter": {
+            "all": "",
+            "active": "Activ",
+            "suspended": "Suspendat"
+        },
+        "empty": {
+            "users": "Încă nu există utilizatori",
+            "admins": ""
+        },
+        "cta": {
+            "create_user": "Creează utilizator",
+            "create_admin": ""
+        },
+        "col": {
+            "username": "Nume de utilizator",
+            "name": "Nume",
+            "package": "Pachet",
+            "created": "Creat",
+            "disk_usage": "Utilizare disc",
+            "actions": "Acțiuni"
+        },
+        "suspended": "Suspendat",
+        "suspended_on": "",
+        "suspend_reason": "",
+        "tab": {
+            "users": "Utilizatori",
+            "admins": "Administratori",
+            "sessions": "Sesiuni"
+        },
+        "search": {
+            "users": "",
+            "admins": ""
+        }
+    },
+    "adminapplicationlist": {
+        "actions": "Acțiuni",
+        "created": "Creat",
+        "domain": "Domeniu",
+        "owner": "Proprietar",
+        "search_by_domain_or_user": "",
+        "status": "Stare",
+        "version": "Versiune"
+    },
+    "adminauditlist": {
+        "action": "Acțiune",
+        "actor": "",
+        "chain_broken_tamper_detected": "",
+        "integrity_retention": "",
+        "prune": "",
+        "result": "Rezultat",
+        "target": "",
+        "this_permanently_deletes_old_audit_records_t": ""
+    },
+    "adminautomationtokenspage": {
+        "actions": "Acțiuni",
+        "copy_it_now_and_store_it_in_your_automation": "",
+        "created": "Creat",
+        "external_callers_using_this_token_will_start": "",
+        "last_used": "Ultima utilizare",
+        "mint_server_api_token": "",
+        "name": "Nume",
+        "revoke": "",
+        "scopes": "",
+        "status": "Stare",
+        "this_is_the_only_time_the_secret_will_be_sho": "",
+        "token_id": "",
+        "writes_enabled": ""
+    },
+    "backuplogstab": {
+        "backup_logs_unavailable": "",
+        "from": "",
+        "kind_contains": "",
+        "status": "Stare",
+        "the_backup_service_isn_t_responding_try_agai": "",
+        "user_id": "ID utilizator"
+    },
+    "backupsettingstab": {
+        "max_concurrent_backup_jobs": "",
+        "tenant_scheduled_backup_time_cron": "",
+        "tenants_choose_what_to_back_up_and_where_you": "",
+        "the_dispatcher_runs_at_most_this_many_backup": ""
+    },
+    "createbackupdrawer": {
+        "backups_run_as_a_goroutine_inside_panel_agen": "",
+        "compression": "",
+        "content": "Conținut",
+        "create_backup": "Creează copie de rezervă",
+        "databases_comma_separated_optional": "",
+        "destination": "Destinație",
+        "folders_comma_separated": "",
+        "mailboxes_comma_separated_optional": "",
+        "pick_a_destination": "",
+        "pick_a_user": "",
+        "type": "Tip",
+        "user": "Utilizator"
+    },
+    "destinationstab": {
+        "actions": "Acțiuni",
+        "backend": "",
+        "credentials": "",
+        "enabled": "Activat",
+        "name": "Nume",
+        "url": ""
+    },
+    "encryptionkeycard": {
+        "losing_this_key_loses_every_snapshot": ""
+    },
+    "recoveryhandofftab": {
+        "bare_metal_full_host_restore_overwrites_the": "",
+        "bare_metal_recovery_sequence": "",
+        "deleted_user_restore_panel_user_row_is_gone": "",
+        "every_restore_flow_above_requires_the_restic": "",
+        "interactive_pick_destination_snapshot_and_us": "",
+        "normal_account_restore_runs_from_the_backups": "",
+        "restore_what_the_panel_does_vs_what_the_cli": "",
+        "staging_only_materialize_to_staging_do_not_a": "",
+        "system_restore_is_not_available_in_the_brows": "",
+        "you_need_the_backup_encryption_key_to_restor": ""
+    },
+    "schedulestab": {
+        "actions": "Acțiuni",
+        "create_at_least_one_destination_before_addin": "",
+        "cron": "",
+        "destinations": "",
+        "enabled": "Activat",
+        "last_run": "Ultima rulare",
+        "next_run": "Următoarea rulare",
+        "users": "Utilizatori"
+    },
+    "cacheoverviewpage": {
+        "cache_overview_page_cache_hit_ratio_by_domai": ""
+    },
+    "fleetcachedoctor": {
+        "re_provisions_cache_constants_acl_drop_in_fo": "",
+        "refresh": "Reîmprospătează",
+        "refresh_the_jabali_cache_plugin_on_every_cac": "",
+        "repair": "Repară",
+        "repair_all_drifted_installs": ""
+    },
+    "admincreatecronmodal": {
+        "choose_tenant": "",
+        "command": "",
+        "custom_cron_expression": "",
+        "name": "Nume",
+        "new_cron_job_as_tenant": "",
+        "run_as": "",
+        "schedule": "Programare",
+        "tenant": ""
+    },
+    "admincronlist": {
+        "no_cron_jobs_yet": "Încă nu există sarcini cron",
+        "search_by_name_command_schedule_or_owner": ""
+    },
+    "databaseuserdrawer": {
+        "create_database_user": "",
+        "database_user_created": "",
+        "engine": "",
+        "mariadb_is_the_default_postgresql_must_be_en": "",
+        "the_final_mariadb_username_will_be_your_pane": "",
+        "username": "Nume de utilizator"
+    },
+    "databaseuserslist": {
+        "actions": "Acțiuni",
+        "created": "Creat",
+        "database_privileges": "",
+        "engine": "",
+        "user": "Utilizator"
+    },
+    "databasecreate": {
+        "admins_create_databases_without_a_username_p": "",
+        "name": "Nume"
+    },
+    "databaselist": {
+        "actions": "Acțiuni",
+        "charset": "",
+        "created": "Creat",
+        "database": "Bază de date",
+        "engine": "",
+        "no_databases_yet": "Încă nu există baze de date",
+        "user_id": "ID utilizator"
+    },
+    "dnszonesoverviewpage": {
+        "actions": "Acțiuni",
+        "dns_zones_are_provisioned_automatically_when": "",
+        "dnssec": "",
+        "domain_name": "Nume de domeniu",
+        "domain_registration_expiry_from_whois": "",
+        "expiration": "Expirare",
+        "no_dns_zones_yet_create_a_domain_to_manage_i": "",
+        "owner": "Proprietar",
+        "records": "",
+        "ttl": "",
+        "zone_status": ""
+    },
+    "admindockerappspage": {
+        "credentials": "",
+        "installed_apps": "",
+        "no_installed_apps_yet": "",
+        "running": "În execuție",
+        "search_by_name": "",
+        "stopped": "Oprit",
+        "updates_available": ""
+    },
+    "backupsdrawer": {
+        "backups": "Copii de rezervă",
+        "container_will_be_stopped_files_restored_con": "",
+        "phase_8_1_restic_via_env_vars": "",
+        "restore": "Restaurează",
+        "restore_this_snapshot": ""
+    },
+    "editdrawer": {
+        "cpu": "",
+        "domain": "Domeniu",
+        "limits_update_mode_can_still_be_saved_ports": "",
+        "memory": "Memorie",
+        "pick_from_the_panel_s_domains_list_leave_emp": "",
+        "pids": "",
+        "select_a_domain": "Selectează un domeniu",
+        "stop_the_container_before_editing_ports_or_d": "",
+        "update_mode": ""
+    },
+    "envsection": {
+        "copy": "Copiază",
+        "mints_a_new_secret_and_recreates_the_contain": "",
+        "recreate_the_container": "",
+        "regenerate": "Regenerează",
+        "save_recreate": "",
+        "saving_applies_the_new_values_by_recreating": ""
+    },
+    "execdrawer": {
+        "admin_only": "",
+        "exec_command": "",
+        "runs_sh_c_command_in_the_first_service_of_th": ""
+    },
+    "installdrawer": {
+        "backup_destination": "",
+        "cpu": "",
+        "domain": "Domeniu",
+        "hostname_to_attach_to_the_loopback_bound_por": "",
+        "inherit_env_var_fallback": "",
+        "install_name": "",
+        "memory": "Memorie",
+        "per_install_identifier_combined_with_the_cat": "",
+        "pick_a_destination_from_server_settings_back": "",
+        "pids": "",
+        "select_a_domain": "Selectează un domeniu",
+        "update_mode": ""
+    },
+    "maintenancetab": {
+        "build_cache": "",
+        "containers": "Containere",
+        "disk_usage": "Utilizare disc",
+        "images": "Imagini",
+        "prune": "",
+        "reclaimable": "",
+        "volumes": "Volume"
+    },
+    "domaincreate": {
+        "adds_a_www_cname_pointing_at_the_domain_apex": "",
+        "doc_root": "",
+        "google_dkim_value": "",
+        "leave_empty_for_auto_generated_path": "",
+        "let_s_encrypt_recommended_self_signed_or_non": "",
+        "mail": "",
+        "microsoft_365_tenant": "",
+        "name": "Nume",
+        "optional_paste_the_google_domainkey_txt_valu": "",
+        "optional_your_tenant_onmicrosoft_com_adds_th": "",
+        "select_a_user": "Selectează un utilizator",
+        "tls_certificate": "",
+        "user": "Utilizator",
+        "where_this_domain_s_email_is_hosted_none_and": ""
+    },
+    "domaindeliverabilitysection": {
+        "deliverability_score": "",
+        "deliverability_score_unavailable_for_this_do": ""
+    },
+    "domaindirectoryprivacysection": {
+        "authentication_name": "",
+        "delete": "Șterge",
+        "delete_this_rule_and_all_its_credentials": "",
+        "delete_this_user": "",
+        "directory_under_the_docroot_to_protect_e_g_s": "",
+        "label_shown_in_the_browser_s_basic_auth_popu": "",
+        "password": "Parolă",
+        "path": "Cale",
+        "per_directory_password_protection": "",
+        "user": "Utilizator",
+        "username": "Nume de utilizator"
+    },
+    "domainedit": {
+        "doc_root": "",
+        "name": "Nume",
+        "panel_hostname_domain_mail_only": ""
+    },
+    "domainemailsection": {
+        "a_fresh_dkim_keypair_is_generated_and_the_dn": "",
+        "copy_value": "Copiază valoarea",
+        "dkim_key_missing": "",
+        "dns_autoconfig_partially_applied": "",
+        "dns_records": "",
+        "email_is_enabled_but_no_dkim_public_key_is_s": "",
+        "failed_to_load_email_state": "",
+        "rotate": "",
+        "rotate_dkim_key": ""
+    },
+    "domainipaclsection": {
+        "action": "Acțiune",
+        "cidr": "",
+        "comment": "Comentariu",
+        "delete": "Șterge",
+        "delete_this_rule": "",
+        "per_domain_ip_allow_deny": "",
+        "priority": "Prioritate"
+    },
+    "domainlist": {
+        "actions": "Acțiuni",
+        "bw_30d": "",
+        "domain": "Domeniu",
+        "more_actions": "",
+        "no_domains_yet": "Încă nu există domenii",
+        "redirect": "",
+        "ssl": "",
+        "status": "Stare",
+        "user": "Utilizator"
+    },
+    "domainmtastssection": {
+        "mta_sts_protects_inbound_mail_from_tls_downg": "",
+        "policy_live_in_dns_vhost_waiting_for_ssl_ren": "",
+        "when_enabled_jabali_publishes_a_policy_telli": ""
+    },
+    "domainmailprovidersection": {
+        "mail_provider": ""
+    },
+    "domainmailtlssection": {
+        "clears_backoff_and_dispatches_ssl_mail_issue": ""
+    },
+    "domainmailboxessection": {
+        "a_send_only_mailbox_authenticates_for_smtp_s": "",
+        "create": "Creează",
+        "create_mailbox": "Creează căsuță poștală",
+        "domain": "Domeniu",
+        "email_isn_t_enabled_on_this_domain": "",
+        "leave_blank_to_auto_generate_generated_passw": "",
+        "local_part": "",
+        "mailboxes_can_only_be_created_once_email_is": "",
+        "only_domains_with_email_enabled_appear_here": "",
+        "password": "Parolă",
+        "pick_a_domain": "",
+        "quota_mib": ""
+    },
+    "domainpathbrowsermodal": {
+        "no_subfolders_here": "",
+        "pick_a_folder_under_the_docroot": ""
+    },
+    "domainsslsection": {
+        "acme_issuance_failed": "",
+        "attach": "",
+        "attach_shared_certificate": "",
+        "only_shared_certificates_that_cover_this_dom": "",
+        "install": "Instalează",
+        "paste_the_full_chain_certificate_leaf_interm": "",
+        "set_an_admin_email_to_use_ssl": "",
+        "this_domain_is_using_a_self_signed_certifica": "",
+        "upload_custom_certificate": "",
+        "using_self_signed_certificate": ""
+    },
+    "domainskipautosantoggle": {
+        "skip_auto_added_san_names": ""
+    },
+    "sharedcertificates": {
+        "title": ""
+    },
+    "adminiplist": {
+        "actions": "Acțiuni",
+        "address": "Adresă",
+        "bound": "",
+        "default": "Implicit",
+        "family": "",
+        "ip_is_in_use": "",
+        "label": "Etichetă",
+        "no_managed_ips_yet": "",
+        "status": "Stare",
+        "user_selectable": ""
+    },
+    "logstreammodal": {
+        "goaccess_dashboard": ""
+    },
+    "admingroupstab": {
+        "no_groups": ""
+    },
+    "adminmailpage": {
+        "leave_blank_to_auto_generate_auto_generated": "",
+        "mailbox_password": "",
+        "new_password": "Parolă nouă",
+        "no_mailboxes": "Nu există căsuțe poștale",
+        "search_email_name_domain_owner": "Caută e-mail, nume, domeniu, proprietar",
+        "set_password": "Setează parola"
+    },
+    "maildeliverabilitypage": {
+        "each_of_the_four_signals_can_subtract_up_to": "Fiecare dintre cele patru criterii poate reduce cu până la 25 de puncte un scor inițial de 100. Aceste criterii sunt obținute din: listările RBL ale IP-ului public, grupurile de mesaje cu verificare DKIM eșuată din rapoartele DMARC RUA, erorile de sesiune TLS din rapoartele TLS-RPT și rapoartele ARF de feedback privind abuzurile provenite de la serverele de mail ale destinatarilor. Toate valorile sunt calculate pe baza ultimelor 7 zile.",
+        "failed_to_load_deliverability_score": "Eroare la încărcarea scorului de livrabilitate",
+        "how_this_score_works": "Cum functioneaza acest scor",
+        "mail_deliverability_server_wide_score": "Capacitatea de livrare a e-mailurilor — scor la nivelul întregului server"
+    },
+    "mailthrottlespage": {
+        "each_row_converges_into_a_stalwart_mtaoutbou": "Fiecare rând este sincronizat cu un obiect Stalwart MtaOutboundThrottle la următoarea execuție a procesului de reconciliere. Valoarea 0 înseamnă nelimitat. În versiunea v1 este aplicată doar limita orară (obiectul rate din Stalwart acceptă o singură fereastră de timp). Limita zilnică este înregistrată în jurnal, dar nu este aplicată până într-o versiune ulterioară, când va fi împărțită într-un obiect pereche.",
+        "enabled": "Activat",
+        "max_per_day_logged_only_v1": "Maxim pe zi (doar înregistrat în jurnal, v1)",
+        "max_per_hour_0_unlimited": "Limită maximă pe oră (0 = nelimitat)",
+        "per_account_per_domain_server_wide_outbound": "Limite ale ratei de trimitere a e-mailurilor pentru cont, domeniu și întregul server",
+        "scope": "Domeniu de aplicare",
+        "scope_ref_ulid": "Referință domeniu de aplicare (ULID)"
+    },
+    "adminmigrationdetailpage": {
+        "bytes_processed": "Date procesate (în octeți)",
+        "destination_domain": "Domeniu de destinație",
+        "destination_user": "Utilizator destinatar",
+        "ended": "Încheiat",
+        "error": "Eroare",
+        "job_id": "ID sarcină",
+        "last_error": "Ultima eroare",
+        "no_migration_job_selected": "Nu a fost selectat niciun job de migrare",
+        "no_stage_rows_yet": "Nu există încă etape",
+        "pipeline": "Pipeline",
+        "source_kind": "Tipul sursei",
+        "stage_timeline": "Cronologia etapelor",
+        "started": "Început",
+        "target_user_id": "ID utilizator destinație"
+    },
+    "adminmigrationspage": {
+        "account_migration_importer_m35": "Importator de migrare a conturilor (M35)",
+        "allow_ssh_to_rfc1918_loopback_link_local_sou": "Permite accesul SSH către gazde sursă RFC1918 / loopback / link-local. Dezactivat implicit pentru siguranța mediilor de producție. Reporniți panoul și agentul după activare/dezactivare pentru a aplica modificarea.",
+        "batch": "Lot",
+        "cancel_batch": "Anulează lotul",
+        "cancels_every_non_terminal_job_sharing_this": "Anulează toate job-urile nefinalizate asociate aceluiași batch_id.",
+        "ended": "Încheiat",
+        "no_migrations_yet": "Nu există încă migrări efectuate",
+        "per_source_kind_support": "Suport în funcție de tipul sursei",
+        "recent_migration_jobs": "Job-uri recente de migrare",
+        "source": "Sursă",
+        "source_host": "Server sursă",
+        "source_user": "Utilizator sursă",
+        "started": "Început",
+        "state": "Stare"
+    },
+    "bulkwhmdrawer": {
+        "accounts": "",
+        "bulk_whm": "",
+        "create_whm_migration_batch": "",
+        "creates_one_migration_job_per_account_all_sh": "",
+        "hostname_or_ip_of_the_source_whm_server_priv": "",
+        "one_account_per_line_or_comma_separated_exis": "",
+        "source_host": ""
+    },
+    "createmigrationdrawer": {
+        "absolute_path_to_the_wordpress_root_on_the_s": "",
+        "import_started": "",
+        "new_migration_job": "",
+        "source_kind": "",
+        "ssh_port": "",
+        "the_migration_is_running_in_the_background_o": "",
+        "the_source_server_s_ssh_port_defaults_to_22": "",
+        "wordpress_path_optional": ""
+    },
+    "createmigrationwizard": {
+        "account_discovery_failed": "",
+        "admin_user": "",
+        "create_migration": "",
+        "credential_type": "",
+        "credentials_are_written_to_etc_jabali_panel": "",
+        "first_connection_is_unverified": "",
+        "import_options": "",
+        "pick_the_source_panel_type": "",
+        "pick_which_accounts_to_migrate_each_becomes": "",
+        "review": "",
+        "sha256_abc123": "",
+        "source_host": "",
+        "source_host_key_fingerprint_optional": "",
+        "ssh_port": "",
+        "the_source_server_s_ssh_port_defaults_to_22": "",
+        "use_the_server_s_direct_ip_if_it_sits_behind": "",
+        "whm_enables_bulk_migration_of_every_cpanel_a": "",
+        "without_a_fingerprint_the_first_connection_t": ""
+    },
+    "channelstab": {
+        "actions": "Acțiuni",
+        "enabled": "Activat",
+        "kind": "",
+        "name": "Nume"
+    },
+    "dlqtab": {
+        "clear": "",
+        "dlq_is_empty": "",
+        "re_publishes_every_envelope_to_the_main_deli": "",
+        "replay_all": "",
+        "this_deletes_every_entry_in_the_stream_use_o": ""
+    },
+    "eventstab": {
+        "description": "Descriere",
+        "enabled": "Activat",
+        "event": "Eveniment",
+        "severity": "Severitate"
+    },
+    "historytab": {
+        "body": "",
+        "channel": "",
+        "clear": "",
+        "clear_all_notifications": "",
+        "deeplink": "",
+        "event": "Eveniment",
+        "outcome": "",
+        "read": "",
+        "retries": "",
+        "severity": "Severitate",
+        "show_details": "Arată detaliile",
+        "this_envelope_was_moved_to_the_dead_letter_q": "",
+        "this_permanently_deletes_every_row_in_your_i": "",
+        "time": "",
+        "title": "Titlu"
+    },
+    "webpushtab": {
+        "browser_blocked_notifications": "",
+        "browser_push_is_not_supported_in_this_browse": "",
+        "couldn_t_enable_browser_push": "",
+        "notifications_appear_via_your_operating_syst": "",
+        "open_the_site_permissions_for_this_domain_in": "",
+        "this_browser_is_receiving_jabali_push_notifi": "",
+        "web_push_relies_on_the_service_worker_push_a": ""
+    },
+    "packagecreate": {
+        "allow_cgi_scripts": "",
+        "allow_ssh_access": "",
+        "allow_tenants_on_this_plan_to_enable_a_sched": "",
+        "allowed_backup_destinations": "",
+        "also_expose_the_individual_pm_knobs_clamped": "",
+        "backup_retention_policy": "",
+        "bandwidth_quota_mb": "",
+        "cpu_quota": "",
+        "destination_kinds_a_tenant_may_back_up_to_em": "",
+        "disk_quota_mb": "",
+        "docker_apps_per_package_allowlist": "",
+        "empty_server_wide_default": "",
+        "est_ram_per_worker_mb_drives_the_memory_budg": "",
+        "io_read_bandwidth_mb_s": "",
+        "io_write_bandwidth_mb_s": "",
+        "let_tenants_pick_a_safe_php_performance_mode": "",
+        "max_backups": "",
+        "max_children_per_user_fpm_cap": "",
+        "max_databases": "",
+        "max_docker_apps": "",
+        "max_domains": "",
+        "max_email_accounts": "",
+        "max_python_apps": "",
+        "max_tasks": "",
+        "memory_limit_mb": "",
+        "name": "Nume",
+        "retention_cap_most_snapshots_a_tenant_on_thi": "",
+        "scheduled_backups": "",
+        "security_re_enables_php_exec_proc_open_shell": "",
+        "what_happens_when_a_tenant_reaches_max_backu": ""
+    },
+    "packageedit": {
+        "allow_cgi_scripts": "",
+        "allow_ssh_access": "",
+        "allow_tenants_on_this_plan_to_enable_a_sched": "",
+        "allowed_backup_destinations": "",
+        "also_expose_the_individual_pm_knobs_clamped": "",
+        "backup_retention_policy": "",
+        "bandwidth_quota_mb": "",
+        "cpu_quota": "",
+        "destination_kinds_a_tenant_may_back_up_to_em": "",
+        "disk_quota_mb": "",
+        "docker_apps_per_package_allowlist": "",
+        "empty_server_wide_default": "",
+        "est_ram_per_worker_mb_drives_the_memory_budg": "",
+        "io_read_bandwidth_mb_s": "",
+        "io_write_bandwidth_mb_s": "",
+        "let_tenants_pick_a_safe_php_performance_mode": "",
+        "max_backups": "",
+        "max_children_per_user_fpm_cap": "",
+        "max_databases": "",
+        "max_docker_apps": "",
+        "max_domains": "",
+        "max_email_accounts": "",
+        "max_python_apps": "",
+        "max_tasks": "",
+        "memory_limit_mb": "",
+        "name": "Nume",
+        "retention_cap_most_snapshots_a_tenant_on_thi": "",
+        "scheduled_backups": "",
+        "security_re_enables_php_exec_proc_open_shell": "",
+        "what_happens_when_a_tenant_reaches_max_backu": ""
+    },
+    "packagelist": {
+        "actions": "Acțiuni",
+        "bandwidth_mb": "",
+        "created": "Creat",
+        "disk_mb": "",
+        "domains": "Domenii",
+        "email": "Email",
+        "name": "Nume",
+        "no_hosting_packages_yet": "",
+        "php_exec": "",
+        "search_by_package_name": "",
+        "ssh": ""
+    },
+    "fpmpoolstab": {
+        "could_not_load_php_fpm_pools": "",
+        "filter_by_php_version": ""
+    },
+    "phpextensionstab": {
+        "action": "Acțiune",
+        "extension": "",
+        "install_a_php_version_first_under_the_php_ve": "",
+        "installed": "Instalat",
+        "no_php_versions_installed": "",
+        "php_version": "",
+        "search_extensions": "",
+        "status": "Stare"
+    },
+    "versionstab": {
+        "actions": "Acțiuni",
+        "default": "Implicit",
+        "end_of_life_no_upstream_security_patches_run": "",
+        "fpm_workers": "",
+        "modifying_php_versions_can_cause_server_down": "",
+        "php_version": "",
+        "status": "Stare",
+        "uninstalling_php_versions_may_break_websites": ""
+    },
+    "phppooledit": {
+        "add_ini_override": "",
+        "directive": "",
+        "idle_timeout_in_seconds": "",
+        "kind": "",
+        "max_children": "",
+        "max_requests_per_worker_0_never": "",
+        "max_spare_servers_dynamic_max_children": "",
+        "min_spare_servers_dynamic": "",
+        "number_of_child_processes": "",
+        "php_version": "",
+        "process_idle_timeout_seconds": "",
+        "process_mode": "",
+        "request_terminate_timeout_seconds_0_no_limit": "",
+        "select_process_manager_mode": "",
+        "start_servers_dynamic": "",
+        "value": "Valoare"
+    },
+    "adminsecurityaide": {
+        "added": "",
+        "aide_file_integrity_monitor": "",
+        "aide_not_active": "",
+        "all_watched_paths_match_the_baseline_checksu": "",
+        "category": "Categorie",
+        "change_type": "",
+        "changed": "",
+        "db_age": "",
+        "last_check": "Ultima verificare",
+        "no_tamper_detected": "",
+        "prioritize_these": "",
+        "rebuild": "Reconstruiește",
+        "rebuild_the_aide_baseline": "",
+        "removed": "",
+        "review_the_sample_below_if_the_changes_are_e": "",
+        "this_replaces_the_integrity_baseline_with_th": ""
+    },
+    "adminsecurityapparmor": {
+        "apparmor": "",
+        "apparmor_disabled": "",
+        "apparmor_profiles_intentionally_not_loaded_o": "",
+        "complain_mode_profiles_are_logging_would_den": "",
+        "denied_enforce_blocks": "",
+        "enforce_will_start_denying_paths_caps_not_in": "",
+        "filter_mode": "",
+        "flip": "",
+        "if_the_profile_is_missing_a_path_the_daemon": "",
+        "mode": "Mod",
+        "protects": "",
+        "this_profile_is_not_soak_ready_enforcing_now": "",
+        "would_deny_complain": ""
+    },
+    "adminsecuritycrowdsec": {
+        "active_decision_sources": "",
+        "active_decisions": "",
+        "active_until": "",
+        "add_crowdsec_decision_manual_ban": "",
+        "add_to_allowlist": "",
+        "added": "",
+        "aggregates_every_active_decision_by_origin_s": "",
+        "alert_not_found": "",
+        "alerts_last_24h": "",
+        "all_time_alerts_since_crowdsec_started": "",
+        "allow_list_with_no_countries_blocks_every_re": "",
+        "allowlist_never_ban": "",
+        "allowlisted_ips_bypass_every_scenario_decisi": "",
+        "apply": "Aplică",
+        "apply_appsec_geoblock": "",
+        "apply_captcha_settings": "",
+        "apply_overrides": "",
+        "appsec_geoblock_server_wide": "",
+        "auto_allowlist_login_ips_server_wide": "",
+        "ban_duration": "",
+        "behaviour_based_intrusion_prevention_tails_s": "",
+        "bouncer_mode_server_wide": "",
+        "cancel": "Anulează",
+        "captcha_action_requires_the_captcha_remediat": "",
+        "captcha_remediation": "",
+        "config_validation_failed_crowdsec_t": "",
+        "country_bans_rely_on_the_geoip_enricher_as_b": "",
+        "create_an_hcaptcha_recaptcha_turnstile_site": "",
+        "decisions": "",
+        "decisions_issued": "",
+        "deny_list_with_no_countries_has_no_effect_ad": "",
+        "description": "Descriere",
+        "duration": "Durată",
+        "enabled": "Activat",
+        "events": "Evenimente",
+        "how_this_is_enforced": "",
+        "ip_or_cidr": "",
+        "ip_value": "",
+        "ips_currently_banned_under_captcha": "",
+        "item": "",
+        "leave_blank_to_keep_the_stored_secret_unchan": "",
+        "lines_no_parser_matched_gaps_in_coverage": "",
+        "machine": "",
+        "no_active_decisions": "",
+        "no_alerts_in_the_last_24h": "",
+        "no_allowlist_entries": "",
+        "no_bouncers_registered_cscli_bouncers_add": "",
+        "no_decisions_issued": "",
+        "no_scenarios_installed": "",
+        "one_click_install_of_upstream_crowdsec_hub_i": "",
+        "override": "",
+        "per_scenario_remediation_override": "",
+        "provider": "Furnizor",
+        "reason": "Motiv",
+        "recent_changes_audit": "",
+        "recommended_free_blocklists_scenarios": "",
+        "remove": "Elimină",
+        "remove_from_allowlist": "",
+        "rewrites_etc_crowdsec_profiles_yaml_marker_b": "",
+        "scenario": "",
+        "scenario_fired": "",
+        "scenario_thresholds_tripped_suspicious_patte": "",
+        "scope": "",
+        "secret_key_write_only": "",
+        "security_trade_off": "",
+        "sensitivity_preset_server_wide": "",
+        "single_ipv4_ipv6_address_or_cidr_block_e_g_1": "",
+        "site_key_public": "",
+        "source": "Sursă",
+        "started": "Început",
+        "this_ip_was_banned_because_the_scenario_abov": "",
+        "this_is_a_broad_crowdsec_exemption_a_success": "",
+        "this_rewrites_etc_crowdsec_bouncers_crowdsec": "",
+        "type": "Tip",
+        "type_a_country_name_or_code_or_pick_from_the": "",
+        "until": "",
+        "value": "Valoare",
+        "what_is_crowdsec": "",
+        "when_enabled_crowdsec_scenarios_flagged_for": "",
+        "why_reason": ""
+    },
+    "adminsecurityegress": {
+        "actions": "Acțiuni",
+        "cidr": "",
+        "comment": "Comentariu",
+        "drops_24h": "",
+        "drops_last_tick": "",
+        "egress_state": "",
+        "enforced_users": "",
+        "learning_users": "",
+        "off_users": "",
+        "per_user_php_fpm_egress_firewall": "",
+        "per_user_policy": "",
+        "port": "Port",
+        "proto": "",
+        "protocol": "",
+        "reason": "Motiv",
+        "state": "Stare",
+        "submitted": "",
+        "total_drops_last_tick": "",
+        "user": "Utilizator"
+    },
+    "adminsecuritymalware": {
+        "built_in_rule_packs": "",
+        "custom_yara_rules": "",
+        "daily_scan_schedule_cron": "",
+        "enable_mail_attachment_scanning": "",
+        "event_detail": "",
+        "exec_audit_auditd_jabali_susp_exec": "",
+        "explain_why_this_restore_is_safe": "",
+        "filename": "Nume fișier",
+        "inotify_watches": "",
+        "manual_scan": "",
+        "max_attachment_size_mb": "",
+        "max_scan_size_per_file_mb": "",
+        "notification_severity_threshold": "",
+        "original": "",
+        "per_attachment_scan_timeout_seconds": "",
+        "per_tick_budget_mailboxes_scanned_each_cycle": "",
+        "pre_flight_parsed_via_yara_w_before_install": "",
+        "quarantine": "",
+        "quarantine_retention_days": "",
+        "real_time_scanning": "",
+        "real_time_scanning_is_off": "",
+        "realtime_monitor": "",
+        "reason_audit": "",
+        "recent_events": "",
+        "restore_from_quarantine": "",
+        "restoring_re_introduces_the_file_to_disk": "",
+        "rule_content": "",
+        "scan_all_folders_not_just_inbox": "",
+        "search_username_name_or_email": "",
+        "settings": "Setări",
+        "sha256": "",
+        "skip_these_recipient_addresses_comma_separat": "",
+        "the_inotify_monitor_is_not_running_daily_sch": "",
+        "upload_fails_with_the_parser_error_if_the_ru": "",
+        "upload_yara_rule": "",
+        "yara_engine": ""
+    },
+    "adminsecuritysnuffleupagus": {
+        "action": "Acțiune",
+        "disable": "Dezactivează",
+        "disable_rule_reason_required": "",
+        "domain_tenant": "",
+        "php_defense": "",
+        "php_defense_rules": "",
+        "php_version": "",
+        "re_enable_this_rule": "",
+        "request_uri": "",
+        "rule": "",
+        "rules_log_incidents_below_without_blocking_s": "",
+        "simulation_mode_active": "",
+        "source_ip": "",
+        "when": ""
+    },
+    "adminsecurityufw": {
+        "action": "Acțiune",
+        "add_ufw_rule": "",
+        "cancel": "Anulează",
+        "continue": "Continuă",
+        "delete": "Șterge",
+        "delete_rule": "",
+        "disable_firewall": "",
+        "disabling_ufw_drops_host_firewall_protection": "",
+        "enable_the_firewall_to_view_and_manage_rules": "",
+        "enabling_ufw_will_activate_default_deny_inco": "",
+        "firewall_disabled": "",
+        "from": "",
+        "no_rules": "",
+        "port": "Port",
+        "proto": "",
+        "protocol": "",
+        "rules": "",
+        "rules_hidden_firewall_disabled": "",
+        "status": "Stare",
+        "this_drops_the_host_firewall_crowdsec_firewa": "",
+        "ufw_is_not_active_rules_below_if_any_are_not": "",
+        "ufw_is_port_policy_only": "",
+        "yes": ""
+    },
+    "crowdsectestipcard": {
+        "drops_every_active_crowdsec_decision_targeti": "",
+        "test_failed": "",
+        "test_ip_would_this_ip_be_blocked": "",
+        "unban": ""
+    },
+    "egressmaturepromotion": {
+        "operator_pin_active": "",
+        "promote": "Promovează",
+        "this_enforces_the_egress_firewall_for_those": ""
+    },
+    "speedtestcard": {
+        "jitter": ""
+    },
+    "adminsessionspage": {
+        "active_sessions": "",
+        "revoke": "",
+        "revoke_this_session": "",
+        "the_user_will_be_signed_out_of_the_panel": ""
+    },
+    "accountskeletoncard": {
+        "account_skeleton": "",
+        "add": "Adaugă",
+        "add_skeleton_file": "",
+        "path": "Cale"
+    },
+    "brandingcard": {
+        "brand_text": "",
+        "browser_cache": "",
+        "jabali": "",
+        "newly_uploaded_logos_may_take_up_to_5_minute": "",
+        "panel_branding": ""
+    },
+    "dnspermissionscard": {
+        "admins_always_have_full_control_ns_and_soa_r": "",
+        "dns_record_permissions": "",
+        "which_dns_record_types_regular_users_may_man": ""
+    },
+    "dnsresolverscard": {
+        "dns_resolvers": "",
+        "ipv4_primary": "",
+        "ipv4_secondary_optional": "",
+        "ipv6_primary_optional": "",
+        "ipv6_secondary_optional": "",
+        "search_domain_optional": "",
+        "the_drop_in_will_still_be_written_but_change": ""
+    },
+    "databaseadminsections": {
+        "actions": "Acțiuni",
+        "apply": "Aplică",
+        "command": "",
+        "host": "",
+        "i_saved_it": "",
+        "kill": "",
+        "query": "",
+        "rotate": "",
+        "state": "Stare",
+        "the_previous_password_if_any_stops_working_i": "",
+        "time": "",
+        "user": "Utilizator"
+    },
+    "dockermarketplacecard": {
+        "docker_app_marketplace_m48": "",
+        "marketplace_live": "",
+        "opt_in_feature": ""
+    },
+    "emailcard": {
+        "dkim": "",
+        "enabled_at": "",
+        "failed_to_load_email_settings": "",
+        "primary_mail_domain": "",
+        "the_panel_hostname_s_mail_domain_is_being_pr": "",
+        "webmail_is_initializing": "",
+        "webmail_url": ""
+    },
+    "logretentioncard": {
+        "it_s_hash_chained_and_tamper_evident_set_a_w": "",
+        "logs_retention": "",
+        "the_audit_log_defaults_to_keep_forever": ""
+    },
+    "lookandfeelcard": {
+        "look_and_feel": "",
+        "panel_font_size": ""
+    },
+    "modulescard": {
+        "modules": ""
+    },
+    "nginxsettingscard": {
+        "cache_key_metadata_zone_8000_keys_mb": "",
+        "custom_http_directives": "",
+        "evict_entries_not_accessed_within_this_windo": "",
+        "gzip_compression": "",
+        "keepalive_timeout": "",
+        "largest_request_body_nginx_accepts_before_41": "",
+        "max_upload_size_client_max_body_size": "",
+        "nginx": "",
+        "off_hides_the_nginx_version_in_responses_err": "",
+        "raw_nginx_directives_can_make_the_server_uns": "",
+        "shared_fastcgi_cache_max_on_disk_size": "",
+        "show_nginx_version_server_tokens": ""
+    },
+    "nspawnimagescard": {
+        "codename": "",
+        "delete_all_unused_images": "",
+        "prune": "",
+        "prune_result": "",
+        "removes_every_sealed_image_no_user_and_not_t": "",
+        "snapshot": "",
+        "ssh_sandbox_images_nspawn": "",
+        "suite": "",
+        "version": "Versiune"
+    },
+    "phpperformancemodescard": {
+        "idle_timeout_s": "",
+        "max_children": "",
+        "max_requests_0_never": "",
+        "max_spare": "",
+        "min_spare": "",
+        "php_performance_modes": "",
+        "process_manager": "",
+        "start_servers": ""
+    },
+    "pagetemplatescard": {
+        "cancel": "Anulează",
+        "page_templates": "",
+        "save": "Salvează"
+    },
+    "panelsslcard": {
+        "failed_to_load_panel_ssl_state": "",
+        "hostname": "",
+        "let_s_encrypt_is_unavailable_for_the_panel": "",
+        "mail": "",
+        "panel_certificate_not_initialised_yet": "",
+        "panel_ssl": ""
+    },
+    "pythonappscard": {
+        "apps_need_python3_venv_and_a_build_toolchain": "",
+        "runtime_prerequisites": ""
+    },
+    "ssomaintenancecard": {
+        "deletes_only_already_expired_tokens_active_s": "",
+        "operator_procedure_run_on_the_host_not_from": "",
+        "purge": "",
+        "purge_expired_sso_tokens_now": "",
+        "rotation_re_encrypts_every_stored_db_user_pa": "",
+        "sso_maintenance_phpmyadmin": ""
+    },
+    "stalwartwebadmincard": {
+        "done": "",
+        "stalwart_webadmin_advanced": "",
+        "the_full_mail_server_admin_is_reachable_behi": ""
+    },
+    "tenantdomainoptionscard": {
+        "tenant_domain_options": ""
+    },
+    "webmailtogglecard": {
+        "webmail": ""
+    },
+    "sslmanagerpage": {
+        "domain_certificates": ""
+    },
+    "adminterminal": {
+        "root_shell_every_keystroke_and_all_output_is": "",
+        "root_terminal_is_disabled": ""
+    },
+    "domainrepaircard": {
+        "cancel": "Anulează",
+        "delete_all_orphan_sites": "",
+        "delete_permanently": "",
+        "no_orphan_sites_found": "",
+        "select_a_user": "Selectează un utilizator",
+        "this_is_irreversible_it_tears_down_each_site": ""
+    },
+    "repaircard": {
+        "applies_non_destructive_fixes_only_jabali_re": "",
+        "auto_repair_safe_issues": "",
+        "cancel": "Anulează",
+        "click_auto_repair_to_fix_the_non_destructive": "",
+        "diagnostics_failed": "",
+        "no_issues_detected_all_healthy": "",
+        "run": "Rulează",
+        "run_diagnostics_to_see_what_s_broken": ""
+    },
+    "systemupdatespage": {
+        "a_bad_self_update_can_take_the_panel_offline": "",
+        "development_channel_less_reviewed_builds": "",
+        "development_follows_the_latest_main_commit_a": "",
+        "no_update_runs_yet": "",
+        "promoting_a_build_to_stable_is_an_operator_c": "",
+        "update_carefully_especially_system_packages": ""
+    },
+    "adminuseroverview": {
+        "user_not_found": ""
+    },
+    "userreset2faaction": {
+        "reset": "Resetează",
+        "reset_two_factor_authentication": ""
+    },
+    "userresetpasswordaction": {
+        "done": "",
+        "new_password_shown_once": "",
+        "reset": "Resetează",
+        "reset_password": ""
+    },
+    "myprofile": {
+        "account": "",
+        "email": "Email",
+        "full_name": "Nume complet",
+        "hosting_package": "Pachete de Găzduire",
+        "member_since": "Membru din",
+        "password_and_two_factor_2fa_totp_settings_al": "",
+        "role": "Rol",
+        "security": "Securitate",
+        "security_settings_unavailable_while_acting_a": "",
+        "user_id": "ID utilizator",
+        "username": "Nume de utilizator"
+    },
+    "myprofilebackupcard": {
+        "destination": "Destinație"
+    },
+    "myprofileschedulecard": {
+        "destination": "Destinație",
+        "scheduled_backups_are_not_included_in_your_h": "Backup-urile programate nu sunt incluse în pachetul dumneavoastră de găzduire."
+    },
+    "restoredrawer": {
+        "restore_from_backup": "Restaurare din backup",
+        "restore_result": "Rezultat restaurare",
+        "the_selected_items_will_be_overwritten_with": "Elementele selectate vor fi suprascrise cu copia din backup.",
+        "this_is_destructive": "Această acțiune este distructivă"
+    },
+    "userdashboard": {
+        "applications": "Aplicații",
+        "databases": "Baze de date",
+        "domains": "Domenii",
+        "mailboxes": "Căsuțe poștale",
+        "recent_applications": "Aplicații Recente",
+        "recent_databases": "Baze de date recente",
+        "recent_domains": "Domenii recente",
+        "recent_mailboxes": "Căsuțe poștale recente"
+    },
+    "accountactivity": {
+        "result": "Rezultat",
+        "target": "Destinație",
+        "what": "Ce"
+    },
+    "ddnssetupguide": {
+        "dynamic_dns_ddns_setup": "Configurare DNS dinamic (DDNS)",
+        "point_your_router_or_ddclient_at_the_update": "Indicați routerul sau ddclient către URL-ul de actualizare de mai jos și folosiți un token API cu scop DDNS (generați unul mai sus) ca PAROLĂ pentru autentificarea Basic. Numele de utilizator nu este verificat — puteți introduce orice valoare. Limitați tokenul la un singur record pentru a respecta principiul privilegiilor minime.",
+        "your_api_token_is_the_ddns_password": "Tokenul API este parola DDNS"
+    },
+    "userapitokenspage": {
+        "any_script_using_it_will_start_getting_401": "Orice script care îl folosește va începe să primească erori 401.",
+        "copy_this_secret_now": "Copiați acest secret acum.",
+        "create": "Creează",
+        "create_api_token": "Creează token API",
+        "expires_in_seconds_optional": "Expiră în (secunde, opțional)",
+        "full_access_can_do_anything_you_can_a_custom": "Accesul complet permite efectuarea oricărei acțiuni disponibile pentru contul dumneavoastră. Un token personalizat este restricționat strict la zonele bifate și va fi refuzat în orice altă zonă.",
+        "i_ve_copied_it": "Am copiat",
+        "limit_to_one_dns_record_id_optional": "",
+        "my_token": "",
+        "name": "Nume",
+        "permissions": "",
+        "personal_api_tokens": "",
+        "revoke": "",
+        "revoke_this_token": "",
+        "the_plaintext_token_is_shown_only_once_after": ""
+    },
+    "catalogtab": {
+        "failed_to_load_the_application_catalog": "",
+        "no_applications_available": "",
+        "no_applications_match_the_selected_tags": "",
+        "try_reloading_the_page": ""
+    },
+    "cloneapplicationmodal": {
+        "clone_application": "",
+        "destination_domain": "",
+        "select_a_domain": "Selectează un domeniu"
+    },
+    "installapplicationmodal": {
+        "application": "",
+        "copy": "Copiază",
+        "directory_optional": "",
+        "domain": "Domeniu",
+        "install_application": "",
+        "install_queued": "",
+        "no_domains_yet": "Încă nu există domenii",
+        "select_a_domain": "Selectează un domeniu",
+        "select_an_application": "",
+        "the_install_runs_in_the_background_copy_the": "",
+        "what_happens_next": "",
+        "you_have_no_domains_create_one_first": ""
+    },
+    "userapplicationlist": {
+        "actions": "Acțiuni",
+        "admin_email": "",
+        "app_version": "",
+        "cache": "",
+        "cache_settings": "",
+        "created": "Creat",
+        "detect_wordpress_joomla_drupal_and_magento_i": "",
+        "domain": "Domeniu",
+        "failed": "Eșuat",
+        "in_progress": "În curs",
+        "installed_apps": "",
+        "no_installed_apps_yet": "",
+        "ready": "",
+        "redis_object_cache_nginx_page_cache": ""
+    },
+    "createcronmodal": {
+        "command": "",
+        "cron_expression": "",
+        "name": "Nume",
+        "schedule": "Programare"
+    },
+    "cronlogdrawer": {
+        "cron_job_log": ""
+    },
+    "runnowresultmodal": {
+        "cron_job_execution_result": "",
+        "standard_error": "",
+        "standard_output": ""
+    },
+    "usercronlist": {
+        "search_by_name_command_or_schedule": ""
+    },
+    "quicksetupmodal": {
+        "copy": "Copiază",
+        "copy_the_password_now_it_is_shown_only_once": "",
+        "database_and_user_created": "",
+        "database_user_name": "",
+        "engine": "",
+        "mariadb_is_the_default_postgresql_must_be_en": "",
+        "quick_database_setup": ""
+    },
+    "userdatabasedrawer": {
+        "create_database": "Creează bază de date",
+        "engine": "",
+        "mariadb_is_the_default_postgresql_must_be_en": "",
+        "name": "Nume",
+        "the_final_database_name_is_your_username_plu": ""
+    },
+    "userdatabaselist": {
+        "actions": "Acțiuni",
+        "charset": "",
+        "created": "Creat",
+        "database": "Bază de date",
+        "engine": "",
+        "size": "Dimensiune"
+    },
+    "diskusagepage": {
+        "could_not_load_disk_usage": "",
+        "home_directory_is_empty": "",
+        "no_disk_usage_snapshot_yet_click_refresh_to": ""
+    },
+    "userdnszonesoverviewpage": {
+        "actions": "Acțiuni",
+        "dns_zones_are_provisioned_automatically_when": "",
+        "dnssec": "",
+        "domain_name": "Nume de domeniu",
+        "domain_registration_expiry_from_whois": "",
+        "expiration": "Expirare",
+        "no_domains_found": "",
+        "records": "",
+        "ttl": "",
+        "zone_status": ""
+    },
+    "userdockerappspage": {
+        "ask_your_administrator_to_enable_tenant_dock": "",
+        "docker_apps_are_not_enabled_on_this_server": "",
+        "docker_apps_are_over_your_disk_quota": "",
+        "installed_apps": "",
+        "no_installed_apps_yet": "",
+        "running": "În execuție",
+        "search_by_name": "",
+        "stopped": "Oprit",
+        "updates_available": "",
+        "your_installed_apps_exceed_your_package_disk": ""
+    },
+    "userdomaindrawer": {
+        "add_domain": "Adaugă domeniu",
+        "adds_a_www_cname_pointing_at_the_domain_apex": "",
+        "domain_name": "Nume de domeniu",
+        "google_dkim_value": "",
+        "let_s_encrypt_issues_a_free_trusted_certific": "",
+        "mail": "",
+        "microsoft_365_tenant": "",
+        "optional_paste_the_google_domainkey_txt_valu": "",
+        "optional_your_tenant_onmicrosoft_com_adds_th": "",
+        "tls_certificate": "",
+        "where_this_domain_s_email_is_hosted_none_and": ""
+    },
+    "userdomainlist": {
+        "actions": "Acțiuni",
+        "bw_30d": "",
+        "domain": "Domeniu",
+        "more_actions": "",
+        "redirect": "",
+        "ssl": "",
+        "status": "Stare"
+    },
+    "filemanagerpage": {
+        "apply": "Aplică",
+        "create": "Creează",
+        "empty_directory": "",
+        "folders": "",
+        "move": "Mută",
+        "new_file": "",
+        "new_folder": "",
+        "rename": "Redenumește",
+        "save": "Salvează"
+    },
+    "autoreplymodal": {
+        "active_dates_optional": "",
+        "html_body_optional": "",
+        "i_m_away_until": "",
+        "out_of_office": "",
+        "plain_text_body": "",
+        "save": "Salvează",
+        "send_automatic_replies": "",
+        "subject": "",
+        "turn_off": ""
+    },
+    "createmailboxwizardmodal": {
+        "a_send_only_mailbox_can_authenticate_for_smt": "",
+        "add_to_groups": "",
+        "aliases_optional": "",
+        "alice_smith": "",
+        "create_mailbox": "Creează căsuță poștală",
+        "display_name": "Nume afișat",
+        "domain": "Domeniu",
+        "email_address": "Adresă de email",
+        "enable_email_on_at_least_one_domain_before_c": "",
+        "extra_addresses_that_deliver_to_this_mailbox": "",
+        "forward_to_optional": "",
+        "leave_blank_to_auto_generate_generated_passw": "",
+        "no_email_enabled_domains": "",
+        "only_domains_with_email_enabled_appear_here": "",
+        "password": "Parolă",
+        "quota_mib": "",
+        "redirect_a_copy_of_incoming_mail_to_an_exter": "",
+        "select_a_domain": "Selectează un domeniu",
+        "select_groups_optional": "",
+        "shown_as_the_sender_name_in_webmail_and_outg": "",
+        "the_mailbox_joins_these_groups_and_gains_the": ""
+    },
+    "catchalltab": {
+        "domain": "Domeniu",
+        "no_email_enabled_domains_yet": "",
+        "save": "Salvează",
+        "select_email_enabled_domain": "",
+        "target_mailbox": ""
+    },
+    "disclaimertab": {
+        "disclaimer_text": "",
+        "edit": "Editează",
+        "enable_disclaimer": "",
+        "if_you_received_this_email_by_mistake_please": "",
+        "no_email_enabled_domains": "",
+        "save": "Salvează"
+    },
+    "forwarderstab": {
+        "add_forwarder": "Adaugă redirecționare",
+        "alias_local_part": "",
+        "create": "Creează",
+        "create_mailboxes_first": "",
+        "external_target": "",
+        "remove": "Elimină",
+        "remove_forwarder": "",
+        "select_mailbox": "",
+        "type": "Tip"
+    },
+    "groupstab": {
+        "enable_email_on_a_domain_first_to_create_gro": "",
+        "no_groups": ""
+    },
+    "logstab": {
+        "from": "",
+        "mail_logs_unavailable": "",
+        "recipient_contains": "",
+        "sender_contains": "",
+        "the_mail_server_s_trace_log_isn_t_responding": ""
+    },
+    "maillogdetaildrawer": {
+        "delivery_trail": "",
+        "no_delivery_trail_found": ""
+    },
+    "mailboxestab": {
+        "automatic_replies_active": "",
+        "leave_blank_to_auto_generate_auto_generated": "Lăsați câmpul gol pentru generarea automată. Parolele generate automat vor fi afișate o singură dată.",
+        "new_password": "Parolă nouă",
+        "no_mailboxes": "Nu există căsuțe poștale",
+        "no_mailboxes_yet": "Încă nu există căsuțe poștale",
+        "set_password": "Setează parola"
+    },
+    "sharedfolderstab": {
+        "create_mailboxes_first": "",
+        "remove": "Elimină",
+        "remove_share": "",
+        "rights": "",
+        "select_owner_mailbox": "",
+        "select_target_mailbox": "",
+        "share": "Partajează",
+        "share_folder": "",
+        "source_mailbox_owner": "",
+        "target_mailbox_grantee": ""
+    },
+    "sharedresourcestab": {
+        "no_email_enabled_domains_yet": ""
+    },
+    "userphpperformancecard": {
+        "ask_your_provider_to_enable_it_on_your_hosti": "",
+        "max_requests_per_worker_0_never": "",
+        "max_spare_dynamic": "",
+        "min_spare_dynamic": "",
+        "php_performance": "",
+        "php_performance_tuning_isn_t_enabled_on_your": "",
+        "process_manager": "",
+        "start_servers_dynamic": ""
+    },
+    "userphpsettingspage": {
+        "caution": "",
+        "changing_php_settings_can_affect_your_websit": "",
+        "cli_terminal_default_php_version": "",
+        "domain": "Domeniu",
+        "max_execution_time": "",
+        "max_input_time": "",
+        "max_input_variables": "",
+        "memory_limit": "",
+        "php_version": "",
+        "post_max_size": "",
+        "select_a_domain": "Selectează un domeniu",
+        "upload_max_file_size": "",
+        "use_pool_default": ""
+    },
+    "pythonappspage": {
+        "app_directory": "",
+        "create": "Creează",
+        "domain": "Domeniu",
+        "entrypoint": "",
+        "mount_path": "",
+        "my_api": "",
+        "name": "Nume",
+        "path_under_your_home_e_g_domains_example_com": "",
+        "python": "",
+        "runtime": "",
+        "select_a_domain": "Selectează un domeniu",
+        "status": "Stare",
+        "type": "Tip"
+    },
+    "usersshkeyspage": {
+        "add_ssh_key": "Adaugă cheie SSH",
+        "are_you_sure_this_revokes_sftp_access": "",
+        "comment_optional": "",
+        "connect_to_your_server_securely_using_ssh_fo": "",
+        "copy_or_download_it_now_if_you_close_this_di": "",
+        "delete_ssh_key": "",
+        "generate_ssh_key": "",
+        "name": "Nume",
+        "public_key": "Cheie publică",
+        "save_your_private_key_now": "",
+        "search_by_name_or_fingerprint": "",
+        "this_is_the_only_time_the_private_key_will_b": "",
+        "yes": "Da"
+    },
+    "dnsrecordspage": {
+        "no_dns_records_yet": "",
+        "system_records": "",
+        "your_administrator_has_restricted_changes_to": ""
+    },
+    "domaincachesection": {
+        "cacheable_query_parameters": "",
+        "caches_php_html_responses_for_the_ttl_above": "",
+        "page_cache_with_background_refresh": "",
+        "purge": "",
+        "purge_cached_pages_for_this_domain": "",
+        "query_string_params_that_get_their_own_cache": ""
+    },
+    "domainnginxoptionsmodal": {
+        "domain_options": "",
+        "max_upload_size_mb": "",
+        "save": "Salvează"
+    },
+    "installappbutton": {
+        "install_app": "",
+        "install_jabali_as_an_app": ""
+    },
+    "jabalifooter": {
+        "source_code": ""
+    },
+    "notificationbell": {
+        "clear": "",
+        "clear_all_notifications": "",
+        "mark_all_read": "",
+        "notifications": "Notificări",
+        "this_deletes_every_notification_in_your_inbo": ""
+    },
+    "serverhealthindicator": {
+        "server_health_alerts": ""
+    },
+    "tasksindicator": {
+        "background_tasks": "",
+        "no_tasks_running": ""
+    },
+    "sslmanagertable": {
+        "are_you_sure_you_want_to_revoke_this_certifi": "",
+        "clears_backoff_and_reissues_the_let_s_encryp": "",
+        "failed_to_load_ssl_certificates": "",
+        "force_acme_retry_now": "",
+        "last_attempt": "",
+        "next_retry": "",
+        "no_ssl_certificates_yet": "",
+        "panel_cert_managed_via_server_settings_panel": "",
+        "renew_certificate": "",
+        "retry_count": "",
+        "revoke_certificate": "",
+        "show_last_error": "",
+        "status": "Stare",
+        "yes": "Da"
+    },
+    "settings": {
+        "admin_email": "",
+        "default_nspawn_image": "",
+        "default_record_ttl_seconds": "",
+        "disk_quotas": "",
+        "disk_size_matters": "",
+        "dns_nameservers": "",
+        "dns_record_defaults": "",
+        "file_manager": "",
+        "hostname": "",
+        "hostname_change": "",
+        "identity": "",
+        "kernel_posix_quota_must_be_active_on_the_filesys": "",
+        "maximum_upload_size_mb": "Dimensiune maximă de încărcare (MB)",
+        "off_by_default_opt_in_feature": "Dezactivat implicit — funcție care necesită activare manuală",
+        "potential_lockout_risk": "Risc de blocare a accesului",
+        "public_ipv4": "IPv4 public",
+        "public_ipv6_optional": "IPv6 public (opțional)",
+        "root_terminal_m45": "Terminal root (M45)",
+        "sandbox_mode": "Mod sandbox",
+        "select_timezone": "Selectează fusul orar",
+        "server_time": "Ora serverului",
+        "ssh_access": "Acces SSH",
+        "ssh_port": "Port SSH",
+        "this_is_the_highest_risk_feature_in_the_panel_le": "Aceasta este cea mai riscantă funcție din panou. Lăsați-o dezactivată, cu excepția cazului în care aveți nevoie de ea.",
+        "timezone": "Fus orar",
+        "working_folder": "Director de lucru"
     }
-  },
-  "login": {
-    "flowError": "",
-    "hostnameWarningTitle": "",
-    "hostnameWarningDescription": "",
-    "noCredentialMethod": "",
-    "fieldRequired": "Obligatoriu",
-    "identifierHint": "",
-    "totpHint": "",
-    "backupCodeHint": "",
-    "webauthnHint": "",
-    "submitVerify": "Verifică",
-    "submitSignIn": "Autentificare"
-  },
-  "menu": {
-    "profile": "Profil",
-    "language": "Limbă",
-    "sign_out": "Deconectare"
-  },
-  "dashboard": {
-    "stats": {
-      "users": "",
-      "domains": "",
-      "mailboxes": "Căsuțe poștale"
-    },
-    "health": {
-      "healthy": "",
-      "critical": "",
-      "warning_one": "",
-      "warning_other": ""
-    },
-    "server_ip": "",
-    "summary": "",
-    "view_server_status": "",
-    "view_all": "Vezi tot",
-    "recent_users": "",
-    "recent_domains": "",
-    "recent_apps": "",
-    "packages": "",
-    "empty": {
-      "users": "Încă nu există utilizatori",
-      "domains": "Încă nu există domenii",
-      "apps": "",
-      "packages": ""
-    },
-    "col": {
-      "username": "Nume de utilizator",
-      "role": "Rol",
-      "domain": "Domeniu",
-      "name": "Nume",
-      "type": "Tip",
-      "ssh": ""
-    },
-    "role": {
-      "admin": "Administrator",
-      "user": "Utilizator"
-    },
-    "ssh": {
-      "on": "activat",
-      "off": "dezactivat"
-    },
-    "alert": {
-      "title_one": "",
-      "title_other": "",
-      "action": ""
-    }
-  },
-  "users": {
-    "actions": {
-      "login_as": "Autentificare ca utilizator",
-      "edit": "Editează",
-      "reset_2fa": "",
-      "reset_password": "Resetează parola",
-      "suspend": "Suspendă",
-      "unsuspend": "Reactivează",
-      "delete": "Șterge"
-    },
-    "error": {
-      "login_as": ""
-    },
-    "filter": {
-      "all": "",
-      "active": "Activ",
-      "suspended": "Suspendat"
-    },
-    "empty": {
-      "users": "Încă nu există utilizatori",
-      "admins": ""
-    },
-    "cta": {
-      "create_user": "Creează utilizator",
-      "create_admin": ""
-    },
-    "col": {
-      "username": "Nume de utilizator",
-      "name": "Nume",
-      "package": "Pachet",
-      "created": "Creat",
-      "disk_usage": "Utilizare disc",
-      "actions": "Acțiuni"
-    },
-    "suspended": "Suspendat",
-    "suspended_on": "",
-    "suspend_reason": "",
-    "tab": {
-      "users": "Utilizatori",
-      "admins": "Administratori",
-      "sessions": "Sesiuni"
-    },
-    "search": {
-      "users": "",
-      "admins": ""
-    }
-  },
-  "adminapplicationlist": {
-    "actions": "Acțiuni",
-    "created": "Creat",
-    "domain": "Domeniu",
-    "owner": "Proprietar",
-    "search_by_domain_or_user": "",
-    "status": "Stare",
-    "version": "Versiune"
-  },
-  "adminauditlist": {
-    "action": "Acțiune",
-    "actor": "",
-    "chain_broken_tamper_detected": "",
-    "integrity_retention": "",
-    "prune": "",
-    "result": "Rezultat",
-    "target": "",
-    "this_permanently_deletes_old_audit_records_t": ""
-  },
-  "adminautomationtokenspage": {
-    "actions": "Acțiuni",
-    "copy_it_now_and_store_it_in_your_automation": "",
-    "created": "Creat",
-    "external_callers_using_this_token_will_start": "",
-    "last_used": "Ultima utilizare",
-    "mint_server_api_token": "",
-    "name": "Nume",
-    "revoke": "",
-    "scopes": "",
-    "status": "Stare",
-    "this_is_the_only_time_the_secret_will_be_sho": "",
-    "token_id": "",
-    "writes_enabled": ""
-  },
-  "backuplogstab": {
-    "backup_logs_unavailable": "",
-    "from": "",
-    "kind_contains": "",
-    "status": "Stare",
-    "the_backup_service_isn_t_responding_try_agai": "",
-    "user_id": "ID utilizator"
-  },
-  "backupsettingstab": {
-    "max_concurrent_backup_jobs": "",
-    "tenant_scheduled_backup_time_cron": "",
-    "tenants_choose_what_to_back_up_and_where_you": "",
-    "the_dispatcher_runs_at_most_this_many_backup": ""
-  },
-  "createbackupdrawer": {
-    "backups_run_as_a_goroutine_inside_panel_agen": "",
-    "compression": "",
-    "content": "Conținut",
-    "create_backup": "Creează copie de rezervă",
-    "databases_comma_separated_optional": "",
-    "destination": "Destinație",
-    "folders_comma_separated": "",
-    "mailboxes_comma_separated_optional": "",
-    "pick_a_destination": "",
-    "pick_a_user": "",
-    "type": "Tip",
-    "user": "Utilizator"
-  },
-  "destinationstab": {
-    "actions": "Acțiuni",
-    "backend": "",
-    "credentials": "",
-    "enabled": "Activat",
-    "name": "Nume",
-    "url": ""
-  },
-  "encryptionkeycard": {
-    "losing_this_key_loses_every_snapshot": ""
-  },
-  "recoveryhandofftab": {
-    "bare_metal_full_host_restore_overwrites_the": "",
-    "bare_metal_recovery_sequence": "",
-    "deleted_user_restore_panel_user_row_is_gone": "",
-    "every_restore_flow_above_requires_the_restic": "",
-    "interactive_pick_destination_snapshot_and_us": "",
-    "normal_account_restore_runs_from_the_backups": "",
-    "restore_what_the_panel_does_vs_what_the_cli": "",
-    "staging_only_materialize_to_staging_do_not_a": "",
-    "system_restore_is_not_available_in_the_brows": "",
-    "you_need_the_backup_encryption_key_to_restor": ""
-  },
-  "schedulestab": {
-    "actions": "Acțiuni",
-    "create_at_least_one_destination_before_addin": "",
-    "cron": "",
-    "destinations": "",
-    "enabled": "Activat",
-    "last_run": "Ultima rulare",
-    "next_run": "Următoarea rulare",
-    "users": "Utilizatori"
-  },
-  "cacheoverviewpage": {
-    "cache_overview_page_cache_hit_ratio_by_domai": ""
-  },
-  "fleetcachedoctor": {
-    "re_provisions_cache_constants_acl_drop_in_fo": "",
-    "refresh": "Reîmprospătează",
-    "refresh_the_jabali_cache_plugin_on_every_cac": "",
-    "repair": "Repară",
-    "repair_all_drifted_installs": ""
-  },
-  "admincreatecronmodal": {
-    "choose_tenant": "",
-    "command": "",
-    "custom_cron_expression": "",
-    "name": "Nume",
-    "new_cron_job_as_tenant": "",
-    "run_as": "",
-    "schedule": "Programare",
-    "tenant": ""
-  },
-  "admincronlist": {
-    "no_cron_jobs_yet": "Încă nu există sarcini cron",
-    "search_by_name_command_schedule_or_owner": ""
-  },
-  "databaseuserdrawer": {
-    "create_database_user": "",
-    "database_user_created": "",
-    "engine": "",
-    "mariadb_is_the_default_postgresql_must_be_en": "",
-    "the_final_mariadb_username_will_be_your_pane": "",
-    "username": "Nume de utilizator"
-  },
-  "databaseuserslist": {
-    "actions": "Acțiuni",
-    "created": "Creat",
-    "database_privileges": "",
-    "engine": "",
-    "user": "Utilizator"
-  },
-  "databasecreate": {
-    "admins_create_databases_without_a_username_p": "",
-    "name": "Nume"
-  },
-  "databaselist": {
-    "actions": "Acțiuni",
-    "charset": "",
-    "created": "Creat",
-    "database": "Bază de date",
-    "engine": "",
-    "no_databases_yet": "Încă nu există baze de date",
-    "user_id": "ID utilizator"
-  },
-  "dnszonesoverviewpage": {
-    "actions": "Acțiuni",
-    "dns_zones_are_provisioned_automatically_when": "",
-    "dnssec": "",
-    "domain_name": "Nume de domeniu",
-    "domain_registration_expiry_from_whois": "",
-    "expiration": "Expirare",
-    "no_dns_zones_yet_create_a_domain_to_manage_i": "",
-    "owner": "Proprietar",
-    "records": "",
-    "ttl": "",
-    "zone_status": ""
-  },
-  "admindockerappspage": {
-    "credentials": "",
-    "installed_apps": "",
-    "no_installed_apps_yet": "",
-    "running": "În execuție",
-    "search_by_name": "",
-    "stopped": "Oprit",
-    "updates_available": ""
-  },
-  "backupsdrawer": {
-    "backups": "Copii de rezervă",
-    "container_will_be_stopped_files_restored_con": "",
-    "phase_8_1_restic_via_env_vars": "",
-    "restore": "Restaurează",
-    "restore_this_snapshot": ""
-  },
-  "editdrawer": {
-    "cpu": "",
-    "domain": "Domeniu",
-    "limits_update_mode_can_still_be_saved_ports": "",
-    "memory": "Memorie",
-    "pick_from_the_panel_s_domains_list_leave_emp": "",
-    "pids": "",
-    "select_a_domain": "Selectează un domeniu",
-    "stop_the_container_before_editing_ports_or_d": "",
-    "update_mode": ""
-  },
-  "envsection": {
-    "copy": "Copiază",
-    "mints_a_new_secret_and_recreates_the_contain": "",
-    "recreate_the_container": "",
-    "regenerate": "Regenerează",
-    "save_recreate": "",
-    "saving_applies_the_new_values_by_recreating": ""
-  },
-  "execdrawer": {
-    "admin_only": "",
-    "exec_command": "",
-    "runs_sh_c_command_in_the_first_service_of_th": ""
-  },
-  "installdrawer": {
-    "backup_destination": "",
-    "cpu": "",
-    "domain": "Domeniu",
-    "hostname_to_attach_to_the_loopback_bound_por": "",
-    "inherit_env_var_fallback": "",
-    "install_name": "",
-    "memory": "Memorie",
-    "per_install_identifier_combined_with_the_cat": "",
-    "pick_a_destination_from_server_settings_back": "",
-    "pids": "",
-    "select_a_domain": "Selectează un domeniu",
-    "update_mode": ""
-  },
-  "maintenancetab": {
-    "build_cache": "",
-    "containers": "Containere",
-    "disk_usage": "Utilizare disc",
-    "images": "Imagini",
-    "prune": "",
-    "reclaimable": "",
-    "volumes": "Volume"
-  },
-  "domaincreate": {
-    "adds_a_www_cname_pointing_at_the_domain_apex": "",
-    "doc_root": "",
-    "google_dkim_value": "",
-    "leave_empty_for_auto_generated_path": "",
-    "let_s_encrypt_recommended_self_signed_or_non": "",
-    "mail": "",
-    "microsoft_365_tenant": "",
-    "name": "Nume",
-    "optional_paste_the_google_domainkey_txt_valu": "",
-    "optional_your_tenant_onmicrosoft_com_adds_th": "",
-    "select_a_user": "Selectează un utilizator",
-    "tls_certificate": "",
-    "user": "Utilizator",
-    "where_this_domain_s_email_is_hosted_none_and": ""
-  },
-  "domaindeliverabilitysection": {
-    "deliverability_score": "",
-    "deliverability_score_unavailable_for_this_do": ""
-  },
-  "domaindirectoryprivacysection": {
-    "authentication_name": "",
-    "delete": "Șterge",
-    "delete_this_rule_and_all_its_credentials": "",
-    "delete_this_user": "",
-    "directory_under_the_docroot_to_protect_e_g_s": "",
-    "label_shown_in_the_browser_s_basic_auth_popu": "",
-    "password": "Parolă",
-    "path": "Cale",
-    "per_directory_password_protection": "",
-    "user": "Utilizator",
-    "username": "Nume de utilizator"
-  },
-  "domainedit": {
-    "doc_root": "",
-    "name": "Nume",
-    "panel_hostname_domain_mail_only": ""
-  },
-  "domainemailsection": {
-    "a_fresh_dkim_keypair_is_generated_and_the_dn": "",
-    "copy_value": "Copiază valoarea",
-    "dkim_key_missing": "",
-    "dns_autoconfig_partially_applied": "",
-    "dns_records": "",
-    "email_is_enabled_but_no_dkim_public_key_is_s": "",
-    "failed_to_load_email_state": "",
-    "rotate": "",
-    "rotate_dkim_key": ""
-  },
-  "domainipaclsection": {
-    "action": "Acțiune",
-    "cidr": "",
-    "comment": "Comentariu",
-    "delete": "Șterge",
-    "delete_this_rule": "",
-    "per_domain_ip_allow_deny": "",
-    "priority": "Prioritate"
-  },
-  "domainlist": {
-    "actions": "Acțiuni",
-    "bw_30d": "",
-    "domain": "Domeniu",
-    "more_actions": "",
-    "no_domains_yet": "Încă nu există domenii",
-    "redirect": "",
-    "ssl": "",
-    "status": "Stare",
-    "user": "Utilizator"
-  },
-  "domainmtastssection": {
-    "mta_sts_protects_inbound_mail_from_tls_downg": "",
-    "policy_live_in_dns_vhost_waiting_for_ssl_ren": "",
-    "when_enabled_jabali_publishes_a_policy_telli": ""
-  },
-  "domainmailprovidersection": {
-    "mail_provider": ""
-  },
-  "domainmailtlssection": {
-    "clears_backoff_and_dispatches_ssl_mail_issue": ""
-  },
-  "domainmailboxessection": {
-    "a_send_only_mailbox_authenticates_for_smtp_s": "",
-    "create": "Creează",
-    "create_mailbox": "Creează căsuță poștală",
-    "domain": "Domeniu",
-    "email_isn_t_enabled_on_this_domain": "",
-    "leave_blank_to_auto_generate_generated_passw": "",
-    "local_part": "",
-    "mailboxes_can_only_be_created_once_email_is": "",
-    "only_domains_with_email_enabled_appear_here": "",
-    "password": "Parolă",
-    "pick_a_domain": "",
-    "quota_mib": ""
-  },
-  "domainpathbrowsermodal": {
-    "no_subfolders_here": "",
-    "pick_a_folder_under_the_docroot": ""
-  },
-  "domainsslsection": {
-    "acme_issuance_failed": "",
-    "attach": "",
-    "attach_shared_certificate": "",
-    "only_shared_certificates_that_cover_this_dom": "",
-    "install": "Instalează",
-    "paste_the_full_chain_certificate_leaf_interm": "",
-    "set_an_admin_email_to_use_ssl": "",
-    "this_domain_is_using_a_self_signed_certifica": "",
-    "upload_custom_certificate": "",
-    "using_self_signed_certificate": ""
-  },
-  "domainskipautosantoggle": {
-    "skip_auto_added_san_names": ""
-  },
-  "sharedcertificates": {
-    "title": ""
-  },
-  "adminiplist": {
-    "actions": "Acțiuni",
-    "address": "Adresă",
-    "bound": "",
-    "default": "Implicit",
-    "family": "",
-    "ip_is_in_use": "",
-    "label": "Etichetă",
-    "no_managed_ips_yet": "",
-    "status": "Stare",
-    "user_selectable": ""
-  },
-  "logstreammodal": {
-    "goaccess_dashboard": ""
-  },
-  "admingroupstab": {
-    "no_groups": ""
-  },
-  "adminmailpage": {
-    "leave_blank_to_auto_generate_auto_generated": "",
-    "mailbox_password": "",
-    "new_password": "Parolă nouă",
-    "no_mailboxes": "",
-    "search_email_name_domain_owner": "",
-    "set_password": "Setează parola"
-  },
-  "maildeliverabilitypage": {
-    "each_of_the_four_signals_can_subtract_up_to": "",
-    "failed_to_load_deliverability_score": "",
-    "how_this_score_works": "",
-    "mail_deliverability_server_wide_score": ""
-  },
-  "mailthrottlespage": {
-    "each_row_converges_into_a_stalwart_mtaoutbou": "",
-    "enabled": "Activat",
-    "max_per_day_logged_only_v1": "",
-    "max_per_hour_0_unlimited": "",
-    "per_account_per_domain_server_wide_outbound": "",
-    "scope": "",
-    "scope_ref_ulid": ""
-  },
-  "adminmigrationdetailpage": {
-    "bytes_processed": "",
-    "destination_domain": "",
-    "destination_user": "",
-    "ended": "Încheiat",
-    "error": "Eroare",
-    "job_id": "",
-    "last_error": "Ultima eroare",
-    "no_migration_job_selected": "",
-    "no_stage_rows_yet": "",
-    "pipeline": "",
-    "source_kind": "",
-    "stage_timeline": "",
-    "started": "Început",
-    "target_user_id": ""
-  },
-  "adminmigrationspage": {
-    "account_migration_importer_m35": "",
-    "allow_ssh_to_rfc1918_loopback_link_local_sou": "",
-    "batch": "",
-    "cancel_batch": "",
-    "cancels_every_non_terminal_job_sharing_this": "",
-    "ended": "Încheiat",
-    "no_migrations_yet": "",
-    "per_source_kind_support": "",
-    "recent_migration_jobs": "",
-    "source": "Sursă",
-    "source_host": "",
-    "source_user": "",
-    "started": "Început",
-    "state": "Stare"
-  },
-  "bulkwhmdrawer": {
-    "accounts": "",
-    "bulk_whm": "",
-    "create_whm_migration_batch": "",
-    "creates_one_migration_job_per_account_all_sh": "",
-    "hostname_or_ip_of_the_source_whm_server_priv": "",
-    "one_account_per_line_or_comma_separated_exis": "",
-    "source_host": ""
-  },
-  "createmigrationdrawer": {
-    "absolute_path_to_the_wordpress_root_on_the_s": "",
-    "import_started": "",
-    "new_migration_job": "",
-    "source_kind": "",
-    "ssh_port": "",
-    "the_migration_is_running_in_the_background_o": "",
-    "the_source_server_s_ssh_port_defaults_to_22": "",
-    "wordpress_path_optional": ""
-  },
-  "createmigrationwizard": {
-    "account_discovery_failed": "",
-    "admin_user": "",
-    "create_migration": "",
-    "credential_type": "",
-    "credentials_are_written_to_etc_jabali_panel": "",
-    "first_connection_is_unverified": "",
-    "import_options": "",
-    "pick_the_source_panel_type": "",
-    "pick_which_accounts_to_migrate_each_becomes": "",
-    "review": "",
-    "sha256_abc123": "",
-    "source_host": "",
-    "source_host_key_fingerprint_optional": "",
-    "ssh_port": "",
-    "the_source_server_s_ssh_port_defaults_to_22": "",
-    "use_the_server_s_direct_ip_if_it_sits_behind": "",
-    "whm_enables_bulk_migration_of_every_cpanel_a": "",
-    "without_a_fingerprint_the_first_connection_t": ""
-  },
-  "channelstab": {
-    "actions": "Acțiuni",
-    "enabled": "Activat",
-    "kind": "",
-    "name": "Nume"
-  },
-  "dlqtab": {
-    "clear": "",
-    "dlq_is_empty": "",
-    "re_publishes_every_envelope_to_the_main_deli": "",
-    "replay_all": "",
-    "this_deletes_every_entry_in_the_stream_use_o": ""
-  },
-  "eventstab": {
-    "description": "Descriere",
-    "enabled": "Activat",
-    "event": "Eveniment",
-    "severity": "Severitate"
-  },
-  "historytab": {
-    "body": "",
-    "channel": "",
-    "clear": "",
-    "clear_all_notifications": "",
-    "deeplink": "",
-    "event": "Eveniment",
-    "outcome": "",
-    "read": "",
-    "retries": "",
-    "severity": "Severitate",
-    "show_details": "Arată detaliile",
-    "this_envelope_was_moved_to_the_dead_letter_q": "",
-    "this_permanently_deletes_every_row_in_your_i": "",
-    "time": "",
-    "title": "Titlu"
-  },
-  "webpushtab": {
-    "browser_blocked_notifications": "",
-    "browser_push_is_not_supported_in_this_browse": "",
-    "couldn_t_enable_browser_push": "",
-    "notifications_appear_via_your_operating_syst": "",
-    "open_the_site_permissions_for_this_domain_in": "",
-    "this_browser_is_receiving_jabali_push_notifi": "",
-    "web_push_relies_on_the_service_worker_push_a": ""
-  },
-  "packagecreate": {
-    "allow_cgi_scripts": "",
-    "allow_ssh_access": "",
-    "allow_tenants_on_this_plan_to_enable_a_sched": "",
-    "allowed_backup_destinations": "",
-    "also_expose_the_individual_pm_knobs_clamped": "",
-    "backup_retention_policy": "",
-    "bandwidth_quota_mb": "",
-    "cpu_quota": "",
-    "destination_kinds_a_tenant_may_back_up_to_em": "",
-    "disk_quota_mb": "",
-    "docker_apps_per_package_allowlist": "",
-    "empty_server_wide_default": "",
-    "est_ram_per_worker_mb_drives_the_memory_budg": "",
-    "io_read_bandwidth_mb_s": "",
-    "io_write_bandwidth_mb_s": "",
-    "let_tenants_pick_a_safe_php_performance_mode": "",
-    "max_backups": "",
-    "max_children_per_user_fpm_cap": "",
-    "max_databases": "",
-    "max_docker_apps": "",
-    "max_domains": "",
-    "max_email_accounts": "",
-    "max_python_apps": "",
-    "max_tasks": "",
-    "memory_limit_mb": "",
-    "name": "Nume",
-    "retention_cap_most_snapshots_a_tenant_on_thi": "",
-    "scheduled_backups": "",
-    "security_re_enables_php_exec_proc_open_shell": "",
-    "what_happens_when_a_tenant_reaches_max_backu": ""
-  },
-  "packageedit": {
-    "allow_cgi_scripts": "",
-    "allow_ssh_access": "",
-    "allow_tenants_on_this_plan_to_enable_a_sched": "",
-    "allowed_backup_destinations": "",
-    "also_expose_the_individual_pm_knobs_clamped": "",
-    "backup_retention_policy": "",
-    "bandwidth_quota_mb": "",
-    "cpu_quota": "",
-    "destination_kinds_a_tenant_may_back_up_to_em": "",
-    "disk_quota_mb": "",
-    "docker_apps_per_package_allowlist": "",
-    "empty_server_wide_default": "",
-    "est_ram_per_worker_mb_drives_the_memory_budg": "",
-    "io_read_bandwidth_mb_s": "",
-    "io_write_bandwidth_mb_s": "",
-    "let_tenants_pick_a_safe_php_performance_mode": "",
-    "max_backups": "",
-    "max_children_per_user_fpm_cap": "",
-    "max_databases": "",
-    "max_docker_apps": "",
-    "max_domains": "",
-    "max_email_accounts": "",
-    "max_python_apps": "",
-    "max_tasks": "",
-    "memory_limit_mb": "",
-    "name": "Nume",
-    "retention_cap_most_snapshots_a_tenant_on_thi": "",
-    "scheduled_backups": "",
-    "security_re_enables_php_exec_proc_open_shell": "",
-    "what_happens_when_a_tenant_reaches_max_backu": ""
-  },
-  "packagelist": {
-    "actions": "Acțiuni",
-    "bandwidth_mb": "",
-    "created": "Creat",
-    "disk_mb": "",
-    "domains": "Domenii",
-    "email": "Email",
-    "name": "Nume",
-    "no_hosting_packages_yet": "",
-    "php_exec": "",
-    "search_by_package_name": "",
-    "ssh": ""
-  },
-  "fpmpoolstab": {
-    "could_not_load_php_fpm_pools": "",
-    "filter_by_php_version": ""
-  },
-  "phpextensionstab": {
-    "action": "Acțiune",
-    "extension": "",
-    "install_a_php_version_first_under_the_php_ve": "",
-    "installed": "Instalat",
-    "no_php_versions_installed": "",
-    "php_version": "",
-    "search_extensions": "",
-    "status": "Stare"
-  },
-  "versionstab": {
-    "actions": "Acțiuni",
-    "default": "Implicit",
-    "end_of_life_no_upstream_security_patches_run": "",
-    "fpm_workers": "",
-    "modifying_php_versions_can_cause_server_down": "",
-    "php_version": "",
-    "status": "Stare",
-    "uninstalling_php_versions_may_break_websites": ""
-  },
-  "phppooledit": {
-    "add_ini_override": "",
-    "directive": "",
-    "idle_timeout_in_seconds": "",
-    "kind": "",
-    "max_children": "",
-    "max_requests_per_worker_0_never": "",
-    "max_spare_servers_dynamic_max_children": "",
-    "min_spare_servers_dynamic": "",
-    "number_of_child_processes": "",
-    "php_version": "",
-    "process_idle_timeout_seconds": "",
-    "process_mode": "",
-    "request_terminate_timeout_seconds_0_no_limit": "",
-    "select_process_manager_mode": "",
-    "start_servers_dynamic": "",
-    "value": "Valoare"
-  },
-  "adminsecurityaide": {
-    "added": "",
-    "aide_file_integrity_monitor": "",
-    "aide_not_active": "",
-    "all_watched_paths_match_the_baseline_checksu": "",
-    "category": "Categorie",
-    "change_type": "",
-    "changed": "",
-    "db_age": "",
-    "last_check": "Ultima verificare",
-    "no_tamper_detected": "",
-    "prioritize_these": "",
-    "rebuild": "Reconstruiește",
-    "rebuild_the_aide_baseline": "",
-    "removed": "",
-    "review_the_sample_below_if_the_changes_are_e": "",
-    "this_replaces_the_integrity_baseline_with_th": ""
-  },
-  "adminsecurityapparmor": {
-    "apparmor": "",
-    "apparmor_disabled": "",
-    "apparmor_profiles_intentionally_not_loaded_o": "",
-    "complain_mode_profiles_are_logging_would_den": "",
-    "denied_enforce_blocks": "",
-    "enforce_will_start_denying_paths_caps_not_in": "",
-    "filter_mode": "",
-    "flip": "",
-    "if_the_profile_is_missing_a_path_the_daemon": "",
-    "mode": "Mod",
-    "protects": "",
-    "this_profile_is_not_soak_ready_enforcing_now": "",
-    "would_deny_complain": ""
-  },
-  "adminsecuritycrowdsec": {
-    "active_decision_sources": "",
-    "active_decisions": "",
-    "active_until": "",
-    "add_crowdsec_decision_manual_ban": "",
-    "add_to_allowlist": "",
-    "added": "",
-    "aggregates_every_active_decision_by_origin_s": "",
-    "alert_not_found": "",
-    "alerts_last_24h": "",
-    "all_time_alerts_since_crowdsec_started": "",
-    "allow_list_with_no_countries_blocks_every_re": "",
-    "allowlist_never_ban": "",
-    "allowlisted_ips_bypass_every_scenario_decisi": "",
-    "apply": "Aplică",
-    "apply_appsec_geoblock": "",
-    "apply_captcha_settings": "",
-    "apply_overrides": "",
-    "appsec_geoblock_server_wide": "",
-    "auto_allowlist_login_ips_server_wide": "",
-    "ban_duration": "",
-    "behaviour_based_intrusion_prevention_tails_s": "",
-    "bouncer_mode_server_wide": "",
-    "cancel": "Anulează",
-    "captcha_action_requires_the_captcha_remediat": "",
-    "captcha_remediation": "",
-    "config_validation_failed_crowdsec_t": "",
-    "country_bans_rely_on_the_geoip_enricher_as_b": "",
-    "create_an_hcaptcha_recaptcha_turnstile_site": "",
-    "decisions": "",
-    "decisions_issued": "",
-    "deny_list_with_no_countries_has_no_effect_ad": "",
-    "description": "Descriere",
-    "duration": "Durată",
-    "enabled": "Activat",
-    "events": "Evenimente",
-    "how_this_is_enforced": "",
-    "ip_or_cidr": "",
-    "ip_value": "",
-    "ips_currently_banned_under_captcha": "",
-    "item": "",
-    "leave_blank_to_keep_the_stored_secret_unchan": "",
-    "lines_no_parser_matched_gaps_in_coverage": "",
-    "machine": "",
-    "no_active_decisions": "",
-    "no_alerts_in_the_last_24h": "",
-    "no_allowlist_entries": "",
-    "no_bouncers_registered_cscli_bouncers_add": "",
-    "no_decisions_issued": "",
-    "no_scenarios_installed": "",
-    "one_click_install_of_upstream_crowdsec_hub_i": "",
-    "override": "",
-    "per_scenario_remediation_override": "",
-    "provider": "Furnizor",
-    "reason": "Motiv",
-    "recent_changes_audit": "",
-    "recommended_free_blocklists_scenarios": "",
-    "remove": "Elimină",
-    "remove_from_allowlist": "",
-    "rewrites_etc_crowdsec_profiles_yaml_marker_b": "",
-    "scenario": "",
-    "scenario_fired": "",
-    "scenario_thresholds_tripped_suspicious_patte": "",
-    "scope": "",
-    "secret_key_write_only": "",
-    "security_trade_off": "",
-    "sensitivity_preset_server_wide": "",
-    "single_ipv4_ipv6_address_or_cidr_block_e_g_1": "",
-    "site_key_public": "",
-    "source": "Sursă",
-    "started": "Început",
-    "this_ip_was_banned_because_the_scenario_abov": "",
-    "this_is_a_broad_crowdsec_exemption_a_success": "",
-    "this_rewrites_etc_crowdsec_bouncers_crowdsec": "",
-    "type": "Tip",
-    "type_a_country_name_or_code_or_pick_from_the": "",
-    "until": "",
-    "value": "Valoare",
-    "what_is_crowdsec": "",
-    "when_enabled_crowdsec_scenarios_flagged_for": "",
-    "why_reason": ""
-  },
-  "adminsecurityegress": {
-    "actions": "Acțiuni",
-    "cidr": "",
-    "comment": "Comentariu",
-    "drops_24h": "",
-    "drops_last_tick": "",
-    "egress_state": "",
-    "enforced_users": "",
-    "learning_users": "",
-    "off_users": "",
-    "per_user_php_fpm_egress_firewall": "",
-    "per_user_policy": "",
-    "port": "Port",
-    "proto": "",
-    "protocol": "",
-    "reason": "Motiv",
-    "state": "Stare",
-    "submitted": "",
-    "total_drops_last_tick": "",
-    "user": "Utilizator"
-  },
-  "adminsecuritymalware": {
-    "built_in_rule_packs": "",
-    "custom_yara_rules": "",
-    "daily_scan_schedule_cron": "",
-    "enable_mail_attachment_scanning": "",
-    "event_detail": "",
-    "exec_audit_auditd_jabali_susp_exec": "",
-    "explain_why_this_restore_is_safe": "",
-    "filename": "Nume fișier",
-    "inotify_watches": "",
-    "manual_scan": "",
-    "max_attachment_size_mb": "",
-    "max_scan_size_per_file_mb": "",
-    "notification_severity_threshold": "",
-    "original": "",
-    "per_attachment_scan_timeout_seconds": "",
-    "per_tick_budget_mailboxes_scanned_each_cycle": "",
-    "pre_flight_parsed_via_yara_w_before_install": "",
-    "quarantine": "",
-    "quarantine_retention_days": "",
-    "real_time_scanning": "",
-    "real_time_scanning_is_off": "",
-    "realtime_monitor": "",
-    "reason_audit": "",
-    "recent_events": "",
-    "restore_from_quarantine": "",
-    "restoring_re_introduces_the_file_to_disk": "",
-    "rule_content": "",
-    "scan_all_folders_not_just_inbox": "",
-    "search_username_name_or_email": "",
-    "settings": "Setări",
-    "sha256": "",
-    "skip_these_recipient_addresses_comma_separat": "",
-    "the_inotify_monitor_is_not_running_daily_sch": "",
-    "upload_fails_with_the_parser_error_if_the_ru": "",
-    "upload_yara_rule": "",
-    "yara_engine": ""
-  },
-  "adminsecuritysnuffleupagus": {
-    "action": "Acțiune",
-    "disable": "Dezactivează",
-    "disable_rule_reason_required": "",
-    "domain_tenant": "",
-    "php_defense": "",
-    "php_defense_rules": "",
-    "php_version": "",
-    "re_enable_this_rule": "",
-    "request_uri": "",
-    "rule": "",
-    "rules_log_incidents_below_without_blocking_s": "",
-    "simulation_mode_active": "",
-    "source_ip": "",
-    "when": ""
-  },
-  "adminsecurityufw": {
-    "action": "Acțiune",
-    "add_ufw_rule": "",
-    "cancel": "Anulează",
-    "continue": "Continuă",
-    "delete": "Șterge",
-    "delete_rule": "",
-    "disable_firewall": "",
-    "disabling_ufw_drops_host_firewall_protection": "",
-    "enable_the_firewall_to_view_and_manage_rules": "",
-    "enabling_ufw_will_activate_default_deny_inco": "",
-    "firewall_disabled": "",
-    "from": "",
-    "no_rules": "",
-    "port": "Port",
-    "proto": "",
-    "protocol": "",
-    "rules": "",
-    "rules_hidden_firewall_disabled": "",
-    "status": "Stare",
-    "this_drops_the_host_firewall_crowdsec_firewa": "",
-    "ufw_is_not_active_rules_below_if_any_are_not": "",
-    "ufw_is_port_policy_only": "",
-    "yes": ""
-  },
-  "crowdsectestipcard": {
-    "drops_every_active_crowdsec_decision_targeti": "",
-    "test_failed": "",
-    "test_ip_would_this_ip_be_blocked": "",
-    "unban": ""
-  },
-  "egressmaturepromotion": {
-    "operator_pin_active": "",
-    "promote": "Promovează",
-    "this_enforces_the_egress_firewall_for_those": ""
-  },
-  "speedtestcard": {
-    "jitter": ""
-  },
-  "adminsessionspage": {
-    "active_sessions": "",
-    "revoke": "",
-    "revoke_this_session": "",
-    "the_user_will_be_signed_out_of_the_panel": ""
-  },
-  "accountskeletoncard": {
-    "account_skeleton": "",
-    "add": "Adaugă",
-    "add_skeleton_file": "",
-    "path": "Cale"
-  },
-  "brandingcard": {
-    "brand_text": "",
-    "browser_cache": "",
-    "jabali": "",
-    "newly_uploaded_logos_may_take_up_to_5_minute": "",
-    "panel_branding": ""
-  },
-  "dnspermissionscard": {
-    "admins_always_have_full_control_ns_and_soa_r": "",
-    "dns_record_permissions": "",
-    "which_dns_record_types_regular_users_may_man": ""
-  },
-  "dnsresolverscard": {
-    "dns_resolvers": "",
-    "ipv4_primary": "",
-    "ipv4_secondary_optional": "",
-    "ipv6_primary_optional": "",
-    "ipv6_secondary_optional": "",
-    "search_domain_optional": "",
-    "the_drop_in_will_still_be_written_but_change": ""
-  },
-  "databaseadminsections": {
-    "actions": "Acțiuni",
-    "apply": "Aplică",
-    "command": "",
-    "host": "",
-    "i_saved_it": "",
-    "kill": "",
-    "query": "",
-    "rotate": "",
-    "state": "Stare",
-    "the_previous_password_if_any_stops_working_i": "",
-    "time": "",
-    "user": "Utilizator"
-  },
-  "dockermarketplacecard": {
-    "docker_app_marketplace_m48": "",
-    "marketplace_live": "",
-    "opt_in_feature": ""
-  },
-  "emailcard": {
-    "dkim": "",
-    "enabled_at": "",
-    "failed_to_load_email_settings": "",
-    "primary_mail_domain": "",
-    "the_panel_hostname_s_mail_domain_is_being_pr": "",
-    "webmail_is_initializing": "",
-    "webmail_url": ""
-  },
-  "logretentioncard": {
-    "it_s_hash_chained_and_tamper_evident_set_a_w": "",
-    "logs_retention": "",
-    "the_audit_log_defaults_to_keep_forever": ""
-  },
-  "lookandfeelcard": {
-    "look_and_feel": "",
-    "panel_font_size": ""
-  },
-  "modulescard": {
-    "modules": ""
-  },
-  "nginxsettingscard": {
-    "cache_key_metadata_zone_8000_keys_mb": "",
-    "custom_http_directives": "",
-    "evict_entries_not_accessed_within_this_windo": "",
-    "gzip_compression": "",
-    "keepalive_timeout": "",
-    "largest_request_body_nginx_accepts_before_41": "",
-    "max_upload_size_client_max_body_size": "",
-    "nginx": "",
-    "off_hides_the_nginx_version_in_responses_err": "",
-    "raw_nginx_directives_can_make_the_server_uns": "",
-    "shared_fastcgi_cache_max_on_disk_size": "",
-    "show_nginx_version_server_tokens": ""
-  },
-  "nspawnimagescard": {
-    "codename": "",
-    "delete_all_unused_images": "",
-    "prune": "",
-    "prune_result": "",
-    "removes_every_sealed_image_no_user_and_not_t": "",
-    "snapshot": "",
-    "ssh_sandbox_images_nspawn": "",
-    "suite": "",
-    "version": "Versiune"
-  },
-  "phpperformancemodescard": {
-    "idle_timeout_s": "",
-    "max_children": "",
-    "max_requests_0_never": "",
-    "max_spare": "",
-    "min_spare": "",
-    "php_performance_modes": "",
-    "process_manager": "",
-    "start_servers": ""
-  },
-  "pagetemplatescard": {
-    "cancel": "Anulează",
-    "page_templates": "",
-    "save": "Salvează"
-  },
-  "panelsslcard": {
-    "failed_to_load_panel_ssl_state": "",
-    "hostname": "",
-    "let_s_encrypt_is_unavailable_for_the_panel": "",
-    "mail": "",
-    "panel_certificate_not_initialised_yet": "",
-    "panel_ssl": ""
-  },
-  "pythonappscard": {
-    "apps_need_python3_venv_and_a_build_toolchain": "",
-    "runtime_prerequisites": ""
-  },
-  "ssomaintenancecard": {
-    "deletes_only_already_expired_tokens_active_s": "",
-    "operator_procedure_run_on_the_host_not_from": "",
-    "purge": "",
-    "purge_expired_sso_tokens_now": "",
-    "rotation_re_encrypts_every_stored_db_user_pa": "",
-    "sso_maintenance_phpmyadmin": ""
-  },
-  "stalwartwebadmincard": {
-    "done": "",
-    "stalwart_webadmin_advanced": "",
-    "the_full_mail_server_admin_is_reachable_behi": ""
-  },
-  "tenantdomainoptionscard": {
-    "tenant_domain_options": ""
-  },
-  "webmailtogglecard": {
-    "webmail": ""
-  },
-  "sslmanagerpage": {
-    "domain_certificates": ""
-  },
-  "adminterminal": {
-    "root_shell_every_keystroke_and_all_output_is": "",
-    "root_terminal_is_disabled": ""
-  },
-  "domainrepaircard": {
-    "cancel": "Anulează",
-    "delete_all_orphan_sites": "",
-    "delete_permanently": "",
-    "no_orphan_sites_found": "",
-    "select_a_user": "Selectează un utilizator",
-    "this_is_irreversible_it_tears_down_each_site": ""
-  },
-  "repaircard": {
-    "applies_non_destructive_fixes_only_jabali_re": "",
-    "auto_repair_safe_issues": "",
-    "cancel": "Anulează",
-    "click_auto_repair_to_fix_the_non_destructive": "",
-    "diagnostics_failed": "",
-    "no_issues_detected_all_healthy": "",
-    "run": "Rulează",
-    "run_diagnostics_to_see_what_s_broken": ""
-  },
-  "systemupdatespage": {
-    "a_bad_self_update_can_take_the_panel_offline": "",
-    "development_channel_less_reviewed_builds": "",
-    "development_follows_the_latest_main_commit_a": "",
-    "no_update_runs_yet": "",
-    "promoting_a_build_to_stable_is_an_operator_c": "",
-    "update_carefully_especially_system_packages": ""
-  },
-  "adminuseroverview": {
-    "user_not_found": ""
-  },
-  "userreset2faaction": {
-    "reset": "Resetează",
-    "reset_two_factor_authentication": ""
-  },
-  "userresetpasswordaction": {
-    "done": "",
-    "new_password_shown_once": "",
-    "reset": "Resetează",
-    "reset_password": ""
-  },
-  "myprofile": {
-    "account": "",
-    "email": "Email",
-    "full_name": "Nume complet",
-    "hosting_package": "",
-    "member_since": "Membru din",
-    "password_and_two_factor_2fa_totp_settings_al": "",
-    "role": "Rol",
-    "security": "Securitate",
-    "security_settings_unavailable_while_acting_a": "",
-    "user_id": "ID utilizator",
-    "username": "Nume de utilizator"
-  },
-  "myprofilebackupcard": {
-    "destination": "Destinație"
-  },
-  "myprofileschedulecard": {
-    "destination": "Destinație",
-    "scheduled_backups_are_not_included_in_your_h": ""
-  },
-  "restoredrawer": {
-    "restore_from_backup": "",
-    "restore_result": "",
-    "the_selected_items_will_be_overwritten_with": "",
-    "this_is_destructive": ""
-  },
-  "userdashboard": {
-    "applications": "",
-    "databases": "Baze de date",
-    "domains": "Domenii",
-    "mailboxes": "Căsuțe poștale",
-    "recent_applications": "",
-    "recent_databases": "",
-    "recent_domains": "",
-    "recent_mailboxes": ""
-  },
-  "accountactivity": {
-    "result": "Rezultat",
-    "target": "",
-    "what": ""
-  },
-  "ddnssetupguide": {
-    "dynamic_dns_ddns_setup": "",
-    "point_your_router_or_ddclient_at_the_update": "",
-    "your_api_token_is_the_ddns_password": ""
-  },
-  "userapitokenspage": {
-    "any_script_using_it_will_start_getting_401": "",
-    "copy_this_secret_now": "",
-    "create": "Creează",
-    "create_api_token": "",
-    "expires_in_seconds_optional": "",
-    "full_access_can_do_anything_you_can_a_custom": "",
-    "i_ve_copied_it": "",
-    "limit_to_one_dns_record_id_optional": "",
-    "my_token": "",
-    "name": "Nume",
-    "permissions": "",
-    "personal_api_tokens": "",
-    "revoke": "",
-    "revoke_this_token": "",
-    "the_plaintext_token_is_shown_only_once_after": ""
-  },
-  "catalogtab": {
-    "failed_to_load_the_application_catalog": "",
-    "no_applications_available": "",
-    "no_applications_match_the_selected_tags": "",
-    "try_reloading_the_page": ""
-  },
-  "cloneapplicationmodal": {
-    "clone_application": "",
-    "destination_domain": "",
-    "select_a_domain": "Selectează un domeniu"
-  },
-  "installapplicationmodal": {
-    "application": "",
-    "copy": "Copiază",
-    "directory_optional": "",
-    "domain": "Domeniu",
-    "install_application": "",
-    "install_queued": "",
-    "no_domains_yet": "Încă nu există domenii",
-    "select_a_domain": "Selectează un domeniu",
-    "select_an_application": "",
-    "the_install_runs_in_the_background_copy_the": "",
-    "what_happens_next": "",
-    "you_have_no_domains_create_one_first": ""
-  },
-  "userapplicationlist": {
-    "actions": "Acțiuni",
-    "admin_email": "",
-    "app_version": "",
-    "cache": "",
-    "cache_settings": "",
-    "created": "Creat",
-    "detect_wordpress_joomla_drupal_and_magento_i": "",
-    "domain": "Domeniu",
-    "failed": "Eșuat",
-    "in_progress": "În curs",
-    "installed_apps": "",
-    "no_installed_apps_yet": "",
-    "ready": "",
-    "redis_object_cache_nginx_page_cache": ""
-  },
-  "createcronmodal": {
-    "command": "",
-    "cron_expression": "",
-    "name": "Nume",
-    "schedule": "Programare"
-  },
-  "cronlogdrawer": {
-    "cron_job_log": ""
-  },
-  "runnowresultmodal": {
-    "cron_job_execution_result": "",
-    "standard_error": "",
-    "standard_output": ""
-  },
-  "usercronlist": {
-    "search_by_name_command_or_schedule": ""
-  },
-  "quicksetupmodal": {
-    "copy": "Copiază",
-    "copy_the_password_now_it_is_shown_only_once": "",
-    "database_and_user_created": "",
-    "database_user_name": "",
-    "engine": "",
-    "mariadb_is_the_default_postgresql_must_be_en": "",
-    "quick_database_setup": ""
-  },
-  "userdatabasedrawer": {
-    "create_database": "Creează bază de date",
-    "engine": "",
-    "mariadb_is_the_default_postgresql_must_be_en": "",
-    "name": "Nume",
-    "the_final_database_name_is_your_username_plu": ""
-  },
-  "userdatabaselist": {
-    "actions": "Acțiuni",
-    "charset": "",
-    "created": "Creat",
-    "database": "Bază de date",
-    "engine": "",
-    "size": "Dimensiune"
-  },
-  "diskusagepage": {
-    "could_not_load_disk_usage": "",
-    "home_directory_is_empty": "",
-    "no_disk_usage_snapshot_yet_click_refresh_to": ""
-  },
-  "userdnszonesoverviewpage": {
-    "actions": "Acțiuni",
-    "dns_zones_are_provisioned_automatically_when": "",
-    "dnssec": "",
-    "domain_name": "Nume de domeniu",
-    "domain_registration_expiry_from_whois": "",
-    "expiration": "Expirare",
-    "no_domains_found": "",
-    "records": "",
-    "ttl": "",
-    "zone_status": ""
-  },
-  "userdockerappspage": {
-    "ask_your_administrator_to_enable_tenant_dock": "",
-    "docker_apps_are_not_enabled_on_this_server": "",
-    "docker_apps_are_over_your_disk_quota": "",
-    "installed_apps": "",
-    "no_installed_apps_yet": "",
-    "running": "În execuție",
-    "search_by_name": "",
-    "stopped": "Oprit",
-    "updates_available": "",
-    "your_installed_apps_exceed_your_package_disk": ""
-  },
-  "userdomaindrawer": {
-    "add_domain": "Adaugă domeniu",
-    "adds_a_www_cname_pointing_at_the_domain_apex": "",
-    "domain_name": "Nume de domeniu",
-    "google_dkim_value": "",
-    "let_s_encrypt_issues_a_free_trusted_certific": "",
-    "mail": "",
-    "microsoft_365_tenant": "",
-    "optional_paste_the_google_domainkey_txt_valu": "",
-    "optional_your_tenant_onmicrosoft_com_adds_th": "",
-    "tls_certificate": "",
-    "where_this_domain_s_email_is_hosted_none_and": ""
-  },
-  "userdomainlist": {
-    "actions": "Acțiuni",
-    "bw_30d": "",
-    "domain": "Domeniu",
-    "more_actions": "",
-    "redirect": "",
-    "ssl": "",
-    "status": "Stare"
-  },
-  "filemanagerpage": {
-    "apply": "Aplică",
-    "create": "Creează",
-    "empty_directory": "",
-    "folders": "",
-    "move": "Mută",
-    "new_file": "",
-    "new_folder": "",
-    "rename": "Redenumește",
-    "save": "Salvează"
-  },
-  "autoreplymodal": {
-    "active_dates_optional": "",
-    "html_body_optional": "",
-    "i_m_away_until": "",
-    "out_of_office": "",
-    "plain_text_body": "",
-    "save": "Salvează",
-    "send_automatic_replies": "",
-    "subject": "",
-    "turn_off": ""
-  },
-  "createmailboxwizardmodal": {
-    "a_send_only_mailbox_can_authenticate_for_smt": "",
-    "add_to_groups": "",
-    "aliases_optional": "",
-    "alice_smith": "",
-    "create_mailbox": "Creează căsuță poștală",
-    "display_name": "Nume afișat",
-    "domain": "Domeniu",
-    "email_address": "Adresă de email",
-    "enable_email_on_at_least_one_domain_before_c": "",
-    "extra_addresses_that_deliver_to_this_mailbox": "",
-    "forward_to_optional": "",
-    "leave_blank_to_auto_generate_generated_passw": "",
-    "no_email_enabled_domains": "",
-    "only_domains_with_email_enabled_appear_here": "",
-    "password": "Parolă",
-    "quota_mib": "",
-    "redirect_a_copy_of_incoming_mail_to_an_exter": "",
-    "select_a_domain": "Selectează un domeniu",
-    "select_groups_optional": "",
-    "shown_as_the_sender_name_in_webmail_and_outg": "",
-    "the_mailbox_joins_these_groups_and_gains_the": ""
-  },
-  "catchalltab": {
-    "domain": "Domeniu",
-    "no_email_enabled_domains_yet": "",
-    "save": "Salvează",
-    "select_email_enabled_domain": "",
-    "target_mailbox": ""
-  },
-  "disclaimertab": {
-    "disclaimer_text": "",
-    "edit": "Editează",
-    "enable_disclaimer": "",
-    "if_you_received_this_email_by_mistake_please": "",
-    "no_email_enabled_domains": "",
-    "save": "Salvează"
-  },
-  "forwarderstab": {
-    "add_forwarder": "Adaugă redirecționare",
-    "alias_local_part": "",
-    "create": "Creează",
-    "create_mailboxes_first": "",
-    "external_target": "",
-    "remove": "Elimină",
-    "remove_forwarder": "",
-    "select_mailbox": "",
-    "type": "Tip"
-  },
-  "groupstab": {
-    "enable_email_on_a_domain_first_to_create_gro": "",
-    "no_groups": ""
-  },
-  "logstab": {
-    "from": "",
-    "mail_logs_unavailable": "",
-    "recipient_contains": "",
-    "sender_contains": "",
-    "the_mail_server_s_trace_log_isn_t_responding": ""
-  },
-  "maillogdetaildrawer": {
-    "delivery_trail": "",
-    "no_delivery_trail_found": ""
-  },
-  "mailboxestab": {
-    "automatic_replies_active": "",
-    "leave_blank_to_auto_generate_auto_generated": "",
-    "new_password": "Parolă nouă",
-    "no_mailboxes": "",
-    "no_mailboxes_yet": "Încă nu există căsuțe poștale",
-    "set_password": "Setează parola"
-  },
-  "sharedfolderstab": {
-    "create_mailboxes_first": "",
-    "remove": "Elimină",
-    "remove_share": "",
-    "rights": "",
-    "select_owner_mailbox": "",
-    "select_target_mailbox": "",
-    "share": "Partajează",
-    "share_folder": "",
-    "source_mailbox_owner": "",
-    "target_mailbox_grantee": ""
-  },
-  "sharedresourcestab": {
-    "no_email_enabled_domains_yet": ""
-  },
-  "userphpperformancecard": {
-    "ask_your_provider_to_enable_it_on_your_hosti": "",
-    "max_requests_per_worker_0_never": "",
-    "max_spare_dynamic": "",
-    "min_spare_dynamic": "",
-    "php_performance": "",
-    "php_performance_tuning_isn_t_enabled_on_your": "",
-    "process_manager": "",
-    "start_servers_dynamic": ""
-  },
-  "userphpsettingspage": {
-    "caution": "",
-    "changing_php_settings_can_affect_your_websit": "",
-    "cli_terminal_default_php_version": "",
-    "domain": "Domeniu",
-    "max_execution_time": "",
-    "max_input_time": "",
-    "max_input_variables": "",
-    "memory_limit": "",
-    "php_version": "",
-    "post_max_size": "",
-    "select_a_domain": "Selectează un domeniu",
-    "upload_max_file_size": "",
-    "use_pool_default": ""
-  },
-  "pythonappspage": {
-    "app_directory": "",
-    "create": "Creează",
-    "domain": "Domeniu",
-    "entrypoint": "",
-    "mount_path": "",
-    "my_api": "",
-    "name": "Nume",
-    "path_under_your_home_e_g_domains_example_com": "",
-    "python": "",
-    "runtime": "",
-    "select_a_domain": "Selectează un domeniu",
-    "status": "Stare",
-    "type": "Tip"
-  },
-  "usersshkeyspage": {
-    "add_ssh_key": "Adaugă cheie SSH",
-    "are_you_sure_this_revokes_sftp_access": "",
-    "comment_optional": "",
-    "connect_to_your_server_securely_using_ssh_fo": "",
-    "copy_or_download_it_now_if_you_close_this_di": "",
-    "delete_ssh_key": "",
-    "generate_ssh_key": "",
-    "name": "Nume",
-    "public_key": "Cheie publică",
-    "save_your_private_key_now": "",
-    "search_by_name_or_fingerprint": "",
-    "this_is_the_only_time_the_private_key_will_b": "",
-    "yes": "Da"
-  },
-  "dnsrecordspage": {
-    "no_dns_records_yet": "",
-    "system_records": "",
-    "your_administrator_has_restricted_changes_to": ""
-  },
-  "domaincachesection": {
-    "cacheable_query_parameters": "",
-    "caches_php_html_responses_for_the_ttl_above": "",
-    "page_cache_with_background_refresh": "",
-    "purge": "",
-    "purge_cached_pages_for_this_domain": "",
-    "query_string_params_that_get_their_own_cache": ""
-  },
-  "domainnginxoptionsmodal": {
-    "domain_options": "",
-    "max_upload_size_mb": "",
-    "save": "Salvează"
-  },
-  "installappbutton": {
-    "install_app": "",
-    "install_jabali_as_an_app": ""
-  },
-  "jabalifooter": {
-    "source_code": ""
-  },
-  "notificationbell": {
-    "clear": "",
-    "clear_all_notifications": "",
-    "mark_all_read": "",
-    "notifications": "Notificări",
-    "this_deletes_every_notification_in_your_inbo": ""
-  },
-  "serverhealthindicator": {
-    "server_health_alerts": ""
-  },
-  "tasksindicator": {
-    "background_tasks": "",
-    "no_tasks_running": ""
-  },
-  "sslmanagertable": {
-    "are_you_sure_you_want_to_revoke_this_certifi": "",
-    "clears_backoff_and_reissues_the_let_s_encryp": "",
-    "failed_to_load_ssl_certificates": "",
-    "force_acme_retry_now": "",
-    "last_attempt": "",
-    "next_retry": "",
-    "no_ssl_certificates_yet": "",
-    "panel_cert_managed_via_server_settings_panel": "",
-    "renew_certificate": "",
-    "retry_count": "",
-    "revoke_certificate": "",
-    "show_last_error": "",
-    "status": "Stare",
-    "yes": "Da"
-  },
-  "settings": {
-    "admin_email": "",
-    "default_nspawn_image": "",
-    "default_record_ttl_seconds": "",
-    "disk_quotas": "",
-    "disk_size_matters": "",
-    "dns_nameservers": "",
-    "dns_record_defaults": "",
-    "file_manager": "",
-    "hostname": "",
-    "hostname_change": "",
-    "identity": "",
-    "kernel_posix_quota_must_be_active_on_the_filesys": "",
-    "maximum_upload_size_mb": "",
-    "off_by_default_opt_in_feature": "",
-    "potential_lockout_risk": "",
-    "public_ipv4": "",
-    "public_ipv6_optional": "",
-    "root_terminal_m45": "",
-    "sandbox_mode": "",
-    "select_timezone": "Selectează fusul orar",
-    "server_time": "",
-    "ssh_access": "",
-    "ssh_port": "",
-    "this_is_the_highest_risk_feature_in_the_panel_le": "",
-    "timezone": "Fus orar",
-    "working_folder": ""
-  }
 }
