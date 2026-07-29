@@ -4169,6 +4169,12 @@ paths:
       responses: { "200": { description: OK } }
 
   /domains/{id}/php-ioncube:
+    get:
+      tags: [Php Settings]
+      summary: Current ionCube state for a domain (version, loader_installed, enabled)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
     put:
       tags: [Php Settings]
       summary: Enable or disable the ionCube loader for a domain's pool

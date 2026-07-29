@@ -10,6 +10,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Typography,
   message,
 } from "antd";
@@ -45,6 +46,13 @@ type PHPSettingsFormData = {
   php_max_input_vars?: number | null;
   php_max_execution_time?: number | null;
   php_max_input_time?: number | null;
+};
+
+// Mirrors GET/PUT /domains/:id/php-ioncube (domain_php_ioncube.go).
+type IonCubeState = {
+  version: string;
+  loader_installed: boolean;
+  enabled: boolean;
 };
 
 const MEMORY_LIMIT_OPTIONS = [
@@ -114,6 +122,8 @@ export function UserPHPSettingsPage() {
   const [phpSettings, setPhpSettings] = useState<DomainPHPSettings | null>(null);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [versionSaving, setVersionSaving] = useState(false);
+  const [ioncube, setIoncube] = useState<IonCubeState | null>(null);
+  const [ioncubeSaving, setIoncubeSaving] = useState(false);
   const [cliVersion, setCliVersion] = useState<string>(""); // "" = auto
   const [cliSaving, setCliSaving] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -175,6 +185,36 @@ export function UserPHPSettingsPage() {
     }
   };
 
+  const onToggleIoncube = async (enabled: boolean) => {
+    if (!selectedDomain) return;
+    setIoncubeSaving(true);
+    try {
+      const { data } = await apiClient.put<IonCubeState>(
+        `/domains/${selectedDomain}/php-ioncube`,
+        { enabled },
+      );
+      // PUT returns pool_set's {enabled}; re-read full state for loader_installed.
+      const resp = await apiClient.get<IonCubeState>(
+        `/domains/${selectedDomain}/php-ioncube`,
+      );
+      setIoncube(resp.data);
+      message.success(
+        (data?.enabled ?? enabled)
+          ? "ionCube Loader enabled for this site"
+          : "ionCube Loader disabled for this site",
+      );
+    } catch (err) {
+      const e = err as { response?: { data?: { detail?: string; error?: string } } };
+      message.error(
+        e.response?.data?.detail ??
+          e.response?.data?.error ??
+          "Failed to change ionCube setting",
+      );
+    } finally {
+      setIoncubeSaving(false);
+    }
+  };
+
   const onChangePHPVersion = async (version: string | null) => {
     if (!selectedDomain) return;
     setVersionSaving(true);
@@ -212,6 +252,7 @@ export function UserPHPSettingsPage() {
   useEffect(() => {
     if (!selectedDomain) {
       setPhpSettings(null);
+      setIoncube(null);
       form.resetFields();
       return;
     }
@@ -223,6 +264,15 @@ export function UserPHPSettingsPage() {
           `/domains/${selectedDomain}/php-settings`,
         );
         setPhpSettings(resp.data);
+        // ionCube state is a separate read (best-effort — never block the page).
+        try {
+          const ic = await apiClient.get<IonCubeState>(
+            `/domains/${selectedDomain}/php-ioncube`,
+          );
+          setIoncube(ic.data);
+        } catch {
+          setIoncube(null);
+        }
         form.setFieldsValue({
           domain_id: selectedDomain,
           php_memory_limit: resp.data.php_memory_limit,
@@ -373,6 +423,22 @@ export function UserPHPSettingsPage() {
                           value: v,
                         })),
                       ]}
+                    />
+                  </Form.Item>
+
+                  <Form.Item
+                    label="ionCube Loader"
+                    extra={
+                      ioncube && !ioncube.loader_installed
+                        ? `ionCube is not installed for PHP ${ioncube.version ?? phpSettings.php_version ?? ""} on this server — ask an administrator to install it before enabling.`
+                        : "Required for applications shipped as ionCube-encoded PHP. Applies to this site's pool only."
+                    }
+                  >
+                    <Switch
+                      checked={!!ioncube?.enabled}
+                      loading={ioncubeSaving}
+                      disabled={ioncubeSaving || !ioncube?.loader_installed}
+                      onChange={(v) => onToggleIoncube(v)}
                     />
                   </Form.Item>
 

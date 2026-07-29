@@ -142,3 +142,31 @@ func TestIonCube_Toggle_NotFound(t *testing.T) {
 	rec := doPut(r, "nope", true)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// TestIonCube_Get_ReportsState: GET reflects the agent status (loader
+// installed for the version + this owner enabled), ownership-scoped.
+func TestIonCube_Get_ReportsState(t *testing.T) {
+	mock := agent.NewMockClient().On("php.ioncube.status", map[string]any{
+		"installed_versions": []any{"8.4"},
+		"enabled":            map[string]any{"arizote": []any{"8.4"}},
+	})
+	r := icRouter(baseCfg(mock), "owner1", false)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/dom1/php-ioncube", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var st map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+	assert.Equal(t, "8.4", st["version"])
+	assert.Equal(t, true, st["loader_installed"])
+	assert.Equal(t, true, st["enabled"])
+}
+
+// TestIonCube_Get_ForbiddenForNonOwner: GET is ownership-scoped too.
+func TestIonCube_Get_ForbiddenForNonOwner(t *testing.T) {
+	r := icRouter(baseCfg(agent.NewMockClient()), "intruder", false)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/dom1/php-ioncube", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}

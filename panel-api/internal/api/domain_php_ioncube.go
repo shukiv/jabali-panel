@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -33,6 +34,7 @@ type DomainIonCubeHandlerConfig struct {
 // single source of truth for "is the loader present for this version".
 func RegisterDomainIonCubeRoutes(g *gin.RouterGroup, cfg DomainIonCubeHandlerConfig) {
 	h := &domainIonCubeHandler{cfg: cfg}
+	g.GET("/domains/:id/php-ioncube", h.get)
 	g.PUT("/domains/:id/php-ioncube", h.put)
 }
 
@@ -40,6 +42,80 @@ type domainIonCubeHandler struct{ cfg DomainIonCubeHandlerConfig }
 
 type domainIonCubeRequest struct {
 	Enabled *bool `json:"enabled" binding:"required"`
+}
+
+// domainIonCubeState is the GET response driving the tenant toggle: the domain's
+// PHP version, whether the loader is installed for it (toggle enabled only when
+// true), and whether ionCube is currently on for this domain's pool.
+type domainIonCubeState struct {
+	Version         string `json:"version"`
+	LoaderInstalled bool   `json:"loader_installed"`
+	Enabled         bool   `json:"enabled"`
+}
+
+// get returns the current ionCube state for a domain (ownership-scoped). Reads
+// live agent status; never mutates.
+func (h *domainIonCubeHandler) get(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	ctx := c.Request.Context()
+	dom, err := h.cfg.Domains.FindByID(ctx, c.Param("id"))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "domain_not_found"})
+			return
+		}
+		slog.ErrorContext(ctx, "ioncube get: load domain", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if !claims.IsAdmin && dom.UserID != claims.UserID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	version := h.resolveVersion(ctx, dom)
+	state := domainIonCubeState{Version: version}
+	if version == "" {
+		c.JSON(http.StatusOK, state) // no pool yet → toggle stays disabled client-side
+		return
+	}
+	owner, err := h.cfg.Users.FindByID(ctx, dom.UserID)
+	if err != nil || owner == nil || owner.Username == nil {
+		c.JSON(http.StatusOK, state)
+		return
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(callCtx, "php.ioncube.status", nil)
+	if err != nil {
+		// Best-effort: report version-only state; the toggle stays disabled
+		// rather than the whole page erroring on a transient agent hiccup.
+		c.JSON(http.StatusOK, state)
+		return
+	}
+	var status struct {
+		InstalledVersions []string            `json:"installed_versions"`
+		Enabled           map[string][]string `json:"enabled"`
+	}
+	_ = json.Unmarshal(raw, &status)
+	for _, v := range status.InstalledVersions {
+		if v == version {
+			state.LoaderInstalled = true
+			break
+		}
+	}
+	for _, v := range status.Enabled[*owner.Username] {
+		if v == version {
+			state.Enabled = true
+			break
+		}
+	}
+	c.JSON(http.StatusOK, state)
 }
 
 func (h *domainIonCubeHandler) put(c *gin.Context) {

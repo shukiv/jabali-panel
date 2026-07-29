@@ -4,8 +4,9 @@ import { CodeOutlined } from "@icons";
 import { VersionsTab } from "./VersionsTab";
 import { PHPExtensionsTab } from "./PHPExtensionsTab";
 import { FPMPoolsTab } from "./FPMPoolsTab";
+import { IonCubeTab } from "./IonCubeTab";
 
-type TabKey = "versions" | "extensions" | "pools";
+type TabKey = "versions" | "extensions" | "pools" | "ioncube";
 
 export const PHPVersionsPage = () => {
   const [active, setActive] = useTabParam<TabKey>("versions");
@@ -23,6 +24,7 @@ export const PHPVersionsPage = () => {
           { key: "versions", tab: "PHP Versions" },
           { key: "extensions", tab: "PHP Extensions" },
           { key: "pools", tab: "FPM Pools" },
+          { key: "ioncube", tab: "ionCube" },
         ]}
         activeTabKey={active}
         onTabChange={(k) => setActive(k as TabKey)}
@@ -31,8 +33,10 @@ export const PHPVersionsPage = () => {
           <VersionsTab />
         ) : active === "extensions" ? (
           <PHPExtensionsTab />
-        ) : (
+        ) : active === "pools" ? (
           <FPMPoolsTab />
+        ) : (
+          <IonCubeTab />
         )}
       </Card>
     </div>
