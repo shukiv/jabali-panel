@@ -1124,14 +1124,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				PHPPools: deps.PHPPools,
 			})
 		}
-		if deps.Domains != nil && deps.PHPPools != nil && deps.Users != nil && deps.Agent != nil {
-			api.RegisterDomainIonCubeRoutes(v1, api.DomainIonCubeHandlerConfig{
-				Domains:  deps.Domains,
-				PHPPools: deps.PHPPools,
-				Users:    deps.Users,
-				Agent:    deps.Agent,
-			})
-		}
 		if deps.Domains != nil {
 			api.RegisterDomainHtaccessRoutes(v1, api.DomainHtaccessHandlerConfig{
 				Domains: deps.Domains,
@@ -1304,8 +1296,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.Agent != nil {
 			admin := v1.Group("/admin", middleware.RequireAdmin())
 			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent, deps.ServerSettings)
-			api.RegisterPHPExtensionAdminRoutes(admin, deps.Agent)
-			api.RegisterIonCubeAdminRoutes(admin, deps.Agent, ioncube.Fetcher{})
+			api.RegisterPHPExtensionAdminRoutes(admin, deps.Agent, ioncube.Fetcher{})
 		}
 
 		// M45 root web terminal (ADR-0096). Off by default; the handler

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -26,8 +27,16 @@ func newAdminRouter(mock agent.AgentInterface) *gin.Engine {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
 		c.Next()
 	})
-	RegisterPHPExtensionAdminRoutes(v1, mock)
+	RegisterPHPExtensionAdminRoutes(v1, mock, extTestFetcher{})
 	return r
+}
+
+// extTestFetcher is a no-op LoaderFetcher for the dpkg-extension tests (the
+// ionCube apply paths have their own tests).
+type extTestFetcher struct{}
+
+func (extTestFetcher) FetchLoader(_ context.Context, _ string) ([]byte, error) {
+	return []byte("fake-loader"), nil
 }
 
 func TestExtensions_List_HappyPath(t *testing.T) {

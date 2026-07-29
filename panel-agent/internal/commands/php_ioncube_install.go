@@ -96,13 +96,13 @@ func phpIoncubeUninstallHandler(_ context.Context, params json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid PHP version %q (want X.Y)", p.Version)}
 	}
 
-	// Refuse while any pool still has the loader enabled on this version — the
-	// pool's 00-ioncube.ini would point at a now-missing .so and the master
-	// would fatal on reload.
-	if users := ioncubeEnabledUsersForVersion(p.Version); len(users) > 0 {
+	// Refuse while the loader is still enabled server-wide for this version —
+	// the conf.d 00-ioncube.ini would point at a now-missing .so and every
+	// master on that version would fatal on reload.
+	if ioncubeVersionEnabled(p.Version) {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeFailedPrecondition,
-			Message: fmt.Sprintf("ionCube is still enabled for PHP %s on %d pool(s): %s; disable them first", p.Version, len(users), strings.Join(users, ", ")),
+			Message: fmt.Sprintf("ionCube is still enabled for PHP %s; disable it first", p.Version),
 		}
 	}
 
@@ -114,20 +114,6 @@ func phpIoncubeUninstallHandler(_ context.Context, params json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("remove loader: %v", err)}
 	}
 	return ioncubeUninstallResponse{Version: p.Version, Installed: false, Changed: true}, nil
-}
-
-// ioncubeEnabledUsersForVersion lists users whose pool has ionCube enabled on
-// the given version (a 00-ioncube.ini under that version's jabali-ext dir).
-func ioncubeEnabledUsersForVersion(version string) []string {
-	matches, _ := filepath.Glob(filepath.Join(ioncubePHPEtcRoot(), version, "fpm", "jabali-ext", "*", "00-ioncube.ini"))
-	users := make([]string, 0, len(matches))
-	for _, m := range matches {
-		u := filepath.Base(filepath.Dir(m))
-		if looksLikeUnixUsername(u) {
-			users = append(users, u)
-		}
-	}
-	return users
 }
 
 func init() {

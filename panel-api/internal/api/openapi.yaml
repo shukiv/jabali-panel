@@ -4017,29 +4017,6 @@ paths:
       parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
-  /admin/php/ioncube:
-    get:
-      tags: [Php]
-      summary: ionCube loader status (installed + enabled + supported)
-      security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
-
-  /admin/php/ioncube/versions/{version}/install:
-    post:
-      tags: [Php]
-      summary: Install the ionCube loader for a PHP version
-      security: [ { KratosSession: [] } ]
-      parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
-
-  /admin/php/ioncube/versions/{version}:
-    delete:
-      tags: [Php]
-      summary: Uninstall the ionCube loader for a PHP version
-      security: [ { KratosSession: [] } ]
-      parameters: [ { in: path, name: version, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
-
   /php/versions:
     get:
       tags: [Php]
@@ -4164,14 +4141,6 @@ paths:
     patch:
       tags: [Php Settings]
       summary: Php Settings domains
-      security: [ { KratosSession: [] } ]
-      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
-
-  /domains/{id}/php-ioncube:
-    put:
-      tags: [Php Settings]
-      summary: Enable or disable the ionCube loader for a domain's pool
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }

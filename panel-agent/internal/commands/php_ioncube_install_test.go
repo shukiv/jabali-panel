@@ -74,17 +74,17 @@ func TestIoncubeInstall_VerifyWriteIdempotent(t *testing.T) {
 	}
 }
 
-// TestIoncubeUninstall_BlockedWhileEnabled: uninstall must refuse while a pool
-// is enabled on that version, then succeed once it's disabled.
+// TestIoncubeUninstall_BlockedWhileEnabled: uninstall must refuse while the
+// loader is enabled server-wide for that version, then succeed once disabled.
 func TestIoncubeUninstall_BlockedWhileEnabled(t *testing.T) {
 	wireIoncubeTestRoots(t)
 	blob := []byte("loader")
 	sum := sha256.Sum256(blob)
 	callInstall(t, "8.4", hex.EncodeToString(sum[:]), base64.StdEncoding.EncodeToString(blob))
 
-	// Enable a pool on 8.4.
-	if _, ae := callPoolSet(t, "arizote", "8.4", true); ae != nil {
-		t.Fatalf("enable pool: %v", ae)
+	// Enable server-wide on 8.4.
+	if _, ae := callServerSet(t, "8.4", true); ae != nil {
+		t.Fatalf("enable: %v", ae)
 	}
 
 	// Uninstall blocked.
@@ -93,8 +93,8 @@ func TestIoncubeUninstall_BlockedWhileEnabled(t *testing.T) {
 	}
 
 	// Disable, then uninstall succeeds.
-	if _, ae := callPoolSet(t, "arizote", "8.4", false); ae != nil {
-		t.Fatalf("disable pool: %v", ae)
+	if _, ae := callServerSet(t, "8.4", false); ae != nil {
+		t.Fatalf("disable: %v", ae)
 	}
 	resp, ae := callUninstall(t, "8.4")
 	if ae != nil {
