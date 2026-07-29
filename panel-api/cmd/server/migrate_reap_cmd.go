@@ -76,15 +76,18 @@ daily cadence; operator can also invoke directly.`,
 					if !isTerminal(row.State) {
 						continue
 					}
+					secretReapOK := secretReapDue(row.State, row.EndedAt, row.UpdatedAt, stagingMaxAge, time.Now())
 					path := filepath.Join(migrationSecretsDir, row.ID+".env")
-					if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-						if dryRun {
-							fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] would remove %s (job state=%s)\n", path, row.State)
-							deleted++
-						} else if err := os.Remove(path); err != nil {
-							fmt.Fprintf(cmd.ErrOrStderr(), "remove %s: %v\n", path, err)
-						} else {
-							deleted++
+					if secretReapOK {
+						if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+							if dryRun {
+								fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] would remove %s (job state=%s)\n", path, row.State)
+								deleted++
+							} else if err := os.Remove(path); err != nil {
+								fmt.Fprintf(cmd.ErrOrStderr(), "remove %s: %v\n", path, err)
+							} else {
+								deleted++
+							}
 						}
 					}
 					// Staging dir: tarball + extracted tree. Reap when
@@ -196,6 +199,24 @@ func reapOrphanStaging(stagingDir string, live map[string]struct{}, maxAge time.
 		deleted++
 	}
 	return deleted
+}
+
+// secretReapDue decides whether a terminal job's source-secret env file
+// (/etc/jabali-panel/migration-secrets/<id>.env, holding the SSH password/key)
+// should be reaped now. A FAILED job is retryable, so its secret is kept until
+// the same age grace as staging (GH #746) — otherwise every failed import
+// strands the retry, which must then re-upload creds AND re-pull. Other
+// terminal states (done/degraded/cancelled) are finished, so their secret reaps
+// immediately (security: don't leave source creds around longer than needed).
+func secretReapDue(state string, endedAt *time.Time, updatedAt time.Time, grace time.Duration, now time.Time) bool {
+	if state != models.MigrationStateFailed {
+		return true
+	}
+	ref := endedAt
+	if ref == nil || ref.IsZero() {
+		ref = &updatedAt
+	}
+	return now.Sub(*ref) >= grace
 }
 
 func isTerminal(state string) bool {

@@ -723,13 +723,18 @@ failed stage. Already-done stages are skipped.`,
 			// Staging-dir cleanup. Re-load the job so we see the
 			// terminal state the runner just stamped (done / failed).
 			// Operator can suppress via --keep-staging when debugging.
-			// JAB-43: degraded is terminal too — clean it like done/failed so a
+			// JAB-43: degraded is terminal too — clean it like done so a
 			// degraded restore doesn't silently leave GBs in /var/lib/jabali-
 			// migrations (pass --keep-staging to retain for debugging).
+			//
+			// GH #746: a FAILED import is retryable — keep its staging so the
+			// operator's retry doesn't re-pull the whole account (nor re-write
+			// the source secret). The reaper's age-based sweep still reaps
+			// abandoned failed staging after stagingMaxAge.
 			if !keepStaging {
 				if j, lerr := jobsRepo.FindByID(ctx, job.ID); lerr == nil && j != nil {
 					switch j.State {
-					case models.MigrationStateDone, models.MigrationStateFailed,
+					case models.MigrationStateDone,
 						models.MigrationStateCancelled, models.MigrationStateDegraded:
 						stagingDir := filepath.Join("/var/lib/jabali-migrations", job.ID)
 						if rmErr := os.RemoveAll(stagingDir); rmErr != nil {
