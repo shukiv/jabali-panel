@@ -48,6 +48,16 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 	availablePath := filepath.Join("/etc/nginx/sites-available", p.Domain+".conf")
 	os.Remove(availablePath)
 
+	// Also reap the per-domain mail vhost (mail.<domain>, file
+	// `<domain>-mail.conf`). domain.delete is only ever invoked on a FULL
+	// domain teardown, so the mail vhost must go with it. reconcileWebmailVhosts
+	// only visits domains that still exist, so a deleted domain's mail vhost was
+	// otherwise never reaped — it orphaned in sites-available + sites-enabled on
+	// every delete path (HTTP via Reconciler.ReconcileDeleted and CLI
+	// `jabali user delete` alike). Same `<domain>-mail.conf` convention
+	// webmail.vhost_remove uses; the single reload below covers it.
+	removeMailVhostFiles(p.Domain)
+
 	// Reload nginx
 	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOutput bytes.Buffer
@@ -75,6 +85,28 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		Domain:  p.Domain,
 		Deleted: true,
 	}, nil
+}
+
+// removeMailVhostFiles reaps the per-domain mail vhost (`<domain>-mail.conf`)
+// from sites-available + sites-enabled, using the same overridable path vars
+// webmail.vhost_remove uses. Idempotent; returns true if it removed anything so
+// the caller can decide whether an nginx reload is warranted. The caller drives
+// the reload (domain.delete reloads once for the main + mail vhost together).
+// domain is expected pre-validated (domainRegex) by the caller.
+func removeMailVhostFiles(domain string) bool {
+	changed := false
+	for _, p := range []string{
+		filepath.Join(mailVhostSitesEnabled, domain+"-mail.conf"),
+		filepath.Join(mailVhostSitesAvailable, domain+"-mail.conf"),
+	} {
+		if _, err := os.Lstat(p); err != nil {
+			continue // absent (or unreadable) — nothing to reap
+		}
+		if err := os.Remove(p); err == nil {
+			changed = true
+		}
+	}
+	return changed
 }
 
 func init() {

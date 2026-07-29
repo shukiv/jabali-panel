@@ -100,6 +100,24 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 			if err := domains.Delete(ctx, d.ID); err != nil {
 				slog.Warn("cli delete: cascade domain failed",
 					"user_id", userID, "domain_id", d.ID, "err", err)
+				continue
+			}
+			// Reap the nginx vhost now the row is gone: sites-enabled +
+			// sites-available <domain>.conf, reload, per-domain logs. The HTTP
+			// handler does this via Reconciler.ReconcileDeleted; the CLI has no
+			// reconciler, so it calls the agent's domain.delete RPC directly
+			// (same teardown the domain DELETE route drives). Without it,
+			// `jabali user delete` left orphan /etc/nginx/sites-*/<domain>.conf
+			// behind after the DB row + /home docroot were already gone — the
+			// vhost served a 404-docroot on the deleted domain's Host header.
+			// Best-effort: log + continue, matching the other agent cascades.
+			if sharedAgent != nil {
+				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				if _, err := sharedAgent.Call(agentCtx, "domain.delete", map[string]any{"domain": d.Name}); err != nil {
+					slog.Warn("cli delete: nginx vhost teardown failed",
+						"user_id", userID, "domain", d.Name, "err", err)
+				}
+				cancel()
 			}
 		}
 	}
