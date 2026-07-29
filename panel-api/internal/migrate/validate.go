@@ -15,9 +15,9 @@ import (
 type ConflictKind string
 
 const (
-	ConflictTargetUserExists  ConflictKind = "target_user_exists"
-	ConflictDomainTaken       ConflictKind = "domain_taken"
-	ConflictUsernameInvalid   ConflictKind = "username_invalid"
+	ConflictTargetUserExists ConflictKind = "target_user_exists"
+	ConflictDomainTaken      ConflictKind = "domain_taken"
+	ConflictUsernameInvalid  ConflictKind = "username_invalid"
 )
 
 // Conflict is one row in the validation report. The Detail is a
@@ -92,13 +92,13 @@ func Validate(ctx context.Context, deps ValidateDeps, m *AccountManifest, target
 	rpt.Projections.CronToCreate = len(m.Cron)
 	rpt.Projections.SSHKeysToCreate = len(m.SSH)
 
-	// Username sanity. POSIX-compatible, 1-32 chars, lowercase,
-	// alnum or hyphen. Stricter than PHP-era panels — refuse
-	// anything that wouldn't survive a useradd.
+	// Username sanity. POSIX-compatible, 1-32 chars, start with a-z,
+	// then lowercase alnum / hyphen / underscore — refuse anything
+	// that wouldn't survive a useradd.
 	if !isValidUnixUsername(targetUsername) {
 		rpt.Blockers = append(rpt.Blockers, Conflict{
 			Kind:   ConflictUsernameInvalid,
-			Detail: fmt.Sprintf("target username %q must be 1-32 chars, lowercase alnum + hyphen", targetUsername),
+			Detail: fmt.Sprintf("target username %q must be 1-32 chars, start with a-z, then lowercase alnum, hyphen or underscore", targetUsername),
 		})
 	}
 
@@ -145,10 +145,13 @@ func Validate(ctx context.Context, deps ValidateDeps, m *AccountManifest, target
 }
 
 // isValidUnixUsername mirrors the rules useradd applies on Debian:
-// start with a lowercase letter, then lowercase / digits / hyphen,
-// 1..32 chars total. Rejects underscores (cPanel allows them, jabali
-// doesn't — restore stage rewrites underscores to hyphens and
-// records the rewrite as a warning).
+// start with a lowercase letter, then lowercase / digits / hyphen /
+// underscore, 1..32 chars total. GH #746: this used to reject
+// underscore, but the agent's looksLikeUnixUsername allows it (and
+// creates such users), and the Plesk auto-kick slug produces one
+// (demolab.test -> demolab_test) — so the mismatch failed imports at
+// validate AFTER the account already existed. Underscore is a valid
+// useradd char, so accept it and stay consistent with the agent.
 func isValidUnixUsername(s string) bool {
 	if len(s) == 0 || len(s) > 32 {
 		return false
@@ -161,6 +164,13 @@ func isValidUnixUsername(s string) bool {
 		case r >= 'a' && r <= 'z':
 		case r >= '0' && r <= '9':
 		case r == '-':
+		// GH #746: underscore is a valid unix username char (useradd allows
+		// it) and the agent's looksLikeUnixUsername accepts it — so the agent
+		// happily CREATES an underscore user, then this validate stage rejected
+		// it, failing the import after the account already exists. It's also
+		// what the Plesk auto-kick slug produces (demolab.test -> demolab_test).
+		// Allow it here to match the agent + actual unix rules.
+		case r == '_':
 		default:
 			return false
 		}
