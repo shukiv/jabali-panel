@@ -20,6 +20,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ioncube"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
@@ -188,7 +189,7 @@ type Deps struct {
 	// user-scoped envelope also reaches the recipient's own routed channels.
 	UserNotificationRoutes repository.UserNotificationRouteRepository
 	WebhookEndpoints       repository.WebhookEndpointRepository
-	WebPushSubs          repository.WebPushSubscriptionRepository
+	WebPushSubs            repository.WebPushSubscriptionRepository
 	// NotificationQueue is the dispatcher's publish end — the internal
 	// enqueue endpoint (RequireLocalhost) and in-process event sources
 	// write to this Queue. Nil when Redis is not configured; handlers
@@ -1123,6 +1124,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				PHPPools: deps.PHPPools,
 			})
 		}
+		if deps.Domains != nil && deps.PHPPools != nil && deps.Users != nil && deps.Agent != nil {
+			api.RegisterDomainIonCubeRoutes(v1, api.DomainIonCubeHandlerConfig{
+				Domains:  deps.Domains,
+				PHPPools: deps.PHPPools,
+				Users:    deps.Users,
+				Agent:    deps.Agent,
+			})
+		}
 		if deps.Domains != nil {
 			api.RegisterDomainHtaccessRoutes(v1, api.DomainHtaccessHandlerConfig{
 				Domains: deps.Domains,
@@ -1296,6 +1305,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			admin := v1.Group("/admin", middleware.RequireAdmin())
 			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent, deps.ServerSettings)
 			api.RegisterPHPExtensionAdminRoutes(admin, deps.Agent)
+			api.RegisterIonCubeAdminRoutes(admin, deps.Agent, ioncube.Fetcher{})
 		}
 
 		// M45 root web terminal (ADR-0096). Off by default; the handler

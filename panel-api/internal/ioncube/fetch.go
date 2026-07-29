@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"path"
 	"strings"
-	"time"
 )
 
 // maxLoaderBytes bounds a single extracted .so (loaders are ~2.5 MB; 16 MB is a
@@ -43,7 +42,11 @@ func (f Fetcher) FetchLoader(ctx context.Context, version string) ([]byte, error
 	}
 	client := f.Client
 	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second}
+		// No client-level Timeout: the request is bound to ctx (below), so the
+		// caller's deadline (ioncubeFetchTimeout, 2m) governs the whole
+		// download. A hardcoded client Timeout would silently cap that shorter
+		// and truncate a slow 29 MB download.
+		client = &http.Client{}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

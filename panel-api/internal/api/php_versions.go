@@ -21,6 +21,11 @@ const phpVersionCallTimeout = 10 * time.Second
 // adminActionTimeout bounds admin-only install/reload operations.
 const adminActionTimeout = 5 * time.Minute
 
+// ioncubeFetchTimeout bounds the panel-api download of the ionCube loaders
+// tarball (~29 MB) before the .so is extracted, verified, and handed to the
+// agent. Generous for a slow link; the fetch runs inside the admin action.
+const ioncubeFetchTimeout = 2 * time.Minute
+
 // reloadTimeout bounds the reload operation specifically.
 const reloadTimeout = 30 * time.Second
 
