@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpext"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ioncube"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -171,6 +173,12 @@ func newPHPExtListCmd() *cobra.Command {
 			for _, e := range resp.Extensions {
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.Name, boolYN(e.Installed), boolYN(e.Enabled), boolYN(e.BuiltIn))
 			}
+			// ionCube is composed in (not a dpkg extension) — mirror the HTTP
+			// list so the CLI shows the same row.
+			if ioncube.ValidVersion(version) {
+				inst, en := ioncubeVersionStateCLI(ctx, version)
+				fmt.Fprintf(w, "ioncube\t%s\t%s\t%s\n", boolYN(inst), boolYN(en), boolYN(false))
+			}
 			return w.Flush()
 		},
 	}
@@ -189,6 +197,13 @@ func newPHPExtApplyCmd(action, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
+			// ionCube is not a dpkg extension — it appears as a row in the
+			// extension list but its actions route to the loader RPCs (parity
+			// with the HTTP ext-apply path in php_extensions.go). panel-api
+			// fetches the loader (ADR-0050); the agent installs the verified .so.
+			if args[0] == "ioncube" {
+				return applyIonCubeCLI(ctx, version, action)
+			}
 			// Built-ins are compiled into php<v>-common (always loaded).
 			// Agent has no mods-available file to enable/disable, so the
 			// agent call would fail with a misleading "ini file doesn't
@@ -228,6 +243,79 @@ func newPHPExtApplyCmd(action, short string) *cobra.Command {
 	cmd.Flags().StringVar(&version, "version", "", "PHP version (required)")
 	_ = cmd.MarkFlagRequired("version")
 	return cmd
+}
+
+// ioncubeVersionStateCLI reads live ionCube status for the list command.
+// Best-effort: a status hiccup renders the row as not-installed/not-enabled.
+func ioncubeVersionStateCLI(ctx context.Context, version string) (installed, enabled bool) {
+	raw, err := sharedAgent.Call(ctx, "php.ioncube.status", nil)
+	if err != nil {
+		return false, false
+	}
+	var status struct {
+		InstalledVersions []string `json:"installed_versions"`
+		EnabledVersions   []string `json:"enabled_versions"`
+	}
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return false, false
+	}
+	for _, v := range status.InstalledVersions {
+		if v == version {
+			installed = true
+		}
+	}
+	for _, v := range status.EnabledVersions {
+		if v == version {
+			enabled = true
+		}
+	}
+	return installed, enabled
+}
+
+// applyIonCubeCLI routes an ext-apply action for the ionCube pseudo-extension
+// to the loader RPCs. Mirrors applyIonCube in panel-api/internal/api so the CLI
+// and HTTP paths behave identically.
+func applyIonCubeCLI(ctx context.Context, version, action string) error {
+	if !ioncube.ValidVersion(version) {
+		return fmt.Errorf("ionCube loader not offered for PHP %s (supported: %v)", version, ioncube.SupportedVersions())
+	}
+	var raw json.RawMessage
+	var err error
+	switch action {
+	case "install":
+		sum, serr := ioncube.SHA256For(version)
+		if serr != nil {
+			return serr
+		}
+		fetchCtx, fcancel := context.WithTimeout(ctx, 2*time.Minute)
+		data, ferr := ioncube.Fetcher{}.FetchLoader(fetchCtx, version)
+		fcancel()
+		if ferr != nil {
+			return fmt.Errorf("fetch ionCube loader: %w", ferr)
+		}
+		raw, err = sharedAgent.Call(ctx, "php.ioncube.install", map[string]any{
+			"version": version, "sha256": sum, "so_b64": base64.StdEncoding.EncodeToString(data),
+		})
+	case "remove":
+		raw, err = sharedAgent.Call(ctx, "php.ioncube.uninstall", map[string]any{"version": version})
+	case "enable", "disable":
+		raw, err = sharedAgent.Call(ctx, "php.ioncube.server_set", map[string]any{
+			"version": version, "enabled": action == "enable",
+		})
+	default:
+		return fmt.Errorf("unknown action %q", action)
+	}
+	if err != nil {
+		return fmt.Errorf("php.ioncube.%s: %w", action, err)
+	}
+	if jsonOutput {
+		var v any
+		_ = json.Unmarshal(raw, &v)
+		return printJSON(v)
+	}
+	cliAuditOK(ctx, "php.ioncube_"+action, "php_extension", "ioncube@"+version, nil)
+	fmt.Printf("php%s %s ioncube: ok\n", version, action)
+	return nil
 }
 
 func newPHPPoolCmd() *cobra.Command {
