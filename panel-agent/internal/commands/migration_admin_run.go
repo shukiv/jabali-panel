@@ -252,6 +252,28 @@ type migrationImportRunParams struct {
 	TargetPackageID string `json:"target_package_id,omitempty"`
 }
 
+// importSystemdRunArgs assembles the systemd-run argv for a migration import.
+// runProps are extra systemd-run options (e.g. --property=EnvironmentFile=…)
+// that MUST come before the command; cmdOpts are extra `jabali migrate import`
+// flags. Keeping --property in runProps (never in the command tail) is the
+// whole point: a systemd-run flag placed after /usr/local/bin/jabali is handed
+// to jabali's argv and dies with "unknown flag: --property" (GH #746).
+func importSystemdRunArgs(jobID, targetUser string, runProps, cmdOpts []string) []string {
+	args := []string{
+		"--unit=" + fmt.Sprintf("jabali-migrate-import-%s.service", jobID),
+		"--no-block",
+		"--collect",
+	}
+	args = append(args, runProps...)
+	args = append(args,
+		"/usr/local/bin/jabali", "migrate", "import",
+		"--job-id="+jobID,
+		"--target-user="+targetUser,
+	)
+	args = append(args, cmdOpts...)
+	return args
+}
+
 func migrationImportRunHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var p migrationImportRunParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -263,16 +285,9 @@ func migrationImportRunHandler(ctx context.Context, raw json.RawMessage) (any, e
 	if !looksLikeUnixUsername(p.TargetUser) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "target_user looks unsafe"}
 	}
-	args := []string{
-		"--unit=" + fmt.Sprintf("jabali-migrate-import-%s.service", p.JobID),
-		"--no-block",
-		"--collect",
-		"/usr/local/bin/jabali", "migrate", "import",
-		"--job-id=" + p.JobID,
-		"--target-user=" + p.TargetUser,
-	}
+	var runProps, cmdOpts []string
 	if p.TargetEmail != "" {
-		args = append(args, "--target-email="+p.TargetEmail)
+		cmdOpts = append(cmdOpts, "--target-email="+p.TargetEmail)
 	}
 	if p.TargetPassword != "" {
 		// Reject control chars so a crafted password can't inject extra
@@ -291,11 +306,14 @@ func migrationImportRunHandler(ctx context.Context, raw json.RawMessage) (any, e
 		if werr := os.WriteFile(envPath, []byte(content), 0o600); werr != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write target-password env: %v", werr)}
 		}
-		args = append(args, "--property=EnvironmentFile="+envPath)
+		// --property is a systemd-run flag — it lands in runProps (before the
+		// command), NOT in cmdOpts.
+		runProps = append(runProps, "--property=EnvironmentFile="+envPath)
 	}
 	if p.TargetPackageID != "" {
-		args = append(args, "--target-package-id="+p.TargetPackageID)
+		cmdOpts = append(cmdOpts, "--target-package-id="+p.TargetPackageID)
 	}
+	args := importSystemdRunArgs(p.JobID, p.TargetUser, runProps, cmdOpts)
 	unit := fmt.Sprintf("jabali-migrate-import-%s.service", p.JobID)
 	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", unit).Run()
 	startedAt := time.Now().UTC()
