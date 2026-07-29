@@ -16,6 +16,19 @@ verfile="/run/php/jabali-${user}/phpver"
 ver=$(cat "$verfile")
 [[ "$ver" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "fpm-exec: malformed version '$ver' in $verfile" >&2; exit 1; }
 
+# Per-user PHP extension scan dir: an extra ini directory scanned ONLY for
+# this user's master. The agent's php.ioncube.pool_set drops a
+# 00-ioncube.ini here to load the ionCube Loader (a version-locked
+# zend_extension) for this tenant alone, not box-wide. The dir is placed
+# FIRST (leading path, trailing ":" appends the compiled-in default scan
+# dir) because ionCube fatals unless its loader is the first zend_extension
+# parsed — OPcache et al. still load from the default dir after it. Benign
+# when the dir is absent/empty: php-fpm just scans nothing extra. Path lives
+# under /etc/php/** so the jabali-fpm-app AppArmor profile already permits
+# reading it (and the loader .so under /usr/lib/php/** mr) with no profile
+# change. user + ver are validated above, so the path carries no injection.
+export PHP_INI_SCAN_DIR="/etc/php/${ver}/fpm/jabali-ext/${user}:"
+
 # --nodaemonize (-F) keeps php-fpm in foreground so systemd supervises
 # it with Type=simple. --fpm-config points at the per-user FPM config
 # so only this user's pool is loaded (fixes the glob-includes-all-pools bug).
