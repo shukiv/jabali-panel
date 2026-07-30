@@ -110,13 +110,19 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 		serviceUser = "jabali"
 	}
 
+	// GH #760: on a low-RAM host, prepend GOFLAGS=-p=1 + GOMEMLIMIT so the
+	// from-source go build can't OOM the box (mirrors install.sh:build_backend).
+	// The vars are Go-specific, so passing them to git/npm too is harmless.
+	lowMemGoEnv := lowRAMGoBuildEnv()
 	asUser := func(dir string, name string, args ...string) error {
-		allArgs := append([]string{"-u", serviceUser, "-H", "env",
+		allArgs := []string{"-u", serviceUser, "-H", "env",
 			"HOME=" + repoDir,
 			"PATH=" + goRoot + "/bin:/usr/bin:/bin",
 			"GOCACHE=" + repoDir + "/.cache/go-build",
 			"GOMODCACHE=" + repoDir + "/.cache/go-mod",
-		}, name)
+		}
+		allArgs = append(allArgs, lowMemGoEnv...)
+		allArgs = append(allArgs, name)
 		allArgs = append(allArgs, args...)
 		return run(dir, "sudo", allArgs...)
 	}

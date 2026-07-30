@@ -4783,10 +4783,21 @@ build_frontend() {
   # time on a fully-loaded box; ~0s on an idle one.
   local vite_demo=""
   [ "$(_deploy_profile)" = "demo" ] && { vite_demo="VITE_DEMO=1"; _log "demo profile active: building panel-ui with VITE_DEMO=1"; }
+  # Cap the V8 old-space RAM-aware (GH #760). A flat 2 GB heap lets node
+  # outgrow a small VPS and get OOM-killed mid-build even with the swap file
+  # above — the operator sees a cryptic 'Killed'. Scale the ceiling to host
+  # RAM so a 2 GB box keeps node under RAM+swap; big hosts keep the roomy cap.
+  #   ≤2 GB → 1024 MB   ≤4 GB → 1536 MB   >4 GB → 2048 MB
+  local node_heap_mb=2048 mem_mb_fe
+  mem_mb_fe=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  if   [[ $mem_mb_fe -gt 0 && $mem_mb_fe -le 2048 ]]; then node_heap_mb=1024
+  elif [[ $mem_mb_fe -gt 0 && $mem_mb_fe -le 4096 ]]; then node_heap_mb=1536
+  fi
+  _log "panel-ui build: host=${mem_mb_fe}MB RAM → NODE --max-old-space-size=${node_heap_mb}"
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
-    NODE_OPTIONS="--max-old-space-size=2048" \
+    NODE_OPTIONS="--max-old-space-size=${node_heap_mb}" \
     $vite_demo \
     bash -c "cd '$REPO_DIR/panel-ui' && nice -n 19 ionice -c 3 npm run build"
   _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
@@ -4859,12 +4870,29 @@ build_backend() {
   panel_ld+=" -X git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api.Commit=$full_sha"
   panel_ld+=" -X git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api.BuildTime=$btime"
 
+  # Low-RAM hosts (GH #760): serialize package compilation (-p=1) and soft-cap
+  # the Go heap so building panel-api — a large binary whose default build
+  # parallelism (=nproc) fans out several compiler processes — can't OOM a 2 GB
+  # VPS. -p=1 is the big lever (one compile at a time); GOMEMLIMIT + a lower
+  # GOGC make each go tool's GC more aggressive. No effect >4 GB, so CI and
+  # real hosts build exactly as before (just slower on the tiny boxes).
+  local go_lowmem="" mem_mb_be
+  mem_mb_be=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  if [[ $mem_mb_be -gt 0 && $mem_mb_be -le 4096 ]]; then
+    if [[ $mem_mb_be -le 2560 ]]; then
+      go_lowmem="GOFLAGS=-p=1 GOMEMLIMIT=900MiB GOGC=40"
+    else
+      go_lowmem="GOFLAGS=-p=1 GOMEMLIMIT=1500MiB GOGC=50"
+    fi
+    _log "build-backend: low-RAM host (${mem_mb_be}MB) → serialize go build ($go_lowmem)"
+  fi
   # One invocation of go, three binaries — shared module, shared build cache.
   sudo -u "$SERVICE_USER" -H env \
     PATH="$GO_ROOT/bin:/usr/bin:/bin" \
     HOME="$REPO_DIR" \
     GOCACHE="$REPO_DIR/.cache/go-build" \
     GOMODCACHE="$REPO_DIR/.cache/go-mod" \
+    $go_lowmem \
     bash -c "cd '$REPO_DIR' && \
       go build -trimpath $panel_tags -ldflags '$panel_ld' -o '$tmp_panel' ./panel-api/cmd/server && \
       go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_agent' ./panel-agent/cmd/jabali-agent && \
