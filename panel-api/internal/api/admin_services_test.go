@@ -100,6 +100,10 @@ func TestAdminServices_SelfDestructBlocked(t *testing.T) {
 		{"nginx", "disable"},
 		{"redis-server", "stop"},
 		{"redis-server", "disable"},
+		// GH #746 follow-up: jabali-kratos is the identity provider —
+		// stopping it locks every operator out of the panel.
+		{"jabali-kratos", "stop"},
+		{"jabali-kratos", "disable"},
 	}
 	for _, c := range cases {
 		ag := &fakeAgent{}
