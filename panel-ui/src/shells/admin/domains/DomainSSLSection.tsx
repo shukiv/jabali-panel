@@ -126,9 +126,14 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
 
   useEffect(() => {
     fetchCert();
+    // GH #738: admin_email lives at GET /admin/settings as a FLAT field. The
+    // old /system/settings path 404'd (no such route) and the .settings.*
+    // nesting was wrong too, so adminEmail was ALWAYS undefined — which left
+    // the "Let's Encrypt" option greyed out even when an admin email was set
+    // (the exact symptom in #738). Read the real endpoint + flat field.
     apiClient
-      .get<{ settings: ServerSettings }>("/system/settings")
-      .then((res) => setAdminEmail(res.data?.settings?.admin_email))
+      .get<ServerSettings>("/admin/settings")
+      .then((res) => setAdminEmail(res.data?.admin_email))
       .catch(() => undefined);
     apiClient
       .get<{ ssl_mode?: string; shared_certificate_id?: string }>(`/domains/${domainId}`)
