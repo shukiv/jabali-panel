@@ -15,6 +15,8 @@
 | Network | Public IPv4, ports 22/25/53/80/443/465/587/993/995 open | + outbound 53/udp+tcp |
 | OS | Debian 13 fresh install | — |
 
+The RAM guidance matches cPanel: **2 GB is the minimum, 4 GB is recommended.** The installer builds the panel (SPA + Go binaries) on the box, so on a ≤4 GB host it provisions a swap file and caps the build's memory (RAM-aware V8 heap + serialized `go build`) so compiling doesn't get OOM-killed — on 2 GB the build is slower but completes. Baseline services (MariaDB, CrowdSec) auto-size down on small hosts; on a very tight 2 GB box you can install without the `security` module to drop CrowdSec's ~500 MB WAF engine.
+
 If outbound `:53/udp` is blocked (some labs), set `JABALI_DNS_FORWARDER=<a-reachable-resolver>` so the recursor forwards over TCP.
 
 ## Install

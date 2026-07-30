@@ -278,7 +278,7 @@ Service stack (single-node default):
 ## Requirements
 
 - Fresh Debian 13 install (no pre-existing web or mail stack)
-- 2 GB RAM minimum (4+ recommended; small VM gets auto-swap during build)
+- 2 GB RAM minimum, 4 GB recommended — the same guidance as cPanel (on a ≤4 GB host the installer adds swap and caps the on-box SPA/Go build memory so it doesn't OOM; on 2 GB the build is slower but completes)
 - A domain for panel + mail (with glue records if hosting DNS)
 - PTR (reverse DNS) for mail hostname
 - Open ports: 22, 80, 443, 8443, 25, 465, 587, 993, 995, 53
