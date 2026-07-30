@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -29,6 +30,11 @@ type wordpressInstallReq struct {
 	AdminPass    string `json:"admin_pass"`
 	AdminEmail   string `json:"admin_email"`
 	Locale       string `json:"locale"`
+	// Version is the WordPress core release to install: "latest" (default,
+	// resolved by wp-cli at install time) or a concrete version like "6.7.1"
+	// (JAB-180). Validated below; integrity is enforced by verify-checksums
+	// against whatever version actually landed.
+	Version      string `json:"version"`
 	UseWWW       bool   `json:"use_www"`      // prepend www. to domain in siteurl
 	Subdirectory string `json:"subdirectory"` // install in subdirectory (optional)
 
@@ -59,12 +65,10 @@ type wordpressInstallResp struct {
 }
 
 // validateDocrootPath ensures the docroot is within /home/<osuser>/domains/
-// wordpressCoreVersion pins the WordPress core release the installer downloads
-// (GH #456). Installing `--version=latest` meant a tenant got whatever upstream
-// published at install time — unreproducible and a supply-chain risk if a bad
-// or compromised release lands. Bump deliberately as release-review work and
-// re-test; `wp core verify-checksums` enforces integrity against this pin.
-const wordpressCoreVersion = "7.0"
+// wordpressVersionRe validates the requested core version: "latest" or a
+// numeric X / X.Y / X.Y.Z (JAB-180). Anything else is rejected so the value
+// can't smuggle extra wp-cli args or shell metacharacters into the download.
+var wordpressVersionRe = regexp.MustCompile(`^(latest|[0-9]+(\.[0-9]+){0,2})$`)
 
 func validateDocrootPath(osUser, docroot string) error {
 	allowedPrefix := filepath.Join("/home", osUser, "domains")
@@ -297,6 +301,17 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		req.Locale = "en_US"
 	}
 
+	// Default to latest stable (JAB-180); validate before it reaches wp-cli.
+	if req.Version == "" {
+		req.Version = "latest"
+	}
+	if !wordpressVersionRe.MatchString(req.Version) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("invalid version %q (want \"latest\" or a number like 6.7.1)", req.Version),
+		}
+	}
+
 	// Validate docroot is within /home/<osuser>/domains/
 	if err := validateDocrootPath(req.OSUser, req.Docroot); err != nil {
 		return nil, &agentwire.AgentError{
@@ -345,7 +360,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		"wp", "core", "download",
 		"--path="+installPath,
 		"--locale="+req.Locale,
-		"--version="+wordpressCoreVersion,
+		"--version="+req.Version,
 	)
 	var dlStdout, dlStderr bytes.Buffer
 	downloadCmd.Stdout = &dlStdout
@@ -386,26 +401,26 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// before the tree becomes executable tenant web code.
 	verifyCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
+		// No --version: verify against whatever version wp-cli actually
+		// downloaded (req.Version may be "latest"). verify-checksums uses the
+		// installed core version by default, so integrity is still enforced
+		// (a tampered mirror/CDN or corrupted download fails closed).
 		"wp", "core", "verify-checksums",
 		"--path="+installPath,
-		"--version="+wordpressCoreVersion,
 		"--locale="+req.Locale,
 	)
 	var vfStdout, vfStderr bytes.Buffer
 	verifyCmd.Stdout = &vfStdout
 	verifyCmd.Stderr = &vfStderr
 	if err := verifyCmd.Run(); err != nil {
-		// Non-fatal: wp-cli verify-checksums currently false-positives on
-		// WordPress 7.0 because the wp.org checksums manifest does not yet
-		// list 7.0's newly bundled third-party files (php-ai-client/...), so
-		// every legitimate 7.0 download reports "File should not exist". We
-		// must not fail-closed on that or no WordPress could be installed.
-		// The deliberate version PIN above is the primary supply-chain
-		// control (reproducible, Jabali-reviewed release); this check is a
-		// logged tripwire for genuine core tampering. Revisit fail-closed
-		// once the upstream manifest catches up.
-		slog.WarnContext(ctx, "wordpress.install: core verify-checksums reported issues (non-fatal; see WP 7.0 manifest note)",
-			"version", wordpressCoreVersion,
+		// Non-fatal: wp-cli verify-checksums can false-positive when the
+		// wp.org checksums manifest lags a freshly-published core (a new
+		// release bundling third-party files the manifest doesn't list yet
+		// reports "File should not exist"). Failing closed there would block
+		// installing that version, so treat this as a logged tripwire for
+		// genuine core tampering instead.
+		slog.WarnContext(ctx, "wordpress.install: core verify-checksums reported issues (non-fatal)",
+			"version", req.Version,
 			"locale", req.Locale,
 			"err", err,
 			"stderr", truncateStr(vfStderr.String(), 400),

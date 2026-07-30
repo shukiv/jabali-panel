@@ -1053,6 +1053,7 @@ type installKickArgs struct {
 	AdminPassword string
 	AdminEmail    string
 	Locale        string
+	Version       string // WordPress core version: "latest" (default) or X.Y.Z (JAB-180)
 	Subdirectory  string
 	UseWWW        bool
 }
@@ -1109,6 +1110,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 		"admin_pass":   args.AdminPassword,
 		"admin_email":  args.AdminEmail,
 		"locale":       args.Locale,
+		"version":      args.Version, // JAB-180; "" => agent defaults to latest
 		"subdirectory": args.Subdirectory,
 		"use_www":      args.UseWWW,
 	}

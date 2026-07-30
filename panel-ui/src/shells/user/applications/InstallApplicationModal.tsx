@@ -108,6 +108,7 @@ function humanizeFieldName(name: string): string {
     admin_email: "Admin email",
     admin_password: "Admin password",
     locale: "Locale",
+    version: "Version",
     license: "License",
     site_name: "Site name",
     admin_user: "Admin user",
@@ -126,6 +127,7 @@ function humanizeFieldName(name: string): string {
 const FIELD_ORDER: Record<string, number> = {
   site_title: 1,
   site_name: 2,
+  version: 5,
   admin_username: 10,
   admin_user: 11,
   admin_email: 12,

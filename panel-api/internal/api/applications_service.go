@@ -315,6 +315,7 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			AdminPassword: adminPassword,
 			AdminEmail:    k.AdminEmail,
 			Locale:        k.Locale,
+			Version:       paramOr(k.Params, "version", "latest"), // JAB-180
 			Subdirectory:  k.Subdirectory,
 			UseWWW:        k.UseWWW,
 		}, deps)

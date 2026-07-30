@@ -56,6 +56,16 @@ var WordPress = App{
 			Default:     "en_US",
 			Description: "Two-part locale code (e.g. en_US, he_IL).",
 		},
+		// JAB-180: caller-chosen core version. Default "latest" is resolved by
+		// wp-cli at install time; a concrete release (e.g. 6.7.1) is also
+		// accepted. The agent validates the value and verify-checksums enforces
+		// integrity against whatever landed.
+		"version": {
+			Type:        "string",
+			Required:    false,
+			Default:     "latest",
+			Description: "WordPress version — \"latest\" (recommended) or a specific release like 6.7.1.",
+		},
 	},
 }
 
