@@ -445,6 +445,22 @@ func newPHPPoolSetCmd() *cobra.Command {
 				}
 				created = true
 			} else {
+				// JAB-174: switching the default pool to a version the user
+				// ALREADY has as a separate per-version pool (per-domain
+				// binding, GH #329) would collide with uniq_user_phpver on the
+				// UPDATE below and surface as a raw duplicate-key error. Detect
+				// it and return an actionable message instead.
+				if pool.PHPVersion != version {
+					if other, ferr := repo.FindByUserAndVersion(ctx, u.ID, version); ferr == nil && other != nil && other.ID != pool.ID {
+						return fmt.Errorf(
+							"user %s already has a separate PHP %s pool (%s), likely bound to specific domains; "+
+								"the default pool can't switch to a version that already exists as its own pool. "+
+								"Delete that pool first (jabali php pool delete %s) or rebind its domains, then retry",
+							u.ID, version, other.ID, other.ID)
+					} else if ferr != nil && !errors.Is(ferr, repository.ErrNotFound) {
+						return fmt.Errorf("check existing pool for version %s: %w", version, ferr)
+					}
+				}
 				pool.PHPVersion = version
 				// Mark pending so the reconciler re-applies. Without this
 				// the pool stays `active`, and ReconcilePHPPools skips

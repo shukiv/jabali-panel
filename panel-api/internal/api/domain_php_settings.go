@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -250,6 +251,21 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 			return
 		}
 		if pool != nil && pool.PHPVersion != *req.PHPVersion {
+			// JAB-174: if the user already has a separate per-version pool for
+			// the target version (per-domain binding, GH #329), switching the
+			// default row to it collides with uniq_user_phpver → a raw 500.
+			// Return a clean, actionable 409 instead.
+			if other, ferr := h.cfg.PHPPools.FindByUserAndVersion(ctx, dom.UserID, *req.PHPVersion); ferr == nil && other != nil && other.ID != pool.ID {
+				c.JSON(http.StatusConflict, gin.H{
+					"error":  "version_pool_exists",
+					"detail": fmt.Sprintf("this user already has a separate PHP %s pool (bound to specific domains); delete it or rebind its domains before switching the default to %s", *req.PHPVersion, *req.PHPVersion),
+				})
+				return
+			} else if ferr != nil && !errors.Is(ferr, repository.ErrNotFound) {
+				slog.ErrorContext(ctx, "patch php-settings: check version pool", "error", ferr, "user_id", dom.UserID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+				return
+			}
 			pool.PHPVersion = *req.PHPVersion
 			pool.Status = "pending"
 			if uerr := h.cfg.PHPPools.Update(ctx, pool); uerr != nil {
