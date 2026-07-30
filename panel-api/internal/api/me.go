@@ -22,6 +22,11 @@ type MeHandlerConfig struct {
 	Packages       repository.PackageRepository
 	ServerSettings repository.ServerSettingsRepository
 	UIPrefs        repository.UserUIPrefRepository
+	// DemoEnabled mirrors cfg.Demo.Enabled. When set, server-capabilities
+	// masks the real public IPs with RFC 5737/3849 documentation-range
+	// placeholders so the public demo dashboard never exposes real infra
+	// (JAB-176). Off in production => the true IPs are returned unchanged.
+	DemoEnabled bool
 }
 
 // RegisterMeRoutes wires GET /api/v1/me and GET /api/v1/me/ssh-connection.
@@ -98,10 +103,29 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		"root_terminal_enabled": settings.RootTerminalEnabled,
 		// GH #361: surface the server's public IPv4/IPv6 so the user + admin
 		// dashboards can show them (already tracked for the panel cert + DNS;
-		// not per-user sensitive). Empty string when unset.
-		"public_ipv4": settings.PublicIPv4,
-		"public_ipv6": settings.PublicIPv6,
+		// not per-user sensitive). Empty string when unset. JAB-176: on the
+		// public demo, mask them so the dashboard never leaks the real infra IP.
+		"public_ipv4": demoMaskIPv4(h.cfg.DemoEnabled, settings.PublicIPv4),
+		"public_ipv6": demoMaskIPv6(h.cfg.DemoEnabled, settings.PublicIPv6),
 	})
+}
+
+// demoMaskIPv4 / demoMaskIPv6 replace a non-empty real IP with a
+// documentation-range placeholder (RFC 5737 TEST-NET-3 / RFC 3849) when the
+// public demo is enabled, so the demo dashboard shows a plausible but fake
+// address instead of the real host (JAB-176). An empty value stays empty.
+func demoMaskIPv4(demo bool, real string) string {
+	if demo && real != "" {
+		return "203.0.113.10"
+	}
+	return real
+}
+
+func demoMaskIPv6(demo bool, real string) string {
+	if demo && real != "" {
+		return "2001:db8::10"
+	}
+	return real
 }
 
 // meHandler is the bare claims-only fallback the test suite uses

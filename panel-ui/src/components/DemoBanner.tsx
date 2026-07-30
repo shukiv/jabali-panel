@@ -13,7 +13,9 @@ import { useEffect } from "react";
 
 import { useServiceInfo } from "../useServiceInfo";
 
-const BANNER_HEIGHT_PX = 72;
+// JAB-178: tighter strip (was 72) so it reclaims vertical space; the copy is
+// bolded below for legibility at the smaller height.
+const BANNER_HEIGHT_PX = 40;
 
 export function DemoBanner() {
   const { data } = useServiceInfo();
@@ -63,7 +65,8 @@ export function DemoBanner() {
       type="warning"
       banner
       showIcon
-      message={message}
+      // JAB-178: heavier weight so the copy stays legible at the reduced height.
+      message={<span style={{ fontWeight: 600 }}>{message}</span>}
       style={{
         position: "fixed",
         top: 0,
@@ -71,6 +74,7 @@ export function DemoBanner() {
         right: 0,
         zIndex: 2000,
         height: BANNER_HEIGHT_PX,
+        paddingBlock: 0,
         display: "flex",
         alignItems: "center",
       }}

@@ -492,6 +492,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Packages:       deps.Packages,
 			ServerSettings: deps.ServerSettings,
 			UIPrefs:        repository.NewUserUIPrefRepository(deps.DB),
+			DemoEnabled:    cfg.Demo.Enabled, // JAB-176: mask real IPs in demo
 		})
 		// GH #256: per-user CLI default PHP version (self-service).
 		api.RegisterMePhpCliRoutes(v1, api.MePhpCliConfig{

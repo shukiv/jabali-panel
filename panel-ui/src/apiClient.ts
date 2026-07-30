@@ -46,6 +46,14 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (resp) => resp,
   (err: AxiosError) => {
+    // JAB-177: rewrite a demo write-guard rejection to a friendly sentence at
+    // this one choke point (see friendlyDemoError) so every rendering path
+    // shows readable copy instead of the raw "demo_mode" code.
+    friendlyDemoError(
+      err.response?.status,
+      err.response?.data as { error?: string; detail?: string } | undefined,
+    );
+
     // A dead/expired/foreign act-as grant: drop the grant and bounce back to
     // the admin view rather than silently continuing as the admin.
     const data = err.response?.data as { error?: string } | undefined;
@@ -62,6 +70,29 @@ apiClient.interceptors.response.use(
     return Promise.reject(normalizeError(err));
   },
 );
+
+/**
+ * JAB-177: the demo write-guard rejects every write with
+ * 403 {"error":"demo_mode"}. Call sites vary — some show err.message
+ * (normalized below), some read response.data.error/.detail raw — so a handful
+ * surfaced the literal "demo_mode" code, which reads like a bug on the public
+ * demo. Rewrite the body IN PLACE to a friendly sentence (preferring the
+ * backend-supplied banner detail) so every rendering path shows readable copy.
+ * Returns true when it applied. Exported for tests.
+ */
+export function friendlyDemoError(
+  status: number | undefined,
+  data: { error?: string; detail?: string } | undefined,
+): boolean {
+  if (status !== 403 || !data || data.error !== "demo_mode") return false;
+  const friendly =
+    data.detail && data.detail !== "demo_mode"
+      ? data.detail
+      : "This is a read-only demo — changes are disabled.";
+  data.error = friendly;
+  data.detail = friendly;
+  return true;
+}
 
 /**
  * Normalize axios errors by extracting the backend's structured error response.
