@@ -38,33 +38,29 @@ const webmailAgentTimeout = 30 * time.Second
 
 // reconcileWebmailVhosts is invoked from ReconcileAll. Errors are
 // logged per-domain and don't abort the sweep; the next tick retries.
-func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
-	if r.sslCerts == nil {
-		// Without SSL cert paths we can't render the vhost (ssl_certificate
-		// directive is required). In an M5-less install this hook is a
-		// no-op — operators running without ACME won't have webmail
-		// either.
-		return
-	}
-	if r.domains == nil {
-		return
-	}
-
+// listWebmailDomains lists all domains for the webmail reconcile pass.
+func (r *Reconciler) listWebmailDomains(ctx context.Context) ([]models.Domain, error) {
 	domains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
-	if err != nil {
-		r.log.Error("webmail reconcile: list domains", "err", err)
-		return
-	}
+	return domains, err
+}
 
-	// GH #316: admins can disable the Bulwark webmail client server-wide. When
-	// off, tear down every webmail vhost, clear the AppSec allowlist, and stop
-	// the daemon — then skip the apply loop. Default is enabled (the column
-	// defaults to 1), so this is a no-op unless an admin turns it off.
-	if r.serverSettings != nil {
+func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
+	// GH #316 / #760: webmail disabled server-wide → stop AND disable the
+	// Bulwark daemon, clear the AppSec allowlist, tear down vhosts. This runs
+	// BEFORE the sslCerts/domains guards below: those guard only vhost
+	// RENDERING, but the daemon must be stopped regardless — otherwise, on an
+	// install without ACME/SSL wired (sslCerts == nil), disabling webmail left
+	// the Node process running (#760). `disable` (not just stop) so it also
+	// stays down across reboots.
+	if r.serverSettings != nil && r.agent != nil {
 		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil && !s.WebmailEnabled {
-			for i := range domains {
-				if domains[i].EmailEnabled {
-					r.removeWebmailVhost(ctx, domains[i].Name)
+			if r.domains != nil {
+				if domains, err := r.listWebmailDomains(ctx); err == nil {
+					for i := range domains {
+						if domains[i].EmailEnabled {
+							r.removeWebmailVhost(ctx, domains[i].Name)
+						}
+					}
 				}
 			}
 			if _, werr := appseccfg.WriteWebmailHosts(appseccfg.WebmailHostsPath, nil); werr != nil {
@@ -75,8 +71,28 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 			if _, err := r.agent.Call(stopCtx, "service.stop", map[string]any{"name": "jabali-webmail"}); err != nil {
 				r.log.Warn("webmail reconcile: service.stop jabali-webmail failed", "err", err)
 			}
+			if _, err := r.agent.Call(stopCtx, "service.disable", map[string]any{"name": "jabali-webmail"}); err != nil {
+				r.log.Warn("webmail reconcile: service.disable jabali-webmail failed", "err", err)
+			}
 			return
 		}
+	}
+
+	if r.sslCerts == nil {
+		// Without SSL cert paths we can't render the vhost (ssl_certificate
+		// directive is required). In an M5-less install this hook is a
+		// no-op — operators running without ACME won't have webmail
+		// either. (The disabled-teardown above already ran.)
+		return
+	}
+	if r.domains == nil {
+		return
+	}
+
+	domains, err := r.listWebmailDomains(ctx)
+	if err != nil {
+		r.log.Error("webmail reconcile: list domains", "err", err)
+		return
 	}
 
 	// GH #316: per-user webmail toggle AND-gates ALL of a user's domains. Build a
@@ -139,6 +155,13 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 			"name": "jabali-webmail",
 		}); err != nil {
 			r.log.Error("webmail reconcile: service.start jabali-webmail failed", "err", err)
+		}
+		// Enable too (idempotent) so the daemon survives a reboot — symmetric
+		// with the disable on the off-path (#760).
+		if _, err := r.agent.Call(startCtx, "service.enable", map[string]any{
+			"name": "jabali-webmail",
+		}); err != nil {
+			r.log.Warn("webmail reconcile: service.enable jabali-webmail failed", "err", err)
 		}
 	}
 }
