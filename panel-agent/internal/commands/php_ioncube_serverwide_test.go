@@ -74,9 +74,14 @@ func TestIoncubeServerSet_EnableThenDisable(t *testing.T) {
 	if !resp.Changed || !resp.Enabled {
 		t.Errorf("enable: changed=%v enabled=%v want true/true", resp.Changed, resp.Enabled)
 	}
-	body, err := os.ReadFile(ioncubeConfdIniPath("8.4"))
-	if err != nil || string(body) != "zend_extension="+ioncubeLoaderSoPath("8.4")+"\n" {
-		t.Fatalf("conf.d ini wrong: %q err=%v", string(body), err)
+	// JAB-175: enable must drop the loader into BOTH the FPM and CLI conf.d,
+	// so wp-cli (CLI SAPI) loads it too.
+	want := "zend_extension=" + ioncubeLoaderSoPath("8.4") + "\n"
+	for _, p := range []string{ioncubeConfdIniPath("8.4"), ioncubeCliConfdIniPath("8.4")} {
+		body, err := os.ReadFile(p)
+		if err != nil || string(body) != want {
+			t.Fatalf("conf.d ini %s wrong: %q err=%v", p, string(body), err)
+		}
 	}
 
 	if resp, _ := callServerSet(t, "8.4", true); resp.Changed {
@@ -87,8 +92,10 @@ func TestIoncubeServerSet_EnableThenDisable(t *testing.T) {
 	if ae != nil || !resp.Changed || resp.Enabled {
 		t.Fatalf("disable: resp=%+v ae=%v", resp, ae)
 	}
-	if _, err := os.Stat(ioncubeConfdIniPath("8.4")); !os.IsNotExist(err) {
-		t.Errorf("conf.d ini still present after disable")
+	for _, p := range []string{ioncubeConfdIniPath("8.4"), ioncubeCliConfdIniPath("8.4")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("conf.d ini %s still present after disable", p)
+		}
 	}
 
 	if resp, _ := callServerSet(t, "8.4", false); resp.Changed {

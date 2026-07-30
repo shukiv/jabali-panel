@@ -117,8 +117,18 @@ func newPHPPoolCreateCmd() *cobra.Command {
 				return err
 			}
 			repo := repository.NewPHPPoolRepository(sharedDB)
-			if existing, _ := repo.FindByUserAndVersion(ctx, u.ID, version); existing != nil {
-				return fmt.Errorf("pool already exists for %s php %s (id=%s)", user, version, existing.ID)
+			// JAB-174: a user already having a pool means `create` would leave a
+			// duplicate + orphan (the old row stays `active` with no on-disk
+			// config, and `pool get` returns it). Switching a user's PHP version
+			// is `pool set` (updates in place + re-applies); per-domain versions
+			// are `domain php-version set`. So refuse to create a second pool and
+			// point at the right command instead of silently orphaning one.
+			if existing, _ := repo.FindByUserID(ctx, u.ID); existing != nil {
+				if existing.PHPVersion == version {
+					return fmt.Errorf("pool already exists for %s php %s (id=%s)", user, version, existing.ID)
+				}
+				return fmt.Errorf("user %s already has a PHP pool on php %s (id=%s); to switch it use `jabali php pool set --user %s --version %s` (updates in place — no duplicate/orphan), or `jabali domain php-version set <domain> %s` for a per-domain version",
+					user, existing.PHPVersion, existing.ID, user, version, version)
 			}
 			pool := &models.PHPPool{
 				ID: ulid.Make().String(), UserID: u.ID, PHPVersion: version,

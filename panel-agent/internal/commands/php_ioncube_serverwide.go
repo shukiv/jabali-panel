@@ -47,6 +47,21 @@ func ioncubeConfdIniPath(version string) string {
 	return filepath.Join(ioncubePHPEtcRoot(), version, "fpm", "conf.d", "00-ioncube.ini")
 }
 
+// ioncubeCliConfdIniPath is the CLI SAPI drop-in. JAB-175: enabling only the FPM
+// conf.d left wp-cli (CLI SAPI) without the loader, so activating / running an
+// ionCube-encoded plugin via wp-cli failed even though the site (FPM) worked.
+// Debian's phpenmod enables an extension for both SAPIs; ionCube must match.
+func ioncubeCliConfdIniPath(version string) string {
+	return filepath.Join(ioncubePHPEtcRoot(), version, "cli", "conf.d", "00-ioncube.ini")
+}
+
+// ioncubeConfdIniPaths returns every SAPI conf.d drop-in for a version (FPM +
+// CLI). The FPM one stays the canonical "enabled" marker (status + guards key
+// on it), but both are written/removed together.
+func ioncubeConfdIniPaths(version string) []string {
+	return []string{ioncubeConfdIniPath(version), ioncubeCliConfdIniPath(version)}
+}
+
 // ioncubeLoaderSoPath is where php.ioncube.install writes the loader .so.
 func ioncubeLoaderSoPath(version string) string {
 	return filepath.Join(ioncubeLoaderLibRoot(), version, "ioncube_loader_lin_"+version+".so")
@@ -83,7 +98,6 @@ func phpIoncubeServerSetHandler(ctx context.Context, params json.RawMessage) (an
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid PHP version %q (want X.Y)", p.Version)}
 	}
 
-	iniPath := ioncubeConfdIniPath(p.Version)
 	changed := false
 
 	if p.Enabled {
@@ -95,21 +109,26 @@ func phpIoncubeServerSetHandler(ctx context.Context, params json.RawMessage) (an
 			}
 		}
 		want := "zend_extension=" + soPath + "\n"
-		if cur, err := os.ReadFile(iniPath); err != nil || string(cur) != want {
-			if err := os.MkdirAll(filepath.Dir(iniPath), 0o755); err != nil {
-				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir conf.d: %v", err)}
+		// Enable for every SAPI (FPM + CLI) so wp-cli / cron load it too (JAB-175).
+		for _, iniPath := range ioncubeConfdIniPaths(p.Version) {
+			if cur, err := os.ReadFile(iniPath); err != nil || string(cur) != want {
+				if err := os.MkdirAll(filepath.Dir(iniPath), 0o755); err != nil {
+					return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir conf.d: %v", err)}
+				}
+				if err := writeFileAtomic(iniPath, []byte(want), 0o644); err != nil {
+					return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write ini: %v", err)}
+				}
+				changed = true
 			}
-			if err := writeFileAtomic(iniPath, []byte(want), 0o644); err != nil {
-				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write ini: %v", err)}
-			}
-			changed = true
 		}
 	} else {
-		if _, err := os.Stat(iniPath); err == nil {
-			if err := os.Remove(iniPath); err != nil {
-				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("remove ini: %v", err)}
+		for _, iniPath := range ioncubeConfdIniPaths(p.Version) {
+			if _, err := os.Stat(iniPath); err == nil {
+				if err := os.Remove(iniPath); err != nil {
+					return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("remove ini: %v", err)}
+				}
+				changed = true
 			}
-			changed = true
 		}
 	}
 
