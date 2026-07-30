@@ -9,6 +9,7 @@ import {
   Form,
   InputNumber,
   Modal,
+  Radio,
   Segmented,
   Select,
   Space,
@@ -73,6 +74,25 @@ interface User {
 const ALL_USERS = "__all__";
 
 type Freq = "daily" | "weekly" | "monthly";
+
+// Scope is the schedule's backup TYPE, mirroring the on-demand
+// "Create backup" drawer (GH #502). It maps onto the wire fields the
+// backend already understands (kind + user_ids + include_system_backup):
+//   account_backup — per-account fan-out ("All users" or selected accounts),
+//                     optionally + a system backup via the include switch.
+//   system_backup  — panel/system only, no account fan-out.
+//   full_server    — every account PLUS the system, in one schedule
+//                    (kind=account_backup, all users, include_system=true).
+type Scope = "account_backup" | "system_backup" | "full_server";
+
+// scopeOf derives the drawer's Scope from an existing schedule row so
+// editing reopens on the right type.
+const scopeOf = (s: BackupSchedule): Scope => {
+  if (s.kind === "system_backup") return "system_backup";
+  const hasSelected = (s.user_ids ?? []).length > 0;
+  if (!hasSelected && s.include_system_backup) return "full_server";
+  return "account_backup";
+};
 
 interface ScheduleSpec {
   freq: Freq;
@@ -161,6 +181,7 @@ function ScheduleDrawer({
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
   const freq = (Form.useWatch("freq", form) ?? "daily") as Freq;
+  const scope = (Form.useWatch("scope", form) ?? "account_backup") as Scope;
 
   useEffect(() => {
     if (open) {
@@ -174,6 +195,7 @@ function ScheduleDrawer({
           ? editing.user_ids
           : [ALL_USERS];
         form.setFieldsValue({
+          scope: scopeOf(editing),
           user_ids: editingIDs,
           freq: spec.freq,
           time: spec.time,
@@ -191,6 +213,7 @@ function ScheduleDrawer({
         });
       } else {
         form.setFieldsValue({
+          scope: "account_backup" as Scope,
           user_ids: [ALL_USERS],
           freq: "daily" as Freq,
           time: dayjs().hour(3).minute(0).second(0),
@@ -213,18 +236,35 @@ function ScheduleDrawer({
     }
     setBusy(true);
     try {
-      const selected: string[] = values.user_ids ?? [];
-      const hasAll = selected.includes(ALL_USERS);
-      // ALL_USERS sentinel collapses to an empty list, which the
-      // backend interprets as "every non-admin user" at tick time.
-      // Any explicit picks while ALL_USERS is also selected are
-      // dropped — operator either backs up everyone or a specific
-      // subset, not both.
-      const userIDs = hasAll ? [] : selected.filter((u) => u !== ALL_USERS);
-      if (!hasAll && userIDs.length === 0) {
-        message.error("Pick at least one user, or 'All users'");
-        setBusy(false);
-        return;
+      // Resolve the wire fields (kind / user_ids / include_system_backup)
+      // from the chosen Scope (GH #502). Only the "account_backup" scope
+      // reads the Users select; system_backup and full_server are
+      // self-describing so their user list / system flag are fixed here.
+      const scopeVal: Scope = values.scope ?? "account_backup";
+      let kind = "account_backup";
+      let userIDs: string[] = [];
+      let includeSystem = false;
+      if (scopeVal === "system_backup") {
+        kind = "system_backup"; // panel/system only, no account fan-out
+      } else if (scopeVal === "full_server") {
+        // Every non-admin account + the system, in one schedule.
+        userIDs = []; // empty = "all non-admin users" at tick time
+        includeSystem = true;
+      } else {
+        const selected: string[] = values.user_ids ?? [];
+        const hasAll = selected.includes(ALL_USERS);
+        // ALL_USERS sentinel collapses to an empty list, which the
+        // backend interprets as "every non-admin user" at tick time.
+        // Any explicit picks while ALL_USERS is also selected are
+        // dropped — operator either backs up everyone or a specific
+        // subset, not both.
+        userIDs = hasAll ? [] : selected.filter((u) => u !== ALL_USERS);
+        if (!hasAll && userIDs.length === 0) {
+          message.error("Pick at least one user, or 'All users'");
+          setBusy(false);
+          return;
+        }
+        includeSystem = !!values.include_system_backup;
       }
       if (values.freq === "weekly" && (!values.weekdays || values.weekdays.length === 0)) {
         message.error("Pick at least one weekday");
@@ -238,12 +278,12 @@ function ScheduleDrawer({
         dom: values.dom,
       });
       const body: Record<string, unknown> = {
-        kind: "account_backup",
+        kind,
         cron_expr: cron,
         enabled: values.enabled,
         destination_ids: values.destination_ids ?? [],
         user_ids: userIDs,
-        include_system_backup: !!values.include_system_backup,
+        include_system_backup: includeSystem,
       };
       // Retention is one knob, scoped to the chosen frequency. The
       // matching keep_* column is set; the other two stay null so
@@ -285,36 +325,58 @@ function ScheduleDrawer({
     >
       <Form form={form} layout="vertical">
         <Form.Item
-          name="user_ids"
-          label="Users"
-          rules={[{ required: true, message: "Pick at least one user, or 'All users'" }]}
-          extra="Select 'All users' OR pick specific accounts. Admins are excluded from the list."
+          name="scope"
+          label="Type"
+          rules={[{ required: true }]}
+          extra={
+            scope === "system_backup"
+              ? "Panel/system only — panel DBs, service config, mail state. No account files."
+              : scope === "full_server"
+                ? "Every account (home, databases, mailboxes) PLUS the system, in one schedule. Disaster recovery."
+                : "Per-account backup — all accounts or a chosen subset. Add the system with the switch below."
+          }
         >
-          <Select
-            mode="multiple"
-            showSearch
-            allowClear
-            placeholder="Pick users (or 'All users')"
-            optionFilterProp="label"
-            options={[
-              { value: ALL_USERS, label: "All users (every non-admin)" },
-              ...users
-                .filter((u) => !u.is_admin)
-                .map((u) => ({
-                  value: u.id,
-                  label: `${u.username} (${u.email})`,
-                })),
-            ]}
-          />
+          <Radio.Group optionType="button" buttonStyle="solid">
+            <Radio.Button value="account_backup">Accounts</Radio.Button>
+            <Radio.Button value="system_backup">System</Radio.Button>
+            <Radio.Button value="full_server">Full Server</Radio.Button>
+          </Radio.Group>
         </Form.Item>
-        <Form.Item
-          name="include_system_backup"
-          label="Include system backup"
-          valuePropName="checked"
-          extra="Also fire a system backup (panel DBs + service config + mail state + …) every time this schedule runs."
-        >
-          <Switch />
-        </Form.Item>
+        {scope === "account_backup" && (
+          <>
+            <Form.Item
+              name="user_ids"
+              label="Users"
+              rules={[{ required: true, message: "Pick at least one user, or 'All users'" }]}
+              extra="Select 'All users' OR pick specific accounts. Admins are excluded from the list."
+            >
+              <Select
+                mode="multiple"
+                showSearch
+                allowClear
+                placeholder="Pick users (or 'All users')"
+                optionFilterProp="label"
+                options={[
+                  { value: ALL_USERS, label: "All users (every non-admin)" },
+                  ...users
+                    .filter((u) => !u.is_admin)
+                    .map((u) => ({
+                      value: u.id,
+                      label: `${u.username} (${u.email})`,
+                    })),
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="include_system_backup"
+              label="Include system backup"
+              valuePropName="checked"
+              extra="Also fire a system backup (panel DBs + service config + mail state + …) every time this schedule runs."
+            >
+              <Switch />
+            </Form.Item>
+          </>
+        )}
         <Form.Item
           name="freq"
           label="Frequency"
@@ -496,6 +558,19 @@ export function SchedulesTab() {
         pagination={false}
         scroll={{ x: "max-content" }}
       >
+        <Table.Column<BackupSchedule>
+          title="Type"
+          render={(_, row) => {
+            const sc = scopeOf(row);
+            if (sc === "system_backup") return <Tag color="purple">System</Tag>;
+            if (sc === "full_server") return <Tag color="purple">Full Server</Tag>;
+            return (
+              <Tag color="blue">
+                {row.include_system_backup ? "Accounts + system" : "Accounts"}
+              </Tag>
+            );
+          }}
+        />
         <Table.Column<BackupSchedule>
           title={t("schedulestab.users")}
           render={(_, row) => {
