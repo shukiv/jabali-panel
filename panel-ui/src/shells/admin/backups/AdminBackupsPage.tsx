@@ -145,6 +145,9 @@ export const AdminBackupsPage = () => {
   const [manual, setManual] = useState<BackupJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [runJobs, setRunJobs] = useState<Record<string, BackupJob[]>>({});
+  // GH #502: control row expansion so the "Expand to manage" cell can toggle it
+  // (previously only the +/- icon did, which the text falsely implied was clickable).
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   // Mirror runJobs into a ref so the polling reload (whose closure
   // captures state from effect-setup time) can read the LATEST set
   // of expanded runs, not a stale snapshot.
@@ -248,8 +251,23 @@ export const AdminBackupsPage = () => {
     }
   };
 
+  // GH #502: toggle a row's expansion from anywhere (the +/- icon and the
+  // "Expand to manage" cell both call this). Lazy-loads a run's child jobs
+  // on open, mirroring the icon's previous onExpand behaviour.
+  const toggleRowExpand = (row: TableRow) => {
+    setExpandedKeys((keys) => {
+      if (keys.includes(row.rowKey)) {
+        return keys.filter((k) => k !== row.rowKey);
+      }
+      if (row.isRun) void expandRun(row.run.run_id);
+      return [...keys, row.rowKey];
+    });
+  };
+
   const handleDownload = (row: BackupJob) => {
-    if (row.status !== "succeeded") {
+    // GH #502: a `partial` backup has a valid snapshot too (a non-critical
+    // stage failed but the manifest was written) — allow downloading it.
+    if (row.status !== "succeeded" && row.status !== "partial") {
       message.warning("Backup must complete before download");
       return;
     }
@@ -364,7 +382,7 @@ export const AdminBackupsPage = () => {
                 // GH #502: Download is the most common action after a backup completes —
                 // make it the primary (first, visible) action; Log + the rest collapse
                 // into the overflow menu.
-                { key: "download", label: "Download", icon: <DownloadOutlined />, hidden: row.status !== "succeeded", onClick: () => handleDownload(row) },
+                { key: "download", label: "Download", icon: <DownloadOutlined />, hidden: row.status !== "succeeded" && row.status !== "partial", onClick: () => handleDownload(row) },
                 { key: "log", label: "Log", icon: <FileTextOutlined />, onClick: () => setLogJob(row) },
                 {
                   key: "restore",
@@ -491,9 +509,8 @@ export const AdminBackupsPage = () => {
             pagination={{ pageSize: 25 }}
             scroll={{ x: "max-content" }}
             expandable={{
-              onExpand: (expanded, row) => {
-                if (expanded && row.isRun) void expandRun(row.run.run_id);
-              },
+              expandedRowKeys: expandedKeys,
+              onExpand: (_expanded, row) => toggleRowExpand(row),
               expandedRowRender: (row) =>
                 row.isRun ? (
                   runJobs[row.run.run_id] ? (
@@ -586,7 +603,9 @@ export const AdminBackupsPage = () => {
                 title: "Actions",
                 render: (_: unknown, row: TableRow) =>
                   row.isRun ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>expand to manage</Typography.Text>
+                    <Typography.Link style={{ fontSize: 12 }} onClick={() => toggleRowExpand(row)}>
+                      {expandedKeys.includes(row.rowKey) ? "Collapse" : "Expand to manage"}
+                    </Typography.Link>
                   ) : (
                     <RowActions
                       actions={[

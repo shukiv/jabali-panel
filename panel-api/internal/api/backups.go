@@ -702,7 +702,13 @@ func (h *backupHandler) download(c *gin.Context) {
 // materializes the snapshot under /var/lib/jabali-backups/downloads/<job_id>/ as
 // root:jabali 0750 for the tar to read without elevated privileges.
 func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.BackupJob, destParams map[string]any, logErr func(string, error, ...any)) {
-	if job.Status != models.BackupJobStatusSucceeded {
+	// A `partial` backup still produced a valid manifest snapshot (one
+	// non-critical stage failed but the rest, incl. the manifest, were
+	// captured) — the operator must be able to download it (GH #502): the
+	// system leg of a Full Server backup is commonly `partial` yet its
+	// snapshot is real. The SnapshotID guard below is the true gate; queued/
+	// running/failed/cancelled have no snapshot and 404 here.
+	if job.Status != models.BackupJobStatusSucceeded && job.Status != models.BackupJobStatusPartial {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "no_completed_snapshot"})
 		return
 	}
