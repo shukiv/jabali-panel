@@ -343,6 +343,30 @@ is_module_enabled() {
   esac
 }
 
+# apply_default_modules — GH #760. A plain `curl | bash` install (no TUI, no
+# explicit JABALI_MODULES) historically installed EVERYTHING (the "full"
+# profile), giving a ~2.5 GB baseline including the mail stack (Stalwart +
+# Bulwark + Node) many operators don't want. Default a FRESH install to the
+# "webhost" profile (dns + security + quota) so mail / docker / python_apps /
+# postgres / api are opt-in.
+#
+# Only fires when JABALI_MODULES is UNSET (the curl|bash default). It does NOT
+# touch the two other cases or the update path:
+#   - SET (TUI or headless)      → operator's explicit selection wins.
+#   - SET-but-EMPTY (Minimal)    → stays minimal.
+#   - `jabali update`            → never runs main() (it sources specific
+#     functions), so the is_module_enabled "unset = all-on" contract that
+#     update relies on (GH #727) is untouched.
+# Called at the very top of main() so --dry-run reflects the real default too.
+# Keep the key list in sync with the "webhost" profile in
+# installer/internal/modules/profiles.go.
+apply_default_modules() {
+  if [[ -z "${JABALI_MODULES+x}" ]]; then
+    export JABALI_MODULES="dns,security,quota"
+    _log "no module selection (JABALI_MODULES unset) → defaulting to the 'webhost' profile: ${JABALI_MODULES}. mail/docker/python_apps/postgres/api are opt-in — pass JABALI_MODULES=dns,mail,security,… or use the installer TUI to choose."
+  fi
+}
+
 # run_if_module <module-key> <install-fn> [args…] — run the install function only
 # when its module is enabled (see is_module_enabled), else log a skip. Used to
 # gate the OPTIONAL install steps in the fresh-install flow. On `jabali update`
@@ -13626,6 +13650,10 @@ check_ptr_rdns() {
 
 main() {
   print_banner
+  # GH #760: default a fresh, no-selection install to the lean "webhost" profile
+  # (mail/docker/python/postgres/api opt-in). Must run BEFORE the dry-run print
+  # so the plan shows the real default. No-op when JABALI_MODULES is set.
+  apply_default_modules
   # --dry-run: print the module plan (which optional modules install vs skip for
   # the current JABALI_MODULES) and exit before any system change. M353 GH #353.
   if [[ -n "${_cli_dry_run:-}${JABALI_DRY_RUN:-}" ]]; then

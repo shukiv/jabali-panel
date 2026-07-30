@@ -12,9 +12,9 @@ type Profile struct {
 // Profiles are the deploy presets (Plesk-style), chosen before the checklist.
 var Profiles = []Profile{
 	{Key: "minimal", Title: "Minimal", Desc: "Web + database + panel only — a few PHP/MySQL sites.", Modules: []string{}},
-	{Key: "webhost", Title: "Web host", Desc: "Minimal + DNS + security + quota (typical shared host).", Modules: []string{"dns", "security", "quota"}},
+	{Key: "webhost", Title: "Web host", Desc: "Minimal + DNS + security + quota (typical shared host; the default for a non-interactive install).", Modules: []string{"dns", "security", "quota"}},
 	{Key: "mail", Title: "Mail server", Desc: "Web + DNS + mail + security.", Modules: []string{"dns", "mail", "security"}},
-	{Key: "full", Title: "Full", Desc: "Everything (the current default install).", Modules: allOptionalKeys()},
+	{Key: "full", Title: "Full", Desc: "Everything — mail, Docker, Python apps, PostgreSQL, API.", Modules: allOptionalKeys()},
 	{Key: "custom", Title: "Custom", Desc: "Start from Web host and adjust in the checklist.", Modules: []string{"dns", "security", "quota"}},
 }
 
