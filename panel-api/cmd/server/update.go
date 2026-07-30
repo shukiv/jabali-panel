@@ -1772,6 +1772,21 @@ test -x node_modules/.bin/tsc || {
 	for _, s := range buildSteps {
 		fmt.Printf("→ %s\n", s.name)
 		if err := s.fn(); err != nil {
+			// The prelude already advanced the checkout to postHEAD, but this
+			// build/install step failed — so the RUNNING binary is unchanged
+			// (still lastBuilt) while the code on disk is at postHEAD. Make
+			// that half-state explicit and flag the most common cause (the
+			// go/vite build getting OOM-killed on a low-RAM box), so the
+			// operator knows the binary did NOT update and simply re-runs
+			// after freeing memory — instead of a bare "signal: killed" that
+			// reads as noise (GH #760 follow-up).
+			oomHint := ""
+			if isLikelyOOM(err) {
+				oomHint = "\n  Looks like the build was killed for memory (OOM). Free RAM or add swap, then re-run `jabali update`."
+			}
+			fmt.Fprintf(os.Stderr,
+				"\n✗ Update FAILED at %q.\n  The running binary was NOT changed (still %s); the code is now at %s.\n  Re-run `jabali update` after fixing the cause.%s\n",
+				s.name, shortSHA7(lastBuilt), shortSHA7(postHEAD), oomHint)
 			return fmt.Errorf("%s: %w", s.name, err)
 		}
 	}

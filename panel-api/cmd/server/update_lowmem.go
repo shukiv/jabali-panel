@@ -49,3 +49,28 @@ func hostMemMB() int {
 
 // lowRAMGoBuildEnv is the /proc-backed wrapper used by the updater.
 func lowRAMGoBuildEnv() []string { return lowRAMGoBuildEnvForMB(hostMemMB()) }
+
+// isLikelyOOM reports whether a build error looks like the process was killed
+// for memory — the common low-RAM `jabali update` failure, where the go/vite
+// build gets OOM-killed. Used to add a "free RAM / add swap" hint to the
+// failure message (GH #760 follow-up) so the operator knows why the binary
+// didn't update.
+func isLikelyOOM(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "signal: killed") ||
+		strings.Contains(s, "cannot allocate memory") ||
+		strings.Contains(s, "out of memory") ||
+		strings.Contains(s, "Killed")
+}
+
+// shortSHA7 truncates a git SHA to 7 chars for display; passes through anything
+// shorter.
+func shortSHA7(s string) string {
+	if len(s) > 7 {
+		return s[:7]
+	}
+	return s
+}
