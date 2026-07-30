@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
@@ -37,14 +39,14 @@ func TestServerStatus_RBAC(t *testing.T) {
 func TestServerStatus_HappyPath(t *testing.T) {
 	mock := agent.NewMockClient().
 		On("system.info", map[string]any{
-			"hostname":      "test.local",
-			"os":            "Debian 13",
-			"kernel":        "6.12",
-			"cpu_count":     4,
-			"load_avg":      []float64{0.1, 0.1, 0.1},
-			"partitions":    []map[string]any{},
-			"mem_total_kb":  1000,
-			"mem_used_kb":   100,
+			"hostname":     "test.local",
+			"os":           "Debian 13",
+			"kernel":       "6.12",
+			"cpu_count":    4,
+			"load_avg":     []float64{0.1, 0.1, 0.1},
+			"partitions":   []map[string]any{},
+			"mem_total_kb": 1000,
+			"mem_used_kb":  100,
 		}).
 		On("system.cpu_usage", map[string]any{"usage_percent": 12.5, "warming_up": false}).
 		On("system.network", map[string]any{"interfaces": []any{}}).
@@ -163,4 +165,46 @@ func TestServerStatus_TimeoutDoesNotKillEnvelope(t *testing.T) {
 	assert.True(t, gotProcAlert, "expected agent-warning alert for failed sub-call")
 
 	_ = errors.Is // keep import
+}
+
+// TestServerStatus_QueuesTolerateNOGROUP: when the notifications consumer group
+// doesn't exist yet (fresh box / Redis wipe), the queues probe must report
+// zeros rather than surfacing a raw NOGROUP error as a status banner.
+func TestServerStatus_QueuesTolerateNOGROUP(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	// Deliberately do NOT create the stream/consumer group → XPending NOGROUPs.
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(injectAdminClaims(true))
+	api.RegisterAdminServerStatusRoutes(v1, api.AdminServerStatusHandlerConfig{
+		Agent: agent.NewMockClient(),
+		Redis: rdb,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var env struct {
+		Queues *struct {
+			NotificationsQueue   int64 `json:"notifications_queue"`
+			NotificationsPending int64 `json:"notifications_pending"`
+		} `json:"queues"`
+		Errors map[string]string `json:"errors"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, bad := env.Errors["queues"]; bad {
+		t.Errorf("queues probe surfaced a NOGROUP error banner: %q", env.Errors["queues"])
+	}
+	if env.Queues == nil {
+		t.Fatal("queues slice missing — should report zeros on an uninitialized group")
+	}
+	assert.Equal(t, int64(0), env.Queues.NotificationsPending)
 }

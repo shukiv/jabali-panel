@@ -12,15 +12,15 @@ import (
 // Stream + consumer-group names. Public so callers (tests, the producer
 // path in the API layer) can target the same keys without mis-typing.
 const (
-	StreamQueue    = "jabali:notifications:queue"
-	StreamDLQ      = "jabali:notifications:dlq"
+	StreamQueue = "jabali:notifications:queue"
+	StreamDLQ   = "jabali:notifications:dlq"
 	// Stream length caps (approximate, ~ trimming): a stuck channel or a
 	// producer flood can otherwise grow these unbounded (a real install hit
 	// 26549 DLQ entries). Approximate trimming is O(1)-ish on XADD.
-	maxQueueLen int64 = 20000
-	maxDLQLen   int64 = 5000
-	ConsumerGroup  = "dispatcher"
-	defaultRetries = 5
+	maxQueueLen    int64 = 20000
+	maxDLQLen      int64 = 5000
+	ConsumerGroup        = "dispatcher"
+	defaultRetries       = 5
 )
 
 // Queue wraps the Redis client with typed operations the dispatcher
@@ -57,6 +57,15 @@ func (q *Queue) EnsureGroup(ctx context.Context) error {
 // Publish enqueues one envelope. Returns the Redis-assigned ID so
 // producers can log + correlate with history rows.
 func (q *Queue) Publish(ctx context.Context, env Envelope) (string, error) {
+	// Self-heal the consumer group before adding. If Redis lost its data
+	// (restart without persistence, flush, or maxmemory eviction), the group
+	// vanishes; a bare XAdd recreates only the stream key, leaving the
+	// dispatcher's XReadGroup to NOGROUP indefinitely and the server-status
+	// probe to show a scary banner. EnsureGroup is idempotent (BUSYGROUP
+	// swallowed) and creates the group at the tail BEFORE this message is
+	// appended, so the message stays consumable. Best-effort: a genuine Redis
+	// outage surfaces on the XAdd below.
+	_ = q.EnsureGroup(ctx)
 	id, err := q.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: StreamQueue,
 		MaxLen: maxQueueLen,
@@ -81,6 +90,13 @@ func (q *Queue) Read(ctx context.Context, consumer string, batch int, block time
 		Block:    block,
 	}).Result()
 	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	// The group/stream was lost out from under us (Redis wipe). Recreate it and
+	// treat this tick as "no work"; the next Read consumes normally. Without
+	// this the consumer loop spin-errors on NOGROUP until a panel restart.
+	if err != nil && strings.Contains(err.Error(), "NOGROUP") {
+		_ = q.EnsureGroup(ctx)
 		return nil, nil
 	}
 	return res, err

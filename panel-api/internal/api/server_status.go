@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,10 +21,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // AdminServerStatusHandlerConfig holds dependencies.
@@ -52,7 +53,9 @@ func RegisterAdminServerStatusRoutes(g *gin.RouterGroup, cfg AdminServerStatusHa
 	grp.GET("", h.get)
 }
 
-type adminServerStatusHandler struct{ cfg AdminServerStatusHandlerConfig }
+type adminServerStatusHandler struct {
+	cfg AdminServerStatusHandlerConfig
+}
 
 const (
 	subCallTimeout   = 5 * time.Second
@@ -90,8 +93,8 @@ type QueuesSlice struct {
 // drives the UI icon; detail is human-readable. Step 4 will add link
 // fields ("link": "/jabali-admin/updates") when applicable.
 type ServerStatusAlert struct {
-	Level  string `json:"level"`  // "warning" | "critical"
-	Kind   string `json:"kind"`   // "disk" | "service" | "load" | ...
+	Level  string `json:"level"` // "warning" | "critical"
+	Kind   string `json:"kind"`  // "disk" | "service" | "load" | ...
 	Detail string `json:"detail"`
 }
 
@@ -164,7 +167,12 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 			qLen := pipe.XLen(subCtx, notifications.StreamQueue)
 			dlqLen := pipe.XLen(subCtx, notifications.StreamDLQ)
 			pending := pipe.XPending(subCtx, notifications.StreamQueue, notifications.ConsumerGroup)
-			if _, err := pipe.Exec(subCtx); err != nil && !errors.Is(err, redis.Nil) {
+			// NOGROUP (missing consumer group / stream) is not a real error to
+			// surface: it just means the notifications queue is uninitialized —
+			// a fresh box, or a Redis wipe that Publish/Read self-heal. XLen
+			// tolerates the missing key (returns 0); only XPending errors. Treat
+			// it like redis.Nil and report zeros instead of a scary status banner.
+			if _, err := pipe.Exec(subCtx); err != nil && !errors.Is(err, redis.Nil) && !strings.Contains(err.Error(), "NOGROUP") {
 				mu.Lock()
 				errMap["queues"] = err.Error()
 				mu.Unlock()
@@ -397,7 +405,6 @@ func unitShouldBeRunning(unitFileState string) bool {
 	}
 	return false
 }
-
 
 // moduleGatedUnits maps an optional-module systemd unit to the ServerSettings
 // flag that must be ON for it to appear in the Services card (JAB request: hide
