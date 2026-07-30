@@ -70,6 +70,15 @@ type wordpressInstallResp struct {
 // can't smuggle extra wp-cli args or shell metacharacters into the download.
 var wordpressVersionRe = regexp.MustCompile(`^(latest|[0-9]+(\.[0-9]+){0,2})$`)
 
+// wordpressLocaleRe validates a WordPress locale before it is passed to wp-cli
+// (as a positional arg to `wp language core install` / `wp site
+// switch-language`). It MUST start with a letter — so a value can never begin
+// with "-" and smuggle a wp-cli flag (e.g. --require=<php>) — and allows only
+// letters, digits and underscores, which covers every real WP locale shape
+// (en_US, he_IL, pt_BR, es_419, de_DE_formal, ckb, …) without permitting
+// spaces, "=", or shell metacharacters.
+var wordpressLocaleRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{1,31}$`)
+
 func validateDocrootPath(osUser, docroot string) error {
 	allowedPrefix := filepath.Join("/home", osUser, "domains")
 	absDocroot, err := filepath.Abs(docroot)
@@ -299,6 +308,14 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// Default locale if not provided
 	if req.Locale == "" {
 		req.Locale = "en_US"
+	}
+	// Validate before the locale reaches wp-cli as a positional arg (Step 3c),
+	// so a crafted value can't smuggle a flag / metacharacters.
+	if !wordpressLocaleRe.MatchString(req.Locale) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("invalid locale %q (want a code like en_US or he_IL)", req.Locale),
+		}
 	}
 
 	// Default to latest stable (JAB-180); validate before it reaches wp-cli.

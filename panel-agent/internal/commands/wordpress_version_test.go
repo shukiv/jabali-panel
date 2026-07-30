@@ -23,3 +23,24 @@ func TestWordPressVersionRe(t *testing.T) {
 		}
 	}
 }
+
+// The locale is passed as a positional arg to wp-cli (Step 3c), so it must
+// reject anything that could smuggle a flag / metacharacters while still
+// accepting every real WordPress locale shape.
+func TestWordPressLocaleRe(t *testing.T) {
+	valid := []string{"en_US", "he_IL", "pt_BR", "es_419", "de_DE_formal", "ckb", "zh_CN"}
+	for _, v := range valid {
+		if !wordpressLocaleRe.MatchString(v) {
+			t.Errorf("locale %q should be valid", v)
+		}
+	}
+	invalid := []string{
+		"", "-", "--require=/tmp/x.php", "-rf", "en US", "en;rm", "../en",
+		"en_US ", "en=US", "en\nUS", "e",
+	}
+	for _, v := range invalid {
+		if wordpressLocaleRe.MatchString(v) {
+			t.Errorf("locale %q should be rejected", v)
+		}
+	}
+}
