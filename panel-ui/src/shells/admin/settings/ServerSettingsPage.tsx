@@ -24,8 +24,10 @@ import {
   Col,
   Divider,
   Form,
+  Grid,
   Input,
   InputNumber,
+  Menu,
   Modal,
   Row,
   Select,
@@ -953,6 +955,25 @@ const SSHSettingsTab = () => {
 
 export const ServerSettingsPage = () => {
   const [activeTab, setActiveTab] = useTabParam<SettingsTabKey>("general");
+  const screens = Grid.useBreakpoint();
+  // GH #688: the old horizontal Card tabList overflowed into a scrollbar as
+  // categories grew. Switch to a vertical Menu that scales down the list.
+  // On narrow screens the Menu goes horizontal (scrollable) above the content
+  // so it doesn't eat the whole width.
+  const vertical = screens.md ?? true;
+
+  const menuItems = [
+    { key: "general", icon: <SettingOutlined />, label: "General" },
+    { key: "ssh", icon: <CodeOutlined />, label: "SSH" },
+    { key: "storage", icon: <HddOutlined />, label: "Storage" },
+    { key: "dns", icon: <GlobalOutlined />, label: "DNS" },
+    { key: "email", icon: <MailOutlined />, label: "Email" },
+    { key: "databases", icon: <DatabaseOutlined />, label: "Databases" },
+    { key: "apps", icon: <AppstoreOutlined />, label: "Apps" },
+    { key: "nginx", icon: <ToolOutlined />, label: "Nginx" },
+    { key: "branding", icon: <BgColorsOutlined />, label: "Branding" },
+    { key: "logs", icon: <FileTextOutlined />, label: "Logs" },
+  ];
 
   return (
     <div>
@@ -960,106 +981,30 @@ export const ServerSettingsPage = () => {
         <SettingOutlined /> Server Settings
       </Typography.Title>
 
-      {/* Card.tabList renders the tab strip attached to the card body —
-          each tab owns an independent form, so unsaved edits in the
-          inactive tab are lost on switch (mirrors the Users page pattern). */}
-      <Card
-        tabList={[
-          {
-            key: "general",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <SettingOutlined />
-                General
-              </span>
-            ),
-          },
-          {
-            key: "ssh",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <CodeOutlined />
-                SSH
-              </span>
-            ),
-          },
-          {
-            key: "storage",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <HddOutlined />
-                Storage
-              </span>
-            ),
-          },
-          {
-            key: "dns",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <GlobalOutlined />
-                DNS
-              </span>
-            ),
-          },
-          {
-            key: "email",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <MailOutlined />
-                Email
-              </span>
-            ),
-          },
-          {
-            key: "databases",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <DatabaseOutlined />
-                Databases
-              </span>
-            ),
-          },
-          {
-            key: "apps",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <AppstoreOutlined />
-                Apps
-              </span>
-            ),
-          },
-          {
-            key: "nginx",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <ToolOutlined />
-                Nginx
-              </span>
-            ),
-          },
-          {
-            key: "branding",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <BgColorsOutlined />
-                Branding
-              </span>
-            ),
-          },
-          {
-            key: "logs",
-            tab: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                <FileTextOutlined />
-                Logs
-              </span>
-            ),
-          },
-        ]}
-        activeTabKey={activeTab}
-        onTabChange={(k) => setActiveTab(k as SettingsTabKey)}
+      {/* GH #688: vertical settings nav (was an overflowing horizontal tab
+          strip). Each tab still owns an independent form, so unsaved edits in
+          the inactive tab are lost on switch (mirrors the Users page). */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: vertical ? "row" : "column",
+          gap: 16,
+          alignItems: "flex-start",
+        }}
       >
-        {activeTab === "general" && (
+        <Menu
+          mode={vertical ? "inline" : "horizontal"}
+          selectedKeys={[activeTab]}
+          onClick={({ key }) => setActiveTab(key as SettingsTabKey)}
+          items={menuItems}
+          style={
+            vertical
+              ? { width: 200, flex: "0 0 auto", borderRadius: 8, border: "1px solid var(--jab-border, #f0f0f0)" }
+              : { width: "100%" }
+          }
+        />
+        <Card style={{ flex: "1 1 480px", minWidth: 0, width: "100%" }}>
+          {activeTab === "general" && (
           <>
             <GeneralSettingsTab />
             <TenantNotificationsCard />
@@ -1096,7 +1041,8 @@ export const ServerSettingsPage = () => {
         )}
         {activeTab === "branding" && <BrandingSettingsTab />}
         {activeTab === "logs" && <LogRetentionCard />}
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 };
