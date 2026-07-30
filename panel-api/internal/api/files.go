@@ -544,6 +544,14 @@ func (h *filesHandler) download(c *gin.Context) {
 		UserID: userID, Username: username, Path: p, Limit: h.resolveMaxUploadBytes(c.Request.Context()),
 	})
 	if err != nil {
+		// GH #756: downloading a folder used to 500 (files.read can't read a
+		// directory). The agent now reports it as a precondition; transparently
+		// serve the folder as <name>.tar.gz — the expected "download folder" UX.
+		if strings.Contains(err.Error(), "path is a directory") {
+			c.Set("audit_target", p+" (archive)")
+			h.streamArchive(c, userID, username, []string{p}, filepath.Base(p)+".tar.gz")
+			return
+		}
 		respondAgentError(c, err)
 		return
 	}
@@ -921,8 +929,16 @@ func (h *filesHandler) archive(c *gin.Context) {
 		return
 	}
 	c.Set("audit_target", strings.Join(req.Paths, ", ")+" (archive)") // GH #658
+	h.streamArchive(c, userID, username, req.Paths, "archive.tar.gz")
+}
+
+// streamArchive asks the agent to build a tar.gz of the given scoped paths
+// into a panel-owned tmp file, streams it back with the given download name,
+// then unlinks the scratch file. Shared by the /files/archive endpoint and the
+// download handler's folder fallback (GH #756).
+func (h *filesHandler) streamArchive(c *gin.Context, userID, username string, paths []string, downloadName string) {
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.archive", filesArchiveAgentParams{
-		UserID: userID, Username: username, Paths: req.Paths,
+		UserID: userID, Username: username, Paths: paths,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -946,7 +962,7 @@ func (h *filesHandler) archive(c *gin.Context) {
 	defer f.Close()
 
 	c.Header("Content-Type", "application/gzip")
-	c.Header("Content-Disposition", `attachment; filename="archive.tar.gz"`)
+	c.Header("Content-Disposition", contentDisposition("attachment", downloadName))
 	c.Header("Content-Length", fmt.Sprintf("%d", result.Size))
 	if _, err := io.Copy(c.Writer, f); err != nil {
 		// Response already started — nothing useful to do, just log

@@ -99,6 +99,17 @@ func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 	defer file.Close()
 
+	// A directory opens fine O_RDONLY but io.ReadAll on it fails with a raw
+	// "is a directory" — which surfaced as an opaque HTTP 500 when a user hit
+	// "download" on a folder (GH #756). Detect it here and return a typed
+	// precondition error so the panel can fall back to archiving the folder.
+	if fi, statErr := file.Stat(); statErr == nil && fi.IsDir() {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeFailedPrecondition,
+			Message: "path is a directory",
+		}
+	}
+
 	// Read with limit
 	limitedReader := io.LimitReader(file, p.Limit+1)
 	content, err := io.ReadAll(limitedReader)
