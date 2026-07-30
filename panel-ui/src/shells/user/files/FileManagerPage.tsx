@@ -340,6 +340,9 @@ export const FileManagerPage = () => {
   const [folderSizes, setFolderSizes] = useState<Record<string, number>>({});
   const [sizingAll, setSizingAll] = useState(false);
   const [sizingPaths, setSizingPaths] = useState<Set<string>>(new Set());
+  // GH #657: recursive total of the CURRENT directory's contents, from the
+  // same files.du pass. null = not yet calculated for this directory.
+  const [dirTotal, setDirTotal] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
@@ -453,6 +456,7 @@ export const FileManagerPage = () => {
     setSelectedNames([]);
     // Folder sizes are per-directory; drop them so a new folder starts blank.
     setFolderSizes({});
+    setDirTotal(null);
   }, [currentPath, reloadList]);
 
   // GH #657: compute REAL recursive sizes for every folder in the current
@@ -467,6 +471,12 @@ export const FileManagerPage = () => {
         if (e.is_dir) next[joinPath(currentPath, e.name)] = e.size;
       }
       setFolderSizes((prev) => ({ ...prev, ...next }));
+      // GH #657: surface the current directory's own recursive total (already
+      // returned by files.du) and confirm the operation finished — larger
+      // trees can take a while, so the explicit success + total is the signal
+      // the reporter asked for.
+      setDirTotal(resp.total);
+      message.success(`Folder sizes calculated — this folder totals ${formatBytes(resp.total)}`);
     } catch (err) {
       message.error(`Size calculation failed: ${errMessage(err)}`);
     } finally {
@@ -1320,6 +1330,13 @@ export const FileManagerPage = () => {
               Folder sizes
             </Button>
           </Tooltip>
+          {dirTotal !== null && (
+            <Tooltip title="Total recursive size of everything in this directory">
+              <Tag color="blue" icon={<HddOutlined />} style={{ marginInlineStart: 4 }}>
+                This folder: {formatBytes(dirTotal)}
+              </Tag>
+            </Tooltip>
+          )}
           <Button icon={<ReloadOutlined />} onClick={handleRefresh} />
         </Space>
       </div>
