@@ -260,6 +260,20 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 			})
 		}
 	}
+	// JAB-179: the public demo must not expose the host fingerprint — hostname,
+	// internal IP, kernel, CPU model, disk sizes, exact software versions (a
+	// ready-made CVE list), or the process/user-slice lists. Rebuild an
+	// ALLOWLISTED envelope keeping only service health, alerts and queue
+	// counts, so a slice added later is dropped by default (fail closed).
+	if DemoRedactionEnabled() {
+		env = ServerStatusEnvelope{
+			AsOf:     env.AsOf,
+			Services: env.Services,
+			Queues:   env.Queues,
+			Alerts:   env.Alerts,
+			Errors:   env.Errors,
+		}
+	}
 	c.JSON(http.StatusOK, env)
 }
 

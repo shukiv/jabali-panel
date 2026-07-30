@@ -14,6 +14,7 @@ import {
 } from "@icons";
 
 import { SUPPORT_LINKS } from "../../../config/support-links";
+import { useServiceInfo } from "../../../useServiceInfo";
 import { DiagnosticReportModal } from "./DiagnosticReportModal";
 import { CliOnlyRunbooks } from "./CliOnlyRunbooks";
 
@@ -77,6 +78,10 @@ const CARDS: CardSpec[] = [
 
 export const SupportPage = () => {
   const [modalOpen, setModalOpen] = useState(false);
+  // JAB-179: the public demo must not publish the internal CLI recovery
+  // runbook (admin command names + source-file refs).
+  const { data: svcInfo } = useServiceInfo();
+  const demo = !!svcInfo?.demo?.enabled;
 
   return (
     <div>
@@ -101,7 +106,7 @@ export const SupportPage = () => {
         ))}
       </Row>
 
-      <CliOnlyRunbooks />
+      {!demo && <CliOnlyRunbooks />}
 
       <DiagnosticReportModal
         open={modalOpen}

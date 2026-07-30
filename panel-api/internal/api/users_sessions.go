@@ -91,6 +91,15 @@ func (h *userHandler) listSessions(c *gin.Context) {
 			}
 		}
 	}
+	// JAB-179: the public demo must never publish real visitors' source IPs
+	// or user-agents (third-party PII). Mask both for every row — Kratos and
+	// SSH sourced — at this single choke point. No-op in production.
+	if DemoRedactionEnabled() {
+		for i := range rows {
+			rows[i].IP = demoMaskIP(rows[i].IP)
+			rows[i].UserAgent = demoRedact(rows[i].UserAgent)
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"sessions": rows})
 }
 

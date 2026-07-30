@@ -8,6 +8,8 @@
 //   breaks phpMyAdmin SSO for every tenant. We surface the exact guarded
 //   procedure + rollback instead (the CLI-supported branch of #575).
 import { useTranslation } from "react-i18next";
+
+import { useServiceInfo } from "../../../useServiceInfo";
 import {
   Alert,
   App,
@@ -46,6 +48,7 @@ systemctl kill -s SIGHUP jabali-panel`;
 export function SSOMaintenanceCard() {
   const { t } = useTranslation();
   const { message } = App.useApp();
+  const { data: svcInfo } = useServiceInfo();
 
   const prune = useMutation({
     mutationFn: async () =>
@@ -54,6 +57,10 @@ export function SSOMaintenanceCard() {
     onError: (e: unknown) =>
       message.error(e instanceof Error ? e.message : "prune failed"),
   });
+
+  // JAB-179: the public demo must not display the SSO key-file paths + rotation
+  // runbook (infra path disclosure). Hide the whole card in demo.
+  if (svcInfo?.demo?.enabled) return null;
 
   return (
     <Card title={t("ssomaintenancecard.sso_maintenance_phpmyadmin")} style={{ marginBottom: 16 }}>

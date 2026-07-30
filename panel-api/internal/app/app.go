@@ -263,6 +263,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		gin.SetMode(gin.DebugMode)
 	}
 
+	// JAB-179: turn on demo GET redaction when running the public demo so
+	// sensitive reads (visitor session IPs, host fingerprint, infra paths)
+	// are masked. No-op in production (Demo.Enabled=false).
+	api.SetDemoRedaction(cfg.Demo.Enabled)
+
 	// Apps registry. Built once per server. RegisterDefaults panics on
 	// programmer error (duplicate name, bad ParamSpec) — those are
 	// startup conditions we want surfaced loudly, not eaten by a
