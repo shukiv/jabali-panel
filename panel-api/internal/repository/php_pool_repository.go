@@ -56,7 +56,11 @@ func (r *phpPoolRepo) FindByID(ctx context.Context, id string) (*models.PHPPool,
 
 func (r *phpPoolRepo) FindByUserID(ctx context.Context, userID string) (*models.PHPPool, error) {
 	var pool models.PHPPool
-	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&pool).Error; err != nil {
+	// The DEFAULT pool is the earliest-created row (slug == username) — the
+	// same "pools[0]" convention domain_php_pool.go uses. Order by id ASC (ULIDs
+	// are time-ordered) so the default is deterministic and a later duplicate
+	// row can never win this lookup (JAB-174).
+	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("id ASC").First(&pool).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
