@@ -6,7 +6,23 @@ Tracking file for non-blocking bugs that have been investigated but deferred. Ne
 
 ## Open
 
-(none)
+### KI-2 — GH #429: Plesk migration pull-source dials port 22 despite a custom SSH port
+
+**Opened:** 2026-07-31
+**Severity:** MEDIUM (blocks Plesk migration on non-22 sources; workaround exists).
+**Status:** believed to be build/data staleness, not a live code bug — awaiting reporter's `jabali version`.
+
+Reporter (lxsdevcode) reports the wizard connects + discovers on a custom port (`840x`) but `jabali migrate pull-source` then dials `22` (`plesk.Connect: tcp dial <ip>:22 i/o timeout`).
+
+Code traced end-to-end and is correct on `main`/`stable` (7085d502): the wizard persists `source_port` on the job row at create (`admin_migrations.go` create handler) AND via the Connection-step PATCH (`PatchDraft`, gated on `state='draft'`); `srcSSHPort(job)` / `pullPlesk` read it back, falling back to `22` only when unset; there is **no code path that resets `source_port`**. The dedicated-port fix landed in #444 (2026-07-15) + #463 (2026-07-18).
+
+So a `pull-source` dialing `22` implies `job.SourcePort==0` — i.e. a build that predates #463, or a job row created before updating (updating the binary does not rewrite existing job rows). Reply asked the reporter to confirm `jabali version` and to create a **fresh** job.
+
+Related: **GH #787** — the reporter opened their own PR (`patch-2`) adding `net.SplitHostPort(host)` to `plesk/discover.go` so a `host:port` string overrides `d.Port`. This is a symptom-level workaround for `d.Port==0`; recommend not merging (redundant vs the `source_port` field, breaks IPv6). Decision pending.
+
+**Next step:** if a freshly-created job on a confirmed-updated box still dials 22, this becomes a real bug — reproduce the wizard create→PATCH→pull flow and inspect `source_port` in the DB at each step. A `source_port` persistence regression test would guard the path.
+
+---
 
 ---
 

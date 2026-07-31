@@ -5,7 +5,7 @@
 > [CONVENTIONS.md](CONVENTIONS.md) (code patterns + anti-patterns),
 > [adr/README.md](adr/README.md) (ADRs through 0124), [RUNBOOK.md](RUNBOOK.md)
 > (ops), [ENV.md](ENV.md) (env vars), [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
-> Last refreshed against `main` @ `c94b6d00` (2026-06-14).
+> Last refreshed against `main` @ `7085d502` (2026-07-31).
 
 ## 1. What this is
 
@@ -137,28 +137,59 @@ ROLLED BACK: **M16** (Hydra/OIDC identity federation).
 PLANNED/not built: **M15** migration importers (cPanel partial exists),
 **M17** diagnostic reports.
 
-## 7. In progress / most recent (this session, 2026-06-14)
+## 7. In progress / most recent (this session, 2026-07-31)
 
-All on `main`, both remotes (Gitea `origin` + `github`):
+Shipped this session, all on `main` + `stable` @ `7085d502`, deployed to
+testserver (`sudo jabali update`) + verified:
 
-- **Mail message backup/restore** (#380–#385, ADR-0123): per-user JMAP
-  Maildir export at backup; restore via `migration.import_mailboxes`.
-  Idempotent (explicit Message-ID dedup — Stalwart does NOT dedup),
-  folder+flag faithful, multi-tenant-safe, handles empty-INBOX/
-  subfolder-only mailboxes, imports into existing accounts
-  (`primaryKeyViolation` = already-exists). Round-trip verified on
-  10.0.3.14.
-- **Restore mail account-config** (#371–#376, ADR-0122): docroot
-  `www-data` re-group fix (+ symlink-safe hardening); mailbox/forwarder
-  panel-row reconstruction (Bug B); the unsafe `stalwart-cli apply` was
-  found (destroy-all) and **disabled**.
-- **CRS 933120 AppSec FP** (#386, ADR-0124): WP-admin `_wp_http_referer`
-  double-encoding false-positive → surgical CRS before-plugin.
-- **Cron import `Enabled=false`** (#388): GORM `default:1` tag dropped so
-  disabled curl/wget crons import inert.
-- **Docs/ADR index sync** (#368/#370/#377/#379/#383/#387).
+- **Download folder/file 500** (#786 / GH #756): the archive was staged
+  in `/tmp`, but `jabali-panel` runs `PrivateTmp=yes` so it can't see a
+  file `jabali-agent` wrote there → `os.Open` ENOENT. Now staged under
+  `/var/lib/jabali-uploads` (shared, outside the tmp sandbox). This is a
+  RECURRING class — any agent→panel file handoff by path must avoid
+  `/tmp` (see §9 + `feedback_agent_panel_file_handoff_not_tmp`).
+- **Plesk/SSH migration wizard** (#785 / GH #429): Test Connection now
+  uploads the operator's credential BEFORE testing (it reads the on-disk
+  secret); the test-connection handler clears its write deadline + is
+  bound to 45s so a slow source handshake returns clean JSON instead of a
+  Cloudflare 52x; passphrase-protected keys give an actionable error.
+- **Admin sidebar fixed while scrolling** (#784): `AdminLayout` switched
+  from `position:sticky` to a fixed-shell (`height:100vh; overflow:hidden`
+  outer, only `Content` scrolls).
+
+Earlier the same day (already on stable): #760 lean default install +
+2GB-min/4GB-recommended RAM guidance, JAB-174 PHP-pool determinism,
+JAB-180 WP core version+language, #779 legible failed-rebuild, #746 Plesk
+files/DBs.
 
 ## 8. Open TODOs
+
+**Current (2026-07-31 — pick up here):**
+
+- **GH #787 — reporter's own PR** (`patch-2`, lxsdevcode): adds
+  `net.SplitHostPort(host)` to `plesk/discover.go` so a `host:port`
+  string overrides `d.Port`. It's a WORKAROUND for `d.Port==0` in their
+  env. Recommend **don't merge** — redundant vs the dedicated
+  `source_port` field (already in stable since #463/#444, 2026-07-18) +
+  fragile (breaks IPv6). **Awaiting operator decision to reply/close.**
+- **GH #429 — custom SSH port** replied with a diagnostic (asked for
+  `jabali version`; a job created before the fix keeps its old
+  `source_port`; create a FRESH job). Code proven correct end-to-end
+  (create persists `source_port`, no reset path, `pull-source` reads it).
+  Awaiting reporter's version. Worth adding: a `source_port` persistence
+  regression test.
+- **GH #756** fix shipped + replied; awaiting reporter confirmation.
+- **GH #731 — low-RAM install NEEDS DIRECTION:** 2GB hosts still OOM on
+  the on-box vite/go build; `ensure_swap` (install.sh) soft-returns 0
+  when `swapon` is blocked (containerized VPS). Decide: prebuilt-artifact
+  install (no on-box compile — `plans/installer-release-resolution.md`)
+  vs. a small `ensure_swap` fail-loud-and-early hardening.
+- **Box cleanup (session artifacts):** `.150` has `demolab`/`demolab_test`
+  MariaDB users from a diagnostic import; `.88` (Plesk repro source) has a
+  throwaway key `~/.ssh/plesk88_repro`, sshd `Port 2222`, and a disabled
+  `ssh.socket`. Remove when the #429/#787 thread closes.
+
+**Older (pre-2026-07, verify still open before acting):**
 
 - **Prod data cleanup (cron):** existing imported cron rows are
   `enabled=1` (the #388 bug). One-off:
@@ -252,6 +283,12 @@ All on `main`, both remotes (Gitea `origin` + `github`):
 - Account-restore re-chowns the whole home to `<user>:<user>`, which
   clobbers the `www-data` docroot group → 403; restore re-applies it
   (symlink-safe Lchown walk).
+- **Agent→panel file handoff can't go through `/tmp`** (GH #756):
+  `jabali-panel` runs `PrivateTmp=yes`, so a file `jabali-agent` writes
+  to `/tmp` is invisible to panel-api (`os.Open` → ENOENT, not a perms
+  error). Stage such files in a shared `/var/lib/jabali-*` dir that's in
+  panel-api's `ReadWritePaths` + AppArmor (e.g. `/var/lib/jabali-uploads`);
+  agent writes + chowns to `jabali:jabali`, panel-api reads + unlinks.
 
 **Install / build**
 - Every system package must be added to `install.sh` (never assume).

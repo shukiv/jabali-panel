@@ -387,6 +387,7 @@ These have bitten us. Don't repeat:
 | Commit to `main` from a feature worktree | Dispatcher is the only pushing entity; agents must branch | CLAUDE.md |
 | Skip the pre-merge rebase | Phantom "N ahead" reports + merge conflicts surface at push time | `feedback_fetch_rebase_before_deploy` |
 | Hand-roll a SQL query string | GORM parameters only; any `WHERE ... = '" + id + "'"` fails code review | security.md |
+| Hand an agent-written file to panel-api via a `/tmp` path | `jabali-panel` runs `PrivateTmp=yes` → the agent's `/tmp` file is invisible to it (`os.Open` ENOENT). Stage in a shared `/var/lib/jabali-*` dir (e.g. `/var/lib/jabali-uploads`) that's in panel-api's ReadWritePaths + AppArmor | `feedback_agent_panel_file_handoff_not_tmp` (GH #756) |
 
 ---
 
