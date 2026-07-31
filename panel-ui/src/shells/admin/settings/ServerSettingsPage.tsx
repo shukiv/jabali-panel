@@ -1034,26 +1034,26 @@ export const ServerSettingsPage = () => {
         <SettingOutlined /> Server Settings
       </Typography.Title>
 
-      <Card>
-        <Tabs
-          type="card"
-          tabPosition="left"
-          activeKey={activeTab}
-          onChange={(k) => setActiveTab(k as SettingsTabKey)}
-          destroyInactiveTabPane
-          items={items}
-          // GH #688: keep the left tab bar in view while a long tab's content
-          // scrolls. Sticky to the top of the scroll container; a very long
-          // tab list scrolls on its own via maxHeight/overflow.
-          tabBarStyle={{
-            position: "sticky",
-            top: 16,
-            alignSelf: "flex-start",
-            maxHeight: "calc(100vh - 32px)",
-            overflowY: "auto",
-          }}
-        />
-      </Card>
+      {/* Tabs sit directly on the page — the left tab bar is NOT wrapped in a
+          Card (the individual card-style tabs are the only card chrome). */}
+      <Tabs
+        type="card"
+        tabPosition="left"
+        activeKey={activeTab}
+        onChange={(k) => setActiveTab(k as SettingsTabKey)}
+        destroyInactiveTabPane
+        items={items}
+        // GH #688: keep the left tab bar in view while a long tab's content
+        // scrolls. Sticky to the top of the scroll container; a very long
+        // tab list scrolls on its own via maxHeight/overflow.
+        tabBarStyle={{
+          position: "sticky",
+          top: 16,
+          alignSelf: "flex-start",
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
+        }}
+      />
     </div>
   );
 };
