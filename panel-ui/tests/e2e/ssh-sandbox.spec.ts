@@ -91,7 +91,7 @@ test.describe("M13: SSH shell sandbox — Server Settings", () => {
     await page.goto("/jabali-admin/settings");
     await page.waitForLoadState("networkidle");
     // Shell Sandbox now lives on the SSH tab (moved out of General).
-    await page.getByRole("menuitem", { name: "SSH" }).click();
+    await page.getByRole("tab", { name: "SSH" }).click();
 
     // Shell Sandbox lives on the SSH tab — the divider must be visible
     await expect(page.getByText("Shell Sandbox")).toBeVisible({ timeout: 15_000 });
@@ -113,7 +113,7 @@ test.describe("M13: SSH shell sandbox — Server Settings", () => {
     await page.goto("/jabali-admin/settings");
     await page.waitForLoadState("networkidle");
     // Shell Sandbox now lives on the SSH tab (moved out of General).
-    await page.getByRole("menuitem", { name: "SSH" }).click();
+    await page.getByRole("tab", { name: "SSH" }).click();
 
     // The Select for ssh_sandbox_mode should display the bubblewrap option text
     await expect(page.getByText("Shell Sandbox")).toBeVisible({ timeout: 15_000 });
@@ -136,7 +136,7 @@ test.describe("M13: SSH shell sandbox — Server Settings", () => {
     await page.goto("/jabali-admin/settings");
     await page.waitForLoadState("networkidle");
     // Shell Sandbox now lives on the SSH tab (moved out of General).
-    await page.getByRole("menuitem", { name: "SSH" }).click();
+    await page.getByRole("tab", { name: "SSH" }).click();
 
     await expect(page.getByText("Shell Sandbox")).toBeVisible({ timeout: 15_000 });
 
@@ -201,7 +201,7 @@ test.describe("M13: SSH shell sandbox — Server Settings", () => {
     await page.goto("/jabali-admin/settings");
     await page.waitForLoadState("networkidle");
     // Shell Sandbox now lives on the SSH tab (moved out of General).
-    await page.getByRole("menuitem", { name: "SSH" }).click();
+    await page.getByRole("tab", { name: "SSH" }).click();
 
     await expect(page.getByText("Shell Sandbox")).toBeVisible({ timeout: 15_000 });
 

@@ -24,15 +24,14 @@ import {
   Col,
   Divider,
   Form,
-  Grid,
   Input,
   InputNumber,
-  Menu,
   Modal,
   Row,
   Select,
   Space,
   Switch,
+  Tabs,
   Typography,
   notification,
 } from "antd";
@@ -953,26 +952,80 @@ const SSHSettingsTab = () => {
   );
 };
 
+// tabLabel renders an icon + text label for a settings tab.
+const tabLabel = (icon: React.ReactNode, text: string) => (
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+    {icon}
+    {text}
+  </span>
+);
+
 export const ServerSettingsPage = () => {
   const [activeTab, setActiveTab] = useTabParam<SettingsTabKey>("general");
-  const screens = Grid.useBreakpoint();
-  // GH #688: the old horizontal Card tabList overflowed into a scrollbar as
-  // categories grew. Switch to a vertical Menu that scales down the list.
-  // On narrow screens the Menu goes horizontal (scrollable) above the content
-  // so it doesn't eat the whole width.
-  const vertical = screens.md ?? true;
 
-  const menuItems = [
-    { key: "general", icon: <SettingOutlined />, label: "General" },
-    { key: "ssh", icon: <CodeOutlined />, label: "SSH" },
-    { key: "storage", icon: <HddOutlined />, label: "Storage" },
-    { key: "dns", icon: <GlobalOutlined />, label: "DNS" },
-    { key: "email", icon: <MailOutlined />, label: "Email" },
-    { key: "databases", icon: <DatabaseOutlined />, label: "Databases" },
-    { key: "apps", icon: <AppstoreOutlined />, label: "Apps" },
-    { key: "nginx", icon: <ToolOutlined />, label: "Nginx" },
-    { key: "branding", icon: <BgColorsOutlined />, label: "Branding" },
-    { key: "logs", icon: <FileTextOutlined />, label: "Logs" },
+  // GH #688: left-positioned card Tabs instead of the old horizontal tab strip
+  // that overflowed into a scrollbar. Each tab still owns an independent form;
+  // destroyInactiveTabPane unmounts the inactive one so unsaved edits are
+  // dropped on switch (mirrors the Users page) and every form isn't mounted at
+  // once.
+  const items = [
+    {
+      key: "general",
+      label: tabLabel(<SettingOutlined />, "General"),
+      children: (
+        <>
+          <GeneralSettingsTab />
+          <TenantNotificationsCard />
+        </>
+      ),
+    },
+    { key: "ssh", label: tabLabel(<CodeOutlined />, "SSH"), children: <SSHSettingsTab /> },
+    { key: "storage", label: tabLabel(<HddOutlined />, "Storage"), children: <StorageSettingsTab /> },
+    { key: "dns", label: tabLabel(<GlobalOutlined />, "DNS"), children: <DNSSettingsTab /> },
+    {
+      key: "email",
+      label: tabLabel(<MailOutlined />, "Email"),
+      children: (
+        <>
+          <EmailCard />
+          <WebmailToggleCard />
+          <StalwartWebadminCard />
+        </>
+      ),
+    },
+    {
+      key: "databases",
+      label: tabLabel(<DatabaseOutlined />, "Databases"),
+      children: (
+        <>
+          <DatabasesCard />
+          <DatabaseAdminSections />
+        </>
+      ),
+    },
+    {
+      key: "apps",
+      label: tabLabel(<AppstoreOutlined />, "Apps"),
+      children: (
+        <Space direction="vertical" style={{ width: "100%" }} size="large">
+          <DockerMarketplaceCard />
+          <PythonAppsCard />
+          <PHPPerformanceModesCard />
+        </Space>
+      ),
+    },
+    {
+      key: "nginx",
+      label: tabLabel(<ToolOutlined />, "Nginx"),
+      children: (
+        <>
+          <NginxSettingsCard />
+          <TenantDomainOptionsCard />
+        </>
+      ),
+    },
+    { key: "branding", label: tabLabel(<BgColorsOutlined />, "Branding"), children: <BrandingSettingsTab /> },
+    { key: "logs", label: tabLabel(<FileTextOutlined />, "Logs"), children: <LogRetentionCard /> },
   ];
 
   return (
@@ -981,68 +1034,16 @@ export const ServerSettingsPage = () => {
         <SettingOutlined /> Server Settings
       </Typography.Title>
 
-      {/* GH #688: vertical settings nav (was an overflowing horizontal tab
-          strip). Each tab still owns an independent form, so unsaved edits in
-          the inactive tab are lost on switch (mirrors the Users page). */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: vertical ? "row" : "column",
-          gap: 16,
-          alignItems: "flex-start",
-        }}
-      >
-        <Menu
-          mode={vertical ? "inline" : "horizontal"}
-          selectedKeys={[activeTab]}
-          onClick={({ key }) => setActiveTab(key as SettingsTabKey)}
-          items={menuItems}
-          style={
-            vertical
-              ? { width: 200, flex: "0 0 auto", borderRadius: 8, border: "1px solid var(--jab-border, #f0f0f0)" }
-              : { width: "100%" }
-          }
+      <Card>
+        <Tabs
+          type="card"
+          tabPosition="left"
+          activeKey={activeTab}
+          onChange={(k) => setActiveTab(k as SettingsTabKey)}
+          destroyInactiveTabPane
+          items={items}
         />
-        <Card style={{ flex: "1 1 480px", minWidth: 0, width: "100%" }}>
-          {activeTab === "general" && (
-          <>
-            <GeneralSettingsTab />
-            <TenantNotificationsCard />
-          </>
-        )}
-        {activeTab === "ssh" && <SSHSettingsTab />}
-        {activeTab === "storage" && <StorageSettingsTab />}
-        {activeTab === "dns" && <DNSSettingsTab />}
-        {activeTab === "email" && (
-          <>
-            <EmailCard />
-            <WebmailToggleCard />
-            <StalwartWebadminCard />
-          </>
-        )}
-        {activeTab === "databases" && (
-          <>
-            <DatabasesCard />
-            <DatabaseAdminSections />
-          </>
-        )}
-        {activeTab === "apps" && (
-          <Space direction="vertical" style={{ width: "100%" }} size="large">
-            <DockerMarketplaceCard />
-            <PythonAppsCard />
-        <PHPPerformanceModesCard />
-          </Space>
-        )}
-        {activeTab === "nginx" && (
-          <>
-            <NginxSettingsCard />
-            <TenantDomainOptionsCard />
-          </>
-        )}
-        {activeTab === "branding" && <BrandingSettingsTab />}
-        {activeTab === "logs" && <LogRetentionCard />}
-        </Card>
-      </div>
+      </Card>
     </div>
   );
 };
