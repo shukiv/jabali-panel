@@ -22,9 +22,21 @@ import (
 )
 
 // files.archive — build a tar.gz of the given scoped paths and write it
-// to /tmp so panel-api (same host, jabali user) can stream it out as a
-// download. The archive is chowned to jabali:jabali + mode 0600 so only
-// the panel process can read it; panel-api unlinks after streaming.
+// to the shared staging dir so panel-api (same host, jabali user) can
+// stream it out as a download. The archive is chowned to jabali:jabali +
+// mode 0600 so only the panel process can read it; panel-api unlinks
+// after streaming.
+//
+// GH #756: the archive was written to /tmp, but both jabali-agent and
+// panel-api run PrivateTmp=yes (install.sh) — /tmp is a per-service mount
+// namespace, so a tarball the agent writes to /tmp is INVISIBLE to
+// panel-api, which then fails os.Open with "no such file or directory"
+// (not a perms error — chownToPanelUser sets the owner fine, the path
+// just doesn't exist in panel-api's private /tmp). Stage it under
+// /var/lib/jabali-uploads instead: it sits OUTSIDE the tmp sandbox and is
+// in panel-api's ReadWritePaths + AppArmor profile, so both units see the
+// same on-disk path (same fix as the upload-staging dir — install.sh
+// "Upload staging dir" note).
 //
 // Paths are resolved through the filesafe scope — a client cannot ask
 // for /etc/passwd via the archive endpoint any more than via read().
@@ -40,6 +52,27 @@ const (
 	// compressible tree can blow far past the 500 MiB compressed cap on input.
 	maxArchiveInputBytes = int64(4 * 1024 * 1024 * 1024)
 )
+
+// archiveStagingRoot is where the scratch tarball is written. It MUST live
+// OUTSIDE the PrivateTmp sandbox so panel-api can read it back (GH #756 — see
+// the handler doc above). /var/lib/jabali-uploads is created by install.sh
+// (0750 jabali) and is in panel-api's ReadWritePaths + AppArmor profile. A var,
+// not a const, so tests can redirect it to a t.TempDir().
+var archiveStagingRoot = "/var/lib/jabali-uploads"
+
+// ensureArchiveStagingRoot makes sure the staging dir exists and is owned by
+// the panel user so panel-api can traverse it. Best-effort: install.sh already
+// provisions it for the upload feature, so on a real host this is a no-op.
+func ensureArchiveStagingRoot() error {
+	if err := os.MkdirAll(archiveStagingRoot, 0o750); err != nil {
+		return fmt.Errorf("ensure archive staging root %s: %w", archiveStagingRoot, err)
+	}
+	// If we just created it as root, hand it to the panel user; if it already
+	// exists with the right owner this is a harmless re-chown. Ignore errors on
+	// hosts without the jabali user (tests) — the temp-dir override skips this.
+	_ = chownToPanelUser(archiveStagingRoot)
+	return nil
+}
 
 type filesArchiveParams struct {
 	UserID   string   `json:"user_id"`
@@ -68,7 +101,7 @@ const maxArchiveStagingBytes = int64(6 * 1024 * 1024 * 1024)
 // (GH #675), so anything older than 15m is definitely abandoned — deleting it
 // frees the shared budget so live requests aren't starved by dead files.
 func reapStaleArchives() {
-	matches, _ := filepath.Glob("/tmp/jabali-archive-*.tar.gz")
+	matches, _ := filepath.Glob(filepath.Join(archiveStagingRoot, "jabali-archive-*.tar.gz"))
 	cutoff := 15 * time.Minute
 	for _, m := range matches {
 		if fi, err := os.Stat(m); err == nil {
@@ -81,7 +114,7 @@ func reapStaleArchives() {
 
 // archiveStagingBytesInUse sums the current jabali-archive-* scratch files.
 func archiveStagingBytesInUse() int64 {
-	matches, _ := filepath.Glob("/tmp/jabali-archive-*.tar.gz")
+	matches, _ := filepath.Glob(filepath.Join(archiveStagingRoot, "jabali-archive-*.tar.gz"))
 	var total int64
 	for _, m := range matches {
 		if fi, err := os.Stat(m); err == nil {
@@ -158,7 +191,7 @@ func filesArchiveHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 	// GH #652: bound concurrent archive generation per user — each request
 	// writes a server-side scratch tarball, so unbounded concurrency lets one
-	// tenant spawn many /tmp/jabali-archive-* files and exhaust the agent/disk.
+	// tenant spawn many jabali-archive-* scratch files and exhaust the agent/disk.
 	if !acquireArchiveSlot(p.Username) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "too many concurrent archive requests for this user; retry shortly"}
 	}
@@ -215,7 +248,12 @@ func filesArchiveHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 	defer releaseArchiveBudget() // release the reservation once done (file is now on-disk-accounted)
-	out := filepath.Join("/tmp", fmt.Sprintf("jabali-archive-%s.tar.gz", hex.EncodeToString(rnd[:])))
+	// GH #756: stage under the shared, non-PrivateTmp dir so panel-api can read
+	// the result back (a /tmp path is invisible across the PrivateTmp boundary).
+	if err := ensureArchiveStagingRoot(); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+	out := filepath.Join(archiveStagingRoot, fmt.Sprintf("jabali-archive-%s.tar.gz", hex.EncodeToString(rnd[:])))
 
 	f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -227,9 +265,9 @@ func filesArchiveHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// If anything below fails we don't want an orphan scratch file.
 	cleanup := func() { _ = os.Remove(out) }
 
-	// Cap the underlying file writer so a runaway archive can't fill
-	// /tmp — panel-api runs as a system service and we don't want to
-	// be the reason the host goes read-only.
+	// Cap the underlying file writer so a runaway archive can't fill the
+	// staging disk — panel-api runs as a system service and we don't want
+	// to be the reason the host goes read-only.
 	cw := &capWriter{w: f, limit: maxArchiveBytes}
 	gz := gzip.NewWriter(cw)
 	// GH #675: the input cap sits ABOVE gzip so it measures the uncompressed
