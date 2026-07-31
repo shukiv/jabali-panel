@@ -153,9 +153,9 @@ func loadSecret(path string) ([]ssh.AuthMethod, error) {
 		case "SSH_PASSWORD":
 			auths = append(auths, migrate.SSHPasswordAuthMethods(v)...)
 		case "SSH_PRIVATE_KEY":
-			signer, perr := ssh.ParsePrivateKey([]byte(v))
+			signer, perr := parsePEMSigner([]byte(v))
 			if perr != nil {
-				return nil, fmt.Errorf("parse SSH_PRIVATE_KEY: %w", perr)
+				return nil, fmt.Errorf("SSH_PRIVATE_KEY: %w", perr)
 			}
 			auths = append(auths, ssh.PublicKeys(signer))
 		case "SSH_PRIVATE_KEY_B64":
@@ -163,10 +163,10 @@ func loadSecret(path string) ([]ssh.AuthMethod, error) {
 			if derr != nil {
 				return nil, fmt.Errorf("base64-decode SSH_PRIVATE_KEY_B64: %w", derr)
 			}
-			signer, perr := ssh.ParsePrivateKey(pem)
+			signer, perr := parsePEMSigner(pem)
 			zero(pem)
 			if perr != nil {
-				return nil, fmt.Errorf("parse SSH_PRIVATE_KEY_B64: %w", perr)
+				return nil, fmt.Errorf("SSH_PRIVATE_KEY_B64: %w", perr)
 			}
 			auths = append(auths, ssh.PublicKeys(signer))
 		}
@@ -175,6 +175,28 @@ func loadSecret(path string) ([]ssh.AuthMethod, error) {
 		return nil, errors.New("no SSH_PASSWORD / SSH_PRIVATE_KEY / SSH_PRIVATE_KEY_B64 in secret file")
 	}
 	return auths, nil
+}
+
+// parsePEMSigner parses an SSH private-key PEM into a Signer (GH #429). It
+// tolerates a CRLF-pasted key — a browser <textarea> often submits \r\n, which
+// corrupts the PEM base64 body and makes ssh.ParsePrivateKey fail even though
+// the key is valid — and returns a clear message for a passphrase-protected
+// key, which migrations (unattended) cannot decrypt.
+func parsePEMSigner(pem []byte) (ssh.Signer, error) {
+	norm := bytes.ReplaceAll(pem, []byte("\r\n"), []byte("\n"))
+	norm = bytes.ReplaceAll(norm, []byte("\r"), []byte("\n"))
+	if n := len(norm); n > 0 && norm[n-1] != '\n' {
+		norm = append(norm, '\n')
+	}
+	signer, err := ssh.ParsePrivateKey(norm)
+	if err != nil {
+		var pmErr *ssh.PassphraseMissingError
+		if errors.As(err, &pmErr) {
+			return nil, errors.New("the private key is passphrase-protected; migrations run unattended and need an UNENCRYPTED key (strip the passphrase with: ssh-keygen -p -f <keyfile>)")
+		}
+		return nil, fmt.Errorf("not a valid SSH private key (%w); paste the full PEM including the BEGIN/END lines", err)
+	}
+	return signer, nil
 }
 
 func zero(b []byte) {

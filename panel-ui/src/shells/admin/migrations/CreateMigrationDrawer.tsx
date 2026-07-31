@@ -19,6 +19,7 @@ import {
   Upload,
   message,
 } from "antd";
+import type { FormInstance } from "antd";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -196,17 +197,39 @@ function SecretsStep({ jobId, kind, onDone }: { jobId: string; kind?: string; on
       <Button type="primary" htmlType="submit" loading={mut.isPending}>
         Save credentials
       </Button>
-      <TestConnection jobId={jobId} />
+      <TestConnection jobId={jobId} form={form} credKind={credKind} />
     </Form>
   );
 }
 
 // TestConnection (GH #665 mockup 03) — handshake the source, show detected
 // counts/version or the error, before pulling.
-function TestConnection({ jobId }: { jobId: string }) {
+function TestConnection({
+  jobId,
+  form,
+  credKind,
+}: {
+  jobId: string;
+  form: FormInstance<SecretsInput>;
+  credKind: "password" | "key";
+}) {
   const [res, setRes] = useState<Record<string, unknown> | null>(null);
   const mut = useMutation({
     mutationFn: async () => {
+      // GH #429: test-connection reads the ON-DISK secret, so testing before
+      // "Save credentials" failed "secret missing". Upload the credential the
+      // operator just typed FIRST, then test.
+      const vals = form.getFieldsValue();
+      const cred =
+        credKind === "password" ? vals.ssh_password?.trim() : vals.ssh_private_key?.trim();
+      if (!cred) {
+        throw new Error(
+          credKind === "password" ? "Enter the SSH password first" : "Paste the SSH private key first",
+        );
+      }
+      await apiClient.post(`/admin/migrations/${jobId}/secrets`, {
+        [credKind === "password" ? "ssh_password" : "ssh_private_key"]: cred,
+      });
       const { data } = await apiClient.post<Record<string, unknown>>(
         `/admin/migrations/${jobId}/test-connection`,
         {},
@@ -216,7 +239,8 @@ function TestConnection({ jobId }: { jobId: string }) {
     onSuccess: (d) => setRes(d),
     onError: (err: unknown) => {
       const detail = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data;
-      setRes({ ok: false, error: detail?.detail ?? detail?.error ?? "Connection failed" });
+      const local = err instanceof Error ? err.message : undefined;
+      setRes({ ok: false, error: detail?.detail ?? detail?.error ?? local ?? "Connection failed" });
     },
   });
   return (

@@ -54,13 +54,20 @@ func (h *adminMigrationsHandler) testConnection(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
 	}
+	// GH #429: a slow source SSH handshake (e.g. sshd reverse-DNS stall) made
+	// test-connection exceed the server's 30s WriteTimeout, so the response was
+	// severed mid-flight and the SPA saw a generic Cloudflare 52x instead of the
+	// real error. Clear this request's write deadline so the handler always
+	// returns a clean JSON result/error within its own ctx, and bound that ctx
+	// well under the gateway's ~100s edge timeout.
+	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{})
 	allowPrivate := false
 	if h.cfg.Settings != nil {
 		if st, sErr := h.cfg.Settings.Get(c.Request.Context()); sErr == nil && st != nil {
 			allowPrivate = st.MigrationAllowPrivateHosts
 		}
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
 	defer cancel()
 	secret := migrate.SecretRef{Path: filepath.Join(migrate.SecretsDir, job.ID+".env")}
 
