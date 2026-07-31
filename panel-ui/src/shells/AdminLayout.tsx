@@ -102,13 +102,15 @@ export function AdminLayout() {
   }, [location.pathname]);
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
+    <Layout style={{ height: "100vh", overflow: "hidden" }}>
       <JabaliHeader
         showMenuButton={!isDesktop}
         onMenuClick={() => setDrawerOpen(true)}
         searchNav={visibleNav}
       />
-      <Layout>
+      {/* Row sized to the viewport minus the 64px header, so the sidebar +
+          header stay fixed and only the Content region scrolls. */}
+      <Layout style={{ height: "calc(100vh - 64px)" }}>
         {isDesktop ? (
           <Sider
             theme={mode}
@@ -137,9 +139,10 @@ export function AdminLayout() {
               background: siderBg,
               paddingTop: 16,
               paddingInline: 8,
-              height: "100vh",
-              position: "sticky",
-              top: 0,
+              // Fills the fixed-height row; its inner div scrolls a long menu.
+              // The row doesn't scroll, so the sidebar stays put while Content
+              // scrolls independently.
+              height: "100%",
               overflow: "hidden",
             }}
           >
@@ -170,7 +173,7 @@ export function AdminLayout() {
             {menu}
           </Drawer>
         )}
-        <Layout>
+        <Layout style={{ height: "100%", overflowY: "auto" }}>
           <Content
             style={{
               // Extra top gap so the page heading breathes away from
