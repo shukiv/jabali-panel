@@ -1042,6 +1042,16 @@ export const ServerSettingsPage = () => {
           onChange={(k) => setActiveTab(k as SettingsTabKey)}
           destroyInactiveTabPane
           items={items}
+          // GH #688: keep the left tab bar in view while a long tab's content
+          // scrolls. Sticky to the top of the scroll container; a very long
+          // tab list scrolls on its own via maxHeight/overflow.
+          tabBarStyle={{
+            position: "sticky",
+            top: 16,
+            alignSelf: "flex-start",
+            maxHeight: "calc(100vh - 32px)",
+            overflowY: "auto",
+          }}
         />
       </Card>
     </div>
