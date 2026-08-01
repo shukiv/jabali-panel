@@ -608,7 +608,11 @@ class Jabali_Cache_Client {
 				return false;
 			}
 		}
-		if ( null === $this->cmd( array( 'SELECT', (string) (int) $this->cfg['database'] ) ) && $this->dead ) {
+		$sel = $this->cmd( array( 'SELECT', (string) (int) $this->cfg['database'] ) );
+		if ( 'OK' !== $sel && true !== $sel ) {
+			// An -ERR/-NOPERM reply must be fatal: continuing would silently
+			// operate on the connection's default DB 0 (the panel's) instead of ours.
+			$this->fail( 'SELECT ' . (int) $this->cfg['database'] . ' rejected: ' . $this->last_error );
 			return false;
 		}
 		$pong = $this->cmd( array( 'PING' ) );
@@ -1097,6 +1101,10 @@ class Jabali_Cache_Client {
 		$steps   = 0;
 		if ( 'phpredis' === $this->driver ) {
 			try {
+				// SCAN_RETRY: without it scan() returns false on an EMPTY iteration
+				// and the loop exits early with an undercount. (pconnect pools the
+				// handle, so never rely on another method having set this option.)
+				$this->redis->setOption( \Redis::OPT_SCAN, \Redis::SCAN_RETRY );
 				$it = null;
 				while ( false !== ( $keys = $this->redis->scan( $it, $pattern, 1000 ) ) ) {
 					$count += count( $keys );
@@ -1180,6 +1188,7 @@ class Jabali_Cache_Client {
 		$keys    = array();
 		if ( 'phpredis' === $this->driver ) {
 			try {
+				$this->redis->setOption( \Redis::OPT_SCAN, \Redis::SCAN_RETRY ); // see count_keys().
 				$it = null;
 				while ( false !== ( $batch = $this->redis->scan( $it, $pattern, 1000 ) ) ) {
 					foreach ( $batch as $k ) {
@@ -1212,8 +1221,14 @@ class Jabali_Cache_Client {
 		if ( $n <= $maxKeys ) {
 			return 0;
 		}
-		$excess = array_slice( $keys, 0, $n - $maxKeys );
-		return (int) $this->del( $excess );
+		$excess  = array_slice( $keys, 0, $n - $maxKeys );
+		$removed = 0;
+		// UNLINK in bounded chunks (GH #608): async memory reclaim, and no
+		// single mega-command against the shared instance.
+		foreach ( array_chunk( $excess, 1000 ) as $chunk ) {
+			$removed += (int) $this->unlink( $chunk );
+		}
+		return $removed;
 	}
 
 	public function close( $force = false ) {

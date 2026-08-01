@@ -285,10 +285,12 @@ class Jabali_Cache_Page_Cache {
 			return $body;
 		}
 		if ( ! $this->is_cacheable_response( $body ) ) {
+			$this->release_regen_lock(); // nothing stored — don't hold the lock for LOCK_TTL.
 			return $body;
 		}
 		// JAB-92: don't cache an oversized body — it would evict useful keys.
 		if ( ! self::is_storable_size( $body ) ) {
+			$this->release_regen_lock();
 			return $body;
 		}
 
@@ -379,7 +381,21 @@ class Jabali_Cache_Page_Cache {
 		$scheme = ( isset( $u['scheme'] ) && 'https' === $u['scheme'] ) ? 'https' : 'http';
 		$host   = $u['host'] . ( isset( $u['port'] ) ? ':' . $u['port'] : '' );
 
-		$keys = $this->keys_for_paths( $paths, $scheme, $host );
+		// Entries are keyed by the VISITOR'S HTTP_HOST; a site reachable on both
+		// apex and www stores two variants. Purge the sibling host too so the
+		// other variant never lingers stale.
+		$hosts = array( $host );
+		$sib   = ( 0 === strpos( $host, 'www.' ) ) ? substr( $host, 4 ) : 'www.' . $host;
+		if ( '' !== $sib && $sib !== $host ) {
+			$hosts[] = $sib;
+		}
+		$keys = array();
+		foreach ( $hosts as $h ) {
+			foreach ( $this->keys_for_paths( $paths, $scheme, $h ) as $k ) {
+				$keys[] = $k;
+			}
+		}
+		$keys = array_values( array_unique( $keys ) );
 		if ( empty( $keys ) ) {
 			return 0;
 		}
@@ -560,7 +576,9 @@ class Jabali_Cache_Page_Cache {
 	}
 
 	private function only_safe_query_params( $qs ) {
-		$safe = array( 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', 'ref' );
+		// No 'ref' here: referral/affiliate plugins render content from it, so
+		// collapsing ?ref= onto the clean-URL entry can cache the wrong page.
+		$safe = array( 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid' );
 		parse_str( $qs, $params );
 		foreach ( array_keys( (array) $params ) as $k ) {
 			if ( ! in_array( $k, $safe, true ) ) {

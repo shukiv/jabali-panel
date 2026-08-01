@@ -25,6 +25,9 @@ if ( ! defined( 'JABALI_CACHE_PLUGIN_FILE' ) ) {
 if ( ! defined( 'JABALI_CACHE_PLUGIN_DIR' ) ) {
 	define( 'JABALI_CACHE_PLUGIN_DIR', __DIR__ );
 }
+if ( ! defined( 'JABALI_CACHE_NGINX_SPOOL' ) ) {
+	define( 'JABALI_CACHE_NGINX_SPOOL', '/run/jabali-wp-purge' );
+}
 
 require_once __DIR__ . '/includes/lib.php';
 require_once __DIR__ . '/includes/class-settings.php';
@@ -133,7 +136,11 @@ function jabali_cache_register_purge_hooks() {
 	// Redis full-page purge inside these hooks self-gates on page_cache (#603),
 	// and the nginx purge (jabali_cache_purge_nginx) is a cheap no-op off Jabali.
 	$cfg = Jabali_Cache_Config::load();
-	if ( empty( $cfg['enabled'] ) ) {
+	// #611 intent: nginx micro-cache purges must fire even when the plugin's
+	// master (object-cache) toggle is off — the spool dir existing is the
+	// "panel page cache present" signal. The Redis-side purges keep
+	// self-gating on enabled/page_cache inside their helpers.
+	if ( empty( $cfg['enabled'] ) && ! @is_dir( JABALI_CACHE_NGINX_SPOOL ) ) {
 		return;
 	}
 	$purge = 'jabali_cache_purge_pages';
@@ -173,8 +180,8 @@ function jabali_cache_purge_redis() {
  * @param array<int,string> $paths URL paths to purge; empty = whole domain.
  */
 function jabali_cache_purge_nginx( $paths = array() ) {
-	$dir = '/run/jabali-wp-purge';
-	if ( ! is_dir( $dir ) || ! is_writable( $dir ) ) {
+	$dir = JABALI_CACHE_NGINX_SPOOL;
+	if ( ! @is_dir( $dir ) || ! @is_writable( $dir ) ) { // @: open_basedir may hide /run (JAB-199) — treat as absent, no per-request warning.
 		return; // not on a Jabali host, or spool not provisioned.
 	}
 	$host = wp_parse_url( home_url(), PHP_URL_HOST );
@@ -213,6 +220,16 @@ function jabali_cache_purge_pages() {
  * @param int $post_id
  */
 function jabali_cache_purge_post( $post_id ) {
+	// Autosaves and revisions fire save_post too (Elementor autosaves every
+	// ~minute while editing). Purging on each one churns the warm cache and
+	// floods the purge spool for content no anonymous visitor can see yet.
+	if ( wp_is_post_revision( $post_id ) || wp_is_post_autosave( $post_id ) ) {
+		return;
+	}
+	$jc_status = get_post_status( $post_id );
+	if ( in_array( $jc_status, array( 'auto-draft', 'inherit' ), true ) ) {
+		return;
+	}
 	// JAB-91: build the affected paths first (home + the post permalink), then
 	// purge ONLY those from the Redis page cache — a single post edit must not
 	// discard the whole site's warm cache. Whole-site Redis purge stays for

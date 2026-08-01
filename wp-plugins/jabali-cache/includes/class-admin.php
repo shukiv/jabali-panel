@@ -34,7 +34,7 @@ class Jabali_Cache_Admin {
 		add_action( 'admin_notices', array( $this, 'notices' ) );
 		add_action( 'admin_bar_menu', array( $this, 'admin_bar' ), 100 );
 		add_filter(
-			'plugin_action_links_' . plugin_basename( $plugin_file ),
+			'plugin_action_links_' . plugin_basename( $this->plugin_file ),
 			array( $this, 'action_links' )
 		);
 	}
@@ -128,7 +128,7 @@ class Jabali_Cache_Admin {
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
 		$on_page = $screen && false !== strpos( (string) $screen->id, self::SLUG );
 
-		$health = $this->health();
+		$health = $this->health_cached();
 		if ( ! $health['enabled'] ) {
 			return;
 		}
@@ -236,7 +236,7 @@ class Jabali_Cache_Admin {
 		$this->kv( 'Serializer', esc_html( $health['serializer'] ) );
 		$this->kv( 'Target', '<code>' . esc_html( $health['target'] ) . '</code> (db ' . (int) $s['database'] . ')' );
 		$this->kv( 'Key prefix', '<code class="jc-ellipsis">' . esc_html( $health['prefix'] ) . '</code>' );
-		$this->kv( 'Keys for this site', $health['connected'] ? (int) $health['keys'] : '—' );
+		$this->kv( 'Keys for this site', $health['connected'] ? ( (int) $health['keys'] . ( ! empty( $health['keys_approx'] ) ? '+' : '' ) ) : '—' );
 		if ( null !== $hits ) {
 			$this->kv( 'Cache hits (this request)', esc_html( $hits['h'] . ' hits / ' . $hits['m'] . ' misses (' . $hits['rate'] . '%)' ) );
 		}
@@ -526,6 +526,21 @@ class Jabali_Cache_Admin {
 	// ------------------------------------------------------------------
 
 	/**
+	 * 60s-cached health for admin_notices: the full health() does live Redis
+	 * work (INFO + a key scan) and admin_notices runs on EVERY wp-admin
+	 * request, so the uncached path must not run per-pageview.
+	 */
+	private function health_cached() {
+		$t = get_transient( 'jabali_cache_admin_health' );
+		if ( is_array( $t ) ) {
+			return $t;
+		}
+		$h = $this->health();
+		set_transient( 'jabali_cache_admin_health', $h, MINUTE_IN_SECONDS );
+		return $h;
+	}
+
+	/**
 	 * @return array<string,mixed>
 	 */
 	private function health() {
@@ -553,7 +568,9 @@ class Jabali_Cache_Admin {
 		if ( $client->connect() ) {
 			$out['connected']  = true;
 			$out['driver']     = $client->driver();
-			$out['keys']       = $client->count_keys( $cfg['prefix'] );
+			$kc                 = $client->stats_key_count( $cfg['prefix'] );
+			$out['keys']        = (int) $kc['count'];
+			$out['keys_approx'] = ! empty( $kc['approx'] );
 			$out['server']     = $this->parse_info( $client->info() );
 			$client->close();
 		} else {
@@ -577,9 +594,11 @@ class Jabali_Cache_Admin {
 			return $cached;
 		}
 		$out  = array();
-		$resp = wp_remote_head(
+		// GET, not HEAD: the nginx micro-cache key embeds $request_method, so a
+		// HEAD probe can never observe a HIT for the GET entries real visitors use.
+		$resp = wp_remote_get(
 			home_url( '/' ),
-			array( 'timeout' => 3, 'redirection' => 0, 'sslverify' => false, 'headers' => array( 'Accept' => 'text/html' ) )
+			array( 'timeout' => 3, 'redirection' => 0, 'sslverify' => false, 'limit_response_size' => 1048576, 'headers' => array( 'Accept' => 'text/html' ) )
 		);
 		if ( ! is_wp_error( $resp ) ) {
 			$xjc = wp_remote_retrieve_header( $resp, 'x-jabali-cache' );
