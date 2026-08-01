@@ -94,6 +94,9 @@ type createDomainRequest struct {
 	// CreateWWW (GH #225) opts the domain into the bootstrap www CNAME.
 	// Omitted/false => no www record (the new default).
 	CreateWWW bool `json:"create_www"`
+	// TempURLEnabled (migration 000243) opts the domain into a preview
+	// URL (<slug>.preview.<hostname>). Off by default.
+	TempURLEnabled bool `json:"temp_url_enabled"`
 	// SSLMode (GH #246) — le|self|none at create. 'custom' is rejected here:
 	// it needs a cert upload, set via PUT /domains/:id/ssl/custom after create.
 	// Empty defaults to 'le'.
@@ -190,6 +193,8 @@ type updateDomainRequest struct {
 	NginxSafeOptions      *models.NginxSafeOptions `json:"nginx_safe_options,omitempty"`
 	IndexPriority         *string                  `json:"index_priority,omitempty"`
 	WebmailEnabled        *bool                    `json:"webmail_enabled,omitempty"`
+	// TempURLEnabled toggles the preview URL vhost block. Owner or admin.
+	TempURLEnabled *bool `json:"temp_url_enabled,omitempty"`
 	// GH #648 (DMARCbis): per-domain settable np (non-existent subdomain
 	// policy) + t=y testing tag, folded into the canonical _dmarc record.
 	DmarcNP      *string `json:"dmarc_np,omitempty"`
@@ -268,6 +273,9 @@ type domainListRow struct {
 	// when BWDaily is wired; omitted otherwise so older clients stay
 	// happy and a fresh install (no data yet) renders 0 not "missing".
 	Bytes30d *uint64 `json:"bytes_30d,omitempty"`
+	// TempURL is the full preview URL, populated when the domain has
+	// temp_url_enabled and a panel hostname is configured.
+	TempURL *string `json:"temp_url,omitempty"`
 }
 
 // ipSummary is the denormalized {id, address} blob the UI consumes for
@@ -276,6 +284,27 @@ type domainListRow struct {
 type ipSummary struct {
 	ID      uint64 `json:"id"`
 	Address string `json:"address"`
+}
+
+// previewSlugConflict reports another temp-URL-enabled domain whose
+// preview slug collides with name ("" = none). Fail-open on list errors:
+// the toggle is best-effort guarded, and nginx first-wins is the backstop.
+func (h *domainHandler) previewSlugConflict(ctx context.Context, name, selfID string) string {
+	all, _, err := h.cfg.Domains.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		return ""
+	}
+	slug := models.PreviewSlug(name)
+	for i := range all {
+		d := &all[i]
+		if d.ID == selfID || !d.TempURLEnabled {
+			continue
+		}
+		if models.PreviewSlug(d.Name) == slug {
+			return d.Name
+		}
+	}
+	return ""
 }
 
 func (h *domainHandler) list(c *gin.Context) {
@@ -412,6 +441,27 @@ func (h *domainHandler) list(c *gin.Context) {
 			for i := range rows {
 				rows[i].ListenIPv4 = pickListenSummary(rows[i].ListenIPv4ID, ipByID, defaultV4)
 				rows[i].ListenIPv6 = pickListenSummary(rows[i].ListenIPv6ID, ipByID, defaultV6)
+			}
+		}
+	}
+
+	// Preview URLs: one settings lookup fills every enabled row's link.
+	if h.cfg.ServerSettings != nil {
+		needsPreview := false
+		for i := range rows {
+			if rows[i].TempURLEnabled {
+				needsPreview = true
+				break
+			}
+		}
+		if needsPreview {
+			if srv, sErr := h.cfg.ServerSettings.Get(c.Request.Context()); sErr == nil && srv != nil && srv.Hostname != "" {
+				for i := range rows {
+					if rows[i].TempURLEnabled {
+						u := "https://" + models.PreviewHost(rows[i].Name, srv.Hostname)
+						rows[i].TempURL = &u
+					}
+				}
 			}
 		}
 	}
@@ -740,8 +790,20 @@ func (h *domainHandler) create(c *gin.Context) {
 		EmailEnabled:    mailEnabled,
 		SkipAutoSAN:     mailSkipSAN,
 		CreateWWW:       req.CreateWWW,
+		TempURLEnabled:  req.TempURLEnabled,
 		CreatedAt:       now,
 		UpdatedAt:       now,
+	}
+
+	// Preview slugs flatten dots to dashes, which is not injective
+	// (my.site.com and my-site.com both slug to my-site-com). Refuse the
+	// second enable of a colliding pair — first-wins at the nginx layer
+	// would silently serve the wrong site.
+	if domain.TempURLEnabled {
+		if other := h.previewSlugConflict(ctx, domain.Name, ""); other != "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "temp_url_slug_conflict", "detail": "preview URL would collide with " + other})
+			return
+		}
 	}
 
 	if err := h.cfg.Domains.Create(ctx, domain); err != nil {
@@ -847,6 +909,18 @@ func (h *domainHandler) update(c *gin.Context) {
 
 	if req.IsEnabled != nil && *req.IsEnabled != domain.IsEnabled {
 		domain.IsEnabled = *req.IsEnabled
+	}
+
+	// Preview URL toggle — owner or admin. Enabling re-checks the slug
+	// collision (see previewSlugConflict).
+	if req.TempURLEnabled != nil && *req.TempURLEnabled != domain.TempURLEnabled {
+		if *req.TempURLEnabled {
+			if other := h.previewSlugConflict(ctx, domain.Name, domain.ID); other != "" {
+				c.JSON(http.StatusConflict, gin.H{"error": "temp_url_slug_conflict", "detail": "preview URL would collide with " + other})
+				return
+			}
+		}
+		domain.TempURLEnabled = *req.TempURLEnabled
 	}
 
 	// Nginx Custom Directives (raw textarea) AND Rule Builder

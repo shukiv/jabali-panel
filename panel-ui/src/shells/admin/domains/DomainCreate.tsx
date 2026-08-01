@@ -19,6 +19,7 @@ export type DomainCreateInput = {
   m365_onmicrosoft?: string;
   google_dkim?: string;
   create_www?: boolean;
+  temp_url_enabled?: boolean;
   ssl_mode?: string;
 };
 
@@ -162,6 +163,15 @@ export const DomainCreate = () => {
           tooltip={t("domaincreate.adds_a_www_cname_pointing_at_the_domain_apex")}
         >
           <Checkbox>Create www record</Checkbox>
+        </Form.Item>
+
+        <Form.Item
+          name="temp_url_enabled"
+          valuePropName="checked"
+          initialValue={false}
+          tooltip="Serves the site at <domain-slug>.preview.<panel-hostname> so it can be checked before DNS points here."
+        >
+          <Checkbox>Enable preview URL</Checkbox>
         </Form.Item>
 
         <Form.Item>

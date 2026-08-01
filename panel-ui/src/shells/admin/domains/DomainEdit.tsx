@@ -42,6 +42,7 @@ import { DomainDeliverabilitySection } from "./DomainDeliverabilitySection";
 export type DomainEditInput = {
   is_enabled?: boolean;
   doc_root?: string;
+  temp_url_enabled?: boolean;
 };
 
 export const DomainEdit = () => {
@@ -71,6 +72,7 @@ export const DomainEdit = () => {
       form.setFieldsValue({
         is_enabled: domain.is_enabled,
         doc_root: domain.doc_root,
+        temp_url_enabled: domain.temp_url_enabled,
       });
     }
   }, [domain, form]);
@@ -141,6 +143,18 @@ export const DomainEdit = () => {
           />
         </Form.Item>
         <Typography.Text>Enabled</Typography.Text>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+        <Form.Item name="temp_url_enabled" valuePropName="checked" noStyle>
+          <Switch
+            checkedChildren={<CheckOutlined />}
+            unCheckedChildren={<CloseOutlined />}
+          />
+        </Form.Item>
+        <Typography.Text>
+          Preview URL (&lt;slug&gt;.preview.&lt;panel-hostname&gt; serves this docroot)
+        </Typography.Text>
       </div>
 
       <Form.Item>
