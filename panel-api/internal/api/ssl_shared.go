@@ -30,6 +30,12 @@ type sharedCertView struct {
 	SANs            []string `json:"sans"`
 	ExpiresAt       string   `json:"expires_at,omitempty"`
 	AttachedDomains int64    `json:"attached_domains"`
+	// Source: 'uploaded' or 'acme'. ACME rows also surface issuance state:
+	// Pending (no cert yet), Staging, and the last failed attempt.
+	Source    string `json:"source"`
+	Pending   bool   `json:"pending"`
+	Staging   bool   `json:"staging,omitempty"`
+	LastError string `json:"last_error,omitempty"`
 }
 
 // uploadSharedCert validates + installs a server-wide shared cert. The agent
@@ -122,7 +128,16 @@ func (h *sslHandler) listSharedCerts(c *gin.Context) {
 	}
 	out := make([]sharedCertView, 0, len(certs))
 	for i := range certs {
-		v := sharedCertView{ID: certs[i].ID, Name: certs[i].Name}
+		v := sharedCertView{
+			ID:      certs[i].ID,
+			Name:    certs[i].Name,
+			Source:  certs[i].Source,
+			Pending: certs[i].Source == models.SharedCertSourceACME && certs[i].CertPath == nil,
+			Staging: certs[i].Staging,
+		}
+		if certs[i].LastError != nil {
+			v.LastError = *certs[i].LastError
+		}
 		if certs[i].SANs != nil {
 			_ = json.Unmarshal([]byte(*certs[i].SANs), &v.SANs)
 		}
@@ -157,7 +172,15 @@ func (h *sslHandler) deleteSharedCert(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	_, _ = h.cfg.Agent.Call(ctx, "ssl.delete_shared", map[string]any{"id": id})
+	if cert.Source == models.SharedCertSourceACME {
+		// ACME rows live as a certbot lineage, not the shared-certs dir.
+		// Revoke + delete the lineage (best-effort) so `certbot renew`
+		// stops renewing a cert nobody serves — its DNS hooks would keep
+		// writing challenge records forever.
+		_, _ = h.cfg.Agent.Call(ctx, "ssl.revoke", map[string]any{"domain": cert.ACMELineageName()})
+	} else {
+		_, _ = h.cfg.Agent.Call(ctx, "ssl.delete_shared", map[string]any{"id": id})
+	}
 	c.JSON(http.StatusOK, gin.H{"deleted": id})
 }
 

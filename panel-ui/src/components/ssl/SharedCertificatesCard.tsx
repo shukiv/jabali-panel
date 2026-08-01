@@ -9,6 +9,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Table,
   Tag,
@@ -18,7 +19,7 @@ import {
   message,
 } from "antd";
 import type { UploadFile } from "antd";
-import { DeleteOutlined, PlusOutlined, UploadOutlined } from "@icons";
+import { DeleteOutlined, PlusOutlined, SafetyCertificateOutlined, UploadOutlined } from "@icons";
 
 import { apiClient } from "../../apiClient";
 
@@ -34,6 +35,15 @@ interface SharedCert {
   sans: string[];
   expires_at?: string;
   attached_domains: number;
+  source?: "uploaded" | "acme";
+  pending?: boolean;
+  staging?: boolean;
+  last_error?: string;
+}
+
+interface DomainOption {
+  id: string;
+  name: string;
 }
 
 const daysUntil = (iso?: string): number | null => {
@@ -79,12 +89,47 @@ export const SharedCertificatesCard = () => {
   const [name, setName] = useState("");
   const [certPem, setCertPem] = useState("");
   const [keyPem, setKeyPem] = useState("");
+  const [acmeOpen, setAcmeOpen] = useState(false);
+  const [acmeDomainId, setAcmeDomainId] = useState<string>();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["shared-certificates"],
     queryFn: async () => {
       const res = await apiClient.get("/admin/certificates/shared");
       return (res.data?.data ?? []) as SharedCert[];
+    },
+    // Poll while an ACME row is still issuing (the reconciler drives the
+    // certbot run); stop once nothing is pending.
+    refetchInterval: (q) => {
+      const rows = q.state.data as SharedCert[] | undefined;
+      return rows?.some((r) => r.pending) ? 10_000 : false;
+    },
+  });
+
+  const domainsQuery = useQuery({
+    queryKey: ["shared-cert-acme-domains"],
+    enabled: acmeOpen,
+    queryFn: async () => {
+      const res = await apiClient.get("/domains?page_size=500");
+      return (res.data?.data ?? []) as DomainOption[];
+    },
+  });
+
+  const acmeMutation = useMutation({
+    mutationFn: async () => {
+      await apiClient.post("/admin/certificates/shared/acme", {
+        domain_id: acmeDomainId,
+      });
+    },
+    onSuccess: () => {
+      message.success("Wildcard certificate requested — issuance runs within a minute");
+      setAcmeOpen(false);
+      setAcmeDomainId(undefined);
+      queryClient.invalidateQueries({ queryKey: ["shared-certificates"] });
+    },
+    onError: (err: unknown) => {
+      const resp = (err as { response?: { data?: { error?: string; detail?: string } } })?.response?.data;
+      message.error(resp?.detail ?? resp?.error ?? "Failed to request certificate");
     },
   });
 
@@ -177,6 +222,22 @@ export const SharedCertificatesCard = () => {
       },
     },
     {
+      title: "Status",
+      key: "status",
+      render: (_: unknown, r: SharedCert) => {
+        if (r.source !== "acme") return <Tag>Uploaded</Tag>;
+        if (r.last_error) {
+          return (
+            <Tooltip title={r.last_error}>
+              <Tag color="red">Issue failed</Tag>
+            </Tooltip>
+          );
+        }
+        if (r.pending) return <Tag color="processing">Issuing…</Tag>;
+        return <Tag color="green">{r.staging ? "Let's Encrypt (staging)" : "Let's Encrypt"}</Tag>;
+      },
+    },
+    {
       title: "Expires",
       dataIndex: "expires_at",
       key: "expires_at",
@@ -219,9 +280,14 @@ export const SharedCertificatesCard = () => {
     <Card
       title={t("sharedcertificates.title")}
       extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setUploadOpen(true)}>
-          Upload shared certificate
-        </Button>
+        <Space>
+          <Button icon={<SafetyCertificateOutlined />} onClick={() => setAcmeOpen(true)}>
+            Request wildcard (Let&apos;s Encrypt)
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setUploadOpen(true)}>
+            Upload shared certificate
+          </Button>
+        </Space>
       }
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
@@ -247,6 +313,38 @@ export const SharedCertificatesCard = () => {
           scroll={{ x: "max-content" }}
         />
       )}
+
+      <Modal
+        open={acmeOpen}
+        title="Request wildcard certificate"
+        okText="Request"
+        okButtonProps={{ disabled: !acmeDomainId }}
+        confirmLoading={acmeMutation.isPending}
+        onOk={() => acmeMutation.mutate()}
+        onCancel={() => {
+          setAcmeOpen(false);
+          setAcmeDomainId(undefined);
+        }}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="Issues a Let's Encrypt certificate covering the domain and *.domain via DNS-01. The domain's DNS zone must be hosted on this server — the challenge record is placed in the local PowerDNS."
+          />
+          <Select
+            style={{ width: "100%" }}
+            placeholder="Select a domain"
+            showSearch
+            optionFilterProp="label"
+            loading={domainsQuery.isLoading}
+            value={acmeDomainId}
+            onChange={setAcmeDomainId}
+            options={(domainsQuery.data ?? []).map((d) => ({ value: d.id, label: d.name }))}
+          />
+        </Space>
+      </Modal>
 
       <Modal
         open={uploadOpen}

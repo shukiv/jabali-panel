@@ -843,6 +843,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:        deps.Domains,
 				SSLCerts:       deps.SSLCerts,
 				SharedCerts:    deps.SharedCerts,
+				DNSZones:       deps.DNSZones,
 				Agent:          deps.Agent,
 				PanelCerts:     deps.PanelCerts,
 				MailCerts:      deps.MailCerts,

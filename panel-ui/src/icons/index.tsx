@@ -226,6 +226,7 @@ export const LogoutOutlined = shim(LogOut);
 export const MenuOutlined = shim(Menu);
 export const MoreOutlined = shim(MoreHorizontal);
 export const PoweroffOutlined = shim(Power);
+export const SafetyCertificateOutlined = shim(ShieldCheck);
 export const SafetyOutlined = shim(ShieldCheck);
 export const ShieldCheckOutlined = shim(ShieldCheck);
 export const CalendarCheckOutlined = shim(CalendarCheck);

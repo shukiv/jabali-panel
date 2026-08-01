@@ -109,6 +109,13 @@ func (r *fakeSharedRepo) CountAttachedDomains(_ context.Context, id string) (int
 func (r *fakeSharedRepo) ListExpiring(_ context.Context, _ time.Time) ([]models.SharedCertificate, error) {
 	return nil, nil
 }
+func (r *fakeSharedRepo) ListACMEDue(_ context.Context, _ time.Time) ([]models.SharedCertificate, error) {
+	return nil, nil
+}
+func (r *fakeSharedRepo) MarkACMEAttempt(_ context.Context, _ string, _ *string) error { return nil }
+func (r *fakeSharedRepo) UpdateACMEIssued(_ context.Context, _, _, _, _ string, _ time.Time, _ bool) error {
+	return nil
+}
 
 // JAB-170 phase 4: upload validates + installs, stores the parsed SANs + expiry.
 func TestUploadSharedCert(t *testing.T) {

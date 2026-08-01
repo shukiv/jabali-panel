@@ -186,6 +186,113 @@ func (r *Runner) Issue(domain, webroot, email string, staging bool, extraHostnam
 	}, nil
 }
 
+// IssueDNS01 runs certbot with the manual DNS-01 authenticator. This is
+// the only challenge type Let's Encrypt accepts for wildcard names, so it
+// is what backs `*.<domain>` shared certificates and the panel's
+// `*.preview.<hostname>` cert.
+//
+// certName pins the lineage directory (LERoot/live/<certName>) and MUST
+// NOT contain `*` — pass a sanitised name (e.g. "wildcard.example.com")
+// and put the wildcard in sans. sans is the full SAN list including the
+// primary name; entries may carry a single leading "*." label.
+//
+// authHook/cleanupHook are the commands certbot runs per name to place
+// and remove the _acme-challenge TXT record. On a jabali box they invoke
+// the panel binary's `dns acme-hook` subcommand, which writes the record
+// through the panel's DNS tables and pushes the zone to PowerDNS —
+// keeping the panel DB authoritative even for ephemeral challenge rows.
+// certbot persists both hooks in the renewal conf, so `certbot renew`
+// keeps working without the caller re-supplying them.
+func (r *Runner) IssueDNS01(certName string, sans []string, email string, staging bool, authHook, cleanupHook string) (*Result, error) {
+	if len(sans) == 0 {
+		return nil, fmt.Errorf("certbot dns-01: at least one SAN required")
+	}
+	r.clearStaleLineageDir(certName)
+
+	args := []string{
+		"certonly",
+		"--cert-name", certName,
+		"--manual",
+		"--preferred-challenges", "dns",
+		"--manual-auth-hook", authHook,
+		"--manual-cleanup-hook", cleanupHook,
+	}
+	seen := map[string]struct{}{}
+	requested := make([]string, 0, len(sans))
+	for _, h := range sans {
+		if _, dup := seen[h]; dup {
+			continue
+		}
+		seen[h] = struct{}{}
+		requested = append(requested, h)
+		args = append(args, "-d", h)
+	}
+	args = append(args,
+		"-m", email,
+		"--agree-tos",
+		"--non-interactive",
+		"--keep-until-expiring",
+		// RSA for the same Cloudflare-origin compatibility reason as
+		// the webroot path above (error 525 on EC-only chains).
+		"--key-type", "rsa",
+	)
+	if existingCertMissingAny(fmt.Sprintf("%s/live/%s/fullchain.pem", r.LERoot, certName), requested) {
+		args = append(args, "--expand")
+	}
+	if staging {
+		args = append(args, "--staging")
+	}
+
+	cmd := exec.Command(r.Binary, args...)
+	cmd.Env = r.Env
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	combinedOutput := stdout.String() + "\n" + stderr.String()
+	noop := func(out string) bool {
+		for _, m := range []string{
+			"not yet due for renewal",
+			"Keeping the existing certificate",
+			"no action taken",
+		} {
+			if strings.Contains(out, m) {
+				return true
+			}
+		}
+		return false
+	}(combinedOutput)
+
+	reason := ""
+	if err != nil {
+		reason = classifyStderr([]byte(combinedOutput))
+	}
+
+	cert, certErr := r.readCert(certName)
+	if err != nil && certErr != nil {
+		return &Result{
+			Reason: reason,
+			Stderr: truncateStderr(combinedOutput, 4096),
+		}, fmt.Errorf("certbot dns-01 issue failed: %w", err)
+	}
+	if certErr != nil {
+		return &Result{
+			Reason: "unknown",
+			Stderr: truncateStderr(combinedOutput, 4096),
+		}, fmt.Errorf("failed to read issued certificate: %w", certErr)
+	}
+
+	return &Result{
+		CertPath:  cert.CertPath,
+		KeyPath:   cert.KeyPath,
+		IssuedAt:  cert.IssuedAt,
+		ExpiresAt: cert.ExpiresAt,
+		Skipped:   noop,
+	}, nil
+}
+
 // Renew runs certbot to renew an existing certificate.
 func (r *Runner) Renew(domain string, force bool) (*Result, error) {
 	args := []string{

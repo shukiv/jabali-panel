@@ -887,6 +887,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	r.reconcileDockerApps(ctx)
 	r.reconcilePythonApps(ctx)
 	r.checkSharedCertExpiry(ctx)
+	// Drive pending/renewing ACME shared certs (DNS-01 wildcards)
+	// through the agent — see acme_shared_certs.go.
+	r.reconcileAcmeSharedCerts(ctx)
 
 	r.reconcileSSHKeysForAllUsers(ctx)
 	// Reconcile SSH keys: sync authorized_keys files for all users.

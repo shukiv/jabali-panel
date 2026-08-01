@@ -34,6 +34,9 @@ type SSLHandlerConfig struct {
 	PanelCerts     repository.PanelCertificateRepository
 	MailCerts      repository.MailCertificateRepository
 	ServerSettings repository.ServerSettingsRepository
+	// DNSZones is optional — required only for the ACME DNS-01 shared-cert
+	// flow; nil degrades that endpoint to 503.
+	DNSZones repository.DNSZoneRepository
 	Reconciler     SSLScheduler
 	Config         *config.Config
 	Agent          agent.AgentInterface
@@ -85,6 +88,7 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 	// Shared certificates (JAB-170): admin upload/list/delete of a
 	// wildcard/multi-SAN cert served from many domains.
 	g.POST("/admin/certificates/shared", middleware.RequireAdmin(), h.uploadSharedCert)
+	g.POST("/admin/certificates/shared/acme", middleware.RequireAdmin(), h.requestAcmeSharedCert)
 	g.GET("/admin/certificates/shared", middleware.RequireAdmin(), h.listSharedCerts)
 	g.PUT("/admin/certificates/shared/:id", middleware.RequireAdmin(), h.replaceSharedCert)
 	g.DELETE("/admin/certificates/shared/:id", middleware.RequireAdmin(), h.deleteSharedCert)

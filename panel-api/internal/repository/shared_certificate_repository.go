@@ -32,6 +32,14 @@ type SharedCertificateRepository interface {
 	// CountAttachedDomains reports how many domains currently point at this cert
 	// (so delete can refuse to strand attached domains).
 	CountAttachedDomains(ctx context.Context, id string) (int64, error)
+	// ListACMEDue returns source='acme' rows that need certbot work: never
+	// issued (cert_path NULL) or expiring before renewBefore. Oldest first.
+	ListACMEDue(ctx context.Context, renewBefore time.Time) ([]models.SharedCertificate, error)
+	// MarkACMEAttempt stamps last_attempt_at=now and records the failure
+	// (nil errMsg clears last_error).
+	MarkACMEAttempt(ctx context.Context, id string, errMsg *string) error
+	// UpdateACMEIssued records a successful DNS-01 issuance.
+	UpdateACMEIssued(ctx context.Context, id, certPath, keyPath, sansJSON string, expiresAt time.Time, staging bool) error
 }
 
 type sharedCertificateRepo struct{ db *gorm.DB }
@@ -80,6 +88,37 @@ func (r *sharedCertificateRepo) UpdateInstalled(ctx context.Context, id, certPat
 		"sans":       sansJSON,
 		"expires_at": expiresAt,
 		"updated_at": time.Now().UTC(),
+	}).Error
+}
+
+func (r *sharedCertificateRepo) ListACMEDue(ctx context.Context, renewBefore time.Time) ([]models.SharedCertificate, error) {
+	var cs []models.SharedCertificate
+	err := r.db.WithContext(ctx).
+		Where("source = ?", models.SharedCertSourceACME).
+		Where("cert_path IS NULL OR expires_at < ?", renewBefore).
+		Order("created_at ASC").
+		Find(&cs).Error
+	return cs, err
+}
+
+func (r *sharedCertificateRepo) MarkACMEAttempt(ctx context.Context, id string, errMsg *string) error {
+	return r.db.WithContext(ctx).Model(&models.SharedCertificate{}).Where("id = ?", id).Updates(map[string]any{
+		"last_attempt_at": time.Now().UTC(),
+		"last_error":      errMsg,
+		"updated_at":      time.Now().UTC(),
+	}).Error
+}
+
+func (r *sharedCertificateRepo) UpdateACMEIssued(ctx context.Context, id, certPath, keyPath, sansJSON string, expiresAt time.Time, staging bool) error {
+	return r.db.WithContext(ctx).Model(&models.SharedCertificate{}).Where("id = ?", id).Updates(map[string]any{
+		"cert_path":       certPath,
+		"key_path":        keyPath,
+		"sans":            sansJSON,
+		"expires_at":      expiresAt,
+		"staging":         staging,
+		"last_error":      nil,
+		"last_attempt_at": time.Now().UTC(),
+		"updated_at":      time.Now().UTC(),
 	}).Error
 }
 
