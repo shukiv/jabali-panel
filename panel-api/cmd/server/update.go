@@ -1127,16 +1127,53 @@ test -x node_modules/.bin/tsc || {
 			// (exit 137) mid-bundle. Capping at 50% of MemTotal keeps
 			// node within budget; transient garbage pressure rises but
 			// the build actually completes.
-			viteBuild := func() error {
+			// heapPct is the share of MemTotal V8 may use. 50 is the
+			// steady-state cap; the retry raises it — see below.
+			viteBuild := func(heapPct int) error {
 				viteEnv := ""
 				if demoBuild {
 					viteEnv = "VITE_DEMO=1 "
 				}
-				bashCmd := viteEnv + "NODE_OPTIONS=\"--max-old-space-size=$(awk '/MemTotal/{print int($2*0.5/1024)}' /proc/meminfo)\" npm run build"
+				bashCmd := fmt.Sprintf(
+					"%sNODE_OPTIONS=\"--max-old-space-size=$(awk '/MemTotal/{print int($2*%.2f/1024)}' /proc/meminfo)\" npm run build",
+					viteEnv, float64(heapPct)/100)
 				return asUser(repoDir+"/panel-ui", "bash", "-c", bashCmd)
 			}
-			buildErr := viteBuild()
+			buildErr := viteBuild(viteHeapPctDefault)
 			if buildErr == nil {
+				writeArtifactSHA("vite", want)
+				return nil
+			}
+			// Two different out-of-memory failures, and they need
+			// opposite remedies.
+			//
+			//   exit 137 — the KERNEL killed node. There was not enough
+			//              real memory; the answer is more swap.
+			//   exit 134 — V8 aborted ITSELF on reaching
+			//              --max-old-space-size ("JavaScript heap out of
+			//              memory"). Memory was available; the ceiling we
+			//              imposed was too low. More swap alone changes
+			//              nothing — the answer is a higher ceiling.
+			//
+			// Only 137 used to be handled, which made this worse over
+			// time: capping the heap to avoid the OOM-killer is exactly
+			// what converts a 137 into a 134, so the original fix turned
+			// the failure into a shape its own retry did not match. Seen
+			// on a 2 GB host where the cap lands at ~986 MB: the frontend
+			// bundle has outgrown that, and `jabali update` aborted with
+			// no retry at all.
+			if isHeapAbort(buildErr) {
+				// Ensure swap first so the larger heap has somewhere to
+				// spill; on a host that already has swap this is a clean
+				// no-op. Failure is not fatal — the retry may still fit.
+				if swapErr := ensureBuildSwap(); swapErr != nil {
+					fmt.Printf("  (vite build hit its heap ceiling; swap helper failed, retrying anyway: %v)\n", swapErr)
+				}
+				fmt.Printf("  (vite build hit its %d%% heap ceiling; retrying once at %d%% of RAM)\n",
+					viteHeapPctDefault, viteHeapPctRetry)
+				if err2 := viteBuild(viteHeapPctRetry); err2 != nil {
+					return err2
+				}
 				writeArtifactSHA("vite", want)
 				return nil
 			}
@@ -1144,13 +1181,13 @@ test -x node_modules/.bin/tsc || {
 			// died with exit 137 (SIGKILL — almost always OOM-killer
 			// on small VMs). Idempotent: skips if any swap already
 			// active OR the swap file already exists.
-			if strings.Contains(buildErr.Error(), "exit status 137") || strings.Contains(buildErr.Error(), "killed") {
+			if isOOMKilled(buildErr) {
 				if swapErr := ensureBuildSwap(); swapErr != nil {
 					fmt.Printf("  (vite build OOM-killed; swap helper failed: %v)\n", swapErr)
 					return buildErr
 				}
 				fmt.Println("  (vite build OOM-killed; added 2G swap, retrying once)")
-				if err2 := viteBuild(); err2 != nil {
+				if err2 := viteBuild(viteHeapPctDefault); err2 != nil {
 					return err2
 				}
 				writeArtifactSHA("vite", want)
