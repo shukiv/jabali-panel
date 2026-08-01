@@ -67,7 +67,7 @@ func (d *Discoverer) describeDomains(ctx context.Context, s *session, account st
 		root := docroots[dom]
 		spec := migrate.DomainSpec{
 			Name:      dom,
-			DocRoot:   root,       // "" when the domain has no physical hosting
+			DocRoot:   root, // "" when the domain has no physical hosting
 			IsPrimary: dom == account,
 			HasPHP:    root != "", // no hosting => no PHP; refined below
 		}
@@ -128,8 +128,12 @@ func (d *Discoverer) describeDatabases(ctx context.Context, s *session, domains 
 	warns := []migrate.Warning{}
 	for _, dom := range domains {
 		// `plesk bin database` has no list verb; enumerate via the psa DB.
+		// GH #429: db.type comes back too. Without it every database was
+		// labelled mysql and handed to mysqldump, so a PostgreSQL database
+		// failed the import with a bare `exit status 2` and nothing naming
+		// the cause.
 		sql := fmt.Sprintf(
-			"SELECT db.name FROM data_bases db JOIN domains d ON db.dom_id=d.id WHERE d.name=%s",
+			"SELECT db.name, db.type FROM data_bases db JOIN domains d ON db.dom_id=d.id WHERE d.name=%s",
 			sqlQuote(dom.Name))
 		out, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote(sql))
 		if err != nil {
@@ -139,12 +143,32 @@ func (d *Discoverer) describeDatabases(ctx context.Context, s *session, domains 
 			})
 			continue
 		}
-		for _, name := range splitLines(string(out)) {
+		for _, line := range splitLines(string(out)) {
+			name, engine, _ := strings.Cut(line, "\t")
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			engine = strings.ToLower(strings.TrimSpace(engine))
+			if engine == "" {
+				engine = "mysql"
+			}
 			rows = append(rows, migrate.DatabaseSpec{
-				Engine:    "mysql",
+				Engine:    engine,
 				Name:      name,
 				GrantUser: "",
 			})
+			// Deliver on what this function's doc comment has always claimed:
+			// a non-MySQL database is recorded WITH a warning, so it shows up
+			// in discovery instead of failing later inside mysqldump.
+			if !isMySQLEngine(engine) {
+				warns = append(warns, migrate.Warning{
+					Code: "database_engine_unsupported",
+					Detail: fmt.Sprintf(
+						"%s: database %q uses %s — the migration importer restores MySQL/MariaDB only, "+
+							"so this database will NOT be migrated", dom.Name, name, engine),
+				})
+			}
 		}
 	}
 	return rows, warns, nil

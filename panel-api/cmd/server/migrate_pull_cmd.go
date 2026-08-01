@@ -693,13 +693,19 @@ func populatePleskDBsAfterExtract(ctx context.Context, sshUser string, job *mode
 	}
 	defer func() { _ = d.Close(ctx, s) }()
 	slug := plesk.Slug(job.SourceUser)
-	n, err := plesk.PopulatePleskDBs(extractDir, slug, func(cmd, dst string) error {
+	n, skipped, err := plesk.PopulatePleskDBs(extractDir, slug, func(cmd, dst string) error {
 		return d.StreamDBDump(ctx, s, cmd, dst)
 	})
 	if err != nil {
 		return err
 	}
 	fmt.Printf("  \u2192 streamed %d database(s) into the cpmove tree\n", n)
+	// GH #429: a database we could not carry across must be stated here and
+	// not just counted out of n. Reporting only the successes is how an
+	// operator ends up telling a customer everything migrated.
+	for _, sk := range skipped {
+		fmt.Printf("  \u2192 WARNING: %s\n", sk)
+	}
 	return nil
 }
 

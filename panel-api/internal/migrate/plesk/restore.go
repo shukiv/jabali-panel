@@ -65,6 +65,37 @@ func parseLinesManifest(content string) []string {
 	return splitLines(content)
 }
 
+// DBManifestEntry is one line of databases.txt: a database and the engine it
+// actually lives in on the source.
+type DBManifestEntry struct {
+	Name   string
+	Engine string
+}
+
+// parseDatabasesManifest parses databases.txt as "<name>\t<engine>", falling
+// back to mysql for a bare name.
+//
+// GH #429: the manifest used to be names only, because every Plesk database
+// was assumed to be MySQL. A bare line can only have come from the older
+// backup script, which ran before any engine was recorded and only ever
+// produced MySQL databases — so mysql is the right and safe default for it.
+func parseDatabasesManifest(content string) []DBManifestEntry {
+	var out []DBManifestEntry
+	for _, line := range splitLines(content) {
+		name, engine, found := strings.Cut(line, "\t")
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		engine = strings.ToLower(strings.TrimSpace(engine))
+		if !found || engine == "" {
+			engine = "mysql"
+		}
+		out = append(out, DBManifestEntry{Name: name, Engine: engine})
+	}
+	return out
+}
+
 // dbDumpCommand builds the READ-ONLY mysqldump command to run on the Plesk
 // source (over SSH) to stream one database to stdout. Plesk stashes the
 // admin DB password at /etc/psa/.psa.shadow; --single-transaction takes a
@@ -90,28 +121,54 @@ func docrootRemotePath(e ManifestEntry) string { return e.Path }
 // source. `stream` is injected so callers pass the live session's streamer
 // (and tests pass a fake). Returns the number of DBs dumped. A db name that
 // fails the charset guard is skipped (never used as an unchecked filename).
-func PopulatePleskDBs(extractDir, slug string, stream func(cmd, dstPath string) error) (int, error) {
+func PopulatePleskDBs(extractDir, slug string, stream func(cmd, dstPath string) error) (int, []string, error) {
 	base := filepath.Join(extractDir, "cpmove-"+slug)
 	mysqlDir := filepath.Join(base, "mysql")
 	if err := os.MkdirAll(mysqlDir, 0o750); err != nil {
-		return 0, fmt.Errorf("mkdir mysql dir: %w", err)
+		return 0, nil, fmt.Errorf("mkdir mysql dir: %w", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(base, "databases.txt"))
 	if err != nil {
-		return 0, nil // no manifest → no DBs (not fatal)
+		return 0, nil, nil // no manifest → no DBs (not fatal)
 	}
 	n := 0
-	for _, db := range parseLinesManifest(string(raw)) {
-		if !validDBName(db) {
+	var skipped []string
+	for _, entry := range parseDatabasesManifest(string(raw)) {
+		if !validDBName(entry.Name) {
 			continue // refuse a suspicious name as a filename
 		}
-		dst := filepath.Join(mysqlDir, db+".sql")
-		if err := stream(dbDumpCommand(db), dst); err != nil {
-			return n, fmt.Errorf("stream db %s: %w", db, err)
+		// GH #429: only MySQL/MariaDB can be dumped with mysqldump and read
+		// back by the cpanel importer. Pointing mysqldump at a PostgreSQL
+		// database is what produced the reported bare `exit status 2`.
+		if !isMySQLEngine(entry.Engine) {
+			skipped = append(skipped, fmt.Sprintf(
+				"database %q (engine %s) was NOT migrated — jabali's migration importer "+
+					"can only restore MySQL/MariaDB. Move it across by hand (pg_dump on the "+
+					"source, then restore into a PostgreSQL database on this server) before "+
+					"decommissioning the source.",
+				entry.Name, entry.Engine))
+			continue
+		}
+		dst := filepath.Join(mysqlDir, entry.Name+".sql")
+		if err := stream(dbDumpCommand(entry.Name), dst); err != nil {
+			return n, skipped, fmt.Errorf("stream db %s: %w", entry.Name, err)
 		}
 		n++
 	}
-	return n, nil
+	return n, skipped, nil
+}
+
+// isMySQLEngine reports whether psa's data_bases.type names a MySQL-family
+// engine. Plesk writes "mysql"; the family is spelled several ways across
+// versions and adapters, so match generously and treat anything unrecognised
+// as NOT MySQL — guessing wrong in that direction produces the misleading
+// mysqldump failure this fix exists to remove.
+func isMySQLEngine(engine string) bool {
+	switch strings.ToLower(strings.TrimSpace(engine)) {
+	case "", "mysql", "mariadb", "mysqli":
+		return true
+	}
+	return false
 }
 
 // StreamDBDump is the production streamer bound to a live pull session; the

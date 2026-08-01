@@ -83,7 +83,10 @@ elif mysql -uroot -BN -e "SELECT 1" >/dev/null 2>&1; then
 else
   echo "WARN: no MySQL admin creds (tried /etc/psa/.psa.shadow, root) — restore DB dumps will be skipped" >&2
 fi
-plesk db -Ne "SELECT db.name FROM data_bases db JOIN domains d ON db.dom_id=d.id WHERE d.name='$SUB'" 2>/dev/null \
+# GH #429: emit the engine as a second tab-separated column. Plesk records
+#    PostgreSQL databases in this same table, and dumping one with mysqldump
+#    fails at restore with a bare exit status 2 that names no cause.
+plesk db -Ne "SELECT db.name, db.type FROM data_bases db JOIN domains d ON db.dom_id=d.id WHERE d.name='$SUB'" 2>/dev/null \
 | awk 'NF' > "$TMP/cpmove-$SLUG/databases.txt" || true
 
 # 3. domains-paths.txt — every domain of the subscription + its docroot,

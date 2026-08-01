@@ -44,7 +44,7 @@ func TestPopulatePleskDBs_StreamsValidSkipsBad(t *testing.T) {
 		}
 		return os.WriteFile(dstPath, []byte("-- dump\n"), 0o640)
 	}
-	n, err := PopulatePleskDBs(extract, slug, fake)
+	n, _, err := PopulatePleskDBs(extract, slug, fake)
 	if err != nil {
 		t.Fatalf("PopulatePleskDBs: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestPopulatePleskDBs_NoManifestIsQuiet(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(extract, "cpmove-"+slug), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	n, err := PopulatePleskDBs(extract, slug, func(_, _ string) error { return nil })
+	n, _, err := PopulatePleskDBs(extract, slug, func(_, _ string) error { return nil })
 	if err != nil || n != 0 {
 		t.Errorf("no databases.txt → (0,nil), got (%d,%v)", n, err)
 	}
