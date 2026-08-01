@@ -283,6 +283,36 @@ var cscliScope = map[string]string{
 	"as":      "AS",
 }
 
+// parseCrowdsecDuration validates a decision/allowlist duration. CrowdSec
+// accepts Go durations plus a leading whole-day component ("7d", "7d12h") that
+// Go's time.ParseDuration rejects. Returns the equivalent duration and the
+// STRING TO PASS TO cscli — days are normalized to a pure Go duration so
+// cscli version drift in day-suffix handling can never bite us.
+func parseCrowdsecDuration(s string) (time.Duration, string, error) {
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, s, nil
+	}
+	m := csDayDurationRE.FindStringSubmatch(s)
+	if m == nil {
+		return 0, "", fmt.Errorf("invalid duration %q (examples: 4h, 30m, 7d, 7d12h)", s)
+	}
+	days, err := strconv.Atoi(m[1])
+	if err != nil || days <= 0 {
+		return 0, "", fmt.Errorf("invalid day count in duration %q", s)
+	}
+	total := time.Duration(days) * 24 * time.Hour
+	if rest := m[2]; rest != "" {
+		rd, rerr := time.ParseDuration(rest)
+		if rerr != nil || rd < 0 {
+			return 0, "", fmt.Errorf("invalid duration %q (examples: 4h, 30m, 7d, 7d12h)", s)
+		}
+		total += rd
+	}
+	return total, total.String(), nil
+}
+
+var csDayDurationRE = regexp.MustCompile(`^(\d+)d(.*)$`)
+
 // normalizeASN strips a leading "AS"/"as" and returns the numeric
 // portion for validation + value passing.
 func normalizeASN(v string) string {
@@ -320,15 +350,16 @@ func csDecisionsAddHandler(ctx context.Context, params json.RawMessage) (any, er
 			return nil, csInvalidArg("value must be an ASN number (e.g. 64500 or AS64500) for scope=as")
 		}
 	}
-	if _, err := time.ParseDuration(p.Duration); err != nil {
-		return nil, csInvalidArg(fmt.Sprintf("duration: %v", err))
+	_, durArg, derr := parseCrowdsecDuration(p.Duration)
+	if derr != nil {
+		return nil, csInvalidArg(fmt.Sprintf("duration: %v", derr))
 	}
 	if l := len(p.Reason); l < 3 || l > 200 {
 		return nil, csInvalidArg("reason length must be 3..200")
 	}
 	cmd := exec.CommandContext(ctx, "cscli", "decisions", "add",
 		"--scope", canonical, "--value", value,
-		"--duration", p.Duration, "--reason", p.Reason)
+		"--duration", durArg, "--reason", p.Reason)
 	if _, err := cmd.CombinedOutput(); err != nil {
 		return nil, csInternal("cscli decisions add", err)
 	}
@@ -373,20 +404,46 @@ func csDecisionsDeleteHandler(ctx context.Context, params json.RawMessage) (any,
 	case p.ID > 0:
 		args = append(args, "--id", strconv.Itoa(p.ID))
 	case p.IP != "":
-		if _, _, err := net.ParseCIDR(p.IP); err != nil {
-			if ip := net.ParseIP(p.IP); ip == nil {
-				return nil, csInvalidArg("ip must be IP or CIDR")
-			}
+		// A CIDR must go to --range: cscli --ip only matches Ip-scoped
+		// decisions, so a Range unban via --ip silently deletes nothing.
+		if _, _, err := net.ParseCIDR(p.IP); err == nil {
+			args = append(args, "--range", p.IP)
+		} else if ip := net.ParseIP(p.IP); ip != nil {
+			args = append(args, "--ip", p.IP)
+		} else {
+			return nil, csInvalidArg("ip must be IP or CIDR")
 		}
-		args = append(args, "--ip", p.IP)
 	default:
 		return nil, csInvalidArg("either id or ip required")
 	}
-	if _, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput(); err != nil {
+	out, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+	if err != nil {
 		return nil, csInternal("cscli decisions delete", err)
+	}
+	// cscli exits 0 even when nothing matched ("0 decision(s) deleted") —
+	// surface that as not-found instead of a false deleted:true.
+	if n, ok := cscliDeletedCount(string(out)); ok && n == 0 {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "no matching decision"}
 	}
 	return map[string]bool{"deleted": true}, nil
 }
+
+// cscliDeletedCount extracts N from cscli's "N decision(s) deleted" output.
+// ok=false when the marker is absent (output format drift) — callers must
+// then assume success rather than fail a real deletion.
+func cscliDeletedCount(out string) (int, bool) {
+	m := csDeletedCountRE.FindStringSubmatch(out)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+var csDeletedCountRE = regexp.MustCompile(`(\d+)\s+decision\(?s?\)?\s+deleted`)
 
 // ---- security.crowdsec.bouncers.list ---------------------------------------
 
@@ -940,9 +997,9 @@ func renderAppSecGeoblockRule(mode string, countries []string) string {
 			"crowdsecurity/vpatch-*",
 			"crowdsecurity/generic-*",
 		},
-		AdminAllowlist:     true,
-		PanelHost:          appsecPanelHost(),
-		WebmailHosts:       webmailHosts,
+		AdminAllowlist: true,
+		PanelHost:      appsecPanelHost(),
+		WebmailHosts:   webmailHosts,
 	})
 }
 
@@ -1037,12 +1094,15 @@ func csAllowlistsAddHandler(ctx context.Context, params json.RawMessage) (any, e
 	if l := len(p.Reason); l < 3 || l > 200 {
 		return nil, csInvalidArg("reason length must be 3..200")
 	}
+	expArg := ""
 	if exp := strings.TrimSpace(p.Expiration); exp != "" {
-		if _, err := time.ParseDuration(exp); err != nil {
-			return nil, csInvalidArg("expiration must be a Go duration (e.g. \"168h\")")
+		_, norm, derr := parseCrowdsecDuration(exp)
+		if derr != nil {
+			return nil, csInvalidArg("expiration must be a duration (e.g. \"168h\", \"7d\")")
 		}
+		expArg = norm
 	}
-	if err := addToJabaliAllowlist(ctx, value, p.Reason, strings.TrimSpace(p.Expiration)); err != nil {
+	if err := addToJabaliAllowlist(ctx, value, p.Reason, expArg); err != nil {
 		return nil, csInternal("allowlist add", err)
 	}
 	return map[string]any{"value": value}, nil
@@ -1065,7 +1125,25 @@ func addToJabaliAllowlist(ctx context.Context, value, reason, expiration string)
 		_ = exec.CommandContext(ctx, "cscli", "allowlists", "remove", jabaliAllowlistName, value).Run()
 		args = append(args, "-e", expiration)
 	}
-	if out, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput(); err != nil {
+	out, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+	if err != nil && expiration != "" {
+		// The remove above already happened: a failed re-add would leave a
+		// previously-allowlisted value DROPPED (an admin IP falling out of the
+		// allowlist mid-session = self-lockout). Retry once, then restore
+		// without the TTL flag — preserving the pre-call allowlisted state is
+		// strictly safer than silently losing it; the entry stays visible in
+		// the panel either way.
+		out, err = exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+		if err != nil {
+			base := args[:len(args)-2] // strip "-e", expiration
+			if rout, rerr := exec.CommandContext(ctx, "cscli", base...).CombinedOutput(); rerr == nil {
+				return fmt.Errorf("cscli allowlists add with -e %s failed (%s); entry restored WITHOUT expiration", expiration, strings.TrimSpace(string(out)))
+			} else {
+				out = append(out, rout...)
+			}
+		}
+	}
+	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		// Re-adding an already-allowlisted value is a no-op success for the
 		// idempotent login refresh path.
