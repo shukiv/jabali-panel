@@ -14,9 +14,16 @@ documentation: https://docs.n8n.io/
 image_channel: n8nio/n8n:2.28.2@sha256:08b9411994c0d091c5cc0969ee9edcb85b5e79f26640703c0c342076ac6f2b17
 update_mode: manual
 
+# The image runs as node (uid 1000); without volume_owner the bind-mounted
+# data dir stays owned by container-root and n8n crash-loops on
+# EACCES /home/node/.n8n/config under docker userns-remap.
+volume_owner: "1000:1000"
+
 resources:
   cpu: "1.0"
-  memory: "512m"
+  # n8n 2.x does not survive startup module loading inside 512m — V8 dies
+  # with "Ineffective mark-compacts near heap limit" before first listen.
+  memory: "1024m"
   pids: 200
 
 volumes:
