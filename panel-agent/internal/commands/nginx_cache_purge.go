@@ -34,12 +34,29 @@ var cachePurgeMaxFiles = 250000
 // fastcgiCacheRoot is a var (not const) so tests can point the purge at a temp dir.
 var fastcgiCacheRoot = "/var/cache/nginx/jabali"
 
+// purgeVhostDir is where rendered vhosts live; a var so tests can stub it.
+var purgeVhostDir = "/etc/nginx/sites-enabled"
+
+// domainUsesQueryAllowlist reports whether the domain's rendered vhost carries
+// the GH #610 query-allowlist cache key (the $jabali_qkey marker). Such a
+// domain stores EXTRA cache entries per allowlisted query combination
+// ("...path?page=2&"), which the hash-based fast purge below cannot enumerate.
+func domainUsesQueryAllowlist(domain string) bool {
+	b, err := os.ReadFile(filepath.Join(purgeVhostDir, domain+".conf"))
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(b, []byte("$jabali_qkey"))
+}
+
 type nginxCachePurgeParams struct {
 	Domain string `json:"domain"`
 	// Paths (GH #619): optional targeted purge. When empty, the whole domain
-	// is purged (v1 behaviour). When set, only cached entries whose request_uri
-	// equals a path or begins with "<path>/" (prefix purge) are removed — so a
-	// small content change doesn't blow away the whole domain's hot cache.
+	// is purged (v1 behaviour). When set, the hash fast path removes each
+	// path's exact entries; domains with a cache_query_allowlist additionally
+	// get a bounded walk that also evicts the path's query-key variants and
+	// honours prefix matching ("<path>/..."). Callers wanting guaranteed
+	// prefix semantics on a non-allowlist domain purge the whole domain.
 	Paths []string `json:"paths,omitempty"`
 }
 
@@ -103,22 +120,45 @@ func nginxCachePurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 				}
 			}
 		}
+		// GH #610 interaction: a domain with a cache_query_allowlist keys its
+		// allowlisted query combinations SEPARATELY ("...path?page=2&"), and
+		// those keys cannot be enumerated from the path alone — the hash fast
+		// path above only removed the clean-URL entries, leaving every query
+		// variant stale after a content edit. For those domains, additionally
+		// run the bounded KEY-line walk: uriMatchesAny strips the query, so
+		// the variants match their purge path.
+		if domainUsesQueryAllowlist(p.Domain) {
+			wp, truncated, werr := walkPurgeHostPaths(ctx, root, p.Domain, paths)
+			if werr != nil {
+				return nil, csInternal("walk cache dir", werr)
+			}
+			purged += wp
+			return map[string]any{"ok": true, "purged": purged, "domain": p.Domain, "truncated": truncated}, nil
+		}
 		return map[string]any{"ok": true, "purged": purged, "domain": p.Domain}, nil
 	}
 
-	// nginx stores a `KEY: <scheme><method><host><uri>` line in the cache file
-	// header (cache_key = $scheme$request_method$host$request_uri, concatenated
-	// with no delimiter). Match the HOST FIELD exactly — a raw substring match
-	// would evict another tenant whose host merely CONTAINS this domain
-	// ("a.com" ⊂ "sub.a.com") or whose URL path contains the string, a
-	// cross-tenant cache-eviction lever despite the owner-scoped REST (Gitea #418).
+	purged, truncated, werr := walkPurgeHostPaths(ctx, root, p.Domain, nil)
+	if werr != nil {
+		return nil, csInternal("walk cache dir", werr)
+	}
+	return map[string]any{"ok": true, "purged": purged, "domain": p.Domain, "truncated": truncated}, nil
+}
+
+// walkPurgeHostPaths removes cached entries whose KEY line matches host and
+// (when paths is non-empty) uriMatchesAny. nginx stores a
+// `KEY: <scheme><method><host><uri>` line in the cache file header,
+// concatenated with no delimiter. Match the HOST FIELD exactly — a raw
+// substring match would evict another tenant whose host merely CONTAINS this
+// domain ("a.com" ⊂ "sub.a.com") or whose URL path contains the string, a
+// cross-tenant cache-eviction lever despite the owner-scoped REST (Gitea #418).
+//
+// Bounded (JAB-67): a dedicated deadline + a scanned-file cap so a purge can
+// never block the agent proportional to total cross-tenant cache size.
+func walkPurgeHostPaths(ctx context.Context, root, host string, paths []string) (int, bool, error) {
 	needle := []byte("KEY: ")
-	host := p.Domain
 	purged := 0
 
-	// Bound the walk (JAB-67): a dedicated deadline + a scanned-file cap so this
-	// full purge can never block the agent proportional to total cross-tenant
-	// cache size.
 	walkCtx, cancel := context.WithTimeout(ctx, cachePurgeWalkDeadline)
 	defer cancel()
 	scanned := 0
@@ -162,16 +202,16 @@ func nginxCachePurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil
 	})
 	if walkErr != nil && walkErr != context.Canceled && walkErr != context.DeadlineExceeded {
-		return nil, csInternal("walk cache dir", walkErr)
+		return purged, truncated, walkErr
 	}
 	if walkErr == context.DeadlineExceeded || walkCtx.Err() == context.DeadlineExceeded {
 		truncated = true
 	}
 	if truncated {
-		slog.Warn("nginx cache full-purge hit a bound; some entries left for nginx inactive-eviction",
+		slog.Warn("nginx cache purge walk hit a bound; some entries left for nginx inactive-eviction",
 			"domain", host, "scanned", scanned, "purged", purged)
 	}
-	return map[string]any{"ok": true, "purged": purged, "domain": p.Domain, "truncated": truncated}, nil
+	return purged, truncated, nil
 }
 
 // keyLineHost extracts the $host field from an nginx cache KEY line of the form
