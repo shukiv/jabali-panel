@@ -17,7 +17,10 @@ services:
 {{- end }}
       BASE_URL: "https://{{ .Domain }}"
 {{- range $name, $val := .Env }}
-{{- if not (hasPrefix $name "SMTP_") }}
+{{- /* BASE_URL is template-owned above — re-emitting it from .Env
+       renders duplicate YAML keys docker compose refuses (same class
+       as the n8n N8N_HOST failure). */}}
+{{- if not (or (hasPrefix $name "SMTP_") (eq $name "BASE_URL")) }}
       {{ $name }}: {{ q $val }}
 {{- end }}
 {{- end }}

@@ -106,15 +106,47 @@ func Render(entry Entry, params RenderParams) (string, error) {
 	// in jabali's single-box model, so runtime.NumCPU() is the daemon's
 	// CPU count.
 	params.CPULimit = clampCPULimit(params.CPULimit, runtime.NumCPU())
+	// A bare number in deploy.resources.limits.memory means BYTES to
+	// docker compose — an operator typing "1024" (meaning MB) gets a
+	// 1 KiB limit and an instantly-OOM-killed container. Catalog
+	// defaults carry a unit ("512m"); normalise unitless operator input
+	// to megabytes at the same chokepoint as the CPU clamp.
+	params.MemoryLimit = normalizeMemoryLimit(params.MemoryLimit)
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, params); err != nil {
 		return "", fmt.Errorf("execute compose template for %q: %w", entry.Slug, err)
 	}
+	// Reject invalid YAML at render time — most importantly duplicate
+	// mapping keys, which a template emits when it hardcodes an env var
+	// that also arrives via .Env (the n8n N8N_HOST incident: docker
+	// compose refused the file and the install failed as an opaque
+	// "pull exit status 1"). yaml.v3 errors on duplicates by default,
+	// so this turns a broken install into a clear render error.
+	var probe map[string]any
+	if err := yaml.Unmarshal(buf.Bytes(), &probe); err != nil {
+		return "", fmt.Errorf("rendered compose for %q is not valid YAML: %w", entry.Slug, err)
+	}
 	if params.TenantHardening != nil {
 		return applyTenantHardening(buf.String(), *params.TenantHardening)
 	}
 	return buf.String(), nil
+}
+
+// normalizeMemoryLimit appends "m" to an all-digit memory limit so the
+// operator's "1024" means megabytes, not bytes. Values with a unit (or
+// empty) pass through untouched.
+func normalizeMemoryLimit(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return v
+		}
+	}
+	return v + "m"
 }
 
 // applyTenantHardening re-parses the rendered compose and injects the M49

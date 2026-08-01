@@ -19,7 +19,11 @@ services:
       WEBHOOK_URL: "https://{{ .Domain }}/"
       N8N_EDITOR_BASE_URL: "https://{{ .Domain }}/"
 {{- range $name, $val := .Env }}
-{{- if not (hasPrefix $name "SMTP_") }}
+{{- /* SMTP_* map onto N8N_SMTP_* above; N8N_HOST / WEBHOOK_URL /
+       N8N_EDITOR_BASE_URL are template-owned — re-emitting them here
+       produced duplicate YAML keys docker compose refuses to parse
+       (GH: n8n install failed with "mapping key already defined"). */}}
+{{- if not (or (hasPrefix $name "SMTP_") (eq $name "N8N_HOST") (eq $name "WEBHOOK_URL") (eq $name "N8N_EDITOR_BASE_URL")) }}
       {{ $name }}: {{ q $val }}
 {{- end }}
 {{- end }}
