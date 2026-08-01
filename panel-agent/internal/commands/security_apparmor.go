@@ -12,11 +12,12 @@
 package commands
 
 import (
-	"os"
 	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	osexec "os/exec"
 	"regexp"
 	"strings"
@@ -188,75 +189,105 @@ func mwApparmorStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 	return resp, nil
 }
 
-// apparmorDeniedRe matches the audit-line format kernel emits for
-// AppArmor denials. Sample:
+// AppArmor AVC audit-line format the kernel emits. Sample:
 //
-//   audit: type=1400 audit(1746371982.123:567): apparmor="DENIED"
-//   operation="open" profile="jabali-panel" name="/etc/shadow"
-//   pid=1234 comm="jabali-panel" requested_mask="r" denied_mask="r"
-//   fsuid=0 ouid=0
+//	type=AVC msg=audit(1746371982.123:567): apparmor="DENIED"
+//	operation="open" profile="jabali-panel" name="/etc/shadow"
+//	pid=1234 comm="jabali-panel" requested_mask="r" denied_mask="r"
+//	fsuid=0 ouid=0
 //
-// The fields appear in a stable order across kernel 6.x releases but
-// we extract by named regex per field — robust to extra/missing
-// trailing fields. profile= is mandatory; everything else is optional.
+// Fields are extracted per-key so extra/missing trailing fields are fine.
+// Quoted values may contain spaces (tenant paths do) — the field regex has a
+// quoted alternative so such values aren't truncated at the first space.
 var (
-	apparmorDeniedLineRe = regexp.MustCompile(`apparmor="DENIED"`)
-	apparmorFieldRe      = regexp.MustCompile(`(\w+)="?([^"\s]*)"?`)
-	apparmorAuditTSRe    = regexp.MustCompile(`audit\((\d+)\.\d+:\d+\)`)
+	apparmorFieldRe   = regexp.MustCompile(`(\w+)="([^"]*)"|(\w+)=([^\s"]+)`)
+	apparmorAuditTSRe = regexp.MustCompile(`audit\((\d+)\.\d+:\d+\)`)
 )
 
-// readApparmorDenials shells out to journalctl --grep'd against
-// apparmor="DENIED" and returns up to maxApparmorDenials rows. We use
-// journalctl rather than dmesg so the lookup honors --since reliably;
-// dmesg ring-buffer rotation could swallow older denials we still want.
 const (
-	apparmorDenialsWindow = "24 hours ago"
+	apparmorDenialsWindow = 24 * time.Hour
 	maxApparmorDenials    = 50
+	// apparmorAuditLogPath is auditd's store. With auditd running (jabali
+	// installs it — ADR-0085), the kernel routes AppArmor AVC records to the
+	// audit subsystem: they land HERE and never reach the kernel journal, so
+	// `journalctl -k --grep apparmor=` is structurally empty on every jabali
+	// box while enforce-mode denials are actively happening. Read this first;
+	// journalctl stays as the fallback for hosts without auditd.
+	apparmorAuditLogPath   = "/var/log/audit/audit.log"
+	apparmorAuditTailBytes = 8 << 20 // bounded tail per scrape
 )
 
+// readApparmorEvents returns the most recent AppArmor events with the given
+// status ("DENIED" enforce blocks | "ALLOWED" complain would-deny), newest
+// first, from the last 24h.
 func readApparmorEvents(ctx context.Context, status string) []apparmorDenial {
-	out := []apparmorDenial{}
+	since := time.Now().Add(-apparmorDenialsWindow)
+	if f, err := os.Open(apparmorAuditLogPath); err == nil {
+		defer f.Close()
+		if fi, serr := f.Stat(); serr == nil && fi.Size() > apparmorAuditTailBytes {
+			_, _ = f.Seek(fi.Size()-apparmorAuditTailBytes, io.SeekStart)
+		}
+		if events := parseApparmorEventLines(f, status, since, maxApparmorDenials); len(events) > 0 {
+			return events
+		}
+		// audit.log present but nothing in-window: fall through to the journal —
+		// auditd may be installed but stopped, with fresh lines in the journal.
+	}
+	return readApparmorEventsJournal(ctx, status, since)
+}
+
+func readApparmorEventsJournal(ctx context.Context, status string, since time.Time) []apparmorDenial {
 	if _, err := osexec.LookPath("journalctl"); err != nil {
-		return out
+		return []apparmorDenial{}
 	}
 	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	cmd := osexec.CommandContext(cctx,
 		"journalctl",
 		"-k",
-		"--since", apparmorDenialsWindow,
+		"--since", "24 hours ago",
 		"--no-pager",
 		"-q",
 		"--grep", `apparmor="`+status+`"`,
 	)
 	stdout, err := cmd.Output()
 	if err != nil {
-		return out
+		return []apparmorDenial{}
 	}
+	return parseApparmorEventLines(strings.NewReader(string(stdout)), status, since, maxApparmorDenials)
+}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(stdout)))
+// parseApparmorEventLines scans chronological audit/journal lines and returns
+// up to max in-window rows with the requested status, NEWEST FIRST. (The old
+// implementation kept the first 50 chronological rows — on a noisy day the
+// panel showed the OLDEST denials and the fresh ones were invisible.)
+func parseApparmorEventLines(r io.Reader, status string, since time.Time, max int) []apparmorDenial {
+	needle := `apparmor="` + status + `"`
+	events := []apparmorDenial{}
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, `apparmor="`+status+`"`) {
+		if !strings.Contains(line, needle) {
 			continue
 		}
 		row := apparmorDenial{}
-		// audit timestamp epoch seconds
 		if m := apparmorAuditTSRe.FindStringSubmatch(line); len(m) == 2 {
-			if epoch, err := time.Parse("1136239445", m[1]); err == nil {
-				_ = epoch // unused — fall through to ParseInt path below
-			}
-			// time.Parse with epoch layout doesn't work; use Unix.
 			var sec int64
-			fmt.Sscanf(m[1], "%d", &sec)
+			_, _ = fmt.Sscanf(m[1], "%d", &sec)
 			if sec > 0 {
-				row.Timestamp = time.Unix(sec, 0).UTC().Format(time.RFC3339)
+				ts := time.Unix(sec, 0).UTC()
+				if ts.Before(since) {
+					continue
+				}
+				row.Timestamp = ts.Format(time.RFC3339)
 			}
 		}
-		// Field extraction.
 		for _, fm := range apparmorFieldRe.FindAllStringSubmatch(line, -1) {
 			key, val := fm[1], fm[2]
+			if key == "" {
+				key, val = fm[3], fm[4]
+			}
 			switch key {
 			case "profile":
 				row.Profile = val
@@ -278,17 +309,23 @@ func readApparmorEvents(ctx context.Context, status string) []apparmorDenial {
 				row.FSUID = val
 			}
 		}
-		// Skip rows without a profile — those are unrelated audit lines
-		// the journalctl --grep happened to surface (rare).
+		// Rows without a profile are unrelated audit lines the grep surfaced.
 		if row.Profile == "" {
 			continue
 		}
-		out = append(out, row)
-		if len(out) >= maxApparmorDenials {
-			break
+		events = append(events, row)
+		// Bound memory on a huge tail: only the newest max matter.
+		if len(events) > 4*max {
+			events = events[len(events)-max:]
 		}
 	}
-	return out
+	if len(events) > max {
+		events = events[len(events)-max:]
+	}
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return events
 }
 
 type apparmorSetModeRequest struct {

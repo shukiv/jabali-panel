@@ -69,6 +69,12 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   /home/*/domains/*/public_html/** rwkl,
   /home/*/web/*/ r,
   /home/*/web/*/public_html/** rwkl,
+  # Tenant PHP error logs (cPanel/DA convention ~/logs/php.error.log —
+  # tenants point error_log there via php.ini/ini_set; migrated accounts
+  # arrive with it preset). Owner-scoped: a worker only touches its own
+  # user's logs dir. No exec. Live enforce denial observed 2026-08-01.
+  owner /home/*/logs/ r,
+  owner /home/*/logs/** rw,
 
   # Temp + sessions.
   /tmp/ r,

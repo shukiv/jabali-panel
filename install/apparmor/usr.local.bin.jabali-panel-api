@@ -280,6 +280,14 @@ profile jabali-panel flags=(attach_disconnected) {
   /run/log/journal/**          r,
   # cscli reads tetragon cgroup export + per-process cgroup/mountinfo.
   /run/tetragon/**             r,
+  # cscli/systemd helpers spawned by the panel read the service's OWN
+  # cgroup limits (cpu.max, memory.max) for capacity checks. Scoped to
+  # the jabali-panel service subtree; live enforce denial observed
+  # 2026-08-01 (comm=cscli, /sys/fs/cgroup/system.slice/jabali-panel.service/cpu.max).
+  /sys/fs/cgroup/              r,
+  /sys/fs/cgroup/system.slice/ r,
+  /sys/fs/cgroup/system.slice/jabali-panel.service/   r,
+  /sys/fs/cgroup/system.slice/jabali-panel.service/** r,
 
   /proc/                       r,
   /proc/loadavg                r,

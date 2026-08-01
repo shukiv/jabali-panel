@@ -71,6 +71,9 @@ profile stalwart-mail /opt/stalwart/stalwart {
 
   /proc/sys/net/core/somaxconn  r,
   /proc/*/status                r,
+  # tokio runtime memory accounting reads its own smaps (owner-scoped —
+  # smaps of other processes stays denied). Live enforce denial 2026-08-01.
+  owner /proc/*/smaps           r,
 
   /etc/jabali-panel/stalwart-admin.token r,
   /etc/jabali-panel/dkim/               r,
