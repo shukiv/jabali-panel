@@ -11,6 +11,7 @@ type UserDomainCreateInput = {
   mail_provider?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;
+  temp_url_enabled?: boolean;
   create_www?: boolean;
   ssl_mode?: string;
 };
@@ -129,6 +130,15 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
           tooltip={t("userdomaindrawer.adds_a_www_cname_pointing_at_the_domain_apex")}
         >
           <Checkbox>Create www record</Checkbox>
+        </Form.Item>
+
+        <Form.Item
+          name="temp_url_enabled"
+          valuePropName="checked"
+          initialValue={false}
+          tooltip="Serves the site at a preview address under this server's hostname, so you can check it before your domain's DNS points here."
+        >
+          <Checkbox>Enable preview URL</Checkbox>
         </Form.Item>
 
         <Form.Item>

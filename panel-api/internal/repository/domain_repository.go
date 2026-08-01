@@ -352,7 +352,7 @@ func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {
 		"nginx_rules", "nginx_safe_options",
 		"redirect_all_to", "redirect_all_type", "page_redirects",
 		"index_priority", "ssl_enabled", "is_quota_suspended", "webmail_enabled",
-		"dmarc_np", "dmarc_testing", "updated_at",
+		"dmarc_np", "dmarc_testing", "temp_url_enabled", "updated_at",
 	).Updates(d).Error; err != nil {
 		return translate(err)
 	}

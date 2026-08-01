@@ -48,6 +48,12 @@ type Reconciler struct {
 	dbAdmin        repository.DBAdminRepository
 	log            *slog.Logger
 	interval       time.Duration
+
+	// Preview-URL state cache (see preview_urls.go) — one settings +
+	// shared-cert lookup per tick instead of per domain.
+	previewMu    sync.Mutex
+	previewCache previewState
+	previewAt    time.Time
 	// moduleInstall* back the M353 module-install convergence backoff so a
 	// persistently-failing install is not re-dispatched every reconcile tick.
 	moduleInstallMu      sync.Mutex
@@ -697,6 +703,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			disabledDomains[d.Name] = d
 		}
 	}
+
+	// Preview URLs: converge the shared wildcard DNS record + cert row
+	// before the domain loop, so a freshly-enabled preview host resolves
+	// (and its vhost can reference the cert) within this same tick.
+	r.reconcilePreviewInfra(ctx, enabledDomains)
 
 	// M6.3: make sure the panel's self-zone is forwardable through the
 	// local recursor. The zone is bootstrapped by install.sh (not a DB
@@ -1770,6 +1781,11 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			params["ssl_cert_path"] = *cert.CertPath
 			params["ssl_key_path"] = *cert.KeyPath
 		}
+	}
+
+	// Preview URL params (temp URLs) — nil when disabled or no hostname.
+	for k, v := range r.previewParams(ctx, domain) {
+		params[k] = v
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

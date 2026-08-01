@@ -62,6 +62,15 @@ type domainCreateParams struct {
 	// off). The agent RE-sanitizes before rendering (config-injection boundary,
 	// like CacheBypassPaths).
 	CacheQueryAllowlist []string `json:"cache_query_allowlist,omitempty"`
+
+	// Preview URL (temp URL): when set, the vhost gains an extra server
+	// block serving the same docroot under <slug>.preview.<hostname>.
+	// PreviewCertPath/KeyPath point at the shared *.preview.<hostname>
+	// wildcard pair; empty (or missing on disk) renders the preview block
+	// HTTP-only — same graceful degradation as the main vhost.
+	PreviewHost     string `json:"preview_host,omitempty"`
+	PreviewCertPath string `json:"preview_cert_path,omitempty"`
+	PreviewKeyPath  string `json:"preview_key_path,omitempty"`
 	SSLCertPath         string   `json:"ssl_cert_path"`
 	SSLKeyPath          string   `json:"ssl_key_path"`
 	// PHP INI overrides: omitted if not set on the domain.
@@ -493,10 +502,66 @@ server {
     error_log /var/log/nginx/{{.Domain}}-error.log;
     location / { try_files /index.html =503; }
 {{ end }}
-}`
+}
+{{ if .PreviewHost }}
+
+# Preview URL — the same docroot served under the panel hostname, so the
+# site is reachable before (or after) the real domain's DNS points here.
+# Canonical-URL apps (WordPress) may redirect to the real domain; that is
+# the app's choice, not a vhost bug. X-Robots-Tag keeps previews out of
+# search indexes.
+server {
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:80;
+{{ else }}    listen 80;
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
+{{ else }}    listen [::]:80;
+{{ end }}    server_name {{.PreviewHost}};
+{{ if .PreviewCertPath }}
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:443 ssl{{.HTTP2Param}};
+{{ else }}    listen 443 ssl{{.HTTP2Param}};
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:443 ssl{{.HTTP2Param}};
+{{ else }}    listen [::]:443 ssl{{.HTTP2Param}};
+{{ end }}{{ if .HTTP2Directive }}    {{.HTTP2Directive}}
+{{ end }}    server_name {{.PreviewHost}};
+    ssl_certificate {{.PreviewCertPath}};
+    ssl_certificate_key {{.PreviewKeyPath}};
+    ssl_protocols TLSv1.2 TLSv1.3;
+{{ end }}
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    root {{.DocRoot}};
+    # Same cross-owner symlink confinement as the main vhost (JAB-183).
+    disable_symlinks if_not_owner from=$document_root;
+    {{.IndexDirective}}
+
+    location / {
+{{ if .HasPHP }}        try_files $uri $uri/ /index.php?$query_string;
+{{ else }}        try_files $uri $uri/ =404;
+{{ end }}    }
+{{ if .HasPHP }}
+    location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_pass unix:{{.FPMSocket}};
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+{{ if .PHPValueParam }}        fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}    }
+{{ end }}
+    access_log /var/log/nginx/{{.Domain}}-preview-access.log;
+    error_log /var/log/nginx/{{.Domain}}-preview-error.log;
+}
+{{ end }}`
 
 type vhostData struct {
 	Domain               string
+	PreviewHost          string
+	PreviewCertPath      string
+	PreviewKeyPath       string
 	DocRoot              string
 	HasPHP               bool
 	PHPVersion           string
@@ -790,7 +855,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -818,6 +883,21 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 			sslKeyPath = ""
 		}
 	}
+	// Same missing-file fallback for the preview wildcard pair: the shared
+	// *.preview.<hostname> cert may not be issued yet when the first
+	// preview-enabled domain converges — serve the preview HTTP-only until
+	// the reconciler's ACME sweep lands it.
+	if previewCertPath != "" {
+		if _, statErr := os.Stat(previewCertPath); statErr != nil {
+			previewCertPath = ""
+			previewKeyPath = ""
+		}
+	}
+	// The preview block only renders for enabled domains — a disabled
+	// domain's preview must go dark with it.
+	if !isEnabled {
+		previewHost = ""
+	}
 
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
@@ -828,6 +908,9 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	h2 := nginxHTTP2()
 	vhostData := vhostData{
 		Domain:                     domain,
+		PreviewHost:                previewHost,
+		PreviewCertPath:            previewCertPath,
+		PreviewKeyPath:             previewKeyPath,
 		HTTP2Param:                 h2.Param,
 		HTTP2Directive:             h2.Directive,
 		DocRoot:                    docRoot,
@@ -967,6 +1050,16 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// Preview host is panel-derived (<slug>.preview.<hostname>) but
+	// validated like any hostname as defense in depth — it lands in a
+	// server_name directive.
+	if p.PreviewHost != "" && !domainRegex.MatchString(p.PreviewHost) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("invalid preview_host %q", p.PreviewHost),
+		}
+	}
+
 	// Validate username format
 	if !usernameRegex.MatchString(p.Username) {
 		return nil, &agentwire.AgentError{
@@ -1082,7 +1175,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 	dirPrivacyDirectives := buildDirectoryPrivacyDirectives(p.DirectoryPrivacyRules)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

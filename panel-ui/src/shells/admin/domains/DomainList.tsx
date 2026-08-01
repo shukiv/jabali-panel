@@ -152,6 +152,8 @@ export type Domain = {
   google_dkim?: string;
   ssl?: SSLBadge | null;
   bytes_30d?: number;
+  temp_url_enabled?: boolean;
+  temp_url?: string | null;
   nginx_custom_directives: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
@@ -315,9 +317,24 @@ export const DomainList = () => {
               currentQ: query.params.q,
               onSearch: (v) => query.setParams({ q: v, page: 1 }),
             })}
-            render={(name: string, record: Domain) =>
-              renderDomainCell(name, record.doc_root, record.is_panel_primary, record.is_quota_suspended)
-            }
+            render={(name: string, record: Domain) => (
+              <>
+                {renderDomainCell(name, record.doc_root, record.is_panel_primary, record.is_quota_suspended)}
+                {record.temp_url && (
+                  <div>
+                    <Typography.Link
+                      href={record.temp_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      copyable={{ text: record.temp_url }}
+                      style={{ fontSize: 12 }}
+                    >
+                      {record.temp_url.replace(/^https?:\/\//, "")}
+                    </Typography.Link>
+                  </div>
+                )}
+              </>
+            )}
           />
           <Table.Column<Domain>
             dataIndex="username"

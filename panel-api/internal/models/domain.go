@@ -432,6 +432,13 @@ type Domain struct {
 	// keeps DEFAULT 1 for any non-API insert (docker-app etc.).
 	CreateWWW bool `gorm:"column:create_www;type:tinyint(1);not null" json:"create_www"`
 
+	// TempURLEnabled (migration 000243) is the per-domain opt-in for a
+	// preview URL: <slug>.preview.<hostname> serving the same docroot, so
+	// the site is reachable before the real domain's DNS points here.
+	// Opt-in (default 0 — zero value, so the GORM default-tag insert trap
+	// from the scar list cannot bite).
+	TempURLEnabled bool `gorm:"column:temp_url_enabled;type:tinyint(1);not null" json:"temp_url_enabled"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
