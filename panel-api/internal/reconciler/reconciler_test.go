@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"sync"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 
 // fakeAgent mocks the agent.AgentInterface for testing.
 type fakeAgent struct {
+	mu         sync.Mutex // JAB-205: ReconcileAll now calls the agent from a worker pool
 	calls      []fakeCall
 	failMethod string // if set, Call returns an error for this method
 }
@@ -30,7 +32,9 @@ type fakeCall struct {
 }
 
 func (f *fakeAgent) Call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, fakeCall{method, params})
+	f.mu.Unlock()
 
 	if method == f.failMethod {
 		return nil, fmt.Errorf("agent call failed for method: %s", method)

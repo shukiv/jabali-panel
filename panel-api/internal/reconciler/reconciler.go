@@ -49,6 +49,12 @@ type Reconciler struct {
 	log            *slog.Logger
 	interval       time.Duration
 
+	// sslIssueMu serialises certbot-touching work across the JAB-205
+	// domain worker pool AND the out-of-band ReconcileOne path: certbot
+	// holds a global /var/lib/letsencrypt lock, so two concurrent runs
+	// make the loser fail spuriously.
+	sslIssueMu sync.Mutex
+
 	// Preview-URL state cache (see preview_urls.go) — one settings +
 	// shared-cert lookup per tick instead of per domain.
 	previewMu    sync.Mutex
@@ -565,6 +571,12 @@ func (r *Reconciler) Schedule(domainID string) {
 
 // ReconcileAll diffs the DB against the agent's filesystem state and converges them.
 // Returns an error if the agent list call fails; on per-domain errors, logs and continues.
+// domainLoopWorkers bounds the JAB-205 per-domain convergence pool.
+// Deliberately modest — the goal is that one slow domain (ACME retry,
+// wedged agent call) no longer stalls the whole fleet, not maximum
+// parallelism. certbot work is additionally serialised on sslIssueMu.
+const domainLoopWorkers = 4
+
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// Coarse per-block timings. A tick that outruns the interval means
 	// the next ticker fire lands immediately behind it and drift repair
@@ -729,97 +741,36 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// the agent set, which silently stalled binding changes for existing
 	// domains. Logged only when the domain is newly-added or disabled so
 	// the steady-state reconcile stays quiet.
+	// JAB-205: converge enabled domains through a bounded worker pool
+	// instead of strictly serially. Safety analysis (see the PR):
+	//   - the agent serialises every vhost write + nginx -t + reload
+	//     under its global nginxOpMu, so concurrent domain.create calls
+	//     cannot interleave a broken config into a reload;
+	//   - the panel's agent client dials a fresh socket connection per
+	//     call — no shared-connection multiplexing to corrupt;
+	//   - certbot cannot run concurrently (shared /var/lib/letsencrypt
+	//     lock) — reconcileSSLForDomain serialises itself on sslIssueMu,
+	//     which also closes the pre-existing ReconcileOne-vs-loop race;
+	//   - everything else in the per-domain path (DNS rows + per-zone
+	//     upserts, Stalwart HTTP, PHP binding reads) is per-domain or
+	//     transactional. ReconcileOne already ran concurrently with this
+	//     loop via the out-of-band queue, so per-domain convergence has
+	//     always had to tolerate a concurrent sibling.
+	// Workers deliberately modest: the win is not raw parallelism but
+	// that one slow domain (ACME retry, wedged agent call) no longer
+	// stalls every domain behind it.
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, domainLoopWorkers)
 	for name, domain := range enabledDomains {
-		// Docker-app proxy domains (managed_by='docker_app') are
-		// admin-owned, docroot-less reverse proxies — they take a
-		// dedicated render path and skip EVERY tenant-only convergence
-		// step (DNS zone, PHP pool, mail, DKIM, MTA-STS, M6.5 phases,
-		// createDomainOnAgent). Branch out high, run only {SSL, proxy
-		// vhost}, like the IsPanelPrimary row below.
-		if domain.ManagedBy == models.DomainManagedByDockerApp {
-			if !agentSites[name] {
-				r.log.Info("reconcile: docker-app proxy domain", "domain", name)
-			}
-			sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
-			r.reconcileSSLForDomain(sslCtx, domain)
-			sslCancel()
-			r.reconcileDockerAppDomain(ctx, domain)
-			continue
-		}
-		// Panel-primary rows (is_panel_primary=1) are mail-only and
-		// intentionally skipped further down (the continue at the
-		// IsPanelPrimary branch) — they are NEVER added to the agent's
-		// site list, so logging "creating missing" for them every
-		// reconciler tick was pure spam ("puzzle.linux-hosting.net"
-		// loop). Only log for real tenant domains where the missing
-		// state is actionable.
-		if !agentSites[name] && !domain.IsPanelPrimary {
-			r.log.Info("reconcile: creating missing domain", "domain", name)
-		}
-		r.reconcileDNSZone(ctx, domain)
-
-		// M6.4 (ADR-0048): is_panel_primary rows are mail-only. They
-		// have no public docroot, no PHP, no per-tenant SSL cert (the
-		// self-signed panel cert already covers mail.<hostname> via its
-		// SAN). The HTTP-vhost path would fail anyway: admin owners have
-		// no Linux username, doc_root is empty ("must start with /home/"
-		// per the agent validator), and creating a server_name=<host>
-		// vhost would hijack /webmail from the default vhost. Skip SSL,
-		// PHP, and domain.create for these rows; the shared
-		// reconcileWebmailVhosts sweep (lower in ReconcileAll) still
-		// applies mail.<host>, and ensurePanelPrimaryDKIM below handles
-		// DKIM/Stalwart/DNS provisioning that the HTTP email-enable
-		// handler would normally run.
-		if domain.IsPanelPrimary {
-			r.reconcileRecursorForward(ctx, name)
-			r.ensurePanelPrimaryDKIM(ctx, domain)
-			continue
-		}
-
-		// Converge SSL state BEFORE the agent RPC. createDomainOnAgent
-		// renders the vhost using the cert paths the ssl_certificates row
-		// points at, so a fresh-issued cert must land in the DB before the
-		// vhost template is re-rendered this pass. This is also what drives
-		// the 3-hour ACME retry for pending_acme_retry certs — without this
-		// call in the steady-state loop, retries only ran on out-of-band
-		// Schedule() or an explicit force, and seed-time domains never got
-		// their first cert attempted at all.
-		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
-		r.reconcileSSLForDomain(sslCtx, domain)
-		sslCancel()
-		// M47 Wave 7c — converge mta-sts vhost (idempotent diff-aware).
-		r.reconcileMTAStsForDomain(ctx, domain)
-		// Auto-bind unbound domains to their owner's pool BEFORE the
-		// agent RPC. Without this, a newly-created domain renders an
-		// nginx vhost with no "location ~ \\.php$" block and the browser
-		// downloads info.php instead of executing it. ReconcilePHPPools
-		// already ran at the top of ReconcileAll so every user has a
-		// pool; this associates it with pre-existing unbound domains.
-		r.ensureDomainPHPBinding(ctx, domain)
-		// Auto-provision DKIM keypair + Stalwart domain for any tenant
-		// domain with email_enabled=1 but no DKIM material yet. Since
-		// mig 000123 makes email_enabled the default, this replaces the
-		// former manual domain.email_enable operator step.
-		r.ensureTenantEmailEnabled(ctx, domain)
-		// Back-fill M6 DNS rows for tenants enabled before DKIM-emit
-		// code shipped (or whose insert failed mid-flight). No-op when
-		// the rows already exist; safe on every tick.
-		r.ensureTenantDKIMRecords(ctx, domain)
-		r.createDomainOnAgent(ctx, domain)
-		// M6.3: ensure the recursor has a forwarder for this zone so
-		// local resolution hits pdns-server on loopback :5300. Idempotent.
-		r.reconcileRecursorForward(ctx, name)
-
-		// M6.5: Email features (forwarders, autoresponders, catch-all, disclaimer,
-		// shared folders, logs). Each feature is registered as a Phase during init(),
-		// enabling parallel Wave development without file collisions (ADR-0051).
-		// This is a no-op until Wave B/C populate the phase implementations.
-		// Domain-level phases called with nil context; mailbox phases deferred to Wave B+.
-		if err := phases.ReconcileDomainAll(ctx, domain, nil); err != nil {
-			r.log.Error("reconcile: M6.5 phase domain reconciliation failed", "domain", name, "err", err)
-			// Log error but continue — one phase failure doesn't abort the entire domain.
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(name string, domain *models.Domain) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			r.reconcileEnabledDomain(ctx, name, domain, agentSites)
+		}(name, domain)
 	}
+	wg.Wait()
 
 	tt.mark(fmt.Sprintf("domain_loop(%d)", len(enabledDomains)))
 
@@ -2298,6 +2249,11 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 	if r.sslCerts == nil || r.serverSettings == nil {
 		return // SSL feature not wired — skip
 	}
+	// One certbot at a time (shared LE lock) — see sslIssueMu. Cheap in
+	// steady state: domains with a live cert don't reach certbot, so the
+	// critical section is a few indexed reads.
+	r.sslIssueMu.Lock()
+	defer r.sslIssueMu.Unlock()
 
 	cert, err := r.sslCerts.FindByDomainID(ctx, domain.ID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -3108,4 +3064,101 @@ func cacheBypassPathsFromInstalls(insts []models.ApplicationInstall) []string {
 		}
 	}
 	return out
+}
+
+
+// reconcileEnabledDomain converges one enabled domain — the body of the
+// ReconcileAll per-domain loop, extracted so the JAB-205 worker pool can
+// run domains concurrently. Must remain safe to run concurrently with
+// itself and with ReconcileOne (see the pool comment in ReconcileAll).
+func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, domain *models.Domain, agentSites map[string]bool) {
+	// Docker-app proxy domains (managed_by='docker_app') are
+	// admin-owned, docroot-less reverse proxies — they take a
+	// dedicated render path and skip EVERY tenant-only convergence
+	// step (DNS zone, PHP pool, mail, DKIM, MTA-STS, M6.5 phases,
+	// createDomainOnAgent). Branch out high, run only {SSL, proxy
+	// vhost}, like the IsPanelPrimary row below.
+	if domain.ManagedBy == models.DomainManagedByDockerApp {
+		if !agentSites[name] {
+			r.log.Info("reconcile: docker-app proxy domain", "domain", name)
+		}
+		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
+		r.reconcileSSLForDomain(sslCtx, domain)
+		sslCancel()
+		r.reconcileDockerAppDomain(ctx, domain)
+		return
+	}
+	// Panel-primary rows (is_panel_primary=1) are mail-only and
+	// intentionally skipped further down (the continue at the
+	// IsPanelPrimary branch) — they are NEVER added to the agent's
+	// site list, so logging "creating missing" for them every
+	// reconciler tick was pure spam ("puzzle.linux-hosting.net"
+	// loop). Only log for real tenant domains where the missing
+	// state is actionable.
+	if !agentSites[name] && !domain.IsPanelPrimary {
+		r.log.Info("reconcile: creating missing domain", "domain", name)
+	}
+	r.reconcileDNSZone(ctx, domain)
+
+	// M6.4 (ADR-0048): is_panel_primary rows are mail-only. They
+	// have no public docroot, no PHP, no per-tenant SSL cert (the
+	// self-signed panel cert already covers mail.<hostname> via its
+	// SAN). The HTTP-vhost path would fail anyway: admin owners have
+	// no Linux username, doc_root is empty ("must start with /home/"
+	// per the agent validator), and creating a server_name=<host>
+	// vhost would hijack /webmail from the default vhost. Skip SSL,
+	// PHP, and domain.create for these rows; the shared
+	// reconcileWebmailVhosts sweep (lower in ReconcileAll) still
+	// applies mail.<host>, and ensurePanelPrimaryDKIM below handles
+	// DKIM/Stalwart/DNS provisioning that the HTTP email-enable
+	// handler would normally run.
+	if domain.IsPanelPrimary {
+		r.reconcileRecursorForward(ctx, name)
+		r.ensurePanelPrimaryDKIM(ctx, domain)
+		return
+	}
+
+	// Converge SSL state BEFORE the agent RPC. createDomainOnAgent
+	// renders the vhost using the cert paths the ssl_certificates row
+	// points at, so a fresh-issued cert must land in the DB before the
+	// vhost template is re-rendered this pass. This is also what drives
+	// the 3-hour ACME retry for pending_acme_retry certs — without this
+	// call in the steady-state loop, retries only ran on out-of-band
+	// Schedule() or an explicit force, and seed-time domains never got
+	// their first cert attempted at all.
+	sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
+	r.reconcileSSLForDomain(sslCtx, domain)
+	sslCancel()
+	// M47 Wave 7c — converge mta-sts vhost (idempotent diff-aware).
+	r.reconcileMTAStsForDomain(ctx, domain)
+	// Auto-bind unbound domains to their owner's pool BEFORE the
+	// agent RPC. Without this, a newly-created domain renders an
+	// nginx vhost with no "location ~ \\.php$" block and the browser
+	// downloads info.php instead of executing it. ReconcilePHPPools
+	// already ran at the top of ReconcileAll so every user has a
+	// pool; this associates it with pre-existing unbound domains.
+	r.ensureDomainPHPBinding(ctx, domain)
+	// Auto-provision DKIM keypair + Stalwart domain for any tenant
+	// domain with email_enabled=1 but no DKIM material yet. Since
+	// mig 000123 makes email_enabled the default, this replaces the
+	// former manual domain.email_enable operator step.
+	r.ensureTenantEmailEnabled(ctx, domain)
+	// Back-fill M6 DNS rows for tenants enabled before DKIM-emit
+	// code shipped (or whose insert failed mid-flight). No-op when
+	// the rows already exist; safe on every tick.
+	r.ensureTenantDKIMRecords(ctx, domain)
+	r.createDomainOnAgent(ctx, domain)
+	// M6.3: ensure the recursor has a forwarder for this zone so
+	// local resolution hits pdns-server on loopback :5300. Idempotent.
+	r.reconcileRecursorForward(ctx, name)
+
+	// M6.5: Email features (forwarders, autoresponders, catch-all, disclaimer,
+	// shared folders, logs). Each feature is registered as a Phase during init(),
+	// enabling parallel Wave development without file collisions (ADR-0051).
+	// This is a no-op until Wave B/C populate the phase implementations.
+	// Domain-level phases called with nil context; mailbox phases deferred to Wave B+.
+	if err := phases.ReconcileDomainAll(ctx, domain, nil); err != nil {
+		r.log.Error("reconcile: M6.5 phase domain reconciliation failed", "domain", name, "err", err)
+		// Log error but continue — one phase failure doesn't abort the entire domain.
+	}
 }
