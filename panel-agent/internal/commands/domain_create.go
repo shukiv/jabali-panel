@@ -503,7 +503,7 @@ server {
     location / { try_files /index.html =503; }
 {{ end }}
 }
-{{ if .PreviewHost }}
+{{- if .PreviewHost }}
 
 # Preview URL — reverse-proxies this domain's OWN vhost with the real
 # Host header, so canonical-URL apps (WordPress etc.) never see a host
