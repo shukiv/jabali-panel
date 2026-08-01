@@ -38,7 +38,14 @@ security.limit_extensions = .php
 ; connection, not TCP) can reach it. Without it open_basedir blocks the
 ; socket and only 127.0.0.1 (TCP) works (GH#112). The socket file is
 ; root/mysql-owned and not user-writable, so it adds no jailbreak surface.
-php_admin_value[open_basedir] = /home/{{.User}}:/run/mysqld/mysqld.sock:/tmp:/var/tmp
+; /run/jabali-wp-purge is the WP->nginx cache-purge spool (GH #611/#619,
+; JAB-199): the jabali-cache plugin drops purge requests there for the
+; agent's spool watcher. Without it in open_basedir the plugin's is_dir()
+; guard trips the restriction on every wp-admin request and concludes
+; "not a Jabali host" -- every content-edit purge of the micro-cache was
+; a silent no-op fleet-wide. Spool dir only; the watcher validates every
+; request, so this adds no jailbreak surface.
+php_admin_value[open_basedir] = /home/{{.User}}:/run/mysqld/mysqld.sock:/tmp:/var/tmp:/run/jabali-wp-purge
 ; Tenant command-exec lockdown (GH #401). Tenants are SFTP-only, so PHP is
 ; their exec vector; without this a tenant shell_exec/proc_open runs arbitrary
 ; commands as their uid from any web request. php_admin_value (not overridable)
@@ -50,9 +57,17 @@ php_admin_value[open_basedir] = /home/{{.User}}:/run/mysqld/mysqld.sock:/tmp:/va
 {{- if .DisableFunctions }}
 php_admin_value[disable_functions] = {{ .DisableFunctions }}
 {{- end }}
-; Opcache SHM cap. Conservative 32MB per pool keeps total bounded on
-; shared-host boxes (20 users × 32MB = 640MB). Tune in the runbook.
-php_admin_value[opcache.memory_consumption] = 32
+; Opcache sizing (JAB-200). The old 32MB cap filled instantly on any real
+; WP site (WooCommerce + Elementor = 10k+ PHP files) and opcache does not
+; evict -- once full it stops caching new scripts and every request pays
+; recompilation, wp-admin hardest. 128MB fits such sites; SHM is mmap'd
+; and faulted lazily, so 20 idle pools do NOT hold 20x128MB of real RAM --
+; resident use tracks what each site actually compiles.
+; max_accelerated_files must exceed the site's file count or the key
+; table saturates the same way (default 10000 < one Woo+Elementor site);
+; PHP rounds 20000 up to the next prime.
+php_admin_value[opcache.memory_consumption] = 128
+php_admin_value[opcache.max_accelerated_files] = 20000
 ; Shared-hosting PHP defaults (GH #253). php_value (not php_admin_value) so a
 ; per-domain override below takes precedence; these apply only when the domain
 ; sets nothing. Stock PHP defaults (128M / 2M / 8M / 1000) are too small for
