@@ -56,10 +56,19 @@ User decisions (2026-08-01):
    Teardown in shared `domain.delete` + on toggle-off.
 4. **UI**: toggle in domain create drawer + settings drawer; copy-chip with the
    preview URL in the domain lists.
-5. **Caveats (docs)**: WordPress canonical-redirects away from the preview
-   host; preview only resolves publicly when the hostname zone is delegated to
-   this server; cookie-scope note (tenant preview sites share the hostname's
-   registrable domain — panel session cookie must stay host-only).
+5. **WordPress/canonical apps — solved via reverse-proxy preview block**
+   (pattern lifted from the operator's proven hostsclick preview fleet):
+   the preview server block proxies the domain's OWN vhost with
+   `Host: <domain>` (canonical never fires), `proxy_redirect` ×4 for
+   Location headers, `proxy_cookie_domain`, and `sub_filter` ×8 (plain +
+   JSON-escaped, apex + www) with `Accept-Encoding ""` + `gunzip on` for
+   body rewrites. Upstream = the domain's listen IP (or loopback), https
+   whenever the main vhost has any cert (self-signed fallback counts —
+   avoids the http/https redirect loop).
+6. **Caveats (docs)**: preview only resolves publicly when the hostname
+   zone is delegated to this server; cookie-scope note (tenant preview
+   sites share the hostname's registrable domain — panel session cookie
+   must stay host-only).
 
 ## Verification
 
