@@ -505,10 +505,14 @@ server {
 }
 {{ if .PreviewHost }}
 
-# Preview URL — the same docroot served under the panel hostname, so the
-# site is reachable before (or after) the real domain's DNS points here.
-# Canonical-URL apps (WordPress) may redirect to the real domain; that is
-# the app's choice, not a vhost bug. X-Robots-Tag keeps previews out of
+# Preview URL — reverse-proxies this domain's OWN vhost with the real
+# Host header, so canonical-URL apps (WordPress etc.) never see a host
+# mismatch and never redirect away. Location headers, cookie domains and
+# absolute URLs in bodies (including the JSON-escaped form Elementor
+# stores) are rewritten to the preview host. Pattern proven in
+# production on the hostsclick preview fleet; adapted here for the
+# local hairpin (SNI to our own vhost, self-signed backend tolerated —
+# proxy_ssl_verify defaults off). X-Robots-Tag keeps previews out of
 # search indexes.
 server {
 {{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:80;
@@ -534,26 +538,41 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 {{ end }}
     add_header X-Robots-Tag "noindex, nofollow" always;
-    root {{.DocRoot}};
-    # Same cross-owner symlink confinement as the main vhost (JAB-183).
-    disable_symlinks if_not_owner from=$document_root;
-    {{.IndexDirective}}
-
-    location / {
-{{ if .HasPHP }}        try_files $uri $uri/ /index.php?$query_string;
-{{ else }}        try_files $uri $uri/ =404;
-{{ end }}    }
-{{ if .HasPHP }}
-    location ~ \.php$ {
-        try_files $uri =404;
-        fastcgi_pass unix:{{.FPMSocket}};
-        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
-        include fastcgi_params;
-{{ if .PHPValueParam }}        fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
-{{ end }}    }
-{{ end }}
+    client_max_body_size 64m;
     access_log /var/log/nginx/{{.Domain}}-preview-access.log;
     error_log /var/log/nginx/{{.Domain}}-preview-error.log;
+
+    location / {
+        proxy_pass {{.PreviewUpstream}};
+        proxy_set_header Host {{.Domain}};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+{{ if .SSLCertPath }}        proxy_ssl_server_name on;
+        proxy_ssl_name {{.Domain}};
+{{ end }}        proxy_redirect http://www.{{.Domain}} http://$http_host;
+        proxy_redirect https://www.{{.Domain}} https://$http_host;
+        proxy_redirect http://{{.Domain}} http://$http_host;
+        proxy_redirect https://{{.Domain}} https://$http_host;
+        proxy_cookie_domain www.{{.Domain}} $host;
+        proxy_cookie_domain {{.Domain}} $host;
+
+        # Body rewrite: plain and JSON-escaped absolute URLs, apex + www.
+        # Upstream compression must be off for sub_filter to see the
+        # bytes; gunzip re-inflates anything that slips through.
+        sub_filter_types text/plain text/css text/xml application/javascript application/x-javascript text/javascript application/json application/ld+json image/svg+xml;
+        sub_filter 'http://www.{{.Domain}}' 'http://$http_host';
+        sub_filter 'https://www.{{.Domain}}' 'https://$http_host';
+        sub_filter 'http://{{.Domain}}' 'http://$http_host';
+        sub_filter 'https://{{.Domain}}' 'https://$http_host';
+        sub_filter 'http:\/\/www.{{.Domain}}' 'http:\/\/$http_host';
+        sub_filter 'https:\/\/www.{{.Domain}}' 'https:\/\/$http_host';
+        sub_filter 'http:\/\/{{.Domain}}' 'http:\/\/$http_host';
+        sub_filter 'https:\/\/{{.Domain}}' 'https:\/\/$http_host';
+        sub_filter_once off;
+        gunzip on;
+        proxy_set_header Accept-Encoding "";
+    }
 }
 {{ end }}`
 
@@ -562,6 +581,7 @@ type vhostData struct {
 	PreviewHost          string
 	PreviewCertPath      string
 	PreviewKeyPath       string
+	PreviewUpstream      string
 	DocRoot              string
 	HasPHP               bool
 	PHPVersion           string
@@ -898,6 +918,23 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	if !isEnabled {
 		previewHost = ""
 	}
+	// Preview upstream: hairpin into this domain's own vhost. Prefer the
+	// domain's bound listen IP (an IP-scoped listen won't answer on
+	// loopback); https whenever the main vhost serves TLS (post
+	// stat-guard, so a self-signed fallback pair counts) — the backend
+	// then sees is_ssl() true and never protocol-redirects into a loop.
+	previewUpstream := ""
+	if previewHost != "" {
+		upstreamAddr := "127.0.0.1"
+		if listenIPv4 != "" {
+			upstreamAddr = listenIPv4
+		}
+		if sslCertPath != "" {
+			previewUpstream = "https://" + upstreamAddr + ":443"
+		} else {
+			previewUpstream = "http://" + upstreamAddr + ":80"
+		}
+	}
 
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
@@ -911,6 +948,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PreviewHost:                previewHost,
 		PreviewCertPath:            previewCertPath,
 		PreviewKeyPath:             previewKeyPath,
+		PreviewUpstream:            previewUpstream,
 		HTTP2Param:                 h2.Param,
 		HTTP2Directive:             h2.Directive,
 		DocRoot:                    docRoot,
