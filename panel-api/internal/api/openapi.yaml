@@ -4653,6 +4653,16 @@ paths:
       summary: List shared certificates
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
+  /admin/certificates/shared/acme:
+    post:
+      tags: [Ssl Certificates]
+      summary: Request an ACME DNS-01 shared wildcard certificate for a domain
+      description: >
+        Inserts a pending shared-certificate row with SANs [name, *.name];
+        the reconciler issues it via certbot DNS-01 against the local
+        PowerDNS. Requires the domain's DNS zone to be hosted on this panel.
+      security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Accepted — issuance runs on the next reconcile tick } }
   /admin/certificates/shared/{id}:
     put:
       tags: [Ssl Certificates]
