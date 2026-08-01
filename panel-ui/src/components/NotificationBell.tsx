@@ -91,7 +91,11 @@ export function NotificationBell() {
       );
       return data;
     },
-    refetchInterval: 10_000,
+    // 30s poll + refetch-on-focus. Focus refetch covers the "came back
+    // to the tab" case instantly, so the background cadence only serves
+    // long-lived open tabs — 3x fewer requests than the old 10s poll
+    // with no perceived staleness. Push (SSE) is tracked separately.
+    refetchInterval: 30_000,
     staleTime: 5_000,
     refetchOnWindowFocus: true,
   });

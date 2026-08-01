@@ -560,6 +560,20 @@ func (r *Reconciler) Schedule(domainID string) {
 // ReconcileAll diffs the DB against the agent's filesystem state and converges them.
 // Returns an error if the agent list call fails; on per-domain errors, logs and continues.
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
+	// Coarse per-block timings. A tick that outruns the interval means
+	// the next ticker fire lands immediately behind it and drift repair
+	// degrades to back-to-back passes — worth a WARN that names the
+	// slow block, not just a vague "panel feels slow" report later.
+	tt := newTickTimings()
+	defer func() {
+		total := tt.total()
+		if total > r.interval {
+			r.log.Warn("reconcile tick overran interval", "took", total.Round(time.Millisecond), "interval", r.interval, "slowest", tt.summary())
+		} else {
+			r.log.Debug("reconcile tick complete", "took", total.Round(time.Millisecond), "slowest", tt.summary())
+		}
+	}()
+
 	// M32: panel-cert hook runs early so a successful issue lands
 	// before the rest of the loop touches the agent. Cheap noop when
 	// use_le=0 or routability gate fails.
@@ -579,6 +593,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// a noop on every tick until an admin edits a template.
 	r.reconcileErrorPages(ctx)
 
+	tt.mark("certs_updates_modules")
+
 	// M6.6 — per-domain mail TLS. Sits next to panel-cert so the
 	// two cert flows share the same admin email/public IP context.
 	r.reconcileMailCertificates(ctx)
@@ -591,6 +607,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// scores WordPress loopback traffic (WooCommerce Action Scheduler et al).
 	r.reconcileSelfAllowlist(ctx)
 
+	tt.mark("mail_shared_egress")
+
 	// PHP pool reconciliation first, so domain regens see latest pool state.
 	r.ReconcilePHPPools(ctx)
 	// GH #329: converge the per-domain versioned pools (apply pending, reap
@@ -601,6 +619,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// tears them down inline; this backstop self-heals pools orphaned before that
 	// fix (or by a failed teardown). Bounded + guarded agent-side.
 	r.reconcileOrphanFPMPools(ctx)
+
+	tt.mark("php_pools")
 
 	// M24: managed IPs BEFORE the domain loop. If a domain is bound to a
 	// secondary IP that fell off the kernel (host reboot, netplan drop),
@@ -636,6 +656,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// further down handles the reverse transition (rate_limit_rps → 0:
 	// vhost stops referencing first, then the fragment drops the zone).
 	r.ReconcileNginxRateLimits(ctx)
+
+	tt.mark("ips_quota_ratelimits")
 
 	// Get the list of enabled sites from the agent
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -681,6 +703,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// row), so it's not covered by the enabledDomains loop below.
 	// Idempotent on the agent side.
 	r.reconcileRecursorSelfZone(ctx)
+
+	tt.mark("list_state")
 
 	// Convergence:
 	// 1. Every enabled DB domain gets a domain.create every pass. The
@@ -786,6 +810,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
+	tt.mark(fmt.Sprintf("domain_loop(%d)", len(enabledDomains)))
+
 	// 2. Disabled DB domain that IS in agent set -> call domain.create with is_enabled=false
 	for name, domain := range disabledDomains {
 		// Docker-app proxy domain disabled -> tear down its vhost
@@ -844,6 +870,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
+	tt.mark("disable_orphan_sweep")
+
 	r.reconcileWordPressInstalls(ctx)
 	// Reconcile WordPress installs (sweep stuck rows, probe drift).
 
@@ -885,6 +913,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// MtaOutboundThrottle objects. Each row's stalwart_id tracks
 	// the upstream id so updates target the right object.
 	r.reconcileMailThrottles(ctx)
+
+	tt.mark("post_sweeps")
 
 	return nil
 }

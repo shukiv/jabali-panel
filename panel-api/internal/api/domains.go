@@ -286,6 +286,11 @@ func (h *domainHandler) list(c *gin.Context) {
 	}
 
 	page, pageSize, opts := parseListOptions(c, defaultDomainsPageSize, maxDomainsPageSize)
+	// List rows never render the wide TEXT columns (DKIM material,
+	// disclaimer, nginx safe-options) — their consumers all fetch the
+	// single domain. Skip them so a full page doesn't drag megabytes of
+	// TEXT through MariaDB and the JSON encoder.
+	opts.OmitHeavyColumns = true
 
 	var domains []models.Domain
 	var total int64

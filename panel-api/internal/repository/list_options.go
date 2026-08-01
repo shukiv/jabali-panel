@@ -31,6 +31,11 @@ type ListOptions struct {
 	IsAdmin *bool
 	// Suspended — user-repo-only; non-nil restricts to suspended/active.
 	Suspended *bool
+	// OmitHeavyColumns — domain-repo-only; when true, List/ListByUserID
+	// skip the wide TEXT columns no list row renders (DKIM material, mail
+	// disclaimer, nginx safe-options JSON). Detail GETs and the reconciler
+	// always read full rows. Other repos ignore it.
+	OmitHeavyColumns bool
 }
 
 // ListCols tells applyListOptions which columns are searchable (free-text

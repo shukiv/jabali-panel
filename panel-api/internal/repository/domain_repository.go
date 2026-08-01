@@ -243,6 +243,18 @@ func (r *domainRepo) FindByName(ctx context.Context, name string) (*models.Domai
 // apply at the SQL layer can resolve it; List() rewrites the bare
 // `username` requested by the UI into the qualified form before
 // passing opts down to applyListOptions.
+// domainHeavyListColumns are the wide TEXT/LONGTEXT columns the domains
+// list never renders. Every UI consumer of these (nginx safe-options
+// modal, DKIM/email panels, disclaimer tab) fetches the single domain or
+// a dedicated endpoint rather than reading the list row, so the list
+// SELECT can skip them when ListOptions.OmitHeavyColumns is set.
+var domainHeavyListColumns = []string{
+	"google_dkim",
+	"dkim_public_key",
+	"disclaimer_text",
+	"nginx_safe_options",
+}
+
 var domainListCols = ListCols{
 	Search:      []string{"domains.name"},
 	Sort:        []string{"domains.name", "domains.created_at", "users.username", "domains.is_enabled"},
@@ -284,6 +296,9 @@ func (r *domainRepo) List(ctx context.Context, opts ListOptions) ([]models.Domai
 	}
 	opts.Sort = rewriteDomainSort(opts.Sort)
 	q := applyListOptions(base.Session(&gorm.Session{}), opts, domainListCols)
+	if opts.OmitHeavyColumns {
+		q = q.Omit(domainHeavyListColumns...)
+	}
 	if err := q.Find(&domains).Error; err != nil {
 		return nil, 0, err
 	}
@@ -312,6 +327,9 @@ func (r *domainRepo) ListByUserID(ctx context.Context, userID string, opts ListO
 	}
 	opts.Sort = rewriteDomainSort(opts.Sort)
 	q := applyListOptions(base.Session(&gorm.Session{}), opts, domainListCols)
+	if opts.OmitHeavyColumns {
+		q = q.Omit(domainHeavyListColumns...)
+	}
 	if err := q.Find(&domains).Error; err != nil {
 		return nil, 0, err
 	}

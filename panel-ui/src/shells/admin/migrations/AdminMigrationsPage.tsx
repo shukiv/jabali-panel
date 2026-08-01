@@ -110,7 +110,16 @@ export const AdminMigrationsPage = () => {
       );
       return data;
     },
-    refetchInterval: 5_000, // pull every 5s — operators expect live state during pull/import bursts
+    // 5s only while a job is actually moving; idle lists poll at 60s —
+    // slow enough to be cheap, fast enough that a CLI-started migration
+    // still shows up without a manual refresh.
+    refetchInterval: (q) => {
+      const data = q.state.data as MigrationJobListResponse | undefined;
+      const live = (data?.data ?? []).some(
+        (r) => r.state !== "done" && r.state !== "failed" && r.state !== "cancelled" && r.state !== "draft",
+      );
+      return live ? 5_000 : 60_000;
+    },
   });
 
   // M35.3 SSRF override toggle. server_settings.migration_allow_private_hosts
