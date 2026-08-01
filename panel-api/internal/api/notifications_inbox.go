@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -48,12 +49,125 @@ func RegisterNotificationsInboxRoutes(g *gin.RouterGroup, cfg NotificationsInbox
 	}
 	h := &inboxHandler{cfg: cfg}
 	g.GET("/notifications/inbox", h.list)
+	g.GET("/notifications/inbox/stream", h.stream)
 	g.POST("/notifications/inbox/:id/read", h.markRead)
 	g.POST("/notifications/inbox/read-all", h.readAll)
 	g.DELETE("/notifications/inbox", h.clearAll)
 }
 
 type inboxHandler struct{ cfg NotificationsInboxHandlerConfig }
+
+// inboxStreamPollInterval is the server-side change-detection cadence for
+// the SSE stream. One indexed COUNT + one LIMIT-1 list per tick per open
+// tab — far cheaper than the REST poll it replaces (full list + DLQ
+// cross-reference through the whole middleware stack), and events reach
+// the bell within this interval instead of the old 30s client poll.
+const inboxStreamPollInterval = 5 * time.Second
+
+// inboxStreamMaxAge hard-caps one SSE connection; EventSource reconnects
+// transparently, so this just bounds zombie connections from abandoned
+// tabs the client never closed.
+const inboxStreamMaxAge = 30 * time.Minute
+
+// stream is the JAB-204 bell push channel: emits an "inbox" event with
+// {unread, latest_id} immediately on connect and then whenever the
+// fingerprint changes. Same server-side poll-and-stream shape as the
+// migrations SSE (ADR-0095 decision 4) — no in-process pub/sub to keep
+// coherent, works across multiple panel-api replicas, and the DB stays
+// the single source of truth.
+func (h *inboxHandler) stream(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || claims.UserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no") // disable nginx proxy_buffering
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming_unsupported"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	fingerprint := func() (string, bool) {
+		var unread int64
+		var err error
+		if claims.IsAdmin {
+			unread, err = h.cfg.History.CountUnreadForAdminInbox(ctx, claims.UserID)
+		} else {
+			unread, err = h.cfg.History.CountUnreadForUser(ctx, claims.UserID)
+		}
+		if err != nil {
+			return "", false
+		}
+		// Latest row id catches the read-one-while-another-arrives case
+		// where the unread count alone stays flat.
+		var rows []models.NotificationHistory
+		if claims.IsAdmin {
+			rows, _, err = h.cfg.History.ListForAdminInbox(ctx, claims.UserID, repository.ListOptions{Limit: 1})
+		} else {
+			rows, _, err = h.cfg.History.ListForUser(ctx, claims.UserID, repository.ListOptions{Limit: 1})
+		}
+		if err != nil {
+			return "", false
+		}
+		latest := ""
+		if len(rows) > 0 {
+			latest = rows[0].ID
+		}
+		return fmt.Sprintf(`{"unread":%d,"latest_id":%q}`, unread, latest), true
+	}
+
+	emit := func(payload string) {
+		fmt.Fprintf(c.Writer, "event: inbox\ndata: %s\n\n", payload)
+		flusher.Flush()
+	}
+
+	last, ok := fingerprint()
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	emit(last)
+
+	ticker := time.NewTicker(inboxStreamPollInterval)
+	defer ticker.Stop()
+	deadline := time.NewTimer(inboxStreamMaxAge)
+	defer deadline.Stop()
+	heartbeat := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			return // EventSource reconnects; bounds abandoned-tab zombies
+		case <-ticker.C:
+			cur, ok := fingerprint()
+			if !ok {
+				continue // transient DB error — keep the stream alive
+			}
+			if cur != last {
+				last = cur
+				emit(cur)
+				heartbeat = 0
+				continue
+			}
+			// SSE comment as keepalive so idle proxies don't reap the
+			// connection (~every 25s at the 5s tick).
+			heartbeat++
+			if heartbeat >= 5 {
+				heartbeat = 0
+				fmt.Fprint(c.Writer, ": keepalive\n\n")
+				flusher.Flush()
+			}
+		}
+	}
+}
 
 // inboxRow extends NotificationHistory with a transient is_dead_letter
 // flag the UI uses to badge the row. Computed per request from the

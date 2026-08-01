@@ -91,14 +91,35 @@ export function NotificationBell() {
       );
       return data;
     },
-    // 30s poll + refetch-on-focus. Focus refetch covers the "came back
-    // to the tab" case instantly, so the background cadence only serves
-    // long-lived open tabs — 3x fewer requests than the old 10s poll
-    // with no perceived staleness. Push (SSE) is tracked separately.
-    refetchInterval: 30_000,
+    // SSE (below) is the primary delivery channel — this poll is the
+    // safety net for browsers/proxies that break EventSource. Focus
+    // refetch still covers the "came back to the tab" case instantly.
+    refetchInterval: 120_000,
     staleTime: 5_000,
     refetchOnWindowFocus: true,
   });
+
+  // JAB-204: server-push inbox updates. The stream emits an "inbox"
+  // event on connect and whenever the unread/latest fingerprint changes;
+  // each event just invalidates the query so the dropdown + badge reuse
+  // the normal fetch path. EventSource auto-reconnects on drops (the
+  // server also recycles connections every 30min); the 120s poll above
+  // covers the gaps.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof EventSource === "undefined") return;
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource("/api/v1/notifications/inbox/stream", { withCredentials: true });
+      es.addEventListener("inbox", () => {
+        qc.invalidateQueries({ queryKey: INBOX_KEY });
+      });
+    } catch {
+      // ctor threw (exotic embedders) — polling fallback carries on.
+    }
+    return () => {
+      es?.close();
+    };
+  }, [qc]);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !navigator.serviceWorker) return;

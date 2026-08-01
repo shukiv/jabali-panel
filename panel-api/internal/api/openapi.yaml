@@ -3854,6 +3854,12 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /notifications/inbox/stream:
+    get:
+      tags: [Notifications]
+      summary: SSE stream of inbox changes (unread count + latest id fingerprint)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "text/event-stream — 'inbox' events on connect and on change" } }
   /notifications/inbox:
     delete:
       tags: [Notifications]
