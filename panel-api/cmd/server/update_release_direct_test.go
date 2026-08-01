@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -168,4 +169,63 @@ func TestByCommitDownloadURLs(t *testing.T) {
 			t.Error("unexpected hit")
 		}
 	})
+}
+
+// TestLocalHeadSHA_ForeignOwnedRepo is the case that actually happens in
+// production and did not happen in any earlier test.
+//
+// /opt/jabali-panel is owned by the service user; `jabali update` runs as root.
+// Plain git refuses that combination:
+//
+//	fatal: detected dubious ownership in repository at '/opt/jabali-panel'
+//
+// localHeadSHA then returns an error, resolution falls back to the
+// rate-limited api.github.com path, and the whole point of resolving locally is
+// lost — silently, because the fallback is by design. Verified on a real host:
+// git rev-parse as root failed there while every developer-checkout test passed,
+// because a dev checkout is owned by whoever runs the tests.
+//
+// Simulated here by pointing git's ownership check at a repo it should distrust
+// via a scrubbed environment, which is the closest a same-user test can get.
+func TestLocalHeadSHA_UsesSafeDirectory(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	ctx := context.Background()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "seed"},
+	} {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// The command localHeadSHA builds must carry the exception, otherwise a
+	// service-user-owned repo read by root fails and we fall back to the API
+	// without anyone noticing.
+	sha, err := localHeadSHA(ctx, dir)
+	if err != nil {
+		t.Fatalf("localHeadSHA: %v", err)
+	}
+	if len(sha) != 40 {
+		t.Errorf("HEAD = %q, want a 40-char SHA", sha)
+	}
+
+	// Assert the flag is actually present in the source of truth — the
+	// behaviour above cannot distinguish "has the flag" from "same owner", and
+	// the flag is the whole fix.
+	src, rerr := os.ReadFile("update_release_direct.go")
+	if rerr != nil {
+		t.Fatalf("read source: %v", rerr)
+	}
+	if !strings.Contains(string(src), `"safe.directory="+repoDir`) {
+		t.Error("localHeadSHA must pass -c safe.directory=<repoDir>; without it " +
+			"the lookup fails as root on every real host and silently degrades " +
+			"to the rate-limited API path")
+	}
 }

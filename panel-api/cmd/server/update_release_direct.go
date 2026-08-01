@@ -57,7 +57,24 @@ func latestDownloadURLs(webBase string) (tarURL, sumURL string) {
 // release channel earlier in the run, so this is the same value the API would
 // return — except it is free, offline, and immune to rate limiting.
 func localHeadSHA(ctx context.Context, repoDir string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	// -c safe.directory is required, not defensive. /opt/jabali-panel is owned
+	// by the service user while `jabali update` runs as root, so plain git
+	// refuses:
+	//
+	//	fatal: detected dubious ownership in repository at '/opt/jabali-panel'
+	//
+	// Without this the lookup fails on EVERY normal host, localHeadSHA returns
+	// an error, and resolution silently falls back to the rate-limited API
+	// path — which is the exact failure the direct path exists to avoid. It
+	// worked in testing only because a developer checkout is owned by the user
+	// running the command.
+	//
+	// Safe here: we are root, the repo belongs to our own service user, and
+	// this is a read-only rev-parse. Scoped to the one invocation rather than
+	// written into the global gitconfig.
+	out, err := exec.CommandContext(ctx, "git",
+		"-c", "safe.directory="+repoDir,
+		"-C", repoDir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", repoDir, err)
 	}
