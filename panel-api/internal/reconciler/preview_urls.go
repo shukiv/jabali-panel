@@ -78,14 +78,14 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 	if r.sharedCerts == nil || r.dnsZones == nil || r.dnsRecords == nil || r.serverSettings == nil {
 		return
 	}
-	any := false
+	enabled := false
 	for _, d := range domains {
 		if d.TempURLEnabled {
-			any = true
+			enabled = true
 			break
 		}
 	}
-	if !any {
+	if !enabled {
 		return
 	}
 	srv, err := r.serverSettings.Get(ctx)
@@ -171,6 +171,24 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 	}
 	if srv.PublicIPv6 != "" && !have["AAAA"] {
 		mk("AAAA", srv.PublicIPv6)
+	}
+
+	// 3. Catch-all vhost for previews that don't exist (typo, disabled
+	// or deleted domain): branded 404 instead of the default-vhost drop.
+	// Content-hash gated agent-side — a per-tick no-op once in place;
+	// re-sent each tick so a cert issued later upgrades it to TLS.
+	if r.agent != nil {
+		st := r.previewStateCached(ctx)
+		fbParams := map[string]any{"base": models.PreviewWildcardBase(srv.Hostname)}
+		if st.certPath != "" {
+			fbParams["ssl_cert_path"] = st.certPath
+			fbParams["ssl_key_path"] = st.keyPath
+		}
+		fbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if _, err := r.agent.Call(fbCtx, "preview.fallback_apply", fbParams); err != nil {
+			r.log.Warn("preview: fallback vhost apply failed", "err", err)
+		}
+		cancel()
 	}
 }
 

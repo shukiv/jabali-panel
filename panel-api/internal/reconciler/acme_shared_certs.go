@@ -26,6 +26,13 @@ const (
 	acmeSharedRenewWindow = 30 * 24 * time.Hour
 	// acmeSharedRetryBackoff throttles retries of failed first issuance.
 	acmeSharedRetryBackoff = 15 * time.Minute
+	// acmeSharedGiveUpAfter: once a never-issued row has been failing this
+	// long, the cause is structural (hostname zone not publicly delegated,
+	// DNS module off) — retrying every 15min forever just burns LE's
+	// failed-validation quota. Drop to one attempt per day; a fixed
+	// environment succeeds on the next daily try (or immediately after
+	// the operator clears last_attempt_at).
+	acmeSharedGiveUpAfter = 24 * time.Hour
 	// acmeSharedRenewBackoff throttles renewal attempts of issued certs.
 	acmeSharedRenewBackoff = 24 * time.Hour
 	// acmeSharedIssueTimeout bounds one certbot DNS-01 run: two hook
@@ -60,6 +67,10 @@ func (r *Reconciler) reconcileAcmeSharedCerts(ctx context.Context) {
 			wait := acmeSharedRetryBackoff
 			if cert.CertPath != nil {
 				wait = acmeSharedRenewBackoff
+			} else if now.Sub(cert.CreatedAt) > acmeSharedGiveUpAfter {
+				// Still never issued after a day of 15-minute retries:
+				// structural failure — daily attempts from here.
+				wait = 24 * time.Hour
 			}
 			if now.Sub(*cert.LastAttemptAt) < wait {
 				continue

@@ -155,6 +155,37 @@ func TestReconcileAcmeSharedCerts_RenewalUsesLongerBackoff(t *testing.T) {
 	}
 }
 
+func TestReconcileAcmeSharedCerts_GiveUpEscalatesToDaily(t *testing.T) {
+	// Never issued, failing for >24h, last attempt 2h ago: the 15min retry
+	// window has long passed, but the give-up escalation (daily) must hold
+	// the attempt back — structural failures should not burn LE quota.
+	attempt := time.Now().Add(-2 * time.Hour)
+	row := acmeRow("C1", &attempt, nil)
+	row.CreatedAt = time.Now().Add(-48 * time.Hour)
+	repo := newFakeAcmeSharedRepo(row)
+	ag := &fakeDNS01Agent{}
+	r := testReconcilerFor(repo, ag)
+
+	r.reconcileAcmeSharedCerts(context.Background())
+
+	if len(ag.calls) != 0 {
+		t.Error("give-up window must throttle to daily attempts")
+	}
+
+	// A day after the last attempt, it tries again.
+	dayOld := time.Now().Add(-25 * time.Hour)
+	repo2 := newFakeAcmeSharedRepo(func() models.SharedCertificate {
+		r2 := acmeRow("C2", &dayOld, nil)
+		r2.CreatedAt = time.Now().Add(-72 * time.Hour)
+		return r2
+	}())
+	r2 := testReconcilerFor(repo2, &fakeDNS01Agent{})
+	r2.reconcileAcmeSharedCerts(context.Background())
+	if len(repo2.issued) != 1 {
+		t.Error("daily retry must still fire once the day has passed")
+	}
+}
+
 func TestAcmeCertLineageName(t *testing.T) {
 	c := models.SharedCertificate{Name: "*.example.com"}
 	if got := c.ACMELineageName(); got != "wildcard.example.com" {

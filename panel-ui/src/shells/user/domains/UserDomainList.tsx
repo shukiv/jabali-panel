@@ -5,6 +5,7 @@
 import { useTranslation } from "react-i18next";
 import {
   PlusSquareOutlined,
+  EyeOutlined,
   GlobalOutlined,
   MoreOutlined,
   SwapOutlined,
@@ -377,6 +378,30 @@ export const UserDomainList = () => {
                             },
                           ]
                         : []),
+                      {
+                        key: "preview-url",
+                        label: r.temp_url_enabled ? "Disable preview URL" : "Enable preview URL",
+                        icon: <EyeOutlined />,
+                        onClick: async () => {
+                          try {
+                            await apiClient.patch(`/domains/${r.id}`, {
+                              temp_url_enabled: !r.temp_url_enabled,
+                            });
+                            notification.success({
+                              message: r.temp_url_enabled
+                                ? "Preview URL disabled"
+                                : "Preview URL enabled — live within a minute",
+                            });
+                            qc.invalidateQueries({ queryKey: ["list", "domains"] });
+                          } catch (err) {
+                            const e = err as { response?: { data?: { detail?: string; error?: string } } };
+                            notification.error({
+                              message: "Failed to toggle preview URL",
+                              description: e.response?.data?.detail ?? e.response?.data?.error ?? (err as Error).message,
+                            });
+                          }
+                        },
+                      },
                       {
                         key: "toggle",
                         label: r.is_enabled ? "Disable" : "Enable",

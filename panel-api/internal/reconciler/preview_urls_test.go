@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
@@ -48,6 +49,19 @@ func (f *fakePreviewCertRepo) ListAll(_ context.Context) ([]models.SharedCertifi
 func (f *fakePreviewCertRepo) Create(_ context.Context, c *models.SharedCertificate) error {
 	f.created = append(f.created, *c)
 	return nil
+}
+
+type fakePreviewAgent struct {
+	calls []map[string]any
+}
+
+func (f *fakePreviewAgent) Call(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
+	if method != "preview.fallback_apply" {
+		return nil, nil
+	}
+	m, _ := params.(map[string]any)
+	f.calls = append(f.calls, m)
+	return json.RawMessage(`{"ok":true}`), nil
 }
 
 func previewReconciler(certs *fakePreviewCertRepo, zones *fakePreviewZoneRepo, recs *fakePreviewRecordRepo) *Reconciler {
@@ -157,6 +171,36 @@ func TestPreviewParams(t *testing.T) {
 	// stale answers past its TTL semantics for the enabled case.
 	if p := r.previewParams(context.Background(), &models.Domain{Name: "x.com"}); p != nil {
 		t.Errorf("temp URL off must yield nil params, got %+v", p)
+	}
+}
+
+func TestReconcilePreviewInfra_AppliesFallbackVhost(t *testing.T) {
+	certPath := "/etc/letsencrypt/live/wildcard.preview.host.tld/fullchain.pem"
+	keyPath := "/etc/letsencrypt/live/wildcard.preview.host.tld/privkey.pem"
+	certs := &fakePreviewCertRepo{rows: []models.SharedCertificate{{
+		Name: "*.preview.host.tld", Source: models.SharedCertSourceACME,
+		CertPath: &certPath, KeyPath: &keyPath,
+	}}}
+	zones := &fakePreviewZoneRepo{zone: &models.DNSZone{ID: "Z1", Name: "host.tld"}}
+	recs := &fakePreviewRecordRepo{existing: []models.DNSRecord{
+		{Name: "*.preview.host.tld", Type: "A"},
+		{Name: "*.preview.host.tld", Type: "AAAA"},
+	}}
+	r := previewReconciler(certs, zones, recs)
+	ag := &fakePreviewAgent{}
+	r.agent = ag
+
+	r.reconcilePreviewInfra(context.Background(), enabledPreviewDomains())
+
+	if len(ag.calls) != 1 {
+		t.Fatalf("expected one preview.fallback_apply call, got %d", len(ag.calls))
+	}
+	call := ag.calls[0]
+	if call["base"] != "preview.host.tld" {
+		t.Errorf("base = %v", call["base"])
+	}
+	if call["ssl_cert_path"] != certPath {
+		t.Errorf("issued wildcard pair must ride along: %+v", call)
 	}
 }
 
