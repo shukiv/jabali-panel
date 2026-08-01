@@ -1009,7 +1009,7 @@ fi
 				return nil
 			}
 			ctx := cmd.Context()
-			installed, sha, err := installFromRelease(ctx, func(format string, args ...any) {
+			installed, sha, err := installFromRelease(ctx, repoDir, func(format string, args ...any) {
 				fmt.Printf("  "+format+"\n", args...)
 			})
 			if err != nil {

@@ -86,45 +86,69 @@ type releaseResponse struct {
 // mismatch, file install failure, migration error) — those should NOT
 // transparently fall back because they indicate corruption or a
 // systemic problem.
-func installFromRelease(ctx context.Context, log func(string, ...any)) (installed bool, sha string, err error) {
+func installFromRelease(ctx context.Context, repoDir string, log func(string, ...any)) (installed bool, sha string, err error) {
 	base := os.Getenv("JABALI_RELEASE_API_BASE")
 	if base == "" {
 		base = defaultReleaseAPIBase
 	}
-
-	// 1. Discover the current main SHA via the Gitea API. Cheaper +
-	//    more reliable than `git ls-remote` on a host that may have
-	//    DNS or auth problems with the SSH/HTTPS git endpoint.
-	fullSHA, err := fetchLatestMainSHA(ctx, base)
-	if err != nil {
-		log("release: lookup of main HEAD failed: %v", err)
-		return false, "", nil
-	}
-	log("release: latest main = %s", fullSHA)
-
-	// Pre-skip check is done by the caller (compares against
-	// lastBuiltSHA) — but the caller passed control here, so go.
-
-	// 2. Look up the release for this commit by SCANNING releases
-	//    for a target_commitish match. Earlier code did a direct
-	//    GET /releases/tags/release-<short_sha> using a truncated
-	//    7-char short SHA, but git's `--short` flag returns
-	//    whatever length is unique in the repo (8 chars here) and
-	//    drifts as the repo grows. Scanning by commit SHA is the
-	//    only stable lookup.
-	rel, shortSHA, err := findReleaseForCommit(ctx, base, fullSHA)
-	if err != nil {
-		log("release: no release tarball published yet for %s (%v) — falling back", fullSHA[:7], err)
-		return false, "", nil
+	webBase := os.Getenv("JABALI_RELEASE_WEB_BASE")
+	if webBase == "" {
+		webBase = defaultReleaseWebBase
 	}
 
-	tarName := fmt.Sprintf("jabali-release-%s.tar.gz", shortSHA)
-	sumName := tarName + ".sha256"
-	tarURL := pickAssetURL(rel, tarName)
-	sumURL := pickAssetURL(rel, sumName)
-	if tarURL == "" || sumURL == "" {
-		log("release: release %s is missing %s or %s asset — falling back", rel.TagName, tarName, sumName)
-		return false, "", nil
+	// 1. Discover the commit we are updating to.
+	//
+	//    Read it from the local checkout, not GET /branches/main. This
+	//    step runs after "git fetch + reset to release channel", so the
+	//    working tree already IS the channel tip — free, offline, and
+	//    not subject to the 60/hour unauthenticated API quota that was
+	//    silently forcing every update into a full source build. See
+	//    update_release_direct.go for the full rationale.
+	var fullSHA string
+	var tarName, sumName, tarURL, sumURL string
+
+	fullSHA, err = localHeadSHA(ctx, repoDir)
+	if err == nil {
+		log("release: local HEAD = %s", fullSHA)
+		// 2. Resolve assets through the release CDN's fixed-name path.
+		//    github.com/.../releases/latest/download/<asset> redirects to
+		//    the newest release without touching the API. The MANIFEST
+		//    check below still verifies it is the build for THIS commit,
+		//    so a host sitting on an older commit falls through rather
+		//    than silently installing something else.
+		tarName = "jabali-release.tar.gz"
+		sumName = tarName + ".sha256"
+		tarURL, sumURL = latestDownloadURLs(webBase)
+	} else {
+		// No usable local checkout (bare install, relocated repo). Fall
+		// back to the API path, which still works when the quota allows.
+		log("release: local HEAD unreadable (%v) — asking the API instead", err)
+		fullSHA, err = fetchLatestMainSHA(ctx, base)
+		if err != nil {
+			log("release: lookup of main HEAD failed: %v", err)
+			return false, "", nil
+		}
+		log("release: latest main = %s", fullSHA)
+
+		// Look up the release for this commit by SCANNING releases for a
+		// target_commitish match. A direct GET /releases/tags/release-<short>
+		// is not usable: git's short-SHA length is whatever is unique in the
+		// repo and drifts as it grows, so the tag name cannot be derived.
+		var rel *releaseResponse
+		var shortSHA string
+		rel, shortSHA, err = findReleaseForCommit(ctx, base, fullSHA)
+		if err != nil {
+			log("release: no release tarball published yet for %s (%v) — falling back", fullSHA[:7], err)
+			return false, "", nil
+		}
+		tarName = fmt.Sprintf("jabali-release-%s.tar.gz", shortSHA)
+		sumName = tarName + ".sha256"
+		tarURL = pickAssetURL(rel, tarName)
+		sumURL = pickAssetURL(rel, sumName)
+		if tarURL == "" || sumURL == "" {
+			log("release: release %s is missing %s or %s asset — falling back", rel.TagName, tarName, sumName)
+			return false, "", nil
+		}
 	}
 
 	// 3. Download tarball + sha256 sidecar into a staging tmpdir.
@@ -165,10 +189,15 @@ func installFromRelease(ctx context.Context, log func(string, ...any)) (installe
 		return false, "", fmt.Errorf("release: parse MANIFEST: %w", err)
 	}
 	if manifest["full_sha"] != fullSHA {
-		// Catch a publisher bug early: tarball was built for a
-		// different SHA than the tag claims.
-		return false, "", fmt.Errorf("release: MANIFEST full_sha=%s but main HEAD=%s — tag/build mismatch",
+		// The newest published release is for a different commit than the
+		// one this host is on. That is ordinary right after a push — the
+		// release build has not finished yet — so fall back to a source
+		// build rather than installing binaries that do not match the
+		// checked-out tree. Not an error: the tarball is intact, it is
+		// simply not ours.
+		log("release: newest release is for %s but this host is on %s — falling back",
 			manifest["full_sha"], fullSHA)
+		return false, "", nil
 	}
 	log("release: tarball MANIFEST: short=%s build_time=%s go=%s",
 		manifest["short_sha"], manifest["build_time"], manifest["go_version"])
