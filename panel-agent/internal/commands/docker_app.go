@@ -13,6 +13,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -99,6 +100,11 @@ type dockerAppInstallResponse struct {
 // subdirectories, and runs `docker compose up -d`. When
 // wait_healthy=true, blocks until the container reports healthy or
 // the healthcheck_timeout_seconds budget runs out.
+// dockerAppComposeRecovery is the sentinel the reconciler's recovery
+// dispatch sends in compose_yml — wire contract with
+// panel-api/internal/reconciler/docker_apps.go dispatchInstall.
+const dockerAppComposeRecovery = "RECOVERY"
+
 func dockerAppInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dockerAppInstallParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -118,6 +124,23 @@ func dockerAppInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	}
 
 	dir := filepath.Join(dockerAppDataRoot, p.Slug)
+	// Recovery dispatch (reconciler): the panel cannot re-render the
+	// compose file — the install env (user inputs, generated secrets) is
+	// not persisted on the row — so it sends the sentinel and the agent
+	// reuses the compose.yml the original REST install wrote. Until this
+	// branch existed, the sentinel string itself was written OVER the
+	// on-disk compose.yml and every reconciler recovery destroyed the
+	// install (found on a production n8n: compose.yml == "RECOVERY").
+	recovery := p.ComposeYML == dockerAppComposeRecovery
+	if recovery {
+		onDisk, rerr := os.ReadFile(filepath.Join(dir, "compose.yml"))
+		if rerr != nil || len(bytes.TrimSpace(onDisk)) == 0 || string(bytes.TrimSpace(onDisk)) == dockerAppComposeRecovery {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeNotFound,
+				Message: fmt.Sprintf("recovery dispatch for %q but no usable compose.yml on disk — re-install from the panel", p.Slug),
+			}
+		}
+	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v", dir, err)}
 	}
@@ -184,8 +207,12 @@ func dockerAppInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	// Atomic write: tmp + rename so a crashed install never leaves a
 	// partial compose.yml that docker compose would try to parse.
-	if err := writeAtomicDockerApp(filepath.Join(dir, "compose.yml"), []byte(p.ComposeYML), 0o640); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	// Skipped on recovery — the on-disk file (validated above) is the
+	// only surviving copy of the rendered install.
+	if !recovery {
+		if err := writeAtomicDockerApp(filepath.Join(dir, "compose.yml"), []byte(p.ComposeYML), 0o640); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+		}
 	}
 	if p.EnvFile != "" {
 		if err := writeAtomicDockerApp(filepath.Join(dir, ".env"), []byte(p.EnvFile), 0o600); err != nil {
