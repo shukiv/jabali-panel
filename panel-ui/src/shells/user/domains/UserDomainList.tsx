@@ -315,16 +315,18 @@ export const UserDomainList = () => {
             render={(_, r) => (
               <>
                 <Space>
-                <RowActionButton
-                  icon={<GlobalOutlined />}
-                  onClick={() => navigate(`/jabali-panel/domains/${r.id}/dns`)}
-                >
-                  DNS
-                </RowActionButton>
+                {/* GH #833: single Actions entry point, mirroring the admin
+                    Domains list — same dropdown shape on both views. */}
                 <Dropdown
                   trigger={["click"]}
                   menu={{
                     items: [
+                      {
+                        key: "dns",
+                        label: "DNS",
+                        icon: <GlobalOutlined />,
+                        onClick: () => navigate(`/jabali-panel/domains/${r.id}/dns`),
+                      },
                       {
                         key: "redirects",
                         label: "Redirects",
@@ -421,7 +423,9 @@ export const UserDomainList = () => {
                     ],
                   }}
                 >
-                  <RowActionButton icon={<MoreOutlined />} color="default" aria-label={t("userdomainlist.more_actions")} />
+                  <RowActionButton icon={<MoreOutlined />} aria-label={t("userdomainlist.more_actions")}>
+                    Actions
+                  </RowActionButton>
                 </Dropdown>
                 </Space>
                 {activeModal?.domainId === r.id && activeModal.type === "redirects" && (

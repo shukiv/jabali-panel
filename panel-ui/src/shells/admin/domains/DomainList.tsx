@@ -379,15 +379,20 @@ export const DomainList = () => {
             dataIndex="actions"
             render={(_, r) => (
               <Space>
-                <RowActionButton
-                  icon={<EditOutlined />}
-                  onClick={() => navigate(`/jabali-admin/domains/edit/${r.id}`)}
-                >
-                  Edit
-                </RowActionButton>
+                {/* GH #833: one entry point for every row action (admin and
+                    tenant lists use the same shape) — no per-view "which
+                    button is primary" decision, and new actions scale into
+                    the menu instead of widening the row. */}
                 <Dropdown
+                  trigger={["click"]}
                   menu={{
                     items: [
+                      {
+                        key: "edit",
+                        icon: <EditOutlined />,
+                        label: "Edit",
+                        onClick: () => navigate(`/jabali-admin/domains/edit/${r.id}`),
+                      },
                       {
                         key: "dns",
                         icon: <GlobalOutlined />,
@@ -455,7 +460,9 @@ export const DomainList = () => {
                     ],
                   }}
                 >
-                  <RowActionButton icon={<MoreOutlined />} color="default" aria-label={t("domainlist.more_actions")} />
+                  <RowActionButton icon={<MoreOutlined />} aria-label={t("domainlist.more_actions")}>
+                    Actions
+                  </RowActionButton>
                 </Dropdown>
                 {activeModal?.domain.id === r.id && activeModal.type === "redirects" && (
                   <DomainRedirectsButton
