@@ -139,7 +139,7 @@ func ImportAppConfigs(
 			filepath.Join(docroot, "php.ini"),
 			filepath.Join(docroot, ".user.ini"),
 		} {
-			n, sk := sanitizePhpIniFile(ctx, agentCli, targetUserID, targetUsername, ini, res)
+			n, sk := sanitizePhpIniFile(ctx, agentCli, targetUserID, targetUsername, ini, docroot, res)
 			if n > 0 {
 				res.PhpIniFixed += n
 			} else if sk != "" {
@@ -272,7 +272,7 @@ var (
 // jail (sanitizePhpIni), and writes it back. Returns (1, "") on a real
 // rewrite, (0, "") when absent/clean, (0, note) on an error. The per-
 // directive changes are appended to res.Skipped as manifest notes.
-func sanitizePhpIniFile(ctx context.Context, agentCli agent.AgentInterface, targetUserID, targetUsername, path string, res *AppConfigsResult) (int, string) {
+func sanitizePhpIniFile(ctx context.Context, agentCli agent.AgentInterface, targetUserID, targetUsername, path, docroot string, res *AppConfigsResult) (int, string) {
 	if _, err := os.Stat(path); err != nil {
 		return 0, ""
 	}
@@ -291,7 +291,7 @@ func sanitizePhpIniFile(ctx context.Context, agentCli agent.AgentInterface, targ
 	if jErr := json.Unmarshal(raw, &r); jErr != nil || r.IsBinary {
 		return 0, fmt.Sprintf("php_ini_decode_skip:%s", path)
 	}
-	updated, notes, changed := sanitizePhpIni(r.Content, targetUsername)
+	updated, notes, changed := sanitizePhpIni(r.Content, targetUsername, docroot, nil)
 	if !changed {
 		return 0, ""
 	}

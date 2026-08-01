@@ -527,7 +527,46 @@ func looksLikeMaildir(path string) (string, bool) {
 			return dapath, true
 		}
 	}
+	// Subfolder-only mailbox: no root cur/new, but a Maildir++ ".<Sub>" still
+	// holds mail. The agent's looksLikeMailMaildir accepts this shape, so the
+	// mailbox IS imported; without the same rule here it was missing from both
+	// count= and messages_found= while its messages showed up in
+	// messages_pushed= — one of the two ways JAB-212 produced pushed > found.
+	if maildirSubfolders(path) != nil {
+		return path, true
+	}
 	return "", false
+}
+
+// maildirSubfolders lists the Maildir++ subfolder directories of a maildir —
+// direct children starting with "." that themselves contain cur/ or new/.
+//
+// Mirrors the agent's rule in importOneMailbox exactly (dot prefix, skip the
+// cur/new/tmp spec dirs). The two must not drift: whatever the agent imports is
+// what the panel has to count, and the divergence between them is the whole of
+// JAB-212.
+func maildirSubfolders(maildir string) []string {
+	entries, err := os.ReadDir(maildir)
+	if err != nil {
+		return nil
+	}
+	var subs []string
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() || !strings.HasPrefix(name, ".") {
+			continue
+		}
+		if name == "cur" || name == "new" || name == "tmp" {
+			continue
+		}
+		sub := filepath.Join(maildir, name)
+		// A dot-dir without cur/new is not a mail folder (.nfs junk, editor
+		// state); the agent never visits it, so neither do we.
+		if existsDir(filepath.Join(sub, "cur")) || existsDir(filepath.Join(sub, "new")) {
+			subs = append(subs, sub)
+		}
+	}
+	return subs
 }
 
 // countMaildirMessages walks cur/, new/, tmp/ inside a Maildir +
@@ -552,7 +591,27 @@ func countMaildirMessages(maildir string) (count int, bytes int64) {
 }
 
 // countMaildirMessagesDetailed additionally reports how many files sit in tmp/.
+//
+// JAB-212: this counts the INBOX slots AND every Maildir++ subfolder, because
+// that is precisely what the agent imports. Counting only the root cur/new made
+// every Sent/Trash/Archive message a push with no matching find, and the
+// account summary reported messages_pushed=787 against messages_found=760 — a
+// counter exceeding its own denominator, days after JAB-209 made operators rely
+// on found==pushed as the attestation that nothing was lost.
 func countMaildirMessagesDetailed(maildir string) (count int, bytes int64, tmpFound int) {
+	count, bytes, tmpFound = countMaildirSlots(maildir)
+	for _, sub := range maildirSubfolders(maildir) {
+		c, b, t := countMaildirSlots(sub)
+		count += c
+		bytes += b
+		tmpFound += t
+	}
+	return count, bytes, tmpFound
+}
+
+// countMaildirSlots counts the cur/ and new/ of a single Maildir level,
+// reporting tmp/ separately (see the JAB-209 note above).
+func countMaildirSlots(maildir string) (count int, bytes int64, tmpFound int) {
 	for _, sub := range []string{"cur", "new", "tmp"} {
 		dir := filepath.Join(maildir, sub)
 		entries, err := os.ReadDir(dir)
@@ -599,8 +658,21 @@ func countMaildirMessagesDetailed(maildir string) (count int, bytes int64, tmpFo
 // explained skips are subtracted is called out as unexplained.
 func reconcileMailCounts(found int, pushed int64, agentSkipped []string) []string {
 	gap := int64(found) - pushed
-	if gap <= 0 {
+	if gap == 0 {
 		return nil
+	}
+	if gap < 0 {
+		// JAB-212. Returning nil here is what let messages_pushed=787 sit next
+		// to messages_found=760 with nothing said. It is not mail loss, so it
+		// deliberately avoids the WARNING wording reserved for that — using it
+		// on a benign accounting mismatch would teach operators to skim past
+		// the word on the runs where it does mean loss.
+		return []string{fmt.Sprintf(
+			"mail: %d more message(s) were imported than were found in staging (found=%d pushed=%d). "+
+				"No mail was lost. Most often this is a re-run importing into a mailbox that already "+
+				"held messages; if this was a first run, the counters are out of step and the numbers "+
+				"above should not be quoted to the customer.",
+			-gap, found, pushed)}
 	}
 	explained := int64(0)
 	for _, s := range agentSkipped {

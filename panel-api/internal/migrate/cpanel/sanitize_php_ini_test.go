@@ -17,7 +17,7 @@ func TestSanitizePhpIni(t *testing.T) {
 		`extension_dir = "/opt/cpanel/ea-php83/root/usr/lib64/php/modules"`,
 	}, "\n")
 
-	out, notes, changed := sanitizePhpIni(in, "migdaleinav")
+	out, notes, changed := sanitizePhpIni(in, "migdaleinav", "/home/migdaleinav/domains/x/public_html", func(string) bool { return false })
 	if !changed {
 		t.Fatal("expected changed=true")
 	}
@@ -56,7 +56,7 @@ func TestSanitizePhpIni(t *testing.T) {
 
 func TestSanitizePhpIni_NoOp(t *testing.T) {
 	in := "memory_limit = 512M\nupload_max_filesize = 64M\nsession.save_path = /home/u/sessions\n"
-	out, notes, changed := sanitizePhpIni(in, "u")
+	out, notes, changed := sanitizePhpIni(in, "u", "/home/u/domains/x/public_html", func(string) bool { return true })
 	if changed || out != in || notes != nil {
 		t.Errorf("clean ini should be untouched; changed=%v notes=%v", changed, notes)
 	}
