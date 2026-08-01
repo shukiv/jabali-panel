@@ -9697,6 +9697,80 @@ POST_SCAN_HOOK
   chown root:root /etc/jabali/maldet/post-scan-hook.sh
   chmod 0750 /etc/jabali/maldet/post-scan-hook.sh
 
+  # Both signature refreshes reach out over the network, and both are
+  # Type=oneshot — for which systemd forbids Restart=. So a single unreachable
+  # endpoint left the unit failed until the next day's timer:
+  #
+  #   {sigup} could not download https://cdn.rfxn.com/downloads/maldet.sigs.ver
+  #   fatal: unable to access '.../signature-base.git/': Send failure: Broken pipe
+  #
+  # Both endpoints answered normally minutes later. That costs a day of
+  # malware-signature freshness and leaves a red unit nobody is watching — a
+  # blip worth retrying, not reporting. Written inline rather than shipped in
+  # install/systemd/ so it carries no $REPO_DIR dependency and therefore no
+  # ordering constraint against clone_or_update_repo.
+  install -d -m 0755 /usr/local/libexec/jabali
+  cat >/usr/local/libexec/jabali/net-retry <<'NET_RETRY'
+#!/usr/bin/env bash
+# jabali net-retry — run a network-dependent maintenance command, retrying
+# transient failures before letting the unit go red.
+#
+# Managed by jabali-panel install.sh. Hand edits will be overwritten.
+#
+# Usage: net-retry <label> -- <command> [args...]
+# Env:   JABALI_RETRY_ATTEMPTS (default 3)
+#        JABALI_RETRY_BACKOFF  (default 60 seconds, doubled after each failure)
+#
+# Deliberately no `set -e`: the whole point is to inspect a non-zero exit and
+# decide, and `set -e` plus arithmetic evaluation is a well-known way to make a
+# bash script die silently mid-loop.
+set -uo pipefail
+
+label="${1:-command}"
+shift || true
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "net-retry: no command given" >&2
+  exit 2
+fi
+
+attempts="${JABALI_RETRY_ATTEMPTS:-3}"
+backoff="${JABALI_RETRY_BACKOFF:-60}"
+if ! [[ "$attempts" =~ ^[0-9]+$ ]] || (( attempts < 1 )); then
+  attempts=3
+fi
+if ! [[ "$backoff" =~ ^[0-9]+$ ]]; then
+  backoff=60
+fi
+
+rc=0
+for (( i=1; i<=attempts; i++ )); do
+  "$@"
+  rc=$?
+  if (( rc == 0 )); then
+    if (( i > 1 )); then
+      echo "net-retry: ${label} succeeded on attempt ${i}/${attempts}"
+    fi
+    exit 0
+  fi
+  if (( i < attempts )); then
+    echo "net-retry: ${label} failed (exit ${rc}) on attempt ${i}/${attempts}; retrying in ${backoff}s" >&2
+    sleep "${backoff}"
+    backoff=$(( backoff * 2 ))
+  fi
+done
+
+# Every attempt failed. Exit non-zero on purpose: a source that is unreachable
+# for the whole retry window is a real outage, and stale malware signatures
+# must not look healthy.
+echo "net-retry: ${label} failed ${attempts} time(s); giving up (exit ${rc})" >&2
+exit "${rc}"
+NET_RETRY
+  chmod 0755 /usr/local/libexec/jabali/net-retry
+
   # M33 systemd timers — daily signature update + daily scan + retention purge.
   # maldet -u refreshes rfxn.yara + hex/md5 sigs; custom.yara.d/ drop-ins
   # (jabali/ + signature-base/) load automatically with maldet v2.0.1+.
@@ -9708,7 +9782,13 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/maldetect/maldet -u
+ExecStart=/usr/local/libexec/jabali/net-retry maldet-sigup -- /usr/local/maldetect/maldet -u
+# Type=oneshot defaults to TimeoutStartSec=infinity, so a hung fetch would
+# block every later run forever — the timer will not start a second instance
+# while one is live. An hour is far more than 3 attempts plus 180s of backoff
+# ever need, and far less than the daily period, so it can only ever fire on a
+# genuine hang and never on a slow but healthy run.
+TimeoutStartSec=3600
 Nice=15
 IOSchedulingClass=idle
 SIG_UNIT
@@ -9738,7 +9818,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -c '\
+ExecStart=/usr/local/libexec/jabali/net-retry signature-base -- /usr/bin/bash -c '\
   set -e; \
   if [[ ! -d /opt/jabali/signature-base/.git ]]; then \
     rm -rf /opt/jabali/signature-base; \
@@ -9750,6 +9830,9 @@ ExecStart=/usr/bin/bash -c '\
     git fetch --depth=1 --quiet origin master && \
     git reset --hard --quiet origin/master; \
   fi'
+# See the maldet unit above: guards against a hung git fetch wedging every
+# future run, without being tight enough to kill a slow clone.
+TimeoutStartSec=3600
 Nice=15
 IOSchedulingClass=idle
 SIGB_UNIT
@@ -14310,6 +14393,9 @@ EOF
   rm -f  /etc/systemd/system/jabali-maldet-update-signatures.timer
   rm -f  /etc/systemd/system/jabali-signature-base-update.service
   rm -f  /etc/systemd/system/jabali-signature-base-update.timer
+  # Only the file — /usr/local/libexec/jabali is shared with the pdns
+  # local-address helper, so removing the directory would break DNS.
+  rm -f  /usr/local/libexec/jabali/net-retry
   rm -f  /etc/systemd/system/jabali-maldet-scan-daily.service
   rm -f  /etc/systemd/system/jabali-maldet-scan-daily.timer
   rm -f  /etc/systemd/system/jabali-malware-quarantine-purge.service
