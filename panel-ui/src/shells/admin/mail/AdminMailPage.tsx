@@ -36,6 +36,7 @@ import { ownerResourceCrumbs, ownerLabel, adminLinks } from "../../../components
 import type { Domain } from "../../user/domains/UserDomainList";
 import { EditMailboxModal } from "../../../components/mail/EditMailboxModal";
 import { AdminGroupsTab } from "./AdminGroupsTab";
+import { MailStatsTab } from "./MailStatsTab";
 import { CreateMailboxWizardModal } from "../../user/mail/CreateMailboxWizardModal";
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../components/PasswordInput";
@@ -198,11 +199,13 @@ export function AdminMailPage() {
         tabList={[
           { key: "mailboxes", tab: "Mailboxes" },
           { key: "groups", tab: "Groups" },
+          { key: "stats", tab: "Statistics" },
         ]}
         activeTabKey={tab}
         onTabChange={setTab}
       >
       {tab === "groups" && <AdminGroupsTab />}
+      {tab === "stats" && <MailStatsTab />}
       {tab === "mailboxes" && (
       <>
         <Space style={{ width: "100%", justifyContent: "flex-start", marginBottom: 16 }} wrap>

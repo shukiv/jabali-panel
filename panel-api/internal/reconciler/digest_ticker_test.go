@@ -130,12 +130,19 @@ func TestDigestTick_PersistFailureSkipsSend(t *testing.T) {
 // call site, so it silently never ran. Pin that serve.go actually starts
 // the digest ticker.
 func TestServeWiresDigestTicker(t *testing.T) {
+	assertServeCalls(t, "reconciler.StartDigestTicker(")
+}
+
+// assertServeCalls fails unless serve.go contains the given call — the
+// JAB-203 regression shape (ticker written, never wired, silently dead).
+func assertServeCalls(t *testing.T, call string) {
+	t.Helper()
 	src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "server", "serve.go"))
 	if err != nil {
 		t.Fatalf("read serve.go: %v", err)
 	}
-	if !strings.Contains(string(src), "reconciler.StartDigestTicker(") {
-		t.Fatal("serve.go does not call reconciler.StartDigestTicker — the digest would silently never run (JAB-203 shape)")
+	if !strings.Contains(string(src), call) {
+		t.Fatalf("serve.go does not call %s — the ticker would silently never run (JAB-203 shape)", call)
 	}
 }
 

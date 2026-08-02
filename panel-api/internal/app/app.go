@@ -805,6 +805,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			ARFReports:      deps.ARFReports,
 			ServerSettings:  deps.ServerSettings,
 		})
+		// GH #873 — admin mail statistics (history + storage drilldown).
+		if deps.DB != nil {
+			api.RegisterAdminMailStatsRoutes(v1, api.AdminMailStatsHandlerConfig{
+				Stats: repository.NewMailStatsRepository(deps.DB),
+			})
+		}
 		// M47 Wave 3 — admin outbound-throttle CRUD.
 		api.RegisterAdminMailThrottlesRoutes(v1, api.AdminMailThrottlesHandlerConfig{
 			Policies:       deps.MailOutboundPolicies,

@@ -903,6 +903,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go reconciler.StartDomainExpiryTicker(ctx, sharedAgent, deps.Domains, log)
 	}
 
+	// GH #873: mail statistics sampler (Stalwart Prometheus + queue size).
+	if sharedAgent != nil && sharedDB != nil {
+		go reconciler.StartMailStatsTicker(ctx, reconciler.MailStatsTickerDeps{
+			Agent:    sharedAgent,
+			Stats:    repository.NewMailStatsRepository(sharedDB),
+			Settings: deps.ServerSettings,
+			Log:      log,
+		})
+	}
+
 	// GH #840: opt-in daily digest email (kind digest.daily, default off).
 	if deps.ServerSettings != nil && deps.NotificationQueue != nil && sharedDB != nil {
 		go reconciler.StartDigestTicker(ctx, reconciler.DigestTickerDeps{
