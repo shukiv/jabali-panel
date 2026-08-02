@@ -8,6 +8,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -510,6 +511,15 @@ func (h *wordPressHandler) cacheAdvise(c *gin.Context) {
 		TTFBMs          int      `json:"ttfb_ms"`
 		PageHitVerified bool     `json:"page_hit_verified"`
 		RiskyEndpoints  []string `json:"risky_endpoints"`
+		// JAB-201 outcome telemetry.
+		HitBlockCause    string `json:"hit_block_cause"`
+		HitBlockEvidence string `json:"hit_block_evidence"`
+		LogOK            bool   `json:"log_ok"`
+		LogHits          int    `json:"log_hits"`
+		LogMisses        int    `json:"log_misses"`
+		LogBypass        int    `json:"log_bypass"`
+		SpoolOK          bool   `json:"spool_ok"`
+		SpoolDetail      string `json:"spool_detail"`
 	}
 	_ = json.Unmarshal(res, &probe)
 	profile, note := recommendCacheProfile(probe.ActivePlugins)
@@ -518,7 +528,37 @@ func (h *wordPressHandler) cacheAdvise(c *gin.Context) {
 		note += " Detected dynamic endpoints (" + strings.Join(probe.RiskyEndpoints, ", ") + ") — these must stay bypassed; the chosen profile already excludes them."
 	}
 	if inst.CacheEnabled && !probe.PageHitVerified {
-		note += " Warning: the homepage did not return a page-cache HIT on a repeat request — caching may be bypassed (a cookie/plugin) or not yet warmed."
+		// JAB-201: name the blocker when the probe identified one — the
+		// production case was a maintenance plugin's nocache_headers()
+		// making every check read green while nothing was ever cached.
+		switch probe.HitBlockCause {
+		case "wp_nocache_headers":
+			note += " Warning: the site opts out of caching on every response (" + probe.HitBlockEvidence +
+				" — WordPress nocache_headers(), typically a maintenance/coming-soon plugin). The page cache stores nothing until it is deactivated."
+		case "upstream_cache_control":
+			note += " Warning: the site sends " + probe.HitBlockEvidence +
+				" — the fail-closed gate refuses to store such responses; find the plugin emitting it."
+		case "vary_header":
+			note += " Warning: the site sends " + probe.HitBlockEvidence +
+				" — responses varying on more than Accept-Encoding are never stored."
+		case "response_sets_cookie":
+			note += " Warning: the homepage sets a cookie (" + probe.HitBlockEvidence +
+				") — cookie-carrying responses bypass the cache; check session/consent plugins."
+		default:
+			note += " Warning: the homepage did not return a page-cache HIT on a repeat request — caching may be bypassed (a cookie/plugin) or not yet warmed."
+		}
+	}
+	// JAB-201: outcome ratio from the live jcache log. Zero HITs across a
+	// meaningful sample is the "enabled but ineffective" signature.
+	if inst.CacheEnabled && probe.LogOK {
+		sample := probe.LogHits + probe.LogMisses + probe.LogBypass
+		if sample >= 50 && probe.LogHits == 0 {
+			note += fmt.Sprintf(" Warning: 0%% page-cache HIT over the last %d logged requests (%d MISS / %d BYPASS) — the cache is enabled but not serving.",
+				sample, probe.LogMisses, probe.LogBypass)
+		}
+	}
+	if inst.CacheEnabled && !probe.SpoolOK && probe.SpoolDetail != "" {
+		note += " Warning: " + probe.SpoolDetail + "."
 	}
 	// Redis eviction pressure (admin-privileged INFO).
 	evicted := 0

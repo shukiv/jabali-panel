@@ -108,6 +108,7 @@ func wordpressCacheProbeHandler(ctx context.Context, params json.RawMessage) (an
 	_ = json.Unmarshal([]byte(strings.TrimSpace(pl)), &plugins)
 	ttfbMs := 0
 	hitVerified := false
+	hitBlockCause, hitBlockEvidence := "", ""
 	risky := []string{}
 	host := strings.ToLower(strings.TrimSpace(p.Host))
 	if host != "" && probeDomainRe.MatchString(host) {
@@ -134,6 +135,12 @@ func wordpressCacheProbeHandler(ctx context.Context, params json.RawMessage) (an
 			"--resolve", host+":443:127.0.0.1", "https://"+host+"/").Output()
 		cancel()
 		hitVerified = strings.Contains(strings.ToUpper(string(hdr)), "X-JABALI-CACHE: HIT")
+		// JAB-201: when the double-fetch does not verify, name the
+		// blocker from the same response's headers instead of leaving
+		// the advisor to guess "cookie/plugin or not warmed".
+		if !hitVerified {
+			hitBlockCause, hitBlockEvidence = classifyCacheBlock(string(hdr))
+		}
 		// Risky endpoints that must never be cached (WooCommerce/EDD/membership).
 		for _, ep := range []string{"/cart", "/checkout", "/my-account"} {
 			if code := curlLocal(ep, "%{http_code}"); code == "200" || code == "302" {
@@ -141,9 +148,20 @@ func wordpressCacheProbeHandler(ctx context.Context, params json.RawMessage) (an
 			}
 		}
 	}
+	// JAB-201: cache OUTCOMES, not just config presence — the jcache
+	// log ratio and the purge-spool/jail assertions.
+	logHits, logMisses, logBypass, logOther, logOK := 0, 0, 0, 0, false
+	if host != "" && probeDomainRe.MatchString(host) {
+		logHits, logMisses, logBypass, logOther, logOK = tallyJcacheLogFile(host)
+	}
+	spoolOK, spoolDetail := probeSpool(p.OSUser)
 	return map[string]any{
 		"active_plugins": plugins, "wp_version": strings.TrimSpace(ver),
 		"ttfb_ms": ttfbMs, "page_hit_verified": hitVerified, "risky_endpoints": risky,
+		"hit_block_cause": hitBlockCause, "hit_block_evidence": hitBlockEvidence,
+		"log_ok": logOK, "log_hits": logHits, "log_misses": logMisses,
+		"log_bypass": logBypass, "log_other": logOther,
+		"spool_ok": spoolOK, "spool_detail": spoolDetail,
 	}, nil
 }
 
