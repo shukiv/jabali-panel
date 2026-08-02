@@ -27,6 +27,10 @@ concurrency:
   group: release-main
   cancel-in-progress: true
 
+# Signing is NOT done here, on purpose (JAB-190 / ADR-0162). The release key is
+# held offline so that a compromise of this workflow, its token, or the release
+# storage cannot produce artifacts that boxes will install. After this workflow
+# publishes, run `tools/sign-release.sh <tag>` on the machine holding the key.
 permissions:
   contents: write
 

@@ -103,6 +103,14 @@ expected="$(awk '{print $1}' "$tmp/release.sha256")"
 actual="$(sha256sum "$tmp/release.tar.gz" | awk '{print $1}')"
 [[ "$expected" == "$actual" ]] || die "checksum mismatch (expected $expected, got $actual)"
 log "checksum verified"
+# NOTE (JAB-190 / ADR-0162): this checksum comes from the SAME origin as the
+# tarball, so it proves the download was not corrupted — not that the release is
+# genuine. Anyone who can publish a release can publish a matching .sha256. A
+# fresh `curl | bash` install is trust-on-first-use by nature: verifying a
+# signature here would mean first fetching a verifier, which needs trust of its
+# own. `jabali update` DOES verify a minisign signature against a key embedded
+# in the panel binary, so every update after this install is cryptographically
+# checked even though this first fetch is not.
 
 # Extract the whole bin/ — not just the installer. GH #731: the tarball already
 # contains compiled jabali-panel / jabali-agent / jabali-ssh-shell /

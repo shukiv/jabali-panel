@@ -186,6 +186,16 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 		}
 		log("release: sha256 verified")
 
+		// JAB-190: the sha256 sidecar comes from the same origin as the
+		// tarball, so it proves the download was not corrupted and nothing
+		// more — whoever can publish one can publish the other. The signature
+		// is checked here, BEFORE extraction, so attacker-controlled bytes are
+		// never written to disk by tar on the strength of a checksum alone.
+		// No-op on builds with no embedded key; mandatory once there is one.
+		if err := verifyReleaseSignature(ctx, tarPath, releaseSignatureURL(tarURL), log); err != nil {
+			return "", false, fmt.Errorf("release: %w", err)
+		}
+
 		extractDir := filepath.Join(dir, "extracted")
 		if err := os.Mkdir(extractDir, 0o755); err != nil {
 			return "", false, fmt.Errorf("release: mkdir extract: %w", err)
