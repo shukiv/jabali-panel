@@ -128,6 +128,25 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 		allArgs = append(allArgs, args...)
 		return run(dir, "sudo", allArgs...)
 	}
+	// asUserOut is asUser for the one case that has to inspect what git said
+	// rather than only whether it failed (JAB-210). `run` streams straight to
+	// the terminal, which is right for build output but leaves the caller
+	// nothing to classify.
+	asUserOut := func(dir string, name string, args ...string) (string, error) {
+		allArgs := []string{"-u", serviceUser, "-H", "env",
+			"HOME=" + repoDir,
+			"PATH=" + goRoot + "/bin:/usr/bin:/bin",
+			"GOCACHE=" + repoDir + "/.cache/go-build",
+			"GOMODCACHE=" + repoDir + "/.cache/go-mod",
+		}
+		allArgs = append(allArgs, lowMemGoEnv...)
+		allArgs = append(allArgs, name)
+		allArgs = append(allArgs, args...)
+		c := exec.Command("sudo", allArgs...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
 
 	force, _ := cmd.Flags().GetBool("force")
 	fromSource, _ := cmd.Flags().GetBool("from-source")
@@ -140,6 +159,29 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	var installedFromRelease bool
 	var releaseSHA string
 	_ = releaseSHA // currently unused; reserved for future logging
+
+	// Byte copies of the binaries as they were before this update replaced
+	// them, so a failed `migrate up` can put them back (JAB-210). Taken by
+	// whichever install path runs — release tarball or source build — and
+	// dropped once migrations succeed. Deferred cleanup covers the updates
+	// that fail at some step in between and never reach the migrate step.
+	var preUpdateBinaries *binarySnapshot
+	defer func() { preUpdateBinaries.cleanup() }()
+	snapshotBeforeSwap := func() {
+		if preUpdateBinaries != nil {
+			return // already captured by an earlier step in this run
+		}
+		snap, err := snapshotBinaries(managedBinaries)
+		if err != nil {
+			// Not fatal: losing the ability to roll back is worse than not
+			// updating, but not worse than leaving the host on old code with
+			// no explanation. Say so plainly and continue.
+			fmt.Printf("  (could not snapshot the current binaries for rollback: %v — "+
+				"a failed migration will NOT be able to restore them)\n", err)
+			return
+		}
+		preUpdateBinaries = snap
+	}
 
 	// gitHead captures HEAD as a string. Runs via `sudo -u <serviceUser>`
 	// because the repo is owned by the jabali user; git 2.35+ refuses to
@@ -370,12 +412,21 @@ chmod 0750 "$WR"`)
 			}
 			resetRef := "origin/main"
 			if channel == "stable" {
-				// Best-effort: the `stable` tag is absent on origin until the
-				// first promote, so a combined fetch would hard-fail. Separate
-				// + ignore the error (GH #445).
-				_ = asUser(repoDir, "git", "fetch", "--force", "origin",
+				// Fetched separately from main: the `stable` tag is absent on
+				// origin until the first promote, so a combined fetch would
+				// hard-fail on a host that has never had one (GH #445).
+				//
+				// "Absent upstream" is the only failure we may ignore, though.
+				// Any other one leaves a possibly-stale LOCAL refs/tags/stable
+				// that rev-parse below would happily accept, resetting the
+				// checkout backwards (JAB-210) — so classify, don't discard.
+				fetchOut, fetchErr := asUserOut(repoDir, "git", "fetch", "--force", "origin",
 					"+refs/tags/stable:refs/tags/stable")
-				if asUser(repoDir, "git", "rev-parse", "--verify", "--quiet",
+				tagOnOrigin, fatal := classifyStableTagFetch(fetchErr, fetchOut)
+				if fatal != nil {
+					return fatal
+				}
+				if tagOnOrigin && asUser(repoDir, "git", "rev-parse", "--verify", "--quiet",
 					"refs/tags/stable^{commit}") == nil {
 					resetRef = "refs/tags/stable"
 					fmt.Println("  release channel: stable -> tracking the promoted `stable` tag")
@@ -1030,6 +1081,7 @@ fi
 				}
 			}
 			ctx := cmd.Context()
+			snapshotBeforeSwap()
 			installed, sha, err := installFromRelease(ctx, repoDir, func(format string, args ...any) {
 				fmt.Printf("  "+format+"\n", args...)
 			})
@@ -1374,6 +1426,7 @@ test -x node_modules/.bin/tsc || {
 				fmt.Println("  (skipped: binaries already installed from release tarball)")
 				return nil
 			}
+			snapshotBeforeSwap()
 			// Skip per-binary when its .new file is absent — the parallel
 			// build step short-circuited that side because its inputs
 			// hadn't changed. The currently-installed binary stays.
@@ -1462,7 +1515,20 @@ test -x node_modules/.bin/tsc || {
 			return nil
 		}},
 		{"run migrations", func() error {
-			return run("", defaultPanelBinPath, "migrate", "up")
+			if err := run("", defaultPanelBinPath, "migrate", "up"); err != nil {
+				// The binaries were swapped several steps ago; the schema is
+				// still where it started. Undo the half that we can undo
+				// rather than leaving new code on disk in front of an old
+				// schema, where the next restart runs the mismatch (JAB-210).
+				return rollbackAfterFailedMigrate(preUpdateBinaries, err, func(format string, args ...any) {
+					fmt.Printf("  "+format+"\n", args...)
+				})
+			}
+			// Past this point the binary and the schema agree, so the
+			// snapshot is only taking up disk.
+			preUpdateBinaries.cleanup()
+			preUpdateBinaries = nil
+			return nil
 		}},
 		{"restart services", func() error {
 			if err := run("", "systemctl", "restart", "jabali-agent"); err != nil {
