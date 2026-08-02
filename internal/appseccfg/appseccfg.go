@@ -215,6 +215,30 @@ SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,no
 SecRule REQUEST_FILENAME "@endsWith /wp-admin/admin-ajax.php" "id:9599210,phase:2,pass,nolog,chain"
     SecRule ARGS:action "@rx ^elementor" "t:none,t:lowercase,ctl:ruleRemoveTargetByTag=attack-sqli;ARGS"
 #
+# Code Snippets plugin (JAB-193). POST /wp-json/code-snippets/v1/snippets/<id>
+# saves a PHP snippet, so the JSON body legitimately IS PHP source — <?php,
+# function calls, superglobals. CRS scores it exactly as it would score an RCE
+# payload (observed on a production editor: rce: 5, php_injection: 5,
+# anomaly: 10 -> inline 403) and the editor simply cannot save their work. The
+# stopgap was allowlisting that one contractor's IP out of the ENTIRE WAF,
+# permanently — strictly worse than a scoped rule drop.
+#
+# There is no narrower content signal available here: accepting code IS the
+# endpoint's purpose, so no payload shape distinguishes a legitimate save from
+# an injection attempt. Scope on identity and reach instead:
+#   - Chained on a wordpress_logged_in_* cookie. An UNAUTHENTICATED request to
+#     the same path keeps FULL rce + php-injection scoring. A forged cookie
+#     buys an attacker nothing by itself — the route is capability-gated
+#     (manage_options) and nonce-checked by the plugin, so WordPress answers
+#     401/403 long before a snippet is written; the cookie only decides whether
+#     CRS scores the body, never whether the write is allowed.
+#   - Only the two families that fire on source text, and only on ARGS +
+#     REQUEST_BODY. Headers, cookies and the URI stay inspected, and every
+#     other family (SQLi, XSS, LFI, traversal, scanner detection) stays fully
+#     active on this path.
+#   - v[0-9]+ so a future API version can't silently re-break saves.
+SecRule REQUEST_URI "@rx ^/wp-json/code-snippets/v[0-9]+/" "id:9599220,phase:1,pass,nolog,chain"
+    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveTargetByTag=attack-rce;ARGS,ctl:ruleRemoveTargetByTag=attack-rce;REQUEST_BODY,ctl:ruleRemoveTargetByTag=attack-injection-php;ARGS,ctl:ruleRemoveTargetByTag=attack-injection-php;REQUEST_BODY"
 # 933120 vs WooCommerce checkout (arizot-e.com incident, 2026-08-02).
 # WooCommerce 8.5+ order attribution submits a field literally named
 # wc_order_attribution_user_agent with every checkout AJAX call — and

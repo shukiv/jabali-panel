@@ -69,11 +69,11 @@ func TestRender_WebmailHostsExplicitEquality(t *testing.T) {
 		WebmailHosts: []string{
 			"Mail.Foo.Com",
 			"autoconfig.foo.com",
-			"mail.foo.com",       // dup
+			"mail.foo.com", // dup
 			"mail.bar.com",
-			"",                   // empty (skip)
+			"",                     // empty (skip)
 			"mail.evil\"injection", // quote (skip)
-			"mail..oops.com",     // double dot (skip)
+			"mail..oops.com",       // double dot (skip)
 		},
 	})
 	// Stable equality OR-chain, sorted.
@@ -144,14 +144,14 @@ func TestRender_GeoExprAgentParity(t *testing.T) {
 func TestSanitizeWebmailHosts(t *testing.T) {
 	in := []string{
 		"  Mail.Example.Com  ",
-		"mail.example.com",       // dup post-lowercase
+		"mail.example.com", // dup post-lowercase
 		"mail.bar.com",
-		"",                       // empty
-		".leading.dot",           // leading dot
-		"trailing.dot.",          // trailing dot
-		"double..dot.com",        // empty label
-		"weird\nhost",            // newline
-		"quote\"host",            // quote
+		"",                // empty
+		".leading.dot",    // leading dot
+		"trailing.dot.",   // trailing dot
+		"double..dot.com", // empty label
+		"weird\nhost",     // newline
+		"quote\"host",     // quote
 		"a.com",
 		strings.Repeat("a", 254), // too long
 	}
@@ -208,4 +208,29 @@ func TestCRSPluginBefore_WordPressBuilderExclusions(t *testing.T) {
 	mustContain(t, out, `^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"`, "admin-ajax phase-1 keeps only narrow ById drops")
 	// Surgical, not blanket: no path-allow, no remediation override.
 	mustNotContain(t, out, `SetRemediation`, "before-plugin must not blanket-allow")
+}
+
+// JAB-193: the Code Snippets REST save carries literal PHP source, so the
+// rce + php-injection families have to stand down there — but ONLY there,
+// ONLY on the body, and ONLY for a request that already carries a WordPress
+// login cookie. An unauthenticated hit on the same path must stay fully
+// scored, which is the property that keeps this from being a path-allow.
+func TestCRSPluginBefore_CodeSnippetsExclusion(t *testing.T) {
+	out := CRSPluginBefore()
+	mustContain(t, out, `"@rx ^/wp-json/code-snippets/v[0-9]+/" "id:9599220,phase:1,pass,nolog,chain"`,
+		"code-snippets drop is a chained phase-1 rule scoped to the versioned REST path")
+	mustContain(t, out, `SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_"`,
+		"chained on an authenticated WordPress session")
+	for _, tag := range []string{"attack-rce", "attack-injection-php"} {
+		mustContain(t, out, "ctl:ruleRemoveTargetByTag="+tag+";ARGS", tag+" dropped on ARGS")
+		mustContain(t, out, "ctl:ruleRemoveTargetByTag="+tag+";REQUEST_BODY", tag+" dropped on REQUEST_BODY")
+	}
+	// Surgical: the SQLi/XSS/LFI families keep inspecting this path, and the
+	// drop is target-scoped rather than a ruleRemoveById sweep.
+	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-sqli;REQUEST_BODY",
+		"SQLi must keep inspecting bodies everywhere")
+	// An unversioned or unauthenticated variant must not exist as a
+	// standalone (unchained) exclusion.
+	mustNotContain(t, out, `"@rx ^/wp-json/code-snippets/" "id:`,
+		"no unchained, unversioned code-snippets exclusion")
 }
