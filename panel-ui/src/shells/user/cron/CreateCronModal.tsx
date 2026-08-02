@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Drawer,
   Form,
@@ -43,14 +43,26 @@ export const CreateCronModal = ({
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [scheduleMode, setScheduleMode] = useState<string>(
-    initial ? (initial.schedule in SCHEDULE_PRESETS.map((p) => p.value) ? initial.schedule : "advanced") : "0 * * * *"
-  );
-  const [customSchedule, setCustomSchedule] = useState(
-    initial && !SCHEDULE_PRESETS.map((p) => p.value).includes(initial.schedule)
-      ? initial.schedule
-      : ""
-  );
+  const [scheduleMode, setScheduleMode] = useState<string>("0 * * * *");
+  const [customSchedule, setCustomSchedule] = useState("");
+
+  // Sync the schedule picker every time the drawer opens (GH #854). This
+  // component stays mounted across opens, so state initializers see only the
+  // very first `initial` (null on page load) — every edit then showed the
+  // "Hourly" default no matter what the job's real schedule was, and saving
+  // silently rewrote the schedule to hourly. destroyOnClose remounts only the
+  // Drawer's children (the Form), not this component's state.
+  useEffect(() => {
+    if (!open) return;
+    if (initial) {
+      const isPreset = SCHEDULE_PRESETS.some((p) => p.value === initial.schedule);
+      setScheduleMode(isPreset ? initial.schedule : "advanced");
+      setCustomSchedule(isPreset ? "" : initial.schedule);
+    } else {
+      setScheduleMode("0 * * * *");
+      setCustomSchedule("");
+    }
+  }, [open, initial]);
   const { message: antMessage } = App.useApp();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
@@ -137,7 +149,7 @@ export const CreateCronModal = ({
 
   const handleModalClose = () => {
     form.resetFields();
-    setScheduleMode(initial?.schedule || "0 * * * *");
+    setScheduleMode("0 * * * *");
     setCustomSchedule("");
     onClose();
   };

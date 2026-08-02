@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -77,7 +78,10 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 		"journalctl", "--user",
 		"-u", fmt.Sprintf("jabali-cron-%s.service", p.JobID),
 		"-n", fmt.Sprintf("%d", lines),
-		"-o", "cat",
+		// short-iso (not cat): the log is useless for "did my hourly job run
+		// at :00" questions without timestamps (GH #856). The hostname/unit
+		// prefix it adds is stripped per line below.
+		"-o", "short-iso",
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -88,13 +92,32 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 		// If journalctl fails (e.g., no logs yet), return empty log or error
 		// Most common: "No entries found" which is not an error condition
 		return &cronTailLogResponse{
-			Log: stdout.String(),
+			Log: stripJournalPrefix(stdout.String()),
 		}, nil
 	}
 
 	return &cronTailLogResponse{
-		Log: strings.TrimSpace(stdout.String()),
+		Log: strings.TrimSpace(stripJournalPrefix(stdout.String())),
 	}, nil
+}
+
+// journalShortISORe matches one short-iso journal line:
+// "2026-08-02T17:45:12+0300 host jabali-cron-x[123]: message". Capture the
+// timestamp and the message; drop the hostname + unit[pid] noise — the drawer
+// shows one job's log, so the unit adds nothing and steals width.
+var journalShortISORe = regexp.MustCompile(`^(\S+) \S+ [^:\[]+\[\d+\]: (.*)$`)
+
+// stripJournalPrefix rewrites "<ts> <host> <unit>[<pid>]: <msg>" lines to
+// "<ts> <msg>". Non-matching lines (journalctl notices, "-- Boot --" markers)
+// pass through untouched.
+func stripJournalPrefix(log string) string {
+	lines := strings.Split(log, "\n")
+	for i, l := range lines {
+		if m := journalShortISORe.FindStringSubmatch(l); m != nil {
+			lines[i] = m[1] + " " + m[2]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func init() {

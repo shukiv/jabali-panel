@@ -97,6 +97,22 @@ func TestCronTailLogDefaultLines(t *testing.T) {
 	}
 }
 
+// GH #856: the cron log drawer needs timestamps; journalctl now runs with
+// -o short-iso and the hostname + unit[pid] prefix is stripped per line.
+func TestStripJournalPrefix(t *testing.T) {
+	in := "2026-08-02T17:45:12+0300 srv1 jabali-cron-01ABC[4242]: wp cron event run\n" +
+		"2026-08-02T17:45:13+0300 srv1 jabali-cron-01ABC[4242]: Executed the cron event\n" +
+		"-- No entries --\n" +
+		"plain line without journal shape"
+	want := "2026-08-02T17:45:12+0300 wp cron event run\n" +
+		"2026-08-02T17:45:13+0300 Executed the cron event\n" +
+		"-- No entries --\n" +
+		"plain line without journal shape"
+	if got := stripJournalPrefix(in); got != want {
+		t.Errorf("stripJournalPrefix:\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestCronTailLogCustomLines(t *testing.T) {
 	currentUser := os.Getenv("USER")
 	if currentUser == "" {
