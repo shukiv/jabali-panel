@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateConfig(t *testing.T) {
 	f := newConfigFields("")
@@ -34,13 +37,23 @@ func TestPHPSelectDefault(t *testing.T) {
 	}
 }
 
-func TestConfigEnv_NSAlwaysPresent(t *testing.T) {
+func TestConfigEnv_NSGatedOnDNSModule(t *testing.T) {
 	f := newConfigFields("h.example.com")
 	f[1].input.SetValue("a@b.com")
 	f[2].input.SetValue("ns1.example.com")
 	f[3].input.SetValue("ns2.example.com")
-	// NS fields are no longer dns-gated — always emitted.
-	env := configEnv(f, false)
+
+	// dns module off: the NS fields are hidden and never emitted —
+	// install.sh falls back to its silent ns1/ns2.<hostname> placeholders
+	// (GH #353 tester feedback: external-DNS installs must not ask for ns1/ns2).
+	for _, e := range configEnv(f, false) {
+		if strings.HasPrefix(e, "JABALI_NS1_NAME=") || strings.HasPrefix(e, "JABALI_NS2_NAME=") {
+			t.Errorf("NS env emitted with dns module off: %v", e)
+		}
+	}
+
+	// dns module on: both emitted.
+	env := configEnv(f, true)
 	var ns1, ns2 bool
 	for _, e := range env {
 		if e == "JABALI_NS1_NAME=ns1.example.com" {
@@ -51,6 +64,16 @@ func TestConfigEnv_NSAlwaysPresent(t *testing.T) {
 		}
 	}
 	if !ns1 || !ns2 {
-		t.Errorf("NS env missing when dns off: %v", env)
+		t.Errorf("NS env missing when dns on: %v", env)
+	}
+}
+
+func TestVisibleFields_NSHiddenWhenDNSOff(t *testing.T) {
+	f := newConfigFields("h.example.com")
+	if got, want := len(visibleFields(f, false)), len(f)-2; got != want {
+		t.Errorf("visible fields with dns off = %d, want %d (NS1/NS2 hidden)", got, want)
+	}
+	if got, want := len(visibleFields(f, true)), len(f); got != want {
+		t.Errorf("visible fields with dns on = %d, want %d", got, want)
 	}
 }

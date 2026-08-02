@@ -36,24 +36,27 @@ const (
 // logTail is how many streamed lines the progress pane shows.
 const logTail = 16
 
+// Dark theme (GH #353 tester feedback: the white fill was too bright and the
+// streamed-log pane didn't stand out). Solid black also blends with the
+// luminance-inverted logo art, whose untouched cells show the app background.
 var (
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
 	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	onStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	offStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	offStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 	errStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
-	boxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("245"))
-	bgWhite     = lipgloss.Color("#ffffff")
-	fgDark      = lipgloss.Color("#1a1a1a")
-	appStyle    = lipgloss.NewStyle().Padding(1, 2).Background(bgWhite).Foreground(fgDark)
+	boxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
+	bgDark      = lipgloss.Color("#000000")
+	fgLight     = lipgloss.Color("#e6e6e6")
+	appStyle    = lipgloss.NewStyle().Padding(1, 2).Background(bgDark).Foreground(fgLight)
 	logoStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	tagStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	tagStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
 )
 
 // jabaliLogo is the brand logo shown on the welcome screen. It's a chafa
-// render of jabali_logo.png (truecolor block art, white background) embedded at
-// build time so there's no ANSI-escaping in source.
+// render of jabali_logo.png (truecolor block art, luminance-inverted for the
+// dark theme) embedded at build time so there's no ANSI-escaping in source.
 //
 //go:embed logo.ansi
 var jabaliLogo string
@@ -469,6 +472,9 @@ func (m Model) View() string {
 				b.WriteString(fmt.Sprintf("%s%s%s\n    %s\n", cur, f.label, req, f.input.View()))
 			}
 		}
+		if !m.selected["dns"] {
+			b.WriteString("\n" + helpStyle.Render("(DNS module off — nameservers skipped; configure them in Server Settings if you enable DNS later)") + "\n")
+		}
 		if m.configErr != "" {
 			b.WriteString("\n" + errStyle.Render(m.configErr) + "\n")
 		}
@@ -529,12 +535,13 @@ func (m Model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return content // no size yet (pre first WindowSizeMsg)
 	}
-	// Fill the ENTIRE terminal white and center the content block on it — a solid
-	// Width×Height container is reliable where Place+WhitespaceBackground left the
-	// terminal's own dark background showing through.
+	// Fill the ENTIRE terminal with the theme background and center the content
+	// block on it — a solid Width×Height container is reliable where
+	// Place+WhitespaceBackground left the terminal's own background showing
+	// through.
 	return lipgloss.NewStyle().
 		Width(m.width).Height(m.height).
-		Background(bgWhite).Foreground(fgDark).
+		Background(bgDark).Foreground(fgLight).
 		Align(lipgloss.Left, lipgloss.Center).
 		Render(content)
 }
@@ -668,7 +675,7 @@ func (m *Model) captureSummary(s string) {
 }
 
 var (
-	fieldLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Width(11)
+	fieldLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Width(11)
 	urlValueStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
 	credValueStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
 	cardStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
@@ -724,7 +731,7 @@ var (
 	barOKStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	barWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	barHotStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	statLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	statLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
 )
 
 // statBar renders a compact [████░░░░] bar coloured by load, plus the percent.

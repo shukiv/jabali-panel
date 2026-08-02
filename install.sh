@@ -1175,7 +1175,9 @@ prompt_server_settings() {
       printf '  - System hostname (hostnamectl set-hostname)\n'
       printf '  - Panel URL (https://<hostname>:8443)\n'
       printf '  - Mail server config (stalwart + per-domain vhosts)\n'
-      printf '  - Nameserver records (ns1.<hostname>, ns2.<hostname>)\n'
+      if is_module_enabled dns; then
+        printf '  - Nameserver records (ns1.<hostname>, ns2.<hostname>)\n'
+      fi
       printf '\n'
       printf 'Current hostname: \033[1m%s\033[0m\n' "$sys_hostname"
       printf 'Server IPv4:      \033[1m%s\033[0m\n' "$inp_ipv4"
@@ -1216,6 +1218,15 @@ prompt_server_settings() {
   # NS names default to ns1/ns2.<hostname> but can be overridden via
   # env (JABALI_NS1_NAME / JABALI_NS2_NAME) for non-interactive
   # provisioning or via interactive prompts when running on a TTY.
+  #
+  # GH #353 (tester feedback): when the dns module is deselected the
+  # nameservers are never served by this host (PowerDNS isn't installed and
+  # bootstrap_pdns_self_zone only runs under `run_if_module dns`), so don't
+  # ask for them — external-DNS operators (Cloudflare etc.) have nothing to
+  # answer. The silent ns1/ns2.<hostname> defaults still land in
+  # config.toml/server_settings as placeholders; enabling dns later
+  # (Server Settings -> Modules) reconstructs from that row and the names are
+  # editable in Server Settings, which triggers a zone re-push.
   local _default_ns1="ns1.${inp_hostname}"
   local _default_ns2="ns2.${inp_hostname}"
 
@@ -1225,6 +1236,9 @@ prompt_server_settings() {
     fi
     inp_ns1_name="$JABALI_NS1_NAME"
     _ok "using ns1 name from env: $inp_ns1_name"
+  elif ! is_module_enabled dns; then
+    inp_ns1_name="$_default_ns1"
+    _log "dns module disabled — skipping ns1 prompt (placeholder: $inp_ns1_name)"
   elif [[ -z "$input_fd" ]]; then
     inp_ns1_name="$_default_ns1"
   else
@@ -1243,6 +1257,9 @@ prompt_server_settings() {
     fi
     inp_ns2_name="$JABALI_NS2_NAME"
     _ok "using ns2 name from env: $inp_ns2_name"
+  elif ! is_module_enabled dns; then
+    inp_ns2_name="$_default_ns2"
+    _log "dns module disabled — skipping ns2 prompt (placeholder: $inp_ns2_name)"
   elif [[ -z "$input_fd" ]]; then
     inp_ns2_name="$_default_ns2"
   else
