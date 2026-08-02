@@ -351,9 +351,9 @@ type provisionedDB struct {
 // wordPressHandler.create: panel rows + MariaDB CREATE DATABASE/USER/
 // GRANT via the agent. Each step rolls back the prior ones on failure
 // before returning the error.
-func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, userID, osUser, appType, fqdn, subdir, dbPassword string) (provisionedDB, error) {
+func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, userID, osUser, appType, dbPassword string) (provisionedDB, error) {
 	now := time.Now().UTC()
-	dbName, dbUsername, nameErr := allocateAppDBNames(ctx, cfg.Databases, cfg.DatabaseUsers, userID, osUser, appType, fqdn, subdir)
+	dbName, dbUsername, nameErr := allocateAppDBNames(ctx, cfg.Databases, cfg.DatabaseUsers, userID, osUser, appType)
 	if nameErr != nil {
 		return provisionedDB{}, fmt.Errorf("allocate db names: %w", nameErr)
 	}

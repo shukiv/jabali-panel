@@ -38,6 +38,26 @@ func TestFitDBName(t *testing.T) {
 	}
 }
 
+// GH #869: app DB/user identifiers are short — <osuser>_<token>_<tail> —
+// not the FQDN-based GH #196 scheme that produced 50+ char names.
+func TestShortAppDBName(t *testing.T) {
+	if got := shortAppDBName("notary", "wordpress", "x4f"); got != "notary_wp_x4f" {
+		t.Errorf("wordpress: %q, want notary_wp_x4f", got)
+	}
+	if got := shortAppDBName("notary", "flarum", "k2p"); got != "notary_flarum_k2p" {
+		t.Errorf("flarum: %q, want notary_flarum_k2p", got)
+	}
+	// OS usernames pass through the same sanitiser as everything else.
+	if got := shortAppDBName("Notary.User", "drupal", "9aa"); got != "notary_user_drupal_9aa" {
+		t.Errorf("sanitised osuser: %q", got)
+	}
+	// Even an absurdly long OS user stays inside the 64-char identifier limit.
+	longUser := "averyveryverylongsystemusernamethatkeepsgoingandgoingandgoingyes"
+	if got := shortAppDBName(longUser, "wordpress", "x4f"); len(got) > 64 {
+		t.Errorf("len=%d > 64: %q", len(got), got)
+	}
+}
+
 // TestAppDBToken — GH #215: each app's DB/user name carries its OWN
 // token, not a blanket "wp". WordPress stays "wp" for continuity.
 func TestAppDBToken(t *testing.T) {

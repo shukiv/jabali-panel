@@ -268,7 +268,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 	// database. Unique by construction ((domain, subdirectory) is unique);
 	// a short suffix is appended only if truncation/sanitisation collides.
 	dbID := ids.NewULID()
-	dbName, dbUsername, nameErr := allocateAppDBNames(ctx, h.cfg.Databases, h.cfg.DatabaseUsers, targetUserID, osUser, "wordpress", domain.Name, req.Subdirectory)
+	dbName, dbUsername, nameErr := allocateAppDBNames(ctx, h.cfg.Databases, h.cfg.DatabaseUsers, targetUserID, osUser, "wordpress")
 	if nameErr != nil {
 		slog.ErrorContext(ctx, "wordpress create: db name allocation failed", "err", nameErr)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -1459,42 +1459,45 @@ func appDBToken(appType string) string {
 	return "app"
 }
 
-// allocateAppDBNames builds the FQDN-based database + user names for a WordPress
-// install (GH #196): <osuser>_wp_<fqdn>[_<subdir>] with `_db` / `_user`
-// suffixes. Dots and any non-[a-z0-9] characters become underscores (the
-// DB-user validator forbids dashes), names are lowercased and truncated to
-// the 64-char MariaDB identifier limit. (domain, subdirectory) is unique so
-// the readable name is normally free; if a collision survives sanitisation
-// or truncation, a short random suffix is appended.
-func allocateAppDBNames(ctx context.Context, dbs repository.DatabaseRepository, users repository.DatabaseUserRepository, userID, osUser, appType, fqdn, subdir string) (dbName, dbUser string, err error) {
-	label := sanitizeDBLabel(fqdn)
-	if subdir != "" {
-		if sub := sanitizeDBLabel(subdir); sub != "" {
-			label += "_" + sub
-		}
+// shortAppDBName assembles <osuser>_<token>_<tail>, clamped to the 64-char
+// MariaDB identifier limit by truncating the osuser part — the random tail
+// is the uniqueness and must survive intact.
+func shortAppDBName(osUser, appType, tail string) string {
+	const max = 64
+	suffix := "_" + appDBToken(appType) + "_" + tail
+	user := sanitizeDBLabel(osUser)
+	if budget := max - len(suffix); len(user) > budget {
+		user = strings.Trim(user[:budget], "_")
 	}
-	prefix := sanitizeDBLabel(osUser) + "_" + appDBToken(appType) + "_"
+	return user + suffix
+}
+
+// allocateAppDBNames builds the database + user name for an app install:
+// <osuser>_<token>_<3 random chars>, the SAME identifier for the database
+// and its user (GH #869). This reverts the FQDN-based names of GH #196 —
+// descriptive names read well on paper but real installs produced 50+
+// character identifiers (<osuser>_wp_<full_fqdn>_<subdir>_db) that were
+// unusable in DB clients. Which site a database belongs to lives in the
+// panel's Application record, not the identifier. The random tail
+// distinguishes multiple installs of the same app under one account; on a
+// collision the loop just draws a fresh tail.
+func allocateAppDBNames(ctx context.Context, dbs repository.DatabaseRepository, users repository.DatabaseUserRepository, userID, osUser, appType string) (dbName, dbUser string, err error) {
 	for attempt := 0; attempt < 16; attempt++ {
-		l := label
-		if attempt > 0 {
-			u := ids.NewULID()
-			l = label + "_" + strings.ToLower(u[len(u)-4:])
-		}
-		db := fitDBName(prefix, l, "_db")
-		usr := fitDBName(prefix, l, "_user")
-		dbTaken, e := dbs.ExistsByUserAndName(ctx, userID, db)
+		u := ids.NewULID()
+		name := shortAppDBName(osUser, appType, strings.ToLower(u[len(u)-3:]))
+		dbTaken, e := dbs.ExistsByUserAndName(ctx, userID, name)
 		if e != nil {
 			return "", "", e
 		}
-		usrTaken, e := users.ExistsByUserAndUsername(ctx, userID, usr)
+		usrTaken, e := users.ExistsByUserAndUsername(ctx, userID, name)
 		if e != nil {
 			return "", "", e
 		}
 		if !dbTaken && !usrTaken {
-			return db, usr, nil
+			return name, name, nil
 		}
 	}
-	return "", "", fmt.Errorf("allocateAppDBNames: could not allocate a free name for %q", fqdn)
+	return "", "", fmt.Errorf("allocateAppDBNames: could not allocate a free name for %s/%s", osUser, appDBToken(appType))
 }
 
 // sanitizeDBLabel lowercases s and maps every non-[a-z0-9] rune to '_',
