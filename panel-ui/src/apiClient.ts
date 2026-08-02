@@ -145,6 +145,11 @@ function humanizeErrorCode(code: string): string {
     identity_service_unavailable: "Identity service temporarily unavailable — try again shortly",
     validation_failed: "Some fields are invalid",
     internal: "Something went wrong on the server",
+    agent_error:
+      "The server's host agent failed — details are in the server logs (journalctl -u jabali-panel / -u jabali-agent)",
+    upload_unreachable:
+      "The server could not reach the report upload service (enclosed.jabali-panel.com) — check outbound HTTPS/DNS from the server, then retry",
+    agent_timeout: "The operation timed out on the server — try again shortly",
   };
   return messages[code] ?? code.replace(/_/g, " ");
 }

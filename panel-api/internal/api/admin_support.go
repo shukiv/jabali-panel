@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 )
@@ -44,7 +46,25 @@ func (h *adminSupportHandler) diagnostic(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, "system.diagnostic_report", nil)
 	if err != nil {
-		respondAgentErr(c, "agent_error", err)
+		// GH #465 follow-up: "agent error" alone left a reporter with no way
+		// to tell an egress problem from a dead agent — and Send Report IS the
+		// diagnostic tool, so it must explain its own failures. Map the
+		// agent's typed codes to stage-level, non-leaking error codes the UI
+		// turns into actionable text. Detail still lands in the server log.
+		code := "agent_error"
+		var ae *agent.AgentError
+		if errors.As(err, &ae) {
+			switch ae.Code {
+			case agentwire.CodeUpstreamUnavailable:
+				code = "upload_unreachable"
+			case agentwire.CodeDeadlineExceeded:
+				code = "agent_timeout"
+			}
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			code = "agent_timeout"
+		}
+		respondAgentErr(c, code, err)
 		return
 	}
 	var data any

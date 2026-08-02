@@ -1125,7 +1125,8 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	if scErr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "scope init: " + scErr.Error()}
 	}
-	if _, err := docScope.MkdirInScope(p.DocRoot, true, 0o755); err != nil {
+	docrootCreated, err := docScope.MkdirInScope(p.DocRoot, true, 0o755)
+	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("mkdir failed: %v", err),
@@ -1178,10 +1179,8 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// BEFORE the default index, so a skeleton-provided index.html wins (the
 	// default-index block below skips when index.html already exists). Never
 	// clobbers an existing path; a bad file warns but doesn't fail create.
-	if len(p.Skeleton) > 0 {
-		for _, w := range writeSkeleton(docScope, p.DocRoot, p.Username, docUID, wwwGID, p.Skeleton) {
-			log.Printf("domain.create: skeleton %s: %s", p.Domain, w)
-		}
+	for _, w := range layAccountSkeleton(docScope, docrootCreated, p.DocRoot, p.Username, docUID, wwwGID, p.Skeleton) {
+		log.Printf("domain.create: skeleton %s: %s", p.Domain, w)
 	}
 
 	indexPath := filepath.Join(p.DocRoot, "index.html")
@@ -1238,6 +1237,19 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 type skeletonFileParam struct {
 	RelPath string `json:"rel_path"`
 	Content []byte `json:"content"`
+}
+
+// layAccountSkeleton writes the skeleton tree only when THIS call actually
+// created the docroot. domain.create is re-run by the reconciler every tick;
+// an unconditional write resurrected every skeleton file the user had deleted
+// (the #465 reopen — "I press delete ... when refreshing the file reappears").
+// O_EXCL in writeSkeleton protects edited files but not deleted ones;
+// docrootCreated is the "this is a new account/domain" signal.
+func layAccountSkeleton(scope *filesafe.Scope, docrootCreated bool, docRoot, username string, docUID, wwwGID int, files []skeletonFileParam) []string {
+	if !docrootCreated || len(files) == 0 {
+		return nil
+	}
+	return writeSkeleton(scope, docRoot, username, docUID, wwwGID, files)
 }
 
 // writeSkeleton lays each skeleton file into the fresh docroot through the

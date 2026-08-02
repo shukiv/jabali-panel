@@ -61,7 +61,10 @@ func systemDiagnosticReportHandler(ctx context.Context, _ json.RawMessage) (any,
 	const ttlSeconds = 7 * 24 * 3600
 	res, err := client.UploadFile(ctx, fileName, "application/x-tar", bundle.TarBytes, ttlSeconds)
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("enclosed upload: %v", err)}
+		// upstream_unavailable (not internal): GH #465 follow-up — the panel
+		// maps this to an actionable "server can't reach enclosed" message
+		// instead of the generic "agent error" that left the reporter blind.
+		return nil, &agentwire.AgentError{Code: agentwire.CodeUpstreamUnavailable, Message: fmt.Sprintf("enclosed upload: %v", err)}
 	}
 
 	out := systemDiagnosticReportResponse{
