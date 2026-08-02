@@ -118,6 +118,11 @@ type ServerSettings struct {
 	// nginx domain options (GH #307). Default off.
 	TenantDomainOptionsEnabled bool `gorm:"column:tenant_domain_options_enabled;type:tinyint(1);not null;default:0" json:"tenant_domain_options_enabled"`
 
+	// DigestLastSentDate is the UTC day (YYYY-MM-DD) the daily digest last
+	// fired for (GH #840). Written by the digest ticker via
+	// SetDigestLastSent; empty = never sent.
+	DigestLastSentDate string `gorm:"column:digest_last_sent_date;type:varchar(10);not null;default:''" json:"digest_last_sent_date"`
+
 	// DKIM2SigningEnabled adds a DKIM2 chain-of-custody signature (GH #648,
 	// draft-ietf-dkim-dkim2) alongside the classic DKIM signature on every
 	// mail domain's outbound. Needs no DNS change — DKIM2 verifies against

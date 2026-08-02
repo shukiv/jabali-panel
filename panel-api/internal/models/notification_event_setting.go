@@ -248,6 +248,15 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "critical",
 		DefaultOn:   true,
 	},
+	// GH #840: opt-in Zimbra/Logwatch-style daily summary. Aggregated by
+	// the digest ticker; off by default so it never surprises anyone.
+	{
+		Kind:        "digest.daily",
+		Label:       "Daily digest",
+		Description: "One summary email a day: alerts by severity, backup outcomes, certificates expiring soon, and fleet counts for the last 24 hours.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
 }
 
 // LookupNotificationEventKind returns the metadata for a known kind

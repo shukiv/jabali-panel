@@ -28,6 +28,8 @@ func (f *fakeWPSettingsRepo) Get(context.Context) (*models.ServerSettings, error
 	return f.row, nil
 }
 func (f *fakeWPSettingsRepo) Upsert(context.Context, *models.ServerSettings) error { return nil }
+func (f *fakeWPSettingsRepo) SetDigestLastSent(context.Context, string) error { return nil }
+
 func (f *fakeWPSettingsRepo) EnsureVAPID(context.Context, string) (bool, error)    { return false, nil }
 
 type fakeSubsRepo struct {

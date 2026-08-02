@@ -903,6 +903,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go reconciler.StartDomainExpiryTicker(ctx, sharedAgent, deps.Domains, log)
 	}
 
+	// GH #840: opt-in daily digest email (kind digest.daily, default off).
+	if deps.ServerSettings != nil && deps.NotificationQueue != nil && sharedDB != nil {
+		go reconciler.StartDigestTicker(ctx, reconciler.DigestTickerDeps{
+			Stats:    repository.NewDigestStatsRepository(sharedDB),
+			Settings: deps.ServerSettings,
+			Queue:    deps.NotificationQueue,
+			Log:      log,
+		})
+	}
+
 	// GH #263: mailbox usage sampler -> mailboxes.last_usage_bytes (the
 	// mailbox.usage probe + UpdateUsage existed but were never wired).
 	if sharedAgent != nil && deps.Mailboxes != nil {

@@ -35,6 +35,11 @@ type ServerSettingsRepository interface {
 	// Empty hostname falls back to "mailto:admin@localhost" so first
 	// boot on a not-yet-configured host still succeeds.
 	EnsureVAPID(ctx context.Context, hostname string) (generated bool, err error)
+
+	// SetDigestLastSent records the UTC day (YYYY-MM-DD) the daily digest
+	// last fired for (GH #840). Targeted single-column UPDATE so it can
+	// never clobber a concurrent admin settings save.
+	SetDigestLastSent(ctx context.Context, day string) error
 }
 
 type serverSettingsRepo struct{ db *gorm.DB }
@@ -133,4 +138,13 @@ func (r *serverSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (
 		return false, ErrNotFound
 	}
 	return true, nil
+}
+
+// SetDigestLastSent — see the interface doc. The settings table is a
+// single row; an empty WHERE is intentional.
+func (r *serverSettingsRepo) SetDigestLastSent(ctx context.Context, day string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.ServerSettings{}).
+		Where("1 = 1").
+		Update("digest_last_sent_date", day).Error
 }

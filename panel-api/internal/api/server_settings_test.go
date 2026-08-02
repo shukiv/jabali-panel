@@ -43,6 +43,8 @@ func (m *mockServerSettingsRepo) Upsert(ctx context.Context, s *models.ServerSet
 	return nil
 }
 
+func (m *mockServerSettingsRepo) SetDigestLastSent(context.Context, string) error { return nil }
+
 func (m *mockServerSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bool, error) {
 	return false, nil
 }

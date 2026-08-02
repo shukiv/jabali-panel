@@ -557,6 +557,7 @@ type fakeSettings struct {
 func (f *fakeSettings) Get(context.Context) (*models.ServerSettings, error) { return f.st, f.err }
 func (f *fakeSettings) Upsert(context.Context, *models.ServerSettings) error { return nil }
 func (f *fakeSettings) EnsureVAPID(context.Context, string) (bool, error)    { return false, nil }
+func (f *fakeSettings) SetDigestLastSent(context.Context, string) error      { return nil }
 
 // JAB-171 phase 4e: the master gate + kind allowlist are a LIVE delivery kill
 // switch, not just a create-time gate.

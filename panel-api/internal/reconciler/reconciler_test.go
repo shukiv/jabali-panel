@@ -445,6 +445,8 @@ type fakeServerSettingsRepo struct {
 	settings *models.ServerSettings
 }
 
+func (f *fakeServerSettingsRepo) SetDigestLastSent(context.Context, string) error { return nil }
+
 func (f *fakeServerSettingsRepo) Get(ctx context.Context) (*models.ServerSettings, error) {
 	if f.settings == nil {
 		return nil, repository.ErrNotFound

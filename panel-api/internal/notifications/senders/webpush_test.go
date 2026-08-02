@@ -28,6 +28,8 @@ func (f *fakeSettingsRepo) Get(ctx context.Context) (*models.ServerSettings, err
 	return f.row, f.err
 }
 func (f *fakeSettingsRepo) Upsert(ctx context.Context, s *models.ServerSettings) error { return nil }
+func (f *fakeSettingsRepo) SetDigestLastSent(context.Context, string) error { return nil }
+
 func (f *fakeSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bool, error) {
 	return false, nil
 }

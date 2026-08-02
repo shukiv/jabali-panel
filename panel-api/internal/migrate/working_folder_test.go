@@ -18,6 +18,7 @@ type fakeServerSettings struct {
 func (f *fakeServerSettings) Get(_ context.Context) (*models.ServerSettings, error) {
 	return f.row, f.err
 }
+func (f *fakeServerSettings) SetDigestLastSent(context.Context, string) error { return nil }
 func (f *fakeServerSettings) Upsert(_ context.Context, _ *models.ServerSettings) error {
 	return nil
 }
