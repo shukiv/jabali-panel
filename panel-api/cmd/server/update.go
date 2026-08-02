@@ -352,6 +352,28 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 					repoDir+"/panel-ui/test-results "+
 					repoDir+"/panel-ui/playwright-report 2>/dev/null; "+
 					"true")
+			// …and the WORKING TREE, which the two chowns above never
+			// covered. Repo files are mode 0640/0660, so a single tracked
+			// file left owned by root breaks every git command that has to
+			// hash the tree — seen on a fresh install as a bare
+			// `fatal: cannot hash CLAUDE.md` mid-update. Tracked files only;
+			// node_modules and build caches keep whatever ownership they have.
+			rep, err := fixTrackedFileOwnership(cmd.Context(), repoDir, serviceUser)
+			if err != nil {
+				// Not fatal on its own: `git reset --hard` can still replace a
+				// root-owned file when the parent dir is writable. Say what
+				// happened rather than letting git fail cryptically later.
+				fmt.Printf("  (could not repair working-tree ownership: %v — "+
+					"a root-owned tracked file may make git fail below)\n", err)
+			} else if len(rep.Fixed) > 0 {
+				shown := rep.Fixed
+				if len(shown) > 5 {
+					shown = shown[:5]
+				}
+				fmt.Printf("  repaired ownership of %d tracked file(s) not owned by %s: %s%s\n",
+					len(rep.Fixed), serviceUser, strings.Join(shown, ", "),
+					map[bool]string{true: ", …", false: ""}[len(rep.Fixed) > len(shown)])
+			}
 			return nil
 		}},
 		{"ensure mail ACME webroot (/var/www/jabali-acme)", func() error {
@@ -439,13 +461,26 @@ chmod 0750 "$WR"`)
 			}
 			// Show diffstat of any local drift vs HEAD before we reset so
 			// the operator can see what was clobbered. Silent on clean tree.
-			_ = asUser(repoDir, "bash", "-c",
-				`d=$(git diff --stat HEAD); `+
-					`if [ -n "$d" ]; then `+
-					`  echo "  (discarding local modifications on deployment target:)"; `+
-					`  echo "$d" | sed "s/^/    /"; `+
-					`  echo "  (recover from reflog if this was a surprise: git reflog, git reset --hard <sha>)"; `+
-					`fi`)
+			// Capture rather than stream. This is a best-effort courtesy —
+			// showing the operator what drift is about to be discarded — but
+			// when it failed it printed git's raw stderr into the middle of an
+			// update with no context:
+			//
+			//   error: open("CLAUDE.md"): Permission denied
+			//   fatal: cannot hash CLAUDE.md
+			//
+			// which reads exactly like the update itself died. It had not; the
+			// reset below repaired the file and carried on. Name it instead.
+			if diffOut, diffErr := asUserOut(repoDir, "git", "diff", "--stat", "HEAD"); diffErr != nil {
+				fmt.Printf("  (could not compute local drift, continuing: %s)\n",
+					gitFailureLine(diffOut, diffErr))
+			} else if d := strings.TrimSpace(diffOut); d != "" {
+				fmt.Println("  (discarding local modifications on deployment target:)")
+				for _, l := range strings.Split(d, "\n") {
+					fmt.Println("    " + l)
+				}
+				fmt.Println("  (recover from reflog if this was a surprise: git reflog, git reset --hard <sha>)")
+			}
 			if err := asUser(repoDir, "git", "reset", "--hard", resetRef); err != nil {
 				// A reset that dies with "unable to unlink ... Permission
 				// denied" means a root-owned tracked file is in the repo (a
