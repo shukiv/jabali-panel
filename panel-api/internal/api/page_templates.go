@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"text/template"
 
 	"github.com/gin-gonic/gin"
 
@@ -12,6 +13,28 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// validatePageTemplateContent rejects a body that the agent could not use.
+// GH #860: domain_default_index is expanded as a Go text/template at
+// docroot-write time; if it fails to parse, the agent silently falls back to
+// the built-in default, so an operator's edit "did nothing". Validating at
+// SAVE time makes that failure visible (the editor shows the parse error)
+// instead of a silent no-op on every future domain. Error pages are static
+// HTML, so they are not parsed. Returns "" when the content is acceptable.
+func validatePageTemplateContent(key, content string) string {
+	if key != models.PageTemplateDomainDefaultIndex {
+		return ""
+	}
+	if _, err := template.New("index").Parse(content); err != nil {
+		// The Go error carries the position (line/token). Prefix it so the
+		// toast reads as guidance, not a bare parser dump — the usual cause is
+		// a literal {{ }} that isn't one of the supported placeholders.
+		return "Template not saved — it has a syntax error. Only {{.Domain}}, " +
+			"{{.Username}} and {{.DocRoot}} are valid; a literal {{ }} from " +
+			"another framework will break it. Details: " + err.Error()
+	}
+	return ""
+}
 
 // MaxPageTemplateBytes caps the accepted template body. Large enough
 // for complex error pages with inline CSS; small enough that an
@@ -163,6 +186,12 @@ func (h *pageTemplatesHandler) update(c *gin.Context) {
 	}
 	if len(req.Content) > MaxPageTemplateBytes {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "content too large"})
+		return
+	}
+	if detail := validatePageTemplateContent(key, req.Content); detail != "" {
+		// GH #860: reject a template that won't parse instead of letting the
+		// agent silently fall back to the built-in default on every new domain.
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "template_parse_error", "detail": detail})
 		return
 	}
 	if err := h.cfg.Repo.Upsert(c.Request.Context(), key, req.Content); err != nil {
