@@ -54,6 +54,41 @@ func TestPreviewFallbackTemplate_TLS(t *testing.T) {
 	}
 }
 
+// The regression the first live verify caught: per-domain vhosts bind
+// explicit IPs (M24), so nginx only considers IP-bound servers for
+// connections to the public IP — a bare `listen 80` fallback silently
+// never matched. The fallback must join the IP-specific pools.
+func TestPreviewFallbackTemplate_JoinsIPListenPools(t *testing.T) {
+	out := renderPreviewFallback(t, previewFallbackApplyParams{
+		Base:        "preview.host.tld",
+		ListenIPv4:  "203.0.113.7",
+		ListenIPv6:  "2001:db8::7",
+		SSLCertPath: "/etc/letsencrypt/live/x/fullchain.pem",
+		SSLKeyPath:  "/etc/letsencrypt/live/x/privkey.pem",
+	})
+	for _, want := range []string{
+		"listen 203.0.113.7:80;",
+		"listen [2001:db8::7]:80;",
+		"listen 203.0.113.7:443 ssl",
+		"listen [2001:db8::7]:443 ssl",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}
+
+func TestPreviewFallbackApply_RejectsBadIP(t *testing.T) {
+	params, _ := json.Marshal(map[string]any{"base": "preview.host.tld", "listen_ipv4": "not-an-ip"})
+	_, err := previewFallbackApplyHandler(context.Background(), json.RawMessage(params))
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if ae, ok := err.(*agentwire.AgentError); !ok || ae.Code != agentwire.CodeInvalidArgument {
+		t.Fatalf("expected CodeInvalidArgument, got %v", err)
+	}
+}
+
 func TestPreviewFallbackApply_RejectsBadBase(t *testing.T) {
 	params, _ := json.Marshal(map[string]any{"base": "not a hostname!"})
 	_, err := previewFallbackApplyHandler(context.Background(), json.RawMessage(params))

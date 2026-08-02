@@ -180,6 +180,15 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 	if r.agent != nil {
 		st := r.previewStateCached(ctx)
 		fbParams := map[string]any{"base": models.PreviewWildcardBase(srv.Hostname)}
+		// The fallback must join the IP-specific listen pools (M24
+		// per-domain binds) or nginx never considers it for connections
+		// to the public IP — see the agent-side comment.
+		if srv.PublicIPv4 != "" {
+			fbParams["listen_ipv4"] = srv.PublicIPv4
+		}
+		if srv.PublicIPv6 != "" {
+			fbParams["listen_ipv6"] = srv.PublicIPv6
+		}
 		if st.certPath != "" {
 			fbParams["ssl_cert_path"] = st.certPath
 			fbParams["ssl_key_path"] = st.keyPath

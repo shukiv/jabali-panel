@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"text/template"
@@ -33,9 +34,17 @@ const previewFallbackConfName = "jabali-preview-fallback.conf"
 
 type previewFallbackApplyParams struct {
 	// Base is "preview.<hostname>" — the wildcard serves *.<Base>.
-	Base           string `json:"base"`
-	SSLCertPath    string `json:"ssl_cert_path,omitempty"`
-	SSLKeyPath     string `json:"ssl_key_path,omitempty"`
+	Base        string `json:"base"`
+	SSLCertPath string `json:"ssl_cert_path,omitempty"`
+	SSLKeyPath  string `json:"ssl_key_path,omitempty"`
+	// ListenIPv4/ListenIPv6: the box's public IPs. nginx picks server
+	// blocks from the MOST specific matching listen socket — per-domain
+	// vhosts bind explicit IPs (M24), so a connection to the public IP
+	// never considers a bare `listen 80` server. The fallback must join
+	// the IP-specific pools too or it silently never matches (found on
+	// the first live verify: bogus preview slug → connection drop).
+	ListenIPv4     string `json:"listen_ipv4,omitempty"`
+	ListenIPv6     string `json:"listen_ipv6,omitempty"`
 	HTTP2Param     string `json:"-"`
 	HTTP2Directive string `json:"-"`
 }
@@ -52,7 +61,9 @@ const previewFallbackTemplate = `# Managed by jabali-agent (preview.fallback_app
 server {
     listen 80;
     listen [::]:80;
-    server_name *.{{.Base}};
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:80;
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
+{{ end }}    server_name *.{{.Base}};
 {{ if .SSLCertPath }}
     location / {
         return 301 https://$host$request_uri;
@@ -62,7 +73,9 @@ server {
 server {
     listen 443 ssl{{.HTTP2Param}};
     listen [::]:443 ssl{{.HTTP2Param}};
-{{ if .HTTP2Directive }}    {{.HTTP2Directive}}
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:443 ssl{{.HTTP2Param}};
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:443 ssl{{.HTTP2Param}};
+{{ end }}{{ if .HTTP2Directive }}    {{.HTTP2Directive}}
 {{ end }}    server_name *.{{.Base}};
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
@@ -91,6 +104,12 @@ func previewFallbackApplyHandler(ctx context.Context, params json.RawMessage) (a
 			Code:    agentwire.CodeInvalidArgument,
 			Message: fmt.Sprintf("invalid base %q", p.Base),
 		}
+	}
+	if p.ListenIPv4 != "" && net.ParseIP(p.ListenIPv4) == nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid listen_ipv4 %q", p.ListenIPv4)}
+	}
+	if p.ListenIPv6 != "" && net.ParseIP(p.ListenIPv6) == nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid listen_ipv6 %q", p.ListenIPv6)}
 	}
 	// Cert paths travel together; a missing file downgrades to HTTP-only
 	// exactly like the per-domain preview blocks.
