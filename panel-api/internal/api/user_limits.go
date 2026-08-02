@@ -108,9 +108,9 @@ type usageResponse struct {
 	// package). Override is the raw per-user override row (nil when none) —
 	// its per-field omitempty distinguishes NULL=inherit from &0=explicit
 	// unlimited, which the GUI needs to label each field's source.
-	Package  *limitFieldsView         `json:"package,omitempty"`
+	Package  *limitFieldsView          `json:"package,omitempty"`
 	Override *models.UserLimitOverride `json:"override,omitempty"`
-	Current  json.RawMessage          `json:"current,omitempty"`
+	Current  json.RawMessage           `json:"current,omitempty"`
 }
 
 func (h *userLimitsHandler) usage(c *gin.Context) {

@@ -354,10 +354,10 @@ func (h *ipHandler) delete(c *gin.Context) {
 		// payloads on a misconfigured pool.
 		domains, _ := h.affectedDomains(ctx, id)
 		c.JSON(http.StatusConflict, gin.H{
-			"error":              "ip_in_use",
-			"detail":             "this IP is bound to one or more domains; reassign them before deleting",
-			"affected_domains":   domains,
-			"affected_count":     count,
+			"error":            "ip_in_use",
+			"detail":           "this IP is bound to one or more domains; reassign them before deleting",
+			"affected_domains": domains,
+			"affected_count":   count,
 		})
 		return
 	}

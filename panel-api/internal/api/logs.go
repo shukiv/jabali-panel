@@ -31,9 +31,9 @@ type createLogAccessRequest struct {
 }
 
 type logAccessResponse struct {
-	StreamKey string    `json:"stream_key"`
-	ExpiresAt time.Time `json:"expires_at"`
-	WebsocketURL string `json:"websocket_url"`
+	StreamKey    string    `json:"stream_key"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	WebsocketURL string    `json:"websocket_url"`
 }
 
 // RegisterLogRoutes sets up log-related API endpoints
@@ -280,4 +280,3 @@ func isSafeDomainSegment(s string) bool {
 	}
 	return !strings.Contains(s, "..")
 }
-

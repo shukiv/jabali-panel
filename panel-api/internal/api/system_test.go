@@ -49,14 +49,14 @@ func TestSystemInfo_OK(t *testing.T) {
 	t.Parallel()
 
 	m := agent.NewMockClient().On("system.info", map[string]any{
-		"hostname":       "web01",
-		"uptime_seconds": 86400,
-		"load_avg":       [3]float64{0.5, 0.3, 0.2},
-		"cpu_count":      4,
-		"mem_total_kb":   16384000,
+		"hostname":         "web01",
+		"uptime_seconds":   86400,
+		"load_avg":         [3]float64{0.5, 0.3, 0.2},
+		"cpu_count":        4,
+		"mem_total_kb":     16384000,
 		"mem_available_kb": 8192000,
-		"mem_used_kb":    8192000,
-		"partitions":     []map[string]any{},
+		"mem_used_kb":      8192000,
+		"partitions":       []map[string]any{},
 	})
 
 	r := adminRouter(m)

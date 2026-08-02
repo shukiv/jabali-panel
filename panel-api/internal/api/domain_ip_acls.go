@@ -1,9 +1,10 @@
 // Per-domain IP allow/deny lists (M36).
 //
 // Routes (mounted under /api/v1/domains/:id/acls):
-//   GET            list rules for one domain
-//   POST           create a rule
-//   DELETE /:acl_id delete one rule
+//
+//	GET            list rules for one domain
+//	POST           create a rule
+//	DELETE /:acl_id delete one rule
 //
 // Authorization: admins read+write any; users only their own domains.
 // Cross-tenant access returns 404 (not 403) to avoid leaking domain

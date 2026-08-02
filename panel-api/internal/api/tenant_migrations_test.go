@@ -28,8 +28,11 @@ func (f *fakeTMJobs) FindByID(_ context.Context, id string) (*models.MigrationJo
 	}
 	return nil, repository.ErrNotFound
 }
-func (f *fakeTMJobs) Create(_ context.Context, j *models.MigrationJob) error { f.created = j; return nil }
-func (f *fakeTMJobs) UpdateSourcePath(_ context.Context, _, _ string) error  { return nil }
+func (f *fakeTMJobs) Create(_ context.Context, j *models.MigrationJob) error {
+	f.created = j
+	return nil
+}
+func (f *fakeTMJobs) UpdateSourcePath(_ context.Context, _, _ string) error { return nil }
 
 type fakeTMDomains struct {
 	repository.DomainRepository
@@ -69,7 +72,7 @@ func newTMHandler() (*tenantMigrationsHandler, *fakeTMJobs, *fakeTMAgent) {
 	h := &tenantMigrationsHandler{cfg: TenantMigrationsConfig{
 		Jobs: jobs,
 		Domains: &fakeTMDomains{byName: map[string]*models.Domain{
-			"mine.com":  {ID: "D1", UserID: "USERA", Name: "mine.com"},
+			"mine.com":   {ID: "D1", UserID: "USERA", Name: "mine.com"},
 			"theirs.com": {ID: "D2", UserID: uidB, Name: "theirs.com"},
 		}},
 		Users: &fakeTMUsers{byID: map[string]*models.User{
@@ -82,7 +85,6 @@ func newTMHandler() (*tenantMigrationsHandler, *fakeTMJobs, *fakeTMAgent) {
 	jobs.jobs["JOBB"] = &models.MigrationJob{ID: "JOBB", SourceKind: models.MigrationSourceWordPressSSH, TargetUserID: &otherUID, State: "validating"}
 	return h, jobs, ag
 }
-
 
 func ctxAs(uid, body, param string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)

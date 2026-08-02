@@ -36,10 +36,10 @@ type SSLHandlerConfig struct {
 	ServerSettings repository.ServerSettingsRepository
 	// DNSZones is optional — required only for the ACME DNS-01 shared-cert
 	// flow; nil degrades that endpoint to 503.
-	DNSZones repository.DNSZoneRepository
-	Reconciler     SSLScheduler
-	Config         *config.Config
-	Agent          agent.AgentInterface
+	DNSZones   repository.DNSZoneRepository
+	Reconciler SSLScheduler
+	Config     *config.Config
+	Agent      agent.AgentInterface
 }
 
 // sslHandler provides HTTP handlers for SSL certificate endpoints.

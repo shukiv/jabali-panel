@@ -43,11 +43,11 @@ type dnssecKey struct {
 }
 
 type dnssecResponse struct {
-	DomainID    string      `json:"domain_id"`
-	DomainName  string      `json:"domain_name"`
-	Enabled     bool        `json:"enabled"`
-	EnabledAt   *time.Time  `json:"enabled_at,omitempty"`
-	Keys        []dnssecKey `json:"keys"`
+	DomainID   string      `json:"domain_id"`
+	DomainName string      `json:"domain_name"`
+	Enabled    bool        `json:"enabled"`
+	EnabledAt  *time.Time  `json:"enabled_at,omitempty"`
+	Keys       []dnssecKey `json:"keys"`
 }
 
 type dnssecUpdateRequest struct {
@@ -55,8 +55,8 @@ type dnssecUpdateRequest struct {
 }
 
 type dnssecDSResponse struct {
-	DomainID   string          `json:"domain_id"`
-	DomainName string          `json:"domain_name"`
+	DomainID   string           `json:"domain_id"`
+	DomainName string           `json:"domain_name"`
 	DSRecords  []dnssecDSRecord `json:"ds_records"`
 }
 

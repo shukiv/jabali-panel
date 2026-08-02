@@ -165,8 +165,8 @@ func TestChannels_Create_SlackHappy(t *testing.T) {
 	repo := &fakeChannelsRepo{}
 	r := newChannelsRouter(t, repo, nil, newAdminCtx())
 	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/admin/notifications/channels", map[string]any{
-		"name": "Ops Slack",
-		"kind": "slack",
+		"name":   "Ops Slack",
+		"kind":   "slack",
 		"config": map[string]any{"url": "https://hooks.slack.com/services/T/B/X"},
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())

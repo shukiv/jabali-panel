@@ -1,10 +1,10 @@
 package api
 
 import (
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"context"
 	"encoding/json"
 	"errors"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"log/slog"
 	"net/http"
 	"strconv"

@@ -387,9 +387,9 @@ func TestIPHandler_UserList_FiltersUnselectable(t *testing.T) {
 
 func TestParseIPID(t *testing.T) {
 	cases := []struct {
-		in       string
-		want     uint64
-		wantErr  bool
+		in      string
+		want    uint64
+		wantErr bool
 	}{
 		{"42", 42, false},
 		{"0", 0, true},

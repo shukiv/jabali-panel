@@ -88,8 +88,8 @@ func TestAdminUpdates_AptCheck_HappyPath(t *testing.T) {
 
 func TestAdminUpdates_Status_PassesSinceQuery(t *testing.T) {
 	mock := agent.NewMockClient().On("system.update_status", map[string]any{
-		"unit":    "jabali-update-oneshot.service",
-		"status":  "active",
+		"unit":     "jabali-update-oneshot.service",
+		"status":   "active",
 		"log_tail": "→ install deps\n",
 	})
 	r := newAdminUpdatesRouter(mock, true)

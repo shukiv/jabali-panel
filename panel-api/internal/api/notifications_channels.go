@@ -25,9 +25,9 @@ import (
 // channel without publishing on the same Redis stream the dispatcher
 // drains.
 type NotificationsChannelsHandlerConfig struct {
-	Channels        repository.NotificationChannelRepository
-	Webhooks        repository.WebhookEndpointRepository
-	Queue           *notifications.Queue
+	Channels repository.NotificationChannelRepository
+	Webhooks repository.WebhookEndpointRepository
+	Queue    *notifications.Queue
 	// Registry, when set, lets the "Send test" endpoint deliver synchronously
 	// and report the real result instead of only enqueuing (GH #322).
 	Registry        *notifications.Registry
@@ -117,10 +117,10 @@ func (h *notificationsChannelsHandler) list(c *gin.Context) {
 }
 
 type channelCreateReq struct {
-	Name    string                            `json:"name"`
-	Kind    string                            `json:"kind"`
-	Config  models.NotificationChannelConfig  `json:"config"`
-	Enabled *bool                             `json:"enabled"`
+	Name    string                           `json:"name"`
+	Kind    string                           `json:"kind"`
+	Config  models.NotificationChannelConfig `json:"config"`
+	Enabled *bool                            `json:"enabled"`
 }
 
 func (h *notificationsChannelsHandler) create(c *gin.Context) {
@@ -339,11 +339,11 @@ func (h *notificationsChannelsHandler) broadcast(c *gin.Context) {
 // --- validation ---
 
 var knownChannelKinds = map[string]struct{}{
-	models.NotificationChannelKindEmail:   {},
-	models.NotificationChannelKindSlack:   {},
-	models.NotificationChannelKindDiscord: {},
-	models.NotificationChannelKindNtfy:    {},
-	models.NotificationChannelKindWebhook: {},
+	models.NotificationChannelKindEmail:    {},
+	models.NotificationChannelKindSlack:    {},
+	models.NotificationChannelKindDiscord:  {},
+	models.NotificationChannelKindNtfy:     {},
+	models.NotificationChannelKindWebhook:  {},
 	models.NotificationChannelKindWebpush:  {},
 	models.NotificationChannelKindSMS:      {},
 	models.NotificationChannelKindTelegram: {},
@@ -463,4 +463,3 @@ func validateHTTPURL(raw string) error {
 	}
 	return nil
 }
-

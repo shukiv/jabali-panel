@@ -27,10 +27,10 @@ const snuffleupagusCallTimeout = 10 * time.Second
 
 // SecuritySnuffleupagusConfig wires the routes to their dependencies.
 type SecuritySnuffleupagusConfig struct {
-	Agent       agent.AgentInterface
-	Repo        repository.SnuffleupagusRepository
-	Reconciler  *reconciler.SnuffleupagusReconciler
-	BundleDir   string // /opt/jabali-panel/install/snuffleupagus/rules or /usr/share/...
+	Agent      agent.AgentInterface
+	Repo       repository.SnuffleupagusRepository
+	Reconciler *reconciler.SnuffleupagusReconciler
+	BundleDir  string // /opt/jabali-panel/install/snuffleupagus/rules or /usr/share/...
 }
 
 func RegisterSecuritySnuffleupagusRoutes(rg *gin.RouterGroup, cfg SecuritySnuffleupagusConfig) {
@@ -250,7 +250,7 @@ type bundleRule struct {
 // "sp.disable_function.function" entry.
 
 var (
-	ruleArgRe   = regexp.MustCompile(`^\s*sp\.([a-z_]+)\.([a-z_]+)\("([^"]+)"\)`)
+	ruleArgRe    = regexp.MustCompile(`^\s*sp\.([a-z_]+)\.([a-z_]+)\("([^"]+)"\)`)
 	ruleEnableRe = regexp.MustCompile(`^\s*sp\.([a-z_]+)\.([a-z_]+)\(`)
 )
 

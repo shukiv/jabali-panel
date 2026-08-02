@@ -955,13 +955,47 @@ func (h *filesHandler) streamArchive(c *gin.Context, userID, username string, pa
 		return
 	}
 	// Always remove the scratch file after we're done streaming —
-	// success, client disconnect, or stat failure. A leftover /tmp
+	// success, client disconnect, or stat failure. A leftover staging
 	// file would accumulate per-download otherwise.
 	defer func() { _ = os.Remove(result.ArchivePath) }()
 
 	f, err := os.Open(result.ArchivePath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		// JAB-192: this branch used to return a bare 500 carrying the raw
+		// os error — which is how the GH #756 namespace bug stayed opaque
+		// for so long. The agent reported success, the panel could not see
+		// the file it had just been handed, and the operator got
+		// "internal_error" with a path and no cause.
+		//
+		// A missing file here is specifically a HANDOFF failure: the agent
+		// wrote the archive somewhere this process cannot see, or a reaper
+		// removed it before we opened it. That is a server-side
+		// misconfiguration, never anything the caller did, so it gets its
+		// own code and an operator-actionable log line rather than being
+		// folded in with genuine internal errors.
+		if os.IsNotExist(err) {
+			if h.cfg.Log != nil {
+				h.cfg.Log.Error("archive handoff failed: agent reported an archive this process cannot see",
+					"path", result.ArchivePath,
+					"hint", "the agent must stage archives somewhere visible to panel-api; "+
+						"a PrivateTmp path is per-unit and will never be readable here (GH #756)")
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "archive_unavailable",
+				"detail": "the archive was created but could not be read back by the panel. " +
+					"This is a server configuration problem, not a problem with the files being downloaded.",
+			})
+			return
+		}
+		if h.cfg.Log != nil {
+			h.cfg.Log.Error("archive open failed", "err", err, "path", result.ArchivePath)
+		}
+		// Path deliberately not echoed to the client (JAB-114: handlers must
+		// not leak internal filesystem detail).
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  "internal_error",
+			"detail": "the archive could not be read back by the panel",
+		})
 		return
 	}
 	defer f.Close()

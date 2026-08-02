@@ -334,7 +334,6 @@ func TestTenantDocker_UsageUnderQuota(t *testing.T) {
 	}
 }
 
-
 // GH #284: tenant delete must detach the app's own domain link + clear the
 // injected proxy_pass (else the hostname keeps 502-ing at the dead container)
 // and remove any hostname auto-created for the app — mirroring the admin path.

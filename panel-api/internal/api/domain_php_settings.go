@@ -28,7 +28,9 @@ func RegisterDomainPHPSettingsRoutes(g *gin.RouterGroup, cfg DomainPHPSettingsHa
 	g.PATCH("/domains/:id/php-settings", h.patch)
 }
 
-type domainPHPSettingsHandler struct{ cfg DomainPHPSettingsHandlerConfig }
+type domainPHPSettingsHandler struct {
+	cfg DomainPHPSettingsHandlerConfig
+}
 
 // getDomainPHPSettingsRequest is unused for GET; response is below.
 type getDomainPHPSettingsResponse struct {

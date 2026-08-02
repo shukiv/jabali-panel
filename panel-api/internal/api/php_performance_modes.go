@@ -15,7 +15,9 @@ type PHPPerformanceModeHandlerConfig struct {
 	Modes repository.PHPPerformanceModeRepository
 }
 
-type phpPerformanceModeHandler struct{ cfg PHPPerformanceModeHandlerConfig }
+type phpPerformanceModeHandler struct {
+	cfg PHPPerformanceModeHandlerConfig
+}
 
 // RegisterPHPPerformanceModeRoutes mounts the admin-only preset editor:
 //   - GET /php-performance-modes           list the 4 presets

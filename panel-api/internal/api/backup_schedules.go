@@ -53,14 +53,14 @@ type scheduleDTO struct {
 	UserIDs             []string               `json:"user_ids"`
 	IncludeSystemBackup bool                   `json:"include_system_backup"`
 	CronExpr            string                 `json:"cron_expr"`
-	Enabled      bool                    `json:"enabled"`
-	KeepDaily    *int                    `json:"keep_daily,omitempty"`
-	KeepWeekly   *int                    `json:"keep_weekly,omitempty"`
-	KeepMonthly  *int                    `json:"keep_monthly,omitempty"`
-	LastRunAt    *string                 `json:"last_run_at,omitempty"`
-	NextRunAt    *string                 `json:"next_run_at,omitempty"`
-	NextFirings  []string                `json:"next_firings,omitempty"`
-	Destinations []backupDestinationDTO  `json:"destinations,omitempty"`
+	Enabled             bool                   `json:"enabled"`
+	KeepDaily           *int                   `json:"keep_daily,omitempty"`
+	KeepWeekly          *int                   `json:"keep_weekly,omitempty"`
+	KeepMonthly         *int                   `json:"keep_monthly,omitempty"`
+	LastRunAt           *string                `json:"last_run_at,omitempty"`
+	NextRunAt           *string                `json:"next_run_at,omitempty"`
+	NextFirings         []string               `json:"next_firings,omitempty"`
+	Destinations        []backupDestinationDTO `json:"destinations,omitempty"`
 }
 
 func toScheduleDTO(s *models.BackupSchedule, dests []models.BackupDestination) scheduleDTO {
@@ -126,7 +126,7 @@ type createScheduleRequest struct {
 	// Kind defaults to account_backup when omitted (UI no longer
 	// exposes the system-only kind — system backups are an opt-in
 	// flag on the account schedule).
-	Kind                string   `json:"kind"`
+	Kind string `json:"kind"`
 	// Legacy single-user field; kept for backwards compat. New
 	// callers should send UserIDs (multi-select). Empty UserIDs +
 	// nil/empty UserID = "all non-admin users" fan-out at tick time.
@@ -370,4 +370,3 @@ func (h *backupScheduleHandler) runNow(c *gin.Context) {
 		"detail": "schedule next-run advanced; tick will fire within " + internalbackup.PresetCronExpr["daily"],
 	})
 }
-

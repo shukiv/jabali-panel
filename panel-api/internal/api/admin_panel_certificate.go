@@ -53,15 +53,17 @@ func RegisterAdminPanelCertificateRoutes(g *gin.RouterGroup, cfg AdminPanelCerti
 	grp.POST("/issue", h.issue)
 }
 
-type adminPanelCertHandler struct{ cfg AdminPanelCertificateHandlerConfig }
+type adminPanelCertHandler struct {
+	cfg AdminPanelCertificateHandlerConfig
+}
 
 // panelCertGetResponse layers the live routability check on top of the
 // stored row so the UI never needs a separate request to render the
 // "Use Let's Encrypt" toggle's enabled/disabled state.
 type panelCertGetResponse struct {
 	*models.PanelCertificate
-	Routable        bool   `json:"routable"`
-	RoutableReason  string `json:"routable_reason,omitempty"`
+	Routable       bool   `json:"routable"`
+	RoutableReason string `json:"routable_reason,omitempty"`
 }
 
 func (h *adminPanelCertHandler) get(c *gin.Context) {

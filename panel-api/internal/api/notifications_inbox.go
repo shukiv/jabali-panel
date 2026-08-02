@@ -55,7 +55,9 @@ func RegisterNotificationsInboxRoutes(g *gin.RouterGroup, cfg NotificationsInbox
 	g.DELETE("/notifications/inbox", h.clearAll)
 }
 
-type inboxHandler struct{ cfg NotificationsInboxHandlerConfig }
+type inboxHandler struct {
+	cfg NotificationsInboxHandlerConfig
+}
 
 // inboxStreamPollInterval is the server-side change-detection cadence for
 // the SSE stream. One indexed COUNT + one LIMIT-1 list per tick per open

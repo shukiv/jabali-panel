@@ -90,7 +90,7 @@ func (f *fakeSubsRepo) DeleteByEndpoint(_ context.Context, ep string) error {
 	f.deletedCount++
 	return nil
 }
-func (f *fakeSubsRepo) DeleteByID(context.Context, string) error   { return nil }
+func (f *fakeSubsRepo) DeleteByID(context.Context, string) error    { return nil }
 func (f *fakeSubsRepo) TouchLastUsed(context.Context, string) error { return nil }
 
 // --- helpers ---

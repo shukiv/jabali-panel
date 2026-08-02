@@ -371,9 +371,9 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{
-				"enabled":   s.CrowdSecCaptchaEnabled,
-				"provider":  s.CrowdSecCaptchaProvider,
-				"site_key":  s.CrowdSecCaptchaSiteKey,
+				"enabled":  s.CrowdSecCaptchaEnabled,
+				"provider": s.CrowdSecCaptchaProvider,
+				"site_key": s.CrowdSecCaptchaSiteKey,
 				// secret_key deliberately omitted (write-only)
 			})
 		})

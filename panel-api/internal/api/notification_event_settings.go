@@ -20,8 +20,9 @@ type NotificationEventSettingsHandlerConfig struct {
 }
 
 // RegisterNotificationEventSettingsRoutes mounts:
-//   GET    /admin/settings/notification-events
-//   PATCH  /admin/settings/notification-events/:kind
+//
+//	GET    /admin/settings/notification-events
+//	PATCH  /admin/settings/notification-events/:kind
 func RegisterNotificationEventSettingsRoutes(g *gin.RouterGroup, cfg NotificationEventSettingsHandlerConfig) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
@@ -33,7 +34,9 @@ func RegisterNotificationEventSettingsRoutes(g *gin.RouterGroup, cfg Notificatio
 	admin.PATCH("/:kind", h.update)
 }
 
-type notificationEventSettingsHandler struct{ cfg NotificationEventSettingsHandlerConfig }
+type notificationEventSettingsHandler struct {
+	cfg NotificationEventSettingsHandlerConfig
+}
 
 type notificationEventDTO struct {
 	Kind        string `json:"kind"`

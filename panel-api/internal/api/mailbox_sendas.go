@@ -41,7 +41,7 @@ type sendAsHandler struct {
 }
 
 type sendAsGrantorResponse struct {
-	ID                string `json:"id"`                  // delegation row id
+	ID                string `json:"id"` // delegation row id
 	GrantorMailboxID  string `json:"grantor_mailbox_id"`
 	GrantorEmail      string `json:"grantor_email"`
 	DelegateMailboxID string `json:"delegate_mailbox_id"`

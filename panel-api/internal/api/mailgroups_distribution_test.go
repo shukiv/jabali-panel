@@ -19,18 +19,22 @@ type mgGroupsFake struct {
 	group *models.MailGroup
 }
 
-func (f *mgGroupsFake) FindByID(context.Context, string) (*models.MailGroup, error) { return f.group, nil }
-func (f *mgGroupsFake) ListMemberEmails(context.Context, string) ([]string, error)  { return nil, nil }
-func (f *mgGroupsFake) SetMembers(context.Context, string, []string) error          { return nil }
-func (f *mgGroupsFake) AddMember(context.Context, string, string) error             { return nil }
-func (f *mgGroupsFake) RemoveMember(context.Context, string, string) error          { return nil }
+func (f *mgGroupsFake) FindByID(context.Context, string) (*models.MailGroup, error) {
+	return f.group, nil
+}
+func (f *mgGroupsFake) ListMemberEmails(context.Context, string) ([]string, error) { return nil, nil }
+func (f *mgGroupsFake) SetMembers(context.Context, string, []string) error         { return nil }
+func (f *mgGroupsFake) AddMember(context.Context, string, string) error            { return nil }
+func (f *mgGroupsFake) RemoveMember(context.Context, string, string) error         { return nil }
 
 type mgMbFake struct {
 	repository.MailboxRepository
 	byID map[string]*models.Mailbox
 }
 
-func (f *mgMbFake) FindByID(_ context.Context, id string) (*models.Mailbox, error) { return f.byID[id], nil }
+func (f *mgMbFake) FindByID(_ context.Context, id string) (*models.Mailbox, error) {
+	return f.byID[id], nil
+}
 
 func mgRouter(t *testing.T, kind string, ag *srAgentFake) *gin.Engine {
 	t.Helper()
@@ -65,7 +69,6 @@ func TestSetMembers_ResourceProjectsMemberGroupIds(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, ag.calls, "mailgroup.members_set", "resource group must project membership")
 }
-
 
 // GH #238: removeMember drops one mailbox. Distribution groups don't project to
 // the agent; resource (shared) groups do, with the mailbox in remove_emails.

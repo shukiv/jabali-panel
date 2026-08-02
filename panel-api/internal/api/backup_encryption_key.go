@@ -50,10 +50,10 @@ func (h *backupEncryptionKeyHandler) reveal(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"status":     "ok",
-		"path":       resp.Path,
-		"password":   resp.Password,
-		"algorithm":  "AES-256-GCM (restic native)",
-		"note":       "back this up out-of-band; losing it loses every snapshot",
+		"status":    "ok",
+		"path":      resp.Path,
+		"password":  resp.Password,
+		"algorithm": "AES-256-GCM (restic native)",
+		"note":      "back this up out-of-band; losing it loses every snapshot",
 	})
 }

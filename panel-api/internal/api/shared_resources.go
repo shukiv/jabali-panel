@@ -14,11 +14,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -65,8 +65,8 @@ func RegisterSharedResourceRoutes(g *gin.RouterGroup, cfg SharedResourceHandlerC
 // ---- request/response ----
 
 type createSharedResourceRequest struct {
-	Name        string `json:"name"`         // local part of the host address
-	Kind        string `json:"kind"`         // mailbox|calendar|addressbook|files
+	Name        string `json:"name"` // local part of the host address
+	Kind        string `json:"kind"` // mailbox|calendar|addressbook|files
 	DisplayName string `json:"display_name"`
 }
 

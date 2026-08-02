@@ -4,25 +4,25 @@
 // Wire contract (verify against this file, per
 // feedback_verify_wire_contract.md):
 //
-//   GET /api/v1/admin/settings/email
+//	GET /api/v1/admin/settings/email
 //
-//   Two distinct response shapes, discriminated by HTTP status code
-//   (NOT by field presence). Clients MUST switch on status.
+//	Two distinct response shapes, discriminated by HTTP status code
+//	(NOT by field presence). Clients MUST switch on status.
 //
-//   200 OK — panel-primary domain row exists:
-//     {
-//       "primary_domain_name": "jabali-panel.local",
-//       "webmail_url":         "https://mail.jabali-panel.local/",
-//       "dkim_published":      true,                        // DkimPublicKey != nil && != ""
-//       "email_enabled_at":    "2026-04-22T18:00:00Z"       // RFC3339, or null
-//     }
+//	200 OK — panel-primary domain row exists:
+//	  {
+//	    "primary_domain_name": "jabali-panel.local",
+//	    "webmail_url":         "https://mail.jabali-panel.local/",
+//	    "dkim_published":      true,                        // DkimPublicKey != nil && != ""
+//	    "email_enabled_at":    "2026-04-22T18:00:00Z"       // RFC3339, or null
+//	  }
 //
-//   202 Accepted — row absent (install still converging, or pathological
-//   operator SQL delete). Minimal shape, no null-filled fields:
-//     {
-//       "primary_domain_name": null,
-//       "status":              "initializing"
-//     }
+//	202 Accepted — row absent (install still converging, or pathological
+//	operator SQL delete). Minimal shape, no null-filled fields:
+//	  {
+//	    "primary_domain_name": null,
+//	    "status":              "initializing"
+//	  }
 //
 // Absence is the designed behavior during the fresh-install convergence
 // window; install.sh creates the row, the reconciler writes DKIM +

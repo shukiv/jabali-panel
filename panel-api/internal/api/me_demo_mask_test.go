@@ -7,11 +7,11 @@ import "testing"
 // production and never invent an IP where none is configured.
 func TestDemoMaskIP(t *testing.T) {
 	cases := []struct {
-		name       string
-		demo       bool
-		v4, v6     string
-		wantV4     string
-		wantV6     string
+		name   string
+		demo   bool
+		v4, v6 string
+		wantV4 string
+		wantV6 string
 	}{
 		{"prod passes real IPs", false, "182.54.236.26", "2a01:4f8::1", "182.54.236.26", "2a01:4f8::1"},
 		{"demo masks real IPs", true, "182.54.236.26", "2a01:4f8::1", "203.0.113.10", "2001:db8::10"},

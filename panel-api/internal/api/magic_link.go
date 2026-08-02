@@ -59,10 +59,10 @@ const ssoTTLSeconds = 60
 // unsupported_app_type.
 //
 // Adding a new CMS to magic-link is three steps:
-//   1. Add a `<cms>.create_sso_file` handler in panel-agent with its
-//      per-CMS PHP template.
-//   2. Add the mapping here.
-//   3. Widen the panel-ui "Log in to admin" button's app_type filter.
+//  1. Add a `<cms>.create_sso_file` handler in panel-agent with its
+//     per-CMS PHP template.
+//  2. Add the mapping here.
+//  3. Widen the panel-ui "Log in to admin" button's app_type filter.
 func ssoAgentCommandFor(appType string) (string, bool) {
 	switch appType {
 	case "wordpress":

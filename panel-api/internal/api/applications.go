@@ -1,11 +1,11 @@
 package api
 
 import (
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -81,14 +81,14 @@ func RegisterApplicationRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig)
 	apps.GET("/:id", wp.get)
 	apps.DELETE("/:id", wp.delete)
 	apps.POST("/:id/clone", wp.clone)
-	apps.PUT("/:id/cache", wp.cache) // GH #406: WP object cache + nginx page cache
+	apps.PUT("/:id/cache", wp.cache)                     // GH #406: WP object cache + nginx page cache
 	apps.GET("/:id/cache-settings", wp.getCacheSettings) // GH #612/#616/#618
 	apps.PUT("/:id/cache-settings", wp.setCacheSettings)
-	apps.POST("/:id/cache-warmup", wp.cacheWarmup) // GH #615
-	apps.GET("/:id/cache-warmup", wp.getCacheWarmup)   // JAB-95 Phase 3: last warmup run
-	apps.GET("/cache-profiles", wp.cacheProfiles) // GH #618
-	apps.GET("/:id/cache-stats", wp.cacheStats) // GH #617
-	apps.GET("/:id/cache-health", wp.cacheHealth) // JAB-11: per-install drift check
+	apps.POST("/:id/cache-warmup", wp.cacheWarmup)   // GH #615
+	apps.GET("/:id/cache-warmup", wp.getCacheWarmup) // JAB-95 Phase 3: last warmup run
+	apps.GET("/cache-profiles", wp.cacheProfiles)    // GH #618
+	apps.GET("/:id/cache-stats", wp.cacheStats)      // GH #617
+	apps.GET("/:id/cache-health", wp.cacheHealth)    // JAB-11: per-install drift check
 	// GH #617: admin cache overview — cache-enabled domains ranked by page-cache
 	// hit ratio so low-hit/noisy sites are visible.
 	adminCache := g.Group("/admin/cache")
@@ -121,7 +121,7 @@ type registryEntry struct {
 	// InstallNotice (GH #341) — pre-install warning the UI shows in the
 	// install modal. Was defined on the registry + rendered by the SPA, but
 	// this DTO dropped it, so the notice never reached the client.
-	InstallNotice        string                    `json:"install_notice,omitempty"`
+	InstallNotice string `json:"install_notice,omitempty"`
 }
 
 func (h *applicationsHandler) registry(c *gin.Context) {

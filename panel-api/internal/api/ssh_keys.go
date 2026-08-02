@@ -18,9 +18,11 @@ import (
 
 // SSHKeysHandlerConfig wires SSH keys CRUD routes.
 type SSHKeysHandlerConfig struct {
-	SSHKeys      repository.SSHKeyRepository
-	Reconciler   interface{ ReconcileSSHKeysForUser(ctx context.Context, userID string) error }
-	Logger       *slog.Logger
+	SSHKeys    repository.SSHKeyRepository
+	Reconciler interface {
+		ReconcileSSHKeysForUser(ctx context.Context, userID string) error
+	}
+	Logger *slog.Logger
 }
 
 // RegisterSSHKeysRoutes registers SSH keys CRUD routes under /api/v1/ssh-keys.

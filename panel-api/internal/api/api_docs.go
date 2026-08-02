@@ -37,7 +37,7 @@ func RegisterAPIDocsRoutes(r gin.IRouter) {
 		var doc any
 		if err := yaml.Unmarshal(openAPIYAML, &doc); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "spec_parse_failed",
+				"error":  "spec_parse_failed",
 				"detail": err.Error(),
 			})
 			return

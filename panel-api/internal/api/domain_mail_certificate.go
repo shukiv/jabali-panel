@@ -1,11 +1,12 @@
 // Per-domain mail TLS (M6.6).
 //
 // Routes (mounted under /api/v1/domains/:id/mail-certificate):
-//   GET     status + last_error + expires_at
-//   POST    /enable  → create or unblock the row (status=pending)
-//   POST    /disable → opt-out (status=disabled)
-//   POST    /reissue → clear backoff + flip back to pending so the
-//                      next reconciler tick re-runs ssl.mail.issue
+//
+//	GET     status + last_error + expires_at
+//	POST    /enable  → create or unblock the row (status=pending)
+//	POST    /disable → opt-out (status=disabled)
+//	POST    /reissue → clear backoff + flip back to pending so the
+//	                   next reconciler tick re-runs ssl.mail.issue
 //
 // Authorization: admins read+write any; users only their own domains.
 // Cross-tenant access returns 404 to avoid leaking domain existence.

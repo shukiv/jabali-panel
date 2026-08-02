@@ -48,4 +48,3 @@ func TestSynthesizeAlerts_OtherErrStillGenericWarning(t *testing.T) {
 		t.Errorf("non-nginx sub-call error should still be a generic agent warning: %+v", alerts)
 	}
 }
-

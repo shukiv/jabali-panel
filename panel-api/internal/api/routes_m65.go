@@ -1,21 +1,21 @@
 package api
 
 import (
-	"github.com/gin-gonic/gin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"github.com/gin-gonic/gin"
 )
 
 // M65RouteDeps holds every repository + client any M6.5 feature needs.
 // One struct for all sub-routes so parallel feature steps don't collide
 // on the registration signature.
 type M65RouteDeps struct {
-	Agent          agent.AgentInterface
-	Domains        repository.DomainRepository
-	Mailboxes      repository.MailboxRepository
-	Autoresponders repository.EmailAutoresponderRepository
-	Forwarders     repository.EmailForwarderRepository
-	MailboxShares  repository.MailboxShareRepository
+	Agent           agent.AgentInterface
+	Domains         repository.DomainRepository
+	Mailboxes       repository.MailboxRepository
+	Autoresponders  repository.EmailAutoresponderRepository
+	Forwarders      repository.EmailForwarderRepository
+	MailboxShares   repository.MailboxShareRepository
 	SharedResources repository.SharedResourceRepository
 	SendDelegations repository.MailboxSendDelegationRepository
 }

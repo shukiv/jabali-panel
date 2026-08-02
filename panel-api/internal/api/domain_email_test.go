@@ -642,5 +642,3 @@ func TestDomains_Create_AutoEnableFailureStillReturns201(t *testing.T) {
 	require.Nil(t, resp.DkimSelector, "no DKIM material when agent never ran")
 	require.Nil(t, resp.EmailEnabledAt, "email_enabled_at unset when agent never ran")
 }
-
-

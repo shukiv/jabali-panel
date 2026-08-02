@@ -130,13 +130,13 @@ type updateServerSettingsRequest struct {
 	WebmailEnabled            *bool                       `json:"webmail_enabled,omitempty"`
 	// M353 Phase 1 (GH #353): per-module enable flags (admin toggles them from
 	// Server Settings -> Modules; the SPA gates nav + routes on them).
-	DNSEnabled                   *bool   `json:"dns_enabled,omitempty"`
-	MailEnabled                  *bool   `json:"mail_enabled,omitempty"`
-	SecurityEnabled              *bool   `json:"security_enabled,omitempty"`
-	QuotaEnabled                 *bool   `json:"quota_enabled,omitempty"`
-	APIEnabled                   *bool   `json:"api_enabled,omitempty"`
-	TenantDomainOptionsEnabled   *bool   `json:"tenant_domain_options_enabled,omitempty"`
-	TenantDocrootEditable        *bool   `json:"tenant_docroot_editable,omitempty"`
+	DNSEnabled                 *bool `json:"dns_enabled,omitempty"`
+	MailEnabled                *bool `json:"mail_enabled,omitempty"`
+	SecurityEnabled            *bool `json:"security_enabled,omitempty"`
+	QuotaEnabled               *bool `json:"quota_enabled,omitempty"`
+	APIEnabled                 *bool `json:"api_enabled,omitempty"`
+	TenantDomainOptionsEnabled *bool `json:"tenant_domain_options_enabled,omitempty"`
+	TenantDocrootEditable      *bool `json:"tenant_docroot_editable,omitempty"`
 	// TenantNotificationKinds — admin-configurable tenant channel-kind allowlist
 	// (phase 4b).
 	TenantNotificationKinds *models.TenantNotificationKinds `json:"tenant_notification_kinds,omitempty"`
@@ -144,7 +144,7 @@ type updateServerSettingsRequest struct {
 	// surface (phase 4e). Now exposed: the abuse controls it gated on (SSRF 4a,
 	// allowlist 4b, quota+rate-limit 4c, email-to-own 4d) have all landed, and
 	// the dispatcher honours this flag as a live delivery kill switch.
-	TenantNotificationsEnabled *bool `json:"tenant_notifications_enabled,omitempty"`
+	TenantNotificationsEnabled   *bool   `json:"tenant_notifications_enabled,omitempty"`
 	RootTerminalEnabled          *bool   `json:"root_terminal_enabled,omitempty"`
 	BandwidthQuotaEnforceEnabled *bool   `json:"bandwidth_quota_enforce_enabled,omitempty"`
 	UploadMaxSizeMB              *uint32 `json:"upload_max_size_mb,omitempty"`

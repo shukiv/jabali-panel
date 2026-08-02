@@ -92,18 +92,18 @@ func RegisterMeNotificationsRoutes(g *gin.RouterGroup, cfg MeNotificationsConfig
 // channels. Server-only events (crowdsec, postgres, reconciler, admin.login, …)
 // are excluded so a tenant isn't offered events that would never reach them.
 var tenantRelevantEventKinds = map[string]bool{
-	"cert.renew.fail":                       true,
-	"cert.renew.ok":                         true,
-	"domain.expiry.7d":                      true,
-	"domain.expiry.1d":                      true,
-	"disk.quota.warn":                       true,
-	"backup.fail":                           true,
-	"backup.limit.reached":                  true,
-	"docker_app.update_available":           true,
-	"ssh.login":                             true,
-	"snuffleupagus.incident.detected":       true,
-	"notifications.channel.auto_disabled":   true,
-	"panel.welcome":                         true,
+	"cert.renew.fail":                     true,
+	"cert.renew.ok":                       true,
+	"domain.expiry.7d":                    true,
+	"domain.expiry.1d":                    true,
+	"disk.quota.warn":                     true,
+	"backup.fail":                         true,
+	"backup.limit.reached":                true,
+	"docker_app.update_available":         true,
+	"ssh.login":                           true,
+	"snuffleupagus.incident.detected":     true,
+	"notifications.channel.auto_disabled": true,
+	"panel.welcome":                       true,
 }
 
 // Per-user anti-abuse limits (JAB-171 phase 4c). Consts, not admin-configurable

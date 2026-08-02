@@ -59,7 +59,9 @@ func installACLUser(osUser, installID string) string { return "wp_" + osUser + "
 
 // installACLKeyPattern fences an ACL user to ONE install's keyspace. NOT the
 // broad ~jc:<osUser>:* — that was the JAB-62 cross-install hole.
-func installACLKeyPattern(osUser, installID string) string { return "~jc:" + osUser + ":" + installID + ":*" }
+func installACLKeyPattern(osUser, installID string) string {
+	return "~jc:" + osUser + ":" + installID + ":*"
+}
 
 // cachePathFromSubdir maps a WP install subdirectory to the nginx page-cache
 // path prefix (Gitea #420). "" (root install) → "/" (whole domain); "blog" or

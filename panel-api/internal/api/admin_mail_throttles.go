@@ -84,7 +84,9 @@ func RegisterAdminMailThrottlesRoutes(g *gin.RouterGroup, cfg AdminMailThrottles
 	grp.DELETE("/:id", h.del)
 }
 
-type adminMailThrottlesHandler struct{ cfg AdminMailThrottlesHandlerConfig }
+type adminMailThrottlesHandler struct {
+	cfg AdminMailThrottlesHandlerConfig
+}
 
 type throttleRequest struct {
 	Scope      string  `json:"scope" binding:"required"` // user|domain|global

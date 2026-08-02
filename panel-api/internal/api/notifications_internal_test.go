@@ -49,7 +49,9 @@ func TestInternalEnqueue_Happy(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusAccepted, rec.Code, "body=%s", rec.Body.String())
-	var resp struct{ ID string `json:"id"` }
+	var resp struct {
+		ID string `json:"id"`
+	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.ID)
 	// Stream should have exactly one entry.

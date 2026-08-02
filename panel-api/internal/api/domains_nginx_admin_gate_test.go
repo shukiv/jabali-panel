@@ -89,4 +89,3 @@ func TestDomainPatch_AdminNginxDirectivesPersist(t *testing.T) {
 		t.Errorf("response nginx_custom_directives missing: %+v", resp.NginxCustomDirectives)
 	}
 }
-

@@ -48,7 +48,9 @@ func RegisterNotificationsWebPushRoutes(g *gin.RouterGroup, cfg NotificationsWeb
 	g.DELETE("/notifications/webpush/subscribe", h.unsubscribe)
 }
 
-type webpushHandler struct{ cfg NotificationsWebPushHandlerConfig }
+type webpushHandler struct {
+	cfg NotificationsWebPushHandlerConfig
+}
 
 func (h *webpushHandler) vapidKey(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(c.Request.Context())
@@ -64,8 +66,8 @@ func (h *webpushHandler) vapidKey(c *gin.Context) {
 }
 
 type webpushSubscribeReq struct {
-	Endpoint  string `json:"endpoint"`
-	Keys      struct {
+	Endpoint string `json:"endpoint"`
+	Keys     struct {
 		P256dh string `json:"p256dh"`
 		Auth   string `json:"auth"`
 	} `json:"keys"`

@@ -965,7 +965,6 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		return
 	}
 
-
 	// Load grant
 	grant, err := h.cfg.DatabaseGrants.FindByID(ctx, c.Param("id"))
 	if err != nil {

@@ -40,7 +40,9 @@ func (m *mockDomainRepo) Update(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
-func (m *mockDomainRepo) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) { return 0, nil }
+func (m *mockDomainRepo) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) {
+	return 0, nil
+}
 
 func (m *mockDomainRepo) Delete(ctx context.Context, id string) error {
 	delete(m.domains, id)
@@ -188,7 +190,7 @@ func (m *mockDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enab
 	return nil
 }
 
-func (m *mockDomainRepo) UpdateCachePath(_ context.Context, _, _ string) error { return nil }
+func (m *mockDomainRepo) UpdateCachePath(_ context.Context, _, _ string) error    { return nil }
 func (m *mockDomainRepo) UpdateCacheTTL(_ context.Context, _ string, _ int) error { return nil }
 func (m *mockDomainRepo) UpdateCacheQueryAllowlist(_ context.Context, _, _ string) error {
 	return nil
@@ -848,7 +850,6 @@ func TestUpdateRecordManagedARecord(t *testing.T) {
 	recordResp := resp["record"].(map[string]interface{})
 	assert.Equal(t, "192.168.1.2", recordResp["content"])
 }
-
 
 // ADR-0107: editing a jabali-managed MX is allowed; the edit is
 // authoritative and demotes the row to operator-owned (Managed=false)

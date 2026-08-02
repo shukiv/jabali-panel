@@ -14,9 +14,9 @@ import (
 
 // domainCatchallResponse is the response envelope for catch-all operations.
 type domainCatchallResponse struct {
-	DomainID   string     `json:"domain_id"`
-	DomainName string     `json:"domain_name"`
-	Target     *string    `json:"target"` // null if no catch-all set
+	DomainID   string    `json:"domain_id"`
+	DomainName string    `json:"domain_name"`
+	Target     *string   `json:"target"` // null if no catch-all set
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 

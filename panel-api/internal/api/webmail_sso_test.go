@@ -141,7 +141,6 @@ func (r *ssoFakeMailboxRepo) ListByDomainIDs(ctx context.Context, domainIDs []st
 	return nil, nil
 }
 
-
 type ssoFakeUserRepo struct {
 	repository.UserRepository
 	users map[string]*models.User

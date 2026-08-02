@@ -1,6 +1,7 @@
 // Admin endpoints for the opt-in Postgres lifecycle (M37 Phase 4).
-//   GET  /admin/databases/postgres/status   → pass-through to agent
-//   POST /admin/databases/postgres/uninstall → destructive purge
+//
+//	GET  /admin/databases/postgres/status   → pass-through to agent
+//	POST /admin/databases/postgres/uninstall → destructive purge
 //
 // Toggle on/off lives on PATCH /admin/settings (postgres_enabled);
 // these endpoints expose state the toggle alone can't reveal
