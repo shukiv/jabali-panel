@@ -14,6 +14,13 @@ func TestCRSPluginBefore_Surgical(t *testing.T) {
 		`SecRule REQUEST_URI "@beginsWith /wp-admin/"`,
 		`id:9599100`,
 		`ctl:ruleRemoveTargetById=933120;ARGS:_wp_http_referer`,
+		// WooCommerce checkout: order-attribution field name contains
+		// "user_agent" (a php-config-directives.data entry) — 933120 FP on
+		// every checkout. Target-scoped drop on wc-ajax endpoints only.
+		`SecRule REQUEST_URI "@contains wc-ajax="`,
+		`id:9599300`,
+		`ctl:ruleRemoveTargetById=933120;ARGS:post_data`,
+		`ctl:ruleRemoveTargetById=933120;ARGS:wc_order_attribution_user_agent`,
 	}
 	for _, sub := range mustContain {
 		if !strings.Contains(body, sub) {

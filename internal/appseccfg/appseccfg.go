@@ -198,6 +198,20 @@ SecRule REQUEST_URI "@rx ^/wp-admin/post\.php"       "id:9599202,phase:1,pass,no
 SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
 SecRule REQUEST_FILENAME "@endsWith /wp-admin/admin-ajax.php" "id:9599210,phase:2,pass,nolog,chain"
     SecRule ARGS:action "@rx ^elementor" "t:none,t:lowercase,ctl:ruleRemoveTargetByTag=attack-sqli;ARGS"
+#
+# 933120 vs WooCommerce checkout (arizot-e.com incident, 2026-08-02).
+# WooCommerce 8.5+ order attribution submits a field literally named
+# wc_order_attribution_user_agent with every checkout AJAX call — and
+# "user_agent" is an entry in php-config-directives.data, so CRS 933120
+# (PHP config directive found, PL1/CRITICAL, +5 = anomaly threshold) fires
+# on EVERY legitimate checkout: on the flat arg at ?wc-ajax=checkout and
+# via the serialized post_data blob at ?wc-ajax=update_order_review. A few
+# field edits in one session cross the appsec-native scenario threshold and
+# hand a paying customer a 4h IP ban mid-purchase.
+# Drop ONLY 933120's inspection of ONLY those two args, ONLY on wc-ajax
+# endpoints. All other rules still inspect both args (a real attack value
+# there is still caught), and 933120 stays active everywhere else.
+SecRule REQUEST_URI "@contains wc-ajax=" "id:9599300,phase:1,pass,nolog,ctl:ruleRemoveTargetById=933120;ARGS:post_data,ctl:ruleRemoveTargetById=933120;ARGS:wc_order_attribution_user_agent"
 `
 }
 
