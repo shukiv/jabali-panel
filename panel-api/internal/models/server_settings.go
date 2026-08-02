@@ -11,6 +11,11 @@ import (
 type ServerSettings struct {
 	ID         uint8  `gorm:"primaryKey;default:1"                json:"id"`
 	Hostname   string `gorm:"type:varchar(253);not null;default:''" json:"hostname"`
+	// PreviewBase (GH #836, migration 000244) overrides the derived
+	// preview-URL base. Empty = preview.<hostname>. Set a custom domain
+	// (preview.example.com) or a magic-DNS base (203-0-113-7.sslip.io)
+	// when the hostname does not resolve publicly.
+	PreviewBase string `gorm:"type:varchar(253);not null;default:''" json:"preview_base"`
 	PublicIPv4 string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
 	PublicIPv6 string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`
 	NS1Name    string `gorm:"type:varchar(253);not null;default:''" json:"ns1_name"`

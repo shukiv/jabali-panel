@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -31,7 +32,7 @@ const previewManagedBy = "preview"
 const previewStateTTL = 45 * time.Second
 
 type previewState struct {
-	hostname string // panel hostname ("" = preview unavailable)
+	base     string // effective preview base ("" = preview unavailable)
 	certPath string // shared wildcard pair; empty until issued
 	keyPath  string
 }
@@ -48,9 +49,11 @@ func (r *Reconciler) previewStateCached(ctx context.Context) previewState {
 
 	st := previewState{}
 	if r.serverSettings != nil && r.sharedCerts != nil {
-		if srv, err := r.serverSettings.Get(ctx); err == nil && srv != nil && srv.Hostname != "" {
-			st.hostname = srv.Hostname
-			wildcard := models.PreviewWildcardName(srv.Hostname)
+		if srv, err := r.serverSettings.Get(ctx); err == nil && srv != nil {
+			st.base = models.EffectivePreviewBase(srv)
+		}
+		if st.base != "" {
+			wildcard := models.PreviewWildcardName(st.base)
 			if certs, err := r.sharedCerts.ListAll(ctx); err == nil {
 				for i := range certs {
 					if certs[i].Name != wildcard || certs[i].Source != models.SharedCertSourceACME {
@@ -89,55 +92,96 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 		return
 	}
 	srv, err := r.serverSettings.Get(ctx)
-	if err != nil || srv == nil || srv.Hostname == "" {
-		r.log.Warn("preview: domains have temp URLs enabled but no panel hostname is set")
+	if err != nil || srv == nil {
 		return
 	}
-	wildcard := models.PreviewWildcardName(srv.Hostname)
+	base := models.EffectivePreviewBase(srv)
+	if base == "" {
+		r.log.Warn("preview: domains have temp URLs enabled but neither preview_base nor a hostname is set")
+		return
+	}
+	wildcard := models.PreviewWildcardName(base)
+	// DNS + DNS-01 cert only make sense when a locally-hosted zone
+	// contains the base. A foreign base (sslip.io magic DNS, or a custom
+	// domain whose DNS lives elsewhere — GH #836) already resolves
+	// externally; previews then serve HTTP-only and the fallback vhost
+	// still applies.
+	zone := r.findZoneForPreviewBase(ctx, base)
 
 	// 1. Shared wildcard cert row (issued by reconcileAcmeSharedCerts).
-	certs, err := r.sharedCerts.ListAll(ctx)
-	if err == nil {
-		found := false
-		for i := range certs {
-			if certs[i].Name == wildcard {
-				found = true
-				break
+	// Skipped for foreign bases: DNS-01 places the challenge TXT through
+	// the local pdns, which cannot answer for a zone it does not host.
+	if zone != nil {
+		if certs, cerr := r.sharedCerts.ListAll(ctx); cerr == nil {
+			found := false
+			for i := range certs {
+				if certs[i].Name == wildcard {
+					found = true
+					break
+				}
 			}
-		}
-		if !found {
-			sansJSON := `["` + wildcard + `"]`
-			now := time.Now().UTC()
-			row := &models.SharedCertificate{
-				ID:        ids.NewULID(),
-				Name:      wildcard,
-				UserID:    nil, // server-wide
-				SANs:      &sansJSON,
-				Source:    models.SharedCertSourceACME,
-				CreatedAt: now,
-				UpdatedAt: now,
-			}
-			if cerr := r.sharedCerts.Create(ctx, row); cerr != nil {
-				r.log.Error("preview: create wildcard cert row failed", "err", cerr)
-			} else {
-				r.log.Info("preview: requested wildcard certificate", "name", wildcard)
+			if !found {
+				sansJSON := `["` + wildcard + `"]`
+				now := time.Now().UTC()
+				row := &models.SharedCertificate{
+					ID:        ids.NewULID(),
+					Name:      wildcard,
+					UserID:    nil, // server-wide
+					SANs:      &sansJSON,
+					Source:    models.SharedCertSourceACME,
+					CreatedAt: now,
+					UpdatedAt: now,
+				}
+				if cerr := r.sharedCerts.Create(ctx, row); cerr != nil {
+					r.log.Error("preview: create wildcard cert row failed", "err", cerr)
+				} else {
+					r.log.Info("preview: requested wildcard certificate", "name", wildcard)
+				}
 			}
 		}
 	}
 
-	// 2. Wildcard A/AAAA records in the hostname zone. The panel-primary
-	// domain's reconcileDNSZone pass pushes the zone every tick, so a row
-	// insert here is live on the next push.
-	zone, err := r.dnsZones.FindByName(ctx, srv.Hostname)
-	if err != nil {
-		r.log.Warn("preview: hostname zone not found in dns_zones — preview DNS cannot be published", "hostname", srv.Hostname, "err", err)
-		return
+	// 2. Wildcard A/AAAA records in the base's zone (local zones only).
+	if zone == nil {
+		r.log.Info("preview: base has no locally-hosted zone — DNS + cert are managed externally, previews serve via the external resolution", "base", base)
+	} else if rows, lerr := r.dnsRecords.ListByZoneID(ctx, zone.ID); lerr != nil {
+		r.log.Error("preview: list base zone records failed", "err", lerr)
+	} else {
+		r.ensurePreviewWildcardRecords(ctx, zone, wildcard, srv, rows)
 	}
-	rows, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
-	if err != nil {
-		r.log.Error("preview: list hostname zone records failed", "err", err)
-		return
+
+	// 3. Catch-all vhost — applies for EVERY base, foreign ones
+	// included: unknown slugs must land on the branded 404, not the
+	// default-vhost drop. Content-hash gated agent-side; re-sent each
+	// tick so a cert issued later upgrades it to TLS.
+	if r.agent != nil {
+		st := r.previewStateCached(ctx)
+		fbParams := map[string]any{"base": base}
+		// The fallback must join the IP-specific listen pools (M24
+		// per-domain binds) or nginx never considers it for connections
+		// to the public IP — see the agent-side comment.
+		if srv.PublicIPv4 != "" {
+			fbParams["listen_ipv4"] = srv.PublicIPv4
+		}
+		if srv.PublicIPv6 != "" {
+			fbParams["listen_ipv6"] = srv.PublicIPv6
+		}
+		if st.certPath != "" {
+			fbParams["ssl_cert_path"] = st.certPath
+			fbParams["ssl_key_path"] = st.keyPath
+		}
+		fbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if _, err := r.agent.Call(fbCtx, "preview.fallback_apply", fbParams); err != nil {
+			r.log.Warn("preview: fallback vhost apply failed", "err", err)
+		}
+		cancel()
 	}
+}
+
+// ensurePreviewWildcardRecords converges the wildcard A/AAAA rows for
+// base inside its locally-hosted zone. The zone's owning domain pushes
+// it to pdns every tick, so a row insert here is live on the next push.
+func (r *Reconciler) ensurePreviewWildcardRecords(ctx context.Context, zone *models.DNSZone, wildcard string, srv *models.ServerSettings, rows []models.DNSRecord) {
 	have := map[string]bool{}
 	for i := range rows {
 		if rows[i].Name == wildcard {
@@ -172,33 +216,20 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 	if srv.PublicIPv6 != "" && !have["AAAA"] {
 		mk("AAAA", srv.PublicIPv6)
 	}
+}
 
-	// 3. Catch-all vhost for previews that don't exist (typo, disabled
-	// or deleted domain): branded 404 instead of the default-vhost drop.
-	// Content-hash gated agent-side — a per-tick no-op once in place;
-	// re-sent each tick so a cert issued later upgrades it to TLS.
-	if r.agent != nil {
-		st := r.previewStateCached(ctx)
-		fbParams := map[string]any{"base": models.PreviewWildcardBase(srv.Hostname)}
-		// The fallback must join the IP-specific listen pools (M24
-		// per-domain binds) or nginx never considers it for connections
-		// to the public IP — see the agent-side comment.
-		if srv.PublicIPv4 != "" {
-			fbParams["listen_ipv4"] = srv.PublicIPv4
+// findZoneForPreviewBase walks the base's parent chain until a local
+// dns_zones row matches ("preview.example.com" tries itself, then
+// "example.com", …). nil = no locally-hosted zone serves the base.
+func (r *Reconciler) findZoneForPreviewBase(ctx context.Context, base string) *models.DNSZone {
+	labels := strings.Split(strings.TrimSuffix(base, "."), ".")
+	for i := 0; i < len(labels)-1; i++ {
+		candidate := strings.Join(labels[i:], ".")
+		if z, err := r.dnsZones.FindByName(ctx, candidate); err == nil && z != nil {
+			return z
 		}
-		if srv.PublicIPv6 != "" {
-			fbParams["listen_ipv6"] = srv.PublicIPv6
-		}
-		if st.certPath != "" {
-			fbParams["ssl_cert_path"] = st.certPath
-			fbParams["ssl_key_path"] = st.keyPath
-		}
-		fbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		if _, err := r.agent.Call(fbCtx, "preview.fallback_apply", fbParams); err != nil {
-			r.log.Warn("preview: fallback vhost apply failed", "err", err)
-		}
-		cancel()
 	}
+	return nil
 }
 
 // previewParams returns the agent payload additions for one domain, or
@@ -208,11 +239,11 @@ func (r *Reconciler) previewParams(ctx context.Context, domain *models.Domain) m
 		return nil
 	}
 	st := r.previewStateCached(ctx)
-	if st.hostname == "" {
+	if st.base == "" {
 		return nil
 	}
 	out := map[string]string{
-		"preview_host": models.PreviewHost(domain.Name, st.hostname),
+		"preview_host": models.PreviewHost(domain.Name, st.base),
 	}
 	if st.certPath != "" {
 		out["preview_cert_path"] = st.certPath

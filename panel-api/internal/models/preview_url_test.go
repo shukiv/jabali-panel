@@ -9,14 +9,24 @@ func TestPreviewNaming(t *testing.T) {
 	if got := PreviewSlug("Example.COM."); got != "example-com" {
 		t.Errorf("slug must lowercase + strip trailing dot, got %q", got)
 	}
-	if got := PreviewHost("example.com", "host.tld"); got != "example-com.preview.host.tld" {
+	if got := PreviewHost("example.com", "preview.host.tld"); got != "example-com.preview.host.tld" {
 		t.Errorf("host = %q", got)
 	}
 	if got := PreviewHost("example.com", ""); got != "" {
-		t.Errorf("no hostname must yield empty preview host, got %q", got)
+		t.Errorf("no base must yield empty preview host, got %q", got)
 	}
-	if got := PreviewWildcardName("host.tld"); got != "*.preview.host.tld" {
+	if got := PreviewWildcardName("preview.host.tld"); got != "*.preview.host.tld" {
 		t.Errorf("wildcard = %q", got)
+	}
+	// GH #836: settings override wins over the derived hostname base.
+	if got := EffectivePreviewBase(&ServerSettings{Hostname: "host.tld"}); got != "preview.host.tld" {
+		t.Errorf("derived base = %q", got)
+	}
+	if got := EffectivePreviewBase(&ServerSettings{Hostname: "host.tld", PreviewBase: "*.Preview.Example.COM."}); got != "preview.example.com" {
+		t.Errorf("override base must normalize, got %q", got)
+	}
+	if got := EffectivePreviewBase(&ServerSettings{}); got != "" {
+		t.Errorf("no hostname, no base -> empty, got %q", got)
 	}
 }
 

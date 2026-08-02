@@ -91,6 +91,7 @@ func (h *serverSettingsHandler) get(c *gin.Context) {
 
 type updateServerSettingsRequest struct {
 	Hostname                 *string          `json:"hostname,omitempty"`
+	PreviewBase              *string          `json:"preview_base,omitempty"`
 	PublicIPv4               *string          `json:"public_ipv4,omitempty"`
 	PublicIPv6               *string          `json:"public_ipv6,omitempty"`
 	NS1Name                  *string          `json:"ns1_name,omitempty"`
@@ -285,6 +286,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 
 	if req.Hostname != nil {
 		current.Hostname = strings.TrimSpace(*req.Hostname)
+	}
+	if req.PreviewBase != nil {
+		current.PreviewBase = models.NormalizePreviewBase(*req.PreviewBase)
 	}
 	if req.PublicIPv4 != nil {
 		current.PublicIPv4 = strings.TrimSpace(*req.PublicIPv4)
@@ -996,6 +1000,11 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 func ValidateServerSettings(s *models.ServerSettings) error {
 	if s.Hostname != "" && !isValidHostname(s.Hostname) {
 		return fmt.Errorf("invalid hostname")
+	}
+	// GH #836: preview base must be a bare hostname (the wildcard label
+	// is implied; NormalizePreviewBase already stripped "*." and case).
+	if s.PreviewBase != "" && !isValidHostname(s.PreviewBase) {
+		return fmt.Errorf("preview_base: invalid hostname")
 	}
 	// IPv4
 	for label, v := range map[string]string{"public_ipv4": s.PublicIPv4, "ns1_ipv4": s.NS1IPv4, "ns2_ipv4": s.NS2IPv4} {

@@ -82,6 +82,7 @@ import { LogRetentionCard } from "./LogRetentionCard";
 type ServerSettings = {
   id: number;
   hostname: string;
+  preview_base?: string;
   public_ipv4: string;
   public_ipv6: string;
   ns1_name: string;
@@ -159,6 +160,7 @@ const GeneralSettingsTab = () => {
     try {
       const resp = await apiClient.patch<ServerSettings>("/admin/settings", {
         hostname: values.hostname,
+        preview_base: values.preview_base || "",
         public_ipv4: values.public_ipv4,
         public_ipv6: values.public_ipv6 || "",
         admin_email: values.admin_email || "",
@@ -232,6 +234,30 @@ const GeneralSettingsTab = () => {
               extra="Fully-qualified name for this server (e.g. panel.example.com)."
             >
               <Input placeholder="panel.example.com" />
+            </Form.Item>
+            <Form.Item
+              label="Preview URL base"
+              name="preview_base"
+              rules={[
+                {
+                  pattern:
+                    /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/,
+                  message: "Invalid hostname",
+                },
+              ]}
+              extra={
+                <>
+                  Domain previews serve at &lt;site&gt;.&lt;base&gt;. Empty ={" "}
+                  <code>preview.&lt;hostname&gt;</code>. If this server's
+                  hostname doesn't resolve publicly, set a custom domain you
+                  control (e.g. <code>preview.example.com</code>, wildcard
+                  pointed here) or a magic-DNS base like{" "}
+                  <code>203-0-113-7.sslip.io</code> (your IP with dashes —
+                  resolves without any DNS setup; previews serve over HTTP).
+                </>
+              }
+            >
+              <Input placeholder="preview.example.com (optional)" allowClear />
             </Form.Item>
           </Col>
           <Col xs={24} md={12}>

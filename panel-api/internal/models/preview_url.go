@@ -16,23 +16,44 @@ func PreviewSlug(domainName string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSuffix(domainName, ".")), ".", "-")
 }
 
-// PreviewHost returns the full preview hostname for a domain under the
-// panel hostname. Empty when hostname is unset — callers skip preview
-// wiring entirely in that case.
-func PreviewHost(domainName, panelHostname string) string {
-	if panelHostname == "" || domainName == "" {
+// EffectivePreviewBase resolves the base every preview host hangs off:
+// server_settings.preview_base when set (GH #836 — custom domain or
+// magic-DNS base like 203-0-113-7.sslip.io), else the derived
+// "preview.<hostname>". Empty when neither is configured — callers skip
+// preview wiring entirely in that case.
+func EffectivePreviewBase(srv *ServerSettings) string {
+	if srv == nil {
 		return ""
 	}
-	return PreviewSlug(domainName) + "." + PreviewWildcardBase(panelHostname)
+	if b := NormalizePreviewBase(srv.PreviewBase); b != "" {
+		return b
+	}
+	if srv.Hostname == "" {
+		return ""
+	}
+	return "preview." + strings.TrimSuffix(strings.ToLower(srv.Hostname), ".")
 }
 
-// PreviewWildcardBase is the label the wildcard DNS record + cert cover:
-// "preview.<hostname>".
-func PreviewWildcardBase(panelHostname string) string {
-	return "preview." + strings.TrimSuffix(strings.ToLower(panelHostname), ".")
+// NormalizePreviewBase canonicalises operator input: lowercase, no
+// leading "*." (the wildcard is implied), no trailing dot, no
+// whitespace.
+func NormalizePreviewBase(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.TrimPrefix(v, "*.")
+	return strings.TrimSuffix(v, ".")
 }
 
-// PreviewWildcardName is the DNS/SAN wildcard: "*.preview.<hostname>".
-func PreviewWildcardName(panelHostname string) string {
-	return "*." + PreviewWildcardBase(panelHostname)
+// PreviewHost returns the full preview hostname for a domain under the
+// given base. Empty when either is unset.
+func PreviewHost(domainName, base string) string {
+	if base == "" || domainName == "" {
+		return ""
+	}
+	return PreviewSlug(domainName) + "." + base
+}
+
+// PreviewWildcardName is the DNS/SAN wildcard covering every preview
+// host under base.
+func PreviewWildcardName(base string) string {
+	return "*." + base
 }

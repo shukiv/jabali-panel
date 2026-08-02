@@ -455,11 +455,13 @@ func (h *domainHandler) list(c *gin.Context) {
 			}
 		}
 		if needsPreview {
-			if srv, sErr := h.cfg.ServerSettings.Get(c.Request.Context()); sErr == nil && srv != nil && srv.Hostname != "" {
-				for i := range rows {
-					if rows[i].TempURLEnabled {
-						u := "https://" + models.PreviewHost(rows[i].Name, srv.Hostname)
-						rows[i].TempURL = &u
+			if srv, sErr := h.cfg.ServerSettings.Get(c.Request.Context()); sErr == nil && srv != nil {
+				if base := models.EffectivePreviewBase(srv); base != "" {
+					for i := range rows {
+						if rows[i].TempURLEnabled {
+							u := "https://" + models.PreviewHost(rows[i].Name, base)
+							rows[i].TempURL = &u
+						}
 					}
 				}
 			}

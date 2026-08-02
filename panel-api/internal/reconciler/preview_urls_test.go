@@ -204,23 +204,52 @@ func TestReconcilePreviewInfra_AppliesFallbackVhost(t *testing.T) {
 	}
 }
 
+// GH #836: a foreign base (magic DNS / externally-managed domain) skips
+// local DNS records and the DNS-01 cert row — both are impossible for a
+// zone pdns doesn't host — but the fallback vhost still applies with
+// that base, and previews serve via the external resolution.
+func TestReconcilePreviewInfra_ForeignBaseSkipsDNSAndCert(t *testing.T) {
+	certs := &fakePreviewCertRepo{}
+	zones := &fakePreviewZoneRepo{zone: &models.DNSZone{ID: "Z1", Name: "host.tld"}}
+	recs := &fakePreviewRecordRepo{}
+	r := previewReconciler(certs, zones, recs)
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{
+		Hostname: "host.tld", PreviewBase: "203-0-113-7.sslip.io", PublicIPv4: "203.0.113.7",
+	}}
+	ag := &fakePreviewAgent{}
+	r.agent = ag
+
+	r.reconcilePreviewInfra(context.Background(), enabledPreviewDomains())
+
+	if len(certs.created) != 0 {
+		t.Errorf("foreign base must not create a DNS-01 cert row: %+v", certs.created)
+	}
+	if len(recs.created) != 0 {
+		t.Errorf("foreign base must not write local DNS records: %+v", recs.created)
+	}
+	if len(ag.calls) != 1 || ag.calls[0]["base"] != "203-0-113-7.sslip.io" {
+		t.Errorf("fallback vhost must still apply with the foreign base: %+v", ag.calls)
+	}
+}
+
 func TestPreviewStateCacheTTL(t *testing.T) {
 	certs := &fakePreviewCertRepo{}
 	zones := &fakePreviewZoneRepo{zone: &models.DNSZone{ID: "Z1", Name: "host.tld"}}
 	r := previewReconciler(certs, zones, &fakePreviewRecordRepo{})
 
 	st1 := r.previewStateCached(context.Background())
-	if st1.hostname != "host.tld" {
-		t.Fatalf("hostname = %q", st1.hostname)
+	if st1.base != "preview.host.tld" {
+		t.Fatalf("base = %q", st1.base)
 	}
 	// Mutate the underlying settings; within TTL the cache must hold.
 	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "other.tld"}}
-	if st2 := r.previewStateCached(context.Background()); st2.hostname != "host.tld" {
+	if st2 := r.previewStateCached(context.Background()); st2.base != "preview.host.tld" {
 		t.Error("cache must serve within TTL")
 	}
-	// Expire and re-read.
+	// Expire and re-read — and a preview_base override wins (GH #836).
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "other.tld", PreviewBase: "203-0-113-7.sslip.io"}}
 	r.previewAt = time.Now().Add(-2 * previewStateTTL)
-	if st3 := r.previewStateCached(context.Background()); st3.hostname != "other.tld" {
-		t.Error("expired cache must re-read settings")
+	if st3 := r.previewStateCached(context.Background()); st3.base != "203-0-113-7.sslip.io" {
+		t.Errorf("expired cache must re-read settings incl. preview_base, got %q", st3.base)
 	}
 }
