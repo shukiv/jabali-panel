@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -274,9 +275,83 @@ func TestBuildCronServiceContent(t *testing.T) {
 	// path, not Environment=PATH, so the unit must add the per-user wrapper
 	// dir via ExecSearchPath for bare `php`/`php8.5` to follow the user's
 	// pinned version instead of /usr/bin/php.
-	if !contains(content, "ExecSearchPath=/home/testuser/.jabali/bin") {
-		t.Error("cron unit must set ExecSearchPath to the per-user .jabali/bin wrapper dir")
+	//
+	// JAB-182: assert the FULL value, not just the prefix. The prefix-only
+	// assertion this replaced passed happily while ExecSearchPath listed the
+	// wrapper dir and nothing else, which is what broke every non-php cron.
+	if !contains(content, "ExecSearchPath=/home/testuser/.jabali/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin\n") {
+		t.Error("cron unit ExecSearchPath must be the wrapper dir followed by the standard system dirs")
 	}
+}
+
+// TestCronExecSearchPathIncludesSystemDirs guards a failure whose whole
+// signature was silence: 5,650 cron jobs on one host exiting 203/EXEC in 30
+// days, having run no user code at all.
+//
+// ExecSearchPath REPLACES systemd's default binary search path — it does not
+// prepend to it. Listing only /home/<user>/.jabali/bin therefore made every
+// bare command that is not a jabali-provided wrapper unresolvable. `php` and
+// `php8.5` kept working, because those are precisely the names the wrapper dir
+// supplies, so the unit looked correct while `wp`, `git`, `rsync`, `node` and
+// `composer` all died before executing a line.
+//
+// Confirmed against systemd 255 rather than inferred from the docs:
+//
+//	systemd-run --property=ExecSearchPath=/tmp/empty --wait wp --version  -> 203
+//	systemd-run --property=ExecSearchPath=/tmp/empty --wait git --version -> 203
+//	systemd-run --wait wp --version                                       -> runs
+//
+// The wrapper dir must stay FIRST (that is GH #299's pinned-version fix), and
+// the system dirs must follow.
+func TestCronExecSearchPathIncludesSystemDirs(t *testing.T) {
+	cmd := &cronvalidate.Command{Argv: []string{"wp", "cron", "event", "run", "--due-now"}}
+	content := buildCronServiceContent("job1", "Nightly", cmd, "testuser", []string{"/var/www/site1"})
+
+	searchPath := unitDirectiveValue(content, "ExecSearchPath")
+	if searchPath == "" {
+		t.Fatal("cron unit has no ExecSearchPath — bare `php` would resolve to the " +
+			"system default instead of the user's pinned version (GH #299)")
+	}
+
+	dirs := strings.Split(searchPath, ":")
+	if dirs[0] != "/home/testuser/.jabali/bin" {
+		t.Errorf("ExecSearchPath starts with %q, want the per-user wrapper dir first "+
+			"so a bare `php` follows the user's pinned version", dirs[0])
+	}
+	for _, want := range []string{"/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin"} {
+		found := false
+		for _, d := range dirs {
+			if d == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("ExecSearchPath is missing %s. It REPLACES systemd's default "+
+				"search path, so anything not listed here fails 203/EXEC before the "+
+				"job runs — wp, git, rsync, node, composer (JAB-182). Got: %s",
+				want, searchPath)
+		}
+	}
+
+	// The two must not drift: ExecSearchPath resolves the ExecStart binary,
+	// Environment=PATH is what a `#!/usr/bin/env php` shebang reads. A command
+	// resolvable by one and not the other fails in a way that looks like the
+	// script is broken.
+	if envPath := unitDirectiveValue(content, "Environment"); envPath != "PATH="+searchPath {
+		t.Errorf("Environment=%q and ExecSearchPath=%q disagree; a command found by "+
+			"one and not the other fails confusingly", envPath, searchPath)
+	}
+}
+
+// unitDirectiveValue returns the value of the first `key=` line in a systemd
+// unit, or "" when absent.
+func unitDirectiveValue(unit, key string) string {
+	for _, line := range strings.Split(unit, "\n") {
+		if strings.HasPrefix(line, key+"=") {
+			return strings.TrimPrefix(line, key+"=")
+		}
+	}
+	return ""
 }
 
 func TestBuildCronTimerContent(t *testing.T) {

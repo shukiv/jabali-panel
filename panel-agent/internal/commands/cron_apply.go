@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/cronvalidate"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // cronApplyParams is the input for cron.apply command.
@@ -279,19 +279,37 @@ func buildCronServiceContent(jobID, name string, cmd *cronvalidate.Command, user
 		condDocroot = "ConditionPathIsDirectory=" + docroot + "\n"
 	}
 
-	// ExecSearchPath prepends the per-user wrapper dir to systemd's binary
+	// ExecSearchPath puts the per-user wrapper dir FIRST in systemd's binary
 	// search for ExecStart= (GH #299). systemd resolves the ExecStart binary
 	// against the MANAGER's path, NOT Environment=PATH — so a bare `php`
 	// resolved to /usr/bin/php (system default), ignoring the user's pinned
 	// version, and `php8.5` only worked because /usr/bin/php8.5 happened to
 	// exist. With .jabali/bin first, bare `php` follows the user's pinned
 	// wrapper (.jabali/bin/php -> their version) and `php8.5` follows
-	// .jabali/bin/php8.5, falling through to /usr/bin for anything not there.
-	// A version that is installed NOWHERE yields a clean 203/EXEC failure —
-	// never a silent wrong-version run. Environment=PATH is kept because wp's
-	// `#!/usr/bin/env php` shebang reads the running process's PATH, not
-	// ExecSearchPath. (GH #184, #256, #299.)
+	// .jabali/bin/php8.5. A version installed NOWHERE yields a clean 203/EXEC
+	// failure — never a silent wrong-version run.
+	//
+	// ExecSearchPath REPLACES the default search path, it does not prepend to
+	// it (JAB-182). Listing only binDir therefore made every bare command that
+	// is NOT a jabali wrapper unresolvable — `wp`, `git`, `rsync`, `node`,
+	// `composer` — each failing 203/EXEC before the job ran a single line.
+	// Measured on a host: 5,650 silent failures in 30 days. Only `php*` worked,
+	// because those are exactly the names .jabali/bin provides, which is what
+	// made it look like the path was falling through to /usr/bin when it was
+	// not. Verified with systemd 255:
+	//
+	//   systemd-run --property=ExecSearchPath=/tmp/empty --wait wp --version
+	//     -> 203     (and bare `git` likewise, though it is in /usr/bin)
+	//   systemd-run --wait wp --version
+	//     -> runs
+	//
+	// So the wrapper dir goes first and the standard system dirs follow — the
+	// same list as Environment=PATH, built from one variable so the two cannot
+	// drift apart again. Environment=PATH is still needed separately because
+	// wp's `#!/usr/bin/env php` shebang reads the running process's PATH, not
+	// ExecSearchPath. (GH #184, #256, #299, JAB-182.)
 	binDir := "/home/" + username + "/.jabali/bin"
+	searchPath := binDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 	return fmt.Sprintf(`[Unit]
 Description=Jabali cron job %s (%s)
 After=default.target
@@ -306,8 +324,8 @@ Environment=PATH=%s
 WorkingDirectory=%%h
 %s
 `, jobID, name, condDocroot,
-		binDir,
-		binDir+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+		searchPath,
+		searchPath,
 		execStart)
 }
 
