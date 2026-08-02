@@ -3030,6 +3030,14 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/mail/stats:
+    get:
+      tags: [Mail]
+      summary: Mail statistics history + storage drilldown
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: query, name: hours, required: false, schema: { type: integer, minimum: 1, maximum: 2160, default: 24 } } ]
+      responses: { "200": { description: OK } }
+
   /admin/mail/queue:
     get:
       tags: [Mail]
