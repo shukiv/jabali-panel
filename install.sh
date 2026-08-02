@@ -2392,15 +2392,21 @@ install_php_pool_template() {
 install_disabled_page() {
   _log "installing branded disabled page"
 
-  # Create the directory with proper permissions
+  # Create the directories with proper permissions
   install -d -m 0755 /var/www/jabali-disabled
   # GH error pages: shared docroot for the branded 404/403/500 pages
   # (vhost error_page -> /var/www/jabali-errors). Files are converged from
   # the editable page_template rows by the reconciler within one tick.
   install -d -m 0755 /var/www/jabali-errors
+  # GH #860: shared docroot for the opt-in "domain not configured" page,
+  # served by the default catch-all only when the admin enables it.
+  install -d -m 0755 /var/www/jabali-unconfigured
 
-  # Write the disabled page HTML, idempotent via install(1)
-  install -m 0644 /dev/stdin /var/www/jabali-disabled/index.html <<'EOF'
+  # GH #860: the pages are editable page_template rows converged by the
+  # reconciler, so only SEED them here — an unconditional write would
+  # clobber the operator's edit on every `jabali update`.
+  if [[ ! -f /var/www/jabali-disabled/index.html ]]; then
+    install -m 0644 /dev/stdin /var/www/jabali-disabled/index.html <<'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2419,6 +2425,41 @@ install_disabled_page() {
 </body>
 </html>
 EOF
+  fi
+
+  if [[ ! -f /var/www/jabali-unconfigured/index.html ]]; then
+    install -m 0644 /dev/stdin /var/www/jabali-unconfigured/index.html <<'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Domain Not Configured</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1.25rem; color: #222; line-height: 1.5; }
+    h1 { margin-bottom: 0.25em; }
+    .muted { color: #666; margin-top: 0; }
+  </style>
+</head>
+<body>
+  <h1>Domain not configured</h1>
+  <p class="muted">This domain points at this server, but no website has been set up for it yet.</p>
+</body>
+</html>
+EOF
+  fi
+
+  # GH #860: catch-all mode include for the default vhost. Seed the shipped
+  # `return 444` drop; the agent rewrites this file when the admin flips the
+  # unconfigured-domain page toggle, so never overwrite an existing one.
+  if [[ ! -f /etc/nginx/jabali-catchall.conf ]]; then
+    install -m 0644 /dev/stdin /etc/nginx/jabali-catchall.conf <<'EOF'
+# Managed by jabali-agent (page_templates.sync_error_pages) — do not edit.
+# Unconfigured-domain page is DISABLED (default): unknown hosts are dropped
+# without a response, so scanners get nothing to fingerprint.
+return 444;
+EOF
+  fi
 
   _ok "disabled page installed at /var/www/jabali-disabled/"
 }
@@ -6297,6 +6338,14 @@ install_nginx_default_vhost() {
     _die "TLS cert missing: $tls_cert — provision_tls_cert must run first"
   fi
 
+  # GH #860: both location / blocks below include the catch-all mode file.
+  # install_disabled_page seeds it earlier in main(); this is the defensive
+  # re-seed — nginx -t fails box-wide on a missing include file.
+  if [[ ! -f /etc/nginx/jabali-catchall.conf ]]; then
+    printf 'return 444;\n' > /etc/nginx/jabali-catchall.conf
+    chmod 0644 /etc/nginx/jabali-catchall.conf
+  fi
+
   # Default vhost:
   #   - :80 force-redirects everything to https:// (panel is https-only)
   #   - :443 terminates TLS with the panel's self-signed cert and serves
@@ -6340,12 +6389,13 @@ server {
         try_files \$uri =404;
     }
 
-    # 444 = close without response. Any HTTP request on a hostname we
-    # don't know is silently dropped — no redirect to https because
-    # https will just 444 too, and no HTML because we don't want to
-    # leak "this server runs nginx" to random scanners. Domains with
-    # their own vhost match BEFORE this default block, so this only
-    # fires for hosts nginx has no server{} for.
+    # Catch-all mode (GH #860): the include holds either \`return 444\`
+    # (shipped default — close without response so we don't leak "this
+    # server runs nginx" to random scanners) or the branded unconfigured-
+    # domain page when the admin enables it in Server Settings. The agent
+    # rewrites the include; this vhost never changes. Domains with their
+    # own vhost match BEFORE this default block, so this only fires for
+    # hosts nginx has no server{} for.
     #
     # Scoped to location / instead of server-level so the ^~ ACME
     # location above wins for challenge paths. Server-scoped return
@@ -6354,7 +6404,7 @@ server {
     # cert HTTP-01 failed on mx.jabali-panel.com because the default
     # vhost's server-level return 444 won the rewrite race).
     location / {
-        return 444;
+        include /etc/nginx/jabali-catchall.conf;
     }
 }
 
@@ -6409,12 +6459,14 @@ server {
         return 301 https://mail.${JABALI_SRV_HOSTNAME}/;
     }
 
-    # Everything else on an unknown host silently drops. The prior
+    # Everything else on an unknown host follows the catch-all mode
+    # include (GH #860): \`return 444\` by default, or the branded
+    # unconfigured-domain page when enabled. The prior hardcoded
     # behaviour (try_files on /var/www/html → 403) leaked a default
     # vhost for domains without an SSL cert yet and sent users a
     # confusing "403 Forbidden" with the panel's self-signed cert.
     location / {
-        return 444;
+        include /etc/nginx/jabali-catchall.conf;
     }
 }
 
@@ -13504,6 +13556,25 @@ provision_new_software() {
   # every update, so a host that has the DNS module off stops reporting the
   # unconfigured pdns unit as "failed" on the dashboard + Server Status.
   converge_pdns_masking
+
+  # GH #860: retrofit the default-vhost catch-all include onto existing
+  # boxes. install_disabled_page is seed-only now (never clobbers operator
+  # edits), so re-running it here just ensures the docroots + catch-all
+  # file exist; then swap the two hardcoded `return 444;` location bodies
+  # in jabali-default.conf for the include. Without this heal the admin
+  # toggle would silently no-op on every box installed before #860.
+  install_disabled_page
+  local _defvhost=/etc/nginx/sites-available/jabali-default.conf
+  if [[ -f "$_defvhost" ]] && ! grep -q 'jabali-catchall.conf' "$_defvhost"; then
+    sed -i 's|^        return 444;$|        include /etc/nginx/jabali-catchall.conf;|' "$_defvhost"
+    if nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx 2>/dev/null || true
+      _ok "provision: default vhost catch-all include retrofitted (#860)"
+    else
+      _warn "provision: nginx -t failed after catch-all retrofit — reverting"
+      sed -i 's|^        include /etc/nginx/jabali-catchall.conf;$|        return 444;|' "$_defvhost"
+    fi
+  fi
 
   # GH #253: refresh the per-user PHP-FPM pool template so updated installs pick
   # up new shared-hosting defaults (memory_limit, upload sizes, etc.). Idempotent

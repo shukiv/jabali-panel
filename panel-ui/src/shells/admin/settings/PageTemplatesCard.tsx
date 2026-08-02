@@ -11,7 +11,9 @@ import {
   Modal,
   Popconfirm,
   Space,
+  Switch,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from "antd";
@@ -31,7 +33,12 @@ type PageTemplate = {
 };
 
 const LIST_KEY = ["admin", "page-templates"] as const;
+const SETTINGS_KEY = ["admin", "page-templates", "settings"] as const;
 const MAX_BYTES = 128 * 1024;
+
+// GH #860: the unconfigured-domain page only serves when the admin opts in;
+// the shipped default drops unknown hosts without a response (444).
+const UNCONFIGURED_KEY = "domain_unconfigured";
 
 export const PageTemplatesCard = () => {
   const { t } = useTranslation();
@@ -49,6 +56,36 @@ export const PageTemplatesCard = () => {
       return data;
     },
   });
+
+  const settings = useQuery<{ unconfigured_page_enabled: boolean }>({
+    queryKey: SETTINGS_KEY,
+    queryFn: async () => {
+      const { data } = await apiClient.get<{
+        unconfigured_page_enabled: boolean;
+      }>("/admin/settings");
+      return data;
+    },
+  });
+  const [togglingUnconfigured, setTogglingUnconfigured] = useState(false);
+
+  const toggleUnconfigured = async (checked: boolean) => {
+    setTogglingUnconfigured(true);
+    try {
+      await apiClient.patch("/admin/settings", {
+        unconfigured_page_enabled: checked,
+      });
+      qc.invalidateQueries({ queryKey: SETTINGS_KEY });
+      message.success(
+        checked
+          ? "Unconfigured-domain page enabled — unknown hosts now get the branded page"
+          : "Unconfigured-domain page disabled — unknown hosts are dropped without a response",
+      );
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Toggle failed");
+    } finally {
+      setTogglingUnconfigured(false);
+    }
+  };
 
   const openEdit = (row: PageTemplate) => {
     setEditing(row);
@@ -107,6 +144,30 @@ export const PageTemplatesCard = () => {
           renderItem={(row) => (
             <List.Item
               actions={[
+                ...(row.key === UNCONFIGURED_KEY
+                  ? [
+                      <Tooltip
+                        key="serve"
+                        title="Off (default): unknown hosts are dropped with no response, so scanners can't fingerprint the server. On: they get this page instead."
+                      >
+                        <Space size={6}>
+                          <Typography.Text type="secondary">
+                            Serve
+                          </Typography.Text>
+                          <Switch
+                            size="small"
+                            checked={
+                              settings.data?.unconfigured_page_enabled ?? false
+                            }
+                            loading={
+                              togglingUnconfigured || settings.isLoading
+                            }
+                            onChange={toggleUnconfigured}
+                          />
+                        </Space>
+                      </Tooltip>,
+                    ]
+                  : []),
                 <Button
                   key="edit"
                   icon={<EditOutlined />}

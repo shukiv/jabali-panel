@@ -20,6 +20,8 @@ func (PageTemplate) TableName() string { return "page_templates" }
 // rows that no consumer reads.
 const (
 	PageTemplateDomainDefaultIndex = "domain_default_index"
+	PageTemplateDomainDisabled     = "domain_disabled"
+	PageTemplateDomainUnconfigured = "domain_unconfigured"
 	PageTemplateError404           = "error_404"
 	PageTemplateError403           = "error_403"
 	PageTemplateError500           = "error_500"
@@ -30,6 +32,8 @@ const (
 // list endpoint.
 var AllPageTemplateKeys = []string{
 	PageTemplateDomainDefaultIndex,
+	PageTemplateDomainDisabled,
+	PageTemplateDomainUnconfigured,
 	PageTemplateError404,
 	PageTemplateError403,
 	PageTemplateError500,

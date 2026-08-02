@@ -74,6 +74,10 @@ func templateMeta(key string) (label, desc string) {
 	switch key {
 	case models.PageTemplateDomainDefaultIndex:
 		return "Domain default index", "Written as index.html on new domain docroots when no real content is present. Supports {{.Domain}}, {{.Username}}, {{.DocRoot}} placeholders."
+	case models.PageTemplateDomainDisabled:
+		return "Disabled site", "Served for every domain that has been administratively disabled. One shared page — no per-domain placeholders."
+	case models.PageTemplateDomainUnconfigured:
+		return "Unconfigured domain", "Served when a domain resolves to this server but has not been added to the panel. Only shown when the unconfigured-domain page is enabled in Server Settings; by default unknown hosts are dropped without a response."
 	case models.PageTemplateError404:
 		return "404 — Not Found", "Served when a requested resource does not exist."
 	case models.PageTemplateError403:

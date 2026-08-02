@@ -137,6 +137,9 @@ type updateServerSettingsRequest struct {
 	APIEnabled                 *bool `json:"api_enabled,omitempty"`
 	TenantDomainOptionsEnabled *bool `json:"tenant_domain_options_enabled,omitempty"`
 	TenantDocrootEditable      *bool `json:"tenant_docroot_editable,omitempty"`
+	// GH #860: opt-in branded page on the default catch-all for unknown
+	// hosts (default off = keep the 444 drop).
+	UnconfiguredPageEnabled *bool `json:"unconfigured_page_enabled,omitempty"`
 	// TenantNotificationKinds — admin-configurable tenant channel-kind allowlist
 	// (phase 4b).
 	TenantNotificationKinds *models.TenantNotificationKinds `json:"tenant_notification_kinds,omitempty"`
@@ -503,6 +506,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.TenantDocrootEditable != nil {
 		current.TenantDocrootEditable = *req.TenantDocrootEditable
+	}
+	if req.UnconfiguredPageEnabled != nil {
+		current.UnconfiguredPageEnabled = *req.UnconfiguredPageEnabled
 	}
 	if req.TenantNotificationKinds != nil {
 		// Sanitize drops unknown kinds, so a PATCH can never smuggle an

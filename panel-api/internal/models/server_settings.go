@@ -118,6 +118,14 @@ type ServerSettings struct {
 	// nginx domain options (GH #307). Default off.
 	TenantDomainOptionsEnabled bool `gorm:"column:tenant_domain_options_enabled;type:tinyint(1);not null;default:0" json:"tenant_domain_options_enabled"`
 
+	// UnconfiguredPageEnabled serves the branded "domain not configured" page
+	// (page_templates.domain_unconfigured) on the default catch-all vhost for
+	// hosts nginx has no server block for (GH #860). Default off: the shipped
+	// behaviour is `return 444` — drop without a response — so scanners can't
+	// fingerprint the box from an unknown Host. Flipping this on is a
+	// deliberate trade of that stealth for a branded operator page.
+	UnconfiguredPageEnabled bool `gorm:"column:unconfigured_page_enabled;type:tinyint(1);not null;default:0" json:"unconfigured_page_enabled"`
+
 	// TenantDocrootEditable lets a non-admin owner repoint their own domain's
 	// document root within the domain's own tree (GH #526). Default ON — the
 	// edit is confined to /home/<user>/domains/<domain>/, many apps (Laravel et
