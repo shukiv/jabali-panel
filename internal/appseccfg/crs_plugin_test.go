@@ -21,6 +21,12 @@ func TestCRSPluginBefore_Surgical(t *testing.T) {
 		`id:9599300`,
 		`ctl:ruleRemoveTargetById=933120;ARGS:post_data`,
 		`ctl:ruleRemoveTargetById=933120;ARGS:wc_order_attribution_user_agent`,
+		// text/plain must be an allowed request content type (sendBeacon
+		// default; jQuery contentType habit) — pre-seeded WITH the full CRS
+		// default list, not as a lone value, or 901162 skips its defaults and
+		// every normal form post gets blocked instead.
+		`id:9599001`,
+		`|application/x-www-form-urlencoded| |multipart/form-data| |multipart/related| |text/xml| |application/xml| |application/soap+xml| |application/json| |application/cloudevents+json| |application/cloudevents-batch+json| |text/plain|`,
 	}
 	for _, sub := range mustContain {
 		if !strings.Contains(body, sub) {

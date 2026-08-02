@@ -155,6 +155,22 @@ func CRSPluginBefore() string {
 # Elementor-action-gated on admin-ajax — see 9599210 below).
 SecAction "id:9599000,phase:1,nolog,pass,setvar:tx.wordpress-rule-exclusions-plugin_enabled=1"
 #
+# Allow text/plain as a request Content-Type (arizot-e.com incident,
+# 2026-08-02). CRS 920420 blocks any CT outside tx.allowed_request_content_type
+# (+5 critical = instant anomaly block), and the CRS 4.0 default list omits
+# text/plain. But text/plain is what navigator.sendBeacon() sends BY DEFAULT
+# for string payloads, and a common jQuery $.ajax contentType habit in WP
+# plugins (the stg-site street picker GETs its city JSON with it) — so stock
+# WordPress/WooCommerce sites kept crossing the appsec-native threshold and
+# banning real shoppers. cPanel/DirectAdmin stacks don't police CT, so plugin
+# authors never see it. Trade-off: a text/plain body is not parsed into ARGS,
+# so ARGS rules don't inspect such bodies — marginal, since attackers can
+# already pick an allowed CT and almost no PHP endpoint parses text/plain.
+# CRS 901162 only seeds the default when the var is unset, and this plugin
+# file loads before the CRS rule files, so pre-seeding here wins. Full
+# default list (REQUEST-901-INITIALIZATION.conf 901162) + text/plain:
+SecAction "id:9599001,phase:1,nolog,pass,setvar:'tx.allowed_request_content_type=|application/x-www-form-urlencoded| |multipart/form-data| |multipart/related| |text/xml| |application/xml| |application/soap+xml| |application/json| |application/cloudevents+json| |application/cloudevents-batch+json| |text/plain|'"
+#
 # 933120 vs WordPress admin search: editing a custom post type issues
 # /wp-admin/edit.php?...&_wp_http_referer=<double-URL-encoded URL>. The
 # nested URL-inside-a-URL trips CRS 933120 (PHP injection) → php_injection
