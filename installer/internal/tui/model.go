@@ -54,9 +54,17 @@ var (
 	tagStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
 )
 
-// jabaliLogo is the brand logo shown on the welcome screen. It's a chafa
-// render of jabali_logo.png (truecolor block art, luminance-inverted for the
-// dark theme) embedded at build time so there's no ANSI-escaping in source.
+// jabaliLogo is the brand logo shown on the welcome screen: a chafa render of
+// jabali_logo_dark.png as truecolor half-block art, embedded at build time so
+// there's no ANSI-escaping in source.
+//
+// Regenerate with installer/internal/tui/gen-logo.sh — never by hand and never
+// with an ad-hoc chafa invocation. The art must be SELF-CONTAINED: every cell
+// carries an explicit foreground and background, so it cannot inherit a colour
+// and cannot be affected by a reset. chafa emits ESC[0m for transparent
+// regions, and a reset cancels the lipgloss background this TUI sets, which is
+// how the previous art ended up as a bright slab on a dark terminal.
+// TestLogoIsSelfContainedDarkArt enforces the property.
 //
 //go:embed logo.ansi
 var jabaliLogo string
@@ -539,10 +547,14 @@ func (m Model) View() string {
 	// block on it — a solid Width×Height container is reliable where
 	// Place+WhitespaceBackground left the terminal's own background showing
 	// through.
+	// Centre the block on both axes. Left-aligned, the content sat in the
+	// left third of a wide terminal with a large dead area beside it — the
+	// logo is only 56 columns, so on a 200-column window it read as broken
+	// rather than deliberate.
 	return lipgloss.NewStyle().
 		Width(m.width).Height(m.height).
 		Background(bgDark).Foreground(fgLight).
-		Align(lipgloss.Left, lipgloss.Center).
+		Align(lipgloss.Center, lipgloss.Center).
 		Render(content)
 }
 
