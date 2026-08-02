@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/installer/internal/modules"
 )
@@ -128,18 +129,29 @@ func (m Model) logLineWidth() int {
 // streamed-log pane didn't stand out). Solid black also blends with the
 // luminance-inverted logo art, whose untouched cells show the app background.
 var (
+	// The muted greys carry explicit per-profile values (GH #353 follow-up:
+	// "can't read bottom instructions"). Left to lipgloss's automatic
+	// degradation, 243/246/247/252 all land on ANSI "bright black" in an
+	// 8/16-colour terminal — VPS web/serial consoles report exactly that —
+	// which is unreadable on ANY background. On those terminals the muted
+	// hierarchy is unaffordable: degrade to plain white and stay legible.
+	grayHelp  = lipgloss.CompleteColor{TrueColor: "#949494", ANSI256: "246", ANSI: "7"}
+	grayOff   = lipgloss.CompleteColor{TrueColor: "#767676", ANSI256: "243", ANSI: "7"}
+	grayLabel = lipgloss.CompleteColor{TrueColor: "#9e9e9e", ANSI256: "247", ANSI: "7"}
+	grayBox   = lipgloss.CompleteColor{TrueColor: "#d0d0d0", ANSI256: "252", ANSI: "7"}
+
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	helpStyle   = lipgloss.NewStyle().Foreground(grayHelp)
 	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	onStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	offStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	offStyle    = lipgloss.NewStyle().Foreground(grayOff)
 	errStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
-	boxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
-	bgDark      = lipgloss.Color("#000000")
-	fgLight     = lipgloss.Color("#e6e6e6")
+	boxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(grayBox)
+	bgDark      = lipgloss.CompleteColor{TrueColor: "#000000", ANSI256: "16", ANSI: "0"}
+	fgLight     = lipgloss.CompleteColor{TrueColor: "#e6e6e6", ANSI256: "254", ANSI: "7"}
 	appStyle    = lipgloss.NewStyle().Padding(1, 2).Background(bgDark).Foreground(fgLight)
 	logoStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	tagStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	tagStyle    = lipgloss.NewStyle().Foreground(grayHelp)
 )
 
 // themeSGR is the app's foreground+background as a raw escape sequence, or ""
@@ -217,7 +229,12 @@ func bannerView(m Model) string {
 	// top of the terminal — the "hog is up" cutoff.
 	// The art is 17 rows; on a short terminal it pushes the prompt and help
 	// line past the bottom edge, where the container silently truncates them.
-	if m.screen == screenWelcome && !m.tightRows(lipgloss.Height(jabaliLogo)+11) {
+	// The art is raw 24-bit SGR (38;2;R;G;B). A terminal that didn't
+	// negotiate truecolor — VPS web/serial consoles in particular — renders
+	// those sequences as garbage blocks or drops them entirely (GH #353
+	// follow-up), so show it only where it can actually display.
+	if m.screen == screenWelcome && lipgloss.ColorProfile() == termenv.TrueColor &&
+		!m.tightRows(lipgloss.Height(jabaliLogo)+11) {
 		return strings.TrimRight(jabaliLogo, "\n") + "\n" + tag + "\n\n"
 	}
 	return tag + "\n\n"
@@ -937,7 +954,7 @@ func (m *Model) captureSummary(s string) {
 }
 
 var (
-	fieldLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Width(11)
+	fieldLabelStyle = lipgloss.NewStyle().Foreground(grayLabel).Width(11)
 	urlValueStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
 	credValueStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
 	cardStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
@@ -993,7 +1010,7 @@ var (
 	barOKStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	barWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	barHotStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	statLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
+	statLabel    = lipgloss.NewStyle().Foreground(grayLabel)
 )
 
 // statBar renders a compact [████░░░░] bar coloured by load, plus the percent.

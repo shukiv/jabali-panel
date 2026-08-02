@@ -4,6 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 var sgrRe = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
@@ -122,7 +125,7 @@ func TestLogoIsSelfContainedDarkArt(t *testing.T) {
 // The welcome screen is the one place the full art is drawn; every other
 // screen gets the one-line brand so tall screens don't push it off the top.
 func TestBannerShowsFullLogoOnlyOnWelcome(t *testing.T) {
-	t.Parallel()
+	lipgloss.SetColorProfile(termenv.TrueColor)
 
 	welcome := bannerView(Model{screen: screenWelcome})
 	if !strings.Contains(welcome, strings.TrimRight(jabaliLogo, "\n")) {
@@ -132,6 +135,40 @@ func TestBannerShowsFullLogoOnlyOnWelcome(t *testing.T) {
 		if got := bannerView(Model{screen: s}); strings.Contains(got, "\x1b[48;2;") {
 			t.Errorf("screen %v renders block art in its banner; only the welcome "+
 				"screen should, or tall screens scroll the art away", s)
+		}
+	}
+}
+
+// GH #353 follow-up ("can't read bottom instructions"): a 16-colour terminal —
+// VPS web/serial consoles report exactly that — must never receive the
+// truecolor logo art (renders as garbage blocks) nor the ANSI-256 greys the
+// help/off/label styles use on capable terminals (nearest 16-colour match is
+// bright black: unreadable on any background). Under the ANSI profile the
+// greys degrade to plain white and the banner falls back to the text brand.
+func TestSixteenColourConsoleStaysLegible(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.TrueColor) })
+
+	welcome := bannerView(Model{screen: screenWelcome})
+	if strings.Contains(welcome, "\x1b[38;2;") || strings.Contains(welcome, "\x1b[48;2;") {
+		t.Error("welcome banner leaks truecolor sequences on a 16-colour terminal")
+	}
+
+	for name, rendered := range map[string]string{
+		"help":  helpStyle.Render("enter: continue   q: quit"),
+		"off":   offStyle.Render("Mail suite"),
+		"label": fieldLabelStyle.Render("URL"),
+		"tag":   tagStyle.Render("JABALI PANEL"),
+		"box":   boxStyle.Render("log line"),
+	} {
+		if strings.Contains(rendered, "[38;5;") {
+			t.Errorf("%s style emits an ANSI-256 grey on a 16-colour terminal: %q", name, rendered)
+		}
+		if strings.Contains(rendered, "[90m") || strings.Contains(rendered, "[30m") {
+			t.Errorf("%s style degrades to (bright) black — invisible: %q", name, rendered)
+		}
+		if !strings.Contains(rendered, "[37m") {
+			t.Errorf("%s style must degrade to white (37) on a 16-colour terminal: %q", name, rendered)
 		}
 	}
 }
