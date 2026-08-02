@@ -143,6 +143,10 @@ type Reconciler struct {
 	skelMu          sync.Mutex
 	skelWire        []map[string]any
 	skelAt          time.Time
+	// dkim2Applied caches, per mail domain, the DKIM2 signing state last
+	// converged to the agent (GH #648) — see dkim2_reconcile.go.
+	dkim2Mu      sync.Mutex
+	dkim2Applied map[string]bool
 	// errorPagesHash caches the last content hash synced to
 	// /var/www/jabali-errors so the per-tick reconcile only calls the
 	// agent when an admin actually edits an error template.
@@ -610,6 +614,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// editable page_template rows into /var/www/jabali-errors. Hash-gated:
 	// a noop on every tick until an admin edits a template.
 	r.reconcileErrorPages(ctx)
+
+	// GH #648: converge DKIM2 signing across mail domains to the
+	// server_settings toggle. Applied-state-gated — noop steady state.
+	r.reconcileDKIM2(ctx)
 
 	tt.mark("certs_updates_modules")
 

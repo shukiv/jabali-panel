@@ -118,6 +118,13 @@ type ServerSettings struct {
 	// nginx domain options (GH #307). Default off.
 	TenantDomainOptionsEnabled bool `gorm:"column:tenant_domain_options_enabled;type:tinyint(1);not null;default:0" json:"tenant_domain_options_enabled"`
 
+	// DKIM2SigningEnabled adds a DKIM2 chain-of-custody signature (GH #648,
+	// draft-ietf-dkim-dkim2) alongside the classic DKIM signature on every
+	// mail domain's outbound. Needs no DNS change — DKIM2 verifies against
+	// the already-published DKIM1 TXT records by design. Default off while
+	// the spec is a working-group draft; DKIM1 always keeps signing.
+	DKIM2SigningEnabled bool `gorm:"column:dkim2_signing_enabled;type:tinyint(1);not null;default:0" json:"dkim2_signing_enabled"`
+
 	// UnconfiguredPageEnabled serves the branded "domain not configured" page
 	// (page_templates.domain_unconfigured) on the default catch-all vhost for
 	// hosts nginx has no server block for (GH #860). Default off: the shipped

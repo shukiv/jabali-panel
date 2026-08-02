@@ -67,6 +67,7 @@ import { DNSResolversCard } from "./DNSResolversCard";
 import { DNSPermissionsCard } from "./DNSPermissionsCard";
 import { EmailCard } from "./EmailCard";
 import { WebmailToggleCard } from "./WebmailToggleCard";
+import { Dkim2ToggleCard } from "./Dkim2ToggleCard";
 import { ModulesCard } from "./ModulesCard";
 import { StalwartWebadminCard } from "./StalwartWebadminCard";
 import { PageTemplatesCard } from "./PageTemplatesCard";
@@ -1024,6 +1025,7 @@ export const ServerSettingsPage = () => {
         <>
           <EmailCard />
           <WebmailToggleCard />
+          <Dkim2ToggleCard />
           <StalwartWebadminCard />
         </>
       ),
