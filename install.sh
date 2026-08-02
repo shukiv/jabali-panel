@@ -10975,10 +10975,29 @@ install_logrotate() {
   # not 24 hours later on cron tick. -d = debug mode (parse only).
   # Skip when the binary is absent — base apt batch installs it but
   # this function runs on update paths that predate that addition.
+  #
+  # Parse the WHOLE config, not just "$dst". A duplicate log entry — the same
+  # path declared by us and by a package's own drop-in — is invisible when each
+  # file is parsed alone, and it is a hard error that makes logrotate skip an
+  # entire config file and exit 1. That is how maldet's event_log silently
+  # stopped rotating while logrotate.service sat failed (JAB-181). Warn only:
+  # a pre-existing problem in someone else's drop-in must not abort an install.
+  local lr_err=""
   if ! command -v logrotate >/dev/null 2>&1; then
     _warn "logrotate binary missing — skipping parse validation"
-  elif ! logrotate -d "$dst" >/dev/null 2>&1; then
-    _warn "logrotate parse failed for $dst — review syntax"
+  else
+    # -d is parse-only. Errors go to stderr alongside the verbose trace, so
+    # keep stderr and drop stdout, then filter. `|| true` because grep exits 1
+    # on no match, which is the good case. No `head` in the pipeline: under
+    # `set -o pipefail` an early-exiting reader SIGPIPEs the producer and the
+    # assignment fails, which has silently killed installs before.
+    lr_err="$(logrotate -d /etc/logrotate.conf 2>&1 >/dev/null | grep -E '^error:' || true)"
+    if [[ -n "$lr_err" ]]; then
+      _warn "logrotate config has errors — logrotate.service will exit non-zero and SKIP the offending file, so those logs stop rotating:"
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && _warn "  $line"
+      done <<< "$lr_err"
+    fi
   fi
 
   # JAB-104: the install logger falls back to /tmp/jabali_install-<ts>.log

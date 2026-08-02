@@ -97,11 +97,26 @@
     endscript
 }
 
-# inotify_log has no .log suffix so the *.log glob misses it (JAB-154); the
-# maldet real-time monitor (M33) appends to it while running, so name it
-# explicitly here — copytruncate keeps the monitor's open fd writing across
-# the rotation.
-/var/log/maldet/*.log
+# maldet (LMD) ships its OWN /etc/logrotate.d/maldet naming event_log,
+# clamscan_log and audit.log explicitly — the same "package already owns these"
+# situation as the nginx note below, and it bites harder. This block used to
+# open with a `/var/log/maldet/*.log` glob, which matches audit.log. logrotate
+# reads /etc/logrotate.d in name order, so `jabali` claimed it first and
+# `maldet` then collided:
+#
+#   error: maldet:1 duplicate log entry for /var/log/maldet/audit.log
+#   error: found error in file maldet, skipping
+#   logrotate.service: Main process exited, code=exited, status=1/FAILURE
+#
+# A duplicate is a HARD error: logrotate discards maldet's ENTIRE config, so
+# event_log and clamscan_log — which only that file covers — stopped rotating,
+# and the unit sat permanently failed, masking every other rotation error
+# behind noise operators learn to ignore (JAB-181).
+#
+# So claim ONLY what maldet's own config misses: inotify_log has no .log suffix,
+# so its glob never matched it (JAB-154), and the real-time monitor (M33) holds
+# the file open while appending — copytruncate keeps that fd writing across the
+# rotation. Do not re-add a *.log glob here; it overlaps audit.log again.
 /var/log/maldet/inotify_log {
     daily
     rotate 30
