@@ -430,8 +430,8 @@ func newBackupDestinationTestCmd() *cobra.Command {
 				return nil
 			}
 			params := map[string]any{
-				"url":           d.URL,
-				"extra_options": backupwrapperhelpers.ResticOptionsFor(d),
+				"url":  d.URL,
+				"sftp": backupwrapperhelpers.SFTPWireParams(d),
 			}
 			if d.CredentialsRef != nil {
 				params["credentials_ref"] = *d.CredentialsRef

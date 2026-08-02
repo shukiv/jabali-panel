@@ -51,15 +51,15 @@ func homeBackupIgnoreFile(homePath string) (string, bool) {
 }
 
 type backupHomeParams struct {
-	JobID          string   `json:"job_id"`
-	UserID         string   `json:"user_id"`
-	Username       string   `json:"username"`
-	ScheduleID     string   `json:"schedule_id,omitempty"`
-	RepoURL        string   `json:"repo_url,omitempty"`
-	PasswordFile   string   `json:"password_file,omitempty"`
-	CredentialsRef string   `json:"credentials_ref,omitempty"`
-	ExtraOptions   []string `json:"extra_options,omitempty"`
-	Compression    string   `json:"compression,omitempty"`
+	JobID          string            `json:"job_id"`
+	UserID         string            `json:"user_id"`
+	Username       string            `json:"username"`
+	ScheduleID     string            `json:"schedule_id,omitempty"`
+	RepoURL        string            `json:"repo_url,omitempty"`
+	PasswordFile   string            `json:"password_file,omitempty"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
+	Compression    string            `json:"compression,omitempty"`
 	// Folders restricts the backup to these paths under the account home
 	// (relative or absolute-under-home). Empty = whole home (GH #294).
 	Folders []string `json:"folders,omitempty"`
@@ -106,7 +106,7 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, bkInternal("restic missing", err)
 	}
 
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

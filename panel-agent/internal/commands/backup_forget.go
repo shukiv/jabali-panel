@@ -17,13 +17,13 @@ import (
 )
 
 type backupForgetParams struct {
-	JobID          string   `json:"job_id"`
-	UserID         string   `json:"user_id"`
-	Kind           string   `json:"kind"` // job-slot lock key (account_backup|system_backup)
-	RepoURL        string   `json:"repo_url"`
-	CredentialsRef string   `json:"credentials_ref,omitempty"`
-	PasswordFile   string   `json:"password_file,omitempty"`
-	ExtraOptions   []string `json:"extra_options,omitempty"`
+	JobID          string            `json:"job_id"`
+	UserID         string            `json:"user_id"`
+	Kind           string            `json:"kind"` // job-slot lock key (account_backup|system_backup)
+	RepoURL        string            `json:"repo_url"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	PasswordFile   string            `json:"password_file,omitempty"`
+	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 }
 
 type backupForgetResponse struct {
@@ -51,7 +51,7 @@ func backupForgetHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	}
 	defer defaultJobSlots.release("backup", p.UserID, p.RepoURL)
 
-	cfg, cerr := bkResticConfigWithPassword(p.RepoURL, p.CredentialsRef, p.PasswordFile, p.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(p.RepoURL, p.CredentialsRef, p.PasswordFile, p.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

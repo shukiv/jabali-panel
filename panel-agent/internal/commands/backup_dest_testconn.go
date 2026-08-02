@@ -13,26 +13,16 @@ import (
 )
 
 type backupDestTestParams struct {
-	URL            string             `json:"url"`
-	CredentialsRef string             `json:"credentials_ref,omitempty"`
-	ExtraOptions   []string           `json:"extra_options,omitempty"`
-	SFTP           *backupTestSFTPIn  `json:"sftp,omitempty"`
-}
-
-type backupTestSFTPIn struct {
-	Host    string `json:"host"`
-	User    string `json:"user"`
-	Port    int    `json:"port,omitempty"`
-	Path    string `json:"path"`
-	Auth    string `json:"auth"`
-	KeyPath string `json:"key_path,omitempty"`
+	URL            string            `json:"url"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 }
 
 type backupDestTestResult struct {
-	Status         string `json:"status"`
-	StdoutPreview  string `json:"stdout_preview,omitempty"`
-	Stderr         string `json:"stderr,omitempty"`
-	Detail         string `json:"detail,omitempty"`
+	Status        string `json:"status"`
+	StdoutPreview string `json:"stdout_preview,omitempty"`
+	Stderr        string `json:"stderr,omitempty"`
+	Detail        string `json:"detail,omitempty"`
 }
 
 func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -57,7 +47,7 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 		p.URL,
 		backup.DefaultPasswordFile,
 		extraEnv,
-		p.ExtraOptions,
+		bkResticOptions(p.SFTP),
 	)
 	if err != nil {
 		stderrStr := strings.TrimSpace(string(stderr))
@@ -93,7 +83,7 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 				p.URL,
 				backup.DefaultPasswordFile,
 				extraEnv,
-				p.ExtraOptions,
+				bkResticOptions(p.SFTP),
 			)
 			if initErr != nil {
 				initErrStr := strings.TrimSpace(string(initStderr))

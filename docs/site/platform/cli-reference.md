@@ -4993,13 +4993,15 @@ jabali system restore [flags]
 - `--apply` — after staging, apply selected stages onto live host (default true) (default `true`)
 - `--apply-stage` — restrict apply to named stages (repeatable). Empty = panel_db + panel_config + tls (the safe defaults) (default `[]`)
 - `--credentials-ref` — absolute path to env file with backend creds (root:root 0600)
-- `--extra-option` — restic -o KEY=VALUE flag body (repeatable) (default `[]`)
 - `--force` — required — restore overwrites the running panel
 - `--include-accounts` — also restore each linked account
 - `--interactive` — force interactive prompts even when --remote-url is set
 - `--password` — restic password (literal; overrides --password-file). Avoid in shell history; prefer --interactive
 - `--password-file` — restic password file (default: /etc/jabali-panel/restic-repo.password)
 - `--remote-url` — restic repo URL or local path (e.g. sftp:user@host:/path)
+- `--sftp-auth` — SFTP auth mode: key | password (default: ssh config)
+- `--sftp-key` — absolute path to the SSH private key for SFTP
+- `--sftp-port` — SFTP port when not 22 (default `0`)
 - `--snapshot` — system_manifest snapshot ID, or 'latest' to auto-pick newest
 
 #### `jabali system services`

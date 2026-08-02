@@ -49,10 +49,10 @@ type backupRestoreSelectiveParams struct {
 	RestoreHome        bool     `json:"home"`
 	Overwrite          bool     `json:"overwrite"`
 	// Restic dest (optional; empty = default local repo, like materialize).
-	RepoURL        string   `json:"repo_url,omitempty"`
-	CredentialsRef string   `json:"credentials_ref,omitempty"`
-	PasswordFile   string   `json:"password_file,omitempty"`
-	ExtraOptions   []string `json:"extra_options,omitempty"`
+	RepoURL        string            `json:"repo_url,omitempty"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	PasswordFile   string            `json:"password_file,omitempty"`
+	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 }
 
 type backupRestoreSelectiveResult struct {
@@ -97,7 +97,7 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 	}
 	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
 
-	cfg, cerr := bkResticConfigWithPassword(p.RepoURL, p.CredentialsRef, p.PasswordFile, p.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(p.RepoURL, p.CredentialsRef, p.PasswordFile, p.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

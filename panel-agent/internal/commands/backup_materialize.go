@@ -5,12 +5,12 @@
 // `restic restore` step has to happen here as root.
 //
 // Flow:
-//   1. panel-api calls backup.materialize → agent restores snapshot to
-//      /var/lib/jabali-backups/downloads/<job_id>/ as root:jabali 0750.
-//   2. panel-api streams `tar -I zstd -cf -` over the restored dir to
-//      the HTTP client (jabali user can read because of the group).
-//   3. panel-api calls backup.materialize_cleanup → agent rm -rf's the
-//      dir to free the disk.
+//  1. panel-api calls backup.materialize → agent restores snapshot to
+//     /var/lib/jabali-backups/downloads/<job_id>/ as root:jabali 0750.
+//  2. panel-api streams `tar -I zstd -cf -` over the restored dir to
+//     the HTTP client (jabali user can read because of the group).
+//  3. panel-api calls backup.materialize_cleanup → agent rm -rf's the
+//     dir to free the disk.
 //
 // The download root is created lazily on first call. install.sh
 // guarantees the parent /var/lib/jabali-backups exists; the per-job
@@ -44,16 +44,16 @@ type backupMaterializeParams struct {
 	// handler always materializes ALL snapshots tagged job-id=<JobID>
 	// because the manifest snapshot alone holds only manifest.json
 	// (the real data lives in sibling stage=home/db/mail snapshots).
-	SnapshotID     string   `json:"snapshot_id,omitempty"`
-	RepoURL        string   `json:"repo_url,omitempty"`
-	PasswordFile   string   `json:"password_file,omitempty"`
-	CredentialsRef string   `json:"credentials_ref,omitempty"`
-	ExtraOptions   []string `json:"extra_options,omitempty"`
+	SnapshotID     string            `json:"snapshot_id,omitempty"`
+	RepoURL        string            `json:"repo_url,omitempty"`
+	PasswordFile   string            `json:"password_file,omitempty"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 }
 
 type backupMaterializeResult struct {
-	Path     string `json:"path"`
-	Stages   []string `json:"stages"`
+	Path   string   `json:"path"`
+	Stages []string `json:"stages"`
 }
 
 func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -93,7 +93,7 @@ func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, er
 		return nil, fmt.Errorf("mkdir target: %w", err)
 	}
 
-	cfg, cerr := bkResticConfigWithPassword(p.RepoURL, p.CredentialsRef, p.PasswordFile, p.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(p.RepoURL, p.CredentialsRef, p.PasswordFile, p.SFTP)
 	if cerr != nil {
 		return nil, fmt.Errorf("restic config: %w", cerr)
 	}

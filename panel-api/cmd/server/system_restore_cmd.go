@@ -37,7 +37,9 @@ func newSystemRestoreCmd() *cobra.Command {
 	var (
 		remoteURL    string
 		credsRef     string
-		extraOpts    []string
+		sftpPort     int
+		sftpAuth     string
+		sftpKeyPath  string
 		passwordFile string
 		passwordCLI  string
 		snapshot     string
@@ -71,7 +73,7 @@ the running panel.`,
 			useInteractive := interactive || (remoteURL == "" && term.IsTerminal(int(os.Stdin.Fd())))
 			if useInteractive {
 				if err := runInteractiveRestorePrompts(cmd.OutOrStdout(),
-					&remoteURL, &credsRef, &extraOpts, &passwordCLI,
+					&remoteURL, &credsRef, &sftpPort, &sftpAuth, &sftpKeyPath, &passwordCLI,
 					&snapshot, &applyStages, &includeAccts, &apply, &force); err != nil {
 					return err
 				}
@@ -143,7 +145,7 @@ the running panel.`,
 				"repo_url":             remoteURL,
 				"credentials_ref":      credsRef,
 				"password_file":        passwordFileForAgent,
-				"extra_options":        extraOpts,
+				"sftp":                 sftpWireFromURL(remoteURL, sftpPort, sftpAuth, sftpKeyPath),
 				"apply":                apply,
 				"apply_stages":         applyStages,
 			}
@@ -163,7 +165,16 @@ the running panel.`,
 	}
 	cmd.Flags().StringVar(&remoteURL, "remote-url", "", "restic repo URL or local path (e.g. sftp:user@host:/path)")
 	cmd.Flags().StringVar(&credsRef, "credentials-ref", "", "absolute path to env file with backend creds (root:root 0600)")
-	cmd.Flags().StringSliceVar(&extraOpts, "extra-option", nil, "restic -o KEY=VALUE flag body (repeatable)")
+	// JAB-194: --extra-option used to take a raw restic `-o KEY=VALUE` body and
+	// hand it to the agent, which passed it straight into restic's argv. One of
+	// those keys, sftp.command, is the command restic EXECUTES to reach an SFTP
+	// backend, so the wire field was arbitrary command execution as root. The
+	// agent no longer accepts it; these typed flags carry the same capability
+	// (non-default port, explicit key, password auth) and the agent builds the
+	// option itself.
+	cmd.Flags().IntVar(&sftpPort, "sftp-port", 0, "SFTP port when not 22")
+	cmd.Flags().StringVar(&sftpAuth, "sftp-auth", "", "SFTP auth mode: key | password (default: ssh config)")
+	cmd.Flags().StringVar(&sftpKeyPath, "sftp-key", "", "absolute path to the SSH private key for SFTP")
 	cmd.Flags().StringVar(&passwordFile, "password-file", "", "restic password file (default: /etc/jabali-panel/restic-repo.password)")
 	cmd.Flags().StringVar(&passwordCLI, "password", "", "restic password (literal; overrides --password-file). Avoid in shell history; prefer --interactive")
 	cmd.Flags().StringVar(&snapshot, "snapshot", "", "system_manifest snapshot ID, or 'latest' to auto-pick newest")
@@ -203,7 +214,9 @@ func writeTempPassword(pw string) (string, error) {
 func runInteractiveRestorePrompts(
 	w io.Writer,
 	remoteURL, credsRef *string,
-	extraOpts *[]string,
+	sftpPort *int,
+	sftpAuth *string,
+	sftpKeyPath *string,
 	passwordCLI, snapshot *string,
 	applyStages *[]string,
 	includeAccts, apply, force *bool,
@@ -253,19 +266,38 @@ func runInteractiveRestorePrompts(
 		}
 	}
 
-	// Optional extra-options (single line, comma-separated; mostly
-	// for SFTP non-default ports/keys when the dest doesn't already
-	// have them encoded server-side).
-	if len(*extraOpts) == 0 {
-		val, err := promptLine(w, r, "Extra restic -o flags (comma-separated, blank to skip): ")
+	// SFTP transport details, asked only when the repo actually is SFTP.
+	// Typed rather than a free-form `-o` line (JAB-194): the agent builds the
+	// sftp.command option from these, so nothing the operator types here ever
+	// becomes a command the agent executes.
+	if strings.HasPrefix(strings.TrimSpace(*remoteURL), "sftp:") && *sftpPort == 0 && *sftpAuth == "" {
+		portStr, err := promptLine(w, r, "SFTP port (blank = 22): ")
 		if err != nil {
 			return err
 		}
-		for _, p := range strings.Split(strings.TrimSpace(val), ",") {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				*extraOpts = append(*extraOpts, p)
+		if v := strings.TrimSpace(portStr); v != "" {
+			n, cerr := strconv.Atoi(v)
+			if cerr != nil || n < 1 || n > 65535 {
+				return fmt.Errorf("invalid SFTP port %q", v)
 			}
+			*sftpPort = n
+		}
+		auth, err := promptLine(w, r, "SFTP auth (key / password, blank = ssh config): ")
+		if err != nil {
+			return err
+		}
+		switch v := strings.ToLower(strings.TrimSpace(auth)); v {
+		case "", "key", "password":
+			*sftpAuth = v
+		default:
+			return fmt.Errorf("invalid SFTP auth %q — use key or password", v)
+		}
+		if *sftpAuth == "key" {
+			keyPath, err := promptLine(w, r, "SSH private key path (blank = ssh default): ")
+			if err != nil {
+				return err
+			}
+			*sftpKeyPath = strings.TrimSpace(keyPath)
 		}
 	}
 
@@ -286,7 +318,7 @@ func runInteractiveRestorePrompts(
 			"repo_url":        *remoteURL,
 			"credentials_ref": *credsRef,
 			"password_file":   tmp,
-			"extra_options":   *extraOpts,
+			"sftp":            sftpWireFromURL(*remoteURL, *sftpPort, *sftpAuth, *sftpKeyPath),
 		}
 		raw, err := ag.Call(ctx, "system.restore_list_manifests", listParams)
 		if err != nil {
@@ -377,7 +409,9 @@ func runInteractiveRestorePrompts(
 	fmt.Fprintln(w, "─── Summary ───")
 	fmt.Fprintf(w, "  remote URL:    %s\n", *remoteURL)
 	fmt.Fprintf(w, "  creds file:    %s\n", strOrPlaceholder(*credsRef, "(none)"))
-	fmt.Fprintf(w, "  extra opts:    %v\n", *extraOpts)
+	if *sftpPort != 0 || *sftpAuth != "" {
+		fmt.Fprintf(w, "  sftp:          port=%d auth=%s key=%s\n", *sftpPort, *sftpAuth, *sftpKeyPath)
+	}
 	fmt.Fprintf(w, "  snapshot:      %s\n", *snapshot)
 	fmt.Fprintf(w, "  apply stages:  %v\n", *applyStages)
 	fmt.Fprintf(w, "  include accts: %v\n", *includeAccts)
@@ -425,4 +459,43 @@ func strOrPlaceholder(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// sftpWireFromURL builds the typed `sftp` block for an agent restore request.
+//
+// JAB-194: the agent no longer accepts a pre-built `-o sftp.command=...` string
+// — that option is the command restic EXECUTES to reach the backend, so
+// carrying it over the wire handed anything that could reach the agent
+// arbitrary command execution as root. The agent builds it from these fields
+// instead, so nothing an operator types becomes a command.
+//
+// Host/user/path come from the repo URL the operator already supplied
+// (`sftp:user@host:/path`); port, auth mode and key path are the parts that URL
+// cannot express. Returns nil for a non-SFTP repo or one needing no override,
+// which the agent reads as "plain ssh defaults".
+func sftpWireFromURL(remoteURL string, port int, auth, keyPath string) map[string]any {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(remoteURL), "sftp:")
+	if !ok {
+		return nil
+	}
+	if port == 0 && auth == "" && keyPath == "" {
+		return nil // default port, default key, ssh config decides
+	}
+	var user, host, path string
+	if at := strings.Index(rest, "@"); at >= 0 {
+		user, rest = rest[:at], rest[at+1:]
+	}
+	if colon := strings.Index(rest, ":"); colon >= 0 {
+		host, path = rest[:colon], rest[colon+1:]
+	} else {
+		host = rest
+	}
+	return map[string]any{
+		"host":     host,
+		"user":     user,
+		"port":     port,
+		"path":     path,
+		"auth":     auth,
+		"key_path": keyPath,
+	}
 }

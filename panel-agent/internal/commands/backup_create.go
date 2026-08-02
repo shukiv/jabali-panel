@@ -88,10 +88,10 @@ type backupCreateParams struct {
 	// file holding backend credentials (AWS_*, B2_*, SSHPASS, …).
 	// Loaded by the agent and merged into the restic process env.
 	CredentialsRef string `json:"credentials_ref,omitempty"`
-	// ExtraOptions are restic `-o key=value` flag bodies — typically
+	// SFTP carries the typed destination inputs; the agent builds restic's
+	// `-o sftp.command=...` from them itself (JAB-194) — typically
 	// `sftp.command="..."` for SFTP destinations with non-default
 	// auth/port/key.
-	ExtraOptions []string `json:"extra_options,omitempty"`
 	// DestinationKind is the BackupDestination.Kind ("local","sftp",…)
 	// — drives auto-mkdir for SFTP repos that don't yet exist on the
 	// remote host.
@@ -174,11 +174,11 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	defer jl.Close()
 	jl.Printf("account_backup start user_id=%s username=%s databases=%d mailboxes=%d destination=%s",
 		req.UserID, req.Username, len(req.Databases), len(req.Mailboxes), req.RepoURL)
-	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP, req.ExtraOptions); err != nil {
+	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP); err != nil {
 		jl.Printf("ensure_repo_failed=%v", err)
 		return fmt.Errorf("ensure repo: %w", err)
 	}
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return fmt.Errorf("restic config: %w", cerr)
 	}
@@ -268,7 +268,7 @@ func runHomeStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 	body, _ := json.Marshal(backupHomeParams{
 		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
 		ScheduleID: req.ScheduleID, RepoURL: req.RepoURL,
-		CredentialsRef: req.CredentialsRef, ExtraOptions: req.ExtraOptions,
+		CredentialsRef: req.CredentialsRef, SFTP: req.SFTP,
 		Compression: req.Compression, Folders: req.Folders,
 	})
 	out, err := backupHomeHandler(ctx, body)
@@ -300,7 +300,7 @@ func runDatabaseStage(ctx context.Context, req backupCreateParams) []backup.Mani
 		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
 		Databases: req.Databases, ScheduleID: req.ScheduleID,
 		RepoURL: req.RepoURL, CredentialsRef: req.CredentialsRef,
-		ExtraOptions: req.ExtraOptions, Compression: req.Compression,
+		SFTP: req.SFTP, Compression: req.Compression,
 	})
 	out, err := backupDatabasesHandler(ctx, body)
 	if err != nil {
@@ -410,7 +410,7 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 		st.Warnings = []string{"metadata marshal: " + err.Error()}
 		return st
 	}
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		st.Status = backup.StageStatusFailed
 		st.Warnings = []string{"restic config: " + cerr.Error()}
@@ -441,7 +441,7 @@ func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
 		Mailboxes: req.Mailboxes, ScheduleID: req.ScheduleID,
 		RepoURL: req.RepoURL, CredentialsRef: req.CredentialsRef,
-		ExtraOptions: req.ExtraOptions, Compression: req.Compression,
+		SFTP: req.SFTP, Compression: req.Compression,
 	})
 	out, err := backupMailboxesHandler(ctx, body)
 	if err != nil {
@@ -473,11 +473,11 @@ func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 // present.
 func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
-		JobID          string   `json:"job_id"`
-		RepoURL        string   `json:"repo_url,omitempty"`
-		PasswordFile   string   `json:"password_file,omitempty"`
-		CredentialsRef string   `json:"credentials_ref,omitempty"`
-		ExtraOptions   []string `json:"extra_options,omitempty"`
+		JobID          string            `json:"job_id"`
+		RepoURL        string            `json:"repo_url,omitempty"`
+		PasswordFile   string            `json:"password_file,omitempty"`
+		CredentialsRef string            `json:"credentials_ref,omitempty"`
+		SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, bkInvalidArg("malformed JSON body")
@@ -485,7 +485,7 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

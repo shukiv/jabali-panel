@@ -747,7 +747,7 @@ func destWireParams(d *models.BackupDestination) map[string]any {
 	out := map[string]any{
 		"repo_url":         d.URL,
 		"destination_kind": d.Kind,
-		"extra_options":    backupwrapperhelpers.ResticOptionsFor(d),
+		"sftp":             backupwrapperhelpers.SFTPWireParams(d),
 	}
 	if d.CredentialsRef != nil {
 		out["credentials_ref"] = *d.CredentialsRef

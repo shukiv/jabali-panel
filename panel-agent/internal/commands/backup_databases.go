@@ -17,20 +17,20 @@ import (
 )
 
 type backupDatabasesParams struct {
-	JobID             string   `json:"job_id"`
-	UserID            string   `json:"user_id"`
-	Username          string   `json:"username"`
-	Databases         []string `json:"databases"`
+	JobID     string   `json:"job_id"`
+	UserID    string   `json:"user_id"`
+	Username  string   `json:"username"`
+	Databases []string `json:"databases"`
 	// M37: Postgres database names. Same dump → restic --stdin pipe
 	// shape; just swaps mariadb-dump for pg_dump -Fc. Optional —
 	// pre-M37 callers omit and behaviour is unchanged.
-	DatabasesPostgres []string `json:"databases_postgres,omitempty"`
-	ScheduleID        string   `json:"schedule_id,omitempty"`
-	RepoURL           string   `json:"repo_url,omitempty"`
-	PasswordFile   string   `json:"password_file,omitempty"`
-	CredentialsRef    string   `json:"credentials_ref,omitempty"`
-	ExtraOptions      []string `json:"extra_options,omitempty"`
-	Compression    string   `json:"compression,omitempty"`
+	DatabasesPostgres []string          `json:"databases_postgres,omitempty"`
+	ScheduleID        string            `json:"schedule_id,omitempty"`
+	RepoURL           string            `json:"repo_url,omitempty"`
+	PasswordFile      string            `json:"password_file,omitempty"`
+	CredentialsRef    string            `json:"credentials_ref,omitempty"`
+	SFTP              *backupSFTPInputs `json:"sftp,omitempty"`
+	Compression       string            `json:"compression,omitempty"`
 }
 
 type backupDatabasesResult struct {
@@ -87,7 +87,7 @@ func backupDatabasesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 		}
 	}
 
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

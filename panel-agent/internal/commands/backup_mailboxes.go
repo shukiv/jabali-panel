@@ -21,16 +21,16 @@ import (
 )
 
 type backupMailboxesParams struct {
-	JobID          string   `json:"job_id"`
-	UserID         string   `json:"user_id"`
-	Username       string   `json:"username"`
-	Mailboxes      []string `json:"mailboxes"`
-	ScheduleID     string   `json:"schedule_id,omitempty"`
-	RepoURL        string   `json:"repo_url,omitempty"`
-	PasswordFile   string   `json:"password_file,omitempty"`
-	CredentialsRef string   `json:"credentials_ref,omitempty"`
-	ExtraOptions   []string `json:"extra_options,omitempty"`
-	Compression    string   `json:"compression,omitempty"`
+	JobID          string            `json:"job_id"`
+	UserID         string            `json:"user_id"`
+	Username       string            `json:"username"`
+	Mailboxes      []string          `json:"mailboxes"`
+	ScheduleID     string            `json:"schedule_id,omitempty"`
+	RepoURL        string            `json:"repo_url,omitempty"`
+	PasswordFile   string            `json:"password_file,omitempty"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
+	Compression    string            `json:"compression,omitempty"`
 }
 
 type backupMailboxesResult struct {
@@ -108,7 +108,7 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 		}
 	}
 
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

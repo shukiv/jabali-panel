@@ -410,8 +410,8 @@ func runAccountRestorePrompts(
 	// 2. List manifests via agent.
 	fmt.Fprintln(w, "Listing manifest snapshots (this can take a few seconds for remote dests)…")
 	listParams := map[string]any{
-		"repo_url":      picked.URL,
-		"extra_options": backupwrapperhelpers.ResticOptionsFor(picked),
+		"repo_url": picked.URL,
+		"sftp":     backupwrapperhelpers.SFTPWireParams(picked),
 	}
 	if picked.CredentialsRef != nil {
 		listParams["credentials_ref"] = *picked.CredentialsRef
@@ -551,7 +551,7 @@ func buildRestoreParams(
 		"apply_staged":         applyFlag,
 		"repo_url":             picked.URL,
 		"destination_kind":     picked.Kind,
-		"extra_options":        backupwrapperhelpers.ResticOptionsFor(picked),
+		"sftp":                 backupwrapperhelpers.SFTPWireParams(picked),
 	}
 	if picked.CredentialsRef != nil {
 		params["credentials_ref"] = *picked.CredentialsRef

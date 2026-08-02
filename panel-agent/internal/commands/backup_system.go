@@ -55,11 +55,10 @@ type systemBackupParams struct {
 	// ScheduleID is the originating backup_schedules.id when the job
 	// came from the scheduler. Empty for manual admin-create jobs.
 	ScheduleID string `json:"schedule_id,omitempty"`
-	// RepoURL + CredentialsRef + ExtraOptions select the destination
+	// RepoURL + CredentialsRef + SFTP select the destination
 	// repo per ADR-0080. Empty = legacy local repo.
 	RepoURL         string            `json:"repo_url,omitempty"`
 	CredentialsRef  string            `json:"credentials_ref,omitempty"`
-	ExtraOptions    []string          `json:"extra_options,omitempty"`
 	DestinationKind string            `json:"destination_kind,omitempty"`
 	SFTP            *backupSFTPInputs `json:"sftp,omitempty"`
 }
@@ -97,11 +96,11 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	jl := backup.NewJobLogger(req.JobID)
 	defer jl.Close()
 	jl.Printf("system_backup start include_accounts=%v destination=%s", req.IncludeAccounts, req.RepoURL)
-	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP, req.ExtraOptions); err != nil {
+	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP); err != nil {
 		jl.Printf("ensure_repo_failed=%v", err)
 		return fmt.Errorf("ensure repo: %w", err)
 	}
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.SFTP)
 	if cerr != nil {
 		return fmt.Errorf("restic config: %w", cerr)
 	}
@@ -249,10 +248,10 @@ func systemBackupCancelHandler(ctx context.Context, raw json.RawMessage) (any, e
 // snapshot from a real list instead of typing a ULID.
 func systemRestoreListManifestsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
-		RepoURL        string   `json:"repo_url"`
-		CredentialsRef string   `json:"credentials_ref,omitempty"`
-		PasswordFile   string   `json:"password_file,omitempty"`
-		ExtraOptions   []string `json:"extra_options,omitempty"`
+		RepoURL        string            `json:"repo_url"`
+		CredentialsRef string            `json:"credentials_ref,omitempty"`
+		PasswordFile   string            `json:"password_file,omitempty"`
+		SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, bkInvalidArg("malformed JSON body")
@@ -260,7 +259,7 @@ func systemRestoreListManifestsHandler(ctx context.Context, raw json.RawMessage)
 	if req.RepoURL == "" {
 		return nil, bkInvalidArg("repo_url required")
 	}
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}
@@ -328,13 +327,13 @@ func latestSystemManifest(ctx context.Context, c *backup.Client) (string, error)
 // observe restore status interactively without the agent sandbox.
 func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
-		JobID              string   `json:"job_id"`
-		ManifestSnapshotID string   `json:"manifest_snapshot_id"`
-		IncludeAccounts    bool     `json:"include_accounts"`
-		RepoURL            string   `json:"repo_url,omitempty"`
-		CredentialsRef     string   `json:"credentials_ref,omitempty"`
-		PasswordFile       string   `json:"password_file,omitempty"`
-		ExtraOptions       []string `json:"extra_options,omitempty"`
+		JobID              string            `json:"job_id"`
+		ManifestSnapshotID string            `json:"manifest_snapshot_id"`
+		IncludeAccounts    bool              `json:"include_accounts"`
+		RepoURL            string            `json:"repo_url,omitempty"`
+		CredentialsRef     string            `json:"credentials_ref,omitempty"`
+		PasswordFile       string            `json:"password_file,omitempty"`
+		SFTP               *backupSFTPInputs `json:"sftp,omitempty"`
 		// Apply, when true, runs the post-stage apply phase: load
 		// panel_db SQL into MariaDB, rsync panel_config to /etc/jabali-panel,
 		// rsync tls to /etc/letsencrypt. Other stages (mail_state,
@@ -353,7 +352,7 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
 
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}
@@ -382,10 +381,10 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 
 	out := struct {
-		JobID    string               `json:"job_id"`
-		Stages   []backupRestoreStage `json:"stages"`
-		Applied  []string             `json:"applied,omitempty"`
-		ApplyWarnings []string        `json:"apply_warnings,omitempty"`
+		JobID         string               `json:"job_id"`
+		Stages        []backupRestoreStage `json:"stages"`
+		Applied       []string             `json:"applied,omitempty"`
+		ApplyWarnings []string             `json:"apply_warnings,omitempty"`
 	}{JobID: req.JobID}
 
 	stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
@@ -469,8 +468,8 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 // exist (a non-jabali host with the same /etc/jabali-panel layout).
 func resyncDBAccountPasswords(ctx context.Context) ([]string, []string) {
 	type acct struct {
-		mariadbUser string
-		host        string
+		mariadbUser  string
+		host         string
 		passwordFile string
 	}
 	accts := []acct{

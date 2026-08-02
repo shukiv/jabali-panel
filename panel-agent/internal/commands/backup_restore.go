@@ -45,11 +45,11 @@ type backupRestoreParams struct {
 	// TargetUsername is the system account name (matches /etc/passwd).
 	// Required for the apply step to chown home + scope mariadb loads.
 	// API resolves this from the panel users repo before dispatching.
-	TargetUsername string   `json:"target_username,omitempty"`
-	Overwrite      bool     `json:"overwrite"`
-	RepoURL        string   `json:"repo_url,omitempty"`
-	CredentialsRef string   `json:"credentials_ref,omitempty"`
-	ExtraOptions   []string `json:"extra_options,omitempty"`
+	TargetUsername string            `json:"target_username,omitempty"`
+	Overwrite      bool              `json:"overwrite"`
+	RepoURL        string            `json:"repo_url,omitempty"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 	// ApplyStaged: when false the handler stops after materializing
 	// stages into /var/lib/jabali-backups/restore-staging/<job_id>/
 	// (recon mode). Default true → home+db are applied onto the live
@@ -118,7 +118,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
 
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}
@@ -613,10 +613,10 @@ func chownTreeRecursive(root string, uid, gid int) error {
 // renders as a friendly grouping.
 func backupAccountListManifestsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
-		RepoURL        string   `json:"repo_url"`
-		CredentialsRef string   `json:"credentials_ref,omitempty"`
-		PasswordFile   string   `json:"password_file,omitempty"`
-		ExtraOptions   []string `json:"extra_options,omitempty"`
+		RepoURL        string            `json:"repo_url"`
+		CredentialsRef string            `json:"credentials_ref,omitempty"`
+		PasswordFile   string            `json:"password_file,omitempty"`
+		SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
 		// UserID optional; when set returns only that account's
 		// manifests. Useful to narrow when the repo carries many users.
 		UserID string `json:"user_id,omitempty"`
@@ -627,7 +627,7 @@ func backupAccountListManifestsHandler(ctx context.Context, raw json.RawMessage)
 	if req.RepoURL == "" {
 		return nil, bkInvalidArg("repo_url required")
 	}
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

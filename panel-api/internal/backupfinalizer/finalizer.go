@@ -7,11 +7,11 @@
 // on that destination's repo, the job is succeeded full-stop.
 //
 // Finalizer responsibilities:
-//   1. List backup_jobs.status='running'.
-//   2. For each, ask the agent if the manifest snapshot exists on
-//      the destination's repo.
-//   3. If yes -> mark succeeded.
-//   4. If running >4h -> mark failed (safety timeout).
+//  1. List backup_jobs.status='running'.
+//  2. For each, ask the agent if the manifest snapshot exists on
+//     the destination's repo.
+//  3. If yes -> mark succeeded.
+//  4. If running >4h -> mark failed (safety timeout).
 package backupfinalizer
 
 import (
@@ -129,7 +129,7 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 		dest, err := f.deps.Destinations.Get(ctx, *j.DestinationID)
 		if err == nil && dest != nil {
 			statusParams["repo_url"] = dest.URL
-			statusParams["extra_options"] = backupwrapperhelpers.ResticOptionsFor(dest)
+			statusParams["sftp"] = backupwrapperhelpers.SFTPWireParams(dest)
 			if dest.CredentialsRef != nil {
 				statusParams["credentials_ref"] = *dest.CredentialsRef
 			}

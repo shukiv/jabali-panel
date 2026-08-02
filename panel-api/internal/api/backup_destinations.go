@@ -470,7 +470,7 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 	payload := map[string]any{
 		"url":             d.URL,
 		"credentials_ref": credsRef,
-		"extra_options":   backupwrapperhelpers.ResticOptionsFor(d),
+		"sftp":            backupwrapperhelpers.SFTPWireParams(d),
 	}
 	if d.Kind == models.BackupDestinationKindSFTP {
 		if s := d.ExtraOptionsTyped().SFTP; s != nil {
