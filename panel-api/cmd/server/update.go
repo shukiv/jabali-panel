@@ -1285,27 +1285,41 @@ test -x node_modules/.bin/tsc || {
 				" -X git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api.BuildTime=" + buildTime
 			ldflagsAgent := "-s -w -X main.version=" + shortSHA
 
+			// Low-RAM hosts build one binary at a time: three concurrent Go
+			// builds at GOMEMLIMIT=900MiB each overshoot a 2 GB box and the
+			// update dies mid-build (see serializeGoBuildsForMB).
+			serialBuilds := serializeGoBuilds()
 			var wg sync.WaitGroup
-			var apiErr, agentErr error
-			if !apiSkip {
+			spawn := func(fn func()) {
+				if serialBuilds {
+					fn()
+					return
+				}
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
+					fn()
+				}()
+			}
+			if serialBuilds {
+				fmt.Println("  (low RAM: building binaries one at a time)")
+			}
+			var apiErr, agentErr error
+			if !apiSkip {
+				spawn(func() {
 					apiArgs := []string{"build", "-trimpath"}
 					if demoBuild {
 						apiArgs = append(apiArgs, "-tags", "demo")
 					}
 					apiArgs = append(apiArgs, "-ldflags", ldflagsAPI, "-o", repoDir+"/bin/jabali-panel.new", "./panel-api/cmd/server")
 					apiErr = asUser(repoDir, goBin, apiArgs...)
-				}()
+				})
 			}
 			if !agentSkip {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				spawn(func() {
 					agentErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAgent,
 						"-o", repoDir+"/bin/jabali-agent.new", "./panel-agent/cmd/jabali-agent")
-				}()
+				})
 			}
 			// jabali-ssh-shell is a tiny binary built from the same
 			// panel-agent module; always rebuild it when buildSteps runs
@@ -1316,12 +1330,10 @@ test -x node_modules/.bin/tsc || {
 			// favour of this binary (filtered passwd + -c forwarding).
 			var sshShellErr error
 			if !agentSkip {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				spawn(func() {
 					sshShellErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAgent,
 						"-o", repoDir+"/bin/jabali-ssh-shell.new", "./panel-agent/cmd/jabali-ssh-shell")
-				}()
+				})
 			}
 			// jabali-mailhook: the loopback MTA-hook service (disclaimers, GH #233).
 			// Same panel-agent module; rebuild alongside the agent/ssh-shell.

@@ -74,3 +74,29 @@ func shortSHA7(s string) string {
 	}
 	return s
 }
+
+// serializeGoBuildsForMB reports whether the updater must build its Go binaries
+// one at a time instead of concurrently.
+//
+// The updater builds THREE binaries in parallel — panel-api, panel-agent and
+// jabali-ssh-shell. lowRAMGoBuildEnvForMB caps each one at GOMEMLIMIT=900MiB on
+// a small box, but that is a per-process ceiling: three of them at once is a
+// 2700MiB ceiling on a host with 1973MB of RAM, and GOFLAGS=-p=1 does not help
+// because it limits parallelism WITHIN a build, not across builds.
+//
+// Observed on a 2 GB / 2-core box, where `jabali update` died with
+//
+//	go build ... ./panel-api/cmd/server: exit status 1
+//
+// and the identical build run on its own immediately afterwards succeeded.
+// Serial builds cost wall-clock (~30s → ~60s) and buy an update that finishes,
+// which is the better trade on exactly the hosts that cannot afford to fail.
+//
+// Uses the same 2560MB threshold as the tight GOMEMLIMIT tier: if a host needs
+// the aggressive per-process cap, it cannot afford three of them at once.
+func serializeGoBuildsForMB(memMB int) bool {
+	return memMB > 0 && memMB <= 2560
+}
+
+// serializeGoBuilds is the /proc-backed wrapper used by the updater.
+func serializeGoBuilds() bool { return serializeGoBuildsForMB(hostMemMB()) }
