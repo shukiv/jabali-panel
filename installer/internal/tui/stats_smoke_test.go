@@ -19,5 +19,6 @@ func TestSampleSys_Smoke(t *testing.T) {
 	if st.memPct < 0 || st.memPct > 100 {
 		t.Errorf("mem%% out of range: %v", st.memPct)
 	}
-	_ = statsFooter(st) // must not panic
+	_ = statsFooter(st, 0)  // no size yet: natural width, must not panic
+	_ = statsFooter(st, 40) // narrow terminal: must shed segments, not panic
 }

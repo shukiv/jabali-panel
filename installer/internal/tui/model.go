@@ -33,8 +33,96 @@ const (
 	screenResult
 )
 
-// logTail is how many streamed lines the progress pane shows.
-const logTail = 16
+// Layout bounds. The TUI has to be legible in an 80x24 default terminal, not
+// only in a maximised one, so every width below is derived from the actual
+// terminal size and clamped rather than hardcoded.
+const (
+	logTailMax  = 16 // streamed log lines when there is room
+	logTailMin  = 4
+	progressMax = 60 // progress bar never grows past this on a wide screen
+	progressMin = 12
+	// appStyle's Padding(1, 2) costs two columns on each side.
+	appHPad = 4
+	// contentMin keeps arithmetic sane on absurdly narrow terminals; below
+	// this the output is going to be cramped whatever we do.
+	contentMin = 24
+)
+
+// contentWidth is the usable width inside the app padding, or 0 before the
+// first WindowSizeMsg (callers then fall back to their natural size).
+func (m Model) contentWidth() int {
+	if m.width <= 0 {
+		return 0
+	}
+	if w := m.width - appHPad; w > contentMin {
+		return w
+	}
+	return contentMin
+}
+
+// logRows is how many streamed lines the log pane shows: as many as the
+// terminal has room for, between logTailMin and logTailMax. The pane is a
+// FIXED height once chosen so it can't shrink mid-install and leave ghost
+// lines behind.
+func (m Model) logRows() int {
+	if m.height <= 0 {
+		return logTailMax
+	}
+	// Everything else on the installing screen — banner, title, progress bar,
+	// phase line, the log box's own border, help line, stats footer and the
+	// blank lines between them — costs exactly 15 rows. Measured, not
+	// estimated: the first guess here was 14, which overflowed every terminal
+	// by one row and truncated the stats footer. TestScreensFitTheTerminal
+	// pins it, with the log pane forced visible (it defaults to hidden, so a
+	// test that does not set logHidden never exercises this at all).
+	switch n := m.height - 15; {
+	case n > logTailMax:
+		return logTailMax
+	case n < logTailMin:
+		return logTailMin
+	default:
+		return n
+	}
+}
+
+// tightRows reports whether the terminal is too short for a layout that wants
+// `want` rows. Screens use it to drop per-item description lines and show the
+// description for the highlighted entry only — the modules list wanted 27 rows
+// and the config screen 29, neither of which fits a default 80x24 window. The
+// container silently truncates the excess, so without this the help line at
+// the bottom just vanishes.
+func (m Model) tightRows(want int) bool {
+	return m.height > 0 && want > m.height
+}
+
+// fitLine trims a line to the content width, allowing for `indent` columns of
+// leading space.
+func (m Model) fitLine(s string, indent int) string {
+	if w := m.contentWidth(); w > 0 {
+		return truncate(s, w-indent)
+	}
+	return s
+}
+
+// wrap reflows prose to the content width instead of relying on hardcoded
+// newlines, which overflowed narrow terminals and left ragged gaps on wide ones.
+func (m Model) wrap(s string) string {
+	if w := m.contentWidth(); w > 0 {
+		return lipgloss.NewStyle().Width(w).Render(s)
+	}
+	return s
+}
+
+// logLineWidth is how wide a streamed log line may be before it is trimmed.
+// boxStyle costs two border columns and two padding columns. This was a
+// hardcoded 76, which overflowed every terminal narrower than 80 and wrapped
+// each log line into two.
+func (m Model) logLineWidth() int {
+	if w := m.contentWidth(); w > 0 {
+		return fitWidth(w-4, 20, 120)
+	}
+	return 76
+}
 
 // Dark theme (GH #353 tester feedback: the white fill was too bright and the
 // streamed-log pane didn't stand out). Solid black also blends with the
@@ -53,6 +141,58 @@ var (
 	logoStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
 	tagStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
 )
+
+// themeSGR is the app's foreground+background as a raw escape sequence, or ""
+// when the terminal has no colour. Derived by rendering with the real style so
+// it follows whatever colour profile lipgloss negotiated.
+func themeSGR() string {
+	const marker = "\x00"
+	out := lipgloss.NewStyle().Background(bgDark).Foreground(fgLight).Render(marker)
+	if i := strings.Index(out, marker); i > 0 {
+		return out[:i]
+	}
+	return ""
+}
+
+// reassertTheme re-establishes the app colours immediately after every SGR
+// reset in the rendered frame.
+//
+// This exists because of how lipgloss composes: the theme is set by ONE outer
+// style carrying Background(bgDark), but every nested style it renders inside
+// that container terminates with ESC[0m — which clears the background along
+// with the colour it was actually trying to end. Everything after the first
+// nested style on a line then paints on the TERMINAL's default background. On
+// a light terminal that is a white slab straight through the UI: the title and
+// the phase text on the progress screen, the focused field's label and the
+// whole PHP-version row on the config screen. The tell was that UNFOCUSED rows
+// looked right — they use a plain "  " cursor with no nested style, so nothing
+// reset the background.
+//
+// Fixing it at each render site would mean giving ~15 styles an explicit
+// background and remembering to do the same for every style added later, which
+// is exactly the mistake that produced this. Doing it once on the finished
+// frame is provably complete: after any reset, the theme is active again.
+// TestScreensPaintTheirOwnBackground enforces the property.
+func reassertTheme(frame string) string {
+	base := themeSGR()
+	if base == "" {
+		return frame // monochrome terminal: nothing to reassert
+	}
+	// Trailing reset so the theme doesn't leak into whatever the terminal
+	// draws after the frame.
+	return strings.ReplaceAll(frame, ansiReset, ansiReset+base) + ansiReset
+}
+
+const ansiReset = "\x1b[0m"
+
+// renderContent is the frame BEFORE it is placed in the full-terminal
+// container. Split out so tests can measure what the container would clamp:
+// Width()/Height() on the container silently wrap and truncate, so a layout
+// that overflows looks perfectly sized once rendered — the bottom of the UI
+// just quietly goes missing. Measuring here is the only way to see it.
+func (m Model) renderContent(body string) string {
+	return appStyle.Render(bannerView(m) + body)
+}
 
 // jabaliLogo is the brand logo shown on the welcome screen: a chafa render of
 // jabali_logo_dark.png as truecolor half-block art, embedded at build time so
@@ -75,7 +215,9 @@ func bannerView(m Model) string {
 	// Full logo only on the welcome screen; elsewhere a compact one-line brand
 	// so tall screens (modules, config, installing) don't push the art off the
 	// top of the terminal — the "hog is up" cutoff.
-	if m.screen == screenWelcome {
+	// The art is 17 rows; on a short terminal it pushes the prompt and help
+	// line past the bottom edge, where the container silently truncates them.
+	if m.screen == screenWelcome && !m.tightRows(lipgloss.Height(jabaliLogo)+11) {
 		return strings.TrimRight(jabaliLogo, "\n") + "\n" + tag + "\n\n"
 	}
 	return tag + "\n\n"
@@ -239,6 +381,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// The progress bar was a fixed 46 columns, which overflowed and wrapped
+		// on a default 80x24 terminal once the percentage and padding were added.
+		m.progress.Width = fitWidth(m.contentWidth()-8, progressMin, progressMax)
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -427,27 +572,43 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+// body renders the screen-specific portion of the frame, without the banner,
+// the app padding or the full-terminal container. Split out from View so tests
+// can measure the layout before the container clamps it.
+func (m Model) body() string {
 	var b strings.Builder
 	switch m.screen {
 	case screenWelcome:
 		b.WriteString(titleStyle.Render("Jabali Panel installer"))
-		b.WriteString("\n\nModular install: pick a deploy profile, then fine-tune the\noptional modules. Core services (web, database, panel) are\nalways installed.\n\n")
+		b.WriteString("\n\n" + m.wrap("Modular install: pick a deploy profile, then fine-tune the "+
+			"optional modules. Core services (web, database, panel) are always installed.") + "\n\n")
 		b.WriteString(helpStyle.Render("enter: continue   q: quit"))
 	case screenProfile:
 		b.WriteString(titleStyle.Render("Deploy profile"))
 		b.WriteString("\n\n")
+		tight := m.tightRows(len(m.profiles)*2 + 9)
 		for i, p := range m.profiles {
 			cur := "  "
 			if i == m.cursor {
 				cur = cursorStyle.Render("> ")
 			}
-			b.WriteString(fmt.Sprintf("%s%s\n    %s\n", cur, p.Title, helpStyle.Render(p.Desc)))
+			if tight {
+				// One row per entry; the description for the highlighted entry
+				// only, below the list. Two rows each does not fit 24 rows.
+				b.WriteString(fmt.Sprintf("%s%s\n", cur, p.Title))
+				continue
+			}
+			b.WriteString(fmt.Sprintf("%s%s\n    %s\n", cur, p.Title,
+				helpStyle.Render(m.fitLine(p.Desc, 4))))
+		}
+		if tight && m.cursor < len(m.profiles) {
+			b.WriteString("\n" + helpStyle.Render(m.fitLine(m.profiles[m.cursor].Desc, 2)) + "\n")
 		}
 		b.WriteString("\n" + helpStyle.Render("↑/↓: move   enter: select   q: quit"))
 	case screenModules:
 		b.WriteString(titleStyle.Render("Optional modules"))
 		b.WriteString("\n\n")
+		tightMods := m.tightRows(len(m.mods)*2 + 9)
 		for i, mod := range m.mods {
 			cur := "  "
 			if i == m.cursor {
@@ -457,13 +618,24 @@ func (m Model) View() string {
 			if m.selected[mod.Key] {
 				box = onStyle.Render("[x]")
 			}
-			b.WriteString(fmt.Sprintf("%s%s %s\n      %s\n", cur, box, mod.Title, helpStyle.Render(mod.Desc)))
+			if tightMods {
+				b.WriteString(fmt.Sprintf("%s%s %s\n", cur, box, mod.Title))
+				continue
+			}
+			b.WriteString(fmt.Sprintf("%s%s %s\n      %s\n", cur, box, mod.Title,
+				helpStyle.Render(m.fitLine(mod.Desc, 6))))
 		}
-		b.WriteString("\n" + helpStyle.Render("↑/↓: move   space: toggle   enter: continue   q: quit"))
-		b.WriteString("\n" + helpStyle.Render("(dependencies auto-select; conflicts auto-clear)"))
+		if tightMods && m.cursor < len(m.mods) {
+			b.WriteString("\n" + helpStyle.Render(m.fitLine(m.mods[m.cursor].Desc, 2)) + "\n")
+		}
+		b.WriteString("\n" + helpStyle.Render(m.wrap("↑/↓: move   space: toggle   enter: continue   q: quit")))
+		if !tightMods {
+			b.WriteString("\n" + helpStyle.Render("(dependencies auto-select; conflicts auto-clear)"))
+		}
 	case screenConfig:
 		b.WriteString(titleStyle.Render("Configuration"))
 		b.WriteString("\n\n")
+		tightCfg := m.tightRows(len(visibleFields(m.fields, m.selected["dns"]))*2 + 12)
 		for _, i := range visibleFields(m.fields, m.selected["dns"]) {
 			f := m.fields[i]
 			cur := "  "
@@ -475,21 +647,29 @@ func (m Model) View() string {
 				req = helpStyle.Render(" *")
 			}
 			if f.phpSelect {
-				b.WriteString(fmt.Sprintf("%s%s\n    %s\n", cur, f.label, phpChips(f, i == m.focus)))
+				b.WriteString(fmt.Sprintf("%s%s\n%s\n", cur, f.label,
+					phpChips(f, i == m.focus, m.contentWidth())))
+			} else if tightCfg {
+				// Label and value share a row; two rows per field does not fit
+				// a short terminal once the PHP chips and help text are added.
+				b.WriteString(fmt.Sprintf("%s%s%s %s\n", cur, f.label, req, f.input.View()))
 			} else {
 				b.WriteString(fmt.Sprintf("%s%s%s\n    %s\n", cur, f.label, req, f.input.View()))
 			}
 		}
 		if !m.selected["dns"] {
-			b.WriteString("\n" + helpStyle.Render("(DNS module off — nameservers skipped; configure them in Server Settings if you enable DNS later)") + "\n")
+			b.WriteString("\n" + helpStyle.Render(m.wrap("(DNS module off — nameservers skipped; "+
+				"configure them in Server Settings if you enable DNS later)")) + "\n")
 		}
 		if m.configErr != "" {
 			b.WriteString("\n" + errStyle.Render(m.configErr) + "\n")
 		}
-		b.WriteString("\n" + helpStyle.Render("tab/↑↓: move fields   ←→+space: toggle PHP   enter: continue   esc: back"))
+		b.WriteString("\n" + helpStyle.Render(m.wrap("tab/↑↓: move fields   ←→+space: toggle PHP   "+
+			"enter: continue   esc: back")))
 	case screenConfirm:
 		b.WriteString(titleStyle.Render("Confirm"))
-		b.WriteString("\n\nCore: web (nginx + PHP-FPM), database (MariaDB), panel + auth\n\nOptional modules to install:\n")
+		b.WriteString("\n\n" + m.wrap("Core: web (nginx + PHP-FPM), database (MariaDB), panel + auth") +
+			"\n\nOptional modules to install:\n")
 		keys := m.SelectedKeys()
 		if len(keys) == 0 {
 			b.WriteString(helpStyle.Render("  (none — minimal install)") + "\n")
@@ -498,24 +678,39 @@ func (m Model) View() string {
 			b.WriteString(onStyle.Render("  + "+k) + "\n")
 		}
 		b.WriteString("\n" + helpStyle.Render("JABALI_MODULES=") + onStyle.Render(strings.Join(keys, ",")) + "\n")
-		b.WriteString("\nConfiguration:\n")
+		// The configuration echo repeats the screen the operator just left, so
+		// it is the first thing to drop when there are not enough rows. Decide
+		// by MEASURING the assembled frame rather than estimating its height —
+		// the estimate has to account for prose that rewraps with the width,
+		// which is how it kept being wrong by a row.
+		var echo strings.Builder
+		echo.WriteString("\nConfiguration:\n")
 		for _, i := range visibleFields(m.fields, m.selected["dns"]) {
 			f := m.fields[i]
 			v := strings.TrimSpace(f.input.Value())
 			if v == "" {
 				continue
 			}
-			b.WriteString(helpStyle.Render("  "+f.label+": ") + v + "\n")
+			echo.WriteString(helpStyle.Render("  "+f.label+": ") + m.fitLine(v, 4) + "\n")
 		}
+		var tail strings.Builder
 		if m.dryRun {
-			b.WriteString("\n" + helpStyle.Render("(dry run — will preview the plan, not install)") + "\n")
+			tail.WriteString("\n" + helpStyle.Render(m.wrap("(dry run — will preview the plan, not install)")) + "\n")
 		}
-		b.WriteString("\n" + helpStyle.Render("enter/y: install   b: back   q: quit"))
+		tail.WriteString("\n" + helpStyle.Render("enter/y: install   b: back   q: quit"))
+		if m.height <= 0 || lipgloss.Height(m.renderContent(b.String()+echo.String()+tail.String())) <= m.height {
+			b.WriteString(echo.String())
+		}
+		b.WriteString(tail.String())
 	case screenInstalling:
 		b.WriteString(fmt.Sprintf("%s %s\n", m.spinner.View(), titleStyle.Render("Installing…")))
 		b.WriteString("\n" + m.progress.View() + "\n")
 		if m.phase != "" {
-			b.WriteString("\n" + helpStyle.Render("current: ") + m.phase + "\n")
+			// Truncate rather than wrap. A long apt phase used to fold onto a
+			// second line and shove everything below it down, so the layout
+			// twitched every time the phase changed.
+			b.WriteString("\n" + helpStyle.Render("current: ") +
+				truncate(m.phase, m.contentWidth()-len("current: ")) + "\n")
 		}
 		if m.logHidden {
 			b.WriteString("\n" + helpStyle.Render("l: show log   ctrl+c: abort") + "\n")
@@ -523,7 +718,7 @@ func (m Model) View() string {
 			b.WriteString("\n" + boxStyle.Render(m.tailLog()) + "\n")
 			b.WriteString(helpStyle.Render("l: hide log   installing… please wait (ctrl+c aborts)"))
 		}
-		b.WriteString("\n\n" + statsFooter(m.stats))
+		b.WriteString("\n\n" + statsFooter(m.stats, m.contentWidth()))
 	case screenResult:
 		if m.installErr != nil {
 			b.WriteString(errStyle.Render("Install failed"))
@@ -539,39 +734,50 @@ func (m Model) View() string {
 		}
 		b.WriteString("\n" + helpStyle.Render("enter/q: exit"))
 	}
-	content := appStyle.Render(bannerView(m) + b.String())
+	return b.String()
+}
+
+// View composes the full frame: banner + body, placed on a terminal-sized
+// themed canvas, with the theme re-established after every reset.
+func (m Model) View() string {
+	content := m.renderContent(m.body())
 	if m.width <= 0 || m.height <= 0 {
-		return content // no size yet (pre first WindowSizeMsg)
+		return reassertTheme(content) // no size yet (pre first WindowSizeMsg)
 	}
-	// Fill the ENTIRE terminal with the theme background and center the content
+	// Fill the ENTIRE terminal with the theme background and place the content
 	// block on it — a solid Width×Height container is reliable where
 	// Place+WhitespaceBackground left the terminal's own background showing
 	// through.
-	// Centre the block on both axes. Left-aligned, the content sat in the
-	// left third of a wide terminal with a large dead area beside it — the
-	// logo is only 56 columns, so on a 200-column window it read as broken
-	// rather than deliberate.
-	return lipgloss.NewStyle().
+	//
+	// Centred horizontally: left-aligned, the block sat in the left third of a
+	// wide terminal with a large dead area beside it. Top-aligned vertically:
+	// centring both axes left the content floating in the middle of a default
+	// 80x24 window with dead bands above and below, and made the whole UI jump
+	// whenever its height changed (the log pane appearing, a phase line
+	// wrapping). An installer that streams progress should grow downward from
+	// a fixed top edge.
+	return reassertTheme(lipgloss.NewStyle().
 		Width(m.width).Height(m.height).
 		Background(bgDark).Foreground(fgLight).
-		Align(lipgloss.Center, lipgloss.Center).
-		Render(content)
+		Align(lipgloss.Center, lipgloss.Top).
+		Render(content))
 }
 
 // tailLog returns the last logTail streamed lines, ANSI-stripped, for the box.
 func (m Model) tailLog() string {
+	rows := m.logRows()
 	lines := m.logLines
-	if len(lines) > logTail {
-		lines = lines[len(lines)-logTail:]
+	if len(lines) > rows {
+		lines = lines[len(lines)-rows:]
 	}
-	out := make([]string, logTail) // fixed height → box never shrinks (no ghost lines)
-	base := logTail - len(lines)
+	out := make([]string, rows) // fixed height → box never shrinks (no ghost lines)
+	base := rows - len(lines)
 	for i := range out {
 		if i < base {
 			out[i] = ""
 			continue
 		}
-		out[i] = truncate(stripANSI(lines[i-base]), 76)
+		out[i] = truncate(stripANSI(lines[i-base]), m.logLineWidth())
 	}
 	if len(lines) == 0 {
 		out[0] = helpStyle.Render("(waiting for output…)")
@@ -595,16 +801,38 @@ func estimateSteps(keys []string) int {
 	return total
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
+// truncate shortens s to at most width display CELLS, marking the cut with an
+// ellipsis. s must be plain text (no ANSI) — both callers strip it first.
+//
+// Counts runes and display width, not bytes. The previous byte-slicing version
+// could cut a multibyte rune in half and emit mojibake, which matters here
+// because apt's output is UTF-8 and the strings this trims come straight from
+// it.
+func truncate(s string, width int) string {
+	if width <= 0 || lipgloss.Width(s) <= width {
 		return s
 	}
-	return s[:n-1] + "…"
+	if width == 1 {
+		return "…"
+	}
+	var out []rune
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > width-1 {
+			break
+		}
+		out = append(out, r)
+		w += rw
+	}
+	return string(out) + "…"
 }
 
 // phpChips renders the PHP version multi-select as [x]/[ ] chips, highlighting
 // the cursor position when the field is focused.
-func phpChips(f configField, focused bool) string {
+// phpChips lays the version chips out in as many rows as the width needs. As a
+// single row they ran 73 cells, which overflowed anything narrower than ~78.
+func phpChips(f configField, focused bool, width int) string {
 	parts := make([]string, len(f.phpVers))
 	for i, v := range f.phpVers {
 		box := "[ ]"
@@ -621,7 +849,29 @@ func phpChips(f configField, focused bool) string {
 		}
 		parts[i] = chip
 	}
-	return strings.Join(parts, " ")
+	const indent = "    "
+	if width <= 0 {
+		return indent + strings.Join(parts, " ")
+	}
+	var rows []string
+	var row string
+	for _, chip := range parts {
+		candidate := row
+		if candidate != "" {
+			candidate += " "
+		}
+		candidate += chip
+		if row != "" && lipgloss.Width(indent+candidate) > width {
+			rows = append(rows, indent+row)
+			row = chip
+			continue
+		}
+		row = candidate
+	}
+	if row != "" {
+		rows = append(rows, indent+row)
+	}
+	return strings.Join(rows, "\n")
 }
 
 // aptWeight is how many phase-units the long "apt install system packages" step
@@ -779,18 +1029,64 @@ func humanRate(bps float64) string {
 }
 
 // statsFooter is the live system-metrics line shown while installing.
-func statsFooter(s sysStats) string {
-	parts := []string{
-		statBar("CPU", s.cpuPct, 10),
-		statBar("MEM", s.memPct, 10),
+// statsFooter renders the CPU/MEM/NET/DISK strip, dropping segments and
+// shrinking the bars until it fits. It used to be a fixed layout that wrapped
+// onto a second line on a default-width terminal — "DISK 0.0B/s" folding under
+// the rest, which then pushed the frame taller than the window.
+//
+// width <= 0 means "no size yet"; render the full strip at its natural size.
+func statsFooter(s sysStats, width int) string {
+	build := func(barW int, net, io bool) string {
+		var parts []string
+		if barW > 0 {
+			parts = append(parts,
+				statBar("CPU", s.cpuPct, barW),
+				statBar("MEM", s.memPct, barW))
+		} else {
+			// No room for bars at all: percentages only.
+			parts = append(parts,
+				statLabel.Render("CPU ")+fmt.Sprintf("%.0f%%", s.cpuPct),
+				statLabel.Render("MEM ")+fmt.Sprintf("%.0f%%", s.memPct))
+		}
+		if net {
+			parts = append(parts, statLabel.Render("NET ")+humanRate(s.netBps))
+		}
+		if io {
+			parts = append(parts, statLabel.Render("DISK ")+humanRate(s.ioBps))
+		}
+		return strings.Join(parts, statLabel.Render("   "))
 	}
-	if s.haveNet {
-		parts = append(parts, statLabel.Render("NET ")+humanRate(s.netBps))
+	// Widest first; shed the least important thing at each step — optional
+	// segments before bar width, bars entirely only as a last resort.
+	type variant struct {
+		barW    int
+		net, io bool
 	}
-	if s.haveIO {
-		parts = append(parts, statLabel.Render("DISK ")+humanRate(s.ioBps))
+	for _, v := range []variant{
+		{10, s.haveNet, s.haveIO},
+		{10, s.haveNet, false},
+		{10, false, false},
+		{6, false, false},
+		{0, false, false},
+	} {
+		out := build(v.barW, v.net, v.io)
+		if width <= 0 || lipgloss.Width(out) <= width {
+			return out
+		}
 	}
-	return strings.Join(parts, statLabel.Render("   "))
+	return build(0, false, false)
+}
+
+// fitWidth clamps n into [lo, hi].
+func fitWidth(n, lo, hi int) int {
+	switch {
+	case n < lo:
+		return lo
+	case n > hi:
+		return hi
+	default:
+		return n
+	}
 }
 
 // SummaryLines returns the captured "JABALI PANEL — installed" block (URL /
