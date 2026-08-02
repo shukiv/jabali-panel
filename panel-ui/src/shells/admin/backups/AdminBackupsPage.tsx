@@ -318,6 +318,29 @@ export const AdminBackupsPage = () => {
     }
   };
 
+  // GH #502: delete EVERY deletable job of a run behind one confirmation —
+  // a Full Server run holds a job per account, and clearing hundreds of
+  // jobs one dialog at a time made cleanup impractical. Running/queued
+  // jobs are skipped server-side (cancel them first).
+  const handleDeleteRun = async (runID: string) => {
+    try {
+      const resp = await apiClient.delete<{ deleted: number; skipped_running: number; failed: number }>(
+        `/admin/backup-runs/${runID}/jobs`,
+      );
+      const { deleted, skipped_running, failed } = resp.data;
+      if (failed > 0 || skipped_running > 0) {
+        message.warning(
+          `Deleted ${deleted} job(s); ${skipped_running} running/queued skipped, ${failed} failed`,
+        );
+      } else {
+        message.success(`Deleted ${deleted} backup job(s)`);
+      }
+      void reload();
+    } catch (err) {
+      message.error(extractApiError(err, "Bulk delete failed"));
+    }
+  };
+
   const tableRows: TableRow[] = [
     ...runs.map<RunRow>((r) => ({ rowKey: `run:${r.run_id}`, isRun: true, run: r })),
     ...manual.map<ManualRow>((j) => ({ rowKey: `job:${j.id}`, isRun: false, job: j })),
@@ -603,9 +626,28 @@ export const AdminBackupsPage = () => {
                 title: "Actions",
                 render: (_: unknown, row: TableRow) =>
                   row.isRun ? (
-                    <Typography.Link style={{ fontSize: 12 }} onClick={() => toggleRowExpand(row)}>
-                      {expandedKeys.includes(row.rowKey) ? "Collapse" : "Expand to manage"}
-                    </Typography.Link>
+                    <Space>
+                      <Typography.Link style={{ fontSize: 12 }} onClick={() => toggleRowExpand(row)}>
+                        {expandedKeys.includes(row.rowKey) ? "Collapse" : "Expand to manage"}
+                      </Typography.Link>
+                      <RowActions
+                        actions={[
+                          {
+                            key: "delete-all",
+                            label: "Delete all jobs",
+                            icon: <DeleteOutlined />,
+                            danger: true,
+                            onClick: () => handleDeleteRun(row.run.run_id),
+                            confirm: {
+                              title: `Delete all ${row.run.total} job(s) of this run?`,
+                              description:
+                                "Permanently removes every finished job's snapshots from the repository. Running or queued jobs are skipped. Cannot be undone.",
+                              okText: "Delete all",
+                            },
+                          },
+                        ]}
+                      />
+                    </Space>
                   ) : (
                     <RowActions
                       actions={[

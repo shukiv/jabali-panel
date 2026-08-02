@@ -2150,6 +2150,15 @@ paths:
       responses: { "200": { description: OK } }
 
   /admin/backup-runs/{run_id}/jobs:
+    delete:
+      tags: [Backups]
+      summary: Delete every deletable job of a backup run (bulk cleanup, GH #502)
+      description: >
+        Forget-then-delete per job, same semantics as the single delete;
+        running/queued jobs are skipped. Response reports
+        deleted / skipped_running / failed.
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
     get:
       tags: [Backup Runs]
       summary: Jobs backup runs

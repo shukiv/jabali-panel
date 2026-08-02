@@ -109,6 +109,7 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.POST("/backups/restore", h.restore)
 	admin.GET("/backup-runs", h.listRuns)
 	admin.GET("/backup-runs/:run_id/jobs", h.listRunJobs)
+	admin.DELETE("/backup-runs/:run_id/jobs", h.deleteRunJobs)
 	admin.POST("/system/backups", h.systemCreate)
 	admin.GET("/system/backups", h.systemList)
 	admin.POST("/system/backups/:job_id/cancel", h.systemCancel)
@@ -572,11 +573,24 @@ func (h *backupHandler) delete(c *gin.Context) {
 }
 
 // forgetBackup asks the agent to forget+prune the run's snapshots from its
-// destination repo. Resolves the job's destination for repo URL + creds; a job
-// with no destination (or a since-deleted one) falls back to the default local
-// repo. Returns a non-nil error (response already written) on hard failure.
+// destination repo. Returns a non-nil error (response already written) on
+// hard failure. Thin response-writing wrapper around forgetBackupErr so the
+// bulk run-jobs delete (GH #502) can reuse the same forget logic per job
+// without fighting over the response writer.
 func (h *backupHandler) forgetBackup(c *gin.Context, job *models.BackupJob) error {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
+	if err := h.forgetBackupErr(c.Request.Context(), job); err != nil {
+		status, body := translateAgentError(err)
+		c.JSON(status, body)
+		return err
+	}
+	return nil
+}
+
+// forgetBackupErr resolves the job's destination for repo URL + creds (a job
+// with no destination, or a since-deleted one, falls back to the default
+// local repo) and asks the agent to forget+prune the job's snapshots.
+func (h *backupHandler) forgetBackupErr(reqCtx context.Context, job *models.BackupJob) error {
+	ctx, cancel := context.WithTimeout(reqCtx, backupCallTimeout)
 	defer cancel()
 	params := map[string]any{"job_id": job.ID, "user_id": job.UserID, "kind": job.Kind}
 	var dest *models.BackupDestination
@@ -595,18 +609,60 @@ func (h *backupHandler) forgetBackup(c *gin.Context, job *models.BackupJob) erro
 		_, err := h.cfg.Agent.Call(ctx, "backup.forget", params)
 		return err
 	}
-	var ferr error
 	if dest != nil {
-		ferr = backupwrapperhelpers.WithDestPasswordFile(ctx, dest, h.cfg.Agent, h.cfg.SSOKey, call)
-	} else {
-		ferr = call("")
+		return backupwrapperhelpers.WithDestPasswordFile(ctx, dest, h.cfg.Agent, h.cfg.SSOKey, call)
 	}
-	if ferr != nil {
-		status, body := translateAgentError(ferr)
-		c.JSON(status, body)
-		return ferr
+	return call("")
+}
+
+// deleteRunJobs removes EVERY deletable job of a backup run behind one
+// confirmation (GH #502): a Full Server run holds a job per account, and
+// deleting hundreds of jobs one dialog at a time is not an operation, it
+// is a punishment. Per-job semantics match the single delete exactly —
+// forget-then-delete, so a failed forget leaves that row for retry.
+// Running/pending jobs are skipped (cancel them first); the response
+// reports deleted / skipped_running / failed so partial outcomes are
+// visible instead of silently half-done.
+func (h *backupHandler) deleteRunJobs(c *gin.Context) {
+	runID := c.Param("run_id")
+	jobs, err := h.cfg.Jobs.ListByRun(c.Request.Context(), runID)
+	if err != nil {
+		h.cfg.logErr("bulk delete: list run jobs", err, "run_id", runID)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list"})
+		return
 	}
-	return nil
+	if len(jobs) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
+		return
+	}
+	deleted, skippedRunning, failed := 0, 0, 0
+	for i := range jobs {
+		job := &jobs[i]
+		switch job.Status {
+		case models.BackupJobStatusRunning, models.BackupJobStatusQueued:
+			skippedRunning++
+			continue
+		}
+		if h.cfg.Agent != nil {
+			if ferr := h.forgetBackupErr(c.Request.Context(), job); ferr != nil {
+				h.cfg.logErr("bulk delete: forget failed", ferr, "job_id", job.ID)
+				failed++
+				continue
+			}
+		}
+		if derr := h.cfg.Jobs.Delete(c.Request.Context(), job.ID); derr != nil {
+			h.cfg.logErr("bulk delete: db delete failed", derr, "job_id", job.ID)
+			failed++
+			continue
+		}
+		deleted++
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":          "ok",
+		"deleted":         deleted,
+		"skipped_running": skippedRunning,
+		"failed":          failed,
+	})
 }
 
 func (h *backupHandler) get(c *gin.Context) {
