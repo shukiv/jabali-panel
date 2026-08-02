@@ -29,9 +29,9 @@ func (f *memDNSZoneRepo) FindByName(_ context.Context, name string) (*models.DNS
 	}
 	return nil, repository.ErrNotFound
 }
-func (f *memDNSZoneRepo) Create(context.Context, *models.DNSZone) error          { return nil }
-func (f *memDNSZoneRepo) Update(context.Context, *models.DNSZone) error          { return nil }
-func (f *memDNSZoneRepo) Delete(context.Context, string) error                   { return nil }
+func (f *memDNSZoneRepo) Create(context.Context, *models.DNSZone) error { return nil }
+func (f *memDNSZoneRepo) Update(context.Context, *models.DNSZone) error { return nil }
+func (f *memDNSZoneRepo) Delete(context.Context, string) error          { return nil }
 func (f *memDNSZoneRepo) FindByID(context.Context, string) (*models.DNSZone, error) {
 	return nil, repository.ErrNotFound
 }
@@ -80,7 +80,7 @@ func (f *memDNSRecordRepo) ListByZoneID(_ context.Context, zoneID string) ([]mod
 	}
 	return out, nil
 }
-func (f *memDNSRecordRepo) DeleteByZoneID(context.Context, string) error            { return nil }
+func (f *memDNSRecordRepo) DeleteByZoneID(context.Context, string) error { return nil }
 func (f *memDNSRecordRepo) DeleteByZoneIDAndManagedBy(context.Context, string, string) error {
 	return nil
 }

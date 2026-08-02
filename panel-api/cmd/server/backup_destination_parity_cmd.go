@@ -47,8 +47,8 @@ func validateSFTPOpts(s *models.SFTPOptions) error {
 
 func newBackupDestinationRotatePasswordCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "rotate-password <id-or-name>",
-		Short:   "Rotate a backup destination's restic password (revealed once)",
+		Use:   "rotate-password <id-or-name>",
+		Short: "Rotate a backup destination's restic password (revealed once)",
 		Long: "Rotate the restic repository password. The agent re-keys the live " +
 			"repository with the old password before the new one is persisted, so " +
 			"existing snapshots stay recoverable. The new password is shown once.",

@@ -9,9 +9,9 @@ import (
 
 func TestReadOperatorHeader(t *testing.T) {
 	cases := []struct {
-		name      string
-		body      string
-		wantMode  string
+		name          string
+		body          string
+		wantMode      string
 		wantCountries []string
 	}{
 		{"empty file → defaults", "", "", nil},

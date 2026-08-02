@@ -1,9 +1,11 @@
 // System + DB lifecycle CLI parity (Gitea #580/#581/#566/#593). Thin wrappers
 // over the same agent verbs the admin REST handlers use:
-//   system resolver get/set   → system.resolver.get / .set  (#580)
-//   system diagnostic         → system.diagnostic_report     (#581)
-//   system process list/kill  → system.processes / kill_process (#566)
-//   db postgres status/uninstall → db.postgres.status / .uninstall (#593)
+//
+//	system resolver get/set   → system.resolver.get / .set  (#580)
+//	system diagnostic         → system.diagnostic_report     (#581)
+//	system process list/kill  → system.processes / kill_process (#566)
+//	db postgres status/uninstall → db.postgres.status / .uninstall (#593)
+//
 // Destructive ops (process kill, postgres uninstall) are --force gated and
 // CLI-audited; inventory honours --json.
 package main
@@ -225,9 +227,9 @@ func newDBPostgresCmd() *cobra.Command {
 func newDBPostgresUninstallCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "uninstall",
-		Short: "DESTROY PostgreSQL: purge packages + delete all data dirs",
-		Long: "Destructive: purges the PostgreSQL packages and removes /var/lib/postgresql + /etc/postgresql (ALL databases gone). This is NOT 'disable' — to stop/disable reversibly, set postgres_enabled=false via `jabali settings`. Requires --force.",
+		Use:     "uninstall",
+		Short:   "DESTROY PostgreSQL: purge packages + delete all data dirs",
+		Long:    "Destructive: purges the PostgreSQL packages and removes /var/lib/postgresql + /etc/postgresql (ALL databases gone). This is NOT 'disable' — to stop/disable reversibly, set postgres_enabled=false via `jabali settings`. Requires --force.",
 		Args:    cobra.NoArgs,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, _ []string) error {

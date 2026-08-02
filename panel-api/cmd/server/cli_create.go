@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -316,12 +316,12 @@ func cliValidEmail(s string) bool {
 // cliDomainNameRe enforces the structural shape of a hostable domain
 // at the CLI surface. Rules (intentionally narrower than RFC 1035):
 //
-//   * Two or more labels separated by '.', total ≤253 chars.
-//   * Each label 1..63 chars, alphanumeric + hyphen, no leading/trailing
+//   - Two or more labels separated by '.', total ≤253 chars.
+//   - Each label 1..63 chars, alphanumeric + hyphen, no leading/trailing
 //     hyphen.
-//   * Final label (TLD) ≥2 chars, all letters — rejects bare hostnames
+//   - Final label (TLD) ≥2 chars, all letters — rejects bare hostnames
 //     ("invalid"), IP literals ("192.168.1.1"), and numeric "TLDs".
-//   * No spaces (operators forgetting to quote get a clear error
+//   - No spaces (operators forgetting to quote get a clear error
 //     instead of a silently-truncated domain row).
 //
 // Stricter validation (TLD allowlist, .local handling) lives downstream

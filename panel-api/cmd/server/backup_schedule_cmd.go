@@ -136,21 +136,21 @@ func newBackupScheduleGetCmd() *cobra.Command {
 
 func newBackupScheduleCreateCmd() *cobra.Command {
 	var (
-		kind                string
-		cronExpr            string
-		preset              string
-		disabled            bool
-		destinations        []string
-		users               []string
-		includeSystem       bool
-		keepDaily           int
-		keepWeekly          int
-		keepMonthly         int
+		kind          string
+		cronExpr      string
+		preset        string
+		disabled      bool
+		destinations  []string
+		users         []string
+		includeSystem bool
+		keepDaily     int
+		keepWeekly    int
+		keepMonthly   int
 	)
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a backup schedule",
-		Long:  "Create a backup schedule. Use --preset daily|weekly|monthly OR --cron '0 3 * * *'. Multiple --destination flags resolve names or IDs. For account_backup, multiple --user (id|email|username) restrict fan-out.",
+		Use:     "create",
+		Short:   "Create a backup schedule",
+		Long:    "Create a backup schedule. Use --preset daily|weekly|monthly OR --cron '0 3 * * *'. Multiple --destination flags resolve names or IDs. For account_backup, multiple --user (id|email|username) restrict fan-out.",
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)

@@ -106,12 +106,12 @@ func newBackupDestinationGetCmd() *cobra.Command {
 
 func newBackupDestinationCreateCmd() *cobra.Command {
 	var (
-		name      string
-		kind      string
-		url       string
-		envKV     []string
-		envStdin  bool
-		disabled  bool
+		name     string
+		kind     string
+		url      string
+		envKV    []string
+		envStdin bool
+		disabled bool
 	)
 
 	cmd := &cobra.Command{
@@ -204,9 +204,9 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 		clearCreds  bool
 	)
 	cmd := &cobra.Command{
-		Use:     "update <id-or-name>",
-		Short:   "Update a backup destination",
-		Args:    cobra.ExactArgs(1),
+		Use:   "update <id-or-name>",
+		Short: "Update a backup destination",
+		Args:  cobra.ExactArgs(1),
 		// Credential writes (--env/--env-stdin/--sftp-password/--clear-creds)
 		// talk to the agent; structured SFTP field edits and name/url/enable
 		// are DB-only. Require the agent only when a credential flag is set.

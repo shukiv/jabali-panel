@@ -6,9 +6,10 @@
 // DB password untouched.
 //
 // Password resolution matches `user password`:
-//   --password <pwd>    explicit value
-//   --password-stdin    piped, no echo (automation)
-//   (omitted)           auto-generate a strong password + print it once
+//
+//	--password <pwd>    explicit value
+//	--password-stdin    piped, no echo (automation)
+//	(omitted)           auto-generate a strong password + print it once
 package main
 
 import (

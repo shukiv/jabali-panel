@@ -97,12 +97,12 @@ func newDockerAppCatalogCmd() *cobra.Command {
 // docker_app.install to the agent. Mirrors panel-api/internal/api/
 // docker_apps.go install() but with two intentional simplifications:
 //
-//   1. No automatic domains-row creation. The CLI doesn't know which
-//      user owns the row; the operator can wire a domain via
-//      `jabali domain ...` after the install settles.
-//   2. Catalog default ports only. Fine-grained per-port overrides
-//      (host_port, bind, reverse_proxy) belong in the install drawer
-//      — adding flags here would balloon UX without much win.
+//  1. No automatic domains-row creation. The CLI doesn't know which
+//     user owns the row; the operator can wire a domain via
+//     `jabali domain ...` after the install settles.
+//  2. Catalog default ports only. Fine-grained per-port overrides
+//     (host_port, bind, reverse_proxy) belong in the install drawer
+//     — adding flags here would balloon UX without much win.
 //
 // Resource limits, update-mode, and env overrides ARE wired so a
 // scripted ops install can pin the install to specific values.
@@ -171,15 +171,15 @@ func newDockerAppInstallCmd() *cobra.Command {
 			}
 
 			app := &models.DockerApp{
-				ID:              ulid.Make().String(),
-				Slug:            slug,
-				Name:            name,
-				CatalogVersion:  entry.Version,
-				InstanceSlug:    entry.Slug,
-				Status:          models.DockerAppStatusPending,
-				UpdateMode:      updateMode,
-				CPULimit:        nilIfEmpty(cpu),
-				MemoryLimit:     nilIfEmpty(mem),
+				ID:             ulid.Make().String(),
+				Slug:           slug,
+				Name:           name,
+				CatalogVersion: entry.Version,
+				InstanceSlug:   entry.Slug,
+				Status:         models.DockerAppStatusPending,
+				UpdateMode:     updateMode,
+				CPULimit:       nilIfEmpty(cpu),
+				MemoryLimit:    nilIfEmpty(mem),
 			}
 			if pids > 0 {
 				p := pids

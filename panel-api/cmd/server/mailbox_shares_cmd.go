@@ -6,15 +6,16 @@
 // the existing mailbox.share_set agent command on its next sweep.
 // Operator workflow:
 //
-//   jabali mailbox shares list --owner alice@example.com
-//   jabali mailbox shares add --owner alice@example.com \
-//       --shared-with bob@example.com --rights rw
-//   jabali mailbox shares remove --id <ULID>
+//	jabali mailbox shares list --owner alice@example.com
+//	jabali mailbox shares add --owner alice@example.com \
+//	    --shared-with bob@example.com --rights rw
+//	jabali mailbox shares remove --id <ULID>
 //
 // Rights presets:
-//   ro     → mayRead
-//   rw     → mayRead + mayAddItems + mayRemoveItems
-//   admin  → all rights
+//
+//	ro     → mayRead
+//	rw     → mayRead + mayAddItems + mayRemoveItems
+//	admin  → all rights
 package main
 
 import (

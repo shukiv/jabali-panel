@@ -6,9 +6,9 @@
 package main
 
 import (
-	"net"
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strconv"

@@ -29,7 +29,7 @@ func TestPrintDiagReport(t *testing.T) {
 		"https://enclosed.jabali-panel.com/01kyk8m8y79w2y0pns2ywkqg75#pw:", // full link, key intact
 		"Uh9LoSe2h6zL1aBydukkjMcfirs",                                      // password shown
 		"2026-07-28 02:24 UTC",                                             // formatted time, not raw RFC3339
-		"do NOT paste it into a public issue",                             // privacy warning
+		"do NOT paste it into a public issue",                              // privacy warning
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("diagnostic output missing %q\n---\n%s", want, out)

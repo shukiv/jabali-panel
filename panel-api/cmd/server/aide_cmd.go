@@ -28,11 +28,13 @@ import (
 
 // parseAideDiffPaths scans aide --update / aide --check report
 // output for path tokens. AIDE's canonical line shapes:
-//   added: /usr/local/bin/jabali-foo
-//   removed: /etc/foo.conf.old
-//   changed: /usr/local/bin/jabali-bar
-//   File: /usr/local/bin/jabali-baz
-//   f++++++++ /usr/local/bin/jabali-qux  (older AIDE)
+//
+//	added: /usr/local/bin/jabali-foo
+//	removed: /etc/foo.conf.old
+//	changed: /usr/local/bin/jabali-bar
+//	File: /usr/local/bin/jabali-baz
+//	f++++++++ /usr/local/bin/jabali-qux  (older AIDE)
+//
 // We extract the absolute path + dedup. Caller's regex match
 // runs against this slice.
 func parseAideDiffPaths(report string) []string {

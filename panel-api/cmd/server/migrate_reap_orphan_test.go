@@ -14,7 +14,7 @@ import (
 func TestReapOrphanStaging(t *testing.T) {
 	root := t.TempDir()
 	old := time.Now().Add(-30 * 24 * time.Hour) // well past maxAge
-	fresh := time.Now()                          // just created
+	fresh := time.Now()                         // just created
 
 	// mk makes a staging dir with a file inside and sets its mtime.
 	mk := func(name string, mtime time.Time) string {
@@ -31,9 +31,9 @@ func TestReapOrphanStaging(t *testing.T) {
 		return p
 	}
 
-	orphanOld := mk("01ORPHANOLD0000000000000000", old)   // row-less + old  -> reap
+	orphanOld := mk("01ORPHANOLD0000000000000000", old)     // row-less + old  -> reap
 	orphanYoung := mk("01ORPHANYOUNG00000000000000", fresh) // row-less + young -> keep (in-flight guard)
-	liveOld := mk("01LIVEJOB000000000000000000", old)      // has a row + old  -> keep (row pass owns it)
+	liveOld := mk("01LIVEJOB000000000000000000", old)       // has a row + old  -> keep (row pass owns it)
 
 	live := map[string]struct{}{"01LIVEJOB000000000000000000": {}}
 

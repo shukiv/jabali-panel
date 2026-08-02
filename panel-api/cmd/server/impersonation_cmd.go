@@ -107,9 +107,9 @@ func newImpersonationListCmd() *cobra.Command {
 func newImpersonationCreateCmd() *cobra.Command {
 	var admin, target string
 	cmd := &cobra.Command{
-		Use:   "create --admin <admin> --target <user>",
-		Short: "Create a 60-minute impersonation grant for an admin to act as a target user",
-		Args:  cobra.NoArgs,
+		Use:     "create --admin <admin> --target <user>",
+		Short:   "Create a 60-minute impersonation grant for an admin to act as a target user",
+		Args:    cobra.NoArgs,
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if admin == "" || target == "" {

@@ -90,9 +90,9 @@ func newLogAccessCmd() *cobra.Command {
 func newLogAccessCreateCmd() *cobra.Command {
 	var user, logType, domainRef string
 	cmd := &cobra.Command{
-		Use:   "create --user <user> --type <access|error|goaccess> [--domain <domain>]",
-		Short: "Mint a 15-minute log-stream access grant for a user",
-		Args:  cobra.NoArgs,
+		Use:     "create --user <user> --type <access|error|goaccess> [--domain <domain>]",
+		Short:   "Mint a 15-minute log-stream access grant for a user",
+		Args:    cobra.NoArgs,
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if user == "" || logType == "" {

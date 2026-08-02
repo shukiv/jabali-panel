@@ -54,8 +54,8 @@ func newSSLSetCustomCmd() *cobra.Command {
 		keyFile    string
 	)
 	cmd := &cobra.Command{
-		Use:     "set-custom",
-		Short:   "Install an operator-supplied SSL cert + key (JAB-128)",
+		Use:   "set-custom",
+		Short: "Install an operator-supplied SSL cert + key (JAB-128)",
 		Long: "Install a bring-your-own certificate for a domain. The cert must cover\n" +
 			"the domain name. The agent writes the files, the domain switches to\n" +
 			"ssl_mode=custom, and the reconciler re-renders the vhost within a tick.",

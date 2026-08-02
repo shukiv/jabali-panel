@@ -8,10 +8,10 @@ import (
 )
 
 // QA 2026-06-22 regressions:
-//  - duplicate sibling Use names silently shadow a command tree (the `docker`
-//    dup that hid the engine subcommands).
-//  - grouping commands (subcommands, no Run) printed help + exit 0 on an
-//    unknown subcommand; rejectUnknownSubcommands now makes them error.
+//   - duplicate sibling Use names silently shadow a command tree (the `docker`
+//     dup that hid the engine subcommands).
+//   - grouping commands (subcommands, no Run) printed help + exit 0 on an
+//     unknown subcommand; rejectUnknownSubcommands now makes them error.
 func TestCLITree_NoDuplicateSiblingNames(t *testing.T) {
 	var walk func(c *cobra.Command, path string)
 	walk = func(c *cobra.Command, path string) {

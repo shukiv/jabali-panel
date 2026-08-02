@@ -70,7 +70,7 @@ func TestComputeBackfillPlan_SortedByAction(t *testing.T) {
 		"a-add.com":  true,
 	}
 	actual := map[string]actualForwarder{
-		"z-noop.com":  {Addr: "127.0.0.1", Port: 5300},
+		"z-noop.com":   {Addr: "127.0.0.1", Port: 5300},
 		"m-remove.com": {Addr: "127.0.0.1", Port: 5300},
 	}
 	plan := computeBackfillPlan(desired, actual)

@@ -7,8 +7,8 @@ func TestDeriveUsername(t *testing.T) {
 		"admin@jabali-panel.local": "admin",
 		"John.Doe@example.com":     "john_doe",
 		"a+b@x.io":                 "a_b",
-		"123num@x.io":             "u123num",
-		"@weird":                  "_weird",
+		"123num@x.io":              "u123num",
+		"@weird":                   "_weird",
 	}
 	for in, want := range cases {
 		if got := deriveUsername(in); got != want {

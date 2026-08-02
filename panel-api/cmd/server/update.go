@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/db"
 )
 
 // Paths match install.sh defaults. The binary can't replace itself while
@@ -1007,6 +1009,25 @@ fi
 			if fromSource {
 				fmt.Println("  (skipped: --from-source flag)")
 				return nil
+			}
+			// JAB-210: refuse a release whose migrations stop short of the
+			// schema this database is already at. Checked HERE, before the
+			// swap — verifying afterwards would report the very state we are
+			// trying to prevent, which is what happened on the reported box:
+			// the update aborted at `migrate up`, but only after an older
+			// binary had already replaced the newer one on disk.
+			if cfg := sharedCfg; cfg.Database.URL != "" && cfg.Database.URL != "placeholder-until-phase-3" {
+				candidateMax, mErr := maxMigrationVersionInDir(repoDir)
+				if mErr != nil {
+					return fmt.Errorf("schema downgrade check: %w", mErr)
+				}
+				st, sErr := db.State(cfg.Database.URL)
+				if sErr != nil {
+					return fmt.Errorf("schema downgrade check: read live schema version: %w", sErr)
+				}
+				if gErr := guardSchemaDowngrade(candidateMax, st.Version); gErr != nil {
+					return gErr
+				}
 			}
 			ctx := cmd.Context()
 			installed, sha, err := installFromRelease(ctx, repoDir, func(format string, args ...any) {

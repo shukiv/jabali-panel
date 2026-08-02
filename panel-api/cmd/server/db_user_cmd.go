@@ -246,8 +246,8 @@ func newDBUserGrantCmd() *cobra.Command {
 	var dbUserID, dbName, level string
 	var privileges []string
 	cmd := &cobra.Command{
-		Use:     "grant",
-		Short:   "Grant a db user privileges on a database",
+		Use:   "grant",
+		Short: "Grant a db user privileges on a database",
 		Long: `Grants the database user the given privileges on the named
 database. --level is a shortcut for common patterns:
   rw  → SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX

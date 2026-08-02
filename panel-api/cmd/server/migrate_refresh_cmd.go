@@ -23,8 +23,8 @@ func newMigrateRefreshCmd() *cobra.Command {
 		force                           bool
 	)
 	cmd := &cobra.Command{
-		Use:     "refresh",
-		Short:   "Force re-pull (refresh) an already-migrated account from a staged source",
+		Use:   "refresh",
+		Short: "Force re-pull (refresh) an already-migrated account from a staged source",
 		Long: `Overwrites a live migrated account: dest files are mirrored from the
 staged source (--delete, preserving wp-config.php + jabali drop-ins) and the
 dest DB is dropped + reimported. A hardlink snapshot + DB dump are taken FIRST;

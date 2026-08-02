@@ -39,8 +39,8 @@ func TestLowRAMGoBuildEnvForMB(t *testing.T) {
 		memMB int
 		want  []string
 	}{
-		{0, nil},                                                          // unknown RAM → don't tune
-		{-5, nil},                                                         // garbage → don't tune
+		{0, nil},  // unknown RAM → don't tune
+		{-5, nil}, // garbage → don't tune
 		{1990, []string{"GOFLAGS=-p=1", "GOMEMLIMIT=900MiB", "GOGC=40"}},  // 2 GB VPS
 		{2048, []string{"GOFLAGS=-p=1", "GOMEMLIMIT=900MiB", "GOGC=40"}},  // 2 GB
 		{2560, []string{"GOFLAGS=-p=1", "GOMEMLIMIT=900MiB", "GOGC=40"}},  // 2.5 GB edge

@@ -159,7 +159,9 @@ banning CDN POPs on hosts behind Cloudflare.`,
 }
 
 // ufwStatusLineRe matches lines of the form
-//   [ 7] 22/tcp                     ALLOW IN    1.2.3.4
+//
+//	[ 7] 22/tcp                     ALLOW IN    1.2.3.4
+//
 // captured groups: 1=num, 2=port-or-anywhere, 3=proto, 4=action, 5=from
 //
 // UFW formats are stable across the supported Debian releases; we only

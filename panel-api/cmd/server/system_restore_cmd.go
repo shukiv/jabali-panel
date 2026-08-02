@@ -1,9 +1,9 @@
 // `jabali system restore` — operator-facing CLI for bare-metal recovery.
 // Walks the disaster-recovery flow end-to-end. Two modes:
 //
-//   * Scriptable (every flag set): used by install.sh --restore-from
+//   - Scriptable (every flag set): used by install.sh --restore-from
 //     and ops automation.
-//   * Interactive (flags missing on a TTY, or --interactive): prompts
+//   - Interactive (flags missing on a TTY, or --interactive): prompts
 //     the operator for the remote URL, restic password (hidden),
 //     credentials env path (optional), snapshot pick from a numbered
 //     list of available system_backup manifests, and the stage set

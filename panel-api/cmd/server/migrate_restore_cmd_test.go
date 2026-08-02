@@ -11,8 +11,8 @@ func TestCpmoveSourceUser(t *testing.T) {
 		{"/home/u/domains/x/public_html/cpmove-newpuzzleans.tar.gz", "newpuzzleans"},
 		{"cpmove-bob123.tar.gz", "bob123"},
 		{"cpmove-user_with-dots.v2.tar.gz", "user_with-dots.v2"},
-		{"backup-1.2.3_bob.tar.gz", ""},  // pkgacct shape — not auto-derived
-		{"cpmove-bob.tar", ""},           // not .tar.gz
+		{"backup-1.2.3_bob.tar.gz", ""}, // pkgacct shape — not auto-derived
+		{"cpmove-bob.tar", ""},          // not .tar.gz
 		{"random.tar.gz", ""},
 		{"", ""},
 	}

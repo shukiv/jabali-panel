@@ -30,7 +30,7 @@ func TestCLIReferenceGolden(t *testing.T) {
 		t.Fatalf("read golden (run with -update to create): %v", err)
 	}
 	if string(want) != got {
-		t.Errorf("CLI reference drifted from the command tree.\n"+
+		t.Errorf("CLI reference drifted from the command tree.\n" +
 			"Regenerate: go test ./panel-api/cmd/server -run TestCLIReferenceGolden -update")
 	}
 }

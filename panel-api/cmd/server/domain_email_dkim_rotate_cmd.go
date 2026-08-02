@@ -6,13 +6,13 @@
 //   - Post-incident credential rotation
 //
 // Pipeline mirrors domain.email_enable's DNS publish path:
-//   1. Resolve domain by name or ID
-//   2. agent.domain.email_dkim_rotate — generates fresh keypair,
-//      snapshots old key to <domain>.key.old, reloads Stalwart
-//   3. UpdateEmailState writes the new dkim_public_key into
-//      domains row
-//   4. Wipe old M6-managed DNS records + republish so the new
-//      DKIM TXT lands at jabali._domainkey.<domain>
+//  1. Resolve domain by name or ID
+//  2. agent.domain.email_dkim_rotate — generates fresh keypair,
+//     snapshots old key to <domain>.key.old, reloads Stalwart
+//  3. UpdateEmailState writes the new dkim_public_key into
+//     domains row
+//  4. Wipe old M6-managed DNS records + republish so the new
+//     DKIM TXT lands at jabali._domainkey.<domain>
 //
 // On agent failure: bail before DB + DNS writes (no partial state).
 // On DB / DNS failure post-agent-success: surface as warning + leave
