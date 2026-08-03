@@ -1549,6 +1549,21 @@ func cpanelRestoreCallback(
 			warnings = append(warnings, "appconfigs: skipped (websites disabled in plan)")
 		}
 
+		// JAB-223: a leftover index.html in a WordPress docroot shadows
+		// index.php under `index index.html index.php;` and the site serves a
+		// parked page at HTTP 200. Run this even when ImportAppConfigs was
+		// skipped for want of credentials — the shadow does not care whether
+		// the database was re-credentialed.
+		if plan.Websites {
+			shadowRes := cpanel.QuarantineShadowingIndexHTML(ctx, restoreAgent, p.targetUserID, p.targetUsername, appDocroots)
+			warnings = append(warnings, fmt.Sprintf(
+				"index_shadow: quarantined=%d flagged=%d",
+				len(shadowRes.Quarantined), len(shadowRes.Flagged)))
+			warnings = append(warnings, shadowRes.Quarantined...)
+			warnings = append(warnings, shadowRes.Flagged...)
+			warnings = append(warnings, shadowRes.Skipped...)
+		}
+
 		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, restoreAgent, p.parsed, p.targetUserID, p.targetUsername, preserve.MailRouting)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("extras: %w", err)
