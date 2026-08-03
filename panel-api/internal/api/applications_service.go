@@ -459,8 +459,11 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 	case "invoiceshelf":
 		invoicePass := paramOr(k.Params, "admin_password", "")
 		if invoicePass == "" {
-			// InvoiceShelf's default policy requires >= 8 chars.
-			invoicePass = ids.NewULID()[:16]
+			// CSPRNG secret (192-bit), NOT a truncated ULID — ULID's leading
+			// chars are a millisecond timestamp, so ids.NewULID()[:16] would
+			// be mostly install-time-predictable. Satisfies InvoiceShelf's
+			// >= 8 char policy with mixed case + digits.
+			invoicePass = ids.NewSecret()
 		}
 		go createInvoiceShelfInstallAndKickAgent(ctx, invoiceShelfKickArgs{
 			InstallID:    k.InstallID,
