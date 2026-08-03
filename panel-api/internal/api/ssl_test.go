@@ -69,12 +69,13 @@ func (m *MockSSLCertificateRepository) DeleteByDomainID(ctx context.Context, dom
 	return args.Error(0)
 }
 
-func (m *MockSSLCertificateRepository) ListDueForRenewal(ctx context.Context, within time.Duration) ([]models.SSLCertificate, error) {
-	args := m.Called(ctx, within)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]models.SSLCertificate), args.Error(1)
+// RefreshObservedExpiry — JAB-203 observation pass. Replaces the
+// ListDueForRenewal stub: that query's only caller was StartSSLTicker, which
+// nothing ever called, so both were deleted when certbot was made the owner of
+// renewal (ADR-0163).
+func (m *MockSSLCertificateRepository) RefreshObservedExpiry(ctx context.Context, id string, notAfter, observedAt time.Time) error {
+	args := m.Called(ctx, id, notAfter, observedAt)
+	return args.Error(0)
 }
 
 func (m *MockSSLCertificateRepository) ListAll(ctx context.Context) ([]repository.SSLCertificateWithDomain, error) {

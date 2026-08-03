@@ -52,9 +52,6 @@ func (m *mockSSLCertsForBadge) MarkRevoked(context.Context, string) error { retu
 func (m *mockSSLCertsForBadge) DeleteByDomainID(context.Context, string) error {
 	return nil
 }
-func (m *mockSSLCertsForBadge) ListDueForRenewal(context.Context, time.Duration) ([]models.SSLCertificate, error) {
-	return nil, nil
-}
 func (m *mockSSLCertsForBadge) ListAll(context.Context) ([]repository.SSLCertificateWithDomain, error) {
 	return nil, nil
 }
@@ -208,4 +205,9 @@ func TestSSLBadgeForDomain_ModeAware(t *testing.T) {
 			t.Errorf("%s: want status %q, got %+v", tc.name, tc.wantStatus, b)
 		}
 	}
+}
+
+// RefreshObservedExpiry — JAB-203 observation pass; no behaviour needed here.
+func (m *mockSSLCertsForBadge) RefreshObservedExpiry(context.Context, string, time.Time, time.Time) error {
+	return nil
 }

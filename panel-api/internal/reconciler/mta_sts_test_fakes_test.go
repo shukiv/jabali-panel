@@ -43,9 +43,6 @@ func (f *fakeSSLCertRepo) MarkRevoked(_ context.Context, id string) error {
 	return nil
 }
 func (f *fakeSSLCertRepo) DeleteByDomainID(context.Context, string) error { return nil }
-func (f *fakeSSLCertRepo) ListDueForRenewal(context.Context, time.Duration) ([]models.SSLCertificate, error) {
-	return nil, nil
-}
 func (f *fakeSSLCertRepo) ListAll(context.Context) ([]repository.SSLCertificateWithDomain, error) {
 	return nil, nil
 }
@@ -72,4 +69,9 @@ func (f *fakeSSLCertRepo) ListDueForACMERetry(context.Context, time.Time, int) (
 
 func newFakeDomainRepo() *fakeDomainRepo {
 	return &fakeDomainRepo{domains: map[string]*models.Domain{}}
+}
+
+// RefreshObservedExpiry — JAB-203 observation pass; no behaviour needed here.
+func (f *fakeSSLCertRepo) RefreshObservedExpiry(context.Context, string, time.Time, time.Time) error {
+	return nil
 }

@@ -26,6 +26,12 @@ type SSLCertificateWithDomain struct {
 	LastError     *string    `json:"last_error"`
 	Staging       bool       `json:"staging"`
 	LastAttemptAt *time.Time `json:"last_attempt_at"`
+	// CertPath is the certificate file on disk. Carried on the join so the
+	// JAB-203 observation pass can read the real notAfter instead of trusting
+	// expires_at — and so it reads the ACTUAL path rather than assuming
+	// /etc/letsencrypt/live/<domain>/, which is wrong for installed custom
+	// certificates.
+	CertPath *string `json:"cert_path,omitempty"`
 }
 
 // SSLCertificateRepository covers the ssl_certificates table.
@@ -39,7 +45,16 @@ type SSLCertificateRepository interface {
 	UpdateAfterRenewal(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
 	MarkRevoked(ctx context.Context, id string) error
 	DeleteByDomainID(ctx context.Context, domainID string) error
-	ListDueForRenewal(ctx context.Context, within time.Duration) ([]models.SSLCertificate, error)
+	// RefreshObservedExpiry corrects expires_at from the certificate actually on
+	// disk (JAB-203). certbot's timer renews outside the panel, so nothing
+	// refreshed this column and it drifted — measured 2.5 months stale on a live
+	// box, while the expiry alerts compute off it.
+	//
+	// Targeted UPDATE of the observed columns only: this pass must never touch
+	// status, retry bookkeeping or paths, which belong to the issuance flow.
+	// last_renewed_at moves only when the certificate moved FORWARD, so it keeps
+	// meaning "when this cert last got newer" rather than "when we last looked".
+	RefreshObservedExpiry(ctx context.Context, id string, notAfter, observedAt time.Time) error
 	ListAll(ctx context.Context) ([]SSLCertificateWithDomain, error)
 	ListByUserID(ctx context.Context, userID string) ([]SSLCertificateWithDomain, error)
 	UpdateSelfSigned(ctx context.Context, id string, certPath, keyPath string, expiresAt time.Time) error
@@ -146,22 +161,35 @@ func (r *sslCertificateRepo) DeleteByDomainID(ctx context.Context, domainID stri
 	return r.db.WithContext(ctx).Delete(&models.SSLCertificate{}, "domain_id = ?", domainID).Error
 }
 
-// ListDueForRenewal returns all certificates in 'issued' status
-// whose expiration is within the given duration from now.
-// The renewal ticker uses this to find candidates for renewal.
-// E.g., within=30*24*time.Hour finds certs expiring within 30 days.
-func (r *sslCertificateRepo) ListDueForRenewal(ctx context.Context, within time.Duration) ([]models.SSLCertificate, error) {
-	var certs []models.SSLCertificate
-	now := time.Now()
-	deadline := now.Add(within)
-	err := r.db.WithContext(ctx).
-		Where("status = ? AND expires_at IS NOT NULL AND expires_at < ?",
-			models.SSLStatusIssued, deadline).
-		Find(&certs).Error
-	if err != nil {
-		return nil, err
+// RefreshObservedExpiry — see the interface.
+func (r *sslCertificateRepo) RefreshObservedExpiry(ctx context.Context, id string, notAfter, observedAt time.Time) error {
+	updates := map[string]any{
+		"expires_at": notAfter,
+		"updated_at": observedAt,
 	}
-	return certs, nil
+	// Only stamp last_renewed_at when the certificate genuinely moved forward.
+	// A row being corrected BACKWARDS (panel ahead of disk) is a bookkeeping
+	// fix, not a renewal, and recording it as one would hide a cert that never
+	// actually renewed.
+	res := r.db.WithContext(ctx).
+		Model(&models.SSLCertificate{}).
+		Where("id = ? AND (expires_at IS NULL OR expires_at < ?)", id, notAfter).
+		Updates(map[string]any{
+			"expires_at":      notAfter,
+			"last_renewed_at": observedAt,
+			"updated_at":      observedAt,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+	// Certificate did not move forward — correct expires_at alone.
+	return r.db.WithContext(ctx).
+		Model(&models.SSLCertificate{}).
+		Where("id = ?", id).
+		Updates(updates).Error
 }
 
 // ListAll returns all SSL certificates joined with their domain and user info.
@@ -172,7 +200,8 @@ func (r *sslCertificateRepo) ListAll(ctx context.Context) ([]SSLCertificateWithD
 		Select(`sc.id, sc.domain_id, d.name as domain_name,
 		        d.user_id, u.username as user_username,
 		        sc.status, sc.issued_at, sc.expires_at,
-		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at`).
+		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,
+		        sc.cert_path`).
 		Table("ssl_certificates sc").
 		Joins("JOIN domains d ON sc.domain_id = d.id").
 		Joins("JOIN users u ON d.user_id = u.id").

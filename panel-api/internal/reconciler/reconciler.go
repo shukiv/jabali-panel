@@ -507,6 +507,12 @@ func (r *Reconciler) Start(ctx context.Context) {
 	defer sslRetryTicker.Stop()
 
 	// SSO token prune ticker: clean up expired tokens every 5 minutes
+	// JAB-203: reconcile the panel's view of each certificate with the file on
+	// disk. Hourly is ample — certbot's timer runs twice a day and a cert lives
+	// 90 days — and it keeps a freshly-renewed cert from showing stale expiry in
+	// the UI for long.
+	sslObserveTicker := time.NewTicker(1 * time.Hour)
+	defer sslObserveTicker.Stop()
 	pruneTicker := time.NewTicker(5 * time.Minute)
 	defer pruneTicker.Stop()
 
@@ -546,6 +552,11 @@ func (r *Reconciler) Start(ctx context.Context) {
 				continue
 			}
 			r.RetrySSLDueForACME(ctx)
+		case <-sslObserveTicker.C:
+			if r.IsPaused() {
+				continue
+			}
+			r.ReconcileSSLObservation(ctx)
 		case <-updateRunTicker.C:
 			if r.IsPaused() {
 				continue
@@ -3073,7 +3084,6 @@ func cacheBypassPathsFromInstalls(insts []models.ApplicationInstall) []string {
 	}
 	return out
 }
-
 
 // reconcileEnabledDomain converges one enabled domain — the body of the
 // ReconcileAll per-domain loop, extracted so the JAB-205 worker pool can

@@ -24,10 +24,10 @@ func TestSSLCertificateRepository_Create(t *testing.T) {
 
 	now := time.Now()
 	cert := &models.SSLCertificate{
-		ID:       "01ARWX4FRYXZ73AK7EQQ69G5NV",
-		DomainID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-		Status:   models.SSLStatusPending,
-		Staging:  false,
+		ID:        "01ARWX4FRYXZ73AK7EQQ69G5NV",
+		DomainID:  "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		Status:    models.SSLStatusPending,
+		Staging:   false,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -38,17 +38,17 @@ func TestSSLCertificateRepository_Create(t *testing.T) {
 			cert.ID,
 			cert.DomainID,
 			models.SSLStatusPending,
-			nil,            // issued_at
-			nil,            // expires_at
-			0,              // renewal_count
-			nil,            // last_renewed_at
-			nil,            // last_error
-			false,          // staging
-			nil,            // cert_path
-			nil,            // key_path
-			nil,            // next_retry_at
-			0,              // retry_count
-			nil,            // last_attempt_at
+			nil,              // issued_at
+			nil,              // expires_at
+			0,                // renewal_count
+			nil,              // last_renewed_at
+			nil,              // last_error
+			false,            // staging
+			nil,              // cert_path
+			nil,              // key_path
+			nil,              // next_retry_at
+			0,                // retry_count
+			nil,              // last_attempt_at
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).
@@ -91,8 +91,8 @@ func TestSSLCertificateRepository_FindByDomainID_Success(t *testing.T) {
 				false,
 				"/etc/letsencrypt/live/example.com/fullchain.pem",
 				"/etc/letsencrypt/live/example.com/privkey.pem",
-				nil,       // next_retry_at
-				0,         // retry_count
+				nil, // next_retry_at
+				0,   // retry_count
 				now,
 				now,
 			),
@@ -219,55 +219,6 @@ func TestSSLCertificateRepository_DeleteByDomainID(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestSSLCertificateRepository_ListDueForRenewal(t *testing.T) {
-	t.Parallel()
-	gdb, mock, raw := newMockDB(t)
-	defer raw.Close()
-
-	repo := repository.NewSSLCertificateRepository(gdb)
-	ctx := context.Background()
-
-	now := time.Now()
-	window := 30 * 24 * time.Hour
-
-	// Expect a query that checks status='issued' and expires_at < NOW()+30days
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `ssl_certificates` WHERE status = ? AND expires_at IS NOT NULL AND expires_at < ?")).
-		WithArgs(
-			models.SSLStatusIssued,
-			sqlmock.AnyArg(), // deadline
-		).
-		WillReturnRows(
-			sqlmock.NewRows([]string{
-				"id", "domain_id", "status", "issued_at", "expires_at",
-				"renewal_count", "last_renewed_at", "last_error", "staging",
-				"cert_path", "key_path", "next_retry_at", "retry_count", "last_attempt_at", "created_at", "updated_at",
-			}).AddRow(
-				"01ARWX4FRYXZ73AK7EQQ69G5NV",
-				"01ARZ3NDEKTSV4RRFFQ69G5FAV",
-				models.SSLStatusIssued,
-				now.Add(-60*24*time.Hour),
-				now.Add(15*24*time.Hour), // expires in 15 days (within 30-day window)
-				0,
-				nil,
-				nil,
-				false,
-				"/etc/letsencrypt/live/example.com/fullchain.pem",
-				"/etc/letsencrypt/live/example.com/privkey.pem",
-				nil,       // next_retry_at
-				0,         // retry_count
-				nil,       // last_attempt_at
-				now,
-				now,
-			),
-		)
-
-	certs, err := repo.ListDueForRenewal(ctx, window)
-	require.NoError(t, err)
-	assert.Len(t, certs, 1)
-	assert.Equal(t, models.SSLStatusIssued, certs[0].Status)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
 func TestSSLCertificateRepository_ListAll(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
@@ -280,12 +231,16 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 
 	// Expect a SELECT joining ssl_certificates, domains, and users
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        sc.cert_path FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
 		WithArgs("revoked").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"id", "domain_id", "domain_name", "user_id", "user_username",
 				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging", "last_attempt_at",
+				// JAB-203: carried on the join so the observation pass can read the
+				// REAL path rather than assuming /etc/letsencrypt/live/<domain>/,
+				// which is wrong for an installed custom certificate.
+				"cert_path",
 			}).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5NV",
@@ -301,6 +256,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					nil,
 					false,
 					nil,
+					nil, // cert_path
 				).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5N0",
@@ -316,6 +272,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					nil,
 					true,
 					nil,
+					nil, // cert_path
 				),
 		)
 
