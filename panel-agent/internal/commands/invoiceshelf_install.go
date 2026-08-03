@@ -138,12 +138,28 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	if out, err := runBoundedOutput(buildSystemdRunShell(ctx, req.OSUser, moveUp), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("relocate app root: %v (%s)", err, truncateStr(string(out), 512))}
 	}
-	// Flatten public/ into the webroot (no-public-dir shape) and fix the
-	// front controller's two "/../" bootstrap paths.
-	flatten := "shopt -s dotglob nullglob; mv " + shellQuote(filepath.Join(installPath, "public")) + "/* " + shellQuote(installPath) + "/ && rmdir " + shellQuote(filepath.Join(installPath, "public")) +
-		" && sed -i \"s#__DIR__\\.'/\\.\\./#__DIR__.'/#g\" " + shellQuote(filepath.Join(installPath, "index.php"))
+	// Flatten public/ into the webroot (no-public-dir shape).
+	flatten := "shopt -s dotglob nullglob; mv " + shellQuote(filepath.Join(installPath, "public")) + "/* " + shellQuote(installPath) + "/ && rmdir " + shellQuote(filepath.Join(installPath, "public"))
 	if out, err := runBoundedOutput(buildSystemdRunShell(ctx, req.OSUser, flatten), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("flatten public/: %v (%s)", err, truncateStr(string(out), 512))}
+	}
+	// Rewrite the front controller for the flattened layout. Two changes vs
+	// stock: (a) the bootstrap/autoload paths lose the "/../" now that
+	// index.php sits at the app root, and (b) usePublicPath(__DIR__) tells
+	// Laravel the PUBLIC path IS the install root — without it public_path()
+	// still resolves to <root>/public (gone after flatten), which 500s the
+	// Vite manifest lookup (`public/build/manifest.json`) on the very first
+	// page. Found in live serving validation.
+	indexPHP := "<?php\n" +
+		"use Illuminate\\Http\\Request;\n" +
+		"define('LARAVEL_START', microtime(true));\n" +
+		"if (file_exists($maintenance = __DIR__.'/storage/framework/maintenance.php')) { require $maintenance; }\n" +
+		"require __DIR__.'/vendor/autoload.php';\n" +
+		"$app = require_once __DIR__.'/bootstrap/app.php';\n" +
+		"$app->usePublicPath(__DIR__);\n" +
+		"$app->handleRequest(Request::capture());\n"
+	if err := dokuwikiWriteUserFile(ctx, req.OSUser, filepath.Join(installPath, "index.php"), indexPHP, "0644"); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
 	// .env from operator inputs. APP_KEY comes from key:generate below.
@@ -161,11 +177,16 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 		"DB_DATABASE=" + req.DBName + "\n" +
 		"DB_USERNAME=" + req.DBUser + "\n" +
 		"DB_PASSWORD=" + envQuoted(req.DBPassword) + "\n" +
-		"SESSION_DRIVER=database\n" +
+		// File-backed session + sync queue avoid the Laravel `sessions` /
+		// `jobs` tables that InvoiceShelf's migrations do NOT ship — a DB
+		// session driver 500s on a missing `sessions` table (found in the
+		// live serving validation). File sessions live under the app's
+		// storage/, denied from the web by the nginx snippet.
+		"SESSION_DRIVER=file\n" +
 		"SESSION_DOMAIN=" + domain + "\n" +
 		"SANCTUM_STATEFUL_DOMAINS=" + domain + "\n" +
 		"CACHE_STORE=file\n" +
-		"QUEUE_CONNECTION=database\n" +
+		"QUEUE_CONNECTION=sync\n" +
 		"TRUSTED_PROXIES=*\n"
 	if err := dokuwikiWriteUserFile(ctx, req.OSUser, filepath.Join(installPath, ".env"), env, "0640"); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
@@ -188,12 +209,11 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	if err := artisan(10*time.Minute, "migrate", "--force", "--seed"); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
-	if err := artisan(1*time.Minute, "storage:link"); err != nil {
-		// Non-fatal: a missing storage symlink only breaks uploaded-file
-		// serving, not login. Warn via the error path is too harsh; log by
-		// ignoring (the app still works for the invoicing core).
-		_ = err
-	}
+	// NOTE: `artisan storage:link` is intentionally skipped. After the
+	// public/ flatten there is no public/ dir for Laravel's default
+	// public_path()/storage target, so the link errors; it only affects
+	// serving uploaded files over /storage (e.g. a company logo), not the
+	// invoicing core, and is a tracked follow-up.
 
 	// Patch the seeded super-admin to the operator's identity + mark the
 	// onboarding complete. The stock UsersTableSeeder created a working
