@@ -72,7 +72,10 @@ func privatebinDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid docroot: %v", err)}
 	}
 
-	installPath := filepath.Join(req.Docroot, req.Subdirectory)
+	installPath, err := appInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", installPath)

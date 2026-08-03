@@ -85,7 +85,10 @@ func privatebinInstallHandler(ctx context.Context, params json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := filepath.Join(req.Docroot, req.Subdirectory)
+	installPath, err := appInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 	dataDir := privatebinDataDir(req.Docroot, req.Subdirectory)
 
 	if req.Subdirectory != "" {

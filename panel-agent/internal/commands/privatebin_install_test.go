@@ -34,3 +34,20 @@ func TestPrivatebinINIQuoted(t *testing.T) {
 		t.Errorf("plain title mangled: %q", got)
 	}
 }
+
+// Security-review finding on the first commit: the install/delete path
+// join must refuse a traversal subdirectory — fed to the deleter,
+// "../../.." would rm -rf the join target as the OS user (their whole
+// home). Applies to every flat-file app via the shared helper.
+func TestAppInstallPath_RejectsTraversal(t *testing.T) {
+	for _, bad := range []string{"..", "../..", "../../..", "a/../../b", "../outside"} {
+		if _, err := appInstallPath("/home/u/domains/d/public_html", bad); err == nil {
+			t.Errorf("appInstallPath accepted traversal subdirectory %q", bad)
+		}
+	}
+	for _, ok := range []string{"", "paste", "tools/paste", "a/b/c"} {
+		if _, err := appInstallPath("/home/u/domains/d/public_html", ok); err != nil {
+			t.Errorf("appInstallPath rejected safe subdirectory %q: %v", ok, err)
+		}
+	}
+}
