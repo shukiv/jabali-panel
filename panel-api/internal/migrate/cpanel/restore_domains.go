@@ -22,6 +22,14 @@ type DomainImportResult struct {
 	Created      int
 	EmailEnabled int
 	Skipped      []string
+	// Failed names domains whose agent-side create FAILED, as opposed to ones
+	// deliberately skipped (already present, filtered out). JAB-214: these used
+	// to land in Skipped alongside benign entries, so the restore reported
+	// "domains: created=0" plus a skip line and still exited 0 — while the
+	// account had no vhost, no DNS zone and no mail routing. A domain is a core
+	// area; the caller promotes these to criticals, which downgrades the run to
+	// DEGRADED and exits non-zero unless --allow-degraded.
+	Failed []string
 	// HtaccessRulesImported counts typed Rule Builder entries converted from
 	// migrated .htaccess files (ADR-0130). HtaccessWarnings carries the
 	// per-domain "not converted" advisories for the migration manifest.
@@ -114,6 +122,7 @@ func ImportDomains(
 			"index_priority": "html_first",
 		}); err != nil {
 			res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:agent_create_failed:%s:%v", domainName, err))
+			res.Failed = append(res.Failed, fmt.Sprintf("%s (%v)", domainName, err))
 			continue
 		}
 

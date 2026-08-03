@@ -6058,6 +6058,61 @@ harden_proc_hidepid() {
   fi
 }
 
+install_nginx_server_names_hash() {
+  # JAB-214: nginx's default server_names_hash_bucket_size is 64 bytes. A
+  # 44-character domain plus its `www.` alias overflows that, and nginx -t then
+  # fails the whole config with:
+  #
+  #   could not build server_names_hash, you should increase
+  #   server_names_hash_bucket_size: 64
+  #
+  # The agent's vhost render correctly rolls back, but a MIGRATION then treats
+  # the failed domain create as a skip and cascades: no DNS zone, mailbox rows
+  # report "domain not found in panel", email never enabled — and the batch
+  # still reported success. Long compound and IDN domains are ordinary in
+  # migrations, so 64 is simply too small a default to ship with.
+  #
+  # 128 is the next power of two and costs a few KB of hash table.
+  _log "writing nginx server_names_hash_bucket_size (long-domain support)"
+  local dst="/etc/nginx/conf.d/06-jabali-server-names-hash.conf"
+
+  # Idempotency guard, same lesson as jabali-ssl-curves.conf: a second
+  # server_names_hash_bucket_size at http scope is a hard duplicate-directive
+  # error that fails nginx -t and takes the whole web server down. Operators hit
+  # this exact overflow and hand-add the directive (the JAB-214 reporter did),
+  # so purge it from every OTHER conf.d file before writing ours — drop
+  # single-directive files outright, strip just the line from multi-directive
+  # ones. Debian's nginx.conf ships it commented out, so that needs no edit.
+  local f
+  for f in /etc/nginx/conf.d/*.conf; do
+    [[ -e "$f" ]] || continue
+    [[ "$f" == "$dst" ]] && continue
+    grep -q '^[[:space:]]*server_names_hash_bucket_size' "$f" 2>/dev/null || continue
+    if [[ $(grep -cvE '^[[:space:]]*(#|$)' "$f") -le 1 ]]; then
+      _warn "removing stray server_names_hash_bucket_size file $f (jabali manages this in $dst)"
+      rm -f "$f"
+    else
+      _warn "stripping server_names_hash_bucket_size from $f (jabali manages it in $dst)"
+      sed -i '/^[[:space:]]*server_names_hash_bucket_size/d' "$f"
+    fi
+  done
+
+  printf '%s\n' \
+    '# Managed by jabali (JAB-214). Do not edit — rewritten on every update.' \
+    '# nginx defaults to 64, which a ~44-char domain plus its www. alias' \
+    '# overflows, failing nginx -t for the ENTIRE config.' \
+    'server_names_hash_bucket_size 128;' > "$dst"
+  chmod 0644 "$dst"
+
+  if command -v nginx >/dev/null 2>&1 && ! nginx -t >/dev/null 2>&1; then
+    _warn "nginx -t failed after writing $dst — reverting"
+    rm -f "$dst"
+    nginx -t 2>&1 | tail -3 >&2 || true
+  else
+    _ok "server_names_hash_bucket_size 128 active"
+  fi
+}
+
 install_nginx_ssl_hardening() {
   # OpenSSL 3.5 enabled post-quantum hybrid key exchange (X25519MLKEM768,
   # group 0x11ec) by DEFAULT for TLS 1.3. Cloudflare's origin pull (and
@@ -14291,6 +14346,7 @@ main() {
   install_nginx_websocket_map
   install_nginx_fastcgi_cache
   install_nginx_ssl_hardening
+  install_nginx_server_names_hash
   harden_proc_hidepid
   install_nginx_tunables
   # M25 Step 4: install the nginx vhost on :8443 that terminates TLS and

@@ -1300,6 +1300,15 @@ func cpanelRestoreCallback(
 				return bytes, warnings, fmt.Errorf("domains: %w", err)
 			}
 			warnings = append(warnings, fmt.Sprintf("domains: created=%d email_enabled=%d", domainsRes.Created, domainsRes.EmailEnabled))
+			// JAB-214: a domain that FAILED to create is not a skip. Everything
+			// downstream cascades off it — no DNS zone, mailbox rows report
+			// "domain not found in panel", email never enabled — and the run
+			// used to exit 0 with a green summary while the site was
+			// unreachable and mail unroutable. Promote to criticals so the run
+			// is marked DEGRADED and exits non-zero unless --allow-degraded.
+			for _, f := range domainsRes.Failed {
+				p.criticals = append(p.criticals, "domain create failed: "+f)
+			}
 			warnings = append(warnings, domainsRes.Skipped...)
 		} else {
 			warnings = append(warnings, "websites: skipped (websites disabled in plan) — no home/docroot or domain import")
