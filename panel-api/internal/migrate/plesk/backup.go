@@ -33,6 +33,13 @@ const BackupUserTimeout = 60 * time.Minute
 //	  domains-paths.txt    <domain>\t<abs docroot>  (rsynced at restore)
 //	  mail-paths.txt       <address>\t<abs Maildir> (rsynced at restore)
 //	  dnszones/<dom>.db    stub per domain (ImportDomains needs the name)
+//	  cron                 the subscription sysuser's crontab (GH #429:
+//	                       top-level `cron` FILE = cPanel full-backup-wizard
+//	                       layout, which cpanel.ParseTarball classifies into
+//	                       CronFiles and the shared cpanel.ImportCron
+//	                       consumes at import — rows land Enabled=false for
+//	                       operator review). Absent when the subscription
+//	                       has no sysuser or an empty crontab.
 //
 // DB dumps are NOT bundled: a live production database can be many GB (a
 // real box carried a 6.9 GB WordPress DB), so bundling a mysqldump into a
@@ -116,7 +123,18 @@ if [ -d "$MAILROOT" ]; then
   done
 fi
 
-# 5. tar the METADATA only (small).
+# 5. cron — the subscription sysuser's crontab (Plesk Scheduled Tasks run
+#    from it). Written as a TOP-LEVEL cron FILE so cpanel.ParseTarball
+#    classifies it into CronFiles (full-backup-wizard layout); the shared
+#    cpanel.ImportCron then imports each line DISABLED for operator review
+#    (GH #429: the Cron checkbox was a silent no-op for Plesk sources).
+SYSUSER=$(plesk db -Ne "SELECT s.login FROM domains d JOIN hosting h ON h.dom_id=d.id JOIN sys_users s ON h.sys_user_id=s.id WHERE d.name='$SUB' LIMIT 1" 2>/dev/null)
+if [ -n "$SYSUSER" ]; then
+  crontab -l -u "$SYSUSER" > "$TMP/cpmove-$SLUG/cron" 2>/dev/null || true
+  [ -s "$TMP/cpmove-$SLUG/cron" ] || rm -f "$TMP/cpmove-$SLUG/cron"
+fi
+
+# 6. tar the METADATA only (small).
 tar -czf "$OUT" -C "$TMP" "cpmove-$SLUG"
 rm -rf "$TMP"
 echo "$OUT"

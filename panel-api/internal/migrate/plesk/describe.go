@@ -117,12 +117,14 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	m.Apps = apps
 	m.Warnings = append(m.Warnings, wpWarns...)
 
-	// DNS zones, cron, SSH keys, mailboxes, and the customers/packages
-	// layer land in later steps — flagged so the operator knows the
-	// manifest is partial (plans/gh429-plesk-migration.md).
+	// DNS zones, SSH keys, and the customers/packages layer land in later
+	// steps — flagged so the operator knows the manifest is partial
+	// (plans/gh429-plesk-migration.md). Cron IS covered since GH #429
+	// follow-up: BackupUser bundles the sysuser crontab and the shared
+	// import creates disabled cron rows for review.
 	m.Warnings = append(m.Warnings, migrate.Warning{
 		Code:   "plesk_areas_pending",
-		Detail: "DNS/cron/SSH and customers/packages ship in follow-up steps; describe currently covers domains + databases + WordPress + mailboxes.",
+		Detail: "DNS/SSH and customers/packages ship in follow-up steps; describe currently covers domains + databases + WordPress + mailboxes (cron imports disabled-for-review).",
 	})
 
 	if firstErr != nil && len(m.Domains) == 0 {
