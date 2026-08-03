@@ -61,6 +61,19 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 	}
 	res := &CronImportResult{}
 
+	// GH #429 E2E finding: import re-runs are a designed flow ("re-run
+	// after fixing, or pass --allow-degraded"), and every re-run used to
+	// duplicate the whole imported cron set. Dedupe against the target
+	// user's existing rows by (schedule, command) — the identity of an
+	// imported line — so a re-run is a clean noop for already-imported
+	// crons.
+	existing := map[string]bool{}
+	if rows, lErr := repo.ListByUserID(ctx, targetUserID); lErr == nil {
+		for _, r := range rows {
+			existing[r.Schedule+"\x00"+r.Command] = true
+		}
+	}
+
 	// The account's own domains + their DEST docroots. Used by the
 	// curl/wget self-target rewrite for (a) the same-origin host gate
 	// and (b) resolving the URL path to a php file under the docroot.
@@ -139,7 +152,7 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 					res.Skipped = append(res.Skipped, fmt.Sprintf(
 						"%s:%d cron_disabled_import (curl_not_rewritable: %s): %s",
 						cronPath, lineNum, reason, origCommand))
-					if cErr := createCronRow(ctx, repo, targetUserID, schedule, origCommand, res); cErr != nil {
+					if cErr := createCronRowDeduped(ctx, repo, targetUserID, schedule, origCommand, res, existing, cronPath, lineNum); cErr != nil {
 						_ = f.Close()
 						return res, cErr
 					}
@@ -152,7 +165,7 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 					res.Skipped = append(res.Skipped, fmt.Sprintf(
 						"%s:%d cron_disabled_import (rewrite_revalidate_failed: %s): %s",
 						cronPath, lineNum, vErr.Error(), origCommand))
-					if cErr := createCronRow(ctx, repo, targetUserID, schedule, origCommand, res); cErr != nil {
+					if cErr := createCronRowDeduped(ctx, repo, targetUserID, schedule, origCommand, res, existing, cronPath, lineNum); cErr != nil {
 						_ = f.Close()
 						return res, cErr
 					}
@@ -160,7 +173,7 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 				}
 				res.Skipped = append(res.Skipped, fmt.Sprintf(
 					"%s:%d cron rewritten curl→php: %s → %s", cronPath, lineNum, origCommand, rewritten))
-				if cErr := createCronRow(ctx, repo, targetUserID, schedule, rewritten, res); cErr != nil {
+				if cErr := createCronRowDeduped(ctx, repo, targetUserID, schedule, rewritten, res, existing, cronPath, lineNum); cErr != nil {
 					_ = f.Close()
 					return res, cErr
 				}
@@ -173,13 +186,13 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 				res.Skipped = append(res.Skipped, fmt.Sprintf(
 					"%s:%d cron_disabled_import (command: %s): %s",
 					cronPath, lineNum, vErr.Error(), origCommand))
-				if cErr := createCronRow(ctx, repo, targetUserID, schedule, origCommand, res); cErr != nil {
+				if cErr := createCronRowDeduped(ctx, repo, targetUserID, schedule, origCommand, res, existing, cronPath, lineNum); cErr != nil {
 					_ = f.Close()
 					return res, cErr
 				}
 				continue
 			}
-			if cErr := createCronRow(ctx, repo, targetUserID, schedule, command, res); cErr != nil {
+			if cErr := createCronRowDeduped(ctx, repo, targetUserID, schedule, command, res, existing, cronPath, lineNum); cErr != nil {
 				_ = f.Close()
 				return res, cErr
 			}
@@ -231,6 +244,22 @@ func isCronEnvLine(line string) bool {
 
 // createCronRow inserts one imported cron_jobs row (always Enabled=false
 // — the operator reviews + flips after migration) and bumps res.Created.
+// createCronRowDeduped skips (with a note) when an identical
+// (schedule, command) row already exists for the user — see the re-run
+// dedupe in ImportCron.
+func createCronRowDeduped(ctx context.Context, repo repository.CronJobRepository, userID, schedule, command string, res *CronImportResult, existing map[string]bool, cronPath string, lineNum int) error {
+	key := schedule + "\x00" + command
+	if existing[key] {
+		res.Skipped = append(res.Skipped, fmt.Sprintf("%s:%d already_imported (re-run dedupe): %s", cronPath, lineNum, command))
+		return nil
+	}
+	if err := createCronRow(ctx, repo, userID, schedule, command, res); err != nil {
+		return err
+	}
+	existing[key] = true
+	return nil
+}
+
 func createCronRow(ctx context.Context, repo repository.CronJobRepository, userID, schedule, command string, res *CronImportResult) error {
 	row := &models.CronJob{
 		ID:        ids.NewULID(),

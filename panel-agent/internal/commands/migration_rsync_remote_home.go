@@ -354,14 +354,16 @@ func stripBase64Whitespace(r rune) rune {
 
 // validateRsyncExclude sanity-checks one caller-provided --exclude pattern.
 // rsync is exec'd argv-direct (no shell), so this is not an injection sink —
-// it rejects shapes that could WIDEN the copy or smuggle traversal into a
-// later interpretation: absolute patterns, .. segments, empty, oversized.
+// it rejects shapes that could smuggle traversal into a later
+// interpretation: .. segments, empty, oversized. A leading "/" is ALLOWED
+// and encouraged: in rsync exclude semantics it anchors the pattern to the
+// TRANSFER root (not the filesystem root), which is how the Plesk
+// vhost-extra pass pins its excludes so a user's own private/bin/ deeper
+// in the tree still copies. Excludes can only SHRINK the copy either way.
 func validateRsyncExclude(e string) string {
 	switch {
 	case e == "":
 		return "empty pattern"
-	case strings.HasPrefix(e, "/"):
-		return "pattern must be relative: " + e
 	case strings.Contains(e, ".."):
 		return "pattern must not contain ..: " + e
 	case len(e) > 300:

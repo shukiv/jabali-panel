@@ -14,7 +14,7 @@ func TestPleskExtraExcludes(t *testing.T) {
 		"/var/www/vhosts/demolab.test/site1",
 		"/var/www/vhosts/OTHER.example/httpdocs", // outside the root — skipped
 	})
-	want := map[string]bool{"httpdocs/": true, "site1/": true}
+	want := map[string]bool{"/httpdocs": true, "/site1": true}
 	for _, sys := range pleskSystemExcludes {
 		want[sys] = true
 	}
@@ -25,8 +25,11 @@ func TestPleskExtraExcludes(t *testing.T) {
 		if !want[e] {
 			t.Errorf("unexpected exclude %q", e)
 		}
-		if strings.HasPrefix(e, "/") || strings.Contains(e, "..") {
-			t.Errorf("exclude %q is not a safe relative pattern", e)
+		if !strings.HasPrefix(e, "/") {
+			t.Errorf("exclude %q must be anchored to the transfer root", e)
+		}
+		if strings.Contains(e, "..") {
+			t.Errorf("exclude %q carries traversal", e)
 		}
 	}
 }

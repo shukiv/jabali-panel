@@ -1970,13 +1970,18 @@ func isHostnameLike(h string) bool {
 // migrate: logs/statistics are regenerable server artifacts, conf/.plesk/
 // system are Plesk internals that would leak source-panel config into the
 // destination account.
+// Patterns are ANCHORED to the transfer root (leading /) and carry no
+// trailing slash — E2E on the live box showed the chroot template's
+// bin/lib/lib64 are SYMLINKS, which a "name/" pattern does not match
+// (dirs only), and an unanchored "bin/" would also wrongly exclude a
+// user's own private/bin/ deeper in the tree.
 var pleskSystemExcludes = []string{
-	"logs/", "statistics/", "conf/", ".plesk/", "system/", "error_docs/",
+	"/logs", "/statistics", "/conf", "/.plesk", "/system", "/error_docs",
 	// Plesk chroot shell template (observed on Obsidian 18.0.79: the vhost
-	// root carries a full chroot toolchain). Copying it would land /bin,
-	// /lib64 etc. into ~/plesk-files. User data lives in private/ and
-	// custom-named dirs, which still copy.
-	"bin/", "dev/", "etc/", "lib/", "lib64/", "sbin/", "usr/", "var/", "tmp/",
+	// root carries a full chroot toolchain, partly as symlinks). Copying
+	// it would land /bin, /lib64 etc. into ~/plesk-files. User data lives
+	// in private/ and custom-named dirs, which still copy.
+	"/bin", "/dev", "/etc", "/lib", "/lib64", "/sbin", "/usr", "/var", "/tmp",
 }
 
 // pleskExtraExcludes builds the --exclude list for the vhost-extra rsync
@@ -1991,7 +1996,7 @@ func pleskExtraExcludes(vhostRoot string, docroots []string) []string {
 		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
 			continue
 		}
-		out = append(out, rel+"/")
+		out = append(out, "/"+rel)
 	}
 	return out
 }
