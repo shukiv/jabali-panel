@@ -1607,3 +1607,72 @@ func createInvoiceShelfInstallAndKickAgent(parentCtx context.Context, args invoi
 	}
 	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
 }
+
+// openEMRKickArgs — OpenEMR is RequiresDB=true and logs in by username.
+// GH #631.
+type openEMRKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	DBName       string
+	DBUser       string
+	DBPassword   string
+	SiteTitle    string
+	AdminUser    string
+	AdminEmail   string
+	AdminPass    string
+	UseWWW       bool
+}
+
+// createOpenEMRInstallAndKickAgent flips the install row to "installing",
+// dispatches app.install with app_type="openemr" (the agent derives the
+// domain from site_url), and updates the row.
+func createOpenEMRInstallAndKickAgent(parentCtx context.Context, args openEMRKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "openemr",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"db_name":      args.DBName,
+		"db_user":      args.DBUser,
+		"db_password":  args.DBPassword,
+		"db_host":      "localhost",
+		"site_title":   args.SiteTitle,
+		"admin_user":   args.AdminUser,
+		"admin_email":  args.AdminEmail,
+		"admin_pass":   args.AdminPass,
+		"use_www":      args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}

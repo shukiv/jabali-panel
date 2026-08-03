@@ -456,6 +456,27 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:         k.UseWWW,
 		}, deps)
 		adminPassword = prestaPass
+	case "openemr":
+		openemrPass := paramOr(k.Params, "admin_password", "")
+		if openemrPass == "" {
+			openemrPass = ids.NewSecret()
+		}
+		go createOpenEMRInstallAndKickAgent(ctx, openEMRKickArgs{
+			InstallID:    k.InstallID,
+			OSUser:       k.OSUser,
+			DocRoot:      k.DocRoot,
+			Subdirectory: k.Subdirectory,
+			SiteURL:      k.SiteURL,
+			DBName:       k.Chain.DBName,
+			DBUser:       k.Chain.DBUsername,
+			DBPassword:   k.Chain.DBPassword,
+			SiteTitle:    paramOr(k.Params, "site_title", "OpenEMR"),
+			AdminUser:    k.AdminUsername,
+			AdminEmail:   k.AdminEmail,
+			AdminPass:    openemrPass,
+			UseWWW:       k.UseWWW,
+		}, deps)
+		adminPassword = openemrPass
 	case "invoiceshelf":
 		invoicePass := paramOr(k.Params, "admin_password", "")
 		if invoicePass == "" {
