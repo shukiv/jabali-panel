@@ -215,3 +215,9 @@ func truncForLog(s string, n int) string {
 // Slug exposes the subscription→archive-slug mapping to the pull/import
 // wiring (which locates cpmove-<slug>/ inside the extracted tree).
 func Slug(sub string) string { return pleskSlug(sub) }
+
+// ValidSubscription reports whether s is a shell-safe Plesk subscription
+// name — exported for the restore stage, which derives the vhost-extra
+// rsync source as /var/www/vhosts/<subscription> and must refuse a name
+// that could escape that directory (GH #429 follow-up).
+func ValidSubscription(s string) bool { return looksLikePleskSubscription(s) }

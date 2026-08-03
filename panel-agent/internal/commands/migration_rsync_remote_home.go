@@ -34,6 +34,11 @@ type migrationRsyncRemoteHomeParams struct {
 	DestPath   string `json:"dest_path"`   // absolute dest path on this host
 	DestUser   string `json:"dest_user"`   // chown target after rsync
 	Port       int    `json:"port"`        // source SSH port; 0 → 22 (GH #429)
+	// Excludes are additional rsync --exclude patterns, RELATIVE to the
+	// source path (GH #429 follow-up: the Plesk vhost-extra pass excludes
+	// every already-rsynced docroot + Plesk system dirs). Validated:
+	// relative, no traversal. Excludes can only SHRINK what copies.
+	Excludes []string `json:"excludes,omitempty"`
 }
 
 type migrationRsyncRemoteHomeResult struct {
@@ -241,10 +246,19 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 		"-aH", "--no-h", "--info=stats2",
 		"--exclude=.lock", "--exclude=.cache",
 		"--exclude=public_html/.well-known/acme-challenge/",
-		"-e", "ssh " + sshOpt,
-		sshUser + "@" + p.Host + ":" + strings.TrimRight(p.SrcPath, "/") + "/",
-		strings.TrimRight(p.DestPath, "/") + "/",
 	}
+	for _, e := range p.Excludes {
+		if msg := validateRsyncExclude(e); msg != "" {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
+				Message: "excludes: " + msg}
+		}
+		rsyncArgs = append(rsyncArgs, "--exclude="+e)
+	}
+	rsyncArgs = append(rsyncArgs,
+		"-e", "ssh "+sshOpt,
+		sshUser+"@"+p.Host+":"+strings.TrimRight(p.SrcPath, "/")+"/",
+		strings.TrimRight(p.DestPath, "/")+"/",
+	)
 	var cmd *exec.Cmd
 	if sshPass != "" {
 		// sshpass-prefixed invocation. -e reads SSHPASS from env so the
@@ -336,4 +350,22 @@ func stripBase64Whitespace(r rune) rune {
 		return -1
 	}
 	return r
+}
+
+// validateRsyncExclude sanity-checks one caller-provided --exclude pattern.
+// rsync is exec'd argv-direct (no shell), so this is not an injection sink —
+// it rejects shapes that could WIDEN the copy or smuggle traversal into a
+// later interpretation: absolute patterns, .. segments, empty, oversized.
+func validateRsyncExclude(e string) string {
+	switch {
+	case e == "":
+		return "empty pattern"
+	case strings.HasPrefix(e, "/"):
+		return "pattern must be relative: " + e
+	case strings.Contains(e, ".."):
+		return "pattern must not contain ..: " + e
+	case len(e) > 300:
+		return "pattern too long"
+	}
+	return ""
 }

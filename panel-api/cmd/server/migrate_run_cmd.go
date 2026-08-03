@@ -1201,6 +1201,51 @@ func cpanelRestoreCallback(
 				}
 				bytes += totalBytes
 				warnings = append(warnings, fmt.Sprintf("home: bytes=%d domains=%d (direct-rsync source→dest, no tar middleware)", totalBytes, domCount))
+
+				// GH #429 follow-up: a Plesk subscription keeps real data
+				// OUTSIDE its docroots under its one vhost dir (private/,
+				// app storage, scripts). One extra rsync copies the vhost
+				// root into ~/plesk-files/, EXCLUDING every docroot already
+				// rsynced per-domain plus Plesk system dirs. The source path
+				// is DERIVED from the job's validated subscription name —
+				// never read from the staged manifest — and the agent's
+				// /var/www/vhosts src_root guard still applies, so a
+				// tampered manifest cannot widen this copy (excludes can
+				// only shrink it).
+				if job.SourceKind == models.MigrationSourcePlesk && plesk.ValidSubscription(job.SourceUser) {
+					vhostRoot := "/var/www/vhosts/" + job.SourceUser
+					docroots := make([]string, 0, len(rsyncRows))
+					for _, r := range rsyncRows {
+						docroots = append(docroots, r.SrcPath)
+					}
+					excludes := pleskExtraExcludes(vhostRoot, docroots)
+					extraDest := filepath.Join("/home", p.targetUsername, "plesk-files")
+					rawResp, rerr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+						"port":        srcSSHPort(job),
+						"job_id":      job.ID,
+						"src_account": p.parsed.SourceUser,
+						"host":        job.SourceHost,
+						"ssh_user":    remoteSSHUser,
+						"secret_path": secretPath,
+						"src_path":    vhostRoot,
+						"src_root":    srcRootOverride,
+						"dest_path":   extraDest,
+						"dest_user":   p.targetUsername,
+						"excludes":    excludes,
+					})
+					if rerr != nil {
+						warnings = append(warnings, fmt.Sprintf("plesk_extra_files: %v", rerr))
+					} else {
+						var rs struct {
+							BytesCopied int64 `json:"bytes_copied"`
+						}
+						_ = json.Unmarshal(rawResp, &rs)
+						bytes += rs.BytesCopied
+						warnings = append(warnings, fmt.Sprintf(
+							"plesk_extra_files: bytes=%d dest=~/plesk-files (non-docroot subscription files; excluded %d docroots + %d system dirs)",
+							rs.BytesCopied, len(excludes)-len(pleskSystemExcludes), len(pleskSystemExcludes)))
+					}
+				}
 				daHomeHandled = true
 			}
 
@@ -1919,4 +1964,27 @@ func isHostnameLike(h string) bool {
 		}
 	}
 	return !strings.Contains(h, "..")
+}
+
+// pleskSystemExcludes are Plesk-managed vhost-root dirs that must never
+// migrate: logs/statistics are regenerable server artifacts, conf/.plesk/
+// system are Plesk internals that would leak source-panel config into the
+// destination account.
+var pleskSystemExcludes = []string{"logs/", "statistics/", "conf/", ".plesk/", "system/", "error_docs/"}
+
+// pleskExtraExcludes builds the --exclude list for the vhost-extra rsync
+// (GH #429 follow-up): every already-rsynced docroot, expressed RELATIVE to
+// the vhost root, plus the Plesk system dirs. A docroot outside the vhost
+// root (shouldn't happen post-allowlist) is skipped rather than emitting a
+// traversal pattern the agent would reject.
+func pleskExtraExcludes(vhostRoot string, docroots []string) []string {
+	out := append([]string{}, pleskSystemExcludes...)
+	for _, dr := range docroots {
+		rel, err := filepath.Rel(vhostRoot, filepath.Clean(dr))
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		out = append(out, rel+"/")
+	}
+	return out
 }
