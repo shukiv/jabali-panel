@@ -24,6 +24,13 @@ type PythonApp struct {
 	Entrypoint string `gorm:"type:varchar(255);not null" json:"entrypoint"`
 	// BaseURI is the mount point on the domain, "/" or "/app".
 	BaseURI string `gorm:"column:base_uri;type:varchar(255);not null;default:'/'" json:"base_uri"`
+	// StaticURL/StaticRoot describe the static-asset split (GH #878): nginx
+	// serves <base_uri><static_url> directly from <app_root>/<static_root>
+	// instead of proxying to the app — the Passenger public/ equivalent.
+	// Empty = everything proxies. Framework installs seed these from the
+	// catalog entry.
+	StaticURL  string `gorm:"column:static_url;type:varchar(255);not null" json:"static_url,omitempty"`
+	StaticRoot string `gorm:"column:static_root;type:varchar(512);not null" json:"static_root,omitempty"`
 	// LoopbackPort is the 127.0.0.1 port gunicorn/uvicorn binds; nginx
 	// proxy_passes to it. Allocated by the API on create (nil until then).
 	LoopbackPort *int `gorm:"column:loopback_port;type:int;null" json:"loopback_port,omitempty"`

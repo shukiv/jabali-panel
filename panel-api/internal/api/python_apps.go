@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -51,6 +52,7 @@ func RegisterPythonAppRoutes(g *gin.RouterGroup, cfg PythonAppHandlerConfig) {
 	grp.POST("/:id/control", h.control)
 	grp.GET("/:id/logs", h.logs)
 	grp.PUT("/:id/env", h.putEnv)
+	grp.PUT("/:id/static", h.putStatic)
 }
 
 func (h *pythonAppHandler) requireEnabled(c *gin.Context) {
@@ -67,7 +69,34 @@ var (
 	baseURIRe    = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
 	pyVersionRe  = regexp.MustCompile(`^3\.(?:[0-9]|1[0-9])$`)
 	entrypointRe = regexp.MustCompile(`^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$`)
+	// GH #878 static split. staticURLRe is a URL path under the mount
+	// ("/static", "/static/"); staticRootRe a relative dir under app_root
+	// ("public", "app/static"). Whitelists exclude spaces and nginx
+	// metacharacters; ".." is checked separately (the segment class admits
+	// consecutive dots).
+	staticURLRe  = regexp.MustCompile(`^/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$`)
+	staticRootRe = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
 )
+
+// validateStaticSplit checks the optional static-asset mapping (GH #878).
+// Both fields come together. The rendered location is base_uri+static_url and
+// the alias app_root/static_root/ — the whitelists guarantee neither can
+// escape the app tree or break the vhost.
+func validateStaticSplit(staticURL, staticRoot string) error {
+	if staticURL == "" && staticRoot == "" {
+		return nil
+	}
+	if staticURL == "" || staticRoot == "" {
+		return errors.New("static_url and static_root must be set together")
+	}
+	if !staticURLRe.MatchString(staticURL) || strings.Contains(staticURL, "..") {
+		return errors.New("static_url must be a URL path like /static (letters, digits, . _ -)")
+	}
+	if !staticRootRe.MatchString(staticRoot) || strings.Contains(staticRoot, "..") {
+		return errors.New("static_root must be a relative directory like public (letters, digits, . _ -)")
+	}
+	return nil
+}
 
 // loadOwned fetches the app and enforces owner/admin scope.
 func (h *pythonAppHandler) loadOwned(c *gin.Context) (*models.PythonApp, bool) {
@@ -138,6 +167,11 @@ type createPythonAppRequest struct {
 	// Framework, when set, is a marketplace slug (JAB-164). It derives
 	// app_type + entrypoint from the catalog and drives the one-shot scaffold.
 	Framework string `json:"framework,omitempty"`
+	// StaticURL/StaticRoot request a static-asset split (GH #878): nginx
+	// serves <base_uri><static_url> from <app_root>/<static_root> instead of
+	// proxying. Ignored when Framework is set (the catalog provides them).
+	StaticURL  string `json:"static_url,omitempty"`
+	StaticRoot string `json:"static_root,omitempty"`
 }
 
 func (h *pythonAppHandler) create(c *gin.Context) {
@@ -153,7 +187,6 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 	}
 	// JAB-164: a framework install derives app_type + entrypoint from the
 	// catalog entry and carries the static split for the nginx alias.
-	var fwStaticURL, fwStaticRoot string
 	if req.Framework != "" {
 		if h.cfg.Catalog == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "framework_catalog_unavailable"})
@@ -171,7 +204,11 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		}
 		req.AppType = spec.AppType
 		req.Entrypoint = spec.Entrypoint
-		fwStaticURL, fwStaticRoot = spec.StaticURL, spec.StaticRoot
+		req.StaticURL, req.StaticRoot = spec.StaticURL, spec.StaticRoot
+	}
+	if err := validateStaticSplit(req.StaticURL, req.StaticRoot); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_static", "detail": err.Error()})
+		return
 	}
 	if req.AppType == "" {
 		req.AppType = "wsgi"
@@ -293,6 +330,8 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		AppType:       req.AppType,
 		Entrypoint:    req.Entrypoint,
 		BaseURI:       req.BaseURI,
+		StaticURL:     req.StaticURL,
+		StaticRoot:    req.StaticRoot,
 		LoopbackPort:  &port,
 		Framework:     req.Framework,
 		Status:        models.PythonAppStatusPending,
@@ -309,8 +348,8 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		_ = h.cfg.Apps.ReplaceEnv(ctx, app.ID, envMapToRows(req.Env))
 	}
 
-	// Attach the nginx proxy (+ framework static_alias) to the domain.
-	h.attachProxyRule(ctx, domain, app, fwStaticURL, fwStaticRoot)
+	// Attach the nginx proxy (+ static_alias when a split is set) to the domain.
+	h.attachProxyRule(ctx, domain, app)
 	if h.cfg.Reconciler != nil {
 		h.cfg.Reconciler.Schedule(domain.ID)
 	}
@@ -395,9 +434,52 @@ func (h *pythonAppHandler) putEnv(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// putStatic sets or clears the static-asset split on an existing app
+// (GH #878) — the Passenger public/ equivalent for hand-configured apps.
+// Both fields empty clears the mapping; nginx goes back to proxying
+// everything to the app.
+func (h *pythonAppHandler) putStatic(c *gin.Context) {
+	app, ok := h.loadOwned(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		StaticURL  string `json:"static_url"`
+		StaticRoot string `json:"static_root"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	if err := validateStaticSplit(req.StaticURL, req.StaticRoot); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_static", "detail": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	domain, err := h.cfg.Domains.FindByID(ctx, app.DomainID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain_not_found"})
+		return
+	}
+	app.StaticURL, app.StaticRoot = req.StaticURL, req.StaticRoot
+	if err := h.cfg.Apps.Update(ctx, app); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	// Re-attach: drop any previous static_alias for this app (its location
+	// may have changed), then upsert the new mapping. attachProxyRule
+	// persists the domain.
+	dropStaticRules(domain, app)
+	h.attachProxyRule(ctx, domain, app)
+	if h.cfg.Reconciler != nil {
+		h.cfg.Reconciler.Schedule(app.DomainID)
+	}
+	c.JSON(http.StatusOK, gin.H{"app": app})
+}
+
 // attachProxyRule appends a proxy_pass nginx rule (base_uri -> loopback port)
 // to the domain so the existing reconciler renders the vhost.
-func (h *pythonAppHandler) attachProxyRule(ctx context.Context, domain *models.Domain, app *models.PythonApp, staticURL, staticRoot string) {
+func (h *pythonAppHandler) attachProxyRule(ctx context.Context, domain *models.Domain, app *models.PythonApp) {
 	rules := append(models.NginxRules{}, domain.NginxRules...)
 	upsert := func(rule models.NginxRule) {
 		for i := range rules {
@@ -410,16 +492,31 @@ func (h *pythonAppHandler) attachProxyRule(ctx context.Context, domain *models.D
 	}
 	ws := true
 	upsert(models.NginxRule{Type: "proxy_pass", Path: app.BaseURI, Target: proxyTargetFor(app), Websocket: &ws})
-	// Framework static split (Django STATIC_ROOT): serve <base><static_url> from
+	// Static split (GH #878): serve <base><static_url> from
 	// <app_root>/<static_root>. Django prefixes STATIC_URL with SCRIPT_NAME
 	// (=base_uri), so the location is base_uri + static_url.
-	if staticURL != "" && staticRoot != "" {
-		loc := strings.TrimSuffix(app.BaseURI, "/") + staticURL
-		alias := strings.TrimSuffix(app.AppRoot, "/") + "/" + strings.Trim(staticRoot, "/") + "/"
+	if app.StaticURL != "" && app.StaticRoot != "" {
+		loc := strings.TrimSuffix(app.BaseURI, "/") + app.StaticURL
+		alias := strings.TrimSuffix(app.AppRoot, "/") + "/" + strings.Trim(app.StaticRoot, "/") + "/"
 		upsert(models.NginxRule{Type: "static_alias", Path: loc, Target: alias})
 	}
 	domain.NginxRules = rules
 	_ = h.cfg.Domains.Update(ctx, domain)
+}
+
+// dropStaticRules removes (in memory) every static_alias rule pointing into
+// this app's tree, so a changed or cleared split doesn't leave the old
+// location behind. The caller persists via attachProxyRule / Domains.Update.
+func dropStaticRules(domain *models.Domain, app *models.PythonApp) {
+	aliasPrefix := strings.TrimSuffix(app.AppRoot, "/") + "/"
+	var kept models.NginxRules
+	for _, r := range domain.NginxRules {
+		if r.Type == "static_alias" && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	domain.NginxRules = kept
 }
 
 // frameworkDTO is the catalog projection the UI needs — no template bytes, and

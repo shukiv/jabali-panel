@@ -16,7 +16,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined } from "@icons";
+import { ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined, FolderOpenOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 import { PythonAppEnvDrawer } from "./PythonAppEnvDrawer";
 import { useEffect, useMemo, useState } from "react";
@@ -33,6 +33,7 @@ import {
   useFrameworks,
   usePythonApps,
   usePythonVersions,
+  useSetPythonAppStatic,
 } from "./usePythonApps";
 
 type DomainRow = { id: string; name: string };
@@ -113,6 +114,32 @@ export function PythonAppsPage() {
   const [logsApp, setLogsApp] = useState<PythonApp | null>(null);
   const [logsText, setLogsText] = useState("");
   const [envApp, setEnvApp] = useState<PythonApp | null>(null);
+  // GH #878: static-asset split editor (Passenger public/ equivalent).
+  const [staticApp, setStaticApp] = useState<PythonApp | null>(null);
+  const [staticForm] = Form.useForm<{ static_url: string; static_root: string }>();
+  const setStatic = useSetPythonAppStatic();
+  const openStatic = (app: PythonApp) => {
+    staticForm.setFieldsValue({
+      static_url: app.static_url ?? "",
+      static_root: app.static_root ?? "",
+    });
+    setStaticApp(app);
+  };
+  const submitStatic = async () => {
+    if (!staticApp) return;
+    const v = await staticForm.validateFields();
+    try {
+      await setStatic.mutateAsync({
+        id: staticApp.id,
+        static_url: v.static_url?.trim() ?? "",
+        static_root: v.static_root?.trim() ?? "",
+      });
+      message.success("Static file mapping saved");
+      setStaticApp(null);
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "Save failed");
+    }
+  };
 
   const submit = async () => {
     const values = await form.validateFields();
@@ -223,6 +250,7 @@ export function PythonAppsPage() {
                 { key: "stop", label: "Stop", icon: <PauseCircleOutlined />, onClick: () => void doControl(r.id, "stop") },
                 { key: "logs", label: "Logs", icon: <FileTextOutlined />, onClick: () => void openLogs(r) },
                 { key: "env", label: "Environment", icon: <SettingOutlined />, onClick: () => setEnvApp(r) },
+                { key: "static", label: "Static files", icon: <FolderOpenOutlined />, onClick: () => openStatic(r) },
                 {
                   key: "delete",
                   label: "Delete",
@@ -358,6 +386,56 @@ export function PythonAppsPage() {
           )}
           <Form.Item name="app_root" label={t("pythonappspage.app_directory")} tooltip={t("pythonappspage.path_under_your_home_e_g_domains_example_com")} rules={[{ required: true }]}>
             <Input placeholder="domains/example.com/app" />
+          </Form.Item>
+          {!installFw && (
+            <Space style={{ width: "100%" }} size="middle">
+              <Form.Item
+                name="static_url"
+                label="Static URL path"
+                tooltip="Optional. Requests under this path are served by nginx directly instead of your app — the Passenger public/ equivalent. Set both fields or neither."
+              >
+                <Input placeholder="/static" />
+              </Form.Item>
+              <Form.Item
+                name="static_root"
+                label="Static directory"
+                tooltip="Directory relative to the app directory that holds the static files, e.g. public or staticfiles."
+              >
+                <Input placeholder="public" />
+              </Form.Item>
+            </Space>
+          )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title={staticApp ? `Static files — ${staticApp.name}` : "Static files"}
+        open={staticApp !== null}
+        onCancel={() => setStaticApp(null)}
+        onOk={() => void submitStatic()}
+        okText="Save"
+        confirmLoading={setStatic.isPending}
+      >
+        <Typography.Paragraph type="secondary">
+          nginx serves the URL path below directly from a directory inside your
+          app — CSS/JS/images stop going through the Python process (what
+          Passenger did with public/). Clear both fields to proxy everything to
+          the app again.
+        </Typography.Paragraph>
+        <Form form={staticForm} layout="vertical">
+          <Form.Item
+            name="static_url"
+            label="Static URL path"
+            rules={[{ pattern: /^$|^\/[A-Za-z0-9._/-]+$/, message: "URL path like /static" }]}
+          >
+            <Input placeholder="/static" />
+          </Form.Item>
+          <Form.Item
+            name="static_root"
+            label="Static directory (relative to app directory)"
+            rules={[{ pattern: /^$|^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/, message: "Relative directory like public" }]}
+          >
+            <Input placeholder="public" />
           </Form.Item>
         </Form>
       </Modal>

@@ -13,6 +13,10 @@ export type PythonApp = {
   app_type: "wsgi" | "asgi";
   entrypoint: string;
   base_uri: string;
+  // GH #878: nginx serves base_uri+static_url directly from
+  // app_root/static_root (Passenger public/ equivalent). Empty = proxy all.
+  static_url?: string;
+  static_root?: string;
   loopback_port?: number;
   status: string;
   last_error?: string;
@@ -31,6 +35,8 @@ export type CreatePythonAppInput = {
   base_uri: string;
   env?: Record<string, string>;
   framework?: string;
+  static_url?: string;
+  static_root?: string;
 };
 
 // Framework is a marketplace catalog entry (JAB-164), from GET
@@ -94,6 +100,22 @@ export function useDeletePythonApp() {
   return useMutation({
     mutationFn: async (id: string) => {
       await apiClient.delete(`/python-apps/${id}`);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+// GH #878: set or clear the static-asset split on an existing app. Both
+// fields empty clears it (nginx goes back to proxying everything).
+export function useSetPythonAppStatic() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { id: string; static_url: string; static_root: string }) => {
+      const { data } = await apiClient.put<{ app: PythonApp }>(
+        `/python-apps/${vars.id}/static`,
+        { static_url: vars.static_url, static_root: vars.static_root },
+      );
+      return data.app;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

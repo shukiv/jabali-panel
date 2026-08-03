@@ -1470,6 +1470,16 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
       responses: { "200": { description: Saved } }
 
+  /python-apps/{id}/static:
+    put:
+      tags: [Python Apps]
+      summary: Set or clear a Python app's static-asset split (GH #878)
+      description: nginx serves base_uri+static_url directly from app_root/static_root instead of proxying to the app — the Passenger public/ equivalent. Both fields empty clears the mapping.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { static_url: { type: string, example: /static }, static_root: { type: string, example: public } } } } } }
+      responses: { "200": { description: Saved }, "400": { description: Invalid static split } }
+
   /python-apps/{id}/control:
     post:
       tags: [Python Apps]
