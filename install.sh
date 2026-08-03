@@ -8845,6 +8845,106 @@ EOF
   done
 }
 
+ensure_crowdsec_db_ordering() {
+  # JAB-217. crowdsec ships
+  # `After=syslog.target network.target remote-fs.target nss-lookup.target` —
+  # nothing about a database, because upstream assumes SQLite. Once
+  # configure_crowdsec_mariadb repoints db_config at the MariaDB socket, boot
+  # becomes a race, and when crowdsec wins it dies with
+  #   FATAL unable to create database client: … dial unix
+  #   /run/mysqld/mysqld.sock: connect: no such file or directory
+  # It recovers only through the Restart=on-failure loop in
+  # 10-jabali-restart.conf — i.e. by luck, after a window in which the LAPI is
+  # down and no fresh decisions reach the edge. Same shape as the panel-api
+  # After=mariadb gap; both only bite on slower boxes where MariaDB's own
+  # startup is long enough to lose the race.
+  #
+  # Wants=, not Requires=: on a box whose MariaDB is deliberately stopped,
+  # crowdsec should still start and fail loudly rather than be a unit systemd
+  # silently refuses to schedule.
+  local dropin_dir="/etc/systemd/system/crowdsec.service.d"
+  local dropin="$dropin_dir/20-jabali-db-ordering.conf"
+  local cs_cfg="/etc/crowdsec/config.yaml"
+
+  [[ -f "$cs_cfg" ]] || return 0
+  command -v yq >/dev/null 2>&1 || return 0
+
+  local cur_type
+  cur_type="$(yq -r '.db_config.type // ""' "$cs_cfg" 2>/dev/null || echo "")"
+  if [[ "$cur_type" != "mysql" ]]; then
+    # Someone moved back to SQLite by hand — drop the ordering rather than
+    # leave crowdsec pinned to a database it no longer uses.
+    if [[ -f "$dropin" ]]; then
+      rm -f "$dropin"
+      systemctl daemon-reload
+      _log "removed crowdsec mariadb ordering drop-in (db_config is ${cur_type:-sqlite})"
+    fi
+    return 0
+  fi
+
+  local desired_dropin=$'# Managed by jabali install.sh — JAB-217. Do NOT hand-edit.\n# CrowdSec\'s LAPI database lives in MariaDB (configure_crowdsec_mariadb), but\n# the stock unit orders against nothing that provides it, so on boot crowdsec\n# can reach for /run/mysqld/mysqld.sock before mariadbd has created it.\n[Unit]\nAfter=mariadb.service\nWants=mariadb.service\n'
+
+  install -d -m 0755 "$dropin_dir"
+  if [[ ! -f "$dropin" ]] || ! cmp -s <(printf '%s' "$desired_dropin") "$dropin"; then
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-cs-order.XXXXXX)"
+    printf '%s' "$desired_dropin" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$dropin"
+    rm -f "$tmp"
+    systemctl daemon-reload
+    _ok "crowdsec ordered after mariadb.service (boot race fix)"
+  fi
+}
+
+ensure_crowdsec_bouncer_names() {
+  # JAB-217. Heal boxes that ran the earlier revision of
+  # configure_crowdsec_mariadb, which re-registered bouncers as
+  # jabali-firewall-bouncer / jabali-nginx-bouncer. No other code path uses
+  # those names — install_crowdsec_bouncer registers "jabali-firewall" and
+  # install_crowdsec_nginx_bouncer registers "jabali-nginx" — so the box ends up
+  # with two rows per bouncer sharing one API key. The LAPI only advances
+  # last_pull on the row it resolves the key to, leaving the other frozen at
+  # whenever it was created. An operator reading `cscli bouncers list` sees a
+  # bouncer that has not pulled in weeks and concludes edge enforcement is dead.
+  #
+  # The order below is load-bearing. Bouncers authenticate by KEY, and
+  # `cscli bouncers delete` removes that key registration — so on a box where
+  # the legacy row is the only one holding the key, deleting first would break
+  # authentication outright. Register the canonical name with the SAME key
+  # first (the running bouncer never notices), verify it landed, then prune.
+  command -v cscli >/dev/null 2>&1 || return 0
+
+  local pair legacy canonical key
+  for pair in "jabali-firewall-bouncer:jabali-firewall" "jabali-nginx-bouncer:jabali-nginx"; do
+    legacy="${pair%%:*}"
+    canonical="${pair##*:}"
+
+    cscli bouncers list -o json 2>/dev/null \
+      | python3 -c 'import json,sys; sys.exit(0 if any(b.get("name")==sys.argv[1] for b in json.load(sys.stdin)) else 1)' "$legacy" 2>/dev/null \
+      || continue
+
+    if [[ "$canonical" == "jabali-firewall" ]]; then
+      key="$(yq -r '.api_key // ""' /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml 2>/dev/null || true)"
+    else
+      key="$(grep -oP '^API_KEY=\K.*' /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf 2>/dev/null || true)"
+    fi
+    if [[ -z "$key" || "$key" == "null" ]]; then
+      _warn "cannot read the $canonical API key — leaving duplicate bouncer '$legacy' in place"
+      continue
+    fi
+
+    cscli bouncers add "$canonical" -k "$key" >/dev/null 2>&1 || true
+    if cscli bouncers list -o json 2>/dev/null \
+      | python3 -c 'import json,sys; sys.exit(0 if any(b.get("name")==sys.argv[1] for b in json.load(sys.stdin)) else 1)' "$canonical" 2>/dev/null; then
+      if cscli bouncers delete "$legacy" >/dev/null 2>&1; then
+        _ok "pruned duplicate crowdsec bouncer '$legacy' ('$canonical' holds the key)"
+      fi
+    else
+      _warn "could not register canonical bouncer '$canonical' — leaving '$legacy' alone"
+    fi
+  done
+}
+
 configure_crowdsec_mariadb() {
   # Move CrowdSec's LAPI database from SQLite to the panel MariaDB (unix
   # socket, M25). SQLite pegged crowdsec at high CPU under the CAPI community
@@ -8910,6 +9010,13 @@ SQL
   chown root:root "$cs_cfg" 2>/dev/null || true
   chmod 0640 "$cs_cfg" 2>/dev/null || true
 
+  # Unconditional, and deliberately BEFORE the restart below: the boxes that
+  # need the boot ordering and the bouncer-name heal are exactly the ones that
+  # migrated long ago and take the "no change" branch, so gating either on
+  # $changed would never reach them (JAB-217).
+  ensure_crowdsec_db_ordering
+  ensure_crowdsec_bouncer_names
+
   if [[ "$changed" == 1 ]]; then
     # cscli reads the inlined password from config.yaml (0640 root) — no env
     # needed, and the same is true for every panel-agent cscli call on MariaDB.
@@ -8928,14 +9035,24 @@ SQL
     fi
     # Re-register bouncers with their existing API keys so their configs are
     # untouched (bouncers authenticate by key, name is just a label).
+    #
+    # The names MUST match the ones install_crowdsec_bouncer /
+    # install_crowdsec_nginx_bouncer register ($fw_bouncer_name="jabali-firewall",
+    # $bouncer_name="jabali-nginx"). An earlier revision used "-bouncer"-suffixed
+    # names that match nothing else, which left a second row per bouncer holding
+    # the same key. Only one row's last_pull advances, so the other sits frozen
+    # forever in `cscli bouncers list` — the one place an operator checks whether
+    # edge enforcement is alive. Observed on testserver: jabali-nginx pulling
+    # every 60s while jabali-nginx-bouncer showed a three-week-old pull, which
+    # reads exactly like a wedged bouncer (JAB-217).
     local fb_key nb_key
     fb_key="$(yq -r '.api_key // ""' /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml 2>/dev/null)"
     if [[ -n "$fb_key" && "$fb_key" != "null" ]]; then
-      cscli bouncers add jabali-firewall-bouncer -k "$fb_key" >/dev/null 2>&1 || true
+      cscli bouncers add jabali-firewall -k "$fb_key" >/dev/null 2>&1 || true
     fi
     nb_key="$(grep -oP '^API_KEY=\K.*' /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf 2>/dev/null || true)"
     if [[ -n "$nb_key" ]]; then
-      cscli bouncers add jabali-nginx-bouncer -k "$nb_key" >/dev/null 2>&1 || true
+      cscli bouncers add jabali-nginx -k "$nb_key" >/dev/null 2>&1 || true
     fi
     if systemctl restart crowdsec; then
       _ok "CrowdSec LAPI DB → MariaDB (schema migrated; agent+bouncers re-registered)"
