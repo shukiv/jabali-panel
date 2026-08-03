@@ -785,7 +785,16 @@ type cpanelRunPayload struct {
 
 // Core-area failure thresholds (JAB-31). Each returns true when an area ran but
 // produced nothing usable — a "done" job in that state is misleading.
-func dbDumpsAllSkipped(dumps, created int) bool        { return dumps > 0 && created == 0 }
+// dbDumpsAllSkipped reports the JAB-31 core failure: dumps were present and
+// NONE of them ended up as a database on this box.
+//
+// JAB-215: a database left in place by an earlier run of the same account
+// counts as handled. Otherwise every recovery re-run of an account that got
+// past the DB stage ends degraded even though its databases are complete —
+// the flag then means nothing when a database is genuinely missing.
+func dbDumpsAllSkipped(dumps, created, alreadyPresent int) bool {
+	return dumps > 0 && created == 0 && alreadyPresent == 0
+}
 func mailFoundNonePushed(found int, pushed int64) bool { return found > 0 && pushed == 0 }
 
 // shouldDowngradeToDegraded gates the done→degraded transition: the runner
@@ -970,11 +979,12 @@ func cpanelRestoreCallback(
 			if err != nil {
 				return bytes, warnings, fmt.Errorf("databases: %w", err)
 			}
-			warnings = append(warnings, fmt.Sprintf("databases: created=%d", dbsRes.Created))
+			warnings = append(warnings, fmt.Sprintf("databases: created=%d verified_existing=%d",
+				dbsRes.Created, dbsRes.AlreadyPresent))
 			warnings = append(warnings, dbsRes.Skipped...)
 			// JAB-31: DB dumps present but none imported is a core failure, not a
 			// warning — a "done" job here has no databases.
-			if dbDumpsAllSkipped(len(p.parsed.MySQLDumps), dbsRes.Created) {
+			if dbDumpsAllSkipped(len(p.parsed.MySQLDumps), dbsRes.Created, dbsRes.AlreadyPresent) {
 				p.criticals = append(p.criticals, fmt.Sprintf(
 					"databases: %d dump(s) present but 0 imported", len(p.parsed.MySQLDumps)))
 			}

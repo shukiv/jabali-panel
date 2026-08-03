@@ -10,14 +10,35 @@ import (
 // treated as degraded, not done. Lock the exact thresholds + the downgrade gate.
 func TestMigrationCriticalThresholds(t *testing.T) {
 	t.Run("db dumps present but none imported is critical", func(t *testing.T) {
-		if !dbDumpsAllSkipped(1, 0) {
-			t.Error("1 dump, 0 created should be critical")
+		if !dbDumpsAllSkipped(1, 0, 0) {
+			t.Error("1 dump, 0 created, 0 already present should be critical")
 		}
-		if dbDumpsAllSkipped(0, 0) {
+		if dbDumpsAllSkipped(0, 0, 0) {
 			t.Error("no dumps is not a failure")
 		}
-		if dbDumpsAllSkipped(2, 2) {
+		if dbDumpsAllSkipped(2, 2, 0) {
 			t.Error("all imported is not a failure")
+		}
+	})
+
+	// JAB-215: --retry-from-scratch wipes the job's stages but does NOT drop the
+	// tenant databases the previous run created, so the re-run finds them
+	// already present and imports nothing. That used to end
+	// "DEGRADED: 1 dump(s) present but 0 imported", exit non-zero, on a box
+	// whose databases were complete and healthy — training operators to reach
+	// for --allow-degraded, which then means nothing when a DB is really gone.
+	t.Run("databases left in place by a previous run are handled, not degraded", func(t *testing.T) {
+		if dbDumpsAllSkipped(1, 0, 1) {
+			t.Error("1 dump already present from an earlier run must NOT be critical — " +
+				"this is the retry-from-scratch false degrade (JAB-215)")
+		}
+		if dbDumpsAllSkipped(3, 1, 2) {
+			t.Error("a mix of re-imported and verified-existing must not be critical")
+		}
+		// The guarantee still has teeth: nothing imported AND nothing already
+		// there is still a core failure.
+		if !dbDumpsAllSkipped(2, 0, 0) {
+			t.Error("dumps present, none imported, none pre-existing is still critical")
 		}
 	})
 

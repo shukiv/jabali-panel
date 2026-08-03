@@ -20,7 +20,21 @@ import (
 // progress reporting + manifest update.
 type DBImportResult struct {
 	Created int
-	Skipped []string
+	// AlreadyPresent counts dumps whose target database was already imported by
+	// an earlier run of the SAME account and left in place.
+	//
+	// JAB-215: these used to be indistinguishable from a failure. A
+	// --retry-from-scratch wipes the job's stages but does NOT drop the tenant
+	// databases the previous run created, so every dump hit the
+	// "already imported" branch, Created stayed 0, and the run ended
+	// "DEGRADED: N dump(s) present but 0 imported" with a non-zero exit — on a
+	// box whose databases were complete and healthy. That trains operators to
+	// reach for --allow-degraded, which defeats the flag for real failures.
+	//
+	// Counted separately rather than folded into Created so the summary can say
+	// which databases were re-imported and which were verified-existing.
+	AlreadyPresent int
+	Skipped        []string
 	// Credentials captures (db_name → DBCredential) for each DB +
 	// user pair created during this restore pass. ImportAppConfigs
 	// reads it to rewrite WordPress/Drupal/Joomla/Magento config
@@ -145,7 +159,9 @@ func ImportDatabases(
 			return res, fmt.Errorf("collision check %s: %w", finalName, err)
 		}
 		if exists {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: %q already imported", dumpPath, finalName))
+			res.AlreadyPresent++
+			res.Skipped = append(res.Skipped, fmt.Sprintf(
+				"%s: %q verified existing — left in place, not re-imported", dumpPath, finalName))
 			continue
 		}
 
