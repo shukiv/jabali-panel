@@ -272,6 +272,17 @@ server {
     location = /jabali-err-404.html { internal; root /var/www/jabali-errors; }
     location = /jabali-err-403.html { internal; root /var/www/jabali-errors; }
     location = /jabali-err-500.html { internal; root /var/www/jabali-errors; }
+{{ if and .InterceptErrors .HasPHP }}
+    # GH #879: with interception on, the PHP locations carry a 50x-ONLY
+    # error_page set (so FPM 404s pass through to the app). That also
+    # detaches their try_files =404 existence guard from the branded 404 —
+    # so the guard falls back HERE instead, where the full-status branded
+    # 404 is back in scope.
+    location @jabali_missing {
+        error_page 404 /jabali-err-404.html;
+        return 404;
+    }
+{{ end }}
 {{ end }}
 {{ if .CacheEnabled }}
     # Long-cache static assets (immutable content; 30 days).
@@ -304,7 +315,11 @@ server {
     # of PHP-FPM's bare "File not found", so the branded error_page shows.
     # When it exists the app runs and owns its own error pages.
     location = /index.php {
+{{ if .InterceptErrors }}
+        try_files $uri @jabali_missing;
+{{ else }}
         try_files $uri =404;
+{{ end }}
         fastcgi_pass unix:{{.FPMSocket}};
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
@@ -408,7 +423,11 @@ server {
         # security.limit_extensions = .php (install/php/jabali-php-pool.conf.tmpl)
         # already rejects that, so this is the second lock on the same door --
         # it must not be removed on the assumption the pool setting is enough.
+{{ if .InterceptErrors }}
+        try_files $uri @jabali_missing;
+{{ else }}
         try_files $uri =404;
+{{ end }}
         fastcgi_pass unix:{{.FPMSocket}};
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;

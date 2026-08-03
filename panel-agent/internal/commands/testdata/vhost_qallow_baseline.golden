@@ -82,6 +82,7 @@ server {
     location = /jabali-err-500.html { internal; root /var/www/jabali-errors; }
 
 
+
     # Long-cache static assets (immutable content; 30 days).
     location ~* \.(?:css|js|jpe?g|png|gif|ico|svg|webp|woff2?|ttf|eot)$ {
         expires 30d;
@@ -112,7 +113,9 @@ server {
     # of PHP-FPM's bare "File not found", so the branded error_page shows.
     # When it exists the app runs and owns its own error pages.
     location = /index.php {
+
         try_files $uri =404;
+
         fastcgi_pass unix:/run/php/jabali-u/fpm.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
@@ -185,7 +188,9 @@ server {
         # security.limit_extensions = .php (install/php/jabali-php-pool.conf.tmpl)
         # already rejects that, so this is the second lock on the same door --
         # it must not be removed on the assumption the pool setting is enough.
+
         try_files $uri =404;
+
         fastcgi_pass unix:/run/php/jabali-u/fpm.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
