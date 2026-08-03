@@ -40,6 +40,11 @@ type domainCreateParams struct {
 	// (true) or a branded "site disabled" placeholder (false). Pointer
 	// so omitted fields default to true (backwards compat).
 	IsEnabled *bool `json:"is_enabled"`
+	// InterceptErrors (GH #879) — show the branded 500 page for PHP
+	// application 5xx responses. A PHP fatal returns 500 with an EMPTY body
+	// (display_errors off), so without interception visitors get the
+	// browser's raw error screen. false ⇒ vhost byte-identical.
+	InterceptErrors bool `json:"intercept_errors"`
 	// CacheEnabled (ADR-0108) — per-domain nginx FastCGI micro-cache
 	// opt-in. false ⇒ vhost byte-identical to the pre-0108 shape.
 	CacheEnabled bool   `json:"cache_enabled"`
@@ -254,11 +259,13 @@ server {
     # Branded error pages (M28 page templates). error_page fires ONLY on
     # NATIVE nginx errors: a missing static file (try_files =404), a denied
     # directory (403), or an upstream 50x. fastcgi_intercept_errors is
-    # deliberately OFF, so a real app (WordPress, etc.) keeps its own 404
+    # OFF by default, so a real app (WordPress, etc.) keeps its own 404
     # — its index.php runs and owns the response. A no-app PHP domain hits
     # the index.php existence guard below, which yields a
     # native 404 that lands here. Files are converged from the editable
     # page_template rows into /var/www/jabali-errors by the reconciler.
+    # The per-domain intercept_errors toggle (GH #879) turns interception
+    # on inside the PHP locations for the 5xx codes only.
     error_page 404 /jabali-err-404.html;
     error_page 403 /jabali-err-403.html;
     error_page 500 502 503 504 /jabali-err-500.html;
@@ -301,6 +308,16 @@ server {
         fastcgi_pass unix:{{.FPMSocket}};
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+{{ if .InterceptErrors }}
+        # GH #879: branded 500 for application errors. A PHP fatal returns
+        # 500 with an empty body, so visitors otherwise get the browser's
+        # raw error screen. error_page is redefined location-scoped with
+        # ONLY the 5xx codes — the inherited 404/403 set is replaced here,
+        # so the app keeps its own 404/403 pages (interception only fires
+        # for codes that have a matching error_page in this location).
+        fastcgi_intercept_errors on;
+        error_page 500 502 503 504 /jabali-err-500.html;
+{{ end }}
 {{ if .PHPValueParam }}
         fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
 {{ end }}
@@ -395,6 +412,12 @@ server {
         fastcgi_pass unix:{{.FPMSocket}};
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+{{ if .InterceptErrors }}
+        # GH #879: branded 500 for application errors (see the identical
+        # block in location = /index.php).
+        fastcgi_intercept_errors on;
+        error_page 500 502 503 504 /jabali-err-500.html;
+{{ end }}
 {{ if .PHPValueParam }}
         fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
 {{ end }}
@@ -624,6 +647,10 @@ type vhostData struct {
 	// auth_basic ...; auth_basic_user_file ...; }` blocks, one per
 	// rule. Empty string when the domain has no privacy rules.
 	DirectoryPrivacyDirectives string
+	// InterceptErrors (GH #879) — branded 500 for PHP app 5xx. Renders
+	// fastcgi_intercept_errors + a 50x-only location-scoped error_page in
+	// the PHP locations. false ⇒ byte-identical.
+	InterceptErrors bool
 	// ADR-0108 FastCGI micro-cache. All three are panel/agent-controlled
 	// (never user data). When CacheEnabled is false the template emits
 	// none of the cache/static directives → byte-identical to pre-0108.
@@ -875,7 +902,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors bool) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -975,6 +1002,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPValueParam:              buildPHPValueParam(phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime),
 		ListenIPv4:                 listenIPv4,
 		ListenIPv6:                 listenIPv6,
+		InterceptErrors:            interceptErrors,
 		CacheEnabled:               cacheEnabled,
 		CachePath:                  cachePath,
 		CacheGate:                  cacheGate,
@@ -1212,7 +1240,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 	dirPrivacyDirectives := buildDirectoryPrivacyDirectives(p.DirectoryPrivacyRules)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

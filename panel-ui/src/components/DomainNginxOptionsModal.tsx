@@ -9,6 +9,7 @@ interface SafeOptions {
   hsts?: boolean;
   security_headers?: boolean;
   gzip?: boolean;
+  intercept_errors?: boolean;
 }
 
 export interface DomainNginxOptionsModalProps {
@@ -52,6 +53,7 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
           hsts: !!values.hsts,
           security_headers: !!values.security_headers,
           gzip: !!values.gzip,
+          intercept_errors: !!values.intercept_errors,
         },
       });
       message.success("Domain options saved — applied on the next reconcile");
@@ -85,6 +87,13 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
         </Form.Item>
         <Form.Item name="gzip" valuePropName="checked">
           <Checkbox>Enable gzip compression for text content</Checkbox>
+        </Form.Item>
+        <Form.Item
+          name="intercept_errors"
+          valuePropName="checked"
+          tooltip="A crashed PHP script normally returns an empty 500, so visitors see the browser's raw error screen. This serves the branded 500 page instead (editable under Server Settings → Page Templates). The site keeps its own 404/403 pages. Note: apps that render their own error screens (e.g. WordPress's recovery notice) or return JSON errors will show the branded page instead."
+        >
+          <Checkbox>Show branded error page when the application fails (500-class errors)</Checkbox>
         </Form.Item>
       </Form>
     </Modal>

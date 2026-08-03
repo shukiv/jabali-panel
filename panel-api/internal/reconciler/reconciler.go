@@ -1672,6 +1672,10 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 	params["custom_directives"] = cust
 
+	// GH #879: branded 500 for app errors — location-scoped in the vhost's
+	// PHP blocks, so it travels as its own param rather than via Render().
+	params["intercept_errors"] = domain.NginxSafeOptions.InterceptErrors
+
 	params["redirect_directives"] = redirects.Compile(domain)
 	params["rule_directives"] = nginxrules.Compile(domain)
 

@@ -67,11 +67,13 @@ server {
     # Branded error pages (M28 page templates). error_page fires ONLY on
     # NATIVE nginx errors: a missing static file (try_files =404), a denied
     # directory (403), or an upstream 50x. fastcgi_intercept_errors is
-    # deliberately OFF, so a real app (WordPress, etc.) keeps its own 404
+    # OFF by default, so a real app (WordPress, etc.) keeps its own 404
     # — its index.php runs and owns the response. A no-app PHP domain hits
     # the index.php existence guard below, which yields a
     # native 404 that lands here. Files are converged from the editable
     # page_template rows into /var/www/jabali-errors by the reconciler.
+    # The per-domain intercept_errors toggle (GH #879) turns interception
+    # on inside the PHP locations for the 5xx codes only.
     error_page 404 /jabali-err-404.html;
     error_page 403 /jabali-err-403.html;
     error_page 500 502 503 504 /jabali-err-500.html;
@@ -114,6 +116,7 @@ server {
         fastcgi_pass unix:/run/php/jabali-u/fpm.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+
 
 
         # Fail-CLOSED page-cache gate (Gitea #416/#419): cache ONLY genuinely
@@ -186,6 +189,7 @@ server {
         fastcgi_pass unix:/run/php/jabali-u/fpm.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+
 
 
         # Fail-CLOSED page-cache gate (Gitea #416/#419): cache ONLY genuinely
