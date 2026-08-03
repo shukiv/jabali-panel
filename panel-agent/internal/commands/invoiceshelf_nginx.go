@@ -108,6 +108,14 @@ func removeInvoiceShelfNginx(ctx context.Context, domain, subdir string) error {
 	if !domainRegex.MatchString(domain) {
 		return fmt.Errorf("invalid domain %q", domain)
 	}
+	// Validate subdir before it is glued into the snippet FILENAME: an
+	// unvalidated "../.." here would let filepath.Join escape the domain
+	// dir and os.Remove (root) an arbitrary .conf. The write path already
+	// checks this; the remove path must too (defense-in-depth, and the
+	// deleter passes the subdir straight from the request).
+	if subdir != "" && !subdirSlugRE.MatchString(subdir) {
+		return fmt.Errorf("invalid subdir slug %q", subdir)
+	}
 	dest := invoiceShelfSnippetPath(domain, subdir)
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove %s: %w", dest, err)

@@ -40,3 +40,14 @@ func TestEnvQuoted(t *testing.T) {
 		t.Errorf("quotes/newlines survived: %q", got)
 	}
 }
+
+// Security review: removeInvoiceShelfNginx must reject a traversal subdir
+// before it reaches the snippet FILENAME (a "../.." would let os.Remove,
+// running as root, escape the domain dir and delete an arbitrary .conf).
+func TestRemoveInvoiceShelfNginx_RejectsTraversalSubdir(t *testing.T) {
+	for _, bad := range []string{"../../etc/nginx/evil", "..", "a/../../b", "foo/../../bar"} {
+		if err := removeInvoiceShelfNginx(nil, "example.com", bad); err == nil {
+			t.Errorf("removeInvoiceShelfNginx accepted traversal subdir %q", bad)
+		}
+	}
+}

@@ -282,6 +282,12 @@ func removeFlarumNginx(ctx context.Context, domain, subdir string) error {
 	if !domainRegex.MatchString(domain) {
 		return fmt.Errorf("invalid domain %q", domain)
 	}
+	// Same containment as writeFlarumNginx: an unvalidated "../.." subdir
+	// glued into the snippet filename would let filepath.Join escape the
+	// domain dir and os.Remove (root) an arbitrary .conf.
+	if subdir != "" && !subdirSlugRE.MatchString(subdir) {
+		return fmt.Errorf("invalid subdir slug %q", subdir)
+	}
 	dest := flarumSnippetPath(domain, subdir)
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove %s: %w", dest, err)
