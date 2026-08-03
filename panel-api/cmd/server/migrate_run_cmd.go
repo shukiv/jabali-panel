@@ -1970,7 +1970,14 @@ func isHostnameLike(h string) bool {
 // migrate: logs/statistics are regenerable server artifacts, conf/.plesk/
 // system are Plesk internals that would leak source-panel config into the
 // destination account.
-var pleskSystemExcludes = []string{"logs/", "statistics/", "conf/", ".plesk/", "system/", "error_docs/"}
+var pleskSystemExcludes = []string{
+	"logs/", "statistics/", "conf/", ".plesk/", "system/", "error_docs/",
+	// Plesk chroot shell template (observed on Obsidian 18.0.79: the vhost
+	// root carries a full chroot toolchain). Copying it would land /bin,
+	// /lib64 etc. into ~/plesk-files. User data lives in private/ and
+	// custom-named dirs, which still copy.
+	"bin/", "dev/", "etc/", "lib/", "lib64/", "sbin/", "usr/", "var/", "tmp/",
+}
 
 // pleskExtraExcludes builds the --exclude list for the vhost-extra rsync
 // (GH #429 follow-up): every already-rsynced docroot, expressed RELATIVE to
