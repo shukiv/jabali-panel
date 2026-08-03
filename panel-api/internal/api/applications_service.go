@@ -456,6 +456,17 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:         k.UseWWW,
 		}, deps)
 		adminPassword = prestaPass
+	case "privatebin":
+		// No accounts, no DB — the smallest kick there is.
+		go createPrivateBinInstallAndKickAgent(ctx, privateBinKickArgs{
+			InstallID:    k.InstallID,
+			OSUser:       k.OSUser,
+			DocRoot:      k.DocRoot,
+			Subdirectory: k.Subdirectory,
+			SiteURL:      k.SiteURL,
+			SiteTitle:    paramOr(k.Params, "site_title", "PrivateBin"),
+			UseWWW:       k.UseWWW,
+		}, deps)
 	case "dokuwiki":
 		dokuPass := paramOr(k.Params, "admin_password", "")
 		if dokuPass == "" {

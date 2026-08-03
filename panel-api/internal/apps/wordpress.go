@@ -106,5 +106,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(Moodle); err != nil {
 		return err
 	}
+	if err := r.Register(PrivateBin); err != nil {
+		return err
+	}
 	return nil
 }
