@@ -1350,6 +1350,73 @@ func cpanelRestoreCallback(
 		// The agent copies <Maildir>/ CONTENTS (trailing slash), so cur/new/tmp
 		// land directly under <local>/ — exactly the layout ImportMailboxes
 		// walks. Point MailRoot there so the generic import below picks it up.
+		// JAB-152: Plesk has the SAME shape as CyberPanel here — Maildirs live
+		// outside the account home (/var/qmail/mailnames/<domain>/<local>/
+		// Maildir) and the Plesk tarball is metadata-only by design, so
+		// ImportMailboxes below finds nothing to walk. The live E2E against a
+		// Plesk Obsidian 18.0.79 box migrated files and databases correctly and
+		// silently moved ZERO of 3 mailboxes, reporting the job done. Reuse the
+		// same rsync-then-point-MailRoot approach; the source paths differ, and
+		// for Plesk they are verified against the source psa DB rather than the
+		// staged manifest.
+		if plan.Mailboxes && job.SourceKind == models.MigrationSourcePlesk && job.SourceHost != "" {
+			mailManifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+plesk.Slug(job.SourceUser), "mail-paths.txt")
+			raw, rerr := os.ReadFile(mailManifest)
+			if rerr != nil {
+				warnings = append(warnings, "mail_rsync: no mail-paths.txt in the Plesk tarball — no mailboxes to migrate")
+			} else if allowed, aerr := pleskAuthorizedMaildirs(ctx, job, sharedDB); aerr != nil {
+				// FAIL CLOSED, and loudly: silently skipping mail is exactly the
+				// failure this fix exists to remove.
+				p.criticals = append(p.criticals, fmt.Sprintf(
+					"security: could not verify Plesk mailboxes from source psa (%v) — mail rsync refused (fail-closed)", aerr))
+			} else {
+				secretPath := fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)
+				remoteSSHUser := migrationSSHUser(job)
+				destMailRoot := filepath.Join("/home", p.targetUsername, "mail")
+				mboxCount := 0
+				for _, line := range strings.Split(string(raw), "\n") {
+					parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+					if len(parts) != 2 {
+						continue
+					}
+					addr, srcMaildir := strings.TrimSpace(parts[0]), filepath.Clean(strings.TrimSpace(parts[1]))
+					at := strings.LastIndex(addr, "@")
+					if at < 1 {
+						continue
+					}
+					// The manifest may name a path; only the SOURCE decides
+					// which paths are ours.
+					if want, ok := allowed[addr]; !ok || want != srcMaildir {
+						p.criticals = append(p.criticals, fmt.Sprintf(
+							"security: mail source %q for %q is not an authoritative Maildir of subscription %q — refused",
+							srcMaildir, addr, job.SourceUser))
+						continue
+					}
+					local, mdom := addr[:at], addr[at+1:]
+					if _, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+						"port":        srcSSHPort(job),
+						"job_id":      job.ID,
+						"src_account": p.parsed.SourceUser,
+						"src_root":    "/var/qmail/mailnames",
+						"host":        job.SourceHost,
+						"ssh_user":    remoteSSHUser,
+						"secret_path": secretPath,
+						"src_path":    srcMaildir,
+						"dest_path":   filepath.Join(destMailRoot, mdom, local),
+						"dest_user":   p.targetUsername,
+					}); mrErr != nil {
+						warnings = append(warnings, fmt.Sprintf("mail_rsync: %s: %v", addr, mrErr))
+						continue
+					}
+					mboxCount++
+				}
+				if mboxCount > 0 {
+					p.parsed.MailRoot = destMailRoot
+					warnings = append(warnings, fmt.Sprintf("mail: rsynced %d maildir(s) -> %s (Plesk /var/qmail/mailnames)", mboxCount, destMailRoot))
+				}
+			}
+		}
+
 		if plan.Mailboxes && job.SourceKind == models.MigrationSourceCyberPanel && job.SourceHost != "" {
 			mailManifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "mail-paths.txt")
 			if raw, rerr := os.ReadFile(mailManifest); rerr == nil {
@@ -1909,6 +1976,41 @@ func primaryDomainFromManifest(manifestJSON *string) string {
 // (authoritative — not the staged manifest). The import rsync guard rsyncs
 // ONLY paths under these. Returns an error (→ fail-closed refuse-all) when
 // the source can't be reached/verified or reports zero domains.
+// pleskAuthorizedMaildirs returns address -> Maildir for every mailbox the
+// subscription owns, read fresh from the SOURCE psa DB. Mail counterpart of
+// pleskAuthorizedDocroots and fail-closed for the same reason: the rsync runs
+// as root over SSH and every Plesk subscription's mail sits side by side under
+// /var/qmail/mailnames/, so a manifest-trusting import could pull another
+// tenant's mail (JAB-152).
+func pleskAuthorizedMaildirs(ctx context.Context, job *models.MigrationJob, db *gorm.DB) (map[string]string, error) {
+	allowPrivate := false
+	if s, err := repository.NewServerSettingsRepository(db).Get(ctx); err == nil && s != nil {
+		allowPrivate = s.MigrationAllowPrivateHosts
+	}
+	d := plesk.New()
+	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
+	secret := migrate.SecretRef{Path: fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID), ExpectedHostKey: job.ExpectedHostKey}
+	sess, err := d.Connect(ctx, job.SourceHost, migrationSSHUser(job), secret)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer func() { _ = d.Close(ctx, sess) }()
+	boxes, err := d.AuthoritativeMaildirs(ctx, sess, job.SourceUser)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for addr, md := range boxes {
+		// Defence in depth on (untrusted) psa output: only Maildirs physically
+		// under the Plesk mailnames root, never /etc, /root, …
+		if cl := filepath.Clean(md); strings.HasPrefix(cl, "/var/qmail/mailnames/") {
+			out[addr] = cl
+		}
+	}
+	return out, nil
+}
+
 func pleskAuthorizedDocroots(ctx context.Context, job *models.MigrationJob, db *gorm.DB) (map[string]bool, error) {
 	allowPrivate := false
 	if s, err := repository.NewServerSettingsRepository(db).Get(ctx); err == nil && s != nil {

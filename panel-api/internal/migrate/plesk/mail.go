@@ -69,3 +69,54 @@ func parseFirstInt(s string) int64 {
 	}
 	return n
 }
+
+// AuthoritativeMaildirs returns the Maildir path for every mailbox the
+// subscription owns, keyed by full address, read fresh from the SOURCE's psa
+// database.
+//
+// This is the mail counterpart of AuthoritativeDocroots and exists for the same
+// reason (GH #746 / JAB-152): the migration rsyncs as ROOT over SSH, so the set
+// of source paths it may read must never come from a staged manifest an
+// attacker or a stale run could have written. A Plesk host has no
+// per-subscription filesystem root — every subscription's mail sits side by side
+// under /var/qmail/mailnames/<domain>/ — so without an allowlist derived from
+// the source itself, one tenant's migration could pull another tenant's mail.
+//
+// Callers FAIL CLOSED on error: refuse every mail rsync rather than fall back to
+// trusting the manifest.
+func (d *Discoverer) AuthoritativeMaildirs(ctx context.Context, raw migrate.Session, sub string) (map[string]string, error) {
+	doms, err := d.AuthoritativeDomains(ctx, raw, sub)
+	if err != nil {
+		return nil, err
+	}
+	s, ok := raw.(*session)
+	if !ok {
+		return nil, fmt.Errorf("AuthoritativeMaildirs: wrong session type")
+	}
+	out := map[string]string{}
+	for _, dom := range doms {
+		dom = strings.TrimSpace(dom)
+		if dom == "" {
+			continue
+		}
+		// psa is the authority on which mail names exist for the domain; the
+		// filesystem is the authority on where the Maildir is. Query psa so a
+		// stray directory left behind by a deleted mailbox is not migrated.
+		sql := fmt.Sprintf(
+			"SELECT m.mail_name FROM mail m JOIN domains d ON m.dom_id=d.id WHERE d.name=%s",
+			sqlQuote(dom))
+		outRaw, err := s.run(ctx, d.CommandTimeout, "plesk db -Ne "+shellQuote(sql))
+		if err != nil {
+			return nil, fmt.Errorf("query psa mailboxes for %s: %w", dom, err)
+		}
+		for _, local := range splitLines(string(outRaw)) {
+			local = strings.TrimSpace(local)
+			if local == "" || strings.ContainsAny(local, "/\\") || strings.Contains(local, "..") {
+				continue // never let a mail name shape a path
+			}
+			md := pleskMailnamesRoot + "/" + dom + "/" + local + "/Maildir"
+			out[local+"@"+dom] = md
+		}
+	}
+	return out, nil
+}

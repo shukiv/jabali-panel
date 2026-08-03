@@ -71,18 +71,26 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		return nil, fmt.Errorf("ImportMailboxes: parsed nil")
 	}
 	res := &MailImportResult{}
-	if parsed.HomeDir == "" {
-		// No homedir → no Maildir tree. Not fatal; record + return.
-		res.Skipped = append(res.Skipped, "mailbox_skip:no_homedir_in_tarball")
-		return res, nil
-	}
 
 	// MailRoot is set by per-importer parsers (cpanel: HomeDir/mail,
-	// DA: HomeDir/email via the directadmin adapter). Fallback to
-	// HomeDir/mail when caller didn't set it (legacy callers + cpanel
-	// pre-MailRoot tarballs).
+	// DA: HomeDir/email via the directadmin adapter) and by the callers that
+	// rsync Maildirs in from outside the tarball. Fallback to HomeDir/mail
+	// when neither applies (legacy callers + cpanel pre-MailRoot tarballs).
+	//
+	// JAB-152: this used to return early whenever HomeDir was empty, which made
+	// mail import IMPOSSIBLE for any source whose tarball is metadata-only. The
+	// Plesk tarball is exactly that by design (see plesk/backup.go: "the homedir
+	// and Maildirs are NOT bundled"), so a live Plesk migration moved files and
+	// databases correctly and silently moved ZERO mailboxes while reporting the
+	// job done. An explicit MailRoot is a complete answer on its own — the
+	// homedir check only ever existed to derive HomeDir/mail.
 	mailRoot := parsed.MailRoot
 	if mailRoot == "" {
+		if parsed.HomeDir == "" {
+			// Nothing to derive a mail tree from. Not fatal; record + return.
+			res.Skipped = append(res.Skipped, "mailbox_skip:no_homedir_in_tarball")
+			return res, nil
+		}
 		mailRoot = filepath.Join(parsed.HomeDir, "mail")
 	}
 	if !existsDir(mailRoot) {
