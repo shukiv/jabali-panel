@@ -235,6 +235,23 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("finalise admin: %v (%s)", err, truncateStr(string(out), 1024))}
 	}
 
+	// Cache the route table (GH #897). This is Laravel's production
+	// best-practice, and here it is load-bearing: jabali's Snuffleupagus
+	// hooks override zend_execute_ex, which under the PHP-FPM SAPI defers
+	// a discarded temporary's __destruct to script shutdown. Laravel
+	// registers every Route::resource() from exactly that pattern
+	// (PendingResourceRegistration::__destruct), so under FPM the CRUD
+	// routes land AFTER route matching and every /api/v1/<resource> 404s
+	// ("route could not be found" on each nav click). route:cache is built
+	// here in the CLI SAPI — where destructor timing is correct — and FPM
+	// then serves the baked table without re-running registration, so the
+	// resource routes exist. Fatal on failure: without a valid cache the app
+	// serves 404s on every CRUD route, so a broken cache is a broken install
+	// and must surface here rather than ship silently.
+	if err := artisan(2*time.Minute, "route:cache"); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+
 	if err := writeInvoiceShelfNginx(ctx, domain, req.OSUser, req.Subdirectory); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("nginx snippet: %v", err)}
 	}
