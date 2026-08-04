@@ -893,11 +893,36 @@ func runSystemPanelDBStage(ctx context.Context, c *backup.Client, jobID, hostnam
 	return stages
 }
 
+// systemDBExists reports whether a MariaDB schema is present. Used to skip
+// the dump of an OPTIONAL system database that isn't installed (GH #502):
+// jabali_pdns only exists when the DNS module is enabled, so on a
+// DNS-less install mariadb-dump would exit 2 ("Unknown database") and mark
+// the whole system backup Partial for a database that was never supposed to
+// be there. A lookup failure returns true so we still attempt the dump
+// (fail loud rather than silently skip a real DB). Overridable for tests.
+var systemDBExists = func(ctx context.Context, db string) bool {
+	out, err := exec.CommandContext(ctx, "mariadb", "-N", "-B", "-e",
+		fmt.Sprintf("SELECT SCHEMA_NAME FROM information_schema.schemata WHERE SCHEMA_NAME = '%s'", db)).Output()
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(string(out)) == db
+}
+
 func dumpOneSystemDB(ctx context.Context, c *backup.Client, jobID, hostname, scheduleID, db string) backup.ManifestStage {
 	st := backup.ManifestStage{
 		Name:  backup.StagePanelDB,
 		Tag:   fmt.Sprintf("stage=panel_db,db=%s", db),
 		Items: []string{db},
+	}
+	// Skip (not fail) an optional system DB that isn't installed — e.g.
+	// jabali_pdns on a server without the DNS module (GH #502). Dumping a
+	// non-existent DB exits 2 and would otherwise mark the whole backup
+	// Partial on an otherwise-clean fresh server.
+	if !systemDBExists(ctx, db) {
+		st.Status = backup.StageStatusSkipped
+		st.Warnings = []string{fmt.Sprintf("database %s not present — skipped (component not installed)", db)}
+		return st
 	}
 	cmd := exec.CommandContext(ctx, "mariadb-dump",
 		"--single-transaction", "--skip-lock-tables",
