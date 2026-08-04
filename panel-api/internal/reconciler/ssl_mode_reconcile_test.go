@@ -25,7 +25,7 @@ func TestReconcileSSL_ModeRouting(t *testing.T) {
 		ag := &fakeAgent{}
 		dr := &fakeDomainRepo{domains: map[string]*models.Domain{}}
 		sc := newFakeSSLCertRepo()
-		ss := &fakeServerSettingsRepo{settings: &models.ServerSettings{Hostname: "host.example.com"}}
+		ss := &fakeServerSettingsRepo{settings: &models.ServerSettings{Hostname: "host.example.com", AdminEmail: "admin@example.com"}}
 		r := New(dr, nil, ag, slog.Default(), Config{}).WithSSLCerts(sc)
 		r.serverSettings = ss
 		dom := &models.Domain{ID: "d1", Name: "example.com", SSLMode: mode}
@@ -41,6 +41,30 @@ func TestReconcileSSL_ModeRouting(t *testing.T) {
 		ag := run(models.SSLModeSelf, nil)
 		require.True(t, hasCall(ag, "ssl.self_sign"), "self mode must call ssl.self_sign")
 		require.False(t, hasCall(ag, "ssl.issue"), "self mode must NOT attempt ACME")
+	})
+
+	// GH #896/#887: a fresh LE domain (no cert row) must bootstrap a
+	// self-signed placeholder on the first tick — NOT attempt ACME, whose
+	// webroot (the domain's docroot) is created later in the same tick.
+	t.Run("le mode bootstraps self-signed on first tick", func(t *testing.T) {
+		ag := run(models.SSLModeLE, nil)
+		require.True(t, hasCall(ag, "ssl.self_sign"), "le first tick must bootstrap self-signed")
+		require.False(t, hasCall(ag, "ssl.issue"), "le first tick must NOT attempt ACME before the docroot exists")
+	})
+
+	// A fresh pending row with no cert file yet takes the same bootstrap path.
+	t.Run("le mode fresh pending row bootstraps self-signed", func(t *testing.T) {
+		ag := run(models.SSLModeLE, &models.SSLCertificate{ID: "c1", Status: models.SSLStatusPending, RetryCount: 0})
+		require.True(t, hasCall(ag, "ssl.self_sign"))
+		require.False(t, hasCall(ag, "ssl.issue"))
+	})
+
+	// Once a self-signed placeholder exists, the next tick upgrades to LE
+	// (the docroot exists by now), so ACME is attempted.
+	t.Run("le mode self_signed upgrades via ACME", func(t *testing.T) {
+		cp, kp := "/etc/ssl/jabali-selfsigned/example.com/cert.pem", "/etc/ssl/jabali-selfsigned/example.com/key.pem"
+		ag := run(models.SSLModeLE, &models.SSLCertificate{ID: "c1", Status: models.SSLStatusSelfSigned, CertPath: &cp, KeyPath: &kp})
+		require.True(t, hasCall(ag, "ssl.issue"), "self_signed le domain must attempt the LE upgrade")
 	})
 
 	t.Run("none mode revokes issued cert", func(t *testing.T) {

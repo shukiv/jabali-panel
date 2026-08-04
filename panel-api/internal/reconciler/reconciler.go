@@ -2330,8 +2330,19 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 		r.sslEnsureSelfSigned(ctx, domain, cert)
 	default: // SSLModeLE and legacy empty mode
 		switch {
+		// GH #896/#887: on the FIRST reconcile of a fresh domain there is no
+		// cert file yet, and the docroot/vhost is created later in this SAME
+		// ReconcileOne (SSL runs before createDomainOnAgent). Attempting ACME
+		// now fails on a missing webroot (the #887 "docroot does not exist"),
+		// and leaves the site with no :443 during the wait (#896). Instead
+		// bootstrap a self-signed placeholder (no webroot needed): the vhost
+		// step later in this tick re-reads the cert row and serves HTTPS
+		// immediately, and the next tick's self_signed branch upgrades to
+		// Let's Encrypt once the docroot exists.
 		case cert == nil:
-			r.tryACMEOrFallback(ctx, domain, nil)
+			r.sslEnsureSelfSigned(ctx, domain, nil)
+		case cert.Status == models.SSLStatusPending && cert.RetryCount == 0 && cert.CertPath == nil:
+			r.sslEnsureSelfSigned(ctx, domain, cert)
 		case cert.Status == models.SSLStatusPending && cert.RetryCount == 0:
 			r.tryACMEOrFallback(ctx, domain, cert)
 		case cert.Status == models.SSLStatusPendingACMERetry && cert.NextRetryAt != nil && cert.NextRetryAt.Before(time.Now().UTC()):
