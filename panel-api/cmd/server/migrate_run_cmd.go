@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"gorm.io/gorm"
@@ -1562,6 +1563,47 @@ func cpanelRestoreCallback(
 			warnings = append(warnings, shadowRes.Quarantined...)
 			warnings = append(warnings, shadowRes.Flagged...)
 			warnings = append(warnings, shadowRes.Skipped...)
+		}
+
+		// JAB-229: re-apply setgid + group www-data across every restored
+		// docroot, AFTER the files are on disk.
+		//
+		// jabali's isolation model relies on docroots being setgid www-data so
+		// that anything the tenant's PHP-FPM worker creates inherits group
+		// www-data — nginx serves as www-data and must be able to traverse it.
+		// The rsync'd tree arrives with the SOURCE's ownership and no setgid on
+		// the subtree, and the pipeline's own fix_perms stage cannot help: it
+		// runs BEFORE restore, and has no registered callback for cPanel at all
+		// ("a no-op for cPanel").
+		//
+		// The damage is delayed, which is what makes it expensive. Existing
+		// directories were chgrp'd by the restore, so the site looks fine. The
+		// first directory WordPress creates on its own — a new uploads/YYYY/MM
+		// on the 1st of the month, a plugin cache dir — inherits the tenant's
+		// primary group instead, and with the FPM umask (027) comes out
+		// drwxr-x--- <user>:<user>. nginx cannot traverse it, so new uploads
+		// 404 as blank thumbnails while old media still serves. A fleet sweep
+		// found every migrated account affected, each waiting on its own month
+		// rollover.
+		if plan.Websites && len(appDocroots) > 0 {
+			if gid, gerr := wwwDataGid(); gerr != nil {
+				warnings = append(warnings, fmt.Sprintf("docroot_perms: resolve www-data gid: %v", gerr))
+			} else {
+				fixed, failed := 0, 0
+				for _, dr := range appDocroots {
+					home := userHomeOf(dr)
+					if dr == "" || home == "" {
+						continue
+					}
+					if err := fsperm.RepairDocrootGroup(home, dr, gid); err != nil {
+						failed++
+						warnings = append(warnings, fmt.Sprintf("docroot_perms_skip:%s:%v", dr, err))
+						continue
+					}
+					fixed++
+				}
+				warnings = append(warnings, fmt.Sprintf("docroot_perms: setgid_www_data fixed=%d failed=%d", fixed, failed))
+			}
 		}
 
 		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, restoreAgent, p.parsed, p.targetUserID, p.targetUsername, preserve.MailRouting)
