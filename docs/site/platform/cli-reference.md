@@ -4747,11 +4747,17 @@ jabali ssl disable <domain>
 
 #### `jabali ssl enable`
 
-Enable SSL for a domain (reconciler will issue cert within ≤60s)
+Enable SSL for a domain and wait until the vhost serves the real certificate
 
 ```
-jabali ssl enable <domain>
+jabali ssl enable <domain> [flags]
 ```
+
+**Flags:**
+
+- `--nginx-dir` — directory holding the enabled nginx vhosts (default `/etc/nginx/sites-enabled`)
+- `--no-wait` — return as soon as the domain is marked, without waiting for the certificate
+- `--wait-timeout` — how long to wait for the vhost to serve the real certificate (default `3m0s`)
 
 #### `jabali ssl list`
 

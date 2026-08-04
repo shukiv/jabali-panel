@@ -14,6 +14,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sslorigin"
 )
 
 func sslRepoFromDB() repository.SSLCertificateRepository {
@@ -86,9 +87,18 @@ func newSSLListCmd() *cobra.Command {
 }
 
 func newSSLEnableCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "enable <domain>",
-		Short:   "Enable SSL for a domain (reconciler will issue cert within ≤60s)",
+	var noWait bool
+	var waitFor time.Duration
+	var nginxDir string
+
+	cmd := &cobra.Command{
+		Use:   "enable <domain>",
+		Short: "Enable SSL for a domain and wait until the vhost serves the real certificate",
+		Long: "Marks the domain for issuance and then WAITS until nginx is actually serving the\n" +
+			"Let's Encrypt certificate, because issuance and vhost repoint happen on separate\n" +
+			"reconciler ticks. Returning at the first tick reports success while the origin is\n" +
+			"still self-signed — which is what makes a Cloudflare Full (strict) cutover return\n" +
+			"526 (JAB-224). Use --no-wait for the old fire-and-forget behaviour.",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -124,18 +134,66 @@ func newSSLEnableCmd() *cobra.Command {
 					return fmt.Errorf("update cert status: %w", err)
 				}
 			}
-			if jsonOutput {
-				return printJSON(map[string]any{
-					"domain": dom.Name,
-					"status": models.SSLStatusPending,
-					"detail": "reconciler tick will issue cert",
-				})
-			}
 			cliAuditOK(ctx, "ssl.enable", "domain", dom.ID, &dom.UserID)
-			fmt.Printf("SSL enabled for %s — reconciler will issue cert within ≤60s.\n", dom.Name)
-			return nil
+
+			if noWait {
+				if jsonOutput {
+					return printJSON(map[string]any{
+						"domain": dom.Name,
+						"status": models.SSLStatusPending,
+						"detail": "marked for issuance; not waiting",
+					})
+				}
+				fmt.Printf("SSL enabled for %s — reconciler will issue cert within ≤60s (not waiting).\n", dom.Name)
+				return nil
+			}
+
+			// Wait for the END state, not the first tick. Issuance and the vhost
+			// repoint land on different reconciler passes, so a command that
+			// returns after marking the row reports success while the origin is
+			// still self-signed. The check reads the vhost — the file nginx
+			// actually serves — rather than the certificate row, because the row
+			// says "issued" one tick before the repoint happens.
+			if !jsonOutput {
+				fmt.Printf("SSL enabled for %s — waiting for nginx to serve the real certificate (up to %s)...\n",
+					dom.Name, waitFor)
+			}
+
+			deadline := time.Now().Add(waitFor)
+			var last sslorigin.Kind
+			for {
+				o := sslorigin.Classify(dom.Name, nginxDir)
+				if o.Kind != last && !jsonOutput {
+					fmt.Printf("  origin: %s\n", o.Kind)
+					last = o.Kind
+				}
+				if o.Kind == sslorigin.KindLetsEncrypt {
+					if jsonOutput {
+						return printJSON(map[string]any{
+							"domain": dom.Name, "status": models.SSLStatusIssued,
+							"origin": string(o.Kind), "cert_path": o.CertPath,
+						})
+					}
+					fmt.Printf("Done — %s is serving a Let's Encrypt certificate (%s).\n", dom.Name, o.CertPath)
+					return nil
+				}
+				if time.Now().After(deadline) {
+					return fmt.Errorf(
+						"timed out after %s: %s origin is still %q (%s).\n"+
+							"  The domain is marked for issuance, so the reconciler may still complete it —\n"+
+							"  re-check with: jabali ssl readiness --all\n"+
+							"  HTTP-01 cannot succeed until the domain resolves to THIS host, so if it has\n"+
+							"  not cut over yet this is expected, not a failure",
+						waitFor, dom.Name, o.Kind, o.Detail)
+				}
+				time.Sleep(5 * time.Second)
+			}
 		},
 	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return as soon as the domain is marked, without waiting for the certificate")
+	cmd.Flags().DurationVar(&waitFor, "wait-timeout", 3*time.Minute, "how long to wait for the vhost to serve the real certificate")
+	cmd.Flags().StringVar(&nginxDir, "nginx-dir", defaultNginxSitesDir, "directory holding the enabled nginx vhosts")
+	return cmd
 }
 
 func newSSLDisableCmd() *cobra.Command {
