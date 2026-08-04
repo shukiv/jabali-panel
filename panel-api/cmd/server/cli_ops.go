@@ -151,6 +151,21 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 		}
 	}
 
+	// Drop the per-user MariaDB shadow-admin account (<osuser>_mysqladmin).
+	// It is provisioned by db.mysqladmin.ensure but is not a database_users
+	// row, so the loop above misses it — an orphaned MySQL login otherwise
+	// survives the deleted account. Mirrors the HTTP delete cascade. Reuses
+	// the idempotent db_user.drop (DROP USER IF EXISTS): a no-op when absent.
+	if sharedAgent != nil && target.Username != nil && *target.Username != "" {
+		shadowUser := *target.Username + "_mysqladmin"
+		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if _, err := sharedAgent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": shadowUser}); err != nil {
+			slog.Warn("cli delete: mysqladmin shadow drop failed",
+				"user_id", userID, "mysqladmin_user", shadowUser, "err", err)
+		}
+		cancel()
+	}
+
 	// Kratos identity delete (if linked).
 	if target.KratosIdentityID != nil && sharedCfg.Auth.Kratos.PublicURL != "" {
 		k := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
