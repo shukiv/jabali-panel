@@ -194,7 +194,7 @@ func TestCRSPluginBefore_WordPressBuilderExclusions(t *testing.T) {
 	// wp/v2 is deliberately NOT excluded — public read surface stays fully inspected.
 	mustNotContain(t, out, `^/wp-json/wp/v2/`, "public wp/v2 REST must keep full CRS coverage")
 	// The original narrow 933120 exclusion is still present.
-	mustContain(t, out, "ctl:ruleRemoveTargetById=933120;ARGS:_wp_http_referer", "933120 _wp_http_referer exclusion intact")
+	mustContain(t, out, "ctl:ruleRemoveById=933120", "933120 wp-admin exclusion intact (now cookie-gated; the target-scoped form was a no-op)")
 	// GH #594: the upstream WordPress CRS-exclusion plugin is activated, which
 	// covers admin-ajax/builder false positives (incl. 942151) comprehensively.
 	mustContain(t, out, "tx.wordpress-rule-exclusions-plugin_enabled=1", "WP exclusion plugin activated")
@@ -202,52 +202,37 @@ func TestCRSPluginBefore_WordPressBuilderExclusions(t *testing.T) {
 	// 180/200/…) can't ban owners — broad on elementor/post.php, but on
 	// admin-ajax ONLY for action=^elementor (chained), so unauthenticated
 	// wp_ajax_nopriv_* handlers keep full SQLi-args inspection.
-	mustContain(t, out, `id:9599210,phase:2,pass,nolog,chain`, "admin-ajax SQLi drop is a chained phase-2 rule")
-	mustContain(t, out, `SecRule ARGS:action "@rx ^elementor"`, "chained on action=^elementor")
+	mustNotContain(t, out, `id:9599210`, "JAB-227: no-op-only rule removed, must not be resurrected")
+	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-sqli", "JAB-227: dead construct must not return")
 	// admin-ajax phase-1 rule must NOT carry the broad tag drop (only narrow ById).
 	mustContain(t, out, `^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"`, "admin-ajax phase-1 keeps only narrow ById drops")
 	// Surgical, not blanket: no path-allow, no remediation override.
 	mustNotContain(t, out, `SetRemediation`, "before-plugin must not blanket-allow")
 }
 
-// JAB-193: the Code Snippets REST save carries literal PHP source, so the
-// rce + php-injection families have to stand down there — but ONLY there,
-// ONLY on the body, and ONLY for a request that already carries a WordPress
-// login cookie. An unauthenticated hit on the same path must stay fully
-// scored, which is the property that keeps this from being a path-allow.
-func TestCRSPluginBefore_CodeSnippetsExclusion(t *testing.T) {
+// JAB-193 / JAB-227: the Code Snippets exclusion (9599220) is GONE.
+//
+// It expressed "stand down rce + php-injection on this authenticated REST save"
+// entirely through ctl:ruleRemoveTargetByTag, which is a silent no-op in the
+// Coraza engine CrowdSec ships. It never worked. Converting it would mean
+// dropping ~27 rules (attack-rce + attack-injection-php at PL1) on that path — a
+// far bigger hole than the false positive it was fixing, and exactly what the
+// WAF-hole guard in crs_plugin_test.go exists to forbid.
+//
+// So that FP is unaddressed again, deliberately and visibly, rather than papered
+// over by a directive that reads like protection and provides none. Reopen with
+// per-rule evidence: which single rules actually fire on that endpoint.
+func TestCRSPluginBefore_CodeSnippetsExclusionRemoved(t *testing.T) {
 	out := CRSPluginBefore()
-	mustContain(t, out, `"@rx ^/wp-json/code-snippets/v[0-9]+/" "id:9599220,phase:1,pass,nolog,chain"`,
-		"code-snippets drop is a chained phase-1 rule scoped to the versioned REST path")
-	mustContain(t, out, `SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_"`,
-		"chained on an authenticated WordPress session")
-	for _, tag := range []string{"attack-rce", "attack-injection-php"} {
-		mustContain(t, out, "ctl:ruleRemoveTargetByTag="+tag+";ARGS", tag+" dropped on ARGS")
-		mustContain(t, out, "ctl:ruleRemoveTargetByTag="+tag+";REQUEST_BODY", tag+" dropped on REQUEST_BODY")
-	}
-	// Surgical: the SQLi/XSS/LFI families keep inspecting this path, and the
-	// drop is target-scoped rather than a ruleRemoveById sweep.
-	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-sqli;REQUEST_BODY",
-		"SQLi must keep inspecting bodies everywhere")
-	// An unversioned or unauthenticated variant must not exist as a
-	// standalone (unchained) exclusion.
-	mustNotContain(t, out, `"@rx ^/wp-json/code-snippets/" "id:`,
-		"no unchained, unversioned code-snippets exclusion")
+	mustNotContain(t, out, "id:9599220", "no-op-only rule must not be resurrected")
+	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-rce", "dead construct must not return")
+	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-injection-php", "dead construct must not return")
 }
 
-// 942100 vs wp-admin/admin-ajax.php (newzaps, 26 denies across 5 source
-// addresses, 2026-08-02..03 — including a consumer ISP address repeatedly
-// locked out of the site's own wp-admin).
-//
-// The exclusion must stay identity-scoped, not path-scoped: admin-ajax.php is
-// reachable unauthenticated for plugins registering nopriv_ actions, and that
-// is exactly where WordPress SQLi gets exploited. An unauthenticated request
-// therefore has to keep full libinjection scoring.
 func TestCRSPluginBefore_AdminAjaxLibinjectionIsCookieGated(t *testing.T) {
 	out := CRSPluginBefore()
 
-	mustContain(t, out, "ctl:ruleRemoveTargetById=942100;ARGS", "942100 dropped on ARGS")
-	mustContain(t, out, "ctl:ruleRemoveTargetById=942100;REQUEST_BODY", "942100 dropped on REQUEST_BODY")
+	mustContain(t, out, "ctl:ruleRemoveById=942100", "942100 dropped (ruleRemoveById — the target-scoped form is a silent no-op)")
 
 	// The drop must be chained on the logged-in cookie. Locate the rule and
 	// assert the chain, rather than trusting that the cookie appears anywhere

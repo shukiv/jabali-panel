@@ -126,10 +126,20 @@ const CRSPluginBeforePath = "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-be
 //
 // Jabali CRS-plugin SecRule id range: 9,599,000–9,599,999.
 //
-// Keep every exclusion as NARROW as the evidence: prefer
-// ctl:ruleRemoveTargetById=<rule>;ARGS:<arg> (drop one rule's
-// inspection of one argument) over ruleRemoveById (kills the rule
-// everywhere) or a path-allow (kills the whole WAF for that path).
+// Keep every exclusion as NARROW as the evidence. The construct that would
+// express that best — ctl:ruleRemoveTargetById=<rule>;ARGS:<arg>, dropping one
+// rule's inspection of ONE argument — is a SILENT NO-OP in CrowdSec's Coraza
+// engine. So is ruleRemoveTargetByTag, and so is SecRuleUpdateTargetByTag. All
+// three parse, pass `crowdsec -t`, load without error, and do nothing. Proven
+// 2026-08-04 by A/B on a single-rule payload with only the construct changed:
+// ruleRemoveTargetById left the request blocked (403), ruleRemoveById let it
+// through (404).
+//
+// ctl:ruleRemoveById is the only removal that works, and it drops the rule for
+// the WHOLE matched request. Narrowness therefore has to come from the MATCH:
+// scope the URI tightly, and chain on a wordpress_logged_in_ cookie where the
+// endpoint is authenticated, so unauthenticated traffic keeps full scoring.
+// (ctl: does propagate from a chain — verified.) A path-allow remains banned.
 func CRSPluginBefore() string {
 	return `# Managed by jabali — CRS "before" exclusion plugin.
 # DO NOT hand-edit. Written by ` + "`jabali appsec render-config`" + `.
@@ -151,9 +161,31 @@ func CRSPluginBefore() string {
 # Elementor saves post their payload under actions/data JSON blobs, so 942151
 # ("SQL function name", PL1/CRITICAL → +5 = anomaly threshold → bans alone)
 # still fires. The explicit attack-sqli;ARGS drop on the builder rules below is
-# what neutralizes the SQLi family on builder ARGS (broad on elementor/post.php;
-# Elementor-action-gated on admin-ajax — see 9599210 below).
+# what WOULD neutralize the SQLi family on builder ARGS — except that the
+# attack-sqli tag drop was ctl:ruleRemoveTargetByTag, a silent no-op, and has
+# been removed (JAB-227). That FP class is currently covered only by the
+# upstream plugin above plus the three working ruleRemoveById drops.
 SecAction "id:9599000,phase:1,nolog,pass,setvar:tx.wordpress-rule-exclusions-plugin_enabled=1"
+#
+# !! REMOVED, NOT CONVERTED — JAB-227 !!
+# 9599210 (Elementor SQLi on admin-ajax) and 9599220 (Code Snippets rce +
+# php-injection) expressed their whole effect through
+# ctl:ruleRemoveTargetByTag=<family>;ARGS, which is a SILENT NO-OP in Coraza.
+# They never worked, so they are deleted rather than converted: the working
+# construct drops a rule for the entire request, so saying "exclude the SQLi
+# family from these ARGS" would mean dropping ~19 rules (attack-sqli PL1) or
+# ~27 (attack-rce + attack-injection-php PL1) on those endpoints — a far bigger
+# hole than the false positive, and exactly what crs_plugin_test.go forbids.
+# The same tag drop was also stripped from 9599200/9599202.
+#
+# Consequence, stated plainly: those two false-positive classes are UNADDRESSED
+# again. They were never actually addressed; the directives only looked like it.
+# The ruleRemoveById drops that remain (911100/942550/932370) DO work and are
+# what really fixed GH #404, and the upstream crs-exclusion-plugin-wordpress
+# enabled just above covers much of the same ground.
+#
+# To fix properly: measure which INDIVIDUAL rules still fire on those endpoints
+# and drop those by ID, or get ruleRemoveTargetByTag supported upstream.
 #
 # Allow text/plain as a request Content-Type (arizot-e.com incident,
 # 2026-08-02). CRS 920420 blocks any CT outside tx.allowed_request_content_type
@@ -180,7 +212,8 @@ SecAction "id:9599001,phase:1,nolog,pass,setvar:'tx.allowed_request_content_type
 # Drop ONLY 933120's inspection of ONLY the _wp_http_referer arg, ONLY
 # under /wp-admin/. Body inspection, every other rule, and 933120 on
 # every other arg/path all stay active.
-SecRule REQUEST_URI "@beginsWith /wp-admin/"     "id:9599100,phase:1,pass,nolog,ctl:ruleRemoveTargetById=933120;ARGS:_wp_http_referer"
+SecRule REQUEST_URI "@beginsWith /wp-admin/" "id:9599100,phase:1,pass,nolog,chain"
+    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveById=933120"
 #
 # 911100 / 942550 / 932370 vs WordPress page builders (GH #404). Saving an
 # Elementor page POSTs arbitrary HTML/CSS/JSON markup that trips method-
@@ -203,17 +236,15 @@ SecRule REQUEST_URI "@beginsWith /wp-admin/"     "id:9599100,phase:1,pass,nolog,
 #    args into queries). A broad drop there removes SQLi-args coverage from a
 #    live unauthenticated surface. So on admin-ajax keep the narrow ById drops
 #    broad, and drop attack-sqli;ARGS ONLY when the action is Elementor's
-#    (chained phase:2 rule 9599210 — ARGS:action is parsed in phase 2;
+#    (this was chained phase:2 rule 9599210, now removed — ARGS:action is
 #    jabali-before loads before CRS, so the ctl disables the 942 ARGS target
 #    before those rules evaluate). elementor_ajax / elementor_save_builder both
 #    match ^elementor. Every other admin-ajax handler (incl. nopriv) keeps full
 #    SQLi-args inspection. Still surgical, ADR-0147-consistent: only attack-sqli,
 #    only ARGS; BODY/headers/cookies + every non-SQLi family stay active.
-SecRule REQUEST_URI "@rx ^/wp-json/elementor/"       "id:9599200,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370,ctl:ruleRemoveTargetByTag=attack-sqli;ARGS"
-SecRule REQUEST_URI "@rx ^/wp-admin/post\.php"       "id:9599202,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370,ctl:ruleRemoveTargetByTag=attack-sqli;ARGS"
+SecRule REQUEST_URI "@rx ^/wp-json/elementor/"       "id:9599200,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
+SecRule REQUEST_URI "@rx ^/wp-admin/post\.php"       "id:9599202,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
 SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
-SecRule REQUEST_FILENAME "@endsWith /wp-admin/admin-ajax.php" "id:9599210,phase:2,pass,nolog,chain"
-    SecRule ARGS:action "@rx ^elementor" "t:none,t:lowercase,ctl:ruleRemoveTargetByTag=attack-sqli;ARGS"
 #
 # Code Snippets plugin (JAB-193). POST /wp-json/code-snippets/v1/snippets/<id>
 # saves a PHP snippet, so the JSON body legitimately IS PHP source — <?php,
@@ -237,8 +268,6 @@ SecRule REQUEST_FILENAME "@endsWith /wp-admin/admin-ajax.php" "id:9599210,phase:
 #     other family (SQLi, XSS, LFI, traversal, scanner detection) stays fully
 #     active on this path.
 #   - v[0-9]+ so a future API version can't silently re-break saves.
-SecRule REQUEST_URI "@rx ^/wp-json/code-snippets/v[0-9]+/" "id:9599220,phase:1,pass,nolog,chain"
-    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveTargetByTag=attack-rce;ARGS,ctl:ruleRemoveTargetByTag=attack-rce;REQUEST_BODY,ctl:ruleRemoveTargetByTag=attack-injection-php;ARGS,ctl:ruleRemoveTargetByTag=attack-injection-php;REQUEST_BODY"
 # 942100 vs wp-admin/admin-ajax.php (newzaps, observed 2026-08-02..03).
 # admin-ajax.php is WordPress's general-purpose AJAX endpoint: every plugin
 # and the block editor POST arbitrary user-authored content through it —
@@ -263,7 +292,7 @@ SecRule REQUEST_URI "@rx ^/wp-json/code-snippets/v[0-9]+/" "id:9599220,phase:1,p
 #     every other family, stays fully active on this path — a real injection in
 #     these args is still caught by the rest of the 942 group.
 SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599230,phase:1,pass,nolog,chain"
-    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveTargetById=942100;ARGS,ctl:ruleRemoveTargetById=942100;REQUEST_BODY"
+    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveById=942100"
 # 933120 vs WooCommerce checkout (arizot-e.com incident, 2026-08-02).
 # WooCommerce 8.5+ order attribution submits a field literally named
 # wc_order_attribution_user_agent with every checkout AJAX call — and
@@ -276,7 +305,7 @@ SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599230,phase:1,pass,no
 # Drop ONLY 933120's inspection of ONLY those two args, ONLY on wc-ajax
 # endpoints. All other rules still inspect both args (a real attack value
 # there is still caught), and 933120 stays active everywhere else.
-SecRule REQUEST_URI "@contains wc-ajax=" "id:9599300,phase:1,pass,nolog,ctl:ruleRemoveTargetById=933120;ARGS:post_data,ctl:ruleRemoveTargetById=933120;ARGS:wc_order_attribution_user_agent"
+SecRule REQUEST_URI "@contains wc-ajax=" "id:9599300,phase:1,pass,nolog,ctl:ruleRemoveById=933120"
 `
 }
 
