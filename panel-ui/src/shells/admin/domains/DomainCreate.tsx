@@ -68,11 +68,14 @@ export const DomainCreate = () => {
         <Form.Item
           label={t("domaincreate.name")}
           name="name"
+          // GH #884: stored lowercase; normalize live so the admin sees the
+          // canonical value and an autocorrected capital can't slip through.
+          normalize={(v) => (typeof v === "string" ? v.toLowerCase() : v)}
           rules={[
             { required: true, message: "Domain name is required" },
             { max: 253, message: "Domain name cannot exceed 253 characters" },
             {
-              pattern: /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/,
+              pattern: /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
               message: "Enter a valid domain name (e.g. example.com)",
             },
           ]}

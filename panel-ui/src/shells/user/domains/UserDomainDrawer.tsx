@@ -60,11 +60,15 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
         <Form.Item
           label={t("userdomaindrawer.domain_name")}
           name="name"
+          // GH #884: domains are stored lowercase (the server normalizes too);
+          // lowercasing as the user types shows the canonical value and avoids
+          // a mobile-autocorrect capital slipping through.
+          normalize={(v) => (typeof v === "string" ? v.toLowerCase() : v)}
           rules={[
             { required: true, message: "Domain name is required" },
             { max: 253, message: "Domain name cannot exceed 253 characters" },
             {
-              pattern: /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/,
+              pattern: /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
               message: "Enter a valid domain name (e.g. example.com)",
             },
           ]}

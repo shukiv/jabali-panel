@@ -103,6 +103,16 @@ type createDomainRequest struct {
 	SSLMode string `json:"ssl_mode"`
 }
 
+// normalizeDomainName canonicalizes a domain for storage (GH #884): trim
+// edge whitespace and lowercase. Domain names are case-insensitive per DNS,
+// but jabali uses the stored string verbatim for the docroot path, cert
+// lineage, DNS zone, and nginx server_name, so a mixed-case entry (mobile
+// autocorrect) yields a site that never resolves. Callers still run
+// validateDomainName on the result to enforce RFC shape.
+func normalizeDomainName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
 // validateDomainName validates domain name for security and RFC compliance
 func validateDomainName(s string) error {
 	// Check for empty or whitespace
@@ -633,6 +643,15 @@ func (h *domainHandler) create(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
+
+	// GH #884: normalize the domain to lowercase (and trim edge whitespace)
+	// before anything consumes it. DNS is case-insensitive, but the name is
+	// used verbatim for the docroot path, cert lineage, DNS zone, and vhost
+	// server_name — so a mobile keyboard's autocorrected "MyDomain.com" was
+	// accepted and then produced a site that didn't resolve. Normalizing
+	// here (the create source of truth) fixes every downstream consumer at
+	// once; validateDomainName still enforces RFC shape on the result.
+	req.Name = normalizeDomainName(req.Name)
 
 	// SECURITY: Validate domain name to prevent XSS and path traversal
 	if err := validateDomainName(req.Name); err != nil {
