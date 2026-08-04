@@ -401,6 +401,7 @@ func ImportDNS(
 		filtered := zone.Records[:0]
 		apexFiltered := false
 		mailFiltered := false
+		serviceFiltered := false
 		ipRewritten := false
 		for _, r := range zone.Records {
 			isApex := r.Name == zone.Origin || r.Name == "@"
@@ -419,11 +420,29 @@ func ImportDNS(
 			// CNAMEs) and regenerates them for THIS server whenever the domain uses
 			// jabali mail, so importing the source's would duplicate jabali's set
 			// and pin the OLD server's SPF ip4: / DKIM selector. A non-mail domain
-			// gets none (ImportDomains sets MailProvider "none"). The `mail` A is
-			// intentionally kept (rewriting its IP to this server is a follow-up):
-			// dropping it would leave the MX target unresolvable.
+			// gets none (ImportDomains sets MailProvider "none").
+			//
+			// JAB-226 reverses the previous "keep the `mail` record" decision.
+			// Its stated reason was that dropping it would leave the MX target
+			// unresolvable, and that does not hold: every imported MX is dropped
+			// unconditionally by the MX case below, and dnscompile/bootstrap.go
+			// generates BOTH `@ MX mail.<zone>` and `mail A <this server>` for a
+			// domain that uses jabali mail. So the imported record is redundant
+			// when jabali mail is on, and an orphan pointing at the OLD box when
+			// it is off — and either way it lands in the certificate SAN, where
+			// it 404s HTTP-01 and fails the whole cert. A source `mail` CNAME
+			// alongside jabali's generated `mail` A is also a CNAME-plus-other-
+			// data conflict.
 			if isMailInfraRecord(toPanelRecordName(r.Name, zone.Origin), r.Type, r.Content) {
 				mailFiltered = true
+				continue
+			}
+			// JAB-226: cPanel's own control-panel hostnames. Nothing on jabali
+			// serves cpanel./whm./webdisk./ftp./cpcalendars./cpcontacts., and
+			// leaving them in DNS puts them in the certificate SAN where they
+			// fail HTTP-01 and take the whole cert down with them.
+			if isCPanelServiceRecord(toPanelRecordName(r.Name, zone.Origin)) {
+				serviceFiltered = true
 				continue
 			}
 			// Repoint any A record that pointed at the old server (incl. the
@@ -439,6 +458,9 @@ func ImportDNS(
 		}
 		if mailFiltered {
 			res.Skipped = append(res.Skipped, "mail_infra_handled_by_jabali:"+zone.Origin)
+		}
+		if serviceFiltered {
+			res.Skipped = append(res.Skipped, "cpanel_service_subdomains_dropped:"+zone.Origin)
 		}
 		if ipRewritten {
 			res.Skipped = append(res.Skipped, "source_ip_repointed_to_this_server:"+zone.Origin)
@@ -499,11 +521,11 @@ func ImportDNS(
 				continue
 			}
 			rec := &models.DNSRecord{
-				ID:        ids.NewULID(),
-				ZoneID:    pz.ID,
-				Name:      pname,
-				Type:      r.Type,
-				Content:   r.Content,
+				ID:      ids.NewULID(),
+				ZoneID:  pz.ID,
+				Name:    pname,
+				Type:    r.Type,
+				Content: r.Content,
 				// GH #527: normalize migrated records to the panel's default
 				// TTL (fallback to the parsed source TTL only when no default
 				// is supplied) so a migrated zone is consistent with what the
@@ -555,13 +577,45 @@ func toPanelRecordName(name, origin string) string {
 // DMARC / client-service SRVs / autoconfig CNAMEs for THIS server. The `mail` A
 // is NOT dropped here (it is the MX target and jabali does not re-create it for
 // imported zones); repointing its IP to this server is a separate follow-up.
+// cpanelServiceHostnames are subdomains cPanel creates for its own control
+// panel and client-service endpoints. They are meaningless on jabali — nothing
+// serves them here — and importing them is actively harmful: the per-domain
+// Let's Encrypt SAN is built from DNS, so each one becomes a hostname that must
+// pass HTTP-01. Pre-cutover they still resolve to the source box and 404, which
+// fails the entire certificate (JAB-226).
+var cpanelServiceHostnames = map[string]bool{
+	"cpanel":      true,
+	"whm":         true,
+	"webdisk":     true,
+	"cpcalendars": true,
+	"cpcontacts":  true,
+	"ftp":         true,
+}
+
+// isCPanelServiceRecord reports whether a record is one of cPanel's own service
+// hostnames. Matched on the leaf label for every record type: cPanel writes some
+// as A and some as CNAME depending on the account's setup, and the reason to
+// drop them does not depend on the type.
+func isCPanelServiceRecord(name string) bool {
+	return cpanelServiceHostnames[strings.ToLower(strings.TrimSpace(name))]
+}
+
 func isMailInfraRecord(name, typ, content string) bool {
 	lc := strings.ToLower(strings.TrimSpace(content))
 	switch typ {
 	case "MX":
 		return true
-	case "CNAME":
-		return name == "webmail" || name == "autoconfig" || name == "autodiscover"
+	case "CNAME", "A", "AAAA":
+		// JAB-226: cPanel writes these as A records at least as often as CNAMEs.
+		// Matching only CNAME let the A variants through, and because the
+		// per-domain LE certificate builds its SAN from what is in DNS, every
+		// migrated domain then tried to validate autoconfig./autodiscover./
+		// webmail. — which still resolve to the OLD box until the source NS
+		// stops being authoritative, 404 the HTTP-01 challenge, and fail the
+		// WHOLE certificate. The domain is then stuck on a self-signed origin,
+		// which behind Cloudflare Full (strict) is a hard 526 outage.
+		return name == "webmail" || name == "autoconfig" ||
+			name == "autodiscover" || name == "mail"
 	case "TXT":
 		lc = strings.Trim(lc, `"`)
 		if strings.HasPrefix(lc, "v=spf1") || strings.HasPrefix(lc, "v=dmarc1") || strings.HasPrefix(lc, "v=tlsrptv1") {
