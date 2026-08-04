@@ -679,6 +679,29 @@ func (h *userHandler) delete(c *gin.Context) {
 		}
 	}
 
+	// Drop the per-user MariaDB shadow-admin account (<osuser>_mysqladmin).
+	// db.mysqladmin.ensure provisions it for tenant DB management, but it is
+	// NOT a database_users row, so the loop above never reaps it — leaving an
+	// orphaned MySQL login with a valid password after the account is gone
+	// (found live: ~20 <user>_mysqladmin accounts survived their deleted
+	// owners). Construct the canonical name from the OS username rather than
+	// the stored users.mysqladmin_username, which is null for accounts
+	// provisioned outside the API (e.g. migrated users) whose shadow account
+	// still exists. Reuse db_user.drop (idempotent DROP USER IF EXISTS), so a
+	// user without a shadow account is a harmless no-op.
+	if h.cfg.Agent != nil && username != "" {
+		shadowUser := username + "_mysqladmin"
+		agentCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		_, dropErr := h.cfg.Agent.Call(agentCtx, "db_user.drop", map[string]any{
+			"db_user_name": shadowUser,
+		})
+		cancel()
+		if dropErr != nil {
+			slog.Warn("cascade delete: mysqladmin shadow drop failed",
+				"user_id", id, "mysqladmin_user", shadowUser, "err", dropErr)
+		}
+	}
+
 	// Cascade-tear-down the user's docker apps (M49, GH #170) BEFORE the panel
 	// row CASCADEs the docker_apps metadata. The FK drops the rows, but the
 	// CONTAINERS + data trees on the host outlive the DB without an explicit
