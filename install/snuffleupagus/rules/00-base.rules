@@ -43,8 +43,14 @@ sp.disable_function.function("show_source").drop();
 sp.disable_function.function("highlight_file").drop();
 sp.disable_function.function("phpinfo").drop();
 
-# Runtime extension load.
-sp.disable_function.function("dl").drop();
+# Runtime extension load: rule REMOVED (GH #897). Hooking dl() makes
+# Snuffleupagus defer destruction of discarded temporaries to script
+# shutdown (verified on PHP 8.4/8.5: a `new A;` statement's __destruct
+# stops firing at statement end), which silently breaks RAII patterns —
+# concretely, every Laravel Route::resource() registration (InvoiceShelf
+# lost all its CRUD API routes). Security loss is minimal: PHP-FPM's
+# SAPI hard-disables dl() natively (the serving path never had it), and
+# CLI abuse requires an attacker who already executes arbitrary PHP.
 
 # putenv LD_*/PATH/GCONV_*: privilege-escalation primitive.
 sp.disable_function.function("putenv").param("assignment").value_r("LD_").drop();
@@ -146,7 +152,16 @@ sp.disable_function.function("call_user_func_array").param("function").value_r("
 # because they route through the Reflection engine, not zend_call_function.
 # $r = new ReflectionFunction('system'); $r->invoke('id') is the canonical
 # webshell evasion pattern. Block both Function and Method flavours.
-sp.disable_function.function("ReflectionFunction::invoke").drop();
-sp.disable_function.function("ReflectionFunction::invokeArgs").drop();
-sp.disable_function.function("ReflectionMethod::invoke").drop();
-sp.disable_function.function("ReflectionMethod::invokeArgs").drop();
+# Reflection invoke rules REMOVED (GH #897): any Class::method hook makes
+# Snuffleupagus defer destruction of discarded temporaries to script
+# shutdown (PHP 8.4/8.5, verified with a minimal repro — see the dl()
+# note above), silently breaking destructor-timing patterns across
+# frameworks: Laravel's Route::resource() registrations vanished
+# (InvoiceShelf #897), and the same class of bug would hit destructor-
+# committed DB transactions and lock guards. Mirrors the GH #335
+# wrappers_whitelist removal: a rule that silently breaks legitimate
+# frameworks costs more than its marginal hardening. Compensating
+# controls that remain: the direct symbol bans on system/exec/… above,
+# the call_user_func string-literal bans, and eval_blacklist — the
+# Reflection evasion needs arbitrary-PHP execution already, at which
+# point those layers are the operative defenses.
