@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cacheprobe"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -248,6 +249,36 @@ func (h *wordPressHandler) doctorOneInstall(ctx context.Context, in *models.Appl
 	_ = json.Unmarshal(raw, &health)
 	item.Healthy = health.Healthy
 	item.Drifted = in.CacheEnabled && !health.Healthy
+
+	// JAB-201: configuration being right and caching working are different
+	// claims. The health check above verifies the first — plugin active, drop-in
+	// and constants present, Redis reachable — and reported green on a site whose
+	// page cache had never stored a single entry: maintenance mode emitted
+	// nocache_headers() on every response, so the fail-closed gate correctly
+	// refused to store anything, forever. Only MISS and BYPASS ever appeared in
+	// the jcache log.
+	//
+	// So when the configuration looks healthy, ask nginx whether caching is
+	// actually happening, and if it is not, say WHY — the cause is what the
+	// operator can act on.
+	if in.CacheEnabled && health.Healthy {
+		probeCtx, pcancel := context.WithTimeout(ctx, cacheDoctorInstallCallTimeout)
+		res, perr := cacheprobe.Probe(probeCtx, dom.Name)
+		pcancel()
+		switch {
+		case perr != nil:
+			// Could not probe — site down, TLS refused, no vhost on this box.
+			// That is NOT evidence of a cache fault, and surfacing it as an item
+			// error would turn "could not check" into "failed" for every install
+			// in an environment without a reachable vhost. Stay silent: this
+			// probe only ever ADDS a verdict, it never invents one.
+		case res.Verdict == cacheprobe.VerdictNotCaching:
+			item.Drifted = true
+			item.Healthy = false
+			item.Error = "configuration is correct but nothing is being cached — " + res.Reason
+		}
+	}
+
 	if !item.Drifted {
 		return item
 	}
