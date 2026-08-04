@@ -40,6 +40,10 @@ const MAX_BYTES = 128 * 1024;
 // the shipped default drops unknown hosts without a response (444).
 const UNCONFIGURED_KEY = "domain_unconfigured";
 
+// GH #879: server-wide default for serving the branded 500 when the app
+// itself fails (PHP fatal = empty-body 500). Domains can override either way.
+const ERROR500_KEY = "error_500";
+
 export const PageTemplatesCard = () => {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -57,11 +61,15 @@ export const PageTemplatesCard = () => {
     },
   });
 
-  const settings = useQuery<{ unconfigured_page_enabled: boolean }>({
+  const settings = useQuery<{
+    unconfigured_page_enabled: boolean;
+    intercept_app_errors_default: boolean;
+  }>({
     queryKey: SETTINGS_KEY,
     queryFn: async () => {
       const { data } = await apiClient.get<{
         unconfigured_page_enabled: boolean;
+        intercept_app_errors_default: boolean;
       }>("/admin/settings");
       return data;
     },
@@ -84,6 +92,27 @@ export const PageTemplatesCard = () => {
       message.error(err instanceof Error ? err.message : "Toggle failed");
     } finally {
       setTogglingUnconfigured(false);
+    }
+  };
+
+  const [togglingIntercept, setTogglingIntercept] = useState(false);
+
+  const toggleIntercept = async (checked: boolean) => {
+    setTogglingIntercept(true);
+    try {
+      await apiClient.patch("/admin/settings", {
+        intercept_app_errors_default: checked,
+      });
+      qc.invalidateQueries({ queryKey: SETTINGS_KEY });
+      message.success(
+        checked
+          ? "Branded page enabled for application errors on all domains (applies within a few minutes; domains can override under Domain → Options)"
+          : "Application errors pass through again — apps serve their own 500s",
+      );
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Toggle failed");
+    } finally {
+      setTogglingIntercept(false);
     }
   };
 
@@ -163,6 +192,29 @@ export const PageTemplatesCard = () => {
                               togglingUnconfigured || settings.isLoading
                             }
                             onChange={toggleUnconfigured}
+                          />
+                        </Space>
+                      </Tooltip>,
+                    ]
+                  : []),
+                ...(row.key === ERROR500_KEY
+                  ? [
+                      <Tooltip
+                        key="intercept"
+                        title="Off (default): a crashed app serves its own error response — a PHP fatal is an empty 500, so visitors see the browser's raw error screen; apps like WordPress show their recovery notice. On: nginx serves this branded page for application 500/502/503/504 on every domain (each domain can override under Domain → Options). Native nginx errors always show this page regardless."
+                      >
+                        <Space size={6}>
+                          <Typography.Text type="secondary">
+                            App errors
+                          </Typography.Text>
+                          <Switch
+                            size="small"
+                            checked={
+                              settings.data?.intercept_app_errors_default ??
+                              false
+                            }
+                            loading={togglingIntercept || settings.isLoading}
+                            onChange={toggleIntercept}
                           />
                         </Space>
                       </Tooltip>,

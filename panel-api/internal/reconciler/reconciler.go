@@ -1502,6 +1502,22 @@ func (r *Reconciler) ensureDomainPHPBinding(ctx context.Context, domain *models.
 		"domain_id", domain.ID, "domain", domain.Name, "pool_id", pool.ID)
 }
 
+// effectiveInterceptErrors resolves the branded-application-error toggle for
+// a domain (GH #879): the per-domain nginx_safe_options.intercept_errors
+// override wins when set; otherwise the server-wide
+// intercept_app_errors_default applies (false when settings are unavailable).
+func (r *Reconciler) effectiveInterceptErrors(ctx context.Context, domain *models.Domain) bool {
+	if o := domain.NginxSafeOptions.InterceptErrors; o != nil {
+		return *o
+	}
+	if r.serverSettings != nil {
+		if s, err := r.serverSettings.Get(ctx); err == nil && s != nil {
+			return s.InterceptAppErrorsDefault
+		}
+	}
+	return false
+}
+
 func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain) {
 	user, err := r.users.FindByID(ctx, domain.UserID)
 	if err != nil {
@@ -1685,7 +1701,8 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 
 	// GH #879: branded 500 for app errors — location-scoped in the vhost's
 	// PHP blocks, so it travels as its own param rather than via Render().
-	params["intercept_errors"] = domain.NginxSafeOptions.InterceptErrors
+	// Server-wide default with a per-domain tri-state override.
+	params["intercept_errors"] = r.effectiveInterceptErrors(ctx, domain)
 
 	params["redirect_directives"] = redirects.Compile(domain)
 	params["rule_directives"] = nginxrules.Compile(domain)

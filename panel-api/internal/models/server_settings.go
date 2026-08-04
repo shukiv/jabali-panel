@@ -138,6 +138,14 @@ type ServerSettings struct {
 	// deliberate trade of that stealth for a branded operator page.
 	UnconfiguredPageEnabled bool `gorm:"column:unconfigured_page_enabled;type:tinyint(1);not null;default:0" json:"unconfigured_page_enabled"`
 
+	// InterceptAppErrorsDefault (GH #879) — server-wide default for the
+	// branded application-error page: nginx serves the themed 500 when a
+	// PHP app returns a 5xx (a fatal is a 500 with an empty body). Domains
+	// can override either way via nginx_safe_options.intercept_errors
+	// (nil = inherit this). Default off: apps that render their own error
+	// screens (WordPress recovery notice, JSON APIs) keep them.
+	InterceptAppErrorsDefault bool `gorm:"column:intercept_app_errors_default;type:tinyint(1);not null;default:0" json:"intercept_app_errors_default"`
+
 	// TenantDocrootEditable lets a non-admin owner repoint their own domain's
 	// document root within the domain's own tree (GH #526). Default ON — the
 	// edit is confined to /home/<user>/domains/<domain>/, many apps (Laravel et

@@ -30,13 +30,15 @@ type NginxSafeOptions struct {
 	Gzip bool `json:"gzip,omitempty"`
 	// InterceptErrors (GH #879) shows the branded 500 page when the PHP app
 	// returns a 5xx. A PHP fatal is a 500 with an EMPTY body, so without this
-	// visitors get the browser's raw error screen. Off by default: apps like
-	// WordPress render their own error pages (recovery-mode notice) and API
-	// endpoints return JSON error bodies — interception replaces those.
+	// visitors get the browser's raw error screen. Tri-state override of
+	// server_settings.intercept_app_errors_default: nil = inherit, true/false
+	// = force per-domain. The default matters because apps like WordPress
+	// render their own error pages (recovery-mode notice) and API endpoints
+	// return JSON error bodies — interception replaces those.
 	// NOT rendered by Render(): it must sit INSIDE the vhost's PHP locations
 	// (location-scoped, 50x-only error_page so app 404/403 pages survive),
 	// so the reconciler plumbs it as its own domain.create param instead.
-	InterceptErrors bool `json:"intercept_errors,omitempty"`
+	InterceptErrors *bool `json:"intercept_errors,omitempty"`
 }
 
 // maxBodyCapMB bounds client_max_body_size so a tenant can't set an absurd

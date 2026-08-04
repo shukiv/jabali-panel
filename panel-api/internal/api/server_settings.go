@@ -140,6 +140,9 @@ type updateServerSettingsRequest struct {
 	// GH #860: opt-in branded page on the default catch-all for unknown
 	// hosts (default off = keep the 444 drop).
 	UnconfiguredPageEnabled *bool `json:"unconfigured_page_enabled,omitempty"`
+	// GH #879: server-wide default for the branded application-error page;
+	// domains override via nginx_safe_options.intercept_errors.
+	InterceptAppErrorsDefault *bool `json:"intercept_app_errors_default,omitempty"`
 	// GH #648: opt-in DKIM2 signing alongside classic DKIM (default off).
 	DKIM2SigningEnabled *bool `json:"dkim2_signing_enabled,omitempty"`
 	// TenantNotificationKinds — admin-configurable tenant channel-kind allowlist
@@ -511,6 +514,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.UnconfiguredPageEnabled != nil {
 		current.UnconfiguredPageEnabled = *req.UnconfiguredPageEnabled
+	}
+	if req.InterceptAppErrorsDefault != nil {
+		current.InterceptAppErrorsDefault = *req.InterceptAppErrorsDefault
 	}
 	if req.DKIM2SigningEnabled != nil {
 		current.DKIM2SigningEnabled = *req.DKIM2SigningEnabled
