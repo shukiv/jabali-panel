@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // newAppSecCmd is the operator-facing parent for AppSec config ops
@@ -21,6 +22,7 @@ func newAppSecCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newAppSecRenderConfigCmd())
 	cmd.AddCommand(newAppSecExplainCmd())
+	cmd.AddCommand(newAppSecExclusionCmd())
 	return cmd
 }
 
@@ -188,6 +190,38 @@ func writeCRSPluginBefore(cmd *cobra.Command) error {
 		return nil // crowdsec not installed here — nothing to manage
 	}
 	body := appseccfg.CRSPluginBefore()
+
+	// JAB-227: append operator-managed exclusions. They live in the DB rather
+	// than in this static template because only the operator can see the false
+	// positives specific to their tenants' apps. Best-effort: a DB that is not
+	// reachable must not stop the built-in exclusions being written, but the
+	// operator has to be told their entries are missing from this render rather
+	// than left assuming they applied.
+	// render-config deliberately has no requireDB PreRunE: install.sh calls it
+	// early, before the database necessarily exists, and it must still write the
+	// built-in exclusions on such a host. So open the DB best-effort here and
+	// carry on without the operator section if it is not reachable.
+	if sharedDB == nil {
+		if err := initConfig(); err == nil {
+			_ = initDB()
+		}
+	}
+	if sharedDB != nil {
+		excl, err := repository.NewCRSRuleExclusionRepository(sharedDB).List(cmd.Context())
+		if err != nil {
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"! operator CRS exclusions NOT rendered (%v) — built-in exclusions written without them\n", err)
+		} else if len(excl) > 0 {
+			list := make([]appseccfg.Exclusion, 0, len(excl))
+			for _, e := range excl {
+				list = append(list, appseccfg.Exclusion{
+					Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
+				})
+			}
+			body += appseccfg.RenderExclusions(list)
+		}
+	}
+
 	existing, _ := os.ReadFile(appseccfg.CRSPluginBeforePath)
 	if string(existing) == body {
 		return nil

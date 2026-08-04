@@ -334,6 +334,45 @@ CrowdSec AppSec config operator subcommands
 jabali appsec
 ```
 
+#### `jabali appsec exclusion`
+
+Manage operator CRS false-positive exclusions
+
+```
+jabali appsec exclusion
+```
+
+##### `jabali appsec exclusion add`
+
+Add an exclusion (host + path + rule are all required)
+
+```
+jabali appsec exclusion add [flags]
+```
+
+**Flags:**
+
+- `--host` — hostname the exclusion applies to (required)
+- `--note` — why this exclusion exists
+- `--rule` — CRS rule ID to exclude, e.g. 942100 (required)
+- `--uri-prefix` — URI prefix the exclusion applies to, e.g. /wp-json/x/ (required)
+
+##### `jabali appsec exclusion list`
+
+List operator CRS exclusions
+
+```
+jabali appsec exclusion list
+```
+
+##### `jabali appsec exclusion rm`
+
+Remove an exclusion by id
+
+```
+jabali appsec exclusion rm <id>
+```
+
 #### `jabali appsec explain`
 
 Show which CRS rules recently blocked requests (AppSec FP triage)
