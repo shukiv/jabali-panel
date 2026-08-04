@@ -4765,6 +4765,19 @@ jabali ssl list [flags]
 
 - `--user` — filter by user (id|email|username)
 
+#### `jabali ssl readiness`
+
+Report domains whose origin certificate would fail Cloudflare Full (strict)
+
+```
+jabali ssl readiness [flags]
+```
+
+**Flags:**
+
+- `--all` — list every domain, not only the ones that would fail
+- `--nginx-dir` — directory holding the enabled nginx vhosts (default `/etc/nginx/sites-enabled`)
+
 #### `jabali ssl renew`
 
 Renew SSL cert via certbot (synchronous, calls agent)

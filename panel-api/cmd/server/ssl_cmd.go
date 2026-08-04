@@ -32,6 +32,7 @@ func newSSLCmd() *cobra.Command {
 		newSSLRenewCmd(),
 		newSSLSetCustomCmd(),
 		newSSLSharedCmd(),
+		newSSLReadinessCmd(),
 	)
 	return cmd
 }
