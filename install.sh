@@ -6193,7 +6193,7 @@ install_nginx_tunables() {
 # Server-wide nginx tunables (Server Settings → Nginx, M55).
 # http{}-scope defaults; individual vhosts may override per-directive.
 
-client_max_body_size 50m;
+client_max_body_size 512m;
 client_body_timeout 60s;
 client_header_timeout 60s;
 send_timeout 60s;

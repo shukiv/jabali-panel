@@ -369,7 +369,7 @@ type ServerSettings struct {
 	// → `server_tokens off` (hide version, secure default). NginxCustomHTTP is
 	// admin-supplied raw http{}-scope directives gated only by nginx -t; the UI
 	// warns it can destabilize the server. NginxWorkerProcesses is "auto" or int.
-	NginxClientMaxBodySize   string `gorm:"column:nginx_client_max_body_size;type:varchar(16);not null;default:'50m'"   json:"nginx_client_max_body_size"`
+	NginxClientMaxBodySize   string `gorm:"column:nginx_client_max_body_size;type:varchar(16);not null;default:'512m'"   json:"nginx_client_max_body_size"`
 	NginxKeepaliveTimeout    string `gorm:"column:nginx_keepalive_timeout;type:varchar(16);not null;default:'65s'"      json:"nginx_keepalive_timeout"`
 	NginxServerTokens        bool   `gorm:"column:nginx_server_tokens;type:tinyint(1);not null;default:0"               json:"nginx_server_tokens"`
 	NginxGzip                bool   `gorm:"column:nginx_gzip;type:tinyint(1);not null;default:1"                        json:"nginx_gzip"`
