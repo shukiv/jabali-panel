@@ -140,14 +140,11 @@ same command to resume a failed job.`,
 			if fi.IsDir() {
 				return fmt.Errorf("--file %q is a directory", abs)
 			}
-			// JAB-41: disk preflight BEFORE creating the job, staging the tarball,
-			// or auto-creating the target user — so a low-disk host fails clean
-			// with nothing half-provisioned. ParseTarball re-checks as a backstop.
-			if err := os.MkdirAll("/var/lib/jabali-migrations", 0o750); err == nil {
-				if derr := migrate.CheckExtractDiskSpace(abs, "/var/lib/jabali-migrations"); derr != nil {
-					return derr
-				}
-			}
+			// The disk preflight used to run here, before the job row existed.
+			// It now runs just below, after find-or-create and before staging —
+			// see the JAB-219 note there for why. Ensure the parent staging dir
+			// exists either way so the check has something to statfs.
+			_ = os.MkdirAll("/var/lib/jabali-migrations", 0o750)
 
 			su := sourceUser
 			if su == "" {
@@ -205,6 +202,32 @@ same command to resume a failed job.`,
 				}
 				jobID = row.ID
 				fmt.Printf("  → created migration job %s (%s/%s)\n", jobID, kind, su)
+			}
+
+			// Disk preflight. Position is deliberate and satisfies two issues that
+			// pull in opposite directions:
+			//
+			//   JAB-41 wanted the refusal BEFORE anything is provisioned, so a
+			//   low-disk host does not half-extract and strand a tarball or a
+			//   half-created target user. Staging begins on the next line, so that
+			//   still holds — nothing has been written yet.
+			//
+			//   JAB-219 wanted the refusal to leave something RESUMABLE. Running
+			//   before the job row existed meant migration_jobs had no row at all,
+			//   so the operator could not free space and continue; they had to
+			//   restart the whole command and hope. The job row is metadata, not
+			//   provisioning, so creating it first costs nothing and makes the
+			//   refusal recoverable.
+			//
+			// The job is marked failed with the measured numbers, so `migrate list`
+			// shows why rather than leaving a pending job with no explanation.
+			if derr := migrate.CheckExtractDiskSpace(abs, "/var/lib/jabali-migrations"); derr != nil {
+				msg := derr.Error()
+				if uerr := jobsRepo.UpdateState(ctx, jobID, models.MigrationStateFailed, &msg); uerr != nil {
+					fmt.Printf("  ! could not record the failure on job %s: %v\n", jobID, uerr)
+				}
+				return fmt.Errorf("%w\n  job %s left resumable — free space, then: jabali migrate import --job-id %s",
+					derr, jobID, jobID)
 			}
 
 			staging := filepath.Join("/var/lib/jabali-migrations", jobID)

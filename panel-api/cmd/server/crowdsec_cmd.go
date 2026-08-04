@@ -1,8 +1,10 @@
 // CrowdSec + AppSec operational CLI (Gitea #551). Each verb dispatches the same
 // agent command the Security REST handlers use (security_crowdsec.go), so
 // validation/reload/apply stay agent-authoritative. Settings-backed knobs
-// (geoblock, captcha) persist to server_settings then push to the agent, exactly
-// as the handlers do. Mutations are CLI-audited (#537).
+// (geoblock, captcha) APPLY TO THE AGENT FIRST and persist to server_settings
+// only on success, exactly as the handlers do — the reverse order lets a failed
+// apply leave the database advertising a protection that is not in force
+// (JAB-222). Mutations are CLI-audited (#537).
 package main
 
 import (
@@ -496,14 +498,27 @@ func newCsCaptchaSetCmd() *cobra.Command {
 			if enabled && s.CrowdSecCaptchaSecretKey == "" {
 				return fmt.Errorf("--secret-key is required when enabling captcha")
 			}
-			if err := repo.Upsert(ctx, s); err != nil {
-				return fmt.Errorf("persist captcha settings: %w", err)
-			}
+			// JAB-222: apply to the bouncer FIRST, persist only on success.
+			//
+			// This used to Upsert first, so a failed agent apply left
+			// server_settings claiming captcha was enabled while the bouncer conf
+			// was untouched — `jabali crowdsec captcha get` reported
+			// enabled=true provider=turnstile on a host whose SITE_KEY was still
+			// empty and FALLBACK_REMEDIATION still ban. A protection the operator
+			// believed was on, silently inactive at the edge.
+			//
+			// The REST handler has done it in this order since GH #685; the CLI
+			// simply never got the same treatment — the same CLI-vs-HTTP parity
+			// gap as the delete-cascade one in #754. geoblock above already
+			// applies-then-persists; captcha was the outlier.
 			if _, err := sharedAgent.Call(ctx, "security.crowdsec.captcha.apply", map[string]any{
 				"enabled": s.CrowdSecCaptchaEnabled, "provider": s.CrowdSecCaptchaProvider,
 				"site_key": s.CrowdSecCaptchaSiteKey, "secret_key": s.CrowdSecCaptchaSecretKey,
 			}); err != nil {
 				return err
+			}
+			if err := repo.Upsert(ctx, s); err != nil {
+				return fmt.Errorf("persist captcha settings: %w", err)
 			}
 			cliAuditOK(ctx, "crowdsec.captcha_set", "server_settings", "1", nil)
 			fmt.Fprintf(cmd.OutOrStdout(), "captcha enabled=%v provider=%s\n", s.CrowdSecCaptchaEnabled, s.CrowdSecCaptchaProvider)
