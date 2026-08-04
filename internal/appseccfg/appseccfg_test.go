@@ -234,3 +234,51 @@ func TestCRSPluginBefore_CodeSnippetsExclusion(t *testing.T) {
 	mustNotContain(t, out, `"@rx ^/wp-json/code-snippets/" "id:`,
 		"no unchained, unversioned code-snippets exclusion")
 }
+
+// 942100 vs wp-admin/admin-ajax.php (newzaps, 26 denies across 5 source
+// addresses, 2026-08-02..03 — including a consumer ISP address repeatedly
+// locked out of the site's own wp-admin).
+//
+// The exclusion must stay identity-scoped, not path-scoped: admin-ajax.php is
+// reachable unauthenticated for plugins registering nopriv_ actions, and that
+// is exactly where WordPress SQLi gets exploited. An unauthenticated request
+// therefore has to keep full libinjection scoring.
+func TestCRSPluginBefore_AdminAjaxLibinjectionIsCookieGated(t *testing.T) {
+	out := CRSPluginBefore()
+
+	mustContain(t, out, "ctl:ruleRemoveTargetById=942100;ARGS", "942100 dropped on ARGS")
+	mustContain(t, out, "ctl:ruleRemoveTargetById=942100;REQUEST_BODY", "942100 dropped on REQUEST_BODY")
+
+	// The drop must be chained on the logged-in cookie. Locate the rule and
+	// assert the chain, rather than trusting that the cookie appears anywhere
+	// in the file (it also appears in the code-snippets rule).
+	idx := strings.Index(out, "id:9599230")
+	if idx < 0 {
+		t.Fatal("admin-ajax 942100 rule (id:9599230) missing")
+	}
+	// Start at the beginning of that SecRule's line — the URI match sits
+	// before the id: on the same line.
+	if nl := strings.LastIndex(out[:idx], "\n"); nl >= 0 {
+		idx = nl + 1
+	}
+	rule := out[idx:]
+	if end := strings.Index(rule, "\n# "); end > 0 {
+		rule = rule[:end]
+	}
+	if !strings.Contains(rule, "chain") {
+		t.Error("942100 drop is not chained — it would apply to unauthenticated requests")
+	}
+	if !strings.Contains(rule, "wordpress_logged_in_") {
+		t.Error("942100 drop is not gated on the wordpress_logged_in_ cookie")
+	}
+	if !strings.Contains(rule, `^/wp-admin/admin-ajax`) {
+		t.Error("942100 drop is not scoped to admin-ajax.php")
+	}
+
+	// Narrowness: only 942100 is dropped by ID here. Removing the whole
+	// attack-sqli tag on this path would surrender libinjection everywhere on
+	// the endpoint, which is the thing this scoping exists to avoid.
+	if strings.Contains(rule, "ruleRemoveTargetByTag=attack-sqli") {
+		t.Error("admin-ajax rule removes the whole SQLi tag — too broad")
+	}
+}

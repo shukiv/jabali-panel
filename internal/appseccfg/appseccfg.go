@@ -239,6 +239,31 @@ SecRule REQUEST_FILENAME "@endsWith /wp-admin/admin-ajax.php" "id:9599210,phase:
 #   - v[0-9]+ so a future API version can't silently re-break saves.
 SecRule REQUEST_URI "@rx ^/wp-json/code-snippets/v[0-9]+/" "id:9599220,phase:1,pass,nolog,chain"
     SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveTargetByTag=attack-rce;ARGS,ctl:ruleRemoveTargetByTag=attack-rce;REQUEST_BODY,ctl:ruleRemoveTargetByTag=attack-injection-php;ARGS,ctl:ruleRemoveTargetByTag=attack-injection-php;REQUEST_BODY"
+# 942100 vs wp-admin/admin-ajax.php (newzaps, observed 2026-08-02..03).
+# admin-ajax.php is WordPress's general-purpose AJAX endpoint: every plugin
+# and the block editor POST arbitrary user-authored content through it —
+# post bodies, meta values, saved queries, form-builder field definitions.
+# CRS 942100 is libinjection, which scores on SQL-shaped text rather than a
+# fixed pattern, so ordinary editorial content ("... 1 or 2 items", quoted
+# fragments, anything resembling a boolean clause) reads as SQLi. Measured on
+# newzaps: 26 denies across 5 source addresses, including a consumer ISP
+# address repeatedly locked out of the site's own wp-admin.
+#
+# 9599201 above already drops 911100/942550/932370 here unconditionally, but
+# not 942100 — libinjection is a far more valuable detector and admin-ajax.php
+# is reachable UNAUTHENTICATED for plugins that register nopriv_ actions, which
+# is precisely where WordPress SQLi is exploited. So this is scoped on identity
+# rather than widened on the path:
+#   - Chained on a wordpress_logged_in_* cookie. An unauthenticated request to
+#     the same endpoint keeps FULL libinjection scoring. A forged cookie buys
+#     nothing on its own: admin-ajax dispatches to capability- and
+#     nonce-checked handlers, so the cookie only decides whether CRS scores the
+#     body, never whether the action runs.
+#   - Only 942100, and only on ARGS + REQUEST_BODY. Every other SQLi rule, and
+#     every other family, stays fully active on this path — a real injection in
+#     these args is still caught by the rest of the 942 group.
+SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599230,phase:1,pass,nolog,chain"
+    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveTargetById=942100;ARGS,ctl:ruleRemoveTargetById=942100;REQUEST_BODY"
 # 933120 vs WooCommerce checkout (arizot-e.com incident, 2026-08-02).
 # WooCommerce 8.5+ order attribution submits a field literally named
 # wc_order_attribution_user_agent with every checkout AJAX call — and
