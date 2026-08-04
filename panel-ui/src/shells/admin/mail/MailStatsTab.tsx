@@ -4,6 +4,13 @@
 // `rates` are per-interval deltas (counters), both keyed by whatever
 // metric names Stalwart's exporter emits (it registers metrics lazily,
 // so charts appear as traffic flows).
+//
+// Metric names are VERIFIED against a live exporter under real traffic —
+// received mail lands as message_ingest_ham / message_ingest_spam (there
+// is no plain "message_ingest"), tenant submissions count via
+// queue_authenticated_message_queued, and outcomes via delivery_completed /
+// delivery_dsn_perm_fail. Do not add a chart for a name you have not seen
+// in mail_stats_samples.
 import { useMemo, useState } from "react";
 import { Alert, Card, Col, Radio, Row, Statistic, Table, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
@@ -35,6 +42,25 @@ const fmtBytes = (n: number): string => {
 
 const toSpark = (pts: Point[] | undefined): SparklinePoint[] =>
   (pts ?? []).map((p) => ({ x: p.t, y: p.v }));
+
+// sumSeries merges rate series by timestamp (samples share tick times, but a
+// metric only starts existing once Stalwart first increments it — union, not
+// zip). Used for "received" = ham + spam classifications (GH #873 round 2;
+// metric names verified against a live exporter, message_ingest_* register
+// lazily per outcome).
+const sumSeries = (...series: (Point[] | undefined)[]): SparklinePoint[] => {
+  const byT = new Map<string, number>();
+  for (const pts of series) {
+    for (const p of pts ?? []) byT.set(p.t, (byT.get(p.t) ?? 0) + p.v);
+  }
+  return [...byT.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([x, y]) => ({ x, y }));
+};
+
+// Total over the charted window (rates are per-interval deltas).
+const sumTotal = (pts: Point[] | undefined): number =>
+  (pts ?? []).reduce((acc, p) => acc + p.v, 0);
 
 const ChartCard = ({
   title,
@@ -145,10 +171,69 @@ export const MailStatsTab = () => {
       />
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={12} md={6}>
+          <Card size="small">
+            <Statistic
+              title={`Received (${hours >= 168 ? `${hours / 24}d` : `${hours}h`})`}
+              value={sumTotal(s?.rates["message_ingest_ham"]) + sumTotal(s?.rates["message_ingest_spam"])}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card size="small">
+            <Statistic
+              title={`Sent (${hours >= 168 ? `${hours / 24}d` : `${hours}h`})`}
+              value={sumTotal(s?.rates["queue_authenticated_message_queued"])}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card size="small">
+            <Statistic
+              title={`Spam blocked (${hours >= 168 ? `${hours / 24}d` : `${hours}h`})`}
+              value={sumTotal(s?.rates["message_ingest_spam"])}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card size="small">
+            <Statistic
+              title={`Delivery failures (${hours >= 168 ? `${hours / 24}d` : `${hours}h`})`}
+              value={sumTotal(s?.rates["delivery_dsn_perm_fail"])}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} md={8}>
           <ChartCard
-            title="Messages processed"
-            data={toSpark(s?.rates["message_ingest"])}
+            title="Messages received"
+            data={sumSeries(
+              s?.rates["message_ingest_ham"],
+              s?.rates["message_ingest_spam"],
+            )}
+          />
+        </Col>
+        <Col xs={24} md={8}>
+          <ChartCard
+            title="Messages sent"
+            data={toSpark(s?.rates["queue_authenticated_message_queued"])}
+          />
+        </Col>
+        <Col xs={24} md={8}>
+          <ChartCard
+            title="Spam blocked"
+            data={toSpark(s?.rates["message_ingest_spam"])}
+          />
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} md={8}>
+          <ChartCard
+            title="Deliveries completed"
+            data={toSpark(s?.rates["delivery_completed"])}
           />
         </Col>
         <Col xs={24} md={8}>
