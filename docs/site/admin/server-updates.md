@@ -29,6 +29,63 @@ The transient-unit pattern was live-verified on 192.168.100.150.
 
 Server Settings → Updates → **Update window**. If set, `jabali update --auto` refuses to run outside the window. UI-initiated updates ignore the window (operator-driven, presumed deliberate).
 
+## Why a fixed bug came back
+
+The most confusing failure this system produces is a bug that was fixed, merged,
+and then re-appeared in production. It is almost always deploy drift, and the
+mechanism is worth understanding because the symptom points away from the cause.
+
+**A merged fix is inert until the binary on that box updates.** That much is
+obvious. What is not obvious is that an out-of-date binary does not merely *lack*
+the fix — it can actively **undo** one.
+
+Several host configuration files are rendered from templates **embedded in the
+Go binary**, not read from disk: the CRS before-plugin, the AppSec config, nginx
+drop-ins, PHP-FPM pool files. Step 6 of every update, and the reconciler on its
+own schedule, re-render those files from whatever template the running binary
+carries. So on a box whose binary predates a fix:
+
+- a hand-applied correction is **overwritten** by the old embedded template on the
+  next reconcile, and
+- it comes back silently, because re-rendering a managed file is normal behaviour,
+  not an error.
+
+Two production incidents on one fleet in three weeks came from exactly this:
+
+- An AppArmor fix existed but was not deployed; config convergence restored the
+  shipped (unfixed) template overnight and took a customer's site down a **second**
+  time.
+- CRS false-positive exclusions for WooCommerce checkout merged on one day, and
+  real customers were still getting 4-hour CrowdSec bans mid-checkout the **next**
+  day, because `appsec render-config` on the old binary rewrote the exclusion file
+  from the old embedded template.
+
+### Checking for drift
+
+```
+jabali version                 # the commit this box is actually running
+```
+
+The Updates page (`/jabali-admin/updates`) shows how many commits the box is
+behind its release channel; the same number is available from the admin API at
+`GET /api/v1/admin/updates/state` as `behind_count`. There is no CLI flag for it
+today — `jabali version` plus the panel is the check.
+
+Any non-zero behind-count means at least one merged fix is not in force here, and
+that config convergence may be actively re-applying pre-fix templates.
+
+### Avoiding it
+
+Enable auto-update on the **stable** channel. Stable is by definition the
+reviewed, promoted build, which is what unattended convergence wants: the box
+converges on fixes without an operator remembering to deploy each one.
+
+Auto-update ships **off**, so this is opt-in — configure it on the Updates page
+(`/jabali-admin/updates`), which drives the `jabali-autoupdate.timer` through the
+reconciler. A fleet that is not
+auto-updating needs a deliberate deploy step after every merge that matters, and
+"we merged the fix" is not the same statement as "the fix is in force".
+
 ## Common failure modes
 
 | Symptom | Cause | Resolution |
