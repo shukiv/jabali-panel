@@ -221,6 +221,20 @@ same command to resume a failed job.`,
 			//
 			// The job is marked failed with the measured numbers, so `migrate list`
 			// shows why rather than leaving a pending job with no explanation.
+			// JAB-216: memory, same position and same contract as the disk check
+			// below — after the job row exists so a refusal is resumable, before
+			// anything is staged so nothing is half-provisioned.
+			if mwarn, merr := migrate.CheckRestoreMemory(); merr != nil {
+				msg := merr.Error()
+				if uerr := jobsRepo.UpdateState(ctx, jobID, models.MigrationStateFailed, &msg); uerr != nil {
+					fmt.Printf("  ! could not record the failure on job %s: %v\n", jobID, uerr)
+				}
+				return fmt.Errorf("%w\n  job %s left resumable — free memory, then: jabali migrate import --job-id %s",
+					merr, jobID, jobID)
+			} else if mwarn != "" {
+				fmt.Printf("  ! %s\n", mwarn)
+			}
+
 			if derr := migrate.CheckExtractDiskSpace(abs, "/var/lib/jabali-migrations"); derr != nil {
 				msg := derr.Error()
 				if uerr := jobsRepo.UpdateState(ctx, jobID, models.MigrationStateFailed, &msg); uerr != nil {
