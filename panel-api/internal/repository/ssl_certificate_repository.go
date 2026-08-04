@@ -63,6 +63,11 @@ type SSLCertificateRepository interface {
 	UpdateAfterACMEFailureCapped(ctx context.Context, id string, lastError string, retryCount int, fallbackCertPath, fallbackKeyPath *string, fallbackExpiresAt *time.Time) error
 	MarkFailed(ctx context.Context, id string, lastError string) error
 	ListDueForACMERetry(ctx context.Context, now time.Time, limit int) ([]models.SSLCertificate, error)
+	// ListExhaustedForSSLEnabledDomains returns certificates that gave up
+	// (status='failed') on domains where SSL is still wanted. JAB-224.
+	ListExhaustedForSSLEnabledDomains(ctx context.Context, before time.Time, limit int) ([]models.SSLCertificate, error)
+	// RearmACME puts an exhausted certificate back in the retry queue.
+	RearmACME(ctx context.Context, id string, retryCount int, now time.Time) error
 }
 
 type sslCertificateRepo struct{ db *gorm.DB }
@@ -369,4 +374,45 @@ func (r *sslCertificateRepo) FindByDomainIDs(ctx context.Context, domainIDs []st
 		return nil, err
 	}
 	return certs, nil
+}
+
+
+// ListExhaustedForSSLEnabledDomains returns certificates that exhausted their
+// ACME attempts (status='failed') while the domain still has SSL enabled, and
+// whose last attempt is older than `before`.
+//
+// JAB-224. These are the certificates ListDueForACMERetry deliberately ignores.
+// That exclusion is right for a cert that failed because something is broken,
+// and wrong for one that failed because the domain had not cut over yet: an
+// un-cut-over domain fails HTTP-01 every single time, by definition, so it
+// always exhausts its attempts and then stops retrying — including at the
+// moment cutover finally makes issuance possible.
+func (r *sslCertificateRepo) ListExhaustedForSSLEnabledDomains(ctx context.Context, before time.Time, limit int) ([]models.SSLCertificate, error) {
+	var certs []models.SSLCertificate
+	err := r.db.WithContext(ctx).
+		Joins("JOIN domains ON domains.id = ssl_certificates.domain_id").
+		Where("ssl_certificates.status = ?", models.SSLStatusFailed).
+		Where("domains.ssl_enabled = ?", true).
+		Where("ssl_certificates.last_attempt_at IS NULL OR ssl_certificates.last_attempt_at <= ?", before).
+		Order("ssl_certificates.last_attempt_at ASC").
+		Limit(limit).
+		Find(&certs).Error
+	return certs, err
+}
+
+// RearmACME moves an exhausted certificate back to pending_acme_retry, due now.
+//
+// retryCount is set rather than zeroed so the caller controls how many attempts
+// this round buys — re-arming to 0 would hand out a full fresh budget every
+// cycle and could push past Let's Encrypt's failed-validation limits.
+func (r *sslCertificateRepo) RearmACME(ctx context.Context, id string, retryCount int, now time.Time) error {
+	return r.db.WithContext(ctx).
+		Model(&models.SSLCertificate{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"status":        models.SSLStatusPendingACMERetry,
+			"retry_count":   retryCount,
+			"next_retry_at": now,
+			"updated_at":    now,
+		}).Error
 }

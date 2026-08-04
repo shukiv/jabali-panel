@@ -557,6 +557,10 @@ func (r *Reconciler) Start(ctx context.Context) {
 				continue
 			}
 			r.ReconcileSSLObservation(ctx)
+			// JAB-224: same cadence — an exhausted certificate on an
+			// SSL-enabled domain is re-armed so cutover is picked up without
+			// operator action. Rate-limited inside the pass.
+			r.ReconcileSSLResurrect(ctx)
 		case <-updateRunTicker.C:
 			if r.IsPaused() {
 				continue

@@ -14,6 +14,11 @@ import (
 type fakeSSLCertRepo struct {
 	byDomain map[string]*models.SSLCertificate
 	revoked  map[string]bool
+	// JAB-224 ssl_resurrect
+	exhausted    []models.SSLCertificate
+	exhaustedErr error
+	rearmErr     error
+	rearmed      map[string]int
 }
 
 func newFakeSSLCertRepo() *fakeSSLCertRepo {
@@ -73,5 +78,34 @@ func newFakeDomainRepo() *fakeDomainRepo {
 
 // RefreshObservedExpiry — JAB-203 observation pass; no behaviour needed here.
 func (f *fakeSSLCertRepo) RefreshObservedExpiry(context.Context, string, time.Time, time.Time) error {
+	return nil
+}
+
+// JAB-224 (ssl_resurrect): exhausted certificates re-armed for another attempt.
+func (f *fakeSSLCertRepo) ListExhaustedForSSLEnabledDomains(_ context.Context, before time.Time, limit int) ([]models.SSLCertificate, error) {
+	if f.exhaustedErr != nil {
+		return nil, f.exhaustedErr
+	}
+	var out []models.SSLCertificate
+	for _, c := range f.exhausted {
+		if c.LastAttemptAt != nil && c.LastAttemptAt.After(before) {
+			continue // still resting
+		}
+		out = append(out, c)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeSSLCertRepo) RearmACME(_ context.Context, id string, retryCount int, now time.Time) error {
+	if f.rearmErr != nil {
+		return f.rearmErr
+	}
+	if f.rearmed == nil {
+		f.rearmed = map[string]int{}
+	}
+	f.rearmed[id] = retryCount
 	return nil
 }

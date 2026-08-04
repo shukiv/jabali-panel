@@ -211,3 +211,10 @@ func TestSSLBadgeForDomain_ModeAware(t *testing.T) {
 func (m *mockSSLCertsForBadge) RefreshObservedExpiry(context.Context, string, time.Time, time.Time) error {
 	return nil
 }
+
+// JAB-224 ssl_resurrect — unused by these tests.
+func (m *mockSSLCertsForBadge) ListExhaustedForSSLEnabledDomains(context.Context, time.Time, int) ([]models.SSLCertificate, error) {
+	return nil, nil
+}
+
+func (m *mockSSLCertsForBadge) RearmACME(context.Context, string, int, time.Time) error { return nil }

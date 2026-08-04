@@ -767,3 +767,12 @@ func (m *MockDomainRepository) ListForRegistrarRefresh(ctx context.Context, stal
 func (m *MockDomainRepository) SetRegistrarExpiry(ctx context.Context, id string, expiresAt *time.Time, checkedAt time.Time) error {
 	return nil
 }
+
+// JAB-224 ssl_resurrect — unused by these tests.
+func (m *MockSSLCertificateRepository) ListExhaustedForSSLEnabledDomains(context.Context, time.Time, int) ([]models.SSLCertificate, error) {
+	return nil, nil
+}
+
+func (m *MockSSLCertificateRepository) RearmACME(context.Context, string, int, time.Time) error {
+	return nil
+}
