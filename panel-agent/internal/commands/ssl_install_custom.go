@@ -194,9 +194,21 @@ func validateKeyMatchesCert(keyPEM string, leaf *x509.Certificate) error {
 	return nil
 }
 
+// writeAtomic writes data to path via a temp file in the SAME directory, so the
+// rename is always intra-filesystem. Staging in /tmp instead is the EXDEV trap:
+// rename(2) cannot cross devices, and /tmp is a separate tmpfs on any hardened
+// host (JAB-222).
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	// WriteFile only applies mode when it CREATES the file. A leftover .tmp
+	// from an interrupted run would keep its old, possibly looser permissions —
+	// and some callers write secrets (bouncer conf carries a captcha secret
+	// key), so set the mode explicitly rather than inheriting whatever is there.
+	if err := os.Chmod(tmp, mode); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {

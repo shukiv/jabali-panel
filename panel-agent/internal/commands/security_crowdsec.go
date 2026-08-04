@@ -1699,21 +1699,23 @@ func rewriteBouncerConfKeys(path string, updates map[string]string) error {
 		}
 	}
 	out := strings.Join(lines, "\n")
-	tmp, err := os.CreateTemp("", "bouncer-conf-*.tmp")
-	if err != nil {
-		return fmt.Errorf("mktemp: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(out); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	tmp.Close()
-	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
-		return fmt.Errorf("chmod tmp: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("rename: %w", err)
+	// JAB-222: stage the temp file NEXT TO the target, not in /tmp. rename(2)
+	// cannot cross filesystems, and /tmp is a separate tmpfs on any hardened
+	// host, so `os.CreateTemp("", …)` here failed with EXDEV:
+	//
+	//   rename /tmp/bouncer-conf-*.tmp /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf:
+	//   invalid cross-device link
+	//
+	// The panel had already written the setting to the database by then, so
+	// `crowdsec captcha get` reported captcha enabled while the bouncer conf
+	// still carried an empty SITE_KEY and FALLBACK_REMEDIATION=ban — a
+	// protection the operator believed was on, silently inactive at the edge,
+	// with the reconciler retrying the same doomed rename every tick.
+	//
+	// writeAtomic stages at path+".tmp", which is by construction on the target
+	// filesystem.
+	if err := writeAtomic(path, []byte(out), 0o600); err != nil {
+		return fmt.Errorf("write bouncer conf: %w", err)
 	}
 	return nil
 }
