@@ -1569,8 +1569,8 @@ func cpanelRestoreCallback(
 			return bytes, warnings, fmt.Errorf("extras: %w", err)
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d autoresponders=%d autoresponders_orphan=%d filters=%d php_pools=%d php_domains_bound=%d php_version=%s ftp_accounts=%d dkim_keys=%d",
-			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated,
+			"extras: catchalls=%d subdomains=%d/%d forwarders=%d forwarders_orphan=%d autoresponders=%d autoresponders_orphan=%d filters=%d php_pools=%d php_domains_bound=%d php_version=%s ftp_accounts=%d dkim_keys=%d",
+			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated, extrasRes.SubdomainsDetected,
 			extrasRes.ForwardersCreated, extrasRes.ForwardersOrphaned,
 			extrasRes.AutorespondersCreated, extrasRes.AutorespondersOrphaned,
 			extrasRes.FiltersImported,

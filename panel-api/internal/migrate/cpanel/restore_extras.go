@@ -37,7 +37,8 @@ import (
 // Counters are summed into the parent restore manifest by the caller.
 type ExtrasResult struct {
 	CatchallsSet           int      // domains where catchall_target was written
-	SubdomainsCreated      int      // panel domain rows added from SUB_DOMAINS
+	SubdomainsDetected     int      // JAB-220: subdomains found on the source (created + skipped)
+	SubdomainsCreated      int      // panel domain rows added for those subdomains
 	ForwardersCreated      int      // mail forwarder rows added (M6.5)
 	ForwardersOrphaned     int      // alias lines whose local mailbox isn't in panel
 	AutorespondersCreated  int      // vacation auto-replies restored (M6.5)
@@ -80,10 +81,10 @@ func ImportExtras(
 	userdataPath := findUserdataFile(parsed.ExtractDir, parsed.SourceUser)
 
 	// ---- P5: subdomains ----
-	if userdataPath != "" {
-		raw := extractKV(userdataPath, "SUB_DOMAINS")
-		for _, name := range splitCpanelList(raw) {
-			n := strings.ToLower(strings.TrimSpace(name))
+	{
+		subs := detectSubDomains(parsed, userdataPath)
+		res.SubdomainsDetected = len(subs)
+		for _, n := range subs {
 			if n == "" {
 				continue
 			}
@@ -92,7 +93,18 @@ func ImportExtras(
 				continue
 			}
 			domainID := ids.NewULID()
-			docRoot := filepath.Join("/home", targetUsername, "public_html", n)
+			// jabali convention — and, more to the point, exactly where
+			// ImportHomeSplit rsynced this subdomain's files. The previous
+			// /home/<user>/public_html/<sub> mirrored the cpanel source layout,
+			// so even a subdomain that got created would have pointed its vhost
+			// at an empty directory (JAB-220). parsed.DocRoots wins when the
+			// source resolved a path itself, matching ImportDomains' docRootFor.
+			docRoot := filepath.Join("/home", targetUsername, "domains", n, "public_html")
+			if parsed.DocRoots != nil {
+				if override, ok := parsed.DocRoots[n]; ok && override != "" {
+					docRoot = override
+				}
+			}
 			if _, err := agentCli.Call(ctx, "domain.create", map[string]any{
 				"domain_id":      domainID,
 				"domain":         n,
@@ -643,6 +655,117 @@ func parseAliases(path string) (string, []aliasForward, []string) {
 	return catchAll, forwards, warnings
 }
 
+// userdataRoots returns the candidate locations of the source's userdata dir
+// inside an extracted cpmove tree, in probe order. Shared so every reader looks
+// in the same places.
+func userdataRoots(parsed *ParsedTarball) []string {
+	return []string{
+		filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "userdata"),
+		filepath.Join(parsed.ExtractDir, "userdata"),
+		filepath.Join(parsed.ExtractDir, "cp", parsed.SourceUser, "userdata"),
+	}
+}
+
+// detectSubDomains returns the account's subdomains, lower-cased and
+// de-duplicated.
+//
+// Read from `<userdata>/main`, which is cpanel's own manifest:
+//
+//	addon_domains: {}
+//	main_domain: bbestgun.co.il
+//	parked_domains: []
+//	sub_domains:
+//	  - staging.bbestgun.co.il
+//
+// An earlier revision read a `SUB_DOMAINS=` key out of the `cp/<user>` file
+// instead. That key does not exist — checked against a live cpanel account,
+// whose user file carries DNS/DNS1/DNS2… and no SUB_DOMAINS at all — so the
+// subdomain pass found nothing on every migration ever run, and the summary's
+// `subdomains=0` was indistinguishable from an account that genuinely had none
+// (JAB-220).
+//
+// Subdomains matter here specifically because ImportDomains cannot see them:
+// it builds its list from zone files, and a cpanel subdomain has no zone of its
+// own — it is a record inside the parent's zone. So the files get restored, the
+// php-ini sanitizer walks them, and nothing ever serves them.
+//
+// The legacy key is still honoured as a fallback in case some cpanel build does
+// emit it.
+func detectSubDomains(parsed *ParsedTarball, userdataPath string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(raw string) {
+		n := strings.ToLower(strings.TrimSpace(raw))
+		n = strings.Trim(n, `"'`)
+		if n == "" || seen[n] {
+			return
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+
+	for _, root := range userdataRoots(parsed) {
+		for _, name := range parseYAMLStringList(filepath.Join(root, "main"), "sub_domains") {
+			add(name)
+		}
+		if len(out) > 0 {
+			break
+		}
+	}
+	// Legacy fallback.
+	if len(out) == 0 && userdataPath != "" {
+		for _, name := range splitCpanelList(extractKV(userdataPath, "SUB_DOMAINS")) {
+			add(name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// parseYAMLStringList pulls a simple `key:` block-sequence out of a cpanel
+// manifest:
+//
+//	sub_domains:
+//	  - one.example.com
+//	  - two.example.com
+//
+// Hand-rolled rather than pulling in a YAML dependency: these manifests are
+// machine-written by cpanel and only ever use this one flat shape. An inline
+// empty list (`sub_domains: []`) yields nothing, which is the correct answer.
+func parseYAMLStringList(path, key string) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var out []string
+	inBlock := false
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		trimmed := strings.TrimSpace(line)
+		if !inBlock {
+			// cpanel writes "sub_domains:" and sometimes "sub_domains: " —
+			// anything with a value on the same line is not a block sequence.
+			if strings.HasPrefix(trimmed, key+":") &&
+				strings.TrimSpace(strings.TrimPrefix(trimmed, key+":")) == "" {
+				inBlock = true
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") {
+			out = append(out, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+			continue
+		}
+		if trimmed == "" {
+			continue // blank lines inside the block are harmless
+		}
+		break // a new key ends the sequence
+	}
+	return out
+}
+
 // userdataNonDomainFiles are the fixed-name entries cpanel keeps in the
 // userdata dir alongside the per-domain files.
 var userdataNonDomainFiles = map[string]bool{
@@ -694,11 +817,7 @@ func isPlainDomainUserdata(name string) bool {
 // one stat per domain and covers any cpanel build that does write the key
 // there — but the plain file is now the primary source.
 func scanUserdataPHPVersions(parsed *ParsedTarball) map[string][]string {
-	roots := []string{
-		filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "userdata"),
-		filepath.Join(parsed.ExtractDir, "userdata"),
-		filepath.Join(parsed.ExtractDir, "cp", parsed.SourceUser, "userdata"),
-	}
+	roots := userdataRoots(parsed)
 	out := map[string][]string{}
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
