@@ -1575,7 +1575,8 @@ func cpanelRestoreCallback(
 			extrasRes.AutorespondersCreated, extrasRes.AutorespondersOrphaned,
 			extrasRes.FiltersImported,
 			extrasRes.PHPPoolsCreated, extrasRes.PHPDomainsBound,
-			extrasRes.PHPVersionApplied, extrasRes.FTPAccountsObserved,
+			extrasRes.PHPVersionApplied+" php_versions_detected="+extrasRes.PHPVersionsDetected,
+			extrasRes.FTPAccountsObserved,
 			extrasRes.DKIMKeysPreserved))
 		warnings = append(warnings, extrasRes.Skipped...)
 

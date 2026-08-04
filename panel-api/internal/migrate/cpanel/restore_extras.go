@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,19 +36,20 @@ import (
 // ExtrasResult is the per-area counter set returned from ImportExtras.
 // Counters are summed into the parent restore manifest by the caller.
 type ExtrasResult struct {
-	CatchallsSet          int      // domains where catchall_target was written
-	SubdomainsCreated     int      // panel domain rows added from SUB_DOMAINS
-	ForwardersCreated     int      // mail forwarder rows added (M6.5)
-	ForwardersOrphaned    int      // alias lines whose local mailbox isn't in panel
-	AutorespondersCreated int      // vacation auto-replies restored (M6.5)
-	AutorespondersOrphaned int     // .autorespond entries whose mailbox isn't in panel
-	PHPVersionApplied     string   // first version applied at user-pool level (legacy)
-	PHPPoolsCreated       int      // distinct (user, version) FPM pools created (M35.8 P6)
-	PHPDomainsBound       int      // domains whose php_pool_id was set to a per-version pool
-	FTPAccountsObserved   int      // cpanel ftp accounts seen on source (record-only)
-	DKIMKeysPreserved     int      // legacy DKIM keys copied to sidecar storage
-	FiltersImported       int      // per-mailbox Sieve/cpanel inbox rules
-	Skipped               []string // human-readable reasons (mirrors other restore writers)
+	CatchallsSet           int      // domains where catchall_target was written
+	SubdomainsCreated      int      // panel domain rows added from SUB_DOMAINS
+	ForwardersCreated      int      // mail forwarder rows added (M6.5)
+	ForwardersOrphaned     int      // alias lines whose local mailbox isn't in panel
+	AutorespondersCreated  int      // vacation auto-replies restored (M6.5)
+	AutorespondersOrphaned int      // .autorespond entries whose mailbox isn't in panel
+	PHPVersionApplied      string   // first version applied at user-pool level (legacy)
+	PHPVersionsDetected    string   // JAB-218: source spread, e.g. "7.4x3,8.1x1" ("none" if the source recorded nothing)
+	PHPPoolsCreated        int      // distinct (user, version) FPM pools created (M35.8 P6)
+	PHPDomainsBound        int      // domains whose php_pool_id was set to a per-version pool
+	FTPAccountsObserved    int      // cpanel ftp accounts seen on source (record-only)
+	DKIMKeysPreserved      int      // legacy DKIM keys copied to sidecar storage
+	FiltersImported        int      // per-mailbox Sieve/cpanel inbox rules
+	Skipped                []string // human-readable reasons (mirrors other restore writers)
 }
 
 // ImportExtras walks the parsed cpmove + reads cpanel meta files for
@@ -204,6 +206,16 @@ func ImportExtras(
 	// that group to that pool via SetPHPPoolID.
 	if agentCli != nil && poolsRepo != nil && domainsRepo != nil {
 		byVersion := detectPHPVersionsPerDomain(parsed)
+		// JAB-218: record the source spread BEFORE any binding, so the summary
+		// distinguishes "the source ran one PHP version" from "we detected
+		// nothing and every domain silently inherited the box default" — the
+		// two used to look identical (`php_version=`), which is how 39 PHP-7.4
+		// sites landed on 8.4 without anyone noticing until they 500'd.
+		res.PHPVersionsDetected = summarisePHPVersionSpread(byVersion)
+		if len(byVersion) == 0 {
+			res.Skipped = append(res.Skipped,
+				"php_version_detect:source recorded no per-domain PHP version — every domain will run the box default")
+		}
 		seenVersions := map[string]string{} // version → pool_id
 		for version, doms := range byVersion {
 			if version == "" {
@@ -631,11 +643,57 @@ func parseAliases(path string) (string, []aliasForward, []string) {
 	return catchAll, forwards, warnings
 }
 
-// detectPHPVersionsPerDomain returns version → [domain1, domain2…]
-// — every distinct PHP version in the source userdata dir with the
-// list of domains using it. Used by the per-domain pool-bind path
-// in ImportExtras.
-func detectPHPVersionsPerDomain(parsed *ParsedTarball) map[string][]string {
+// userdataNonDomainFiles are the fixed-name entries cpanel keeps in the
+// userdata dir alongside the per-domain files.
+var userdataNonDomainFiles = map[string]bool{
+	"main": true, "cache": true, "scope": true, "nobody": true,
+}
+
+// userdataSidecarSuffixes are the per-domain sidecars that sit next to the
+// plain userdata file. None of them carries phpversion.
+var userdataSidecarSuffixes = []string{
+	".php-fpm.yaml", ".php-fpm.cache", ".cache", ".json", ".db", ".yaml",
+}
+
+// isPlainDomainUserdata reports whether name is cpanel's plain per-domain
+// userdata file — the one that actually carries `phpversion`.
+//
+// _SSL is excluded because it duplicates the http vhost's settings; counting
+// both would double every domain in the version tally.
+func isPlainDomainUserdata(name string) bool {
+	if name == "" || userdataNonDomainFiles[name] || strings.HasSuffix(name, "_SSL") {
+		return false
+	}
+	for _, suf := range userdataSidecarSuffixes {
+		if strings.HasSuffix(name, suf) {
+			return false
+		}
+	}
+	return true
+}
+
+// scanUserdataPHPVersions walks the source userdata dir and returns
+// version → [domain…] for every per-domain PHP version it can read.
+//
+// It reads the PLAIN `<userdata>/<domain>` file. An earlier revision scanned
+// `<domain>.php-fpm.yaml` instead, which never carries the key: cpanel puts
+// only pool tuning there —
+//
+//	_is_present: 1
+//	pm_max_children: 5
+//	pm_max_requests: 20
+//	pm_process_idle_timeout: 10
+//
+// Measured on a live source box: 0 of 143 .php-fpm.yaml files contained
+// `phpversion`, while 141 plain userdata files did. So detection always came
+// back empty, every migrated domain silently inherited the destination's
+// default PHP, and the restore summary reported the tell nobody read:
+// `php_pools=0 php_domains_bound=0 php_version=` (JAB-218).
+//
+// The .php-fpm.yaml probe is kept as a fallback rather than deleted — it costs
+// one stat per domain and covers any cpanel build that does write the key
+// there — but the plain file is now the primary source.
+func scanUserdataPHPVersions(parsed *ParsedTarball) map[string][]string {
 	roots := []string{
 		filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "userdata"),
 		filepath.Join(parsed.ExtractDir, "userdata"),
@@ -648,16 +706,16 @@ func detectPHPVersionsPerDomain(parsed *ParsedTarball) map[string][]string {
 			continue
 		}
 		for _, e := range entries {
-			name := e.Name()
-			if !strings.HasSuffix(name, ".php-fpm.yaml") {
+			if e.IsDir() || !isPlainDomainUserdata(e.Name()) {
 				continue
 			}
-			domain := strings.TrimSuffix(name, ".php-fpm.yaml")
-			// Skip the cpanel internal "main" + the "*_SSL" sidecar files.
-			if domain == "" || strings.HasSuffix(domain, "_SSL") {
-				continue
+			domain := e.Name()
+			ver := normalisePHPVersion(extractKV(filepath.Join(root, domain), "phpversion"))
+			if ver == "" {
+				// Legacy fallback: some builds may carry it in the sidecar.
+				ver = normalisePHPVersion(extractKV(
+					filepath.Join(root, domain+".php-fpm.yaml"), "phpversion"))
 			}
-			ver := normalisePHPVersion(extractKV(filepath.Join(root, name), "phpversion"))
 			if ver == "" {
 				continue
 			}
@@ -667,58 +725,71 @@ func detectPHPVersionsPerDomain(parsed *ParsedTarball) map[string][]string {
 			break
 		}
 	}
+	// Deterministic domain order per version so reruns and tests agree.
+	for v := range out {
+		sort.Strings(out[v])
+	}
 	return out
 }
 
-// detectPHPVersion scans <userdata>/*.php-fpm.yaml files for the
-// `phpversion: ea-php82` line + returns (primaryVersion, otherVersions).
-// "primary" = the most-frequent version (operator can fix outliers
-// after migration). Empty string when no .php-fpm.yaml found.
+// summarisePHPVersionSpread renders the detected version distribution for the
+// restore summary, e.g. "7.4x39,8.1x82,8.3x29". Returns "none" for an empty
+// map, which is the case the operator most needs to see.
+func summarisePHPVersionSpread(byVersion map[string][]string) string {
+	if len(byVersion) == 0 {
+		return "none"
+	}
+	vers := make([]string, 0, len(byVersion))
+	for v := range byVersion {
+		vers = append(vers, v)
+	}
+	sort.Strings(vers)
+	parts := make([]string, 0, len(vers))
+	for _, v := range vers {
+		parts = append(parts, fmt.Sprintf("%sx%d", v, len(byVersion[v])))
+	}
+	return strings.Join(parts, ",")
+}
+
+// detectPHPVersionsPerDomain returns version → [domain1, domain2…]
+// — every distinct PHP version in the source userdata dir with the
+// list of domains using it. Used by the per-domain pool-bind path
+// in ImportExtras.
+func detectPHPVersionsPerDomain(parsed *ParsedTarball) map[string][]string {
+	return scanUserdataPHPVersions(parsed)
+}
+
+// detectPHPVersion returns (primaryVersion, otherVersions) across the source's
+// per-domain userdata files. "primary" = the most-frequent version; the rest
+// are reported so the operator can see the spread. Empty string when the source
+// records no PHP version at all.
+//
+// Shares scanUserdataPHPVersions with the per-domain path so both read the same
+// file — see the note there for why the plain userdata file, not the
+// .php-fpm.yaml sidecar, is the one that carries `phpversion` (JAB-218).
 func detectPHPVersion(parsed *ParsedTarball) (string, []string) {
-	// userdata dir lives next to the cp/<user> file inside the
-	// extracted wrapper. Same probe set PeekAccountMeta uses.
-	roots := []string{
-		filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "userdata"),
-		filepath.Join(parsed.ExtractDir, "userdata"),
-		filepath.Join(parsed.ExtractDir, "cp", parsed.SourceUser, "userdata"),
-	}
-	versions := map[string]int{}
-	for _, root := range roots {
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".php-fpm.yaml") {
-				continue
-			}
-			if v := normalisePHPVersion(extractKV(filepath.Join(root, e.Name()), "phpversion")); v != "" {
-				versions[v]++
-			}
-		}
-		if len(versions) > 0 {
-			break
-		}
-	}
-	if len(versions) == 0 {
+	byVersion := scanUserdataPHPVersions(parsed)
+	if len(byVersion) == 0 {
 		return "", nil
 	}
 	// Most-frequent wins; ties pick lexicographically lower so reruns
 	// are deterministic.
 	primary := ""
 	bestCount := 0
-	for v, c := range versions {
+	for v, doms := range byVersion {
+		c := len(doms)
 		if c > bestCount || (c == bestCount && (primary == "" || v < primary)) {
 			primary = v
 			bestCount = c
 		}
 	}
 	var others []string
-	for v := range versions {
+	for v := range byVersion {
 		if v != primary {
 			others = append(others, v)
 		}
 	}
+	sort.Strings(others)
 	return primary, others
 }
 
