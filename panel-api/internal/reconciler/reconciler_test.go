@@ -2044,10 +2044,37 @@ func TestSANHostnamesForDomain(t *testing.T) {
 			t.Errorf("got %v, want nil", got)
 		}
 	})
-	t.Run("email disabled", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: false}
+	t.Run("email disabled, www out", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: false, CreateWWW: false}
 		if got := sanHostnamesForDomain(d); got != nil {
 			t.Errorf("got %v, want nil", got)
+		}
+	})
+	t.Run("www opt-in adds www (GH #895)", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: false, CreateWWW: true}
+		got := sanHostnamesForDomain(d)
+		if len(got) != 1 || got[0] != "www.example.com" {
+			t.Errorf("got %v, want [www.example.com]", got)
+		}
+	})
+	t.Run("www opt-in + email keeps www first", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: true, CreateWWW: true}
+		got := sanHostnamesForDomain(d)
+		want := []string{"www.example.com", "mail.example.com", "autoconfig.example.com", "autodiscover.example.com"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i, w := range want {
+			if got[i] != w {
+				t.Errorf("[%d]: got %q, want %q", i, got[i], w)
+			}
+		}
+	})
+	t.Run("SkipAutoSAN + www opt-in keeps only www", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: true}
+		got := sanHostnamesForDomain(d)
+		if len(got) != 1 || got[0] != "www.example.com" {
+			t.Errorf("got %v, want [www.example.com]", got)
 		}
 	})
 	t.Run("email enabled", func(t *testing.T) {

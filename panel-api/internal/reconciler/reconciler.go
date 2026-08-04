@@ -2161,15 +2161,21 @@ func sanHostnamesForDomain(d *models.Domain) []string {
 	if d == nil {
 		return nil
 	}
-	// Tenant opt-out: when SkipAutoSAN is set, panel won't add ANY
-	// auto-derived SAN names (mail/autoconfig/mta-sts). Cert covers
-	// just <domain> + www.<domain>. Use this when the domain's mail
-	// runs elsewhere or the operator manages their own DNS without
-	// the helper subdomains.
-	if d.SkipAutoSAN {
-		return nil
-	}
 	var out []string
+	// www.<domain> is issued ONLY when the domain opted into the www CNAME
+	// (GH #895). It rides as an extra SAN (the base name is added agent-side
+	// from p.Domain); resolvableSANs drops it if the record isn't live yet,
+	// so it never tanks issuance. Placed before the SkipAutoSAN return so an
+	// opt-in www survives even when the helper subdomains are skipped.
+	if d.CreateWWW {
+		out = append(out, "www."+d.Name)
+	}
+	// Tenant opt-out: when SkipAutoSAN is set, panel won't add the
+	// auto-derived helper SANs (mail/autoconfig/mta-sts) — only the base
+	// name (agent-side) and www.<domain> when opted in.
+	if d.SkipAutoSAN {
+		return out
+	}
 	if d.EmailEnabled {
 		out = append(out, "mail."+d.Name, "autoconfig."+d.Name, "autodiscover."+d.Name)
 	}

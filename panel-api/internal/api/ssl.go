@@ -540,7 +540,9 @@ func (h *sslHandler) enrichCertRows(ctx context.Context, certs []repository.SSLC
 // [domain, www.domain] plus the auto-added names. Falls back to the
 // base pair if the domain can't be loaded.
 func (h *sslHandler) webCertSANs(ctx context.Context, c repository.SSLCertificateWithDomain) []string {
-	base := []string{c.DomainName, "www." + c.DomainName}
+	// Fallback when the domain row can't be loaded: report only the base
+	// name. www is opt-in (GH #895) and unknowable here, so don't claim it.
+	base := []string{c.DomainName}
 	if h.cfg.Domains == nil {
 		return base
 	}
@@ -553,8 +555,14 @@ func (h *sslHandler) webCertSANs(ctx context.Context, c repository.SSLCertificat
 
 // webCertSANsForDomain is the pure policy (extracted for testing) — it
 // MUST stay in lockstep with reconciler.sanHostnamesForDomain (ADR-0070).
+// www.<domain> is included ONLY when the domain opted into the www CNAME
+// (GH #895): otherwise there is no www DNS record, issuance omits it, and
+// listing it here over-reported coverage the cert never had.
 func webCertSANsForDomain(d *models.Domain) []string {
-	sans := []string{d.Name, "www." + d.Name}
+	sans := []string{d.Name}
+	if d.CreateWWW {
+		sans = append(sans, "www."+d.Name)
+	}
 	if d.SkipAutoSAN {
 		return sans
 	}
