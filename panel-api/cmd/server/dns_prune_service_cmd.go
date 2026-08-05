@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -61,6 +62,7 @@ func newDNSPruneServiceCmd() *cobra.Command {
 
 			type victim struct{ zone, name, typ, id string }
 			var victims []victim
+			var kept []victim
 
 			for i := range zones {
 				z := zones[i]
@@ -72,14 +74,24 @@ func newDNSPruneServiceCmd() *cobra.Command {
 					fmt.Fprintf(cmd.OutOrStdout(), "  ! %s: list records: %v\n", z.Name, rErr)
 					continue
 				}
+
+				// Names this zone's MX records point at, and the names that have
+				// an address record of their own. See mxTargetLabels.
+				mxTargets, addressed := mailRoutingNames(z.Name, recs)
+
 				for _, r := range recs {
 					// Reuse the SAME predicates the importer now filters on, so
 					// the cleanup and the filter can never disagree about what
 					// counts as a service hostname.
-					if cpanel.IsCPanelServiceRecordName(r.Name) ||
-						cpanel.IsMailInfraRecordName(r.Name, r.Type) {
-						victims = append(victims, victim{z.Name, r.Name, r.Type, r.ID})
+					if !cpanel.IsCPanelServiceRecordName(r.Name) &&
+						!cpanel.IsMailInfraRecordName(r.Name, r.Type) {
+						continue
 					}
+					if wouldDanglingMX(r.Name, r.Type, mxTargets, addressed) {
+						kept = append(kept, victim{z.Name, r.Name, r.Type, r.ID})
+						continue
+					}
+					victims = append(victims, victim{z.Name, r.Name, r.Type, r.ID})
 				}
 			}
 
@@ -90,8 +102,42 @@ func newDNSPruneServiceCmd() *cobra.Command {
 				return victims[i].name < victims[j].name
 			})
 
+			sort.Slice(kept, func(i, j int) bool {
+				if kept[i].zone != kept[j].zone {
+					return kept[i].zone < kept[j].zone
+				}
+				return kept[i].name < kept[j].name
+			})
+
+			// Never silent about what was skipped: a cleanup that quietly leaves
+			// rows behind reads as "done" when it is not, and the operator needs
+			// to know these names still count toward the certificate SAN.
+			reportKept := func() {
+				if len(kept) == 0 {
+					return
+				}
+				zonesKept := map[string]bool{}
+				for _, k := range kept {
+					zonesKept[k.zone] = true
+				}
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"\nKEPT %d record(s) across %d zone(s): an MX in the same zone points at them,\n"+
+						"and no other address record provides the name. Deleting them would leave the MX\n"+
+						"unresolvable and external senders could not deliver.\n"+
+						"Enable mail on these domains in the panel (which publishes jabali's own\n"+
+						"mail A record), then re-run — they will be prunable once the name has a\n"+
+						"replacement.\n", len(kept), len(zonesKept))
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "KEPT ZONE\tNAME\tTYPE")
+				for _, k := range kept {
+					fmt.Fprintf(w, "%s\t%s\t%s\n", k.zone, k.name, k.typ)
+				}
+				_ = w.Flush()
+			}
+
 			if len(victims) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No imported cPanel service records found.")
+				reportKept()
 				return nil
 			}
 
@@ -100,7 +146,14 @@ func newDNSPruneServiceCmd() *cobra.Command {
 				for _, v := range victims {
 					out = append(out, map[string]string{"zone": v.zone, "name": v.name, "type": v.typ})
 				}
-				return printJSON(map[string]any{"records": out, "total": len(victims), "applied": apply})
+				keptOut := make([]map[string]string, 0, len(kept))
+				for _, k := range kept {
+					keptOut = append(keptOut, map[string]string{"zone": k.zone, "name": k.name, "type": k.typ})
+				}
+				return printJSON(map[string]any{
+					"records": out, "total": len(victims), "applied": apply,
+					"kept_mx_targets": keptOut, "kept_total": len(kept),
+				})
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -115,6 +168,7 @@ func newDNSPruneServiceCmd() *cobra.Command {
 					"\n%d record(s) would be removed. This is a DRY RUN — nothing changed.\n"+
 						"Re-run with --apply to delete them, then let the reconciler push the zones.\n",
 					len(victims))
+				reportKept()
 				return nil
 			}
 
@@ -131,10 +185,79 @@ func newDNSPruneServiceCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "\nremoved %d record(s), %d failed.\n"+
 				"The reconciler rewrites each zone in PowerDNS on its next tick (upsert is a full\n"+
 				"replace), so the certificate SAN shrinks once that has run.\n", deleted, failed)
+			reportKept()
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "actually delete (default is a dry run)")
 	cmd.Flags().StringVar(&zoneFilter, "zone", "", "limit to one zone (default: every zone)")
 	return cmd
+}
+
+// mailRoutingNames returns, for one zone, the set of labels this zone's MX
+// records point at, and the set of labels that own an A or AAAA record.
+//
+// Both are zone-relative labels ("mail"), because that is how records are
+// stored, while MX content is an FQDN ("mail.example.com" or with a trailing
+// dot). An MX target outside the zone is irrelevant here — deleting a record in
+// THIS zone cannot break it.
+func mailRoutingNames(zone string, recs []models.DNSRecord) (mxTargets, addressed map[string]bool) {
+	mxTargets = map[string]bool{}
+	addressed = map[string]bool{}
+	suffix := "." + strings.ToLower(strings.TrimSuffix(zone, "."))
+
+	for _, r := range recs {
+		switch strings.ToUpper(r.Type) {
+		case "MX":
+			// Content may carry a priority prefix on some backends; the target
+			// is the last field either way.
+			f := strings.Fields(strings.TrimSpace(r.Content))
+			if len(f) == 0 {
+				continue
+			}
+			t := strings.ToLower(strings.TrimSuffix(f[len(f)-1], "."))
+			switch {
+			case t == strings.ToLower(strings.TrimSuffix(zone, ".")):
+				mxTargets["@"] = true
+			case strings.HasSuffix(t, suffix):
+				mxTargets[strings.TrimSuffix(t, suffix)] = true
+			}
+		case "A", "AAAA":
+			addressed[strings.ToLower(r.Name)] = true
+		}
+	}
+	return mxTargets, addressed
+}
+
+// wouldDanglingMX reports whether deleting this record would leave an MX in the
+// same zone pointing at a name that no longer resolves.
+//
+// This is the difference between a cosmetic cleanup and an outage. On a real
+// migrated host, 69 of 71 domains had their ONLY mail.<zone> record as the
+// cPanel-imported CNAME, and every one of those zones had MX -> mail.<zone>.
+// Deleting them as "cPanel service records" would have made the MX target
+// unresolvable, and external senders cannot deliver to a domain whose MX does
+// not resolve. The certificate problem this command exists to fix is worth
+// fixing; it is not worth trading for bounced mail.
+//
+// A record is safe to delete when something else still provides the name — an A
+// or AAAA that survives (the address records are never service-hostname
+// matches, so they are not in the deletion set).
+func wouldDanglingMX(name, typ string, mxTargets, addressed map[string]bool) bool {
+	n := strings.ToLower(name)
+	if !mxTargets[n] {
+		return false
+	}
+	// Deleting an address record for an MX target is only safe if another
+	// address record for the same name remains; we cannot tell them apart here,
+	// so treat any address record for an MX target as load-bearing.
+	switch strings.ToUpper(typ) {
+	case "A", "AAAA":
+		return true
+	case "CNAME":
+		// A CNAME is how cPanel points mail.<zone> at the apex. Safe to drop
+		// only if the name also has its own address record to fall back on.
+		return !addressed[n]
+	}
+	return false
 }
