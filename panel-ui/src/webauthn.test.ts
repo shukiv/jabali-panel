@@ -277,8 +277,16 @@ describe("webauthn 2FA (security keys, AAL2)", () => {
       JSON.stringify({ publicKey: { challenge: "AQID", allowCredentials: [{ id: "AQID", type: "public-key" }] } }),
       "button",
     );
+    // The AAL2 flow always carries the identifier node (pre-filled username);
+    // Kratos rejects the submit without it ("Property identifier is missing").
+    flow.ui.nodes.push({
+      type: "input",
+      group: "default",
+      attributes: { name: "identifier", type: "hidden", value: "alice" },
+    });
     const out = await webauthn2faLoginFields(flow);
     expect(out).not.toBeNull();
+    expect(out!.identifier).toBe("alice"); // must forward the identifier
     // allowCredentials id must be decoded before get.
     expect(Array.from(new Uint8Array(get.mock.calls[0][0].publicKey.allowCredentials[0].id))).toEqual([1, 2, 3]);
     const body = JSON.parse(out!.webauthn_login);

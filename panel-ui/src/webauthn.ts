@@ -181,14 +181,19 @@ export function flowHasWebauthnEnrol(flow: KratosFlow): boolean {
 
 // webauthn2faLoginFields runs the AAL2 security-key assertion. The options live
 // in the webauthn_login_trigger node's value (Kratos's own webauthn.js reads it
-// the same way). No identifier — the user is already known from the AAL1 session.
+// the same way). The AAL2 login flow ALSO requires the `identifier` field —
+// Kratos's webauthn.js submits the whole form, which carries the pre-filled
+// identifier node; omitting it fails with "Property identifier is missing".
 // Returns null when the flow carries no webauthn login trigger; throws on failure.
 export async function webauthn2faLoginFields(
   flow: KratosFlow,
-): Promise<{ webauthn_login: string } | null> {
+): Promise<{ webauthn_login: string; identifier: string } | null> {
   const raw = nodeValue(flow, "webauthn_login_trigger");
   if (raw === undefined) return null;
-  return { webauthn_login: await runGetCeremony(raw) };
+  return {
+    webauthn_login: await runGetCeremony(raw),
+    identifier: nodeValue(flow, "identifier") ?? "",
+  };
 }
 
 // webauthnEnrolFields runs security-key registration. The create options live in

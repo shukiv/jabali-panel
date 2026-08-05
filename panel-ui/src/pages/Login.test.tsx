@@ -204,6 +204,11 @@ describe("LoginPage", () => {
       f.ui.nodes[0], // csrf
       {
         type: "input",
+        group: "default",
+        attributes: { name: "identifier", type: "hidden", value: "alice" },
+      },
+      {
+        type: "input",
         group: "webauthn",
         attributes: {
           name: "webauthn_login_trigger",
@@ -248,6 +253,7 @@ describe("LoginPage", () => {
     await waitFor(() => expect(submit).toHaveBeenCalled());
     const body = submit.mock.calls[0][1] as Record<string, string>;
     expect(body.method).toBe("webauthn");
+    expect(body.identifier).toBe("alice"); // AAL2 flow requires the identifier
     expect(JSON.parse(body.webauthn_login).id).toBe("wk");
   });
 
