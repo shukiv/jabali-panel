@@ -15,6 +15,7 @@ import { StatCard } from "../../components/StatCard";
 import { useListQuery } from "../../hooks/useQueries";
 import { useServerStatus } from "../../hooks/useServerStatus";
 import { useServerCapabilities } from "../../hooks/useServerCapabilities";
+import { UpdatesPendingBanner } from "./updates/UpdatesPendingBanner";
 
 interface UserRow {
   id: string;
@@ -106,6 +107,11 @@ export const Dashboard = () => {
 
   return (
     <div>
+      {/* JAB-221: above the stat cards, not in the Masonry below. The
+          commits-behind count existed only inside the Updates Center, and two
+          production incidents came from boxes silently running builds that
+          predated an already-merged fix. */}
+      <UpdatesPendingBanner />
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={8}>
           <StatCard

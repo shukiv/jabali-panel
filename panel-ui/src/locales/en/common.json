@@ -137,6 +137,16 @@
       "title_one": "{{count}} critical issue on host",
       "title_other": "{{count}} critical issues on host",
       "action": "Open Server Status to investigate →"
+    },
+    "updates_pending": {
+      "title_one": "Panel is {{count}} commit behind",
+      "title_other": "Panel is {{count}} commits behind",
+      "title_auto_one": "Panel is {{count}} commit behind — auto-update is on",
+      "title_auto_other": "Panel is {{count}} commits behind — auto-update is on",
+      "body": "Auto-update is off, so nothing will apply these on its own. This matters more than it looks: config templates are built into the panel binary, so an out-of-date host rewrites its own config from the old template — a fix you already merged gets undone on the next render.",
+      "body_auto": "Auto-update will apply these at {{time}}. No action needed.",
+      "action": "Review and update",
+      "action_auto": "Open Updates"
     }
   },
   "users": {
