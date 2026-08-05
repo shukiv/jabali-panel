@@ -10,10 +10,10 @@ import (
 // snake_case so they're URL-safe in the per-stage logs endpoint
 // (Step 8 UI exposes /admin/migrations/:id/stages/:stage/logs).
 const (
-	StageAnalyze   = "analyze"
-	StageFixPerms  = "fix_perms"
-	StageValidate  = "validate"
-	StageRestore   = "restore"
+	StageAnalyze  = "analyze"
+	StageFixPerms = "fix_perms"
+	StageValidate = "validate"
+	StageRestore  = "restore"
 )
 
 // AllStages is the canonical pipeline order. Importers seed
@@ -73,7 +73,26 @@ var jobTransitions = map[string]map[string]struct{}{
 		models.MigrationStateFailed:    {},
 		models.MigrationStateCancelled: {},
 	},
+	// Restoring is RESUMABLE (JAB-216), for the same reason failed and
+	// degraded are. A job only reaches this state while a runner is working,
+	// so it looks like an in-flight lock — but the state is written to the
+	// database, and the thing it describes is a process. When that process
+	// dies without warning the row keeps saying "restoring" forever.
+	//
+	// That is not hypothetical: a restore OOM-wedged its host, the box needed
+	// a console reboot, and the job was left mid-restore. Resume re-enters at
+	// analyze, the runner asked for restoring -> analyzing, this table said no,
+	// and the only way out was --retry-from-scratch (which writes the state
+	// directly and so never consulted this table) — i.e. redoing hours of work
+	// that had already succeeded.
+	//
+	// This does mean a second runner can be started against a job whose first
+	// runner is genuinely still alive. That risk is identical for failed and
+	// degraded above, the stages are idempotent, and "operator cannot recover
+	// after a host dies" is much the worse failure.
 	models.MigrationStateRestoring: {
+		models.MigrationStateAnalyzing: {},
+		models.MigrationStatePending:   {},
 		models.MigrationStateDone:      {},
 		models.MigrationStateFailed:    {},
 		models.MigrationStateCancelled: {},
