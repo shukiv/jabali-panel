@@ -1072,13 +1072,16 @@ func appInstallPath(docRoot, subdirectory string) string {
 	return docRoot
 }
 
-// itflowCronSpec is the fixed set of cron jobs ITFlow needs (#206).
+// itflowCronSpec is the cron ITFlow needs. As of the 2026-08 stable
+// (GH #928) cron.php is a DISPATCHER: it is the only crontab entry — run
+// every minute, it wakes, works out which jobs are due from the cron_jobs
+// table (edited under Maintenance > Cron), and runs them in-process. The
+// old per-job crons (mail_queue.php, ticket_email_parser.php) are no longer
+// scheduled directly; the dispatcher invokes them.
 var itflowCronSpec = []struct {
 	name, schedule, file string
 }{
-	{"ITFlow Maintenance", "0 3 * * *", "cron.php"},
-	{"ITFlow Mail Queue", "* * * * *", "mail_queue.php"},
-	{"ITFlow Ticket Email Parser", "* * * * *", "ticket_email_parser.php"},
+	{"ITFlow Cron", "* * * * *", "cron.php"},
 }
 
 func createITFlowCrons(ctx context.Context, args itflowKickArgs, cfg ApplicationHandlerConfig) {

@@ -30,10 +30,10 @@ import (
 // correct source under jabali's nginx->FPM/FastCGI (no reverse-proxy XFF
 // hop), so we no longer write that define (GH #226).
 //
-// The three cron jobs ITFlow needs (cron.php daily, mail_queue.php +
-// ticket_email_parser.php per-minute) are created panel-side after this
-// returns ready (see api.createITFlowInstallAndKickAgent) — they're just
-// `php <docroot>/cron/<file>.php`, which the jabali cron allowlist accepts.
+// The single cron ITFlow needs (GH #928) — cron.php run every minute as
+// the dispatcher — is created panel-side after this returns ready (see
+// api.createITFlowInstallAndKickAgent). It's just `php <docroot>/cron/cron.php`,
+// which the jabali cron allowlist accepts.
 
 type itflowInstallReq struct {
 	AppType      string `json:"app_type"`
@@ -68,13 +68,16 @@ const itflowRepoURL = "https://github.com/itflow-org/itflow.git"
 // reset the working tree to this reviewed SHA at install time and verify HEAD
 // matches — installs are reproducible and never pull an unreviewed master tip.
 // Bump deliberately (code review) when adopting a newer ITFlow.
-const itflowMasterPinnedCommit = "698135d53d652e7fcbbd1ea48454ef3de7a3418b"
+// 2026-08 stable (GH #928): the major release that makes cron.php a
+// dispatcher (single every-minute crontab entry).
+const itflowMasterPinnedCommit = "ccaa45b0ae9900ad731a6491559f65ff8d87a8f3"
 
 // itflowDevelopPinnedCommit pins the `develop` branch (GH #332). develop is
 // ITFlow's active dev branch  bleeding-edge and NOT security-reviewed; we pin
 // it (like master) so installs are reproducible and never drift to a raw tip,
 // but the UI labels it unreviewed. Bump deliberately when adopting newer dev.
-const itflowDevelopPinnedCommit = "78c3dd0eedec25186f82951fca33b5a372a8a560"
+// Bumped alongside the 2026-08 master stable (GH #928).
+const itflowDevelopPinnedCommit = "cbf8922f5b79287ab874cede0f97e0e34f6b328f"
 
 // itflowResolveBranch maps the requested branch to (branch, pinnedCommit),
 // defaulting to master. Any unknown value falls back to master (fail-safe).
