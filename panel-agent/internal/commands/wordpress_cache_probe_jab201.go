@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -116,7 +117,7 @@ func probeSpool(osUser string) (ok bool, detail string) {
 	if st.Mode().Perm()&0o002 == 0 {
 		return false, "purge spool " + spool + " not world-writable — tenant PHP cannot drop purge requests"
 	}
-	matches, _ := filepath.Glob("/etc/php/*/fpm/pool.d/jabali-" + osUser + ".conf")
+	matches := userPoolConfs(osUser)
 	if len(matches) == 0 {
 		// No pool conf (static site, custom pool name) — nothing to assert.
 		return true, ""
@@ -126,14 +127,99 @@ func probeSpool(osUser string) (ok bool, detail string) {
 		if rerr != nil {
 			continue
 		}
-		for _, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "php_admin_value[open_basedir]") {
-				if !strings.Contains(line, spool) {
-					return false, "pool open_basedir in " + filepath.Base(conf) + " lacks " + spool +
-						" — the JAB-199 regression: WP purges of the page cache silently fail (run jabali update to reapply pools)"
-				}
-			}
+		ob, present := poolOpenBasedir(string(b))
+		if !present {
+			// No open_basedir at all: PHP is not jailed here, which is a
+			// different and more serious finding than a missing spool entry.
+			// Not this probe's to report, and not a purge failure either.
+			continue
+		}
+		if !openBasedirAllows(ob, spool) {
+			return false, "pool open_basedir in " + filepath.Base(conf) + " lacks " + spool +
+				" — the JAB-199 regression: WP purges of the page cache silently fail (run jabali update to reapply pools)"
 		}
 	}
 	return true, ""
+}
+
+// poolConfDirGlob is the pool.d location, as a glob because pools live under
+// every installed PHP version. A variable rather than a constant so tests can
+// point it at a fixture tree and exercise the real selection logic.
+var poolConfDirGlob = "/etc/php/*/fpm/pool.d"
+
+// userPoolConfs returns every FPM pool file belonging to an OS user.
+//
+// A user can own more than one pool: the default pool is jabali-<user>.conf,
+// and each per-version pool (GH #329, models.PoolSlug) is
+// jabali-<user>-php<version>.conf. Globbing only the default form checked one
+// pool and silently passed the rest — and the extra pools are the ones most
+// likely to drift, since they are created later and rendered separately.
+//
+// jabali-<other-user>.conf must never match, so the suffix after the username
+// is required to be a -php version segment rather than any trailing text.
+func userPoolConfs(osUser string) []string {
+	if osUser == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, pat := range []string{
+		filepath.Join(poolConfDirGlob, "jabali-"+osUser+".conf"),
+		filepath.Join(poolConfDirGlob, "jabali-"+osUser+"-php*.conf"),
+	} {
+		m, _ := filepath.Glob(pat)
+		for _, p := range m {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// poolOpenBasedir extracts the open_basedir value from a rendered pool file.
+// The second return distinguishes "absent" from "present but empty", because
+// those mean opposite things: no jail at all versus a jail that allows nothing.
+//
+// Comment lines are skipped — the pool template carries a ';'-prefixed note
+// mentioning open_basedir directly above the directive, and matching it would
+// read the explanation instead of the value.
+func poolOpenBasedir(poolBody string) (value string, present bool) {
+	for _, line := range strings.Split(poolBody, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" || strings.HasPrefix(l, ";") || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if !strings.HasPrefix(l, "php_admin_value[open_basedir]") {
+			continue
+		}
+		eq := strings.Index(l, "=")
+		if eq < 0 {
+			continue
+		}
+		return strings.TrimSpace(l[eq+1:]), true
+	}
+	return "", false
+}
+
+// openBasedirAllows reports whether an open_basedir value permits path.
+//
+// open_basedir is a colon-separated list of path boundaries, so a plain
+// substring test would let "/run/jabali-wp-purge-old" satisfy
+// "/run/jabali-wp-purge" — reporting a healthy jail on a pool that in fact
+// blocks every purge. The boundary is checked explicitly.
+func openBasedirAllows(openBasedir, path string) bool {
+	want := filepath.Clean(path)
+	for _, entry := range strings.Split(openBasedir, ":") {
+		e := filepath.Clean(strings.TrimSpace(entry))
+		if e == "" || e == "." {
+			continue
+		}
+		if e == want || strings.HasPrefix(want, e+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

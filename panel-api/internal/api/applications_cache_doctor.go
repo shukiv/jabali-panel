@@ -194,11 +194,6 @@ func SweepCacheDoctor(ctx context.Context, cfg ApplicationHandlerConfig, run *mo
 // doctorOneInstall health-checks one install and, per kind, repairs drift or
 // refreshes the plugin. Never returns an error — every outcome is recorded on
 // the item so one bad install doesn't abort the sweep.
-// cachePoolGlobs are where rendered per-user FPM pools live. Globbed rather
-// than derived from a PHP version because a host runs several minors at once
-// and the pool that matters is whichever one this user's domain is bound to.
-var cachePoolGlobs = []string{"/etc/php/*/fpm/pool.d/jabali-*.conf"}
-
 func (h *wordPressHandler) doctorOneInstall(ctx context.Context, in *models.ApplicationInstall, kind, actorUserID string) models.CacheDoctorItem {
 	item := models.CacheDoctorItem{InstallID: in.ID}
 
@@ -281,20 +276,6 @@ func (h *wordPressHandler) doctorOneInstall(ctx context.Context, in *models.Appl
 			item.Drifted = true
 			item.Healthy = false
 			item.Error = "configuration is correct but nothing is being cached — " + res.Reason
-		}
-
-		// JAB-201 / JAB-199 regression guard. Page caching can be working
-		// perfectly while every content-edit PURGE is silently dropped: the
-		// plugin's is_dir() check on the spool trips open_basedir, it concludes
-		// this is not a Jabali host, and edits stay stale for the full cache TTL.
-		// The pool template carries the fix, but a host only gets it when its
-		// pools are re-rendered — so read the pool ON DISK, not the template.
-		if item.Error == "" {
-			if problem, checked := cacheprobe.CheckPurgeSpool(cachePoolGlobs, osUser); checked && problem != "" {
-				item.Drifted = true
-				item.Healthy = false
-				item.Error = "cached pages are served but purges are dropped — " + problem
-			}
 		}
 	}
 
