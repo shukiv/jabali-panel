@@ -47,11 +47,16 @@ func buildAppDeps() (api.ApplicationHandlerConfig, error) {
 		Domains:             repository.NewDomainRepository(sharedDB),
 		Users:               userRepo(),
 		Packages:            repository.NewPackageRepository(sharedDB),
-		Agent:               sharedAgent,
-		Apps:                registry,
-		Redis:               cacheRedis,
-		CacheTokenSecret:    cacheSecret,
-		CacheTokenSalts:     repository.NewCacheTokenSaltRepository(sharedDB),
+		// GH #928 follow-up: without CronJobs, createITFlowCrons early-returns,
+		// so a CLI-installed ITFlow (or any cron-needing app) never gets its
+		// cron and its background jobs never run. The HTTP path wires this;
+		// the CLI path forgot (the #754 dual-path class).
+		CronJobs:         repository.NewCronJobRepository(sharedDB),
+		Agent:            sharedAgent,
+		Apps:             registry,
+		Redis:            cacheRedis,
+		CacheTokenSecret: cacheSecret,
+		CacheTokenSalts:  repository.NewCacheTokenSaltRepository(sharedDB),
 	}, nil
 }
 
