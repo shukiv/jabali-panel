@@ -159,3 +159,32 @@ func TestDigestKindRegisteredDefaultOff(t *testing.T) {
 	}
 	t.Fatal("digest.daily missing from AllNotificationEventKinds")
 }
+
+// GH #840: the digest carries a mail-volume line when mail stats are
+// available, and omits it entirely on a mail-less install (no misleading 0).
+func TestRenderDigest_MailLine(t *testing.T) {
+	now := time.Date(2026, 8, 2, 6, 0, 0, 0, time.UTC)
+
+	withMail := &repository.DigestStats{
+		AlertsBySeverity:   map[string]int64{},
+		BackupsByStatus:    map[string]int64{},
+		MailStatsAvailable: true,
+		MailReceived:       42,
+		MailSent:           7,
+		MailQueueNow:       3,
+	}
+	_, body := renderDigest(now, withMail)
+	if !strings.Contains(body, "Mail (24h): 42 received, 7 sent; 3 queued now") {
+		t.Errorf("mail line missing/wrong:\n%s", body)
+	}
+
+	noMail := &repository.DigestStats{
+		AlertsBySeverity: map[string]int64{},
+		BackupsByStatus:  map[string]int64{},
+		// MailStatsAvailable false
+	}
+	_, body = renderDigest(now, noMail)
+	if strings.Contains(body, "Mail (24h)") {
+		t.Errorf("mail line must be omitted when stats unavailable:\n%s", body)
+	}
+}

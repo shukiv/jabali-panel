@@ -151,6 +151,14 @@ func renderDigest(now time.Time, s *repository.DigestStats) (title, body string)
 	}
 
 	fmt.Fprintf(&b, "Certificates expiring within 14 days: %d\n", s.CertsExpiring14d)
+
+	// Mail volume (GH #840): omit entirely on a mail-less install rather
+	// than report a misleading zero.
+	if s.MailStatsAvailable {
+		fmt.Fprintf(&b, "\nMail (24h): %d received, %d sent; %d queued now\n",
+			s.MailReceived, s.MailSent, s.MailQueueNow)
+	}
+
 	fmt.Fprintf(&b, "\nFleet: %d domain%s (%d enabled), %d user%s\n",
 		s.DomainsTotal, plural(s.DomainsTotal), s.DomainsEnabled, s.UsersTotal, plural(s.UsersTotal))
 	return title, b.String()
