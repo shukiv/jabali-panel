@@ -21,14 +21,59 @@ cd "$(dirname "$0")/../.."
 
 fail=0
 
-# --- 1. Function exists + has the bracket map. ---
+# --- 1. Function exists; the sizing is EXECUTED, not grepped. ---
+#
+# This previously asserted four bracket literals (-le 2048/4096/8192/16384).
+# #597 replaced the upper brackets with a percentage, so two of them stopped
+# matching and this test has been failing ever since — unnoticed, because
+# install/tests was not wired into CI. Grepping for constants stops covering
+# anything the moment the shape changes; running the arithmetic does not.
 if ! grep -q '^tune_mariadb_for_ram() {' install.sh; then
   echo "FAIL: tune_mariadb_for_ram function not defined in install.sh"
   fail=1
 fi
-for bracket in '\[\[ \$mem_mb -le 2048' '\[\[ \$mem_mb -le 4096' '\[\[ \$mem_mb -le 8192' '\[\[ \$mem_mb -le 16384'; do
-  if ! grep -Eq "$bracket" install.sh; then
-    echo "FAIL: missing bracket: $bracket"
+
+fn_src=$(awk '/^mariadb_pool_size_mb\(\) \{$/,/^\}$/' install.sh)
+if [[ -z "$fn_src" ]]; then
+  echo "FAIL: mariadb_pool_size_mb not defined in install.sh"
+  exit 1
+fi
+eval "$fn_src"
+
+check_pool() {
+  local mem_mb="$1" want="$2" label="$3" got
+  got=$(mariadb_pool_size_mb "$mem_mb")
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL: ${mem_mb}MB host ($label): pool=${got}M, want ${want}M"
+    fail=1
+  fi
+}
+
+#          host    pool   why
+check_pool 1024    128    "tiny VM, OOM-critical"
+check_pool 2048    128    "top of the tiny bracket"
+check_pool 2049    256    "just over into the puzzle bracket"
+check_pool 3891    256    "the puzzle box (3.8 GB) that was OOM-killed twice"
+check_pool 4096    256    "top of the puzzle bracket"
+# The 1024 MB floor is unreachable with the brackets as they stand: it binds
+# only below ~2926 MB, and everything under 4096 MB is already caught by the
+# fixed brackets above. Left in place as a guard for future bracket edits —
+# same reason as the one in stalwart_mem_bounds_mb — so this asserts the 35%
+# that actually applies rather than the floor that does not.
+check_pool 4097    1433   "just over the bracket — 35%, floor does not bind"
+check_pool 8192    2867   "35% of RAM"
+check_pool 12288   4300   "35% of RAM"
+
+# The pool must never claim the whole box: this shares RAM with panel-api,
+# the agent, Stalwart, Kratos, PDNS, CrowdSec and every tenant PHP-FPM pool.
+for mb in 512 1024 2048 4096 8192 16384 32768 65536; do
+  pool=$(mariadb_pool_size_mb "$mb")
+  if [[ "$pool" -ge "$mb" ]]; then
+    echo "FAIL: ${mb}MB host: pool=${pool}M is not smaller than host RAM"
+    fail=1
+  fi
+  if [[ $((pool * 100 / mb)) -gt 40 ]]; then
+    echo "FAIL: ${mb}MB host: pool=${pool}M is over 40% of RAM, leaving no headroom"
     fail=1
   fi
 done

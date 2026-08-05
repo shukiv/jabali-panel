@@ -86,6 +86,32 @@ jobs:
       - name: Run lint
         run: tools/lint-install-sh.sh
 
+  install-sh-tests:
+    name: install.sh regression tests
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run install/tests
+        # These are per-incident regression guards (OOM sizing, /etc/hosts
+        # loopback shadow, pdns upstream, socket helpers). They existed but
+        # were never wired into CI, so two of them sat red on main for weeks
+        # while asserting nothing. A guard nobody runs is not a guard.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          failed=0
+          for t in install/tests/*.sh; do
+            echo "::group::$(basename "$t")"
+            if bash "$t"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error file=$t::$(basename "$t") failed"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
   pinned-downloads:
     name: install.sh pinned downloads published
     runs-on: self-hosted

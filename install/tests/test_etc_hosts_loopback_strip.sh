@@ -50,11 +50,16 @@ else
   if [[ -z "$gate_open" || -z "$gate_close" || -z "$strip_line" ]]; then
     echo "FAIL: could not locate (gate_open=$gate_open, gate_close=$gate_close, strip_line=$strip_line)"
     fail=1
-  elif [[ "$strip_line" -le "$gate_close" ]]; then
-    echo "FAIL: /etc/hosts strip (line $strip_line) is inside the JABALI_HOSTNAME gate (closes at line $gate_close) — still gated, bug regressed"
+  # The requirement is that the strip is not INSIDE the gate. It can satisfy
+  # that from either side — this originally asserted "after the gate closes",
+  # but the strip was later moved to the top of the function instead, which is
+  # equally unconditional. Asserting one arrangement rather than the property
+  # made this test read a correct install.sh as a regression.
+  elif [[ "$strip_line" -ge "$gate_open" && "$strip_line" -le "$gate_close" ]]; then
+    echo "FAIL: /etc/hosts strip (line $strip_line) is inside the JABALI_HOSTNAME gate (lines $gate_open-$gate_close) — still gated, bug regressed"
     fail=1
   else
-    echo "ok: strip at line $strip_line is unconditional (gate closes at $gate_close)"
+    echo "ok: strip at line $strip_line is unconditional (gate spans $gate_open-$gate_close)"
   fi
 fi
 

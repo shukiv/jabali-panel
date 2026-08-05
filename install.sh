@@ -2727,12 +2727,14 @@ OPC_EOF
 #
 # Idempotent: only writes when desired != on-disk; only restarts
 # when something actually changed.
-tune_mariadb_for_ram() {
-  local tuning_dropin="/etc/mysql/mariadb.conf.d/99-jabali-mariadb-tuning.cnf"
-  local oom_dropin="/etc/systemd/system/mariadb.service.d/15-jabali-oom.conf"
-  local mem_kb mem_mb pool_mb
-  mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
-  mem_mb=$((mem_kb / 1024))
+# mariadb_pool_size_mb <host-ram-mb> — prints the innodb_buffer_pool_size in MB.
+#
+# Split from tune_mariadb_for_ram so the brackets can be tested by running them
+# at every interesting host size. The test used to grep install.sh for bracket
+# literals, which silently stopped covering anything when #597 replaced the
+# bracket ladder with a percentage.
+mariadb_pool_size_mb() {
+  local mem_mb="$1" pool_mb
 
   if   [[ $mem_mb -le 2048 ]]; then pool_mb=128
   elif [[ $mem_mb -le 4096 ]]; then pool_mb=256
@@ -2740,6 +2742,18 @@ tune_mariadb_for_ram() {
     pool_mb=$((mem_mb * 35 / 100))
     [[ $pool_mb -lt 1024 ]] && pool_mb=1024   # #597 floor
   fi
+
+  printf '%s\n' "$pool_mb"
+}
+
+tune_mariadb_for_ram() {
+  local tuning_dropin="/etc/mysql/mariadb.conf.d/99-jabali-mariadb-tuning.cnf"
+  local oom_dropin="/etc/systemd/system/mariadb.service.d/15-jabali-oom.conf"
+  local mem_kb mem_mb pool_mb
+  mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  mem_mb=$((mem_kb / 1024))
+
+  pool_mb=$(mariadb_pool_size_mb "$mem_mb")
   # NOTE: innodb_buffer_pool_instances was REMOVED in MariaDB 11.x (single
   # resizable buffer pool) — do NOT set it, MariaDB rejects the unknown var.
   _log "mariadb-tune: host=${mem_mb}MB RAM -> innodb_buffer_pool_size=${pool_mb}M"
