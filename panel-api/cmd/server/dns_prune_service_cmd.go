@@ -60,9 +60,18 @@ func newDNSPruneServiceCmd() *cobra.Command {
 				return fmt.Errorf("list zones: %w", err)
 			}
 
+			mailOn, mErr := mailEnabledZones(ctx)
+			if mErr != nil {
+				// Without this set the command cannot tell jabali's own mail
+				// records from imported ones, and the difference is whether it
+				// deletes working autodiscovery. Refuse rather than guess.
+				return fmt.Errorf("read mail-enabled domains: %w", mErr)
+			}
+
 			type victim struct{ zone, name, typ, id string }
 			var victims []victim
 			var kept []victim
+			var ours []victim
 
 			for i := range zones {
 				z := zones[i]
@@ -87,6 +96,10 @@ func newDNSPruneServiceCmd() *cobra.Command {
 						!cpanel.IsMailInfraRecordName(r.Name, r.Type) {
 						continue
 					}
+					if mailOn[strings.ToLower(z.Name)] && jabaliPublishesMailRecord(r.Name, r.Type) {
+						ours = append(ours, victim{z.Name, r.Name, r.Type, r.ID})
+						continue
+					}
 					if wouldDanglingMX(r.Name, r.Type, mxTargets, addressed) {
 						kept = append(kept, victim{z.Name, r.Name, r.Type, r.ID})
 						continue
@@ -109,10 +122,28 @@ func newDNSPruneServiceCmd() *cobra.Command {
 				return kept[i].name < kept[j].name
 			})
 
+			sort.Slice(ours, func(i, j int) bool {
+				if ours[i].zone != ours[j].zone {
+					return ours[i].zone < ours[j].zone
+				}
+				return ours[i].name < ours[j].name
+			})
+
 			// Never silent about what was skipped: a cleanup that quietly leaves
 			// rows behind reads as "done" when it is not, and the operator needs
 			// to know these names still count toward the certificate SAN.
 			reportKept := func() {
+				if len(ours) > 0 {
+					zn := map[string]bool{}
+					for _, o := range ours {
+						zn[o.zone] = true
+					}
+					fmt.Fprintf(cmd.OutOrStdout(),
+						"\nSKIPPED %d record(s) across %d mail-enabled zone(s): jabali publishes these\n"+
+							"itself (MX, mail, autodiscovery, DKIM/SPF/DMARC). They are not imported cPanel\n"+
+							"leftovers, and deleting them would break mail-client autoconfiguration with\n"+
+							"nothing to republish them.\n", len(ours), len(zn))
+				}
 				if len(kept) == 0 {
 					return
 				}
@@ -150,9 +181,14 @@ func newDNSPruneServiceCmd() *cobra.Command {
 				for _, k := range kept {
 					keptOut = append(keptOut, map[string]string{"zone": k.zone, "name": k.name, "type": k.typ})
 				}
+				oursOut := make([]map[string]string, 0, len(ours))
+				for _, o := range ours {
+					oursOut = append(oursOut, map[string]string{"zone": o.zone, "name": o.name, "type": o.typ})
+				}
 				return printJSON(map[string]any{
 					"records": out, "total": len(victims), "applied": apply,
 					"kept_mx_targets": keptOut, "kept_total": len(kept),
+					"skipped_jabali_published": oursOut, "skipped_total": len(ours),
 				})
 			}
 
@@ -192,6 +228,49 @@ func newDNSPruneServiceCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&apply, "apply", false, "actually delete (default is a dry run)")
 	cmd.Flags().StringVar(&zoneFilter, "zone", "", "limit to one zone (default: every zone)")
 	return cmd
+}
+
+// mailEnabledZones returns the lowercased names of domains that have mail
+// enabled in the panel.
+//
+// On those, jabali publishes the mail infrastructure itself (dnscompile's
+// bootstrap + email records), so the same hostnames the importer skips are the
+// ones WE authored. Deleting them is not a cleanup, it is breaking live mail.
+func mailEnabledZones(ctx context.Context) (map[string]bool, error) {
+	var names []string
+	if err := sharedDB.WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("email_enabled = ?", true).
+		Pluck("name", &names).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		out[strings.ToLower(strings.TrimSuffix(n, "."))] = true
+	}
+	return out, nil
+}
+
+// jabaliPublishesMailRecord reports whether, on a mail-enabled domain, this
+// record is one jabali publishes for itself.
+//
+// The list is dnscompile's: the mail A/AAAA and MX from bootstrap, and the
+// autodiscovery CNAMEs, client-service SRVs, DKIM/SPF/DMARC/TLS-RPT TXTs from
+// the email record set. That is everything IsMailInfraRecordName matches EXCEPT
+// webmail — jabali publishes no webmail record, so an imported one is still a
+// dead cPanel hostname and still belongs in the SAN cleanup.
+//
+// Measured on a production host: all 26 zones the prune targeted were
+// mail-enabled, and every remaining record was one of ours — 26 mail A records
+// (held back by the dangling-MX guard) plus 51 autoconfig/autodiscover CNAMEs
+// pointing at them, at the TTL dnscompile writes. The honest answer for that
+// box was zero records to remove, not 51. Nothing would have republished them:
+// the zone push is a full replace from dns_records.
+func jabaliPublishesMailRecord(name, typ string) bool {
+	if strings.EqualFold(name, "webmail") {
+		return false
+	}
+	return cpanel.IsMailInfraRecordName(name, typ)
 }
 
 // mailRoutingNames returns, for one zone, the set of labels this zone's MX

@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -151,6 +153,60 @@ func TestWouldDanglingMX_AddressRecordIsTheMXTarget(t *testing.T) {
 	for _, n := range []string{"autoconfig", "autodiscover"} {
 		if wouldDanglingMX(n, "CNAME", mx, addressed) {
 			t.Errorf("%s is not an MX target and must still be pruned", n)
+		}
+	}
+}
+
+// The second flaw of the same kind, found on a production host the same night.
+//
+// #941 stopped the prune deleting a record an MX depended on. It did not stop it
+// deleting records jabali PUBLISHED. On that box every one of the 26 zones the
+// prune targeted was mail-enabled, and the whole remaining target set was ours:
+// 26 mail A records (held back by the dangling-MX guard) and 51
+// autoconfig/autodiscover CNAMEs pointing at them, at dnscompile's own TTL.
+// The honest answer for that box was ZERO records to remove, not 51 — and
+// nothing would have republished them, because the zone push is a full replace
+// from dns_records.
+//
+// Root cause is the same as #941: IsMailInfraRecordName was written to tell the
+// IMPORTER "skip these, we publish our own". Reused as a cleanup on a domain
+// where we did publish our own, it selects exactly those for deletion.
+func TestJabaliPublishesMailRecord(t *testing.T) {
+	// The hostname records dnscompile writes for a mail-enabled domain. These
+	// are the ones actually at risk: the prune only ever classifies A, AAAA and
+	// CNAME (IsMailInfraRecordName returns false for anything else), so MX, the
+	// DKIM/SPF/DMARC/TLS-RPT TXTs and the client-service SRVs are outside its
+	// reach entirely and were never in danger.
+	for _, tc := range []struct{ name, typ string }{
+		{"mail", "A"}, {"mail", "AAAA"},
+		{"autoconfig", "CNAME"}, {"autodiscover", "CNAME"},
+	} {
+		if !jabaliPublishesMailRecord(tc.name, tc.typ) {
+			t.Errorf("%s %s is published by jabali and must never be pruned on a mail-enabled zone", tc.name, tc.typ)
+		}
+	}
+
+	// Pin that boundary, so widening the classifier later cannot silently pull
+	// DKIM or the MX into the deletion set without this failing first.
+	for _, tc := range []struct{ name, typ string }{
+		{"@", "MX"}, {"_dmarc", "TXT"}, {"jabali._domainkey", "TXT"}, {"_imaps._tcp", "SRV"},
+	} {
+		if cpanel.IsMailInfraRecordName(tc.name, tc.typ) {
+			t.Errorf("%s %s is outside the prune's scope; classifying it brings it into the deletion set", tc.name, tc.typ)
+		}
+	}
+
+	// webmail is the exception: jabali publishes no webmail record, so an
+	// imported one is still a dead cPanel hostname inflating the certificate
+	// SAN. Excluding it too would leave the problem this command exists for.
+	if jabaliPublishesMailRecord("webmail", "A") {
+		t.Error("webmail is not published by jabali and must stay prunable")
+	}
+
+	// The pure cPanel names are not mail infrastructure at all.
+	for _, n := range []string{"cpanel", "whm", "webdisk", "ftp", "cpcalendars", "cpcontacts"} {
+		if jabaliPublishesMailRecord(n, "A") {
+			t.Errorf("%s is a cPanel service hostname, not ours", n)
 		}
 	}
 }
