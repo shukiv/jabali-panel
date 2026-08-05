@@ -632,3 +632,25 @@ func isMailInfraRecord(name, typ, content string) bool {
 	}
 	return false
 }
+
+// IsCPanelServiceRecordName reports whether a DNS record name is one of
+// cPanel's own service hostnames.
+//
+// Exported so the cleanup command (`jabali dns prune-service-records`) tests the
+// SAME predicate the importer filters on. Two copies of this list would drift,
+// and the failure mode of drift here is a certificate that will not issue.
+func IsCPanelServiceRecordName(name string) bool {
+	return isCPanelServiceRecord(name)
+}
+
+// IsMailInfraRecordName reports whether a record is jabali-owned mail
+// infrastructure that should not have been imported. Content-independent, so it
+// covers the name/type pairs (webmail, autoconfig, autodiscover, mail) rather
+// than the content-matched TXT cases.
+func IsMailInfraRecordName(name, typ string) bool {
+	switch strings.ToUpper(strings.TrimSpace(typ)) {
+	case "A", "AAAA", "CNAME":
+		return isMailInfraRecord(strings.ToLower(strings.TrimSpace(name)), strings.ToUpper(strings.TrimSpace(typ)), "")
+	}
+	return false
+}

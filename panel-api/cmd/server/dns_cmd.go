@@ -175,7 +175,7 @@ func newDNSCmd() *cobra.Command {
 			"validation and conflict rules. Records are written to the DB; the reconciler pushes\n" +
 			"them into PowerDNS on its next tick.",
 	}
-	cmd.AddCommand(newDNSZoneCmd(), newDNSRecordCmd(), newDNSAcmeHookCmd())
+	cmd.AddCommand(newDNSZoneCmd(), newDNSRecordCmd(), newDNSAcmeHookCmd(), newDNSPruneServiceCmd())
 	return cmd
 }
 

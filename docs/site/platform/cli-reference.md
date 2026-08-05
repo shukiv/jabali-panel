@@ -1436,6 +1436,19 @@ DNS zones and records (dns_zones / dns_records): list / add / update / delete
 jabali dns
 ```
 
+#### `jabali dns prune-service-records`
+
+Remove imported cPanel service subdomains (cpanel/webmail/whm/…) from DNS
+
+```
+jabali dns prune-service-records [flags]
+```
+
+**Flags:**
+
+- `--apply` — actually delete (default is a dry run)
+- `--zone` — limit to one zone (default: every zone)
+
 #### `jabali dns record`
 
 DNS records: list / add / update / delete
