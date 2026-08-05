@@ -25,7 +25,14 @@ type BackupSchedule struct {
 	// database / folders (GH #454). Default 'full' preserves the pre-feature
 	// behaviour. Used by the scheduler fan-out (wired in a follow-up) and set by
 	// tenants on their own schedule.
-	Content     string     `gorm:"column:content;type:varchar(16);not null;default:'full'" json:"content"`
+	Content string `gorm:"column:content;type:varchar(16);not null;default:'full'" json:"content"`
+	// Cadence (GH #454 7B) is the tenant's chosen firing cadence for a
+	// window-governed schedule (hourly / every_6h / every_12h / daily / weekly).
+	// Empty '' = a legacy cron-governed schedule (admin fan-out, system, or the
+	// pre-7B single tenant schedule) that keeps using CronExpr + NextRunAt. A
+	// non-empty cadence routes the schedule through the window-guarded dispatch
+	// path (internal/backup.NextTenantRun), where CronExpr is ignored.
+	Cadence     string     `gorm:"column:cadence;type:varchar(16);not null;default:''" json:"cadence"`
 	Enabled     bool       `gorm:"not null;default:1" json:"enabled"`
 	KeepDaily   *int       `gorm:"type:int" json:"keep_daily,omitempty"`
 	KeepWeekly  *int       `gorm:"type:int" json:"keep_weekly,omitempty"`

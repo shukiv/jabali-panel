@@ -160,6 +160,11 @@ type updateServerSettingsRequest struct {
 	// backups run at. Tenants choose content + destination; only the admin sets
 	// the timing. Validated server-side via internalbackup.ParseCron.
 	TenantBackupCron *string `json:"tenant_backup_cron,omitempty"`
+	// TenantBackupWindow{Start,End} (GH #454 7B): the admin-owned UTC maintenance
+	// window ("HH:MM") that tenant window-governed multi-schedules fire inside.
+	// Validated server-side via internalbackup.ParseWindow round-trip.
+	TenantBackupWindowStart *string `json:"tenant_backup_window_start,omitempty"`
+	TenantBackupWindowEnd   *string `json:"tenant_backup_window_end,omitempty"`
 
 	// M13 SSH shell sandbox.
 	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
@@ -545,6 +550,22 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			return
 		}
 		current.TenantBackupCron = cronExpr
+	}
+	if req.TenantBackupWindowStart != nil {
+		v := strings.TrimSpace(*req.TenantBackupWindowStart)
+		if !internalbackup.ValidHHMM(v) {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_backup_window", "detail": "tenant_backup_window_start must be HH:MM (00:00–23:59)"})
+			return
+		}
+		current.TenantBackupWindowStart = v
+	}
+	if req.TenantBackupWindowEnd != nil {
+		v := strings.TrimSpace(*req.TenantBackupWindowEnd)
+		if !internalbackup.ValidHHMM(v) {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_backup_window", "detail": "tenant_backup_window_end must be HH:MM (00:00–23:59)"})
+			return
+		}
+		current.TenantBackupWindowEnd = v
 	}
 	if req.SSHSandboxMode != nil {
 		current.SSHSandboxMode = strings.TrimSpace(*req.SSHSandboxMode)

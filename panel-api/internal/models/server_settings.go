@@ -9,20 +9,20 @@ import (
 // DNS configuration. Operators edit these from the admin Settings page;
 // at first boot the row is seeded from the installer's config.toml.
 type ServerSettings struct {
-	ID         uint8  `gorm:"primaryKey;default:1"                json:"id"`
-	Hostname   string `gorm:"type:varchar(253);not null;default:''" json:"hostname"`
+	ID       uint8  `gorm:"primaryKey;default:1"                json:"id"`
+	Hostname string `gorm:"type:varchar(253);not null;default:''" json:"hostname"`
 	// PreviewBase (GH #836, migration 000244) overrides the derived
 	// preview-URL base. Empty = preview.<hostname>. Set a custom domain
 	// (preview.example.com) or a magic-DNS base (203-0-113-7.sslip.io)
 	// when the hostname does not resolve publicly.
 	PreviewBase string `gorm:"type:varchar(253);not null;default:''" json:"preview_base"`
-	PublicIPv4 string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
-	PublicIPv6 string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`
-	NS1Name    string `gorm:"type:varchar(253);not null;default:''" json:"ns1_name"`
-	NS1IPv4    string `gorm:"type:varchar(45);not null;default:''"  json:"ns1_ipv4"`
-	NS2Name    string `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
-	NS2IPv4    string `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
-	AdminEmail string `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
+	PublicIPv4  string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
+	PublicIPv6  string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`
+	NS1Name     string `gorm:"type:varchar(253);not null;default:''" json:"ns1_name"`
+	NS1IPv4     string `gorm:"type:varchar(45);not null;default:''"  json:"ns1_ipv4"`
+	NS2Name     string `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
+	NS2IPv4     string `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
+	AdminEmail  string `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
 	// DefaultDNSTTL is the TTL (seconds) applied to newly-created DNS
 	// records when the API caller doesn't pass one. Editable via
 	// Server Settings → DNS in the admin UI. Range 60–86400 enforced
@@ -282,6 +282,15 @@ type ServerSettings struct {
 	// their own scheduled backup; the admin owns the timing (resource
 	// planning). Default 03:00 daily.
 	TenantBackupCron string `gorm:"column:tenant_backup_cron;type:varchar(64);not null;default:'0 3 * * *'" json:"tenant_backup_cron"`
+	// TenantBackupWindowStart/End (GH #454 7B) is the admin-owned UTC maintenance
+	// window ("HH:MM") that tenant window-governed schedules fire inside. The
+	// scheduler enqueues a due tenant schedule only when now is within the window
+	// and smears multiple due schedules across it. Defaults 02:00–05:00.
+	// tenant_backup_cron stays authoritative for legacy single-schedule installs;
+	// the window governs schedules created through the multi-schedule surface
+	// (backup_schedules.cadence != '').
+	TenantBackupWindowStart string `gorm:"column:tenant_backup_window_start;type:varchar(5);not null;default:'02:00'" json:"tenant_backup_window_start"`
+	TenantBackupWindowEnd   string `gorm:"column:tenant_backup_window_end;type:varchar(5);not null;default:'05:00'" json:"tenant_backup_window_end"`
 
 	// BackupMaxConcurrentJobs caps how many backup_jobs the in-process
 	// dispatcher will keep in status=running at once. Scheduler ticks

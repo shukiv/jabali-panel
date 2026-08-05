@@ -886,6 +886,47 @@ paths:
       summary: Set your scheduled-backup content, destination, and on/off
       responses: { "200": { description: OK } }
 
+  /me/backup-schedules:
+    get:
+      tags: [Backups]
+      summary: List your backup schedules (multi-schedule plans) + the admin window
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Backups]
+      summary: Create a backup schedule (content, cadence, destination, retention)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content, cadence]
+              properties:
+                enabled:        { type: boolean }
+                content:        { type: string, enum: [full, files, database, folders] }
+                cadence:        { type: string, enum: [hourly, every_6h, every_12h, daily, weekly] }
+                destination_id: { type: string, format: ulid }
+                keep_daily:     { type: integer, nullable: true }
+      responses:
+        "201": { description: Created }
+        "403": { description: Cap reached or content/destination not allowed by your plan }
+
+  /me/backup-schedules/{id}:
+    put:
+      tags: [Backups]
+      summary: Update one of your backup schedules
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found or not yours }
+    delete:
+      tags: [Backups]
+      summary: Delete one of your backup schedules
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found or not yours }
+
   /me/backups/{id}/restore:
     post:
       tags: [Backups]

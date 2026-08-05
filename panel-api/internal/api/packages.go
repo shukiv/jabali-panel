@@ -84,6 +84,7 @@ type createPackageRequest struct {
 	MaxPythonApps    uint32 `json:"max_python_apps"`
 	// Tenant backup limits (GH #454). 0 = backups not included on this plan.
 	MaxBackups                    uint32 `json:"max_backups"`
+	MaxBackupSchedules            uint32 `json:"max_backup_schedules"`
 	ScheduledBackupsEnabled       bool   `json:"scheduled_backups_enabled"`
 	AllowedBackupDestinationKinds string `json:"allowed_backup_destination_kinds"`
 	BackupRetentionPolicy         string `json:"backup_retention_policy"`
@@ -116,6 +117,7 @@ type updatePackageRequest struct {
 	MaxPythonApps    *uint32 `json:"max_python_apps"`
 	// Tenant backup limits (GH #454).
 	MaxBackups                    *uint32 `json:"max_backups"`
+	MaxBackupSchedules            *uint32 `json:"max_backup_schedules"`
 	ScheduledBackupsEnabled       *bool   `json:"scheduled_backups_enabled"`
 	AllowedBackupDestinationKinds *string `json:"allowed_backup_destination_kinds"`
 	BackupRetentionPolicy         *string `json:"backup_retention_policy"`
@@ -205,6 +207,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		MaxPythonApps:    req.MaxPythonApps,
 
 		MaxBackups:                    req.MaxBackups,
+		MaxBackupSchedules:            req.MaxBackupSchedules,
 		ScheduledBackupsEnabled:       req.ScheduledBackupsEnabled,
 		AllowedBackupDestinationKinds: req.AllowedBackupDestinationKinds,
 		BackupRetentionPolicy:         req.BackupRetentionPolicy,
@@ -341,6 +344,11 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.MaxBackups != nil {
 		pkg.MaxBackups = *req.MaxBackups
+	}
+	if req.MaxBackupSchedules != nil {
+		// 0 is normalised to 1 (single-schedule) at read time via
+		// MaxBackupSchedulesOrDefault; store the admin's value verbatim.
+		pkg.MaxBackupSchedules = *req.MaxBackupSchedules
 	}
 	if req.ScheduledBackupsEnabled != nil {
 		pkg.ScheduledBackupsEnabled = *req.ScheduledBackupsEnabled

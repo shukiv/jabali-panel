@@ -247,7 +247,10 @@
     "max_concurrent_backup_jobs": "Max concurrent backup jobs",
     "tenant_scheduled_backup_time_cron": "Tenant scheduled-backup time (cron)",
     "tenants_choose_what_to_back_up_and_where_you": "Tenants choose what to back up and where; you own when. 5-field cron (min hour day-of-month month day-of-week), e.g. '0 3 * * *' = daily at 03:00 UTC.",
-    "the_dispatcher_runs_at_most_this_many_backup": "The dispatcher runs at most this many backup_jobs at once. Scheduled jobs queue and start as slots free."
+    "the_dispatcher_runs_at_most_this_many_backup": "The dispatcher runs at most this many backup_jobs at once. Scheduled jobs queue and start as slots free.",
+    "tenant_backup_window_start": "Tenant backup window start (UTC)",
+    "tenant_backup_window_end": "Tenant backup window end (UTC)",
+    "the_maintenance_window_multischedule_tenants": "The maintenance window multi-schedule tenants' backups fire inside. The scheduler only runs (and spreads) tenant backups within this window."
   },
   "createbackupdrawer": {
     "backups_run_as_a_goroutine_inside_panel_agen": "Backups run as a goroutine inside panel-agent.",
@@ -715,6 +718,7 @@
     "io_write_bandwidth_mb_s": "IO Write Bandwidth (MB/s)",
     "let_tenants_pick_a_safe_php_performance_mode": "Let tenants pick a safe PHP Performance Mode (Balanced / Low-memory / High-traffic / WordPress-optimized).",
     "max_backups": "Max Backups",
+    "max_backup_schedules": "Max Backup Schedules",
     "max_children_per_user_fpm_cap": "Max children per user (FPM cap)",
     "max_databases": "Max Databases",
     "max_docker_apps": "Max Docker Apps",
@@ -724,6 +728,7 @@
     "max_tasks": "Max Tasks",
     "memory_limit_mb": "Memory Limit (MB)",
     "name": "Name",
+    "how_many_scheduled_backups_a_tenant_may_own": "How many scheduled backups a tenant on this plan may own. 1 keeps the single-schedule card; more than 1 unlocks the multi-schedule list (fired inside the admin maintenance window).",
     "retention_cap_most_snapshots_a_tenant_on_thi": "Retention cap — most snapshots a tenant on this plan may keep. 0 = tenant backups not included.",
     "scheduled_backups": "Scheduled Backups",
     "security_re_enables_php_exec_proc_open_shell": "Security: re-enables PHP exec/proc_open/shell_exec for ALL tenants on this package (GH #401 lockdown is OFF). Only enable for plans whose apps genuinely need shell-outs.",
@@ -747,6 +752,7 @@
     "io_write_bandwidth_mb_s": "IO Write Bandwidth (MB/s)",
     "let_tenants_pick_a_safe_php_performance_mode": "Let tenants pick a safe PHP Performance Mode (Balanced / Low-memory / High-traffic / WordPress-optimized).",
     "max_backups": "Max Backups",
+    "max_backup_schedules": "Max Backup Schedules",
     "max_children_per_user_fpm_cap": "Max children per user (FPM cap)",
     "max_databases": "Max Databases",
     "max_docker_apps": "Max Docker Apps",
@@ -756,6 +762,7 @@
     "max_tasks": "Max Tasks",
     "memory_limit_mb": "Memory Limit (MB)",
     "name": "Name",
+    "how_many_scheduled_backups_a_tenant_may_own": "How many scheduled backups a tenant on this plan may own. 1 keeps the single-schedule card; more than 1 unlocks the multi-schedule list (fired inside the admin maintenance window).",
     "retention_cap_most_snapshots_a_tenant_on_thi": "Retention cap — most snapshots a tenant on this plan may keep. 0 = tenant backups not included.",
     "scheduled_backups": "Scheduled Backups",
     "security_re_enables_php_exec_proc_open_shell": "Security: re-enables PHP exec/proc_open/shell_exec for ALL tenants on this package (GH #401 lockdown is OFF). Only enable for plans whose apps genuinely need shell-outs.",

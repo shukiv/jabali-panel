@@ -199,6 +199,13 @@ func (s *Scheduler) tickDispatch(ctx context.Context) {
 // firing, create queued backup_jobs rows for each fan-out target, mark
 // the schedule ran. The dispatcher tick then drains the queue.
 func (s *Scheduler) enqueue(ctx context.Context, sched models.BackupSchedule) {
+	// GH #454 7B: a non-empty cadence marks a window-governed tenant schedule —
+	// its timing comes from the admin maintenance window + interval, NOT cron.
+	if sched.Cadence != "" {
+		s.enqueueTenantWindow(ctx, sched)
+		return
+	}
+
 	logger := s.deps.Log.With(
 		"schedule_id", sched.ID,
 		"kind", sched.Kind,
@@ -231,6 +238,42 @@ func (s *Scheduler) enqueue(ctx context.Context, sched models.BackupSchedule) {
 
 	if err := s.deps.Schedules.MarkRan(ctx, sched.ID, time.Now().UTC(), next); err != nil {
 		logger.Error("schedule mark-ran failed", "err", err)
+	}
+}
+
+// enqueueTenantWindow handles a window-governed tenant schedule (GH #454 7B):
+// it only enqueues while the clock is inside the admin maintenance window, and
+// advances next_run_at to the next in-window opening (smeared per schedule) so
+// N tenants that come due together don't all fire at window open. The retention
+// cap + fan-out reuse the same enqueueBackup path as the cron schedules.
+func (s *Scheduler) enqueueTenantWindow(ctx context.Context, sched models.BackupSchedule) {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "cadence", sched.Cadence, "user_id", strDeref(sched.UserID))
+	now := time.Now().UTC()
+	w := internalbackup.DefaultTenantWindow
+	if s.deps.Settings != nil {
+		if set, err := s.deps.Settings.Get(ctx); err == nil && set != nil {
+			w = internalbackup.ParseWindow(set.TenantBackupWindowStart, set.TenantBackupWindowEnd)
+		}
+	}
+	next := internalbackup.NextTenantRun(now, sched.Cadence, w, sched.ID)
+	if !w.Contains(now) {
+		// Due but outside the window — defer to the next (smeared) opening
+		// without enqueuing anything.
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+	enqueued, qErr := s.enqueueBackup(ctx, sched)
+	if qErr != nil {
+		logger.Error("tenant window enqueue failed", "err", qErr)
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+	if !enqueued {
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+	if err := s.deps.Schedules.MarkRan(ctx, sched.ID, now, next); err != nil {
+		logger.Error("tenant window mark-ran failed", "err", err)
 	}
 }
 

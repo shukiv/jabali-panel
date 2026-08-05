@@ -51,6 +51,7 @@ type PackageEditInput = {
   // string on the wire; the multi-Select binds an array (converted on load/save,
   // like docker_app_slugs).
   max_backups: number;
+  max_backup_schedules: number;
   scheduled_backups_enabled: boolean;
   allowed_backup_destination_kinds: string | string[];
   backup_retention_policy: string;
@@ -347,6 +348,15 @@ export const PackageEdit = () => {
               tooltip={t("packageedit.allow_tenants_on_this_plan_to_enable_a_sched")}
             >
               <Switch />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label={t("packageedit.max_backup_schedules")}
+              name="max_backup_schedules"
+              tooltip={t("packageedit.how_many_scheduled_backups_a_tenant_may_own")}
+            >
+              <InputNumber min={1} style={{ width: "100%" }} />
             </Form.Item>
           </Col>
           <Col xs={24} sm={12} md={8}>
