@@ -2481,7 +2481,18 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		// Drop unresolvable SAN names — they would otherwise fail
 		// HTTP-01 and tank the whole cert. The base name +
 		// www.<name> always remain (added agent-side).
-		if filtered := r.resolvableSANs(issueCtx, extras); len(filtered) > 0 {
+		filtered := r.resolvableSANs(issueCtx, extras)
+		// JAB-226: resolving is not enough. During a migration the helper
+		// names still answer with the SOURCE box's address until its
+		// nameservers stop being authoritative, so they pass the resolvable
+		// test, the challenge lands on the old server, and one 404 fails the
+		// whole certificate — apex included. Only applied on the ACME path:
+		// a self-signed cert covering a name that points elsewhere is
+		// harmless, and filtering it there would just churn the cert.
+		if len(filtered) > 0 {
+			filtered = r.reachableSANs(issueCtx, domain.Name, filtered)
+		}
+		if len(filtered) > 0 {
 			params["hostnames"] = filtered
 		}
 	}
