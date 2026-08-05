@@ -2804,6 +2804,140 @@ OOM_EOF
   fi
 }
 
+# bound_stalwart_memory caps how much memory Stalwart can take before the
+# kernel starts killing whatever else is on the box (JAB-216).
+#
+# Why: serial cPanel restores on a 7.7 GB host drove it into repeated global
+# OOM kills over four hours and finally into a full userspace wedge — sshd
+# stopped answering, nginx stopped serving, and the box needed a provider-
+# console reboot. The kernel's last kill was stalwart at ~888 MB anon-rss
+# while it ingested migrated mail. Stalwart runs unbounded (MemoryHigh and
+# MemoryMax both infinity), so a heavy ingest has nothing between it and the
+# host's last free page.
+#
+# The two limits do different jobs and BOTH are needed:
+#   MemoryHigh — soft. The kernel throttles allocation and reclaims harder
+#     above it. Nothing is killed; a busy server gets slower. This is the one
+#     that would have applied back-pressure long before the box died.
+#   MemoryMax — hard. Exceeding it OOM-kills inside Stalwart's OWN cgroup, so
+#     a genuine runaway costs mail delivery (and systemd restarts it) instead
+#     of costing the operator console access. Containing the blast radius is
+#     the entire point; a mail outage is recoverable over SSH, a wedged host
+#     is not.
+#
+# Sizing, mirroring tune_mariadb_for_ram: a fraction of host RAM so small VMs
+# stay conservative, with a floor so a tiny box still gets a workable mail
+# server, and a CEILING because past a few GB any further growth is runaway
+# rather than legitimate working set. Stalwart idles near 100 MB.
+#   MemoryHigh = 25 % of RAM, floor 512 MB,  ceiling 4096 MB
+#   MemoryMax  = 40 % of RAM, floor 768 MB,  ceiling 6144 MB
+# On the 7.7 GB box from the incident that is High=1927M / Max=3084M — the
+# fatal kill happened at 888 MB anon-rss, so reclaim pressure would have
+# started well before the host ran out.
+#
+# OOMScoreAdjust is deliberately NOT set here. With MemoryMax in place a
+# runaway is contained in-cgroup, and the global OOM order already prefers
+# tenant slices (oom_score_adj 100). sshd needs nothing either: OpenSSH sets
+# its listener to -1000 itself, verified on a live host, and a systemd
+# OOMScoreAdjust on ssh.service would apply to the whole cgroup — making
+# tenant SSH sessions un-killable, which is worse than the problem.
+#
+# Idempotent: only writes when desired != on-disk. Uses `set-property
+# --runtime` afterwards so the new bounds apply WITHOUT restarting a running
+# mail server; the drop-in is what makes them survive a reboot.
+# stalwart_mem_bounds_mb <host-ram-mb> — prints "<high_mb> <max_mb>".
+#
+# Split from bound_stalwart_memory so the brackets can be tested directly at
+# every interesting host size instead of only grepped for. Pure arithmetic:
+# no filesystem, no systemctl.
+stalwart_mem_bounds_mb() {
+  local mem_mb="$1" high_mb max_mb
+
+  high_mb=$((mem_mb * 25 / 100))
+  [[ $high_mb -lt 512  ]] && high_mb=512
+  [[ $high_mb -gt 4096 ]] && high_mb=4096
+  max_mb=$((mem_mb * 40 / 100))
+  [[ $max_mb -lt 768  ]] && max_mb=768
+  [[ $max_mb -gt 6144 ]] && max_mb=6144
+
+  # Guard, not a live branch: with the brackets above the soft limit is always
+  # under the hard one. It exists because that is a property of the CONSTANTS,
+  # not of the shape — raising the MemoryHigh floor past 768 would invert them,
+  # and systemd would then kill at Max having never throttled at High, silently
+  # removing the only mechanism that degrades gracefully. Cheaper to keep than
+  # to rediscover.
+  if [[ $high_mb -ge $max_mb ]]; then
+    high_mb=$((max_mb * 80 / 100))
+  fi
+
+  printf '%s %s\n' "$high_mb" "$max_mb"
+}
+
+bound_stalwart_memory() {
+  local dropin_dir="/etc/systemd/system/jabali-stalwart.service.d"
+  local dropin="${dropin_dir}/20-jabali-memory.conf"
+  local mem_kb mem_mb high_mb max_mb
+
+  # Nothing to bound on a host without the mail unit (modular install with
+  # mail disabled). Not an error.
+  if ! systemctl list-unit-files jabali-stalwart.service >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ ! -f /etc/systemd/system/jabali-stalwart.service ]]; then
+    return 0
+  fi
+
+  mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  mem_mb=$((mem_kb / 1024))
+  if [[ $mem_mb -le 0 ]]; then
+    _warn "stalwart-mem: cannot read MemTotal; leaving Stalwart unbounded"
+    return 0
+  fi
+
+  read -r high_mb max_mb < <(stalwart_mem_bounds_mb "$mem_mb")
+
+  local desired
+  desired=$(cat <<STALWART_MEM_EOF
+# Managed by jabali install.sh -- sized to ${mem_mb} MB host RAM.
+# Do NOT hand-edit; install.sh rewrites on every run.
+# See install.sh:bound_stalwart_memory for the sizing brackets (JAB-216).
+[Service]
+MemoryAccounting=yes
+MemoryHigh=${high_mb}M
+MemoryMax=${max_mb}M
+STALWART_MEM_EOF
+)
+
+  if [[ -f "$dropin" ]] && cmp -s <(printf '%s\n' "$desired") "$dropin"; then
+    _log "stalwart-mem: drop-in already current (High=${high_mb}M Max=${max_mb}M)"
+    return 0
+  fi
+
+  mkdir -p "$dropin_dir"
+  local tmp
+  tmp="$(mktemp --tmpdir jabali-stalwart-mem.XXXXXX)"
+  printf '%s\n' "$desired" >"$tmp"
+  install -m 0644 -o root -g root "$tmp" "$dropin"
+  rm -f "$tmp"
+  systemctl daemon-reload
+  _log "stalwart-mem: wrote $dropin"
+
+  # Apply to the RUNNING unit without a restart. Bouncing Stalwart drops live
+  # IMAP/JMAP sessions and interrupts mail delivery, which is too much
+  # collateral for a limit change — and mid-migration, restarting the very
+  # service that is ingesting mail is exactly the wrong move.
+  if systemctl is-active --quiet jabali-stalwart.service; then
+    if systemctl set-property --runtime jabali-stalwart.service \
+         "MemoryHigh=${high_mb}M" "MemoryMax=${max_mb}M" >/dev/null 2>&1; then
+      _ok "stalwart-mem: MemoryHigh=${high_mb}M MemoryMax=${max_mb}M (host ${mem_mb}MB, applied live)"
+    else
+      _warn "stalwart-mem: drop-in written but live apply failed; bounds take effect on next restart"
+    fi
+  else
+    _ok "stalwart-mem: MemoryHigh=${high_mb}M MemoryMax=${max_mb}M (host ${mem_mb}MB, applies on next start)"
+  fi
+}
+
 
 
 # ensure_mariadb_socket_acl_for_jabali — POSIX ACL fallback so the
@@ -11599,6 +11733,12 @@ EOF
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-stalwart.service" \
     /etc/systemd/system/jabali-stalwart.service
 
+  # JAB-216: bound the mail server's memory before step 3 starts it, so a
+  # fresh host never runs an unbounded Stalwart even for one boot. Must come
+  # after the unit is on disk (the drop-in directory is named for it) and
+  # before the enable --now below.
+  bound_stalwart_memory || _warn "stalwart memory bounds not applied (non-fatal)"
+
   # Spam-filter rules weekly refresh. Refresh script + timer + service.
   # Enabled+started here so a fresh install ends with the timer armed.
   local refresh_src="${REPO_DIR}/install/stalwart/jabali-spam-rules-refresh"
@@ -14174,6 +14314,14 @@ EOF
   # on-change; guarded on mariadb being installed.
   if declare -f tune_mariadb_for_ram >/dev/null 2>&1 && command -v mariadb >/dev/null 2>&1; then
     tune_mariadb_for_ram
+  fi
+
+  # Stalwart memory bounds (JAB-216) — self-heal on every update so hosts
+  # installed before this existed stop running an unbounded mail server. This
+  # is the fix for a real wedge, so existing fleets are exactly who needs it.
+  # Non-fatal: a limit that cannot be applied must not abort an update.
+  if declare -f bound_stalwart_memory >/dev/null 2>&1; then
+    bound_stalwart_memory || _warn "stalwart memory bounds not applied (non-fatal)"
   fi
 
 }
