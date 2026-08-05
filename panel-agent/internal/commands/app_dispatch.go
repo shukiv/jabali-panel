@@ -96,12 +96,60 @@ func dispatchByAppType(table map[string]Handler, op string, ctx context.Context,
 	return h(ctx, params)
 }
 
+// appInstallHandler records what the install actually laid down (GH #946).
+//
+// The diff is taken around the per-app installer rather than from a static list,
+// because only the filesystem knows what upstream's tree contains today. On
+// delete this is what lets the cleanup remove exactly our files and nothing
+// else.
 func appInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {
-	return dispatchByAppType(appInstallers, "install", ctx, params)
+	p := parseAppDispatchPaths(params)
+	root := p.installRoot()
+	before := topLevelEntries(root)
+
+	res, err := dispatchByAppType(appInstallers, "install", ctx, params)
+	if err != nil {
+		// A failed install may still have written files, but recording them as
+		// "the install" would be a lie, and the panel tears down a failed
+		// install by its own path. Leave no manifest.
+		return res, err
+	}
+
+	if root != "" {
+		var created []string
+		for name := range topLevelEntries(root) {
+			if !before[name] {
+				created = append(created, name)
+			}
+		}
+		writeAppManifest(root, p.AppType, created)
+	}
+	return res, nil
 }
 
+// appDeleteHandler sweeps the recorded entries before handing off to the
+// per-app deleter (GH #946).
+//
+// Sweep first, dispatch second: the per-app handlers finish by restoring the
+// default index page and dropping the nginx rewrite, and those must survive.
+// Running them last means a file the sweep removed can be legitimately put back.
+//
+// The per-app deleter still runs in full. It is the fallback for installs made
+// before manifests existed, and it owns the parts of teardown that are not file
+// removal.
 func appDeleteHandler(ctx context.Context, params json.RawMessage) (any, error) {
-	return dispatchByAppType(appDeleters, "delete", ctx, params)
+	p := parseAppDispatchPaths(params)
+	root := p.installRoot()
+
+	sweepAppManifest(ctx, p.OSUser, root)
+
+	res, err := dispatchByAppType(appDeleters, "delete", ctx, params)
+	if err != nil {
+		// Keep the manifest so a retried delete still knows what to remove.
+		return res, err
+	}
+	removeAppManifestFile(root)
+	return res, nil
 }
 
 func appCloneHandler(ctx context.Context, params json.RawMessage) (any, error) {
