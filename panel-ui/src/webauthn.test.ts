@@ -8,10 +8,37 @@ import {
   bufferEncode,
   flowHasPasskeyEnrol,
   flowHasPasskeyLogin,
+  flowHasWebauthn2faLogin,
+  flowHasWebauthnEnrol,
   passkeyEnrolFields,
   passkeyLoginFields,
+  webauthn2faLoginFields,
+  webauthnEnrolFields,
 } from "./webauthn";
 import type { KratosFlow } from "./kratos";
+
+// A flow with a single input node (name/value) in the given group. Used to build
+// the webauthn 2FA trigger-node flows (options live in the *_trigger value).
+function nodeFlow(group: string, name: string, value: string, type = "hidden"): KratosFlow {
+  return {
+    id: "n1",
+    type: "browser",
+    expires_at: "",
+    issued_at: "",
+    request_url: "",
+    ui: {
+      action: "/self-service/x?flow=n1",
+      method: "POST",
+      nodes: [
+        {
+          type: "input",
+          group,
+          attributes: { name, type: type as never, value },
+        },
+      ],
+    },
+  };
+}
 
 function u8(...bytes: number[]): ArrayBuffer {
   return new Uint8Array(bytes).buffer;
@@ -217,5 +244,72 @@ describe("passkeyEnrolFields", () => {
     const flow = enrolFlow({ publicKey: {} });
     flow.ui.nodes = [];
     expect(await passkeyEnrolFields(flow)).toBeNull();
+  });
+});
+
+describe("webauthn 2FA (security keys, AAL2)", () => {
+  it("detects the login trigger and enrol trigger nodes", () => {
+    const login = nodeFlow("webauthn", "webauthn_login_trigger", JSON.stringify({ publicKey: { challenge: "AQID" } }), "button");
+    expect(flowHasWebauthn2faLogin(login)).toBe(true);
+    expect(flowHasWebauthnEnrol(login)).toBe(false);
+    const enrol = nodeFlow("webauthn", "webauthn_register_trigger", JSON.stringify({ publicKey: { user: { id: "AQID" }, challenge: "AQID" } }), "button");
+    expect(flowHasWebauthnEnrol(enrol)).toBe(true);
+    expect(flowHasWebauthn2faLogin(enrol)).toBe(false);
+  });
+
+  it("runs the assertion from webauthn_login_trigger and returns webauthn_login", async () => {
+    const get = vi.fn().mockResolvedValue({
+      id: "wk",
+      type: "public-key",
+      rawId: u8(1),
+      response: {
+        authenticatorData: u8(2),
+        clientDataJSON: u8(3),
+        signature: u8(4),
+        userHandle: null,
+      },
+    });
+    vi.stubGlobal("navigator", { credentials: { get, create: vi.fn() } });
+
+    const flow = nodeFlow(
+      "webauthn",
+      "webauthn_login_trigger",
+      JSON.stringify({ publicKey: { challenge: "AQID", allowCredentials: [{ id: "AQID", type: "public-key" }] } }),
+      "button",
+    );
+    const out = await webauthn2faLoginFields(flow);
+    expect(out).not.toBeNull();
+    // allowCredentials id must be decoded before get.
+    expect(Array.from(new Uint8Array(get.mock.calls[0][0].publicKey.allowCredentials[0].id))).toEqual([1, 2, 3]);
+    const body = JSON.parse(out!.webauthn_login);
+    expect(body.id).toBe("wk");
+    expect(body.response.signature).toBe(bufferEncode(u8(4)));
+    expect(body.response.userHandle).toBe(""); // null → empty
+    expect(await webauthn2faLoginFields(nodeFlow("webauthn", "other", "{}"))).toBeNull();
+  });
+
+  it("runs registration and carries the display name", async () => {
+    const create = vi.fn().mockResolvedValue({
+      id: "wk-new",
+      type: "public-key",
+      rawId: u8(9),
+      response: { attestationObject: u8(1), clientDataJSON: u8(2) },
+    });
+    vi.stubGlobal("navigator", { credentials: { get: vi.fn(), create } });
+
+    const flow = nodeFlow(
+      "webauthn",
+      "webauthn_register_trigger",
+      JSON.stringify({ publicKey: { user: { id: "AQID", name: "a", displayName: "a" }, challenge: "BAUG" } }),
+      "button",
+    );
+    const out = await webauthnEnrolFields(flow, "YubiKey 5C");
+    expect(out).not.toBeNull();
+    expect(out!.webauthn_register_displayname).toBe("YubiKey 5C");
+    expect(Array.from(new Uint8Array(create.mock.calls[0][0].publicKey.challenge))).toEqual([4, 5, 6]);
+    const body = JSON.parse(out!.webauthn_register);
+    expect(body.id).toBe("wk-new");
+    expect(body.response.attestationObject).toBe(bufferEncode(u8(1)));
+    expect(await webauthnEnrolFields(nodeFlow("webauthn", "other", "{}"), "x")).toBeNull();
   });
 });

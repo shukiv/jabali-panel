@@ -142,6 +142,22 @@ selfservice:
           display_name: "Jabali Panel"
           origins:
             - "https://{{.PanelHostname}}{{.PanelPortSuffix}}"
+    webauthn:
+      # GH #917 follow-up: hardware security keys (YubiKey, etc.) and platform
+      # authenticators as a SECOND factor (AAL2), presented AFTER the password —
+      # distinct from `passkey` above, which is passwordless (AAL1). The
+      # passwordless:false flag is what makes Kratos treat a registered credential
+      # as MFA rather than a first factor; changing it would silently reclassify
+      # existing credentials, so it is pinned. Same RP (id = bare hostname, origins
+      # carry the panel port) as passkey.
+      enabled: true
+      config:
+        passwordless: false
+        rp:
+          id: "{{.PanelHostname}}"
+          display_name: "Jabali Panel"
+          origins:
+            - "https://{{.PanelHostname}}{{.PanelPortSuffix}}"
 
   flows:
     login:

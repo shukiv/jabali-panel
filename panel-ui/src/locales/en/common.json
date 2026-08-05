@@ -87,7 +87,9 @@
     "submitSignIn": "Sign in",
     "passkeySignIn": "Sign in with a passkey",
     "passkeyError": "Passkey sign-in was cancelled or failed. Try again, or use your password.",
-    "orDivider": "or"
+    "orDivider": "or",
+    "webauthnSignIn": "Use your security key",
+    "webauthnError": "Security-key sign-in was cancelled or failed. Try again."
   },
   "menu": {
     "profile": "Profile",

@@ -27,7 +27,7 @@ import { useLocation, useNavigate } from "react-router";
 
 import { getIdentity, type Identity } from "../../identity";
 import { getActAs } from "../../impersonation";
-import { passkeyEnrolFields, webauthnSupported } from "../../webauthn";
+import { passkeyEnrolFields, webauthnEnrolFields, webauthnSupported } from "../../webauthn";
 import {
   csrfToken,
   flowMessages,
@@ -415,6 +415,106 @@ function PasskeySettingsCard({
   );
 }
 
+// WebauthnSettingsCard — GH #917 follow-up. Security key (webauthn) as a SECOND
+// factor. Adding one runs the WebAuthn create ceremony with a user-chosen name
+// (webauthn_register_displayname); removing one is a normal submit
+// (webauthn_remove=<credential id>).
+function WebauthnSettingsCard({
+  flow,
+  onSubmit,
+}: {
+  flow: KratosFlow;
+  onSubmit: (values: Record<string, unknown>) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const removals = renderableFields(flow, "webauthn").filter(
+    (f) => f.kind === "submit" && f.name === "webauthn_remove",
+  );
+  const supported = webauthnSupported();
+
+  const onAdd = async () => {
+    const displayName = name.trim() || "Security key";
+    setBusy(true);
+    try {
+      const fields = await webauthnEnrolFields(flow, displayName);
+      if (!fields) return;
+      await onSubmit(fields);
+      setName("");
+      message.success("Security key added");
+    } catch {
+      message.error("Security-key registration was cancelled or failed. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card type="inner" title="Security keys (two-factor)" size="small">
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Typography.Text type="secondary">
+          Add a hardware security key (e.g. YubiKey) or your device as a second
+          factor. After your password, you'll confirm sign-in with the key.
+        </Typography.Text>
+
+        {removals.length > 0 && (
+          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+            {removals.map((f, i) => (
+              <Space
+                key={f.value || i}
+                style={{ width: "100%", justifyContent: "space-between" }}
+              >
+                <Typography.Text>Security key {i + 1}</Typography.Text>
+                <Button
+                  danger
+                  size="small"
+                  onClick={() =>
+                    Modal.confirm({
+                      title: "Remove this security key?",
+                      content:
+                        "This key will no longer work as your second factor. If it's your only 2FA method, you'll sign in with just your password until you add another.",
+                      okText: "Remove",
+                      okButtonProps: { danger: true },
+                      cancelText: "Cancel",
+                      onOk: () => onSubmit({ webauthn_remove: f.value }),
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              </Space>
+            ))}
+          </Space>
+        )}
+
+        {supported ? (
+          <Form layout="vertical" requiredMark={false} onFinish={() => void onAdd()}>
+            <Form.Item label="Name (to recognise this key later)" style={{ marginBottom: 12 }}>
+              <Input
+                placeholder="e.g. YubiKey 5C"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={64}
+              />
+            </Form.Item>
+            <Form.Item style={{ marginBottom: 0 }}>
+              <Button type="primary" htmlType="submit" loading={busy}>
+                Add a security key
+              </Button>
+            </Form.Item>
+          </Form>
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message="This browser does not support security keys."
+          />
+        )}
+      </Space>
+    </Card>
+  );
+}
+
 function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
@@ -427,6 +527,9 @@ function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
   // Remove reuses the normal submit path).
   if (group === "passkey") {
     return <PasskeySettingsCard flow={flow} onSubmit={onSubmit} />;
+  }
+  if (group === "webauthn") {
+    return <WebauthnSettingsCard flow={flow} onSubmit={onSubmit} />;
   }
 
   const submit = async (values: Record<string, unknown>) => {

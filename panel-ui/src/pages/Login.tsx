@@ -54,7 +54,9 @@ import {
 } from "../kratos";
 import {
   flowHasPasskeyLogin,
+  flowHasWebauthn2faLogin,
   passkeyLoginFields,
+  webauthn2faLoginFields,
   webauthnSupported,
 } from "../webauthn";
 
@@ -224,7 +226,26 @@ export const LoginPage = () => {
     }
   };
 
+  // GH #917 follow-up: AAL2 security-key (webauthn 2FA) step. After the password
+  // succeeds for an identity with a registered security key, Kratos returns an
+  // aal2 flow carrying a webauthn group. Like passkey, it's a button-triggered
+  // ceremony, not a field form — run get() and submit method=webauthn.
+  const onWebauthn2fa = async () => {
+    if (!flow) return;
+    setPasskeyBusy(true);
+    try {
+      const fields = await webauthn2faLoginFields(flow);
+      if (!fields) return;
+      await onFinish("webauthn", fields);
+    } catch {
+      showFlowError(t("login.webauthnError", "Security-key sign-in was cancelled or failed. Try again."));
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
   const passkeyAvailable = !!flow && webauthnSupported() && flowHasPasskeyLogin(flow);
+  const webauthn2faAvailable = !!flow && webauthnSupported() && flowHasWebauthn2faLogin(flow);
 
   return (
     <div
@@ -293,7 +314,13 @@ export const LoginPage = () => {
               />
             </Suspense>
           ) : null}
-          {flow && <FlowForm flow={flow} onFinish={onFinish} />}
+          {flow && (
+            <FlowForm
+              flow={flow}
+              onFinish={onFinish}
+              ceremonyAvailable={passkeyAvailable || webauthn2faAvailable}
+            />
+          )}
 
           {passkeyAvailable && (
             <>
@@ -310,6 +337,22 @@ export const LoginPage = () => {
               </Button>
             </>
           )}
+
+          {webauthn2faAvailable && (
+            <>
+              <Divider plain style={{ margin: "4px 0" }}>
+                {t("login.orDivider", "or")}
+              </Divider>
+              <Button
+                block
+                icon={<span aria-hidden>🔐</span>}
+                loading={passkeyBusy}
+                onClick={() => void onWebauthn2fa()}
+              >
+                {t("login.webauthnSignIn", "Use your security key")}
+              </Button>
+            </>
+          )}
         </Space>
       </Card>
     </div>
@@ -319,6 +362,10 @@ export const LoginPage = () => {
 type FlowFormProps = {
   flow: KratosFlow;
   onFinish: (group: string, values: Record<string, unknown>) => Promise<void>;
+  // True when a passkey / security-key button is rendered outside this form.
+  // Suppresses the "no credential method" warning for ceremony-only flows
+  // (e.g. an AAL2 step whose only method is a security key).
+  ceremonyAvailable?: boolean;
 };
 
 /**
@@ -329,12 +376,24 @@ type FlowFormProps = {
  * render as the active section; the "default" nodes are included as
  * hidden inputs on submission.
  */
-function FlowForm({ flow, onFinish }: FlowFormProps) {
+function FlowForm({ flow, onFinish, ceremonyAvailable }: FlowFormProps) {
   const { t } = useTranslation();
   const topErrors = flowMessages(flow);
   const activeGroup = pickActiveGroup(flow);
 
   if (!activeGroup) {
+    // A ceremony-only step (e.g. AAL2 with just a security key) has no field
+    // form — the passkey/security-key button outside this component drives it.
+    // Still surface any top-level flow errors so a failed attempt is visible.
+    if (ceremonyAvailable) {
+      return (
+        <>
+          {topErrors.map((msg, i) => (
+            <Alert key={i} message={msg} type="error" showIcon />
+          ))}
+        </>
+      );
+    }
     return (
       <Alert
         message={t("login.noCredentialMethod")}
@@ -369,12 +428,15 @@ function pickActiveGroup(flow: KratosFlow): string | null {
     if (node.group === "default") continue;
     if (!seen.has(node.group)) seen.add(node.group);
   }
-  // Preferred order if multiple groups show up at once.
-  const preferred = ["totp", "lookup_secret", "password", "webauthn"];
+  // Preferred order if multiple groups show up at once. passkey + webauthn are
+  // button-triggered ceremonies rendered outside the field form, so they are
+  // deliberately excluded here (never rendered as an input group).
+  const preferred = ["totp", "lookup_secret", "password"];
   for (const g of preferred) {
     if (seen.has(g)) return g;
   }
-  return seen.values().next().value ?? null;
+  const fieldGroups = [...seen].filter((g) => g !== "passkey" && g !== "webauthn");
+  return fieldGroups[0] ?? null;
 }
 
 type GroupFormProps = {

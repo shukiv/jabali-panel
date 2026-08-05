@@ -28,6 +28,9 @@
               },
               "passkey": {
                 "display_name": true
+              },
+              "webauthn": {
+                "identifier": true
               }
             }
           }

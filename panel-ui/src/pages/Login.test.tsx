@@ -197,6 +197,60 @@ describe("LoginPage", () => {
     expect(screen.getByRole("button", { name: /verify/i })).toBeInTheDocument();
   });
 
+  // AAL2 flow whose only method is a webauthn security key (button-triggered).
+  function webauthn2faFlow(): kratos.KratosFlow {
+    const f = totpFlow();
+    f.ui.nodes = [
+      f.ui.nodes[0], // csrf
+      {
+        type: "input",
+        group: "webauthn",
+        attributes: {
+          name: "webauthn_login_trigger",
+          type: "button",
+          value: JSON.stringify({ publicKey: { challenge: "AQID", allowCredentials: [] } }),
+        },
+      },
+      {
+        type: "input",
+        group: "webauthn",
+        attributes: { name: "webauthn_login", type: "hidden" },
+      },
+    ];
+    return f;
+  }
+
+  it("offers a security-key button on an AAL2 webauthn step and submits method=webauthn", async () => {
+    vi.stubGlobal("PublicKeyCredential", function () {});
+    const get = vi.fn().mockResolvedValue({
+      id: "wk",
+      type: "public-key",
+      rawId: new Uint8Array([1]).buffer,
+      response: {
+        authenticatorData: new Uint8Array([2]).buffer,
+        clientDataJSON: new Uint8Array([3]).buffer,
+        signature: new Uint8Array([4]).buffer,
+        userHandle: null,
+      },
+    });
+    Object.defineProperty(globalThis.navigator, "credentials", { value: { get }, configurable: true });
+    vi.spyOn(kratos, "initLoginFlow").mockResolvedValue(webauthn2faFlow());
+    const submit = vi
+      .spyOn(kratos, "submitLoginFlow")
+      .mockResolvedValue({ kind: "error", message: "x" });
+
+    renderLogin();
+    const btn = await screen.findByRole("button", { name: /use your security key/i });
+    // No spurious "no credential method" warning for the ceremony-only step.
+    expect(screen.queryByText(/no credential method/i)).not.toBeInTheDocument();
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(submit).toHaveBeenCalled());
+    const body = submit.mock.calls[0][1] as Record<string, string>;
+    expect(body.method).toBe("webauthn");
+    expect(JSON.parse(body.webauthn_login).id).toBe("wk");
+  });
+
   it("offers a passkey sign-in button when the flow advertises passkey", async () => {
     vi.stubGlobal("PublicKeyCredential", function () {});
     vi.spyOn(kratos, "initLoginFlow").mockResolvedValue(passkeyFlow());

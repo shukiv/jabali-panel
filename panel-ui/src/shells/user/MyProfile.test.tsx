@@ -247,6 +247,36 @@ describe("MyProfile 2FA", () => {
     );
   });
 
+  it("shows the security-key (webauthn 2FA) card with a name field + Add button", async () => {
+    vi.stubGlobal("PublicKeyCredential", function () {});
+    vi.spyOn(kratos, "getSettingsFlow").mockResolvedValue(
+      baseFlow([
+        {
+          type: "input",
+          group: "webauthn",
+          attributes: {
+            name: "webauthn_register_displayname",
+            type: "text",
+          },
+        },
+        {
+          type: "input",
+          group: "webauthn",
+          attributes: {
+            name: "webauthn_register_trigger",
+            type: "button",
+            value: JSON.stringify({ publicKey: { user: { id: "AQID" }, challenge: "AQID" } }),
+          },
+        },
+      ]),
+    );
+    renderProfile();
+    await waitFor(() =>
+      expect(screen.getByText("Security keys (two-factor)")).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: /add a security key/i })).toBeInTheDocument();
+  });
+
   it("submits the typed totp_code on TOTP enrolment (regression #140)", async () => {
     vi.spyOn(kratos, "getSettingsFlow").mockResolvedValue(
       baseFlow([

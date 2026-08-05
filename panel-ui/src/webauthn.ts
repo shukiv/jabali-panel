@@ -1,4 +1,5 @@
-// webauthn.ts — GH #917: passkey (passwordless WebAuthn) ceremony for the SPA.
+// webauthn.ts — GH #917: passkey (passwordless AAL1) and WebAuthn security-key
+// (second-factor AAL2) ceremonies for the SPA.
 //
 // Kratos ships a browser helper (/.well-known/ory/webauthn.js) that runs the
 // WebAuthn ceremony and submits a hidden HTML form. Our SPA renders its own
@@ -9,11 +10,14 @@
 //
 // The encode/decode + result JSON shape below MIRROR Kratos's own webauthn.js
 // byte-for-byte (verified against the deployed v26.2.0 script): base64url
-// WITHOUT padding, and the exact field names Kratos's passkey strategy reads
-// (`passkey_challenge` / `passkey_login` for login, `passkey_create_data` /
-// `passkey_settings_register` for settings enrolment). Getting this wrong
-// silently breaks authentication, so it is kept deliberately faithful and is
-// covered by webauthn.test.ts.
+// WITHOUT padding, and the exact field names Kratos's strategies read.
+//   passkey  (AAL1): passkey_challenge / passkey_login (login),
+//                    passkey_create_data / passkey_settings_register (enrol).
+//   webauthn (AAL2): webauthn_login_trigger / webauthn_login (login),
+//                    webauthn_register_trigger / webauthn_register
+//                    (+ webauthn_register_displayname) (enrol).
+// Getting this wrong silently breaks authentication, so it is kept deliberately
+// faithful and is covered by webauthn.test.ts.
 import type { KratosFlow } from "./kratos";
 
 // base64url (no padding) → bytes. Mirrors __oryWebAuthnBufferDecode. Returns a
@@ -45,7 +49,8 @@ export function webauthnSupported(): boolean {
   return typeof window !== "undefined" && !!window.PublicKeyCredential;
 }
 
-// Read a Kratos node's input value by field name.
+// Read a Kratos node's input value by field name (works for hidden inputs and
+// the button-typed *_trigger nodes, whose `value` carries the options JSON).
 function nodeValue(flow: KratosFlow, name: string): string | undefined {
   for (const node of flow.ui.nodes) {
     if (node.type === "input" && node.attributes.name === name) {
@@ -56,22 +61,12 @@ function nodeValue(flow: KratosFlow, name: string): string | undefined {
   return undefined;
 }
 
-// A login flow offers passkey when Kratos injected the discoverable-login
-// challenge node; a settings flow offers enrolment via passkey_create_data.
-export function flowHasPasskeyLogin(flow: KratosFlow): boolean {
-  return nodeValue(flow, "passkey_challenge") !== undefined;
-}
-export function flowHasPasskeyEnrol(flow: KratosFlow): boolean {
-  return nodeValue(flow, "passkey_create_data") !== undefined;
-}
-
 // Kratos serialises the WebAuthn options as { publicKey: { challenge, ... } }
 // with base64url-encoded binary fields. We decode the binary fields the
 // authenticator needs as ArrayBuffers before calling navigator.credentials.
 type PublicKeyOptions = {
   publicKey: PublicKeyCredentialRequestOptions &
     PublicKeyCredentialCreationOptions & {
-      // Kratos ships these as base64url strings; we rewrite them to BufferSource.
       challenge: unknown;
       allowCredentials?: Array<{ id: unknown; type: string; transports?: string[] }>;
       excludeCredentials?: Array<{ id: unknown; type: string; transports?: string[] }>;
@@ -83,30 +78,21 @@ function decodeId<T extends { id: unknown }>(c: T): T {
   return { ...c, id: bufferDecode(String(c.id)) };
 }
 
-// passkeyLoginFields runs the discoverable-login ceremony and returns the
-// credential field to POST. `identifier` is empty: passkey login is
-// discoverable — the authenticator supplies the user handle, so the user
-// doesn't type a username. Returns null when the flow carries no passkey
-// challenge. Throws when the ceremony fails (no authenticator, user cancel).
-export async function passkeyLoginFields(
-  flow: KratosFlow,
-): Promise<{ passkey_login: string; identifier: string } | null> {
-  const raw = nodeValue(flow, "passkey_challenge");
-  if (raw === undefined) return null;
-
-  const opt = JSON.parse(raw) as PublicKeyOptions;
+// runGetCeremony: shared assertion (login) ceremony. Decodes the challenge +
+// allowCredentials, calls navigator.credentials.get, and encodes the assertion
+// into the exact JSON string Kratos's *_login fields expect.
+async function runGetCeremony(rawOptions: string): Promise<string> {
+  const opt = JSON.parse(rawOptions) as PublicKeyOptions;
   opt.publicKey.challenge = bufferDecode(String(opt.publicKey.challenge)) as BufferSource;
   if (opt.publicKey.allowCredentials) {
     opt.publicKey.allowCredentials = opt.publicKey.allowCredentials.map(decodeId);
   }
-
   const credential = (await navigator.credentials.get({
     publicKey: opt.publicKey as PublicKeyCredentialRequestOptions,
   })) as PublicKeyCredential | null;
-  if (!credential) throw new Error("No passkey credential was returned");
-
+  if (!credential) throw new Error("No credential was returned");
   const response = credential.response as AuthenticatorAssertionResponse;
-  const passkey_login = JSON.stringify({
+  return JSON.stringify({
     id: credential.id,
     rawId: bufferEncode(credential.rawId),
     type: credential.type,
@@ -117,22 +103,13 @@ export async function passkeyLoginFields(
       userHandle: bufferEncode(response.userHandle),
     },
   });
-  return { passkey_login, identifier: "" };
 }
 
-// passkeyEnrolFields runs the registration ceremony against the settings
-// flow's passkey_create_data and returns the field to POST. Kratos has
-// already set user.name/displayName from the identity's display-name trait
-// (the username, per the identity schema), so no display-name input is
-// needed. Returns null when the flow carries no create data. Throws on
-// ceremony failure.
-export async function passkeyEnrolFields(
-  flow: KratosFlow,
-): Promise<{ passkey_settings_register: string } | null> {
-  const raw = nodeValue(flow, "passkey_create_data");
-  if (raw === undefined) return null;
-
-  const opt = JSON.parse(raw) as PublicKeyOptions;
+// runCreateCeremony: shared attestation (registration) ceremony. Decodes
+// user.id + challenge + excludeCredentials, calls navigator.credentials.create,
+// and encodes the attestation into the JSON Kratos's *_register fields expect.
+async function runCreateCeremony(rawOptions: string): Promise<string> {
+  const opt = JSON.parse(rawOptions) as PublicKeyOptions;
   if (opt.publicKey.user) {
     opt.publicKey.user = { ...opt.publicKey.user, id: bufferDecode(String(opt.publicKey.user.id)) };
   }
@@ -140,14 +117,12 @@ export async function passkeyEnrolFields(
   if (opt.publicKey.excludeCredentials) {
     opt.publicKey.excludeCredentials = opt.publicKey.excludeCredentials.map(decodeId);
   }
-
   const credential = (await navigator.credentials.create({
     publicKey: opt.publicKey as PublicKeyCredentialCreationOptions,
   })) as PublicKeyCredential | null;
-  if (!credential) throw new Error("No passkey credential was created");
-
+  if (!credential) throw new Error("No credential was created");
   const response = credential.response as AuthenticatorAttestationResponse;
-  const passkey_settings_register = JSON.stringify({
+  return JSON.stringify({
     id: credential.id,
     rawId: bufferEncode(credential.rawId),
     type: credential.type,
@@ -156,5 +131,79 @@ export async function passkeyEnrolFields(
       clientDataJSON: bufferEncode(response.clientDataJSON),
     },
   });
-  return { passkey_settings_register };
+}
+
+// ---------------------------------------------------------------------------
+// passkey (passwordless, AAL1)
+// ---------------------------------------------------------------------------
+
+export function flowHasPasskeyLogin(flow: KratosFlow): boolean {
+  return nodeValue(flow, "passkey_challenge") !== undefined;
+}
+export function flowHasPasskeyEnrol(flow: KratosFlow): boolean {
+  return nodeValue(flow, "passkey_create_data") !== undefined;
+}
+
+// passkeyLoginFields runs the discoverable-login ceremony. `identifier` is empty:
+// passkey login is discoverable — the authenticator supplies the user handle, so
+// the user doesn't type a username. Returns null when the flow carries no passkey
+// challenge. Throws when the ceremony fails (no authenticator, user cancel).
+export async function passkeyLoginFields(
+  flow: KratosFlow,
+): Promise<{ passkey_login: string; identifier: string } | null> {
+  const raw = nodeValue(flow, "passkey_challenge");
+  if (raw === undefined) return null;
+  return { passkey_login: await runGetCeremony(raw), identifier: "" };
+}
+
+// passkeyEnrolFields runs registration against the settings flow's
+// passkey_create_data. Kratos has already set user.name/displayName from the
+// identity's display-name trait, so no display-name input is needed. Returns
+// null when the flow carries no create data. Throws on ceremony failure.
+export async function passkeyEnrolFields(
+  flow: KratosFlow,
+): Promise<{ passkey_settings_register: string } | null> {
+  const raw = nodeValue(flow, "passkey_create_data");
+  if (raw === undefined) return null;
+  return { passkey_settings_register: await runCreateCeremony(raw) };
+}
+
+// ---------------------------------------------------------------------------
+// webauthn (security key as a SECOND factor, AAL2)
+// ---------------------------------------------------------------------------
+
+export function flowHasWebauthn2faLogin(flow: KratosFlow): boolean {
+  return nodeValue(flow, "webauthn_login_trigger") !== undefined;
+}
+export function flowHasWebauthnEnrol(flow: KratosFlow): boolean {
+  return nodeValue(flow, "webauthn_register_trigger") !== undefined;
+}
+
+// webauthn2faLoginFields runs the AAL2 security-key assertion. The options live
+// in the webauthn_login_trigger node's value (Kratos's own webauthn.js reads it
+// the same way). No identifier — the user is already known from the AAL1 session.
+// Returns null when the flow carries no webauthn login trigger; throws on failure.
+export async function webauthn2faLoginFields(
+  flow: KratosFlow,
+): Promise<{ webauthn_login: string } | null> {
+  const raw = nodeValue(flow, "webauthn_login_trigger");
+  if (raw === undefined) return null;
+  return { webauthn_login: await runGetCeremony(raw) };
+}
+
+// webauthnEnrolFields runs security-key registration. The create options live in
+// the webauthn_register_trigger node's value; the user-chosen friendly name is
+// submitted alongside as webauthn_register_displayname (Kratos stores it as the
+// credential's label). Returns null when the flow carries no register trigger;
+// throws on ceremony failure.
+export async function webauthnEnrolFields(
+  flow: KratosFlow,
+  displayName: string,
+): Promise<{ webauthn_register: string; webauthn_register_displayname: string } | null> {
+  const raw = nodeValue(flow, "webauthn_register_trigger");
+  if (raw === undefined) return null;
+  return {
+    webauthn_register: await runCreateCeremony(raw),
+    webauthn_register_displayname: displayName,
+  };
 }
