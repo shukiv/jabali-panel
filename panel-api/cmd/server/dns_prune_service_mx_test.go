@@ -117,3 +117,40 @@ func TestMailRoutingNames_ForeignAndApexTargets(t *testing.T) {
 		t.Errorf("apex MX target not recorded: %v", mx2)
 	}
 }
+
+// The newzaps shape, which is NOT the aramapp shape and nearly caused a second
+// outage on the same day.
+//
+// There the mail record is an A, not a CNAME, and it is still the MX target:
+//
+//	hoff.co.il        MX  ->  mail.hoff.co.il
+//	mail.hoff.co.il   A   ->  <the box>
+//
+// 26 domains on that host looked like this, including the server's OWN mail
+// hostname. The pre-flight query that cleared the box asked for domains that had
+// a mail record but NO address record — which by construction excludes exactly
+// this set, so it returned zero and read as "safe".
+//
+// That is why the refusal belongs in the command and not in an operator's query:
+// the command sees the records it is about to delete, and cannot ask the wrong
+// question about them.
+func TestWouldDanglingMX_AddressRecordIsTheMXTarget(t *testing.T) {
+	recs := []models.DNSRecord{
+		rec("@", "MX", "mail.hoff.co.il"),
+		rec("mail", "A", "182.54.236.64"),
+		rec("autoconfig", "CNAME", "hoff.co.il."),
+		rec("autodiscover", "CNAME", "hoff.co.il."),
+	}
+	mx, addressed := mailRoutingNames("hoff.co.il", recs)
+
+	if !wouldDanglingMX("mail", "A", mx, addressed) {
+		t.Error("mail A is the MX target and its only provider — deleting it breaks inbound mail")
+	}
+	// The autodiscovery CNAMEs are not MX targets and stay prunable; refusing
+	// them too would leave the certificate-SAN problem unfixed.
+	for _, n := range []string{"autoconfig", "autodiscover"} {
+		if wouldDanglingMX(n, "CNAME", mx, addressed) {
+			t.Errorf("%s is not an MX target and must still be pruned", n)
+		}
+	}
+}
