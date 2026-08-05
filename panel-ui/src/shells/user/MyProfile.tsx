@@ -27,6 +27,7 @@ import { useLocation, useNavigate } from "react-router";
 
 import { getIdentity, type Identity } from "../../identity";
 import { getActAs } from "../../impersonation";
+import { passkeyEnrolFields, webauthnSupported } from "../../webauthn";
 import {
   csrfToken,
   flowMessages,
@@ -315,8 +316,8 @@ function collectGroups(flow: KratosFlow): string[] {
     seen.add(node.group);
     order.push(node.group);
   }
-  // Stable ordering: password first, then 2FA methods.
-  const preferred = ["password", "totp", "lookup_secret", "webauthn"];
+  // Stable ordering: password first, then passwordless passkeys, then 2FA methods.
+  const preferred = ["password", "passkey", "totp", "lookup_secret", "webauthn"];
   return [...preferred.filter((p) => seen.has(p)), ...order.filter((g) => !preferred.includes(g))];
 }
 
@@ -326,12 +327,107 @@ type GroupFormProps = {
   onSubmit: (values: Record<string, unknown>) => Promise<void>;
 };
 
+// PasskeySettingsCard — GH #917 passwordless passkey enrolment. The passkey
+// settings group can't be a plain form POST: adding a passkey runs the
+// WebAuthn *create* ceremony in the browser first, then submits the encoded
+// credential. Removing one is a normal submit (passkey_remove=<credential id>),
+// so we reuse onSubmit for that.
+function PasskeySettingsCard({
+  flow,
+  onSubmit,
+}: {
+  flow: KratosFlow;
+  onSubmit: (values: Record<string, unknown>) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  // Each registered passkey surfaces a submit node named "passkey_remove"
+  // whose value is that credential's id.
+  const removals = renderableFields(flow, "passkey").filter(
+    (f) => f.kind === "submit" && f.name === "passkey_remove",
+  );
+  const supported = webauthnSupported();
+
+  const onAdd = async () => {
+    setBusy(true);
+    try {
+      const fields = await passkeyEnrolFields(flow);
+      if (!fields) return;
+      await onSubmit(fields);
+      message.success("Passkey added");
+    } catch {
+      message.error("Passkey registration was cancelled or failed. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card type="inner" title="Passkeys (passwordless)" size="small">
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Typography.Text type="secondary">
+          Sign in without a password using Touch ID, Face ID, Windows Hello, or a
+          security key. You can register more than one.
+        </Typography.Text>
+
+        {removals.length > 0 && (
+          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+            {removals.map((f, i) => (
+              <Space
+                key={f.value || i}
+                style={{ width: "100%", justifyContent: "space-between" }}
+              >
+                <Typography.Text>Passkey {i + 1}</Typography.Text>
+                <Button
+                  danger
+                  size="small"
+                  onClick={() =>
+                    Modal.confirm({
+                      title: "Remove this passkey?",
+                      content:
+                        "This device or key will no longer be able to sign you in. If it's your only passkey, make sure you still know your password.",
+                      okText: "Remove",
+                      okButtonProps: { danger: true },
+                      cancelText: "Cancel",
+                      onOk: () => onSubmit({ passkey_remove: f.value }),
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              </Space>
+            ))}
+          </Space>
+        )}
+
+        {supported ? (
+          <Button type="primary" loading={busy} onClick={() => void onAdd()}>
+            Add a passkey
+          </Button>
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message="This browser does not support passkeys."
+          />
+        )}
+      </Space>
+    </Card>
+  );
+}
+
 function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const fields = renderableFields(flow, group);
   const totpDisplay = group === "totp" ? totpEnrolmentDisplay(flow) : null;
   const recoveryCodes = group === "lookup_secret" ? lookupSecretReveal(flow) : null;
+
+  // Passkey enrolment needs the WebAuthn create ceremony, not a plain form
+  // POST — render it with its own card (Add runs navigator.credentials.create;
+  // Remove reuses the normal submit path).
+  if (group === "passkey") {
+    return <PasskeySettingsCard flow={flow} onSubmit={onSubmit} />;
+  }
 
   const submit = async (values: Record<string, unknown>) => {
     setSubmitting(true);

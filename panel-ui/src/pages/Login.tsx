@@ -18,6 +18,7 @@ import {
   Alert,
   Button,
   Card,
+  Divider,
   Form,
   Input,
   Space,
@@ -51,6 +52,11 @@ import {
   type KratosFlow,
   type RenderableField,
 } from "../kratos";
+import {
+  flowHasPasskeyLogin,
+  passkeyLoginFields,
+  webauthnSupported,
+} from "../webauthn";
 
 // JAB-159: demo-only quick-enter buttons. VITE_DEMO is a build-time
 // constant, so a non-demo build dead-code-eliminates the import() and
@@ -74,6 +80,7 @@ export const LoginPage = () => {
   const [flow, setFlow] = useState<KratosFlow | null>(null);
   const [loadingFlow, setLoadingFlow] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
 
   // GH#177: Kratos is same-origin — login cookies, CSRF tokens, and allowed
   // return URLs are all bound to the panel hostname. Signing in over the raw
@@ -111,6 +118,22 @@ export const LoginPage = () => {
       cancelled = true;
     };
   }, []);
+
+  // Surface a one-off error into the flow's messages so the renderer shows it
+  // uniformly (used for both submit failures and the passkey ceremony).
+  const showFlowError = (msg: string) => {
+    setFlow((prev) =>
+      prev
+        ? {
+            ...prev,
+            ui: {
+              ...prev.ui,
+              messages: [...(prev.ui.messages ?? []), { id: 0, text: msg, type: "error" }],
+            },
+          }
+        : prev,
+    );
+  };
 
   const onFinish = async (group: string, values: Record<string, unknown>) => {
     if (!flow) return;
@@ -179,17 +202,29 @@ export const LoginPage = () => {
     }
     // Error — surface into the flow messages via a local synthetic flow so
     // the renderer path handles it uniformly.
-    setFlow({
-      ...flow,
-      ui: {
-        ...flow.ui,
-        messages: [
-          ...(flow.ui.messages ?? []),
-          { id: 0, text: result.message, type: "error" },
-        ],
-      },
-    });
+    showFlowError(result.message);
   };
+
+  // GH #917: passwordless passkey sign-in. Runs the WebAuthn discoverable-login
+  // ceremony (no username typed — the authenticator supplies the user handle),
+  // then reuses onFinish's "passkey" submit + result handling. A user cancel or
+  // missing authenticator throws from navigator.credentials.get; we surface a
+  // friendly message rather than the raw DOMException.
+  const onPasskey = async () => {
+    if (!flow) return;
+    setPasskeyBusy(true);
+    try {
+      const fields = await passkeyLoginFields(flow);
+      if (!fields) return;
+      await onFinish("passkey", fields);
+    } catch {
+      showFlowError(t("login.passkeyError", "Passkey sign-in was cancelled or failed. Try again, or use your password."));
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  const passkeyAvailable = !!flow && webauthnSupported() && flowHasPasskeyLogin(flow);
 
   return (
     <div
@@ -259,6 +294,22 @@ export const LoginPage = () => {
             </Suspense>
           ) : null}
           {flow && <FlowForm flow={flow} onFinish={onFinish} />}
+
+          {passkeyAvailable && (
+            <>
+              <Divider plain style={{ margin: "4px 0" }}>
+                {t("login.orDivider", "or")}
+              </Divider>
+              <Button
+                block
+                icon={<span aria-hidden>🔑</span>}
+                loading={passkeyBusy}
+                onClick={() => void onPasskey()}
+              >
+                {t("login.passkeySignIn", "Sign in with a passkey")}
+              </Button>
+            </>
+          )}
         </Space>
       </Card>
     </div>

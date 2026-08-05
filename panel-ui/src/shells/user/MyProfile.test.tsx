@@ -198,6 +198,55 @@ describe("MyProfile 2FA", () => {
     expect(screen.getByText(/ccccc-ddddd/)).toBeInTheDocument();
   });
 
+  it("shows the passkey enrolment card with an Add button (GH #917)", async () => {
+    vi.stubGlobal("PublicKeyCredential", function () {});
+    vi.spyOn(kratos, "getSettingsFlow").mockResolvedValue(
+      baseFlow([
+        {
+          type: "input",
+          group: "passkey",
+          attributes: {
+            name: "passkey_create_data",
+            type: "hidden",
+            value: JSON.stringify({ publicKey: { user: { id: "AQID" }, challenge: "AQID" } }),
+          },
+        },
+      ]),
+    );
+    renderProfile();
+    await waitFor(() =>
+      expect(screen.getByText("Passkeys (passwordless)")).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: /add a passkey/i })).toBeInTheDocument();
+  });
+
+  it("lists a Remove button for each registered passkey (GH #917)", async () => {
+    vi.stubGlobal("PublicKeyCredential", function () {});
+    vi.spyOn(kratos, "getSettingsFlow").mockResolvedValue(
+      baseFlow([
+        {
+          type: "input",
+          group: "passkey",
+          attributes: {
+            name: "passkey_create_data",
+            type: "hidden",
+            value: JSON.stringify({ publicKey: {} }),
+          },
+        },
+        {
+          type: "input",
+          group: "passkey",
+          attributes: { name: "passkey_remove", type: "submit", value: "cred-abc" },
+          meta: { label: { text: "Remove" } },
+        },
+      ]),
+    );
+    renderProfile();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^remove$/i })).toBeInTheDocument(),
+    );
+  });
+
   it("submits the typed totp_code on TOTP enrolment (regression #140)", async () => {
     vi.spyOn(kratos, "getSettingsFlow").mockResolvedValue(
       baseFlow([

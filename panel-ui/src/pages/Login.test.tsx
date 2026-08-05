@@ -120,6 +120,22 @@ function totpFlow(): kratos.KratosFlow {
   };
 }
 
+// GH #917: a password flow that ALSO carries the passkey discoverable-login
+// challenge Kratos injects when the passkey method is enabled.
+function passkeyFlow(): kratos.KratosFlow {
+  const f = passwordFlow();
+  f.ui.nodes.push({
+    type: "input",
+    group: "passkey",
+    attributes: {
+      name: "passkey_challenge",
+      type: "hidden",
+      value: JSON.stringify({ publicKey: { challenge: "AQID", allowCredentials: [] } }),
+    },
+  });
+  return f;
+}
+
 describe("LoginPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -179,6 +195,52 @@ describe("LoginPage", () => {
       expect(screen.getByLabelText(/authentication code/i)).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: /verify/i })).toBeInTheDocument();
+  });
+
+  it("offers a passkey sign-in button when the flow advertises passkey", async () => {
+    vi.stubGlobal("PublicKeyCredential", function () {});
+    vi.spyOn(kratos, "initLoginFlow").mockResolvedValue(passkeyFlow());
+
+    renderLogin();
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /sign in with a passkey/i })).toBeInTheDocument(),
+    );
+  });
+
+  it("runs the passkey ceremony and submits method=passkey", async () => {
+    vi.stubGlobal("PublicKeyCredential", function () {});
+    const get = vi.fn().mockResolvedValue({
+      id: "cred",
+      type: "public-key",
+      rawId: new Uint8Array([1]).buffer,
+      response: {
+        authenticatorData: new Uint8Array([2]).buffer,
+        clientDataJSON: new Uint8Array([3]).buffer,
+        signature: new Uint8Array([4]).buffer,
+        userHandle: new Uint8Array([5]).buffer,
+      },
+    });
+    Object.defineProperty(globalThis.navigator, "credentials", {
+      value: { get },
+      configurable: true,
+    });
+    vi.spyOn(kratos, "initLoginFlow").mockResolvedValue(passkeyFlow());
+    const submit = vi
+      .spyOn(kratos, "submitLoginFlow")
+      .mockResolvedValue({ kind: "continue", flow: totpFlow() });
+
+    renderLogin();
+
+    const btn = await screen.findByRole("button", { name: /sign in with a passkey/i });
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(submit).toHaveBeenCalled());
+    const body = submit.mock.calls[0][1] as Record<string, string>;
+    expect(body.method).toBe("passkey");
+    expect(body.identifier).toBe("");
+    expect(JSON.parse(body.passkey_login).id).toBe("cred");
+    expect(get).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces top-level flow errors into an alert", async () => {

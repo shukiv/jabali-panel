@@ -84,7 +84,10 @@
     "backupCodeHint": "Enter one of your backup codes.",
     "webauthnHint": "Use your security key to sign in.",
     "submitVerify": "Verify",
-    "submitSignIn": "Sign in"
+    "submitSignIn": "Sign in",
+    "passkeySignIn": "Sign in with a passkey",
+    "passkeyError": "Passkey sign-in was cancelled or failed. Try again, or use your password.",
+    "orDivider": "or"
   },
   "menu": {
     "profile": "Profile",

@@ -122,6 +122,26 @@ selfservice:
       # regeneration; codes are hashed at rest and marked used after
       # redemption. Surfaced once in the settings flow response.
       enabled: true
+    passkey:
+      # GH #917: passwordless login with platform authenticators (Touch ID,
+      # Face ID, Windows Hello) and roaming FIDO2 keys (YubiKey). `passkey` is
+      # Kratos's dedicated *passwordless* method — it completes AAL1 on its own
+      # (no password), unlike `webauthn` which is a second factor (AAL2). Users
+      # enrol a passkey in the settings flow and can then sign in with it alone.
+      #
+      # rp.id is the Relying Party ID: the BARE panel hostname (no scheme, no
+      # port) — WebAuthn scopes a credential to this registrable domain. origins
+      # carry the FULL origin including the panel port, because the browser's
+      # WebAuthn origin check compares the exact scheme+host+port the SPA runs
+      # on (":8443" by default, or portless when fronted by a :443 reverse proxy
+      # — the same PanelPortSuffix the login/return URLs above use).
+      enabled: true
+      config:
+        rp:
+          id: "{{.PanelHostname}}"
+          display_name: "Jabali Panel"
+          origins:
+            - "https://{{.PanelHostname}}{{.PanelPortSuffix}}"
 
   flows:
     login:
