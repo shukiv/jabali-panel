@@ -111,8 +111,8 @@ export const AdminDockerAppsPage = () => {
     onSuccess: () => {
       // Async: the server returned 202 (update started). The row shows the
       // "updating" spinner and the 8s poll flips it to running/failed when
-      // the background pull + recreate finishes.
-      message.info("Update started — this can take a few minutes");
+      // the background pull + recreate finishes. The click handler already
+      // toasted the right message (update vs already-current, GH #794).
       qc.invalidateQueries({ queryKey: ["docker-apps-installed"] });
     },
     onError: (e: unknown) => message.error(e instanceof Error ? e.message : "Update failed"),
@@ -397,7 +397,25 @@ export const AdminDockerAppsPage = () => {
                           : { key: "start", label: "Start", icon: <PlayCircleOutlined />, onClick: () => lifecycle.mutate({ id: r.id, action: "start" }) },
                         { key: "restart", label: "Restart", icon: <ReloadOutlined />, onClick: () => lifecycle.mutate({ id: r.id, action: "restart" }) },
                         { key: "edit", label: "Edit", icon: <EditOutlined />, disabled: running, onClick: () => setEditApp(r) },
-                        { key: "update", label: "Update", icon: <SyncOutlined />, onClick: () => updateImage.mutate(r.id) },
+                        {
+                          key: "update",
+                          label: "Update",
+                          icon: <SyncOutlined />,
+                          // GH #794: catalog images are pinned to a reviewed
+                          // digest, so a newer version only appears when the
+                          // catalog is bumped. Tell the operator up-front why
+                          // "Update" won't change the version when they're
+                          // already current (it still re-applies catalog config).
+                          onClick: () => {
+                            const hasUpdate = !!r.available_digest && r.available_digest !== (r.image_sha ?? "");
+                            message.info(
+                              hasUpdate
+                                ? "Update started — this can take a few minutes"
+                                : "Already on the latest catalog version — re-applying catalog config, but there's no newer version to pull yet. New app versions arrive when the catalog is bumped.",
+                            );
+                            updateImage.mutate(r.id);
+                          },
+                        },
                         { key: "logs", label: "Logs", icon: <FileTextOutlined />, onClick: () => setLogsAppId(r.id) },
                         { key: "creds", label: "Credentials", icon: <KeyOutlined />, onClick: () => setCredsAppId(r.id) },
                         { key: "exec", label: "Exec", icon: <CodeOutlined />, onClick: () => setExecAppId(r.id) },

@@ -1507,6 +1507,13 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 					_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, appID, entry.Version)
 				}
 			}
+		case "no_change":
+			// GH #794: the image was already the catalog-pinned version, so
+			// nothing was upgraded. This is a clean success, not an error —
+			// clear last_error (the UI shows a red "err" tag when it's set)
+			// so the recreate doesn't look like a failure. The UI explains
+			// up-front (before dispatching) when no update is available.
+			_ = h.cfg.Repo.UpdateStatus(persistCtx, appID, models.DockerAppStatusRunning, nil)
 		case "rolled_back":
 			detail := resp.Detail
 			_ = h.cfg.Repo.UpdateStatus(persistCtx, appID, models.DockerAppStatusRunning, &detail)

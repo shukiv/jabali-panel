@@ -51,7 +51,7 @@ type dockerAppUpdateParams struct {
 
 type dockerAppUpdateResponse struct {
 	Slug      string `json:"slug"`
-	Outcome   string `json:"outcome"`              // "updated" | "rolled_back"
+	Outcome   string `json:"outcome"`              // "updated" | "no_change" | "rolled_back"
 	NewImage  string `json:"new_image,omitempty"`
 	OldImage  string `json:"old_image,omitempty"`
 	SnapshotID string `json:"snapshot_id,omitempty"` // restic id when one was taken
@@ -146,6 +146,25 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 
 	newImage := currentImage(ctx, p.Slug)
+
+	// GH #794: distinguish "nothing changed" from a real upgrade. The catalog
+	// pins each image to a digest (post-#458), so an update only carries a
+	// newer version when the catalog itself was bumped. When it hasn't, the
+	// re-rendered compose is identical, `pull` is a no-op, and the container
+	// image is unchanged — the user pressed Update and rightly saw "no update
+	// happened". Report that as its own outcome so the panel can say the app
+	// is already on the latest catalog version instead of implying an upgrade.
+	if oldImage != "" && oldImage == newImage {
+		return dockerAppUpdateResponse{
+			Slug:       p.Slug,
+			Outcome:    "no_change",
+			OldImage:   oldImage,
+			NewImage:   newImage,
+			SnapshotID: snapshotID,
+			Detail:     "already on the latest catalog version; nothing to update",
+		}, nil
+	}
+
 	detail := ""
 	if snapshotErr != nil {
 		detail = fmt.Sprintf("update succeeded; pre-update snapshot was NOT taken (restic: %v)", snapshotErr)
