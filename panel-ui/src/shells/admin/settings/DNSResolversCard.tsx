@@ -132,6 +132,22 @@ function collectResolvers(values: FormShape): string[] {
     .filter((s) => s.length > 0);
 }
 
+// matchingProviderKey returns the preset whose full address set equals the
+// resolvers currently in use, so the UI can show WHICH provider is active
+// (GH #912 — without this the admin only sees bare IPs and can't tell). A
+// set-equality match (order-independent) against each provider's non-empty
+// entries; null when the current list matches no preset (custom/mixed).
+function matchingProviderKey(current: string[]): string | null {
+  const cur = new Set(current.map((s) => s.toLowerCase()));
+  for (const p of providers) {
+    const want = [...p.ipv4, ...p.ipv6].filter((s) => s.length > 0).map((s) => s.toLowerCase());
+    if (want.length === cur.size && want.every((s) => cur.has(s))) {
+      return p.key;
+    }
+  }
+  return null;
+}
+
 // Post-M21: useNotification shim. See ServerSettingsPage.tsx for why.
 type NotifyInput = {
   type?: "success" | "error" | "warning" | "info";
@@ -155,6 +171,10 @@ export const DNSResolversCard = () => {
   const [saving, setSaving] = useState(false);
   const [source, setSource] = useState<ResolverGet["source"]>("none");
   const [active, setActive] = useState<boolean>(true);
+  // GH #912: the resolvers actually in use, for the "Currently in use"
+  // readout + highlighting the matching preset.
+  const [current, setCurrent] = useState<string[]>([]);
+  const activePreset = matchingProviderKey(current);
   const notify: NotifyFn = (input) =>
     notification.open({
       message: input.message,
@@ -171,6 +191,7 @@ export const DNSResolversCard = () => {
         form.setFieldsValue(populateFromGet(resp.data));
         setSource(resp.data.source);
         setActive(resp.data.active);
+        setCurrent(resp.data.resolvers ?? []);
       } catch (err) {
         notifyError(notify, "Failed to load DNS resolvers", err);
       } finally {
@@ -203,6 +224,7 @@ export const DNSResolversCard = () => {
       form.setFieldsValue(populateFromGet(resp.data));
       setSource(resp.data.source);
       setActive(resp.data.active);
+      setCurrent(resp.data.resolvers ?? []);
     } catch (err) {
       notifyError(notify, "Failed to save DNS resolvers", err);
     } finally {
@@ -229,6 +251,28 @@ export const DNSResolversCard = () => {
         <Tag>Source: {source}</Tag>
       </Space>
 
+      {/* GH #912: an at-a-glance readout of the resolvers actually in use, so
+          the admin doesn't have to recognise bare IPs to know their provider. */}
+      <div style={{ marginBottom: 12 }}>
+        <Typography.Text type="secondary">Currently in use: </Typography.Text>
+        {current.length === 0 ? (
+          <Typography.Text type="secondary">system default (no panel drop-in)</Typography.Text>
+        ) : (
+          <Space size={[4, 4]} wrap>
+            {activePreset && (
+              <Tag color="blue">
+                {providers.find((p) => p.key === activePreset)?.label}
+              </Tag>
+            )}
+            {current.map((r) => (
+              <Tag key={r} style={{ fontFamily: "monospace" }}>
+                {r}
+              </Tag>
+            ))}
+          </Space>
+        )}
+      </div>
+
       {!active && (
         <Alert
           type="warning"
@@ -253,8 +297,11 @@ export const DNSResolversCard = () => {
                 key={p.key}
                 onClick={() => applyPreset(p)}
                 title={p.description}
+                // GH #912: highlight the preset matching the resolvers in use.
+                type={p.key === activePreset ? "primary" : "default"}
               >
                 {p.label}
+                {p.key === activePreset ? " ✓" : ""}
               </Button>
             ))}
           </Space>
