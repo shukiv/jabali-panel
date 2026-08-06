@@ -401,6 +401,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// group so the path matcher hits the unauth group first.
 		if deps.AutomationTokens != nil && deps.SSOKey != nil {
 			autoGroup := r.Group("/api/v1")
+			// GH #331: the Automation API is a headless write path that mounts
+			// OUTSIDE the v1 group, so it needs its own DR-standby guard — a
+			// standby's DB is a replica, and an automation-driven provisioning
+			// write here would diverge from the primary and be discarded by the
+			// next sync. Reads (read:status/read:mail) stay allowed (the guard
+			// only blocks mutating methods). Nil ServerSettings (tests) → ungated.
+			if deps.ServerSettings != nil {
+				autoGroup.Use(middleware.StandbyReadOnly(deps.ServerSettings, deps.Log))
+			}
 			api.RegisterAutomation(autoGroup, api.AutomationConfig{
 				AutomationTokens: deps.AutomationTokens,
 				Key:              deps.SSOKey,
