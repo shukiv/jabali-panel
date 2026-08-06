@@ -59,6 +59,9 @@ func (r *Reconciler) ReconcileSSLResurrect(ctx context.Context) {
 	if r.sslCerts == nil {
 		return
 	}
+	if r.isStandby(ctx) {
+		return // DR standby issues no ACME (GH #331 Step 3)
+	}
 	now := time.Now().UTC()
 	certs, err := r.sslCerts.ListExhaustedForSSLEnabledDomains(ctx, now.Add(-sslResurrectAfter), sslResurrectBatch)
 	if err != nil {

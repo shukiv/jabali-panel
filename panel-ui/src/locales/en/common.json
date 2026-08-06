@@ -1684,5 +1684,10 @@
     "this_is_the_highest_risk_feature_in_the_panel_le": "This is the highest-risk feature in the panel. Leave off unless actively needed.",
     "timezone": "Timezone",
     "working_folder": "Working Folder"
+  },
+  "dr": {
+    "standby_banner_title": "DR standby — read-only replica",
+    "standby_banner_desc": "This server is a disaster-recovery standby of {{peer}}. It mirrors the primary and serves no live traffic; changes are disabled until it is promoted with `jabali dr promote`.",
+    "standby_banner_desc_nopeer": "This server is a disaster-recovery standby. It mirrors the primary and serves no live traffic; changes are disabled until it is promoted with `jabali dr promote`."
   }
 }

@@ -70,6 +70,17 @@ type Reconciler struct {
 	socketReady func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool
 	// paused is an atomic flag to pause reconciliation (for SSO key rotation)
 	paused atomic.Bool
+
+	// standby* back the DR standby gate (GH #331 Step 3). A standby's reconciler
+	// stays DORMANT: it builds no serving config and issues no ACME certificate,
+	// so the box serves no live traffic and never fails a challenge for the
+	// primary's domains (which would burn Let's Encrypt rate limits). The role is
+	// cached with a short TTL so runtime pairing/promotion takes effect within a
+	// tick without a per-call DB read. serverSettings nil or a read error →
+	// treated as primary (fail toward active), matching middleware.StandbyReadOnly.
+	standbyMu      sync.Mutex
+	standbyCached  bool
+	standbyFetched time.Time
 	// ssoTokens holds reference to the SSO token repository for nightly prune
 	ssoTokens repository.PhpMyAdminSSOTokenRepository
 	// wordPressInstalls holds reference to the WordPress installs repository
@@ -489,6 +500,32 @@ func (r *Reconciler) IsPaused() bool {
 	return r.paused.Load()
 }
 
+// isStandby reports whether this box is a DR standby (GH #331 Step 3). A
+// standby's automatic reconcile loops early-return so it builds no serving
+// config and issues no ACME certificate. Cached with a short TTL so promotion
+// (role → primary) takes effect within a tick; a nil repo or a read error is
+// treated as primary so a DB blip never wrongly parks a live box. This gates the
+// AUTOMATIC loops only — the explicit ReconcileAllForce path (used by promote)
+// stays ungated so it always converges regardless of the cached role.
+func (r *Reconciler) isStandby(ctx context.Context) bool {
+	if r.serverSettings == nil {
+		return false
+	}
+	const ttl = 5 * time.Second
+	r.standbyMu.Lock()
+	defer r.standbyMu.Unlock()
+	if !r.standbyFetched.IsZero() && time.Since(r.standbyFetched) < ttl {
+		return r.standbyCached
+	}
+	s, err := r.serverSettings.Get(ctx)
+	if err != nil || s == nil {
+		return r.standbyCached // keep last-known; fail toward active primary
+	}
+	r.standbyCached = s.IsStandby()
+	r.standbyFetched = time.Now()
+	return r.standbyCached
+}
+
 // Start blocks until ctx is cancelled, running ReconcileAll every interval
 // and draining the out-of-band queue. Must be called once per process.
 func (r *Reconciler) Start(ctx context.Context) {
@@ -597,6 +634,15 @@ func (r *Reconciler) Schedule(domainID string) {
 const domainLoopWorkers = 4
 
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
+	// GH #331 Step 3: a DR standby stays dormant — no serving config, no ACME.
+	// The whole convergence loop below (panel/mail/shared certs, per-domain
+	// SSL + nginx vhosts, DNS zone push, module installs) is suppressed so the
+	// box serves nothing until `jabali dr promote`. Config is (re)built from the
+	// replicated DB at promote time via ReconcileAllForce.
+	if r.isStandby(ctx) {
+		r.log.Debug("reconcile all skipped — DR standby (not serving)")
+		return nil
+	}
 	// Coarse per-block timings. A tick that outruns the interval means
 	// the next ticker fire lands immediately behind it and drift repair
 	// degrades to back-to-back passes — worth a WARN that names the
@@ -910,6 +956,12 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 // ReconcileOne converges a single domain ID. If the domain doesn't exist in the DB,
 // it is treated as deleted and we call domain.disable on the agent.
 func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
+	// GH #331 Step 3: a DR standby serves no traffic — skip single-domain
+	// convergence too (same posture as ReconcileAll).
+	if r.isStandby(ctx) {
+		r.log.Debug("reconcile one skipped — DR standby", "domain_id", domainID)
+		return nil
+	}
 	domain, err := r.domains.FindByID(ctx, domainID)
 	if err != nil {
 		// Domain not found in DB (e.g., it was deleted). Assume it's supposed to be gone.
@@ -2701,6 +2753,9 @@ func (r *Reconciler) ReconcileSSLInline(ctx context.Context, domain *models.Doma
 func (r *Reconciler) RetrySSLDueForACME(ctx context.Context) {
 	if r.sslCerts == nil {
 		return // SSL feature not wired — skip
+	}
+	if r.isStandby(ctx) {
+		return // DR standby issues no ACME (GH #331 Step 3)
 	}
 
 	certs, err := r.sslCerts.ListDueForACMERetry(ctx, time.Now().UTC(), 10)

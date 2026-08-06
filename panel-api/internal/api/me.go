@@ -60,7 +60,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": ""})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": ""})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -107,6 +107,11 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		// public demo, mask them so the dashboard never leaks the real infra IP.
 		"public_ipv4": demoMaskIPv4(h.cfg.DemoEnabled, settings.PublicIPv4),
 		"public_ipv6": demoMaskIPv6(h.cfg.DemoEnabled, settings.PublicIPv6),
+		// GH #331 Step 3: DR standby banner. Every signed-in user's SPA reads
+		// this to render a read-only-replica banner; a standby also 409s their
+		// mutations (middleware.StandbyReadOnly), so the banner explains why.
+		"is_standby":    settings.IsStandby(),
+		"dr_peer_label": settings.DRPeerLabel,
 	})
 }
 
