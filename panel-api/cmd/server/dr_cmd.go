@@ -34,7 +34,7 @@ func newDRCmd() *cobra.Command {
 			"primary's state from a read-only backup destination and serves no live " +
 			"traffic until `dr promote`. No automatic failover, no split-brain.",
 	}
-	cmd.AddCommand(newDRStatusCmd(), newDRPairCmd(), newDRUnpairCmd(), newDRFeedCmd())
+	cmd.AddCommand(newDRStatusCmd(), newDRPairCmd(), newDRUnpairCmd(), newDRFeedCmd(), newDRPromoteCmd())
 	return cmd
 }
 

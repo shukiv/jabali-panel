@@ -2291,6 +2291,20 @@ jabali dr pair [flags]
 - `--destination` — backup destination ID used as the read-only DR channel
 - `--peer-label` — human label for the primary this box replicates (e.g. its hostname)
 
+#### `jabali dr promote`
+
+Promote this DR standby to the live primary (GH #331)
+
+```
+jabali dr promote [flags]
+```
+
+**Flags:**
+
+- `--force` — promote even if the old primary still answers (operator asserts it is down)
+- `--skip-restore` — skip the final account-inclusive restore (role flip only)
+- `--yes` — skip the interactive confirmation (scriptable)
+
 #### `jabali dr status`
 
 Show this box's DR role + pairing
