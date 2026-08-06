@@ -480,6 +480,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// the body). No-op when AuditRecorder is nil (no Redis).
 		v1.Use(middleware.AuditRecord(deps.AuditRecorder))
 
+		// GH #331 — DR standby read-only guard. When this box is a standby its
+		// panel DB is a replica; refuse tenant-mutating writes (they'd diverge
+		// and be overwritten by the next sync). No-op on a primary (the default),
+		// so every normal install is unaffected.
+		if deps.ServerSettings != nil {
+			v1.Use(middleware.StandbyReadOnly(deps.ServerSettings, deps.Log))
+		}
+
 		// M353 Phase 1 (GH #353): module guards. A disabled module's routes must
 		// 409, not just be hidden in the UI. Build one guard factory (shared TTL
 		// cache) and mount each module's routes on a guarded sub-group. Fails

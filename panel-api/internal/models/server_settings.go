@@ -292,6 +292,17 @@ type ServerSettings struct {
 	TenantBackupWindowStart string `gorm:"column:tenant_backup_window_start;type:varchar(5);not null;default:'02:00'" json:"tenant_backup_window_start"`
 	TenantBackupWindowEnd   string `gorm:"column:tenant_backup_window_end;type:varchar(5);not null;default:'05:00'" json:"tenant_backup_window_end"`
 
+	// DR / standby (GH #331). ServerRole is 'primary' (default — box is fully
+	// active) or 'standby' (a one-way async replica: pulls the primary's state,
+	// serves no live traffic until manually promoted). The whole DR feature is
+	// inert until `jabali dr pair` flips this. DRDestinationID is the read-only
+	// backup destination the standby pulls from / the primary ships to; the
+	// standby never holds a primary-mutating credential (least privilege).
+	ServerRole      string     `gorm:"column:server_role;type:varchar(16);not null;default:'primary'" json:"server_role"`
+	DRPairedAt      *time.Time `gorm:"column:dr_paired_at;type:datetime(6)" json:"dr_paired_at,omitempty"`
+	DRPeerLabel     string     `gorm:"column:dr_peer_label;type:varchar(255);not null;default:''" json:"dr_peer_label"`
+	DRDestinationID *string    `gorm:"column:dr_destination_id;type:char(26)" json:"dr_destination_id,omitempty"`
+
 	// BackupMaxConcurrentJobs caps how many backup_jobs the in-process
 	// dispatcher will keep in status=running at once. Scheduler ticks
 	// enqueue rows as queued; the dispatcher drains them under this

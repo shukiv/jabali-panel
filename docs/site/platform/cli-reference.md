@@ -2257,6 +2257,43 @@ WHOIS lookup for a domain
 jabali domain whois <domain-name|domain-id>
 ```
 
+### `jabali dr`
+
+Disaster-recovery standby: pair, status, promote (GH #331)
+
+```
+jabali dr
+```
+
+#### `jabali dr pair`
+
+Designate this box a DR standby of a primary
+
+```
+jabali dr pair [flags]
+```
+
+**Flags:**
+
+- `--destination` — backup destination ID used as the read-only DR channel
+- `--peer-label` — human label for the primary this box replicates (e.g. its hostname)
+
+#### `jabali dr status`
+
+Show this box's DR role + pairing
+
+```
+jabali dr status
+```
+
+#### `jabali dr unpair`
+
+Revert this box to a primary (clears standby role)
+
+```
+jabali dr unpair
+```
+
 ### `jabali files`
 
 Scoped tenant file manager (list/read/mkdir/move/chmod/archive/…) — same policy as the GUI
