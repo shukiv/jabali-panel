@@ -525,7 +525,7 @@ paths:
                 domain_id: { type: string, format: ulid }
                 kind:      { type: string, enum: [wordpress, joomla, drupal, moodle, ghost, opencart, prestashop, magento, drupal10, mediawiki, nextcloud, mautic, suitecrm, dolibarr, processmaker] }
                 path:      { type: string, default: "/", description: "Install path under doc-root." }
-      responses: { "201": { description: Install started — poll /applications/{id} for status } }
+      responses: { "201": { description: "Install started — poll /applications/{id} for status" } }
 
   # ----------------------------------------------------------- Backups ---
 
