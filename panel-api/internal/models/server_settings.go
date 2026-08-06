@@ -302,6 +302,13 @@ type ServerSettings struct {
 	DRPairedAt      *time.Time `gorm:"column:dr_paired_at;type:datetime(6)" json:"dr_paired_at,omitempty"`
 	DRPeerLabel     string     `gorm:"column:dr_peer_label;type:varchar(255);not null;default:''" json:"dr_peer_label"`
 	DRDestinationID *string    `gorm:"column:dr_destination_id;type:char(26)" json:"dr_destination_id,omitempty"`
+	// DR standby sync liveness (GH #331 Step 2, migration 000255). Written only
+	// by the drsync loop on a standby; a primary leaves these at their defaults.
+	// See models.DRSyncStatus* for the status vocabulary.
+	DRLastSyncAt     *time.Time `gorm:"column:dr_last_sync_at;type:datetime(6)" json:"dr_last_sync_at,omitempty"`
+	DRLastSnapshotID string     `gorm:"column:dr_last_snapshot_id;type:varchar(64);not null;default:''" json:"dr_last_snapshot_id"`
+	DRLastSyncStatus string     `gorm:"column:dr_last_sync_status;type:varchar(16);not null;default:''" json:"dr_last_sync_status"`
+	DRLastSyncError  string     `gorm:"column:dr_last_sync_error;type:varchar(1024);not null;default:''" json:"dr_last_sync_error"`
 
 	// BackupMaxConcurrentJobs caps how many backup_jobs the in-process
 	// dispatcher will keep in status=running at once. Scheduler ticks

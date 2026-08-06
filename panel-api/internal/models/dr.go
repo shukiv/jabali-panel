@@ -27,3 +27,20 @@ func IsValidServerRole(r string) bool {
 	}
 	return false
 }
+
+// DR standby sync outcomes (GH #331 Step 2). Recorded on server_settings by the
+// drsync loop after each tick so `jabali dr status` and the admin banner can show
+// how fresh the replica is. Empty (”) means the loop has never recorded a tick.
+const (
+	// DRSyncStatusOK — the loop applied a newer system_backup manifest this tick.
+	DRSyncStatusOK = "ok"
+	// DRSyncStatusCurrent — the newest manifest on the destination was already
+	// applied; nothing to do.
+	DRSyncStatusCurrent = "current"
+	// DRSyncStatusWaiting — the DR destination holds no system_backup manifest
+	// yet (the primary hasn't shipped one). Not an error — a fresh pairing.
+	DRSyncStatusWaiting = "waiting"
+	// DRSyncStatusError — the tick failed (destination unreachable, restore
+	// error). DRLastSyncError carries the detail.
+	DRSyncStatusError = "error"
+)

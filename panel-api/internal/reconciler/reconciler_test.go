@@ -2,7 +2,6 @@ package reconciler
 
 import (
 	"context"
-	"sync"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -446,6 +446,9 @@ type fakeServerSettingsRepo struct {
 }
 
 func (f *fakeServerSettingsRepo) SetDigestLastSent(context.Context, string) error { return nil }
+func (f *fakeServerSettingsRepo) RecordDRSync(context.Context, string, string, string) error {
+	return nil
+}
 
 func (f *fakeServerSettingsRepo) Get(ctx context.Context) (*models.ServerSettings, error) {
 	if f.settings == nil {

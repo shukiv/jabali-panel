@@ -27,6 +27,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupscheduler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/db"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/drsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailscan"
@@ -977,6 +978,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go fin.Start(ctx)
 	} else {
 		log.Info("backup finalizer not started — required deps missing")
+	}
+
+	// GH #331 Step 2: DR standby pull-restore loop. Inert on a primary (it
+	// re-reads server_role each tick), so it is always safe to start; on a
+	// standby it converges the panel DB/config/TLS from the DR destination.
+	if syncer := drsync.New(drsync.Deps{
+		Settings:     deps.ServerSettings,
+		Destinations: deps.BackupDestinations,
+		Agent:        deps.Agent,
+		SSOKey:       deps.SSOKey,
+		Log:          log,
+	}); syncer != nil {
+		go syncer.Start(ctx)
+	} else {
+		log.Info("DR sync loop not started — required deps missing")
 	}
 
 	// M33.2 (ADR-0079): mail YARA scanner tick. Off by default; the tick

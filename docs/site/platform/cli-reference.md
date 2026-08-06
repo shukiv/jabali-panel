@@ -2265,6 +2265,19 @@ Disaster-recovery standby: pair, status, promote (GH #331)
 jabali dr
 ```
 
+#### `jabali dr feed`
+
+Primary side: ship system backups to the DR destination on a cadence
+
+```
+jabali dr feed [flags]
+```
+
+**Flags:**
+
+- `--cron` — cron cadence for the DR feed (default hourly, "0 * * * *")
+- `--destination` — DR backup destination ID to ship system backups to
+
 #### `jabali dr pair`
 
 Designate this box a DR standby of a primary
