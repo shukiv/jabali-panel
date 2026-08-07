@@ -118,6 +118,54 @@ type jabaliUserList struct {
 	Users []jabaliUser `json:"users"`
 }
 
+// domainRe is the strict allow-list a source domain must match before it is
+// interpolated into a `jabali mailbox list --domain <name>` argument. Values
+// come from the source's own domain list, never operator free-text, but we
+// validate anyway (defence in depth) and drop anything that doesn't match.
+var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,253})$`)
+
+// Parse shapes — the subset of each `jabali … list --json` row we consume.
+type jabaliDomain struct {
+	UserID       string `json:"user_id"`
+	Name         string `json:"name"`
+	DocRoot      string `json:"doc_root"`
+	PHPPoolID    string `json:"php_pool_id"`
+	EmailEnabled bool   `json:"email_enabled"`
+}
+type jabaliDomainList struct {
+	Domains []jabaliDomain `json:"domains"`
+}
+
+// db list returns a bare JSON array.
+type jabaliDB struct {
+	Name   string `json:"name"`
+	Engine string `json:"engine"`
+}
+
+type jabaliMailbox struct {
+	Email          string `json:"email"`
+	QuotaBytes     int64  `json:"quota_bytes"`
+	LastUsageBytes int64  `json:"last_usage_bytes"`
+}
+type jabaliMailboxList struct {
+	Mailboxes []jabaliMailbox `json:"mailboxes"`
+}
+
+type jabaliCronJob struct {
+	Name     string `json:"name"`
+	Command  string `json:"command"`
+	Schedule string `json:"schedule"`
+}
+type jabaliCronList struct {
+	Jobs []jabaliCronJob `json:"jobs"`
+}
+
+// shellSingleQuote wraps s in single quotes, escaping embedded single quotes, so
+// it is safe as one shell argument in an SSH command string.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // Connect dials the source over SSH, verifies the host key, and validates the
 // connection with a single read: `jabali version --json`. A successful parse
 // proves (a) the SSH creds work, (b) the `jabali` CLI is present, and (c) this
@@ -268,7 +316,7 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	if s.client != nil {
 		host = s.client.RemoteAddr().String()
 	}
-	return &migrate.AccountManifest{
+	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,
 		Source: migrate.SourceRef{
 			Kind: models.MigrationSourceJabali,
@@ -279,7 +327,162 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 		Mailboxes: []migrate.MailboxSpec{},
 		Databases: []migrate.DatabaseSpec{},
 		Warnings:  []migrate.Warning{},
-	}, nil
+	}
+
+	// Resolve the account's user_id — domains are filtered client-side by it
+	// (domain list has no --user flag), while db/cron accept --user <username>.
+	userID, uerr := s.resolveUserID(ctx, accountID)
+	if uerr != nil {
+		return nil, fmt.Errorf("jabali.DescribeAccount: resolve user id for %q: %w", accountID, uerr)
+	}
+	m.Domains = s.buildDomains(ctx, userID, &m.Warnings)
+	m.Databases = s.buildDatabases(ctx, accountID, &m.Warnings)
+	m.Mailboxes = s.buildMailboxes(ctx, m.Domains, &m.Warnings)
+	m.Cron = s.buildCron(ctx, accountID, &m.Warnings)
+	return m, nil
+}
+
+// resolveUserID maps a source username to its ULID via `jabali user list --json`.
+func (s *session) resolveUserID(ctx context.Context, username string) (string, error) {
+	out, err := s.run(ctx, s.commandTimeout, "jabali user list --json")
+	if err != nil {
+		return "", err
+	}
+	var list jabaliUserList
+	if err := json.Unmarshal(out, &list); err != nil {
+		return "", fmt.Errorf("parse user list: %w", err)
+	}
+	for _, u := range list.Users {
+		if u.Username == username {
+			return u.ID, nil
+		}
+	}
+	return "", fmt.Errorf("user %q not found on source", username)
+}
+
+// buildDomains returns the account's domains (domain list filtered by user_id).
+// The first domain is flagged primary (Jabali has no per-user primary marker);
+// import treats each independently regardless.
+func (s *session) buildDomains(ctx context.Context, userID string, warns *[]migrate.Warning) []migrate.DomainSpec {
+	out := []migrate.DomainSpec{}
+	b, err := s.run(ctx, s.commandTimeout, "jabali domain list --json")
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "jabali_domains", Detail: err.Error()})
+		return out
+	}
+	var list jabaliDomainList
+	if err := json.Unmarshal(b, &list); err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "jabali_domains", Detail: "parse: " + err.Error()})
+		return out
+	}
+	first := true
+	for _, dom := range list.Domains {
+		if dom.UserID != userID || strings.TrimSpace(dom.Name) == "" {
+			continue
+		}
+		spec := migrate.DomainSpec{
+			Name:      dom.Name,
+			DocRoot:   dom.DocRoot,
+			IsPrimary: first,
+			HasPHP:    strings.TrimSpace(dom.PHPPoolID) != "",
+		}
+		out = append(out, spec)
+		first = false
+	}
+	return out
+}
+
+// buildDatabases returns the account's MariaDB databases. Postgres is skipped in
+// v1 (a warning per skipped DB); the spec's engine vocabulary is mysql|postgres,
+// so a mariadb source engine is normalised to "mysql". DB users/grants are a
+// Phase-3 (import) concern and left empty here.
+func (s *session) buildDatabases(ctx context.Context, username string, warns *[]migrate.Warning) []migrate.DatabaseSpec {
+	out := []migrate.DatabaseSpec{}
+	cmd := "jabali db list --user " + shellSingleQuote(username) + " --json"
+	b, err := s.run(ctx, s.commandTimeout, cmd)
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "jabali_databases", Detail: err.Error()})
+		return out
+	}
+	var dbs []jabaliDB
+	if err := json.Unmarshal(b, &dbs); err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "jabali_databases", Detail: "parse: " + err.Error()})
+		return out
+	}
+	for _, db := range dbs {
+		if strings.TrimSpace(db.Name) == "" {
+			continue
+		}
+		if db.Engine == "postgres" {
+			*warns = append(*warns, migrate.Warning{Code: "jabali_postgres_skipped", Detail: "postgres database " + db.Name + " skipped (v1 migrates MariaDB only)"})
+			continue
+		}
+		out = append(out, migrate.DatabaseSpec{Engine: "mysql", Name: db.Name})
+	}
+	return out
+}
+
+// buildMailboxes returns every mailbox on the account's domains. mailbox list is
+// per-domain (no --user), so we fan out over the domains DescribeAccount already
+// resolved. A domain with mail disabled simply yields none.
+func (s *session) buildMailboxes(ctx context.Context, domains []migrate.DomainSpec, warns *[]migrate.Warning) []migrate.MailboxSpec {
+	out := []migrate.MailboxSpec{}
+	for _, dom := range domains {
+		if !domainRe.MatchString(dom.Name) {
+			continue
+		}
+		cmd := "jabali mailbox list --domain " + shellSingleQuote(dom.Name) + " --json"
+		b, err := s.run(ctx, s.commandTimeout, cmd)
+		if err != nil {
+			// A mail-disabled domain returns an error/empty; note it, keep going.
+			*warns = append(*warns, migrate.Warning{Code: "jabali_mailboxes", Detail: dom.Name + ": " + err.Error()})
+			continue
+		}
+		var list jabaliMailboxList
+		if err := json.Unmarshal(b, &list); err != nil {
+			*warns = append(*warns, migrate.Warning{Code: "jabali_mailboxes", Detail: dom.Name + ": parse: " + err.Error()})
+			continue
+		}
+		for _, mb := range list.Mailboxes {
+			if strings.TrimSpace(mb.Email) == "" {
+				continue
+			}
+			out = append(out, migrate.MailboxSpec{
+				Address:    mb.Email,
+				QuotaBytes: mb.QuotaBytes,
+				BytesUsed:  mb.LastUsageBytes,
+			})
+		}
+	}
+	return out
+}
+
+// buildCron returns the account user's cron jobs (`cron list --user`).
+func (s *session) buildCron(ctx context.Context, username string, warns *[]migrate.Warning) []migrate.CronSpec {
+	out := []migrate.CronSpec{}
+	cmd := "jabali cron list --user " + shellSingleQuote(username) + " --json"
+	b, err := s.run(ctx, s.commandTimeout, cmd)
+	if err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "jabali_cron", Detail: err.Error()})
+		return out
+	}
+	var list jabaliCronList
+	if err := json.Unmarshal(b, &list); err != nil {
+		*warns = append(*warns, migrate.Warning{Code: "jabali_cron", Detail: "parse: " + err.Error()})
+		return out
+	}
+	for _, j := range list.Jobs {
+		if strings.TrimSpace(j.Command) == "" {
+			continue
+		}
+		out = append(out, migrate.CronSpec{
+			Name:     j.Name,
+			Schedule: j.Schedule,
+			Command:  j.Command,
+			RunAs:    username,
+		})
+	}
+	return out
 }
 
 // Close releases the SSH client. Best-effort.

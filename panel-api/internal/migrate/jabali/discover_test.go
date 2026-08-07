@@ -139,6 +139,73 @@ func TestProbeJabali(t *testing.T) {
 	}
 }
 
+// routedSession answers each builder command independently from a substring map.
+func routedSession(routes map[string]string) *session {
+	s := &session{commandTimeout: time.Second}
+	s.run = func(_ context.Context, _ time.Duration, cmd string) ([]byte, error) {
+		for sub, out := range routes {
+			if strings.Contains(cmd, sub) {
+				return []byte(out), nil
+			}
+		}
+		return []byte("{}"), nil
+	}
+	return s
+}
+
+func TestDescribeAccount_Phase2Builders(t *testing.T) {
+	routes := map[string]string{
+		"user list": twoTenants, // alice → 01A, bob → 01C
+		// One domain for alice (01A), one for bob (01C) — bob's must be filtered out.
+		"domain list": `{"domains":[
+			{"user_id":"01A","name":"alice.com","doc_root":"/home/alice/domains/alice.com/public_html","php_pool_id":"p1","email_enabled":true},
+			{"user_id":"01C","name":"bob.com","doc_root":"/home/bob/x","php_pool_id":"","email_enabled":false}
+		]}`,
+		"db list":      `[{"name":"alice_wp","engine":"mariadb"},{"name":"alice_pg","engine":"postgres"}]`,
+		"mailbox list": `{"domain":"alice.com","mailboxes":[{"email":"info@alice.com","quota_bytes":1073741824,"last_usage_bytes":2048}]}`,
+		"cron list":    `{"jobs":[{"name":"nightly","command":"/usr/bin/php /home/alice/cron.php","schedule":"0 3 * * *"}]}`,
+	}
+	m, err := New().DescribeAccount(context.Background(), routedSession(routes), "alice")
+	if err != nil {
+		t.Fatalf("DescribeAccount: %v", err)
+	}
+
+	// Domains: only alice's, flagged primary, with PHP + docroot.
+	if len(m.Domains) != 1 || m.Domains[0].Name != "alice.com" {
+		t.Fatalf("want 1 alice domain, got %+v", m.Domains)
+	}
+	if !m.Domains[0].IsPrimary || !m.Domains[0].HasPHP || m.Domains[0].DocRoot == "" {
+		t.Errorf("domain fields wrong: %+v", m.Domains[0])
+	}
+
+	// Databases: mariadb kept (as mysql), postgres skipped + a warning.
+	if len(m.Databases) != 1 || m.Databases[0].Name != "alice_wp" || m.Databases[0].Engine != "mysql" {
+		t.Fatalf("want 1 mysql db, got %+v", m.Databases)
+	}
+	if !hasWarn(m.Warnings, "jabali_postgres_skipped") {
+		t.Error("skipped postgres db must add a warning")
+	}
+
+	// Mailboxes: fanned out over alice.com.
+	if len(m.Mailboxes) != 1 || m.Mailboxes[0].Address != "info@alice.com" || m.Mailboxes[0].BytesUsed != 2048 {
+		t.Fatalf("want info@alice.com mailbox, got %+v", m.Mailboxes)
+	}
+
+	// Cron: run-as the account user.
+	if len(m.Cron) != 1 || m.Cron[0].Command == "" || m.Cron[0].RunAs != "alice" {
+		t.Fatalf("want 1 cron run-as alice, got %+v", m.Cron)
+	}
+}
+
+func hasWarn(ws []migrate.Warning, code string) bool {
+	for _, w := range ws {
+		if w.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 func TestJabaliRegisteredInRegistry(t *testing.T) {
 	d, err := migrate.Get(models.MigrationSourceJabali)
 	if err != nil {
