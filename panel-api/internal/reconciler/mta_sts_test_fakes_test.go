@@ -19,6 +19,9 @@ type fakeSSLCertRepo struct {
 	exhaustedErr error
 	rearmErr     error
 	rearmed      map[string]int
+	// GH #887: counts ACME-failure recordings so a test can assert a
+	// webroot_not_ready deferral records NO failure (quiet skip).
+	acmeFailures int
 }
 
 func newFakeSSLCertRepo() *fakeSSLCertRepo {
@@ -62,9 +65,11 @@ func (f *fakeSSLCertRepo) UpdateCustom(context.Context, string, string, string, 
 	return nil
 }
 func (f *fakeSSLCertRepo) UpdateAfterACMEFailure(context.Context, string, string, time.Time, int, *string, *string, *time.Time) error {
+	f.acmeFailures++
 	return nil
 }
 func (f *fakeSSLCertRepo) UpdateAfterACMEFailureCapped(context.Context, string, string, int, *string, *string, *time.Time) error {
+	f.acmeFailures++
 	return nil
 }
 func (f *fakeSSLCertRepo) MarkFailed(context.Context, string, string) error { return nil }

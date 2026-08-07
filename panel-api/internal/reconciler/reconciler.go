@@ -2568,8 +2568,27 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		return
 	}
 
+	// GH #887: the document root isn't there yet (fresh domain / subdomain the
+	// panel is still provisioning). This is NOT a real ACME failure — recording
+	// it would surface a scary "…/public_html does not exist" cert error and bump
+	// the retry backoff. The domain already carries a self-signed cert (the
+	// bootstrap path), so HTTPS keeps working; just leave the row as-is and let
+	// the next tick retry once the docroot exists. No LE request was spent.
+	if isWebrootNotReady(err) {
+		r.log.Debug("ssl: webroot not ready, deferring ACME to next tick", "domain", domain.Name)
+		return
+	}
+
 	// ACME failed — fall through to self-sign + scheduled retry.
 	r.fallbackToSelfSignAndRetry(ctx, domain, cert, firstLine(err.Error()))
+}
+
+// isWebrootNotReady reports whether an ssl.issue error is the agent's typed
+// "the document root does not exist yet" signal (GH #887), as opposed to a real
+// ACME failure. Matched on the stable marker string the agent embeds in the
+// error message so it survives the NDJSON wire round-trip.
+func isWebrootNotReady(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "webroot_not_ready")
 }
 
 // fallbackToSelfSignAndRetry is the "ACME unavailable" path used by both

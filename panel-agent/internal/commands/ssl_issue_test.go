@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -177,6 +178,34 @@ func TestSSLIssueValidation_AllowedWebroots(t *testing.T) {
 		if result != tt.allowed {
 			t.Errorf("%s: expected %v, got %v", tt.name, tt.allowed, result)
 		}
+	}
+}
+
+// GH #887: a format-valid webroot that does not exist yet must return the typed
+// webroot_not_ready signal (CodeFailedPrecondition) — NOT run certbot and NOT a
+// generic failure — so the panel reconciler can quietly defer ACME.
+func TestSSLIssue_WebrootNotReady(t *testing.T) {
+	params := sslIssueParams{
+		Domain:  "sub.example.com",
+		Webroot: "/home/nobody-gh887/domains/sub.example.com/public_html", // does not exist
+		Email:   "admin@example.com",
+	}
+	paramsJSON, _ := json.Marshal(params)
+
+	result, err := sslIssueHandler(context.Background(), paramsJSON)
+	if err == nil || result != nil {
+		t.Fatalf("expected typed error, got result=%v err=%v", result, err)
+	}
+	agentErr, ok := err.(*agentwire.AgentError)
+	if !ok {
+		t.Fatalf("expected *agentwire.AgentError, got %T", err)
+	}
+	if agentErr.Code != agentwire.CodeFailedPrecondition {
+		t.Errorf("code = %s, want %s", agentErr.Code, agentwire.CodeFailedPrecondition)
+	}
+	if !strings.Contains(agentErr.Message, WebrootNotReadyMarker) {
+		t.Errorf("message %q must carry the %q marker so the reconciler can match it",
+			agentErr.Message, WebrootNotReadyMarker)
 	}
 }
 

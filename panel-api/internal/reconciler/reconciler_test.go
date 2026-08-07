@@ -21,9 +21,10 @@ import (
 
 // fakeAgent mocks the agent.AgentInterface for testing.
 type fakeAgent struct {
-	mu         sync.Mutex // JAB-205: ReconcileAll now calls the agent from a worker pool
-	calls      []fakeCall
-	failMethod string // if set, Call returns an error for this method
+	mu          sync.Mutex // JAB-205: ReconcileAll now calls the agent from a worker pool
+	calls       []fakeCall
+	failMethod  string           // if set, Call returns an error for this method
+	errByMethod map[string]error // if set for a method, Call returns that exact error
 }
 
 type fakeCall struct {
@@ -36,6 +37,11 @@ func (f *fakeAgent) Call(ctx context.Context, method string, params interface{})
 	f.calls = append(f.calls, fakeCall{method, params})
 	f.mu.Unlock()
 
+	if f.errByMethod != nil {
+		if e, ok := f.errByMethod[method]; ok {
+			return nil, e
+		}
+	}
 	if method == f.failMethod {
 		return nil, fmt.Errorf("agent call failed for method: %s", method)
 	}
