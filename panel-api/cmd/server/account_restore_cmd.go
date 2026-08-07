@@ -102,11 +102,10 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		}
 	}
 
-	fmt.Fprintln(w, "Note: mailbox + forwarder ROWS are reconstructed above — accounts")
-	fmt.Fprintln(w, "authenticate again via the Stalwart SQL directory. Stored Maildir")
-	fmt.Fprintln(w, "MESSAGES are NOT replayed by account-restore yet; migrate old mail")
-	fmt.Fprintln(w, "separately. DNSSEC keys are not in this bundle — re-enable with")
-	fmt.Fprintln(w, "`jabali pdns dnssec enable`.")
+	fmt.Fprintln(w, "Note: mailbox + forwarder ROWS are reconstructed above and their stored")
+	fmt.Fprintln(w, "Maildir MESSAGES are replayed into Stalwart via JMAP (see the mail →")
+	fmt.Fprintln(w, "line in the agent output for the count). DNSSEC keys are not in this")
+	fmt.Fprintln(w, "bundle — re-enable with `jabali pdns dnssec enable`.")
 }
 
 func boolMark(b bool) string {

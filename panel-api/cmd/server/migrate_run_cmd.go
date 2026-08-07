@@ -952,8 +952,8 @@ func runJabaliImport(
 		"✓ jabali migration complete: user %s restored (source id %s preserved).\n"+
 			"  NOTE: check the \"login:\" line above — when it says NOT restored, issue a\n"+
 			"  password-reset link with: jabali user password %s --link\n"+
-			"  Mailbox MESSAGES (Maildir bodies) are not replayed by account-restore;\n"+
-			"  migrate old mail separately.\n",
+			"  Mailbox message bodies are replayed into Stalwart (see the mail → line for\n"+
+			"  the count); a source mailbox with no messages simply shows 0.\n",
 		targetUser, sourceULID, targetUser)
 
 	// Staging cleanup (mirrors the tarball path). This also removes the staged

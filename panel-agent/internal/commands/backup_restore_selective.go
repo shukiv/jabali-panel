@@ -291,7 +291,10 @@ func applySelectiveMail(ctx context.Context, stagingRoot string, mailboxes []str
 			warnings = append(warnings, "mail "+mb+": not found in this backup — skipped")
 			continue
 		}
-		n, _, _, ierr := importOneMailbox(ctx, mb, md, migrationStagingRoots)
+		// GH #954: scope filesafe to this restore's staging dir (see
+		// backup_restore.go) — the tree lives under restore-staging, not a
+		// migration root, so migrationStagingRoots refused every open.
+		n, _, _, ierr := importOneMailbox(ctx, mb, md, []string{stagingRoot})
 		if ierr != nil {
 			warnings = append(warnings, "mail "+mb+": import: "+ierr.Error())
 			continue

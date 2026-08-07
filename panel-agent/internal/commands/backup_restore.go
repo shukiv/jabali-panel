@@ -488,7 +488,15 @@ func applyAccountRestore(
 				warnings = append(warnings, "mail: Stalwart inactive — message import skipped")
 				continue
 			}
-			impRes, impErr := importMaildirTree(ctx, mailTree, "", migrationStagingRoots)
+			// GH #954: scope filesafe to THIS restore's staging dir, not
+			// migrationStagingRoots. The mail tree materializes under
+			// /var/lib/jabali-backups/restore-staging/<job>/mail, which is NOT a
+			// migration root — so openMaildirFileInStaging refused every message
+			// file's open, and every account-restore silently imported 0 bodies
+			// (the "messages not replayed" symptom). stagingRoot is agent-owned,
+			// not tenant-writable; RESOLVE_BENEATH under it still blocks symlink
+			// escape inside the restored tree.
+			impRes, impErr := importMaildirTree(ctx, mailTree, "", []string{stagingRoot})
 			if impErr != nil {
 				warnings = append(warnings, fmt.Sprintf("mail: import: %v", impErr))
 				continue
