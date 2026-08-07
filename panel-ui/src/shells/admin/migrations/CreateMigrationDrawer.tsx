@@ -68,6 +68,7 @@ const SOURCE_DESC: Record<string, string> = {
   cloudpanel: "Live SSH — web sites, PHP, databases, cron, SSH keys (no mail)",
   cyberpanel: "Live SSH — web sites, databases, cron, SSH keys, DNS, mail",
   plesk: "Live SSH — subscriptions, WordPress, DBs (streamed), mail, DNS",
+  jabali: "Live SSH from another Jabali box — full account: files, DBs, mail bodies, cron; login + user id preserved",
   wordpress_ssh: "Cloudways / VPS / generic SSH — single WP site (files + DB + wp-config rewrite)",
   wordpress_plugin: "No SSH — jabali-migrator plugin on the source pushes over a token-authed API",
 };
@@ -104,6 +105,7 @@ const SOURCE_OPTIONS = [
   { value: "cloudpanel", label: "CloudPanel (live SSH source)" },
   { value: "cyberpanel", label: "CyberPanel (live SSH source)" },
   { value: "plesk", label: "Plesk (live SSH source)" },
+  { value: "jabali", label: "Jabali (live SSH source)" },
 ];
 
 // ─── sub-step components ───────────────────────────────────────────────────────

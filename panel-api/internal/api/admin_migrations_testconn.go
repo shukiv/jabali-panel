@@ -15,6 +15,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressplugin"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/jabali"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressssh"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -37,6 +38,10 @@ func panelDiscoverer(kind string, allowPrivate bool) migrate.Discoverer {
 		return d
 	case models.MigrationSourcePlesk:
 		d := plesk.New()
+		d.AllowPrivate = allowPrivate
+		return d
+	case models.MigrationSourceJabali: // GH #954
+		d := jabali.New()
 		d.AllowPrivate = allowPrivate
 		return d
 	}
@@ -169,6 +174,8 @@ func panelLabel(kind string) string {
 		return "HestiaCP"
 	case models.MigrationSourcePlesk:
 		return "Plesk"
+	case models.MigrationSourceJabali:
+		return "Jabali"
 	}
 	return kind
 }
