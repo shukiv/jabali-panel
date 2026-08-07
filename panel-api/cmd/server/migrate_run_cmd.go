@@ -950,9 +950,9 @@ func runJabaliImport(
 
 	fmt.Fprintf(cmd.OutOrStdout(),
 		"✓ jabali migration complete: user %s restored (source id %s preserved).\n"+
-			"  NOTE: the migrated user cannot log in yet — set a password with\n"+
-			"    jabali user password %s --link\n"+
-			"  and mailbox MESSAGES (Maildir bodies) are not replayed by account-restore;\n"+
+			"  NOTE: check the \"login:\" line above — when it says NOT restored, issue a\n"+
+			"  password-reset link with: jabali user password %s --link\n"+
+			"  Mailbox MESSAGES (Maildir bodies) are not replayed by account-restore;\n"+
 			"  migrate old mail separately.\n",
 		targetUser, sourceULID, targetUser)
 

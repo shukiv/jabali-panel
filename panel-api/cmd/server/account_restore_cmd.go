@@ -76,6 +76,15 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	fmt.Fprintf(w, "  ssh_keys:       %d\n", r.SSHKeys)
 	fmt.Fprintf(w, "  cron_jobs:      %d\n", r.CronJobs)
 	fmt.Fprintf(w, "  skipped:        %d (already present)\n", r.Skipped)
+	// GH #954: definitive login status — resolved against live Kratos after
+	// the apply, not inferred from which restore path ran.
+	if r.LoginNote != "" {
+		mark := "NOT restored"
+		if r.LoginRestored {
+			mark = "restored"
+		}
+		fmt.Fprintf(w, "  login:          %s — %s\n", mark, r.LoginNote)
+	}
 	for _, e := range r.Errors {
 		fmt.Fprintf(w, "  ERR: %s\n", e)
 	}

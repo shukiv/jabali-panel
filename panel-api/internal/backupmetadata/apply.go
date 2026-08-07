@@ -46,6 +46,13 @@ type ApplyResult struct {
 	CronJobs       int
 	Skipped        int
 	Errors         []string
+	// LoginRestored is true when the user's Kratos identity exists AND has a
+	// password credential after the apply — i.e. the account can actually sign
+	// in with its old password. When false, LoginNote says why + what to do
+	// (typically: issue a recovery link). Both are set only when a KratosClient
+	// was provided and the bundle carried a user email.
+	LoginRestored bool
+	LoginNote     string
 }
 
 // Apply walks the metadata bundle and inserts missing rows into the
@@ -449,9 +456,54 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		} else {
 			if err := d.KratosClient.ImportIdentities(ctx, []kratosclient.ExportedIdentity{exportedIdentity}); err != nil {
 				r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: import: %v", err))
+			}
+		}
+	}
+
+	// 9) Login verification (GH #954). The steps above can each half-succeed
+	// (applyUser creates an identity only when the panel hash is a usable
+	// bcrypt; the bundle's exported identity may predate credential capture;
+	// an identity may exist from a prior run). Resolve the ground truth —
+	// does an identity exist for this email, and does it hold a password? —
+	// so the operator gets a definitive login status instead of a swallowed
+	// warning, and a fresh (password-less) identity is minted when none
+	// exists so a recovery link can actually be issued.
+	if d.KratosClient != nil && m.User.Email != "" {
+		username := ""
+		if m.User.Username != nil {
+			username = *m.User.Username
+		}
+		id, err := d.KratosClient.IdentityIDByEmail(ctx, m.User.Email)
+		switch {
+		case err != nil:
+			r.LoginNote = fmt.Sprintf("kratos lookup failed (%v) — verify Kratos is up, then issue a recovery link", err)
+		case id == "":
+			// No identity at all. Mint one so the account is recoverable:
+			// with the panel bcrypt when the bundle carried a usable one
+			// (login works immediately), otherwise credential-less (login
+			// needs a recovery link).
+			pwd := m.User.PasswordHash
+			if pwd != "" && pwd != "!" && len(pwd) >= 59 {
+				traits := kratosclient.AdminTraits{Email: m.User.Email, Username: username, IsAdmin: m.User.IsAdmin}
+				if _, cerr := d.KratosClient.CreateIdentityWithPassword(ctx, traits, pwd); cerr == nil || errors.Is(cerr, kratosclient.ErrIdentityExisted) {
+					r.LoginRestored = true
+					r.LoginNote = "identity created with the preserved password — the user signs in with their old password"
+				} else {
+					r.LoginNote = fmt.Sprintf("identity create failed (%v) — issue a recovery link after fixing", cerr)
+				}
 			} else {
-				// Successfully imported Kratos identity
-				r.UserCreated = true // User was restored to Kratos
+				r.LoginNote = "no identity and no usable password hash in the bundle — issue a recovery link: jabali user password " + username + " --link"
+			}
+		default:
+			hasPW, herr := d.KratosClient.IdentityHasPassword(ctx, id)
+			switch {
+			case herr != nil:
+				r.LoginNote = fmt.Sprintf("identity %s present but password check failed (%v)", id, herr)
+			case hasPW:
+				r.LoginRestored = true
+				r.LoginNote = "identity present with a password credential — the user signs in with their old password"
+			default:
+				r.LoginNote = "identity present but has NO password credential — issue a recovery link: jabali user password " + username + " --link"
 			}
 		}
 	}
