@@ -354,6 +354,12 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
+	// GH #953: make OpenCart's Twig loader compatible with jabali's per-user
+	// open_basedir confinement before it ever renders a page.
+	if err := patchOpenCartOpenBasedir(ctx, req.OSUser, installPath); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("patch twig open_basedir: %v", err)}
+	}
+
 	if err := runOpenCartCLIInstaller(ctx, req, installPath); err != nil {
 		// Best-effort cleanup so re-install works.
 		_ = exec.CommandContext(ctx, "rm", "-f",
@@ -372,6 +378,47 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 
 	return opencartInstallResp{Version: opencartVersion}, nil
+}
+
+// rewriteOpenCartTwigLoader rewrites OpenCart's hardcoded Twig base path (GH
+// #953). OpenCart 4.x builds its loader as
+//
+//	new \Twig\Loader\FilesystemLoader('/', $this->root)
+//
+// using "/" as the base search path. Under jabali's per-user open_basedir
+// confinement, PHP's is_dir('/') is denied, so every storefront and admin page
+// dies with `open_basedir restriction in effect. File(/) ... The "/" directory
+// does not exist`. $this->root is already the install web root — inside the
+// user's home, hence inside open_basedir — so pointing the loader at it renders
+// correctly while leaving the hardening intact (absolute template paths, which
+// OpenCart passes at render time, resolve the same either way).
+//
+// Returns the rewritten content and whether a change was made. A miss (upstream
+// changed the construction) is a no-op, not an error — we never guess at a
+// shape we don't recognise.
+func rewriteOpenCartTwigLoader(content string) (string, bool) {
+	const oldLoader = `new \Twig\Loader\FilesystemLoader('/', $this->root)`
+	const newLoader = `new \Twig\Loader\FilesystemLoader($this->root, $this->root)`
+	if !strings.Contains(content, oldLoader) {
+		return content, false
+	}
+	return strings.Replace(content, oldLoader, newLoader, 1), true
+}
+
+// patchOpenCartOpenBasedir applies rewriteOpenCartTwigLoader to the installed
+// system/library/template/twig.php, writing it back as the OS user. Idempotent
+// and a no-op when the marker is absent (already patched / upstream changed).
+func patchOpenCartOpenBasedir(ctx context.Context, osUser, installPath string) error {
+	twigPath := filepath.Join(installPath, "system", "library", "template", "twig.php")
+	raw, err := os.ReadFile(twigPath) // #nosec G304 — fixed path under the validated install root
+	if err != nil {
+		return fmt.Errorf("read twig.php: %w", err)
+	}
+	patched, changed := rewriteOpenCartTwigLoader(string(raw))
+	if !changed {
+		return nil
+	}
+	return dokuwikiWriteUserFile(ctx, osUser, twigPath, patched, "0644")
 }
 
 func init() {
