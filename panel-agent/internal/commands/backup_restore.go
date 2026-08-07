@@ -49,7 +49,16 @@ type backupRestoreParams struct {
 	Overwrite      bool              `json:"overwrite"`
 	RepoURL        string            `json:"repo_url,omitempty"`
 	CredentialsRef string            `json:"credentials_ref,omitempty"`
-	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
+	// PasswordFile lets the caller point restic at a repo password other
+	// than the box-wide /etc/jabali-panel/restic-repo.password. GH #954
+	// (Jabali→Jabali migration): the pulled source repo is encrypted with
+	// the SOURCE box's restic password, so the import stages it and passes
+	// that password's path here — reading the foreign repo without rekeying
+	// it. Empty falls back to the box-wide file (every existing caller).
+	// Exact parity with backup.account_list_manifests, which already threads
+	// this field.
+	PasswordFile string            `json:"password_file,omitempty"`
+	SFTP         *backupSFTPInputs `json:"sftp,omitempty"`
 	// ApplyStaged: when false the handler stops after materializing
 	// stages into /var/lib/jabali-backups/restore-staging/<job_id>/
 	// (recon mode). Default true → home+db are applied onto the live
@@ -118,7 +127,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
 
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.SFTP)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

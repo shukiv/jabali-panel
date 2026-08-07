@@ -43,6 +43,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cyberpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/jabali"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressplugin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/wordpressssh"
@@ -174,6 +175,20 @@ live source SSH. Use scp directly for that kind.`,
 			// API (no SSH). Stages dump.sql + files.tar.gz, then operator-gated.
 			if job.SourceKind == models.MigrationSourceWordPressPlugin {
 				if err := pullWordPressPlugin(ctx, job, secret, localDir, allowPrivate, repo); err != nil {
+					return markPullFailed(err)
+				}
+				return nil
+			}
+
+			// GH #954 jabali: Path-Y transport. Drive the source's OWN jabali CLI
+			// to produce a restic account_backup, pull the repo + its box password
+			// into staging, then STOP — the import arm restores it via the DR
+			// account-restore path (reads the foreign-password repo through
+			// backup.restore's password_file field; no rekey). Non-tarball shaped,
+			// so it's handled here before the tarball switch, like the wordpress
+			// kinds above.
+			if job.SourceKind == models.MigrationSourceJabali {
+				if err := pullJabali(ctx, sshUser, job, secret, localDir, allowPrivate, repo); err != nil {
 					return markPullFailed(err)
 				}
 				return nil
@@ -622,6 +637,103 @@ func readPluginToken(path string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("PLUGIN_TOKEN not found in secret file")
+}
+
+// pullJabali (GH #954) drives a Jabali source over SSH to back up one account
+// into a throwaway restic destination, streams that repo + the source box's
+// restic password into the job staging dir, then stops in validating state. The
+// dest-side import arm (runJabaliImport) restores it via the DR account-restore
+// path. Read-only on the source EXCEPT the per-job throwaway
+// destination/schedule/repo, which CleanupSource removes before returning.
+func pullJabali(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool, repo repository.MigrationJobRepository) error {
+	d := jabali.New()
+	d.AllowPrivate = allowPrivate
+	d.Port = srcSSHPort(job)
+	sess, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
+	if err != nil {
+		return fmt.Errorf("jabali.Connect: %w", err)
+	}
+	defer func() { _ = d.Close(ctx, sess) }()
+
+	_ = repo.UpdateState(ctx, job.ID, models.MigrationStateAnalyzing, nil)
+	stAnalyze := wpMigStartStage(ctx, repo, job.ID, "analyze")
+
+	fmt.Printf("  → running source account_backup for %s (restic; may take many minutes for a large account)...\n", job.SourceUser)
+	sb, err := jabali.RunSourceBackup(ctx, sess, job.SourceUser, job.ID)
+	// Always attempt cleanup of the throwaway source dest/schedule/repo, even on
+	// error (RunSourceBackup returns the partial SourceBackup so we can). Use a
+	// fresh context so a cancelled/expired ctx doesn't skip cleanup and leave a
+	// broken daily schedule on the source.
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		for _, e := range jabali.CleanupSource(cleanupCtx, sess, sb) {
+			fmt.Printf("  (warning: source cleanup: %v)\n", e)
+		}
+	}()
+	if err != nil {
+		return fmt.Errorf("source account_backup: %w", err)
+	}
+
+	// Stream the source restic repo back + read its box password.
+	repoTar := filepath.Join(localDir, "jabali-repo.tar.gz")
+	fmt.Printf("  → pulling source restic repo...\n")
+	if err := jabali.PullRepo(ctx, sess, sb.RepoDir, repoTar); err != nil {
+		return fmt.Errorf("pull source repo: %w", err)
+	}
+	boxPW, err := jabali.ReadBoxPassword(ctx, sess)
+	if err != nil {
+		return err
+	}
+
+	// Extract the repo into <localDir>/repo (disk preflight first).
+	repoDir := filepath.Join(localDir, "repo")
+	if err := os.MkdirAll(repoDir, 0o750); err != nil {
+		return fmt.Errorf("mkdir repo dir: %w", err)
+	}
+	if derr := migrate.CheckExtractDiskSpace(repoTar, repoDir); derr != nil {
+		return fmt.Errorf("disk preflight before repo extract: %w", derr)
+	}
+	if err := migrate.ExtractTarGz(repoTar, repoDir); err != nil {
+		return fmt.Errorf("extract source repo: %w", err)
+	}
+	_ = os.Remove(repoTar) // extracted; the tarball is now redundant
+
+	// Persist the source box password to staging (0600) for the import arm's
+	// password_file. It never crosses the agent socket — the agent runs as root
+	// and reads this jabali-owned staging file directly. NOTE: on a FAILED import
+	// the staging (incl. this password) is kept for retry (GH #746), so the
+	// source's restic password lingers on disk until retry/reaper — same exposure
+	// class as the SSH secret in migration-secrets/<job>.env, and staging already
+	// holds the account data itself.
+	pwPath := filepath.Join(localDir, "source-restic.password")
+	if err := os.WriteFile(pwPath, []byte(boxPW), 0o600); err != nil {
+		return fmt.Errorf("write source password: %w", err)
+	}
+
+	wpMigDoneStage(ctx, repo, stAnalyze)
+	_ = repo.UpdateState(ctx, job.ID, models.MigrationStateValidating, nil)
+	fmt.Printf("  → source account staged (restic repo at %s)\n", repoDir)
+
+	// Auto-kick the import so the operator's "discover → continue → done"
+	// expectation lands at done, not at validating-with-repo. Best-effort: a
+	// dispatch failure leaves the job staged so a manual `jabali migrate import`
+	// still works. The import arm's collision preflight makes auto-kick safe.
+	if sharedAgent != nil {
+		kickCtx, kickCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer kickCancel()
+		if _, err := sharedAgent.Call(kickCtx, "migration.import_run", map[string]any{
+			"job_id":      job.ID,
+			"target_user": job.SourceUser,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"  (warning: could not auto-kick import: %v — run `jabali migrate import --job-id %s` manually)\n",
+				err, job.ID)
+		} else {
+			fmt.Printf("  → import dispatched (systemd unit jabali-migrate-import-%s.service)\n", job.ID)
+		}
+	}
+	return nil
 }
 
 func pullDirectAdmin(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
