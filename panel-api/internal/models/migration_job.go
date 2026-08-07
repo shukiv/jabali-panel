@@ -53,6 +53,12 @@ const (
 	// are part of the manifest. Restore reuses the cpanel writers via cpmove
 	// synthesis (DirectAdmin/CloudPanel strategy).
 	MigrationSourceCyberPanel = "cyberpanel"
+	// MigrationSourceJabali (GH #954) — migrate a hosting account from ANOTHER
+	// Jabali install. The source is itself a Jabali box, so discovery talks to
+	// its own `jabali … list --json` CLI over SSH (version-tolerant, authoritative)
+	// rather than screen-scraping a foreign schema. One source account = one
+	// non-admin Jabali user, which maps 1:1 onto a destination user.
+	MigrationSourceJabali = "jabali"
 )
 
 // MigrationState is the per-job lifecycle. Stage transitions are
