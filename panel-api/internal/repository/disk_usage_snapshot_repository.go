@@ -18,6 +18,9 @@ type DiskUsageSnapshotRepository interface {
 	Get(ctx context.Context, userID string) (*models.DiskUsageSnapshot, error)
 	// Upsert writes (or replaces) the user's snapshot.
 	Upsert(ctx context.Context, userID, payload string, computedAt time.Time) error
+	// ListAll returns every stored snapshot — one batch read for the
+	// automation bulk-usage endpoint (ADR-0164; never per-user N+1).
+	ListAll(ctx context.Context) ([]models.DiskUsageSnapshot, error)
 }
 
 type diskUsageSnapshotRepo struct{ db *gorm.DB }
@@ -51,4 +54,12 @@ func (r *diskUsageSnapshotRepo) Upsert(ctx context.Context, userID, payload stri
 		Columns:   []clause.Column{{Name: "user_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"payload", "computed_at", "updated_at"}),
 	}).Create(&s).Error
+}
+
+func (r *diskUsageSnapshotRepo) ListAll(ctx context.Context) ([]models.DiskUsageSnapshot, error) {
+	var rows []models.DiskUsageSnapshot
+	if err := r.db.WithContext(ctx).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

@@ -25,6 +25,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -430,6 +431,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				BackupJobs:  automationBackupJobs(deps.DB),
 				BackupDests: automationBackupDests(deps.DB),
 				Notify:      automationNotifier(deps.NotificationQueue),
+				// ADR-0164 billing endpoints: account lifecycle shares the
+				// userops write path with the GUI handlers; usage reads stay
+				// snapshot/bw_daily-only (never the agent).
+				Packages:         deps.Packages,
+				Databases:        deps.Databases,
+				DatabaseUsers:    deps.DatabaseUsers,
+				DockerApps:       deps.DockerApps,
+				KratosClient:     deps.KratosClient,
+				LimitsReconciler: automationLimitsReconciler(deps.Reconciler),
+				DomainReconciler: automationDomainReconciler(deps.Reconciler),
+				DiskSnapshots:    repository.NewDiskUsageSnapshotRepository(deps.DB),
+				BWDaily:          deps.BWDaily,
+				Log:              deps.Log,
 			})
 		}
 
@@ -1398,6 +1412,23 @@ func cacheHMACSecret() string {
 }
 
 // automationOps builds the JAB-140 async-operation repo (nil when no DB).
+// automationLimitsReconciler / automationDomainReconciler adapt the concrete
+// reconciler to the narrow userops interfaces WITHOUT boxing a typed nil
+// into the interface (the != nil guard would pass, then SIGSEGV — HANDOFF §9).
+func automationLimitsReconciler(r *reconciler.Reconciler) userops.LimitsReconciler {
+	if r == nil {
+		return nil
+	}
+	return r
+}
+
+func automationDomainReconciler(r *reconciler.Reconciler) userops.DomainReconciler {
+	if r == nil {
+		return nil
+	}
+	return r
+}
+
 func automationOps(db *gorm.DB) repository.AutomationOperationRepository {
 	if db == nil {
 		return nil

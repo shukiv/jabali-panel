@@ -133,6 +133,8 @@ var AllowedAutomationScopes = []string{
 	"read:applications",
 	"read:status",
 	"read:mail",
+	// ADR-0164: hosting-package list for billing-panel product mapping.
+	"read:packages",
 	// JAB-140 write scopes — least-privilege, independent of read. read:* does
 	// NOT imply any write scope (Has() wildcard is prefix-scoped).
 	"write:*",

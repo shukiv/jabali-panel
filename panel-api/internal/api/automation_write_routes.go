@@ -64,6 +64,9 @@ func registerAutomationWrites(g *gin.RouterGroup, cfg AutomationConfig) {
 		caps = append(caps, capability{"backups.create", "POST", "/automation/backups", "write:backups", true})
 	}
 
+	// ADR-0164 billing endpoints (account lifecycle + usage + packages).
+	caps = append(caps, registerAutomationBilling(g, cfg, wl)...)
+
 	// GET /automation/capabilities — any valid token. Lets Sounder show only
 	// the actions this server actually mounts + stay forward-compatible.
 	g.GET("/capabilities", func(c *gin.Context) {
