@@ -1,17 +1,19 @@
-# Bulwark Webmail 1.7.8 standalone tarball SHA-256.
-# Source: https://github.com/bulwarkmail/webmail/releases/tag/1.7.8
-#   asset: bulwark-standalone-1.7.8-linux-amd64.tar.gz
-# Captured 2026-07-23 directly from the GitHub release artifact (monthly review
-# #625). 1.7.8 (2026-07-22): Unified Mailbox, Category Tabs, Collapsible Quoted
-# Replies, Arabic translation, expanded plugin APIs.
+# Bulwark Webmail 1.8.0 standalone tarball SHA-256.
+# Source: https://github.com/bulwarkmail/webmail/releases/tag/1.8.0
+#   asset: bulwark-standalone-1.8.0-linux-amd64.tar.gz
+# Captured 2026-08-08 directly from the GitHub release artifact.
+# 1.8.0 (2026-08-06): fixes the stale account chip after mailbox impersonation
+# (bulwarkmail/webmail#697, GH #646) — the handoff now drops the browser-cached
+# account list so the top-left chip follows the impersonated mailbox.
 #
 # Bulwark ships a prebuilt "standalone" Next.js tarball (server.js +
 # node_modules + .next), so we no longer git-clone + `npm ci` +
 # `npm run build`. install_bulwark() downloads this tarball, verifies
 # the SHA below, and extracts it.
 #
-# To re-capture on a version bump:
+# To re-capture on a version bump (BOTH the version in install.sh AND this
+# checksum must change together — a version bump alone fails SHA verification):
 #   curl -sSL https://github.com/bulwarkmail/webmail/releases/download/<v>/bulwark-standalone-<v>-linux-amd64.tar.gz | sha256sum
 # Paste the returned 64-char hex below. install.sh `_die`s if the
 # placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY survives.
-db461aec112b071b2db69a9a0b5b29c2ec53f692cb8a500b221cb95c85fcefb7
+df4f5f215735ef1768ed54c3e6b516ea7b3352add19a9f9f6627cf8c48529de4

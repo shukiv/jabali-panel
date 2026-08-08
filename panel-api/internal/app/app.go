@@ -401,6 +401,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// group so the path matcher hits the unauth group first.
 		if deps.AutomationTokens != nil && deps.SSOKey != nil {
 			autoGroup := r.Group("/api/v1")
+			// GH #331: the Automation API is a headless write path that mounts
+			// OUTSIDE the v1 group, so it needs its own DR-standby guard — a
+			// standby's DB is a replica, and an automation-driven provisioning
+			// write here would diverge from the primary and be discarded by the
+			// next sync. Reads (read:status/read:mail) stay allowed (the guard
+			// only blocks mutating methods). Nil ServerSettings (tests) → ungated.
+			if deps.ServerSettings != nil {
+				autoGroup.Use(middleware.StandbyReadOnly(deps.ServerSettings, deps.Log))
+			}
 			api.RegisterAutomation(autoGroup, api.AutomationConfig{
 				AutomationTokens: deps.AutomationTokens,
 				Key:              deps.SSOKey,
@@ -479,6 +488,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// M49 — record one audit event per mutating request (never
 		// the body). No-op when AuditRecorder is nil (no Redis).
 		v1.Use(middleware.AuditRecord(deps.AuditRecorder))
+
+		// GH #331 — DR standby read-only guard. When this box is a standby its
+		// panel DB is a replica; refuse tenant-mutating writes (they'd diverge
+		// and be overwritten by the next sync). No-op on a primary (the default),
+		// so every normal install is unaffected.
+		if deps.ServerSettings != nil {
+			v1.Use(middleware.StandbyReadOnly(deps.ServerSettings, deps.Log))
+		}
 
 		// M353 Phase 1 (GH #353): module guards. A disabled module's routes must
 		// 409, not just be hidden in the UI. Build one guard factory (shared TTL
@@ -1031,6 +1048,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:          deps.Agent,
 				Jobs:           deps.BackupJobs,
 				Destinations:   deps.BackupDestinations,
+				SSOKey:         deps.SSOKey,
 				Users:          deps.Users,
 				Packages:       deps.Packages,
 				Databases:      deps.Databases,

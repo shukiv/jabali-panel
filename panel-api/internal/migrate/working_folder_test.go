@@ -19,6 +19,9 @@ func (f *fakeServerSettings) Get(_ context.Context) (*models.ServerSettings, err
 	return f.row, f.err
 }
 func (f *fakeServerSettings) SetDigestLastSent(context.Context, string) error { return nil }
+func (f *fakeServerSettings) RecordDRSync(context.Context, string, string, string) error {
+	return nil
+}
 func (f *fakeServerSettings) Upsert(_ context.Context, _ *models.ServerSettings) error {
 	return nil
 }

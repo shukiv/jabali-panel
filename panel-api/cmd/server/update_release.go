@@ -265,6 +265,23 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 		log("release: installed %s", dst)
 	}
 
+	// 6a. jabali-sendmail (JAB-230) — the PHP mail() shim, installed to
+	//     libexec (FPM workers exec it via sendmail_path; not operator PATH).
+	//     Best-effort presence check: older tarballs predate the binary and
+	//     must not fail the whole update.
+	if src := filepath.Join(extractDir, "bin", "jabali-sendmail"); func() bool {
+		_, err := os.Stat(src)
+		return err == nil
+	}() {
+		_ = os.MkdirAll("/usr/local/libexec/jabali", 0o755)
+		if err := installBinaryAtomic(src, "/usr/local/libexec/jabali/jabali-sendmail"); err != nil {
+			return false, "", fmt.Errorf("release: install jabali-sendmail: %w", err)
+		}
+		log("release: installed /usr/local/libexec/jabali/jabali-sendmail")
+	} else {
+		log("release: tarball has no bin/jabali-sendmail (older release) — PHP mail() shim skipped")
+	}
+
 	// 6b. Install the bundled WordPress plugins (GH #406). The agent installs
 	//     jabali-cache FROM /usr/local/share/jabali/wp-plugins; ship it in the
 	//     tarball so the release-update path matches the source-build bundle.

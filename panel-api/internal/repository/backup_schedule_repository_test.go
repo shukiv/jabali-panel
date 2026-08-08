@@ -85,8 +85,10 @@ func TestBackupSchedule_Update_PersistsContent(t *testing.T) {
 	repo := NewBackupScheduleRepository(db)
 
 	mock.ExpectBegin()
-	// Fails if `content` is missing from the SET clause (the bug).
-	mock.ExpectExec("UPDATE .backup_schedules. SET .content.=").
+	// Fails if `content` is missing from the SET clause (the bug). GORM orders
+	// the map columns alphabetically, so `content` no longer sits right after
+	// SET (`cadence` precedes it since GH #454 7B) — match it anywhere in SET.
+	mock.ExpectExec("UPDATE .backup_schedules. SET .*.content.=").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

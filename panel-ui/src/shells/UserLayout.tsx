@@ -8,6 +8,7 @@ import { LeftOutlined, RightOutlined } from "@icons";
 import { ConfigProvider, Drawer, Grid, Layout, Menu, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
+import { DRStandbyBanner } from "../components/DRStandbyBanner";
 import { JabaliFooter } from "../components/JabaliFooter";
 import { ImpersonationBanner } from "../components/ImpersonationBanner";
 import { JabaliHeader } from "../components/JabaliHeader";
@@ -187,6 +188,7 @@ export function UserLayout() {
               overflowX: "hidden",
             }}
           >
+            <DRStandbyBanner />
             <BreadcrumbProvider>
               <RouteBreadcrumb nav={userNav} homePath="/jabali-panel/dashboard" homeLabel="Dashboard" />
               <Outlet />

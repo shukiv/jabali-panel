@@ -129,6 +129,7 @@ func (r *backupScheduleRepo) Update(ctx context.Context, s *models.BackupSchedul
 			"include_system_backup": s.IncludeSystemBackup,
 			"cron_expr":             s.CronExpr,
 			"content":               s.Content,
+			"cadence":               s.Cadence,
 			"enabled":               s.Enabled,
 			"keep_daily":            s.KeepDaily,
 			"keep_weekly":           s.KeepWeekly,

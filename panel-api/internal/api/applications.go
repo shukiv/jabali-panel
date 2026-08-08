@@ -1104,6 +1104,102 @@ func createITFlowCrons(ctx context.Context, args itflowKickArgs, cfg Application
 	}
 }
 
+// osticketKickArgs bundles the osTicket install inputs (GH #962, JAB-231).
+type osticketKickArgs struct {
+	InstallID     string
+	UserID        string
+	OSUser        string
+	DocRoot       string
+	SiteURL       string
+	DBName        string
+	DBUser        string
+	DBPassword    string
+	HelpdeskName  string
+	HelpdeskEmail string
+	AdminFirst    string
+	AdminLast     string
+	AdminEmail    string
+	AdminUsername string
+	AdminPass     string
+}
+
+// createOsTicketInstallAndKickAgent flips the row to "installing", installs
+// osTicket via the agent (download + headless Installer->install() + nginx
+// PATH_INFO snippet), auto-creates the osTicket cron, and flips the row to
+// "ready"/"failed".
+func createOsTicketInstallAndKickAgent(parentCtx context.Context, args osticketKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":       "osticket",
+		"os_user":        args.OSUser,
+		"docroot":        args.DocRoot,
+		"site_url":       args.SiteURL,
+		"db_name":        args.DBName,
+		"db_user":        args.DBUser,
+		"db_password":    args.DBPassword,
+		"db_host":        "localhost",
+		"helpdesk_name":  args.HelpdeskName,
+		"helpdesk_email": args.HelpdeskEmail,
+		"admin_first":    args.AdminFirst,
+		"admin_last":     args.AdminLast,
+		"admin_email":    args.AdminEmail,
+		"admin_username": args.AdminUsername,
+		"admin_pass":     args.AdminPass,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+
+	// osTicket cron (email fetch + scheduled tasks). Best-effort: the app is
+	// already installed + usable; a cron failure is logged, not fatal.
+	createOsTicketCron(ctx, args, cfg)
+
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// createOsTicketCron registers osTicket's api/cron.php (every 5 minutes).
+func createOsTicketCron(ctx context.Context, args osticketKickArgs, cfg ApplicationHandlerConfig) {
+	if cfg.CronJobs == nil || cfg.Users == nil || cfg.Domains == nil {
+		return
+	}
+	installPath := appInstallPath(args.DocRoot, "")
+	deps := cronops.Deps{Users: cfg.Users, Domains: cfg.Domains, CronJobs: cfg.CronJobs, Agent: cfg.Agent}
+	cmd := fmt.Sprintf("php %s/api/cron.php", installPath)
+	if _, err := cronops.Create(ctx, deps, cronops.CreateInput{
+		UserID:   args.UserID,
+		Name:     "osTicket Cron",
+		Schedule: "*/5 * * * *",
+		Command:  cmd,
+		Enabled:  true,
+	}); err != nil {
+		slog.WarnContext(ctx, "osticket: create cron failed", "command", cmd, "err", err)
+	}
+}
+
 // removeITFlowCrons tears down the ITFlow cron jobs for an install on
 // delete. Matches by command path (`php <installPath>/cron/`) since crons
 // aren't FK-linked to the install. Best-effort.

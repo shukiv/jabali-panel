@@ -28,6 +28,7 @@ const (
 	screenWelcome screen = iota
 	screenProfile
 	screenModules
+	screenHostname // JAB-213: free jabalihosted.com hostname vs bring-your-own
 	screenConfig
 	screenConfirm
 	screenInstalling
@@ -274,6 +275,8 @@ type Model struct {
 	focus     int
 	configErr string
 
+	fh fhModel // JAB-213 free-hostname screen state
+
 	Confirmed bool
 	Aborted   bool
 	ExitCode  int
@@ -300,6 +303,7 @@ func New(installSh string, dryRun bool) Model {
 		spinner:   sp,
 		logHidden: true, // log hidden by default; press 'l' to reveal
 		fields:    newConfigFields(defaultHostname()),
+		fh:        newFHModel(),
 	}
 }
 
@@ -396,6 +400,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.screen = screenResult
 		return m, nil
+	case fhCodeSentMsg:
+		m.fh.stage = fhCode
+		m.fh.errMsg = ""
+		m.fh.code.SetValue("")
+		return m, m.fh.code.Focus()
+	case fhClaimedMsg:
+		m.fh.fqdn, m.fh.label, m.fh.token = msg.fqdn, msg.label, msg.token
+		if err := m.fh.writeCredential(); err != nil {
+			m.fh.stage = fhCode
+			m.fh.errMsg = "could not save the credential: " + err.Error()
+			return m, nil
+		}
+		// Hand install.sh a normal hostname; the credential file + slice step
+		// wire up the heartbeat + cert.
+		setHostnameField(m.fields, msg.fqdn)
+		m.screen = screenConfig
+		m.focus = 0
+		m.configErr = ""
+		return m, m.focusField(0)
+	case fhErrMsg:
+		if m.fh.stage == fhWorking {
+			// return to whichever entry stage we came from
+			if m.fh.fqdn == "" && m.fh.code.Value() == "" {
+				m.fh.stage = fhEmail
+			} else {
+				m.fh.stage = fhCode
+			}
+		}
+		m.fh.errMsg = msg.msg
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		// The progress bar was a fixed 46 columns, which overflowed and wrapped
@@ -423,6 +457,84 @@ func (m *Model) focusField(i int) tea.Cmd {
 		}
 	}
 	return textinput.Blink
+}
+
+// handleHostnameKey drives the JAB-213 free-hostname screen: a choice between
+// a free jabalihosted.com hostname and bringing your own, then an email + code
+// verification sub-flow that calls the hostname service.
+func (m Model) handleHostnameKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.fh.stage {
+	case fhChoice:
+		switch key.String() {
+		case "up", "k", "down", "j":
+			m.fh.choice = 1 - m.fh.choice
+		case "b", "left", "backspace":
+			m.screen = screenModules
+		case "enter":
+			if m.fh.choice == 1 { // bring your own → normal config
+				m.screen = screenConfig
+				m.focus = 0
+				m.configErr = ""
+				return m, m.focusField(0)
+			}
+			m.fh.stage = fhEmail
+			m.fh.errMsg = ""
+			return m, m.fh.email.Focus()
+		}
+	case fhEmail:
+		switch key.String() {
+		case "esc", "b":
+			m.fh.stage = fhChoice
+			return m, nil
+		case "enter":
+			email := strings.TrimSpace(m.fh.email.Value())
+			if !emailRe.MatchString(email) {
+				m.fh.errMsg = "enter a valid email address"
+				return m, nil
+			}
+			m.fh.stage = fhWorking
+			m.fh.busy = "sending code…"
+			m.fh.errMsg = ""
+			return m, m.fh.registerCmd(email)
+		default:
+			var cmd tea.Cmd
+			m.fh.email, cmd = m.fh.email.Update(key)
+			return m, cmd
+		}
+	case fhCode:
+		switch key.String() {
+		case "esc", "b":
+			m.fh.stage = fhEmail
+			return m, m.fh.email.Focus()
+		case "enter":
+			code := strings.TrimSpace(m.fh.code.Value())
+			if len(code) != 6 {
+				m.fh.errMsg = "the code is 6 digits"
+				return m, nil
+			}
+			m.fh.stage = fhWorking
+			m.fh.busy = "verifying…"
+			m.fh.errMsg = ""
+			return m, m.fh.claimCmd(strings.TrimSpace(m.fh.email.Value()), code)
+		default:
+			var cmd tea.Cmd
+			m.fh.code, cmd = m.fh.code.Update(key)
+			return m, cmd
+		}
+	}
+	return m, nil
+}
+
+// setHostnameField writes the claimed FQDN into the hostname config field and
+// re-derives the untouched admin/ns fields from it.
+func setHostnameField(fields []configField, fqdn string) {
+	for i := range fields {
+		if fields[i].env == "JABALI_HOSTNAME" {
+			fields[i].input.SetValue(fqdn)
+			fields[i].touched = true
+		}
+	}
+	applyDerived(fields, fqdn)
 }
 
 // handleConfigKey drives the config screen: tab/↑↓ move between the visible
@@ -556,11 +668,14 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.selected = modules.Resolve(m.selected, mod.Key)
 			}
 		case "enter":
-			m.screen = screenConfig
-			m.focus = 0
-			m.configErr = ""
-			return m, m.focusField(0)
+			m.screen = screenHostname
+			m.fh.stage = fhChoice
+			m.fh.choice = 0
+			m.fh.errMsg = ""
+			return m, nil
 		}
+	case screenHostname:
+		return m.handleHostnameKey(key)
 	case screenConfig:
 		return m.handleConfigKey(key)
 	case screenConfirm:
@@ -683,6 +798,40 @@ func (m Model) body() string {
 		}
 		b.WriteString("\n" + helpStyle.Render(m.wrap("tab/↑↓: move fields   ←→+space: toggle PHP   "+
 			"enter: continue   esc: back")))
+	case screenHostname:
+		b.WriteString(titleStyle.Render("Panel hostname"))
+		b.WriteString("\n\n")
+		switch m.fh.stage {
+		case fhChoice:
+			opts := []string{
+				"Free Jabali hostname   (auto DNS + TLS, e.g. 203-0-113-7.jabalihosted.com)",
+				"Enter my own domain    (you point DNS at this server)",
+			}
+			for i, o := range opts {
+				cursor := "  "
+				render := offStyle.Render
+				if i == m.fh.choice {
+					cursor = onStyle.Render("> ")
+					render = onStyle.Render
+				}
+				b.WriteString(cursor + render(o) + "\n")
+			}
+			b.WriteString("\n" + helpStyle.Render(m.wrap("↑↓: choose   enter: continue   b: back")))
+		case fhEmail:
+			b.WriteString(m.wrap("We email a one-time code to verify the address "+
+				"(stored only to contact you about the hostname).") + "\n\n")
+			b.WriteString(onStyle.Render("Email") + "\n  " + m.fh.email.View() + "\n")
+			b.WriteString("\n" + helpStyle.Render("enter: send code   esc: back"))
+		case fhCode:
+			b.WriteString(m.wrap("Enter the 6-digit code sent to "+m.fh.email.Value()) + "\n\n")
+			b.WriteString(onStyle.Render("Code") + "\n  " + m.fh.code.View() + "\n")
+			b.WriteString("\n" + helpStyle.Render("enter: activate   esc: change email"))
+		case fhWorking:
+			b.WriteString(m.spinner.View() + " " + m.fh.busy)
+		}
+		if m.fh.errMsg != "" {
+			b.WriteString("\n" + errStyle.Render(m.fh.errMsg) + "\n")
+		}
 	case screenConfirm:
 		b.WriteString(titleStyle.Render("Confirm"))
 		b.WriteString("\n\n" + m.wrap("Core: web (nginx + PHP-FPM), database (MariaDB), panel + auth") +

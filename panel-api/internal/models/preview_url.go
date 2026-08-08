@@ -16,11 +16,15 @@ func PreviewSlug(domainName string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSuffix(domainName, ".")), ".", "-")
 }
 
+// FreeHostnameBase is the base domain of the Jabali free-hostname service
+// (JAB-213). A panel whose hostname is <label>.jabalihosted.com gets its DNS
+// + TLS from that service.
+const FreeHostnameBase = "jabalihosted.com"
+
 // EffectivePreviewBase resolves the base every preview host hangs off:
 // server_settings.preview_base when set (GH #836 — custom domain or
-// magic-DNS base like 203-0-113-7.sslip.io), else the derived
-// "preview.<hostname>". Empty when neither is configured — callers skip
-// preview wiring entirely in that case.
+// magic-DNS base like 203-0-113-7.sslip.io), else the derived default. Empty
+// when neither is configured — callers skip preview wiring entirely.
 func EffectivePreviewBase(srv *ServerSettings) string {
 	if srv == nil {
 		return ""
@@ -28,10 +32,20 @@ func EffectivePreviewBase(srv *ServerSettings) string {
 	if b := NormalizePreviewBase(srv.PreviewBase); b != "" {
 		return b
 	}
-	if srv.Hostname == "" {
+	host := strings.TrimSuffix(strings.ToLower(srv.Hostname), ".")
+	if host == "" {
 		return ""
 	}
-	return "preview." + strings.TrimSuffix(strings.ToLower(srv.Hostname), ".")
+	// JAB-213: on a free jabalihosted.com hostname, previews must sit EXACTLY
+	// one label under <label>.jabalihosted.com — the service's wildcard A
+	// (*.<label>) and the wildcard cert both cover a single label only, so
+	// "<slug>.<label>.jabalihosted.com" resolves + is certified, whereas the
+	// normal "preview.<hostname>" default would be two labels deep and covered
+	// by neither. So the preview base IS the hostname itself here.
+	if strings.HasSuffix(host, "."+FreeHostnameBase) {
+		return host
+	}
+	return "preview." + host
 }
 
 // NormalizePreviewBase canonicalises operator input: lowercase, no

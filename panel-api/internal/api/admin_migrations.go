@@ -282,7 +282,9 @@ func isKnownSourceKind(s string) bool {
 		models.MigrationSourceWordPressPlugin, // GH #648
 		models.MigrationSourceIMAP,            // GH #390/#374
 		models.MigrationSourcePlesk,           // GH #429
-		models.MigrationSourceCloudPanel:      // GH #522
+		models.MigrationSourceCloudPanel,      // GH #522
+		models.MigrationSourceCyberPanel,      // GH #522 follow-on (was wired end-to-end but never added here → wizard create 400'd)
+		models.MigrationSourceJabali:          // GH #954
 		return true
 	}
 	return false

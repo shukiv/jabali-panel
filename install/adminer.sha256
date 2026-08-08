@@ -1,0 +1,6 @@
+# Adminer 4.8.1 — served on the panel vhost behind jabali SSO with full
+# database access, so a swapped file is arbitrary PHP running as www-data
+# with the operator's DB credentials. Pinned per the same rule as every other
+# third-party artifact here (wp-cli, phpMyAdmin, Stalwart, Kratos, Bulwark).
+# Bump together with adminer_url in install.sh.
+2fd7e6d8f987b243ab1839249551f62adce19704c47d3d0c8dd9e57ea5b9c6b3  adminer-4.8.1.php

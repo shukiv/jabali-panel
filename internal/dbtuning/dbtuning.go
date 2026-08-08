@@ -189,6 +189,15 @@ func RenderMariaDBDropIn(kv map[string]string) string {
 
 // PostgresStatements renders one `ALTER SYSTEM SET` per key (sorted).
 // Values are quoted; identifiers are allowlisted so no injection path.
+//
+// Bytes tunables are normalised to an explicit "<n>B" literal. A memory GUC
+// with a unit-less value is read by Postgres in the parameter's base unit
+// (8 kB blocks for these params), so a plain byte count like effective_cache_size's
+// 4 GiB default (4294967296) is parsed as 4294967296 * 8 kB and overflows the
+// int32 GUC ceiling — ALTER SYSTEM then rejects the statement and rolls the
+// whole apply back, even on the untouched defaults (GH #968). The "<n>B" form
+// also rescues a MariaDB-style single-letter suffix (4G) that Postgres would
+// not accept.
 func PostgresStatements(kv map[string]string) []string {
 	keys := make([]string, 0, len(kv))
 	for k := range kv {
@@ -197,7 +206,13 @@ func PostgresStatements(kv map[string]string) []string {
 	sort.Strings(keys)
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
-		v := strings.ReplaceAll(kv[k], "'", "''")
+		val := kv[k]
+		if p, ok := lookup("postgres", k); ok && p.Kind == KindBytes {
+			if b, err := parseBytes(val); err == nil {
+				val = strconv.FormatInt(int64(b), 10) + "B"
+			}
+		}
+		v := strings.ReplaceAll(val, "'", "''")
 		out = append(out, fmt.Sprintf("ALTER SYSTEM SET %s = '%s'", k, v))
 	}
 	return out

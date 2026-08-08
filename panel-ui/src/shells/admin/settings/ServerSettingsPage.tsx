@@ -66,6 +66,7 @@ import { DatabaseAdminSections } from "./DatabaseAdminSections";
 import { DNSResolversCard } from "./DNSResolversCard";
 import { DNSPermissionsCard } from "./DNSPermissionsCard";
 import { EmailCard } from "./EmailCard";
+import { FreeHostnameCard } from "./FreeHostnameCard";
 import { WebmailToggleCard } from "./WebmailToggleCard";
 import { Dkim2ToggleCard } from "./Dkim2ToggleCard";
 import { ModulesCard } from "./ModulesCard";
@@ -1011,6 +1012,7 @@ export const ServerSettingsPage = () => {
       children: (
         <>
           <GeneralSettingsTab />
+          <FreeHostnameCard />
           <TenantNotificationsCard />
         </>
       ),

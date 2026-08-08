@@ -1,0 +1,28 @@
+[Unit]
+Description=jabalihosted.com free-hostname service (JAB-213)
+After=network-online.target pdns.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jabalihosted
+Group=jabalihosted
+EnvironmentFile=/etc/jabalihosted/svc.env
+ExecStart=/usr/local/bin/jabalihosted-svc serve
+Restart=on-failure
+RestartSec=5s
+
+# Hardening — same posture as the jabali units: never loosened for features.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/jabalihosted
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

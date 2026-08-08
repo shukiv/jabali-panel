@@ -6,13 +6,14 @@ import (
 	"testing"
 )
 
-// nginx.test agent failure (config invalid → nginx -t non-zero → AgentError)
-// must surface as a DEDICATED critical alert, not the generic
-// warning/agent sub-call line — an invalid nginx config is a
-// whole-vhost outage on the box.
+// An nginx sub-call failure must surface as a DEDICATED critical alert, not
+// the generic warning/agent sub-call line — nginx being down is a
+// whole-vhost outage on the box. The aggregator polls `nginx.status`
+// (systemd unit state), which errors exactly when nginx is not running;
+// it deliberately does NOT run `nginx -t` on this hot path.
 func TestSynthesizeAlerts_NginxInvalidIsCritical(t *testing.T) {
 	errMap := map[string]string{
-		"nginx": "nginx test failed: [emerg] unknown directive \"http2\" in /etc/nginx/sites-enabled/default.conf:57",
+		"nginx": "nginx not running: state=failed",
 	}
 	alerts := synthesizeAlerts(map[string]json.RawMessage{}, errMap)
 

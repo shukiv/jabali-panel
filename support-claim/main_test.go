@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -139,5 +141,84 @@ func TestRateLimit(t *testing.T) {
 	}
 	if codes == 0 {
 		t.Errorf("rate limiter blocked everything")
+	}
+}
+
+// clientIP must NOT trust X-Forwarded-For from a non-loopback peer. Trusting
+// it from anyone made the per-IP rate limit meaningless (rotate the header to
+// bypass the cap on the open POST /claims) and, because each distinct value
+// allocated a permanent bucket entry, turned the same trick into unbounded
+// heap growth. :8088 is directly reachable, and nothing guarantees the service
+// is proxy-fronted.
+func TestClientIPIgnoresXFFFromUntrustedPeer(t *testing.T) {
+	r := httptest.NewRequest("POST", "/claims", nil)
+	r.RemoteAddr = "203.0.113.9:51000"
+	r.Header.Set("X-Forwarded-For", "198.51.100.7")
+	if got := clientIP(r); got != "203.0.113.9" {
+		t.Fatalf("clientIP = %q, want the real peer 203.0.113.9 — a spoofed "+
+			"X-Forwarded-For must not become the rate-limit key", got)
+	}
+}
+
+// A loopback peer IS the local reverse proxy, so its XFF is authoritative.
+func TestClientIPTrustsXFFFromLoopback(t *testing.T) {
+	r := httptest.NewRequest("POST", "/claims", nil)
+	r.RemoteAddr = "127.0.0.1:51000"
+	r.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.1")
+	if got := clientIP(r); got != "198.51.100.7" {
+		t.Fatalf("clientIP = %q, want 198.51.100.7 from the trusted proxy", got)
+	}
+}
+
+// Rotating the header must not let one source outrun the cap.
+func TestRateLimitNotBypassableByRotatingXFF(t *testing.T) {
+	rl := newRateLimiter(3)
+	allowed := 0
+	for i := 0; i < 20; i++ {
+		r := httptest.NewRequest("POST", "/claims", nil)
+		r.RemoteAddr = "203.0.113.9:51000"
+		r.Header.Set("X-Forwarded-For", "198.51.100."+strconv.Itoa(i))
+		if rl.allow(clientIP(r)) {
+			allowed++
+		}
+	}
+	if allowed > 3 {
+		t.Fatalf("allowed %d requests from one peer rotating XFF, cap is 3", allowed)
+	}
+}
+
+// The bucket map must not keep an entry per key forever.
+func TestRateLimiterEvictsIdleBuckets(t *testing.T) {
+	rl := newRateLimiter(30)
+	base := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	rl.now = func() time.Time { return base }
+	for i := 0; i < 500; i++ {
+		rl.allow("198.51.100." + strconv.Itoa(i))
+	}
+	if len(rl.bucket) < 100 {
+		t.Fatalf("expected many buckets while active, got %d", len(rl.bucket))
+	}
+	// Long after everything went idle, one more call should sweep the rest.
+	rl.now = func() time.Time { return base.Add(time.Hour) }
+	rl.allow("203.0.113.1")
+	if len(rl.bucket) > 2 {
+		t.Fatalf("idle buckets not evicted: %d remain — the map grows without "+
+			"bound from client-controlled keys", len(rl.bucket))
+	}
+}
+
+// The claim store must refuse new entries at capacity rather than growing
+// until the process is OOM-killed.
+func TestStorePutRefusesWhenFull(t *testing.T) {
+	s := newStore(14 * 24 * time.Hour)
+	now := time.Now()
+	for i := 0; i < maxClaims; i++ {
+		if _, _, err := s.put(redeemPayload{Host: "h"}, now); err != nil {
+			t.Fatalf("unexpected error filling store at %d: %v", i, err)
+		}
+	}
+	_, _, err := s.put(redeemPayload{Host: "h"}, now)
+	if !errors.Is(err, errStoreFull) {
+		t.Fatalf("put past capacity returned %v, want errStoreFull", err)
 	}
 }

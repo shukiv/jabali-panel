@@ -30,6 +30,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // Reconciler syncs the database state with the filesystem (nginx configs, php-fpm pools).
@@ -70,8 +71,26 @@ type Reconciler struct {
 	socketReady func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool
 	// paused is an atomic flag to pause reconciliation (for SSO key rotation)
 	paused atomic.Bool
+
+	// standby* back the DR standby gate (GH #331 Step 3). A standby's reconciler
+	// stays DORMANT: it builds no serving config and issues no ACME certificate,
+	// so the box serves no live traffic and never fails a challenge for the
+	// primary's domains (which would burn Let's Encrypt rate limits). The role is
+	// cached with a short TTL so runtime pairing/promotion takes effect within a
+	// tick without a per-call DB read. serverSettings nil or a read error →
+	// treated as primary (fail toward active), matching middleware.StandbyReadOnly.
+	standbyMu      sync.Mutex
+	standbyCached  bool
+	standbyFetched time.Time
 	// ssoTokens holds reference to the SSO token repository for nightly prune
 	ssoTokens repository.PhpMyAdminSSOTokenRepository
+	// mailboxes + sendmailSSOKey back the JAB-230 relay-credential loop
+	// (sendmail_cred_reconcile.go). sendmailDone caches converged domains
+	// (domain ID → input fingerprint) so steady-state ticks are map lookups.
+	mailboxes      repository.MailboxRepository
+	sendmailSSOKey *ssokey.Key
+	sendmailMu     sync.Mutex
+	sendmailDone   map[string]string
 	// wordPressInstalls holds reference to the WordPress installs repository
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
@@ -195,6 +214,17 @@ type Reconciler struct {
 	// sshKeysDispatchState. sync.Map = lock-free for the common
 	// "many readers, one writer per key" pattern.
 	sshKeysDispatchCache sync.Map
+
+	// dnsZoneDispatchCache: per-zone hash of the last-pushed record set +
+	// timestamp, same shape and rationale as sshKeysDispatchCache. Without
+	// it reconcileDNSZone rewrote the SOA serial, UPDATEd dns_zones, and
+	// pushed a full zone to the agent for EVERY enabled domain every tick —
+	// and the agent then DELETEs and re-INSERTs every record row in
+	// PowerDNS's SQL backend and shells out three times (purge auth cache,
+	// wipe recursor cache, NOTIFY slaves). Because the serial changed on
+	// every pass, the payload could never converge, so no downstream gate
+	// could ever fire. Keyed by zone ID; value type dnsZoneDispatchState.
+	dnsZoneDispatchCache sync.Map
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -489,6 +519,32 @@ func (r *Reconciler) IsPaused() bool {
 	return r.paused.Load()
 }
 
+// isStandby reports whether this box is a DR standby (GH #331 Step 3). A
+// standby's automatic reconcile loops early-return so it builds no serving
+// config and issues no ACME certificate. Cached with a short TTL so promotion
+// (role → primary) takes effect within a tick; a nil repo or a read error is
+// treated as primary so a DB blip never wrongly parks a live box. This gates the
+// AUTOMATIC loops only — the explicit ReconcileAllForce path (used by promote)
+// stays ungated so it always converges regardless of the cached role.
+func (r *Reconciler) isStandby(ctx context.Context) bool {
+	if r.serverSettings == nil {
+		return false
+	}
+	const ttl = 5 * time.Second
+	r.standbyMu.Lock()
+	defer r.standbyMu.Unlock()
+	if !r.standbyFetched.IsZero() && time.Since(r.standbyFetched) < ttl {
+		return r.standbyCached
+	}
+	s, err := r.serverSettings.Get(ctx)
+	if err != nil || s == nil {
+		return r.standbyCached // keep last-known; fail toward active primary
+	}
+	r.standbyCached = s.IsStandby()
+	r.standbyFetched = time.Now()
+	return r.standbyCached
+}
+
 // Start blocks until ctx is cancelled, running ReconcileAll every interval
 // and draining the out-of-band queue. Must be called once per process.
 func (r *Reconciler) Start(ctx context.Context) {
@@ -597,6 +653,15 @@ func (r *Reconciler) Schedule(domainID string) {
 const domainLoopWorkers = 4
 
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
+	// GH #331 Step 3: a DR standby stays dormant — no serving config, no ACME.
+	// The whole convergence loop below (panel/mail/shared certs, per-domain
+	// SSL + nginx vhosts, DNS zone push, module installs) is suppressed so the
+	// box serves nothing until `jabali dr promote`. Config is (re)built from the
+	// replicated DB at promote time via ReconcileAllForce.
+	if r.isStandby(ctx) {
+		r.log.Debug("reconcile all skipped — DR standby (not serving)")
+		return nil
+	}
 	// Coarse per-block timings. A tick that outruns the interval means
 	// the next ticker fire lands immediately behind it and drift repair
 	// degrades to back-to-back passes — worth a WARN that names the
@@ -633,6 +698,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// GH #648: converge DKIM2 signing across mail domains to the
 	// server_settings toggle. Applied-state-gated — noop steady state.
 	r.reconcileDKIM2(ctx)
+
+	// JAB-230: every domain gets a noreply@ SendOnly relay identity + a
+	// cred file for the jabali-sendmail shim. Fingerprint-gated noop in
+	// steady state; doubles as the fleet backfill after `jabali update`.
+	r.reconcileSendmailCreds(ctx)
 
 	tt.mark("certs_updates_modules")
 
@@ -910,6 +980,12 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 // ReconcileOne converges a single domain ID. If the domain doesn't exist in the DB,
 // it is treated as deleted and we call domain.disable on the agent.
 func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
+	// GH #331 Step 3: a DR standby serves no traffic — skip single-domain
+	// convergence too (same posture as ReconcileAll).
+	if r.isStandby(ctx) {
+		r.log.Debug("reconcile one skipped — DR standby", "domain_id", domainID)
+		return nil
+	}
 	domain, err := r.domains.FindByID(ctx, domainID)
 	if err != nil {
 		// Domain not found in DB (e.g., it was deleted). Assume it's supposed to be gone.
@@ -1708,6 +1784,11 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// Server-wide default with a per-domain tri-state override.
 	params["intercept_errors"] = r.effectiveInterceptErrors(ctx, domain)
 
+	// GH #962: PATH_INFO location for front-controller PHP apps (osTicket, …).
+	// Per-domain nginx_safe_options toggle; needs the FPM socket so it travels
+	// as its own param rather than via Render(). Default off ⇒ byte-identical.
+	params["path_info"] = domain.NginxSafeOptions.PathInfo
+
 	params["redirect_directives"] = redirects.Compile(domain)
 	params["rule_directives"] = nginxrules.Compile(domain)
 
@@ -2070,10 +2151,6 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	}
 	compiled := dnscompile.Compile(zone, records, srv)
 
-	// Bump serial on push.
-	zone.Serial = time.Now().UTC().Unix()
-	_ = r.dnsZones.Update(ctx, zone)
-
 	// Derive AXFR and NOTIFY lists from ServerSettings.
 	var allowAXFR, alsoNotify []string
 	if srv != nil && srv.NS2IPv4 != "" {
@@ -2085,6 +2162,26 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// `dig AXFR @127.0.0.1` — add that for debugging.
 	allowAXFR = append(allowAXFR, "127.0.0.1")
 
+	// Gate the whole push on a content compare. Unconditionally stamping the
+	// serial and pushing meant EVERY enabled domain, EVERY tick: one
+	// dns_zones UPDATE, plus an agent RPC that DELETEs and re-INSERTs every
+	// record row in PowerDNS's SQL backend and shells out three times (purge
+	// auth cache, wipe recursor cache, NOTIFY slaves). With a slave
+	// configured that also meant NOTIFY/AXFR churn every minute, and
+	// `rec_control wipe-cache` meant recursor entries for hosted zones never
+	// outlived one tick. dnsZonePushNeeded self-heals every
+	// dnsZoneReDispatchInterval, so out-of-band pdns drift is still corrected.
+	now := time.Now().UTC()
+	hash := desiredDNSZoneHash(compiled, allowAXFR, alsoNotify)
+	if !r.dnsZonePushNeeded(zone.ID, hash, now) {
+		return
+	}
+
+	// Bump the serial only when we are actually pushing changed content —
+	// a serial that moves every tick is what made this unconvergeable.
+	zone.Serial = now.Unix()
+	_ = r.dnsZones.Update(ctx, zone)
+
 	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := r.agent.Call(pushCtx, "dns.zone.upsert", map[string]any{
@@ -2093,8 +2190,13 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		"allow_axfr_from": allowAXFR,
 		"also_notify":     alsoNotify,
 	}); err != nil {
+		// Do NOT record the hash on failure: the agent may hold older
+		// content, so the next tick must retry rather than believe it is
+		// converged.
 		r.log.Error("dns.zone.upsert failed", "zone", zone.Name, "err", err)
+		return
 	}
+	r.dnsZonePushed(zone.ID, hash, now)
 }
 
 // reconcileDNSZoneDeleted tears down a DNS zone on the agent after its DB row
@@ -2516,8 +2618,27 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		return
 	}
 
+	// GH #887: the document root isn't there yet (fresh domain / subdomain the
+	// panel is still provisioning). This is NOT a real ACME failure — recording
+	// it would surface a scary "…/public_html does not exist" cert error and bump
+	// the retry backoff. The domain already carries a self-signed cert (the
+	// bootstrap path), so HTTPS keeps working; just leave the row as-is and let
+	// the next tick retry once the docroot exists. No LE request was spent.
+	if isWebrootNotReady(err) {
+		r.log.Debug("ssl: webroot not ready, deferring ACME to next tick", "domain", domain.Name)
+		return
+	}
+
 	// ACME failed — fall through to self-sign + scheduled retry.
 	r.fallbackToSelfSignAndRetry(ctx, domain, cert, firstLine(err.Error()))
+}
+
+// isWebrootNotReady reports whether an ssl.issue error is the agent's typed
+// "the document root does not exist yet" signal (GH #887), as opposed to a real
+// ACME failure. Matched on the stable marker string the agent embeds in the
+// error message so it survives the NDJSON wire round-trip.
+func isWebrootNotReady(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "webroot_not_ready")
 }
 
 // fallbackToSelfSignAndRetry is the "ACME unavailable" path used by both
@@ -2701,6 +2822,9 @@ func (r *Reconciler) ReconcileSSLInline(ctx context.Context, domain *models.Doma
 func (r *Reconciler) RetrySSLDueForACME(ctx context.Context) {
 	if r.sslCerts == nil {
 		return // SSL feature not wired — skip
+	}
+	if r.isStandby(ctx) {
+		return // DR standby issues no ACME (GH #331 Step 3)
 	}
 
 	certs, err := r.sslCerts.ListDueForACMERetry(ctx, time.Now().UTC(), 10)

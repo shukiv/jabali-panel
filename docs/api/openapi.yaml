@@ -525,7 +525,7 @@ paths:
                 domain_id: { type: string, format: ulid }
                 kind:      { type: string, enum: [wordpress, joomla, drupal, moodle, ghost, opencart, prestashop, magento, drupal10, mediawiki, nextcloud, mautic, suitecrm, dolibarr, processmaker] }
                 path:      { type: string, default: "/", description: "Install path under doc-root." }
-      responses: { "201": { description: Install started — poll /applications/{id} for status } }
+      responses: { "201": { description: "Install started — poll /applications/{id} for status" } }
 
   # ----------------------------------------------------------- Backups ---
 
@@ -547,6 +547,35 @@ paths:
       responses: { "202": { description: Restore queued } }
 
   # --------------------------------------------------------- Databases ---
+
+  /mail/logs:
+    get:
+      tags: [Logs]
+      summary: List recent mail log entries for your domains (delivered/failed/queued)
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 50, description: "max entries" } }
+        - { in: query, name: offset, schema: { type: integer, default: 0 } }
+        - { in: query, name: sender, schema: { type: string, description: "filter by sender address" } }
+        - { in: query, name: recipient, schema: { type: string, description: "filter by recipient address" } }
+      responses:
+        "200":
+          description: Mail log page
+          content: { application/json: { schema: { type: object, properties: {
+            data: { type: array, items: { type: object } }, total: { type: integer }, page: { type: integer }, page_size: { type: integer } } } } }
+
+  /logs/tail:
+    get:
+      tags: [Logs]
+      summary: Tail a domain's nginx access or error log (last N lines, snapshot)
+      parameters:
+        - { in: query, name: domain_id, required: true, schema: { type: string, format: ulid, description: "the domain's ULID" } }
+        - { in: query, name: log_type, required: true, schema: { type: string, enum: [access, error] } }
+        - { in: query, name: lines, schema: { type: integer, default: 200, minimum: 1, maximum: 2000, description: "how many trailing lines" } }
+      responses:
+        "200":
+          description: Last log lines
+          content: { application/json: { schema: { type: object, properties: {
+            domain_id: { type: string }, log_type: { type: string }, lines: { type: array, items: { type: string } } } } } }
 
   /databases:
     get:

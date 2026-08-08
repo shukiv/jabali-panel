@@ -68,6 +68,13 @@ php_admin_value[disable_functions] = {{ .DisableFunctions }}
 ; PHP rounds 20000 up to the next prime.
 php_admin_value[opcache.memory_consumption] = 128
 php_admin_value[opcache.max_accelerated_files] = 20000
+; PHP mail() path (JAB-230). install.sh purges every traditional MTA
+; (Stalwart owns :25), so /usr/sbin/sendmail does not exist — without this
+; line mail()/wp_mail() fails on every site. The shim runs as the tenant
+; uid, picks the panel-provisioned relay credential for the message's From
+; domain, and submits to Stalwart on 127.0.0.1:587 with the envelope sender
+; forced to that identity. php_admin_value: the path is not tenant-tunable.
+php_admin_value[sendmail_path] = /usr/local/libexec/jabali/jabali-sendmail -t -i
 ; Shared-hosting PHP defaults (GH #253). php_value (not php_admin_value) so a
 ; per-domain override below takes precedence; these apply only when the domain
 ; sets nothing. Stock PHP defaults (128M / 2M / 8M / 1000) are too small for

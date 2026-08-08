@@ -27,6 +27,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupscheduler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/db"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/drsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailscan"
@@ -53,6 +54,7 @@ import (
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cyberpanel"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
+	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/jabali"
 	_ "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/plesk"
 )
 
@@ -370,6 +372,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// per-collection shareWith). Grant grantees resolve via the mailbox +
 		// mail-group repos.
 		rec.WithSharedResources(repository.NewSharedResourceRepository(sharedDB), mailboxRepo, mailGroupRepo)
+		// JAB-230 — noreply@ relay identities + shim cred files. Needs the
+		// sso.key to seal/unseal the relay passwords; nil key (fresh install
+		// mid-bootstrap) just disables the loop until the key exists.
+		rec.WithSendmailCreds(mailboxRepo, ssoKeyPtr)
 		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
@@ -972,11 +978,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Schedules:    deps.BackupSchedules,
 		Destinations: deps.BackupDestinations,
 		Agent:        deps.Agent,
+		SSOKey:       deps.SSOKey,
 		Log:          log,
 	}); fin != nil {
 		go fin.Start(ctx)
 	} else {
 		log.Info("backup finalizer not started — required deps missing")
+	}
+
+	// GH #331 Step 2: DR standby pull-restore loop. Inert on a primary (it
+	// re-reads server_role each tick), so it is always safe to start; on a
+	// standby it converges the panel DB/config/TLS from the DR destination.
+	if syncer := drsync.New(drsync.Deps{
+		Settings:     deps.ServerSettings,
+		Destinations: deps.BackupDestinations,
+		Agent:        deps.Agent,
+		SSOKey:       deps.SSOKey,
+		Log:          log,
+	}); syncer != nil {
+		go syncer.Start(ctx)
+	} else {
+		log.Info("DR sync loop not started — required deps missing")
 	}
 
 	// M33.2 (ADR-0079): mail YARA scanner tick. Off by default; the tick

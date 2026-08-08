@@ -51,8 +51,14 @@ type HostingPackage struct {
 	// owns the content within these limits. AllowedBackupDestinationKinds is a
 	// CSV of BackupDestinationKind* a tenant on this package may target; empty
 	// = none allowed.
-	MaxBackups                    uint32 `gorm:"column:max_backups;type:int unsigned;not null;default:0" json:"max_backups"`
-	ScheduledBackupsEnabled       bool   `gorm:"column:scheduled_backups_enabled;type:tinyint(1);not null;default:0" json:"scheduled_backups_enabled"`
+	MaxBackups              uint32 `gorm:"column:max_backups;type:int unsigned;not null;default:0" json:"max_backups"`
+	ScheduledBackupsEnabled bool   `gorm:"column:scheduled_backups_enabled;type:tinyint(1);not null;default:0" json:"scheduled_backups_enabled"`
+	// MaxBackupSchedules (GH #454 7B) caps how many scheduled backups a tenant on
+	// this plan may own. 1 = the original single-schedule behaviour (existing
+	// plans unchanged); > 1 unlocks the tenant multi-schedule surface + the
+	// window-governed dispatch path. Explicit column tag — GORM would otherwise
+	// mangle nothing here, but keep it consistent with the sibling backup fields.
+	MaxBackupSchedules            uint32 `gorm:"column:max_backup_schedules;type:int unsigned;not null;default:1" json:"max_backup_schedules"`
 	AllowedBackupDestinationKinds string `gorm:"column:allowed_backup_destination_kinds;type:varchar(255);not null;default:''" json:"allowed_backup_destination_kinds"`
 	// BackupRetentionPolicy (GH #454) chooses the behaviour when a tenant hits
 	// MaxBackups: "reject" (default, safe) blocks the new backup and notifies;
@@ -99,6 +105,23 @@ func (HostingPackage) TableName() string { return "hosting_packages" }
 // BackupsEnabled reports whether tenants on this package may use backups at all
 // (MaxBackups > 0). The tenant backup UI + API are gated on this (GH #454).
 func (p HostingPackage) BackupsEnabled() bool { return p.MaxBackups > 0 }
+
+// MaxBackupSchedulesOrDefault returns the per-tenant schedule cap, treating 0
+// (an unmigrated / cleared value) as 1 so a tenant always keeps at least the
+// single-schedule capability (GH #454 7B).
+func (p HostingPackage) MaxBackupSchedulesOrDefault() int {
+	if p.MaxBackupSchedules == 0 {
+		return 1
+	}
+	return int(p.MaxBackupSchedules)
+}
+
+// TenantMultiScheduleEnabled reports whether this plan unlocks the tenant
+// multi-schedule surface (cap > 1). Below that the tenant keeps the legacy
+// single-schedule card (GH #454 7B).
+func (p HostingPackage) TenantMultiScheduleEnabled() bool {
+	return p.BackupsEnabled() && p.ScheduledBackupsEnabled && p.MaxBackupSchedulesOrDefault() > 1
+}
 
 // AllowedBackupKinds parses AllowedBackupDestinationKinds (CSV) into a deduped,
 // lower-cased, order-preserving slice. Empty when none are allowed.

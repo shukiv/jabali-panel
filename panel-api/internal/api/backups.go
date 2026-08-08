@@ -326,14 +326,24 @@ func (h *backupHandler) resolveDest(c *gin.Context, destID string) (*models.Back
 // Without this the download always opened the local repo and 404'd remote
 // backups with "no snapshots for job" (GH #462).
 func materializeDestParams(ctx context.Context, dests repository.BackupDestinationRepository, job *models.BackupJob) map[string]any {
+	_, params := materializeDest(ctx, dests, job)
+	return params
+}
+
+// materializeDest is materializeDestParams plus the destination row itself,
+// which the caller needs to bridge a per-destination restic password
+// (M30.2.x) into the download. Without that password the agent cannot open a
+// rotated destination's repo, so the download fails even though the backup
+// is fine.
+func materializeDest(ctx context.Context, dests repository.BackupDestinationRepository, job *models.BackupJob) (*models.BackupDestination, map[string]any) {
 	if dests == nil || job.DestinationID == nil || *job.DestinationID == "" {
-		return nil
+		return nil, nil
 	}
 	d, err := dests.Get(ctx, *job.DestinationID)
 	if err != nil || d == nil {
-		return nil
+		return nil, nil
 	}
-	return destWireParams(d)
+	return d, destWireParams(d)
 }
 
 // destWireParams projects a destination into the JSON keys the agent
@@ -743,7 +753,21 @@ func (h *backupHandler) download(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "no_completed_snapshot"})
 		return
 	}
-	streamBackupArtifact(c, h.cfg.Agent, job, materializeDestParams(c.Request.Context(), h.cfg.Destinations, job), h.cfg.logErr)
+	dest, destParams := materializeDest(c.Request.Context(), h.cfg.Destinations, job)
+	// Bridge the destination's own restic password (M30.2.x) for the
+	// materialize call; without it a rotated destination's snapshot cannot
+	// be opened and the download fails. No-op for legacy/local jobs.
+	_ = backupwrapperhelpers.WithOptionalDestPassword(c.Request.Context(), dest, h.cfg.Agent, h.cfg.SSOKey,
+		func(passwordFile string) error {
+			if passwordFile != "" {
+				if destParams == nil {
+					destParams = map[string]any{}
+				}
+				destParams["password_file"] = passwordFile
+			}
+			streamBackupArtifact(c, h.cfg.Agent, job, destParams, h.cfg.logErr)
+			return nil
+		})
 }
 
 // streamBackupArtifact materializes a SUCCEEDED backup job's restic snapshot
@@ -1200,6 +1224,11 @@ type MeBackupsHandlerConfig struct {
 	Schedules repository.BackupScheduleRepository
 	Settings  repository.ServerSettingsRepository
 
+	// SSOKey unseals a destination's per-row restic password (M30.2.x) so a
+	// tenant download can open a rotated destination's repo. Optional: nil
+	// falls back to the agent's shared password file.
+	SSOKey *ssokey.Key
+
 	Log *slog.Logger
 }
 
@@ -1288,6 +1317,14 @@ func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
 	if cfg.Schedules != nil && cfg.Settings != nil {
 		rg.GET("/me/backup-schedule", h.getSchedule)
 		rg.PUT("/me/backup-schedule", h.putSchedule)
+		// GH #454 7B: tenant multi-schedule surface (window-governed). Owner-
+		// scoped CRUD — every mutation re-verifies row.user_id == the session
+		// user, 404 on mismatch (no cross-tenant leak). Cap enforced from the
+		// hosting package's max_backup_schedules.
+		rg.GET("/me/backup-schedules", h.listSchedules)
+		rg.POST("/me/backup-schedules", h.createSchedule)
+		rg.PUT("/me/backup-schedules/:id", h.updateSchedule)
+		rg.DELETE("/me/backup-schedules/:id", h.deleteSchedule)
 	}
 }
 
@@ -1892,6 +1929,315 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+// ---- GH #454 7B: tenant multi-schedule surface (window-governed) ----
+
+// meScheduleRow is one tenant-owned schedule in the multi-schedule list. The
+// firing times are read-only (the scheduler owns them); the tenant edits
+// content/cadence/destination/retention/on-off.
+type meScheduleRow struct {
+	ID            string  `json:"id"`
+	Enabled       bool    `json:"enabled"`
+	Content       string  `json:"content"`
+	Cadence       string  `json:"cadence"`
+	DestinationID string  `json:"destination_id,omitempty"`
+	KeepDaily     *int    `json:"keep_daily,omitempty"`
+	KeepWeekly    *int    `json:"keep_weekly,omitempty"`
+	KeepMonthly   *int    `json:"keep_monthly,omitempty"`
+	NextRunAt     *string `json:"next_run_at,omitempty"`
+	LastRunAt     *string `json:"last_run_at,omitempty"`
+}
+
+// meSchedulesView is the multi-schedule list payload: the tenant's own rows plus
+// the read-only caps + admin window the UI renders around them.
+type meSchedulesView struct {
+	Schedules               []meScheduleRow `json:"schedules"`
+	MaxBackupSchedules      int             `json:"max_backup_schedules"`
+	MaxBackups              uint32          `json:"max_backups"`
+	ScheduledBackupsEnabled bool            `json:"scheduled_backups_enabled"`
+	MultiEnabled            bool            `json:"multi_enabled"`
+	WindowStart             string          `json:"window_start"`
+	WindowEnd               string          `json:"window_end"`
+}
+
+// meScheduleUpsertRequest is the tenant-editable multi-schedule payload. Cadence
+// is a fixed allow-list (NOT free cron) so a tenant can never pick a stampede
+// minute; the admin owns the window the cadence fires inside.
+type meScheduleUpsertRequest struct {
+	Enabled       bool   `json:"enabled"`
+	Content       string `json:"content"`
+	Cadence       string `json:"cadence"`
+	DestinationID string `json:"destination_id"`
+	KeepDaily     *int   `json:"keep_daily"`
+	KeepWeekly    *int   `json:"keep_weekly"`
+	KeepMonthly   *int   `json:"keep_monthly"`
+}
+
+// ownedTenantSchedules returns the caller's OWN account_backup schedules.
+// ListForUser filters by the user_id column, which tenant-owned schedules always
+// set (admin fan-out schedules leave it NULL), so this can never surface another
+// tenant's or an admin's schedule.
+func (h *meBackupHandler) ownedTenantSchedules(ctx context.Context, userID string) []models.BackupSchedule {
+	rows, err := h.cfg.Schedules.ListForUser(ctx, userID)
+	if err != nil {
+		return nil
+	}
+	out := rows[:0]
+	for i := range rows {
+		if rows[i].Kind == models.BackupScheduleKindAccount {
+			out = append(out, rows[i])
+		}
+	}
+	return out
+}
+
+// findOwnedSchedule resolves one schedule by id, but only if it belongs to the
+// caller (kind=account_backup AND user_id == caller). Returns nil otherwise so
+// every caller can 404 without leaking whether the id exists for another tenant.
+func (h *meBackupHandler) findOwnedSchedule(ctx context.Context, userID, id string) *models.BackupSchedule {
+	s, err := h.cfg.Schedules.Get(ctx, id)
+	if err != nil || s == nil {
+		return nil
+	}
+	if s.Kind != models.BackupScheduleKindAccount || s.UserID == nil || *s.UserID != userID {
+		return nil
+	}
+	return s
+}
+
+func (h *meBackupHandler) tenantWindow(ctx context.Context) internalbackup.TenantWindow {
+	settings, err := h.cfg.Settings.Get(ctx)
+	if err != nil || settings == nil {
+		return internalbackup.DefaultTenantWindow
+	}
+	return internalbackup.ParseWindow(settings.TenantBackupWindowStart, settings.TenantBackupWindowEnd)
+}
+
+func (h *meBackupHandler) listSchedules(c *gin.Context) {
+	user, pkg, ok := h.meScheduleGate(c)
+	if !ok {
+		return
+	}
+	settings, serr := h.cfg.Settings.Get(c.Request.Context())
+	if serr != nil || settings == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "settings_unavailable"})
+		return
+	}
+	view := meSchedulesView{
+		Schedules:          []meScheduleRow{},
+		MaxBackupSchedules: 1,
+		WindowStart:        settings.TenantBackupWindowStart,
+		WindowEnd:          settings.TenantBackupWindowEnd,
+	}
+	if pkg != nil {
+		view.ScheduledBackupsEnabled = pkg.BackupsEnabled() && pkg.ScheduledBackupsEnabled
+		view.MaxBackups = pkg.MaxBackups
+		view.MaxBackupSchedules = pkg.MaxBackupSchedulesOrDefault()
+		view.MultiEnabled = pkg.TenantMultiScheduleEnabled()
+	}
+	for _, s := range h.ownedTenantSchedules(c.Request.Context(), user.ID) {
+		row := meScheduleRow{
+			ID:          s.ID,
+			Enabled:     s.Enabled,
+			Content:     models.NormalizeBackupContent(s.Content),
+			Cadence:     s.Cadence,
+			KeepDaily:   s.KeepDaily,
+			KeepWeekly:  s.KeepWeekly,
+			KeepMonthly: s.KeepMonthly,
+		}
+		if s.NextRunAt != nil {
+			v := s.NextRunAt.Format(time.RFC3339)
+			row.NextRunAt = &v
+		}
+		if s.LastRunAt != nil {
+			v := s.LastRunAt.Format(time.RFC3339)
+			row.LastRunAt = &v
+		}
+		if dests, derr := h.cfg.Schedules.GetDestinations(c.Request.Context(), s.ID); derr == nil && len(dests) > 0 {
+			row.DestinationID = dests[0].ID
+		}
+		view.Schedules = append(view.Schedules, row)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": view})
+}
+
+// validateScheduleUpsert checks the shared body rules for create + update and,
+// on success, returns the normalized content + clamped keep_* + the destination
+// list to link. On failure it writes the error response and returns ok=false.
+func (h *meBackupHandler) validateScheduleUpsert(c *gin.Context, pkg *models.HostingPackage, req meScheduleUpsertRequest) (content string, keepDaily, keepWeekly, keepMonthly *int, dests []string, ok bool) {
+	if !internalbackup.ValidCadence(req.Cadence) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cadence", "detail": "cadence must be hourly/every_6h/every_12h/daily/weekly"})
+		return
+	}
+	if !validBackupContent(req.Content) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_option", "detail": "content must be full/files/database/folders"})
+		return
+	}
+	content = models.NormalizeBackupContent(req.Content)
+	destID := strings.TrimSpace(req.DestinationID)
+	if destID != "" {
+		if h.cfg.Destinations == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "destination_lookup_unavailable"})
+			return
+		}
+		d, derr := h.cfg.Destinations.Get(c.Request.Context(), destID)
+		if derr != nil || d == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "unknown_destination", "detail": "no such backup destination"})
+			return
+		}
+		if !d.Enabled {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_disabled", "detail": "that backup destination is disabled"})
+			return
+		}
+		if !pkg.AllowsBackupKind(d.Kind) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "destination_not_allowed", "detail": fmt.Sprintf("your hosting plan does not allow the %q backup destination", d.Kind)})
+			return
+		}
+		dests = []string{destID}
+	}
+	if req.Enabled && destID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_required", "detail": "pick a backup destination to enable a scheduled backup"})
+		return
+	}
+	maxKeep := int(pkg.MaxBackups)
+	clamp := func(v *int) *int {
+		if v == nil {
+			return nil
+		}
+		n := *v
+		if n < 0 {
+			n = 0
+		}
+		if n > maxKeep {
+			n = maxKeep
+		}
+		return &n
+	}
+	keepDaily, keepWeekly, keepMonthly = clamp(req.KeepDaily), clamp(req.KeepWeekly), clamp(req.KeepMonthly)
+	ok = true
+	return
+}
+
+func (h *meBackupHandler) createSchedule(c *gin.Context) {
+	user, pkg, ok := h.meScheduleGate(c)
+	if !ok {
+		return
+	}
+	if pkg == nil || !pkg.BackupsEnabled() || !pkg.ScheduledBackupsEnabled {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "scheduled_backups_not_enabled", "detail": "your hosting plan does not allow scheduled backups"})
+		return
+	}
+	// Cap enforcement: refuse the N+1th schedule (GH #454 7B). Counts the
+	// caller's OWN account_backup rows only.
+	existing := h.ownedTenantSchedules(c.Request.Context(), user.ID)
+	if len(existing) >= pkg.MaxBackupSchedulesOrDefault() {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "schedule_limit_reached", "detail": fmt.Sprintf("your hosting plan allows at most %d backup schedules", pkg.MaxBackupSchedulesOrDefault())})
+		return
+	}
+	var req meScheduleUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
+		return
+	}
+	content, keepDaily, keepWeekly, keepMonthly, dests, vok := h.validateScheduleUpsert(c, pkg, req)
+	if !vok {
+		return
+	}
+	uid := user.ID
+	id := ids.NewULID()
+	next := internalbackup.NextTenantRun(time.Now().UTC(), req.Cadence, h.tenantWindow(c.Request.Context()), id)
+	sched := &models.BackupSchedule{
+		ID:          id,
+		Kind:        models.BackupScheduleKindAccount,
+		UserID:      &uid,
+		Cadence:     req.Cadence,
+		Content:     content,
+		Enabled:     req.Enabled,
+		KeepDaily:   keepDaily,
+		KeepWeekly:  keepWeekly,
+		KeepMonthly: keepMonthly,
+		NextRunAt:   &next,
+	}
+	if err := h.cfg.Schedules.Create(c.Request.Context(), sched); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
+		return
+	}
+	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), id, []string{uid}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
+		return
+	}
+	if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), id, dests); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"status": "ok", "id": id})
+}
+
+func (h *meBackupHandler) updateSchedule(c *gin.Context) {
+	user, pkg, ok := h.meScheduleGate(c)
+	if !ok {
+		return
+	}
+	if pkg == nil || !pkg.BackupsEnabled() || !pkg.ScheduledBackupsEnabled {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "scheduled_backups_not_enabled", "detail": "your hosting plan does not allow scheduled backups"})
+		return
+	}
+	id := c.Param("id")
+	sched := h.findOwnedSchedule(c.Request.Context(), user.ID, id)
+	if sched == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "schedule_not_found"})
+		return
+	}
+	var req meScheduleUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
+		return
+	}
+	content, keepDaily, keepWeekly, keepMonthly, dests, vok := h.validateScheduleUpsert(c, pkg, req)
+	if !vok {
+		return
+	}
+	uid := user.ID
+	next := internalbackup.NextTenantRun(time.Now().UTC(), req.Cadence, h.tenantWindow(c.Request.Context()), sched.ID)
+	sched.UserID = &uid
+	sched.Cadence = req.Cadence
+	sched.Content = content
+	sched.Enabled = req.Enabled
+	sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
+	sched.NextRunAt = &next
+	if err := h.cfg.Schedules.Update(c.Request.Context(), sched); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update"})
+		return
+	}
+	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), sched.ID, []string{uid}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
+		return
+	}
+	if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), sched.ID, dests); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func (h *meBackupHandler) deleteSchedule(c *gin.Context) {
+	user, _, ok := h.meScheduleGate(c)
+	if !ok {
+		return
+	}
+	id := c.Param("id")
+	// Ownership check BEFORE delete: a non-owner (or admin targeting a tenant
+	// row through this path) gets 404, never a cross-tenant delete.
+	if sched := h.findOwnedSchedule(c.Request.Context(), user.ID, id); sched == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "schedule_not_found"})
+		return
+	}
+	if err := h.cfg.Schedules.Delete(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_delete"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 // pruneOldestOwned auto-forgets the caller's OLDEST owned account_backup(s)
 // until they are under maxBackups, for the "prune" retention policy (GH #454).
 // Owner-scoped: OldestAccountBackupForUser filters by user_id, so a tenant can
@@ -2285,5 +2631,19 @@ func (h *meBackupHandler) download(c *gin.Context) {
 	// returned job metadata as JSON, so the browser's <a href> download
 	// got a JSON blob, never a file). Same agent-materialize path as the
 	// admin handler, scoped to the caller's own job by the check above.
-	streamBackupArtifact(c, h.cfg.Agent, job, materializeDestParams(c.Request.Context(), h.cfg.Destinations, job), h.cfg.logErr)
+	dest, destParams := materializeDest(c.Request.Context(), h.cfg.Destinations, job)
+	// Bridge the destination's own restic password (M30.2.x) for the
+	// materialize call; without it a rotated destination's snapshot cannot
+	// be opened and the download fails. No-op for legacy/local jobs.
+	_ = backupwrapperhelpers.WithOptionalDestPassword(c.Request.Context(), dest, h.cfg.Agent, h.cfg.SSOKey,
+		func(passwordFile string) error {
+			if passwordFile != "" {
+				if destParams == nil {
+					destParams = map[string]any{}
+				}
+				destParams["password_file"] = passwordFile
+			}
+			streamBackupArtifact(c, h.cfg.Agent, job, destParams, h.cfg.logErr)
+			return nil
+		})
 }

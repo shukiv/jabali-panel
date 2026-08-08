@@ -1,0 +1,4 @@
+# Adminer 4.8.1 plugin loader (plugins/plugin.php) — loaded by adminer.php,
+# so it executes with the same privileges. Bump together with
+# adminer_plugin_url in install.sh.
+f97b8a530cee342f3fb93816bfad397cd1c27a42cb16b0844a7c42bb66acded1  plugin.php

@@ -45,6 +45,10 @@ type domainCreateParams struct {
 	// (display_errors off), so without interception visitors get the
 	// browser's raw error screen. false ⇒ vhost byte-identical.
 	InterceptErrors bool `json:"intercept_errors"`
+	// PathInfo (GH #962) — emit an extra PATH_INFO location for front-controller
+	// PHP apps (osTicket, …) that route through /script.php/extra/path URLs.
+	// false ⇒ vhost byte-identical (feature off).
+	PathInfo bool `json:"path_info"`
 	// CacheEnabled (ADR-0108) — per-domain nginx FastCGI micro-cache
 	// opt-in. false ⇒ vhost byte-identical to the pre-0108 shape.
 	CacheEnabled bool   `json:"cache_enabled"`
@@ -520,7 +524,25 @@ server {
         add_header Cache-Control "private, no-cache, max-age=0" always;
 {{ end }}
     }
-{{ end }}
+{{ if .EnablePathInfo }}
+    # PATH_INFO for front-controller PHP apps (GH #962): osTicket
+    # (/scp/ajax.php/…) and similar route through /script.php/extra/path URLs,
+    # which the end-anchored  location ~ \.php$  above never matches — so they
+    # 400/404 without this. Fires ONLY for a real .php followed by a further
+    # /segment, so plain .php and clean URLs stay on the default handler. The
+    # -f existence guard is the JAB-187 second lock (the pool's
+    # security.limit_extensions = .php is the first): it refuses a walk-back
+    # onto an uploaded non-.php file before the request can reach FPM. The
+    # regex is non-greedy so /a.php/b.php/c splits on the FIRST .php.
+    location ~ ^(?<jabali_pi_script>.+?\.php)(?<jabali_pi_suffix>/.+)$ {
+        if (!-f $realpath_root$jabali_pi_script) { return 404; }
+        fastcgi_pass unix:{{.FPMSocket}};
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$jabali_pi_script;
+        fastcgi_param PATH_INFO $jabali_pi_suffix;
+{{ if .PHPValueParam }}        fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}    }
+{{ end }}{{ end }}
 
     access_log /var/log/nginx/{{.Domain}}-access.log;
     error_log /var/log/nginx/{{.Domain}}-error.log;
@@ -670,6 +692,9 @@ type vhostData struct {
 	// fastcgi_intercept_errors + a 50x-only location-scoped error_page in
 	// the PHP locations. false ⇒ byte-identical.
 	InterceptErrors bool
+	// EnablePathInfo (GH #962) — render an extra PATH_INFO location for
+	// front-controller PHP apps (osTicket, …). false ⇒ byte-identical.
+	EnablePathInfo bool
 	// ADR-0108 FastCGI micro-cache. All three are panel/agent-controlled
 	// (never user data). When CacheEnabled is false the template emits
 	// none of the cache/static directives → byte-identical to pre-0108.
@@ -921,7 +946,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo bool) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -1022,6 +1047,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		ListenIPv4:                 listenIPv4,
 		ListenIPv6:                 listenIPv6,
 		InterceptErrors:            interceptErrors,
+		EnablePathInfo:             pathInfo,
 		CacheEnabled:               cacheEnabled,
 		CachePath:                  cachePath,
 		CacheGate:                  cacheGate,
@@ -1259,7 +1285,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 	dirPrivacyDirectives := buildDirectoryPrivacyDirectives(p.DirectoryPrivacyRules)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

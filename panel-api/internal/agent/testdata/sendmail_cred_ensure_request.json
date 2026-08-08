@@ -1,0 +1,8 @@
+{
+  "username": "alice",
+  "domain": "example.com",
+  "email": "noreply@example.com",
+  "password": "REDACTED-FIXTURE-VALUE",
+  "host": "mail.panel.tld",
+  "make_default": true
+}

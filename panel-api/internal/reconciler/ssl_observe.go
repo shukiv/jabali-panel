@@ -123,6 +123,9 @@ func (r *Reconciler) ReconcileSSLObservation(ctx context.Context) {
 	if r.sslCerts == nil {
 		return
 	}
+	if r.isStandby(ctx) {
+		return // DR standby's cert rows are a replica; drsync owns them (GH #331 Step 3)
+	}
 	certs, err := r.sslCerts.ListAll(ctx)
 	if err != nil {
 		r.log.Warn("ssl_observe: listing certificates failed", "error", err)

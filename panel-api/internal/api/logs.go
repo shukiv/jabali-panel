@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +46,92 @@ func RegisterLogRoutes(g *gin.RouterGroup, cfg LogHandlerConfig) {
 	logs.POST("/access", h.createAccess)
 	logs.DELETE("/access/:stream_key", h.deleteAccess)
 	logs.GET("/types", h.listTypes)
+	logs.GET("/tail", h.tail)
+}
+
+// tail returns the last N lines of a domain's nginx access or error log as a
+// JSON snapshot — the request/response counterpart to the /logs/stream WebSocket
+// (which is a live follow, unusable from a stateless API client).
+//
+// It reuses the same vetted path resolver (logFilePathForDomain +
+// isSafeDomainSegment) and reads via `tail -n`, exactly like the streamer, so it
+// inherits the streamer's path-safety and file-access model. Ownership is
+// enforced: a non-admin can only read logs for a domain they own (404 on a
+// domain they don't, to avoid leaking existence).
+func (h *logHandler) tail(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	logType := c.Query("log_type")
+	if logType != "access" && logType != "error" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "log_type must be 'access' or 'error'"})
+		return
+	}
+	domainID := c.Query("domain_id")
+	if domainID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "domain_id required"})
+		return
+	}
+	// Clamp lines to [1, 2000], default 200 — bounded so a client can never ask
+	// the server to buffer an unbounded log.
+	lines := 200
+	if v := c.Query("lines"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			lines = n
+		}
+	}
+	if lines < 1 {
+		lines = 1
+	}
+	if lines > 2000 {
+		lines = 2000
+	}
+
+	if h.cfg.Domains == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "domain service not available"})
+		return
+	}
+	domain, err := h.cfg.Domains.FindByID(c.Request.Context(), domainID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
+		return
+	}
+	if !claims.IsAdmin && domain.UserID != claims.UserID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		return
+	}
+
+	logPath, err := logFilePathForDomain(domain.Name, logType)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid log request"})
+		return
+	}
+
+	cctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "tail", "-n", strconv.Itoa(lines), logPath).Output()
+	if err != nil {
+		// Most commonly the file doesn't exist yet (no traffic). Treat as empty
+		// rather than a 500 — an empty log is a valid answer.
+		c.JSON(http.StatusOK, gin.H{
+			"domain_id": domainID, "log_type": logType, "lines": []string{},
+			"note": "log is empty or not yet created",
+		})
+		return
+	}
+	trimmed := strings.TrimRight(string(out), "\n")
+	var ls []string
+	if trimmed != "" {
+		ls = strings.Split(trimmed, "\n")
+	}
+	c.JSON(http.StatusOK, gin.H{"domain_id": domainID, "log_type": logType, "lines": ls})
 }
 
 // listTypes returns available log types and their descriptions

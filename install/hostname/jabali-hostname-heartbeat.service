@@ -1,0 +1,8 @@
+[Unit]
+Description=Jabali free-hostname heartbeat (JAB-213)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/jabali/jabali-hostname-heartbeat.sh

@@ -9,6 +9,7 @@ import { Drawer, Grid, Layout, Menu, Tooltip, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { useServerCapabilities } from "../hooks/useServerCapabilities";
+import { DRStandbyBanner } from "../components/DRStandbyBanner";
 import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
@@ -188,6 +189,7 @@ export function AdminLayout() {
               overflowX: "hidden",
             }}
           >
+            <DRStandbyBanner />
             <BreadcrumbProvider>
               <RouteBreadcrumb nav={adminNav} homePath="/jabali-admin/dashboard" homeLabel="Dashboard" />
               <Outlet />

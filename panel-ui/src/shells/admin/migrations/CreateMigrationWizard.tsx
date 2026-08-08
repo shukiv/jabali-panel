@@ -74,6 +74,7 @@ const SOURCE_OPTIONS = [
   { value: "cloudpanel", label: "CloudPanel (site users)" },
   { value: "cyberpanel", label: "CyberPanel (websites)" },
   { value: "plesk", label: "Plesk (subscriptions)" },
+  { value: "jabali", label: "Jabali (accounts)" },
 ];
 
 const SOURCE_DESC: Record<string, string> = {
@@ -84,6 +85,7 @@ const SOURCE_DESC: Record<string, string> = {
   cloudpanel: "Live SSH — web sites, PHP, databases, cron, SSH keys (no mail)",
   cyberpanel: "Live SSH — web sites, databases, cron, SSH keys, DNS, mail",
   plesk: "Live SSH — subscriptions, WordPress, DBs (streamed), mail, DNS",
+  jabali: "Live SSH from another Jabali box — full account: files, DBs, mail bodies, cron; login password + user id preserved",
   wordpress_ssh: "Cloudways / VPS / generic SSH — a single WordPress site",
 };
 
@@ -105,6 +107,10 @@ const MULTI_ACCOUNT_KINDS = new Set([
   // created a bogus `root` user importing nothing. The picker lets the operator
   // choose the real subscription(s); a reseller can select several at once.
   "plesk",
+  // GH #954: Jabali source enumerates its own non-admin users via
+  // `jabali user list --json` (Discoverer.ListAccounts), so it goes through the
+  // account picker — pick one (or several) real accounts, never the SSH root.
+  "jabali",
 ]);
 function isMultiAccount(kind: string) {
   return MULTI_ACCOUNT_KINDS.has(kind);

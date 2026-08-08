@@ -1433,6 +1433,18 @@ test -x node_modules/.bin/tsc || {
 						"-o", repoDir+"/bin/jabali-mailhook.new", "./panel-agent/cmd/jabali-mailhook")
 				}()
 			}
+			// jabali-sendmail: the PHP mail() submission shim (JAB-230). Same
+			// panel-agent module — its sources are inside agentInputs, so
+			// agentSkip gates it correctly.
+			var sendmailErr error
+			if !agentSkip {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					sendmailErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
+						"-o", repoDir+"/bin/jabali-sendmail.new", "./panel-agent/cmd/jabali-sendmail")
+				}()
+			}
 			wg.Wait()
 			if apiErr != nil {
 				return fmt.Errorf("panel-api: %w", apiErr)
@@ -1445,6 +1457,9 @@ test -x node_modules/.bin/tsc || {
 			}
 			if mailhookErr != nil {
 				return fmt.Errorf("jabali-mailhook: %w", mailhookErr)
+			}
+			if sendmailErr != nil {
+				return fmt.Errorf("jabali-sendmail: %w", sendmailErr)
 			}
 			// Persist the sha only on the side we just rebuilt; skipped
 			// side keeps its existing sha file untouched.
@@ -1492,6 +1507,16 @@ test -x node_modules/.bin/tsc || {
 					return err
 				}
 				_ = os.Remove(mailhookNew)
+			}
+			sendmailNew := repoDir + "/bin/jabali-sendmail.new"
+			if _, err := os.Stat(sendmailNew); err == nil {
+				if err := run("", "install", "-d", "-m", "0755", "/usr/local/libexec/jabali"); err != nil {
+					return err
+				}
+				if err := run("", "install", "-m", "0755", "-o", "root", "-g", "root", sendmailNew, "/usr/local/libexec/jabali/jabali-sendmail"); err != nil {
+					return err
+				}
+				_ = os.Remove(sendmailNew)
 			}
 			// Idempotent ergonomic alias: `jabali` → `jabali-panel`.
 			// install.sh creates this on fresh installs; update.go refreshes it

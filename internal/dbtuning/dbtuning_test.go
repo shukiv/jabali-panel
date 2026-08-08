@@ -65,6 +65,34 @@ func TestPostgresStatementsQuoting(t *testing.T) {
 	}
 }
 
+// TestPostgresBytesCarryUnit pins GH #968: memory GUCs must reach ALTER SYSTEM
+// with an explicit byte unit. Without it, effective_cache_size's 4 GiB default
+// (4294967296, unit-less) is read as 8 kB blocks and overflows the int32 GUC
+// ceiling, so the whole apply is rejected and rolled back.
+func TestPostgresBytesCarryUnit(t *testing.T) {
+	stmts := PostgresStatements(map[string]string{
+		"effective_cache_size": "4294967296", // 4 GiB default, plain bytes
+		"shared_buffers":       "4G",          // MariaDB-style suffix Postgres rejects
+		"max_connections":      "150",         // KindInt — must stay verbatim
+	})
+	got := strings.Join(stmts, "\n")
+	// bytes tunables normalised to an explicit "<n>B" literal
+	if !strings.Contains(got, "ALTER SYSTEM SET effective_cache_size = '4294967296B'") {
+		t.Errorf("effective_cache_size not rendered with a byte unit:\n%s", got)
+	}
+	if !strings.Contains(got, "ALTER SYSTEM SET shared_buffers = '4294967296B'") {
+		t.Errorf("shared_buffers 4G not normalised to bytes:\n%s", got)
+	}
+	// the old, broken form must not survive
+	if strings.Contains(got, "effective_cache_size = '4294967296'") {
+		t.Errorf("unit-less byte value still emitted (the #968 bug):\n%s", got)
+	}
+	// non-bytes params untouched
+	if !strings.Contains(got, "ALTER SYSTEM SET max_connections = '150'") {
+		t.Errorf("max_connections should stay verbatim:\n%s", got)
+	}
+}
+
 func TestRestartRequired(t *testing.T) {
 	if !RestartRequired("mariadb", map[string]string{"max_connections": "200"}) {
 		t.Fatal("max_connections is restart-required")

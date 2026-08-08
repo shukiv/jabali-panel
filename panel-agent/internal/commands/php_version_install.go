@@ -411,8 +411,12 @@ func runSnuffleupagusBuild(version string) {
 	if _, err := os.Stat(installSh); err != nil {
 		return
 	}
+	// install_php_cli_sendmail_path (JAB-230) rides along: the fresh minor's
+	// cli/conf.d needs the sendmail_path dropin or cron mail() on that
+	// version regresses to "sendmail not found". Both functions loop every
+	// on-disk minor and are idempotent.
 	cmd := exec.Command("bash", "-c",
-		"source "+installSh+" && install_snuffleupagus")
+		"source "+installSh+" && install_snuffleupagus && install_php_cli_sendmail_path")
 	cmd.Env = append(os.Environ(), "JABALI_PHP_DEFENSE_TRIGGER_VERSION="+version)
 	// Detached: don't wait. Output goes to journalctl via stdout
 	// inheriting from the agent's systemd-managed PID.

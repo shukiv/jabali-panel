@@ -199,6 +199,13 @@ func (s *Scheduler) tickDispatch(ctx context.Context) {
 // firing, create queued backup_jobs rows for each fan-out target, mark
 // the schedule ran. The dispatcher tick then drains the queue.
 func (s *Scheduler) enqueue(ctx context.Context, sched models.BackupSchedule) {
+	// GH #454 7B: a non-empty cadence marks a window-governed tenant schedule —
+	// its timing comes from the admin maintenance window + interval, NOT cron.
+	if sched.Cadence != "" {
+		s.enqueueTenantWindow(ctx, sched)
+		return
+	}
+
 	logger := s.deps.Log.With(
 		"schedule_id", sched.ID,
 		"kind", sched.Kind,
@@ -231,6 +238,42 @@ func (s *Scheduler) enqueue(ctx context.Context, sched models.BackupSchedule) {
 
 	if err := s.deps.Schedules.MarkRan(ctx, sched.ID, time.Now().UTC(), next); err != nil {
 		logger.Error("schedule mark-ran failed", "err", err)
+	}
+}
+
+// enqueueTenantWindow handles a window-governed tenant schedule (GH #454 7B):
+// it only enqueues while the clock is inside the admin maintenance window, and
+// advances next_run_at to the next in-window opening (smeared per schedule) so
+// N tenants that come due together don't all fire at window open. The retention
+// cap + fan-out reuse the same enqueueBackup path as the cron schedules.
+func (s *Scheduler) enqueueTenantWindow(ctx context.Context, sched models.BackupSchedule) {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "cadence", sched.Cadence, "user_id", strDeref(sched.UserID))
+	now := time.Now().UTC()
+	w := internalbackup.DefaultTenantWindow
+	if s.deps.Settings != nil {
+		if set, err := s.deps.Settings.Get(ctx); err == nil && set != nil {
+			w = internalbackup.ParseWindow(set.TenantBackupWindowStart, set.TenantBackupWindowEnd)
+		}
+	}
+	next := internalbackup.NextTenantRun(now, sched.Cadence, w, sched.ID)
+	if !w.Contains(now) {
+		// Due but outside the window — defer to the next (smeared) opening
+		// without enqueuing anything.
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+	enqueued, qErr := s.enqueueBackup(ctx, sched)
+	if qErr != nil {
+		logger.Error("tenant window enqueue failed", "err", qErr)
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+	if !enqueued {
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+	if err := s.deps.Schedules.MarkRan(ctx, sched.ID, now, next); err != nil {
+		logger.Error("tenant window mark-ran failed", "err", err)
 	}
 }
 
@@ -300,8 +343,15 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 		}
 		for i := range targets {
 			u := &targets[i]
+			// Resolve the hosting package ONCE per user, not once per
+			// (user, destination): it is the same static row for every
+			// destination, and on a large host this loop ran
+			// users × destinations lookups inside the 60s enqueue tick.
+			// The cap check itself stays per-pair — each enqueue adds a job,
+			// so the count it reads genuinely changes.
+			pkg := s.userPackage(ctx, u)
 			for j := range enabledDests {
-				if ok := s.enqueueAccountBackup(ctx, sched, u, &enabledDests[j], runID); ok {
+				if ok := s.enqueueAccountBackup(ctx, sched, u, pkg, &enabledDests[j], runID); ok {
 					anyUser = true
 				}
 			}
@@ -333,14 +383,16 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 // enqueueAccountBackup creates one backup_jobs row in status=queued
 // for the given (user, destination) pair. Per ADR-0080 the destination
 // is a first-class field on backup_jobs.
-func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, dest *models.BackupDestination, runID string) bool {
+// pkg is the user's hosting package, resolved once by the caller for all of
+// that user's destinations (nil when unresolvable or not wired).
+func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, pkg *models.HostingPackage, dest *models.BackupDestination, runID string) bool {
 	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID, "destination_id", dest.ID, "run_id", runID)
 	// Retention cap (GH #454): honour the tenant's package policy on scheduled
 	// backups, matching the on-demand path. Only enforced when the package repo
 	// is wired AND the plan actually caps backups; otherwise the scheduled
 	// backup proceeds unchanged (no regression for uncapped/unresolvable plans).
 	if s.deps.Packages != nil {
-		if pkg := s.userPackage(ctx, user); pkg != nil && pkg.BackupsEnabled() && s.atOrOverCap(ctx, user.ID, int(pkg.MaxBackups)) {
+		if pkg != nil && pkg.BackupsEnabled() && s.atOrOverCap(ctx, user.ID, int(pkg.MaxBackups)) {
 			if pkg.BackupRetentionPrunes() && s.pruneOldestForUser(ctx, user, int(pkg.MaxBackups)) {
 				s.notifyBackupLimit(ctx, user, "prune", pkg.MaxBackups)
 			} else {
@@ -392,7 +444,10 @@ func (s *Scheduler) userPackage(ctx context.Context, user *models.User) *models.
 
 // atOrOverCap reports whether the user already holds >= maxBackups jobs.
 func (s *Scheduler) atOrOverCap(ctx context.Context, userID string, maxBackups int) bool {
-	_, total, err := s.deps.Jobs.ListForUser(ctx, userID, 1, 0)
+	// COUNT only. This used to call ListForUser(userID, 1, 0), which runs a
+	// COUNT(*) *and* a LIMIT 1 SELECT just to read the total — paid once per
+	// (user, destination) pair inside the 60s enqueue tick.
+	total, err := s.deps.Jobs.CountForUser(ctx, userID)
 	if err != nil {
 		return false
 	}
@@ -403,8 +458,15 @@ func (s *Scheduler) atOrOverCap(ctx context.Context, userID string, maxBackups i
 // under maxBackups. Owner-scoped: OldestAccountBackupForUser filters by
 // user_id, so a scheduled prune only ever touches the target tenant's own
 // backups. Returns true once under the cap (GH #454).
+// maxPrunesPerTick bounds how many snapshots one enqueue tick will forget.
+// Each backup.forget is a synchronous `restic forget` (30s timeout) that
+// takes the repo lock, so an unbounded loop — e.g. after an operator lowers
+// a plan's cap from 10 to 2 — blocked the 60s tick for minutes and contended
+// with any running backup. Whatever is left over is pruned on the next tick.
+const maxPrunesPerTick = 5
+
 func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, maxBackups int) bool {
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < maxPrunesPerTick; i++ {
 		if !s.atOrOverCap(ctx, user.ID, maxBackups) {
 			return true
 		}
@@ -414,16 +476,33 @@ func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, m
 		}
 		if s.deps.Agent != nil {
 			fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_, _ = s.deps.Agent.Call(fctx, "backup.forget", map[string]any{
+			_, ferr := s.deps.Agent.Call(fctx, "backup.forget", map[string]any{
 				"job_id": oldest.ID, "user_id": oldest.UserID, "kind": oldest.Kind,
 			})
 			cancel()
+			if ferr != nil {
+				// Do NOT delete the row when the snapshot is still in the
+				// repo. Dropping it would orphan the data: the repo keeps
+				// growing while the panel's retention accounting believes
+				// the tenant is under cap, and nothing ever revisits it.
+				// Leave the row so a later tick retries the forget.
+				s.deps.Log.Error("retention prune: backup.forget failed; keeping job row for retry",
+					"user_id", user.ID, "job_id", oldest.ID, "snapshot_id", oldest.SnapshotID, "err", ferr)
+				return false
+			}
 		}
 		if derr := s.deps.Jobs.Delete(ctx, oldest.ID); derr != nil {
 			return false
 		}
 	}
-	return false
+	// Still over cap after this tick's budget — report that so the caller
+	// rejects rather than silently proceeding, and the next tick continues.
+	if s.atOrOverCap(ctx, user.ID, maxBackups) {
+		s.deps.Log.Info("retention prune hit the per-tick budget; continuing next tick",
+			"user_id", user.ID, "pruned", maxPrunesPerTick)
+		return false
+	}
+	return true
 }
 
 // notifyBackupLimit fires backup.limit.reached to the tenant's inbox
@@ -542,7 +621,11 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 	for k, v := range destWireParams(dest) {
 		params[k] = v
 	}
-	err = backupwrapperhelpers.WithDestPasswordFile(callCtx, dest, s.deps.Agent, s.deps.SSOKey,
+	// Async variant: backup.create returns as soon as the agent spawns its
+	// orchestrator, so the password tempfile must outlive this call — the
+	// agent unlinks it when the job ends. The synchronous helper unlinked it
+	// here, seconds into a job that needs it for up to 90 minutes.
+	err = backupwrapperhelpers.WithDestPasswordFileAsync(callCtx, dest, s.deps.Agent, s.deps.SSOKey,
 		func(passwordFile string) error {
 			if passwordFile != "" {
 				params["password_file"] = passwordFile
@@ -587,7 +670,18 @@ func (s *Scheduler) dispatchSystem(ctx context.Context, j models.BackupJob) {
 	for k, v := range destWireParams(dest) {
 		params[k] = v
 	}
-	if _, err := s.deps.Agent.Call(callCtx, "system.backup", params); err != nil {
+	// A system backup writes to the same destinations as account backups, so
+	// it needs the same per-destination password bridging — without it a
+	// rotated destination fails outright. Async, like backup.create: the
+	// agent owns the tempfile for the life of the job.
+	if err := backupwrapperhelpers.WithDestPasswordFileAsync(callCtx, dest, s.deps.Agent, s.deps.SSOKey,
+		func(passwordFile string) error {
+			if passwordFile != "" {
+				params["password_file"] = passwordFile
+			}
+			_, callErr := s.deps.Agent.Call(callCtx, "system.backup", params)
+			return callErr
+		}); err != nil {
 		if isAgentConflict(err) {
 			_ = s.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusCancelled,
 				"", "", 0, 0, nil, nil, "skipped: prior system backup still running")

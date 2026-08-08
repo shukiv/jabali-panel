@@ -148,6 +148,14 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	// (status endpoint + journal-tail websocket) is wired.
 	go func() {
 		defer defaultJobSlots.release("backup", req.UserID, req.RepoURL)
+		// The per-destination password tempfile belongs to THIS job, not to
+		// the RPC that started it. backup.create is fire-and-forget — it
+		// returns as soon as this goroutine is spawned — so the caller
+		// cannot own the file's lifetime: panel-api's deferred cleanup used
+		// to unlink it seconds in, while the orchestrator below still needed
+		// it for every stage and for the manifest snapshot (up to 90
+		// minutes). Clean it up when the job actually ends.
+		defer func() { _ = removePasswordTempFile(req.PasswordFile) }()
 		ctxBg, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
 		defer cancel()
 		if err := runBackupOrchestrator(ctxBg, req); err != nil {
@@ -174,7 +182,7 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	defer jl.Close()
 	jl.Printf("account_backup start user_id=%s username=%s databases=%d mailboxes=%d destination=%s",
 		req.UserID, req.Username, len(req.Databases), len(req.Mailboxes), req.RepoURL)
-	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP); err != nil {
+	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.PasswordFile, req.SFTP); err != nil {
 		jl.Printf("ensure_repo_failed=%v", err)
 		return fmt.Errorf("ensure repo: %w", err)
 	}
@@ -270,6 +278,11 @@ func runHomeStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 		ScheduleID: req.ScheduleID, RepoURL: req.RepoURL,
 		CredentialsRef: req.CredentialsRef, SFTP: req.SFTP,
 		Compression: req.Compression, Folders: req.Folders,
+		// PasswordFile MUST be forwarded: a destination with its own
+		// sealed restic password (M30.2.x) is unopenable with the legacy
+		// shared file, and omitting it here silently falls back to that
+		// file — the stage then fails against a rotated destination.
+		PasswordFile: req.PasswordFile,
 	})
 	out, err := backupHomeHandler(ctx, body)
 	if err != nil {
@@ -301,6 +314,9 @@ func runDatabaseStage(ctx context.Context, req backupCreateParams) []backup.Mani
 		Databases: req.Databases, ScheduleID: req.ScheduleID,
 		RepoURL: req.RepoURL, CredentialsRef: req.CredentialsRef,
 		SFTP: req.SFTP, Compression: req.Compression,
+		// See runHomeStage: a per-destination password must reach the
+		// stage or it falls back to the legacy shared file.
+		PasswordFile: req.PasswordFile,
 	})
 	out, err := backupDatabasesHandler(ctx, body)
 	if err != nil {
@@ -442,6 +458,9 @@ func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 		Mailboxes: req.Mailboxes, ScheduleID: req.ScheduleID,
 		RepoURL: req.RepoURL, CredentialsRef: req.CredentialsRef,
 		SFTP: req.SFTP, Compression: req.Compression,
+		// See runHomeStage: a per-destination password must reach the
+		// stage or it falls back to the legacy shared file.
+		PasswordFile: req.PasswordFile,
 	})
 	out, err := backupMailboxesHandler(ctx, body)
 	if err != nil {

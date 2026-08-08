@@ -39,6 +39,14 @@ type BackupJobRepository interface {
 	// dispatches at server_settings.backup_max_concurrent_jobs.
 	CountByStatus(ctx context.Context, status string) (int64, error)
 	ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error)
+	// ListRunning is the finalizer's worklist. It must query status
+	// directly: paging the newest N of ALL statuses and filtering in Go
+	// loses the oldest-created running jobs of a big fan-out, which then
+	// wedge the queue permanently. See the method comment.
+	ListRunning(ctx context.Context, limit int) ([]models.BackupJob, error)
+	// CountForUser counts a user's jobs for the retention cap without
+	// materialising rows.
+	CountForUser(ctx context.Context, userID string) (int64, error)
 
 	// Run grouping — admin UI rolls scheduler-fired jobs under one
 	// header per run_id. ListRuns aggregates jobs that share a run_id;
@@ -270,6 +278,50 @@ func (r *backupJobRepo) ListByRun(ctx context.Context, runID string) ([]models.B
 
 func (r *backupJobRepo) ListManual(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error) {
 	return r.list(ctx, "run_id IS NULL", nil, limit, offset)
+}
+
+// ListRunning returns jobs currently in `running`, oldest-started first.
+//
+// The finalizer MUST use this rather than filtering ListAll in memory.
+// ListAll pages `created_at DESC`, while the dispatcher admits work via
+// ListQueuedOldest (`created_at ASC`) — so the running jobs are the
+// OLDEST-created of a fan-out batch and fall outside the newest-N page as
+// soon as a schedule creates more than N jobs. Those jobs could then be
+// neither finalized nor stall-timed-out: they stayed `running` forever,
+// CountByStatus(running) stayed at the cap, and the whole backup queue
+// deadlocked until someone edited the DB by hand.
+//
+// Indexed by idx_backup_jobs_status.
+func (r *backupJobRepo) ListRunning(ctx context.Context, limit int) ([]models.BackupJob, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []models.BackupJob
+	err := r.db.WithContext(ctx).
+		Where("status = ?", models.BackupJobStatusRunning).
+		Order("started_at ASC").
+		Limit(limit).
+		Find(&out).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	return out, nil
+}
+
+// CountForUser counts a user's jobs without materialising any rows. The
+// retention cap check used ListForUser(userID, 1, 0), which runs a COUNT(*)
+// AND a LIMIT 1 SELECT purely to read the total — once per (user,
+// destination) pair inside the enqueue tick.
+func (r *backupJobRepo) CountForUser(ctx context.Context, userID string) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&models.BackupJob{}).
+		Where("user_id = ?", userID).
+		Count(&n).Error
+	if err != nil {
+		return 0, translate(err)
+	}
+	return n, nil
 }
 
 func (r *backupJobRepo) ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error) {

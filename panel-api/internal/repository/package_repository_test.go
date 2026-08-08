@@ -119,6 +119,9 @@ func TestPackage_Update_PersistsPHPExecEnabled(t *testing.T) {
 // appears in the emitted UPDATE (each would be absent with the old allowlist).
 func TestPackage_Update_PersistsBackupLimits(t *testing.T) {
 	updatePersistsColumn(t, "max_backups")
+	// GH #454 7B: this one was the actual reported bug — editing Max Backup
+	// Schedules on a package saved-with-success but reverted on reload.
+	updatePersistsColumn(t, "max_backup_schedules")
 	updatePersistsColumn(t, "scheduled_backups_enabled")
 	updatePersistsColumn(t, "allowed_backup_destination_kinds")
 	updatePersistsColumn(t, "backup_retention_policy")

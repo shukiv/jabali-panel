@@ -111,9 +111,14 @@ type BackupDestination struct {
 	PasswordEnc       []byte          `gorm:"type:varbinary(512)" json:"-"`
 	PasswordRotatedAt *time.Time      `gorm:"type:datetime(6)" json:"password_rotated_at,omitempty"`
 	ExtraOptions      json.RawMessage `gorm:"type:json" json:"extra_options,omitempty"`
-	Enabled           bool            `gorm:"not null;default:1" json:"enabled"`
-	CreatedAt         time.Time       `gorm:"type:datetime(6);not null" json:"created_at"`
-	UpdatedAt         time.Time       `gorm:"type:datetime(6);not null" json:"updated_at"`
+	// No gorm default:1 — a destination/schedule can be created --disabled
+	// (Enabled=false), and GORM binds the DB default for a zero-valued bool on
+	// INSERT, so default:1 would silently re-enable it. See
+	// feedback_gorm_default1_bool_zero_value. Every create site sets Enabled
+	// explicitly; the DB column keeps its DEFAULT 1 for raw inserts.
+	Enabled   bool      `gorm:"not null" json:"enabled"`
+	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 func (BackupDestination) TableName() string { return "backup_destinations" }

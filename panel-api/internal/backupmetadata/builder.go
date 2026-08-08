@@ -22,6 +22,11 @@ import (
 type KratosClient interface {
 	CreateIdentityWithPassword(ctx context.Context, traits kratosclient.AdminTraits, passwordHash string) (string, error)
 	ImportIdentities(ctx context.Context, identities []kratosclient.ExportedIdentity) error
+	// IdentityIDByEmail + IdentityHasPassword back the login-verification
+	// step (GH #954): after restore, resolve whether the account can
+	// actually sign in, and mint a recoverable identity when none exists.
+	IdentityIDByEmail(ctx context.Context, email string) (string, error)
+	IdentityHasPassword(ctx context.Context, identityID string) (bool, error)
 }
 
 // Deps is the union of repos the producer reads. Every field is

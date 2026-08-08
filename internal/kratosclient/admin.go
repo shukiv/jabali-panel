@@ -631,65 +631,164 @@ type ExportedIdentity struct {
 	UpdatedAt           string          `json:"updated_at"`
 }
 
-// ExportIdentities exports all identities from Kratos using the official export API.
-// Returns the raw export data that can be saved to backup and later imported.
+// ExportIdentities returns every identity WITH its password credential (the
+// bcrypt hash), suitable for embedding in a backup bundle and re-importing via
+// ImportIdentities.
+//
+// GH #954 post-mortem: the old implementation did one GET with `?export=true` —
+// but `export=true` is not a Kratos API parameter (silently ignored) and list
+// responses NEVER include credentials, so every backup's "exported identity"
+// lacked the password hash and the restored user could not log in. The real
+// contract (verified against Kratos v26.2.0): list to enumerate ids, then
+// re-fetch each with `?include_credential=password`, which DOES return
+// credentials.password.config.hashed_password.
 func (c *Client) ExportIdentities(ctx context.Context) ([]ExportedIdentity, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.adminURL+"/admin/identities?export=true", nil)
-	if err != nil {
-		return nil, fmt.Errorf("exportidentities: request: %w", err)
+	var out []ExportedIdentity
+	token := ""
+	for {
+		page, next, err := c.ListIdentitiesPage(ctx, 250, token)
+		if err != nil {
+			return nil, fmt.Errorf("exportidentities: %w", err)
+		}
+		for _, id := range page {
+			full, err := c.getExportedIdentity(ctx, id.ID)
+			if err != nil {
+				return nil, fmt.Errorf("exportidentities: identity %s: %w", id.ID, err)
+			}
+			out = append(out, *full)
+		}
+		if next == "" {
+			break
+		}
+		token = next
 	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("exportidentities: do: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("exportidentities: status %d: %s", resp.StatusCode, string(errBody))
-	}
-
-	var exports []ExportedIdentity
-	if err := json.NewDecoder(resp.Body).Decode(&exports); err != nil {
-		return nil, fmt.Errorf("exportidentities: decode: %w", err)
-	}
-
-	return exports, nil
+	return out, nil
 }
 
-// ImportIdentities imports identities to Kratos using the official import API.
-// The identities parameter should contain data previously exported by ExportIdentities.
-func (c *Client) ImportIdentities(ctx context.Context, identities []ExportedIdentity) error {
-	if len(identities) == 0 {
-		return nil
-	}
-
-	body, err := json.Marshal(identities)
+// getExportedIdentity fetches one identity including its password credential.
+func (c *Client) getExportedIdentity(ctx context.Context, identityID string) (*ExportedIdentity, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.adminURL+"/admin/identities/"+url.PathEscape(identityID)+"?include_credential=password", nil)
 	if err != nil {
-		return fmt.Errorf("importidentities: marshal: %w", err)
+		return nil, fmt.Errorf("request: %w", err)
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.adminURL+"/admin/identities/import", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("importidentities: request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("importidentities: do: %w", err)
+		return nil, fmt.Errorf("do: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("importidentities: status %d: %s", resp.StatusCode, string(errBody))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(errBody))
 	}
+	var full ExportedIdentity
+	if err := json.NewDecoder(resp.Body).Decode(&full); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	return &full, nil
+}
 
+// exportedPasswordHash extracts credentials.password.config.hashed_password
+// from an exported identity's raw credentials blob. Empty when the blob is
+// missing, malformed, or carries no password credential (old backups made
+// before ExportIdentities captured credentials).
+func exportedPasswordHash(credentials json.RawMessage) string {
+	if len(credentials) == 0 {
+		return ""
+	}
+	var creds struct {
+		Password struct {
+			Config struct {
+				HashedPassword string `json:"hashed_password"`
+			} `json:"config"`
+		} `json:"password"`
+	}
+	if err := json.Unmarshal(credentials, &creds); err != nil {
+		return ""
+	}
+	return creds.Password.Config.HashedPassword
+}
+
+// ImportIdentities re-creates previously exported identities.
+//
+// GH #954 post-mortem: the old implementation POSTed the batch to
+// `/admin/identities/import` — a route that does not exist in Kratos (the
+// router matches /admin/identities/{id} with id="import", where POST is not
+// allowed → 405 on every restore, ever). The real contract is one
+// POST /admin/identities per identity with a CreateIdentityBody: only the
+// fields Kratos accepts on create, with the password credential transformed
+// from the exported shape (password.config.hashed_password) into the create
+// shape (credentials.password.config.hashed_password).
+//
+// An identity whose traits already exist (409 conflict) is skipped, not an
+// error — restore re-runs and same-box drills hit this constantly.
+func (c *Client) ImportIdentities(ctx context.Context, identities []ExportedIdentity) error {
+	for _, id := range identities {
+		schemaID := id.SchemaID
+		if schemaID == "" {
+			schemaID = "default"
+		}
+		payload := map[string]any{
+			"schema_id": schemaID,
+			"traits":    id.Traits,
+		}
+		if id.State != "" {
+			payload["state"] = id.State
+		}
+		if len(id.MetadataPublic) > 0 && string(id.MetadataPublic) != "null" {
+			payload["metadata_public"] = id.MetadataPublic
+		}
+		if len(id.MetadataAdmin) > 0 && string(id.MetadataAdmin) != "null" {
+			payload["metadata_admin"] = id.MetadataAdmin
+		}
+		if hash := exportedPasswordHash(id.Credentials); hash != "" {
+			payload["credentials"] = map[string]any{
+				"password": map[string]any{
+					"config": map[string]any{"hashed_password": hash},
+				},
+			}
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("importidentities: marshal: %w", err)
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			c.adminURL+"/admin/identities", bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("importidentities: request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			return fmt.Errorf("importidentities: do: %w", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		status := resp.StatusCode
+		if cerr := resp.Body.Close(); cerr != nil && status < 300 {
+			return fmt.Errorf("importidentities: close body: %w", cerr)
+		}
+		if status == http.StatusConflict {
+			continue // identity already present — restore re-run / same-box drill
+		}
+		if status != http.StatusCreated && status != http.StatusOK {
+			return fmt.Errorf("importidentities: status %d", status)
+		}
+	}
 	return nil
+}
+
+// IdentityHasPassword reports whether the identity has a password credential
+// set (a stored hash). Restore flows use it to decide whether the account can
+// actually log in or needs a recovery link.
+func (c *Client) IdentityHasPassword(ctx context.Context, identityID string) (bool, error) {
+	if identityID == "" {
+		return false, ErrIdentityNotFound
+	}
+	full, err := c.getExportedIdentity(ctx, identityID)
+	if err != nil {
+		return false, fmt.Errorf("identityhaspassword: %w", err)
+	}
+	return exportedPasswordHash(full.Credentials) != "", nil
 }
 
 // randomCanarySuffix returns a hex-encoded random token for constructing a

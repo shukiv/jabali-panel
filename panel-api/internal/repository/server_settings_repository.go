@@ -40,6 +40,14 @@ type ServerSettingsRepository interface {
 	// last fired for (GH #840). Targeted single-column UPDATE so it can
 	// never clobber a concurrent admin settings save.
 	SetDigestLastSent(ctx context.Context, day string) error
+
+	// RecordDRSync records the outcome of one drsync tick on a standby (GH
+	// #331 Step 2): the timestamp, status (models.DRSyncStatus*), and error
+	// string. snapshotID is written only when non-empty (i.e. a snapshot was
+	// actually applied) so a failed/waiting tick doesn't erase the last-known
+	// applied snapshot. Targeted UPDATE so it never clobbers a concurrent
+	// settings save.
+	RecordDRSync(ctx context.Context, snapshotID, status, syncErr string) error
 }
 
 type serverSettingsRepo struct{ db *gorm.DB }
@@ -147,4 +155,26 @@ func (r *serverSettingsRepo) SetDigestLastSent(ctx context.Context, day string) 
 		Model(&models.ServerSettings{}).
 		Where("1 = 1").
 		Update("digest_last_sent_date", day).Error
+}
+
+// RecordDRSync — see the interface doc. Empty WHERE targets the single
+// settings row. syncErr is truncated to the column width (1024) so a long
+// restic error string can never fail the UPDATE.
+func (r *serverSettingsRepo) RecordDRSync(ctx context.Context, snapshotID, status, syncErr string) error {
+	const maxErr = 1024
+	if len(syncErr) > maxErr {
+		syncErr = syncErr[:maxErr]
+	}
+	updates := map[string]any{
+		"dr_last_sync_at":     time.Now().UTC(),
+		"dr_last_sync_status": status,
+		"dr_last_sync_error":  syncErr,
+	}
+	if snapshotID != "" {
+		updates["dr_last_snapshot_id"] = snapshotID
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.ServerSettings{}).
+		Where("1 = 1").
+		Updates(updates).Error
 }

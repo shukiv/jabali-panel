@@ -138,6 +138,17 @@ REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 # 9.9.9.9 via UDP.
 DNS_FORWARDER="${JABALI_DNS_FORWARDER:-}"
 GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
+# SHA-256 of the pinned Go tarballs, from https://go.dev/dl/?mode=json.
+# Pinned HERE rather than in install/ because install_go runs BEFORE
+# clone_or_update_repo — on a fresh install $REPO_DIR does not exist yet, so a
+# pin under install/ could never be read (and the ordering guard test would
+# rightly flag the attempt). install.sh itself is the bootstrap artifact and is
+# sha256-verified by bootstrap.sh, so a pin here carries the same weight.
+# Bump together with GO_VERSION. An unpinned version (JABALI_GO_VERSION
+# override, or the CDN-gap fallback) verifies against go.dev's published
+# checksum instead — see install_go.
+GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053}"
+GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
@@ -1042,6 +1053,88 @@ _detect_public_ipv6() {
   ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
 }
 
+# ---- JAB-213 free-hostname install-time flow (inline; runs pre-clone) --------
+# Defined in install.sh itself, not sourced from $REPO_DIR/install/, because
+# prompt_server_settings runs BEFORE clone_or_update_repo (ordering guard in
+# install_repo_dir_ordering_test.go). The token is parsed out and written to
+# hostname.env directly — never echoed to the install log, which wraps output.
+JH_API="${JABALI_HOSTNAME_API:-https://api.jabalihosted.com}"
+JH_TOKEN_FILE=/etc/jabali-panel/hostname.env
+
+jh_post() {
+  local path="$1" body="$2"
+  curl -sS --max-time 30 -w $'\n%{http_code}' \
+    -H 'Content-Type: application/json' \
+    -d "$body" "${JH_API}${path}" 2>/dev/null || printf '\n000'
+}
+jh_field() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$2" 2>/dev/null; }
+
+jh_free_hostname_flow() {
+  local fd="$1" email code body fqdn label token
+  [[ -z "$fd" ]] && { echo "free hostname needs an interactive terminal" >&2; return 1; }
+  {
+    printf '\nFree Jabali hostname\n'
+    printf '  A public hostname like 203-0-113-7.jabalihosted.com with automatic\n'
+    printf '  DNS + TLS. We email a one-time code to verify the address (stored\n'
+    printf '  only to contact you about the hostname).\n\n'
+  } > /dev/tty 2>/dev/null || true
+  local email_re='^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+  while true; do
+    printf 'Email for verification: ' > /dev/tty 2>/dev/null || printf 'Email for verification: '
+    read -r -u "$fd" email || true
+    [[ "$email" =~ $email_re ]] && break
+    echo "  please enter a valid email address" > /dev/tty 2>/dev/null || true
+  done
+  local resp jcode attempt
+  for attempt in 1 2; do
+    resp="$(jh_post /v1/register "{\"email\":\"${email}\"}")"
+    jcode="${resp##*$'\n'}"; body="${resp%$'\n'*}"
+    case "$jcode" in
+      200) break ;;
+      429) echo "  a code was just sent — wait a minute and re-run" >&2; return 1 ;;
+      000|5*) [[ $attempt == 1 ]] && { sleep 3; continue; }
+             echo "  hostname service unreachable ($jcode) — using a manual hostname" >&2; return 1 ;;
+      *)   echo "  could not send a code ($(jh_field "$body" error)) — using a manual hostname" >&2; return 1 ;;
+    esac
+  done
+  printf '  code sent to %s\n' "$email" > /dev/tty 2>/dev/null || true
+  local tries
+  for tries in 1 2 3; do
+    printf 'Enter the 6-digit code: ' > /dev/tty 2>/dev/null || printf 'Enter the 6-digit code: '
+    read -r -u "$fd" code || true
+    code="${code//[^0-9]/}"
+    resp="$(jh_post /v1/claim "{\"email\":\"${email}\",\"code\":\"${code}\"}")"
+    jcode="${resp##*$'\n'}"; body="${resp%$'\n'*}"
+    case "$jcode" in
+      200) break ;;
+      403) echo "  wrong or expired code, try again" > /dev/tty 2>/dev/null || true
+           [[ $tries == 3 ]] && { echo "  no valid code entered — using a manual hostname" >&2; return 1; }
+           continue ;;
+      429) echo "  too many attempts — re-run the installer for a fresh code" >&2; return 1 ;;
+      422) echo "  this server's public IP can't take a free hostname ($(jh_field "$body" message))" >&2
+           echo "  falling back to a manual hostname" >&2; return 1 ;;
+      *)   echo "  claim failed ($jcode) — using a manual hostname" >&2; return 1 ;;
+    esac
+  done
+  fqdn="$(jh_field "$body" fqdn)"; label="$(jh_field "$body" label)"; token="$(jh_field "$body" token)"
+  [[ -z "$fqdn" || -z "$token" ]] && { echo "  malformed claim response — using a manual hostname" >&2; return 1; }
+  # Validate every field before it lands in hostname.env. The readers no longer
+  # `source` that file, but this is the boundary where remote data enters the
+  # box, and a value carrying shell metacharacters or a newline could still
+  # break or spoof a later parse. Reject rather than sanitize so a
+  # compromised/MITM'd service can't smuggle anything through.
+  [[ "$token" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "  claim response token has an unexpected format — using a manual hostname" >&2; return 1; }
+  [[ "$label" =~ ^[A-Za-z0-9-]+$ ]]  || { echo "  claim response label has an unexpected format — using a manual hostname" >&2; return 1; }
+  [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || { echo "  email has an unexpected format — using a manual hostname" >&2; return 1; }
+  umask 077
+  {
+    printf 'LABEL=%s\nFQDN=%s\nEMAIL=%s\nTOKEN=%s\nAPI=%s\n' "$label" "$fqdn" "$email" "$token" "$JH_API"
+  } > "$JH_TOKEN_FILE"
+  chmod 0600 "$JH_TOKEN_FILE"
+  printf '%s' "$fqdn"   # only stdout — install.sh captures it
+  return 0
+}
+
 prompt_server_settings() {
   local config_file="/etc/jabali-panel/config.toml"
 
@@ -1145,7 +1238,27 @@ prompt_server_settings() {
   # env), skip the prompt entirely — even when a TTY is available. This
   # enables non-interactive provisioning (Ansible, CI images, etc.).
   local _hostname_regex='^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$'
-  if [[ -n "${JABALI_HOSTNAME:-}" ]]; then
+  # JAB-213: opt-in free jabalihosted.com hostname. Gated on the env flag AND
+  # an interactive TTY (the email+code dance is inherently interactive) AND no
+  # explicit --hostname. On success it sets inp_hostname to the claimed FQDN
+  # and skips the manual prompt; on any failure it falls through to the normal
+  # prompt with a reason printed. Never runs non-interactively.
+  if [[ "${JABALI_FREE_HOSTNAME:-}" == "1" && -z "${JABALI_HOSTNAME:-}" && -n "$input_fd" ]]; then
+    local _jh_fqdn
+    # jh_free_hostname_flow is defined inline below (NOT sourced from $REPO_DIR
+    # — this runs before clone_or_update_repo, so the repo isn't on disk yet;
+    # the install-repo-dir-ordering guard enforces that).
+    if _jh_fqdn="$(jh_free_hostname_flow "$input_fd")" && [[ "$_jh_fqdn" =~ $_hostname_regex ]]; then
+      inp_hostname="$_jh_fqdn"
+      _ok "using free Jabali hostname: $inp_hostname"
+      JABALI_FREE_HOSTNAME_ACTIVE=1
+    else
+      _warn "free hostname not set up — continuing with a manual hostname"
+    fi
+  fi
+  if [[ -n "${JABALI_FREE_HOSTNAME_ACTIVE:-}" ]]; then
+    : # hostname already resolved via the free-hostname flow; skip prompts below
+  elif [[ -n "${JABALI_HOSTNAME:-}" ]]; then
     if [[ ! "$JABALI_HOSTNAME" =~ $_hostname_regex ]]; then
       _die "invalid JABALI_HOSTNAME: '$JABALI_HOSTNAME' (use letters/digits/dots/hyphens)"
     fi
@@ -1732,10 +1845,29 @@ EARLYDNS
     local _composer_tmp
     _composer_tmp="$(mktemp)"
     if curl -fsSL -o "$_composer_tmp" https://getcomposer.org/installer; then
-      "php${primary_version}" "$_composer_tmp" \
-        --install-dir=/usr/local/bin --filename=composer --quiet
-      rm -f "$_composer_tmp"
-      _ok "composer installed at /usr/local/bin/composer"
+      # Verify the installer's SHA-384 before executing it as root — this is
+      # Composer's own documented procedure, and without it a MITM or a
+      # compromise of getcomposer.org is immediate root code execution during
+      # install/update. The signature is served from composer.github.io, a
+      # DIFFERENT host than the installer, so an attacker has to compromise
+      # both for the check to pass. Not pinned in-repo on purpose: the
+      # installer is rebuilt upstream regularly and a stale pin would fail
+      # every install.
+      local _composer_sig _composer_sum
+      _composer_sig="$(curl -fsSL --max-time 20 https://composer.github.io/installer.sig || true)"
+      _composer_sum="$(sha384sum "$_composer_tmp" | awk '{print $1}')"
+      if [[ -z "$_composer_sig" ]]; then
+        rm -f "$_composer_tmp"
+        _warn "could not fetch composer installer signature — refusing to run an unverified installer as root; composer unavailable"
+      elif [[ "$_composer_sig" != "$_composer_sum" ]]; then
+        rm -f "$_composer_tmp"
+        _err "composer installer checksum mismatch (expected $_composer_sig, got $_composer_sum) — NOT executing it"
+      else
+        "php${primary_version}" "$_composer_tmp" \
+          --install-dir=/usr/local/bin --filename=composer --quiet
+        rm -f "$_composer_tmp"
+        _ok "composer installed at /usr/local/bin/composer (installer signature verified)"
+      fi
     else
       rm -f "$_composer_tmp"
       _warn "failed to download composer installer — composer will be unavailable"
@@ -2342,6 +2474,13 @@ install_jabali_slices() {
   install -m 0755 "$REPO_DIR/install/systemd/fpm-pre-start" /usr/local/libexec/jabali/fpm-pre-start
   install -m 0755 "$REPO_DIR/install/systemd/fpm-exec" /usr/local/libexec/jabali/fpm-exec
   install -m 0755 "$REPO_DIR/install/systemd/fpm-post-start" /usr/local/libexec/jabali/fpm-post-start
+  # JAB-213: free-hostname heartbeat helper (always installed; the timer below
+  # is only enabled when the box actually uses a free jabalihosted.com name).
+  install -m 0755 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.sh" /usr/local/libexec/jabali/jabali-hostname-heartbeat.sh
+  # JAB-213 phase 3b: wildcard-cert DNS-01 hooks + issuance wrapper.
+  install -m 0755 "$REPO_DIR/install/hostname/certbot-auth-hook.sh" /usr/local/libexec/jabali/certbot-auth-hook.sh
+  install -m 0755 "$REPO_DIR/install/hostname/certbot-cleanup-hook.sh" /usr/local/libexec/jabali/certbot-cleanup-hook.sh
+  install -m 0755 "$REPO_DIR/install/hostname/jabali-hostname-cert.sh" /usr/local/libexec/jabali/jabali-hostname-cert.sh
   # cron-precheck is the ExecStartPre guard generated cron .service units
   # reference (panel-agent buildCronServiceContent). Without it the unit
   # dies 203/EXEC and scheduled crons never run.
@@ -2350,6 +2489,15 @@ install_jabali_slices() {
   install -m 0644 "$REPO_DIR/install/systemd/jabali.slice" /etc/systemd/system/jabali.slice
   install -m 0644 "$REPO_DIR/install/systemd/jabali-user.slice" /etc/systemd/system/jabali-user.slice
   install -m 0644 "$REPO_DIR/install/systemd/jabali-fpm@.service" /etc/systemd/system/jabali-fpm@.service
+  # JAB-213: heartbeat timer units (enabled conditionally below).
+  install -m 0644 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.service" /etc/systemd/system/jabali-hostname-heartbeat.service
+  install -m 0644 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.timer" /etc/systemd/system/jabali-hostname-heartbeat.timer
+  # Enable the daily heartbeat only when this box uses a free hostname.
+  if [[ -r /etc/jabali-panel/hostname.env ]]; then
+    systemctl enable --now jabali-hostname-heartbeat.timer >/dev/null 2>&1 \
+      && _ok "free-hostname heartbeat timer enabled" \
+      || _warn "could not enable free-hostname heartbeat timer (non-fatal)"
+  fi
 
   systemctl daemon-reload
   systemctl start jabali.slice jabali-user.slice
@@ -2364,6 +2512,10 @@ install_php_pool_template() {
   mkdir -p /etc/jabali-panel
   install -d -m 0755 -o root -g root /etc/jabali-panel/fpm
   install -d -m 0755 -o root -g root /etc/jabali-panel/user-phpver
+  # JAB-230: relay-credential tree for the jabali-sendmail shim. 0711 — tenant
+  # PHP must traverse into its own 0750 root:<usergroup> subdir but must not
+  # enumerate other users. Subdirs + creds are written by the agent.
+  install -d -m 0711 -o root -g root /etc/jabali-panel/sendmail
   local template_src="$REPO_DIR/install/php/jabali-php-pool.conf.tmpl"
   local template_dst="/etc/jabali-panel/php-pool.conf.tmpl"
   if [[ ! -f "$template_src" ]]; then
@@ -2641,6 +2793,69 @@ install_mariadb_skip_networking() {
   # Belt-and-braces ACL — grant jabali rwx on the socket dir + file
   # regardless of group membership state.
   ensure_mariadb_socket_acl_for_jabali
+}
+
+# ensure_jabali_sendmail_binary — JAB-230 two-hop-update closer. The shim
+# binary is normally installed by build_backend / update.go, but the FIRST
+# `jabali update` onto a JAB-230 build runs the PREVIOUS binary's update
+# code, which knows nothing about the shim — the new pool template lands
+# (sendmail_path set) while /usr/local/libexec/jabali/jabali-sendmail is
+# still absent, and mail() stays broken until some later release touches
+# panel-agent again. Seen live on the .165 stable box. This runs from the
+# NEW repo's install.sh self-heal block on every update, so the gap closes
+# in the same run. SHA-marker-gated: a no-op when the installed shim was
+# built from the current checkout.
+ensure_jabali_sendmail_binary() {
+  local dst=/usr/local/libexec/jabali/jabali-sendmail
+  local marker=/usr/local/libexec/jabali/.jabali-sendmail.sha
+  local src_pkg="$REPO_DIR/panel-agent/cmd/jabali-sendmail"
+  [[ -d "$src_pkg" ]] || return 0   # pre-JAB-230 checkout — nothing to build
+  local want
+  want="$(sudo -u "$SERVICE_USER" git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [[ -x "$dst" && -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "$want" ]]; then
+    return 0
+  fi
+  local gobin="${GO_ROOT:-/usr/local/go}/bin"
+  [[ -x "$gobin/go" ]] || gobin="$(dirname "$(command -v go 2>/dev/null || echo /usr/local/go/bin/go)")"
+  if sudo -u "$SERVICE_USER" -H env \
+      PATH="$gobin:/usr/bin:/bin" HOME="$REPO_DIR" \
+      GOCACHE="$REPO_DIR/.cache/go-build" GOMODCACHE="$REPO_DIR/.cache/go-mod" \
+      bash -c "cd '$REPO_DIR' && go build -trimpath -ldflags '-s -w' -o bin/jabali-sendmail.new ./panel-agent/cmd/jabali-sendmail"; then
+    install -d -m 0755 /usr/local/libexec/jabali
+    install -m 0755 -o root -g root "$REPO_DIR/bin/jabali-sendmail.new" "$dst"
+    rm -f "$REPO_DIR/bin/jabali-sendmail.new"
+    printf '%s\n' "$want" > "$marker"
+    _ok "jabali-sendmail shim installed at $dst (JAB-230)"
+  else
+    _warn "jabali-sendmail build failed — PHP mail() stays broken until the next update (non-fatal)"
+  fi
+}
+
+# install_php_cli_sendmail_path — JAB-230: point CLI PHP's mail() at the
+# jabali-sendmail shim. The FPM pools get sendmail_path from the pool template;
+# CLI php (cron jobs, wp-cli, artisan) reads its own per-version cli/conf.d, so
+# without this dropin every cron-driven mail() still dies on the purged
+# /usr/sbin/sendmail. Idempotent; loops every installed minor. Callers:
+# fresh install, every `jabali update` (self-heal), and php.version.install
+# (agent) for minors added after install day.
+install_php_cli_sendmail_path() {
+  local dir minor ini
+  for dir in /etc/php/*/; do
+    [[ -d "${dir}cli" ]] || continue
+    minor="$(basename "$dir")"
+    ini="/etc/php/${minor}/cli/conf.d/99-jabali-sendmail.ini"
+    install -d -m 0755 "/etc/php/${minor}/cli/conf.d"
+    if [[ ! -f "$ini" ]] || ! grep -q "jabali-sendmail" "$ini" 2>/dev/null; then
+      cat > "$ini" <<'SENDMAIL_EOF'
+; Managed by jabali-panel (JAB-230). CLI mail() submits via the jabali shim
+; (per-user relay credentials; Stalwart on 127.0.0.1:587).
+sendmail_path = /usr/local/libexec/jabali/jabali-sendmail -t -i
+SENDMAIL_EOF
+      chmod 0644 "$ini"
+      _log "php-cli sendmail_path: wrote $ini"
+    fi
+  done
+  _ok "CLI PHP mail() routed through jabali-sendmail (JAB-230)"
 }
 
 # install_php_opcache_tuning — multi-tenant WordPress opcache defaults (#597).
@@ -4637,7 +4852,47 @@ install_go() {
       fi
     done
     [[ -n "$_got" ]] || _die "failed to download Go: pinned go${failed_pin} and every published stable fallback 404'd from go.dev -- check egress to go.dev / dl.google.com from this host"
+    # A downgrade is a security-relevant event, not a detail: the host is now
+    # building the panel with an older toolchain that may carry known CVEs, and
+    # simply making the pinned URL fail is enough to trigger it. Say so loudly.
+    _warn "GO TOOLCHAIN DOWNGRADE: pinned go${failed_pin} was unavailable; installing go${GO_VERSION} instead. The panel/agent binaries will be built with this older toolchain — re-run once go${failed_pin} is reachable."
   fi
+  # Verify BEFORE extracting into /usr/local. The tarball builds the panel and
+  # agent binaries, so a tampered toolchain compromises every artifact this
+  # host produces — and nothing downstream would notice. Prefer the in-repo
+  # pin (protects even against a compromised go.dev); fall back to go.dev's own
+  # published sha256 for a version the pin can't know in advance (the CDN-gap
+  # fallback, or a JABALI_GO_VERSION override). Refuse to install unverified.
+  local go_tar_name go_expected go_actual
+  go_tar_name="$(basename "$tarball")"
+  go_expected=""
+  # Only the PINNED version has a checksum baked in; the fallback path lands on
+  # a version chosen at runtime, so it verifies against go.dev instead.
+  if [[ "$go_tar_name" == "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" ]]; then
+    case "$GO_ARCH" in
+      amd64) go_expected="$GO_SHA256_AMD64" ;;
+      arm64) go_expected="$GO_SHA256_ARM64" ;;
+    esac
+  fi
+  if [[ -z "$go_expected" ]]; then
+    _log "no pinned checksum for ${go_tar_name} — verifying against go.dev's published checksum"
+    # go.dev's listing is pretty-printed with "sha256" a few lines below the
+    # matching "filename", so take the first sha256 in that window.
+    go_expected="$("${go_curl[@]}" "https://go.dev/dl/?mode=json" 2>/dev/null \
+      | grep -A 5 "\"filename\": \"${go_tar_name}\"" \
+      | grep -oE '"sha256": "[a-f0-9]{64}"' \
+      | grep -oE '[a-f0-9]{64}' | head -1)"
+  fi
+  go_actual="$(sha256sum "$tarball" | awk '{print $1}')"
+  if [[ -z "$go_expected" ]]; then
+    rm -f "$tarball"
+    _die "could not determine an expected checksum for ${go_tar_name} — refusing to install an unverified Go toolchain"
+  fi
+  if [[ "$go_expected" != "$go_actual" ]]; then
+    rm -f "$tarball"
+    _die "Go toolchain checksum mismatch for ${go_tar_name}: expected $go_expected, got $go_actual — NOT extracting"
+  fi
+  _ok "Go toolchain checksum verified (${go_tar_name})"
   tar -C /usr/local -xzf "$tarball"
   rm -f "$tarball"
 
@@ -4875,6 +5130,16 @@ clone_or_update_repo() {
     # other trees that may legitimately be group-owned differently
     # don't get clobbered.
     chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR/.git"
+    # Self-heal a stale remote URL. Boxes provisioned before the codeberg→GitHub
+    # source-of-truth switch still have origin pointing at the DROPPED codeberg
+    # remote, which is frozen: `git fetch origin` there silently pulls
+    # long-obsolete code (e.g. missing install/hostname/* and other newer
+    # files), then a later install step hard-fails on a file the current
+    # install.sh references. Force origin to the canonical $REPO_URL before
+    # fetching so the pull always tracks the real source. Idempotent — a no-op
+    # when origin is already correct.
+    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" remote set-url origin "$REPO_URL" 2>/dev/null \
+      || _warn "could not reset origin URL to $REPO_URL — continuing with the existing remote"
     # No --quiet: under `set -e` a failed fetch/clone aborts install.sh
     # without any output because --quiet suppresses git's stderr, leaving
     # the operator with a silent exit. Let git's error reach the trace.
@@ -4993,7 +5258,7 @@ _prebuilt_ready() {
   local d="${JABALI_PREBUILT_BIN:-}"
   [[ -n "$d" && -d "$d" ]] || return 1
   local b
-  for b in jabali-panel jabali-agent jabali-ssh-shell jabali-mailhook; do
+  for b in jabali-panel jabali-agent jabali-ssh-shell jabali-mailhook jabali-sendmail; do
     [[ -s "$d/$b" && -x "$d/$b" ]] || return 1
   done
   "$d/jabali-panel" version >/dev/null 2>&1 || return 1
@@ -5129,6 +5394,7 @@ build_backend() {
   local tmp_agent="$REPO_DIR/bin/jabali-agent.new"
   local tmp_sshshell="$REPO_DIR/bin/jabali-ssh-shell.new"
   local tmp_mailhook="$REPO_DIR/bin/jabali-mailhook.new"
+  local tmp_sendmail="$REPO_DIR/bin/jabali-sendmail.new"
 
   # Build-info ldflags: panel-api exposes api.Version (short SHA),
   # api.Commit (full SHA) and api.BuildTime (RFC3339) through
@@ -5167,6 +5433,7 @@ build_backend() {
     install -m 0755 "$JABALI_PREBUILT_BIN/jabali-agent"     "$tmp_agent"
     install -m 0755 "$JABALI_PREBUILT_BIN/jabali-ssh-shell" "$tmp_sshshell"
     install -m 0755 "$JABALI_PREBUILT_BIN/jabali-mailhook"  "$tmp_mailhook"
+    install -m 0755 "$JABALI_PREBUILT_BIN/jabali-sendmail"  "$tmp_sendmail"
   else
     # One invocation of go, three binaries — shared module, shared build cache.
     sudo -u "$SERVICE_USER" -H env \
@@ -5179,7 +5446,8 @@ build_backend() {
         go build -trimpath $panel_tags -ldflags '$panel_ld' -o '$tmp_panel' ./panel-api/cmd/server && \
         go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_agent' ./panel-agent/cmd/jabali-agent && \
         go build -trimpath -ldflags '-s -w' -o '$tmp_sshshell' ./panel-agent/cmd/jabali-ssh-shell && \
-        go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_mailhook' ./panel-agent/cmd/jabali-mailhook"
+        go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_mailhook' ./panel-agent/cmd/jabali-mailhook && \
+        go build -trimpath -ldflags '-s -w' -o '$tmp_sendmail' ./panel-agent/cmd/jabali-sendmail"
   fi
 
   install -m 0755 "$tmp_panel" "$BIN_PATH"
@@ -5209,7 +5477,11 @@ build_backend() {
   # wired (Step 1 = skeleton; Step 2 + 3 wire bwrap + nspawn argv).
   install -m 0755 "$tmp_sshshell" /usr/local/bin/jabali-ssh-shell
   install -m 0755 "$tmp_mailhook" /usr/local/bin/jabali-mailhook
-  rm -f "$tmp_panel" "$tmp_agent" "$tmp_sshshell" "$tmp_mailhook"
+  # JAB-230: the PHP mail() submission shim lives in libexec (exec'd by FPM
+  # workers via sendmail_path, never on an operator's PATH).
+  install -d -m 0755 /usr/local/libexec/jabali
+  install -m 0755 -o root -g root "$tmp_sendmail" /usr/local/libexec/jabali/jabali-sendmail
+  rm -f "$tmp_panel" "$tmp_agent" "$tmp_sshshell" "$tmp_mailhook" "$tmp_sendmail"
 
   # Sync the docker-app + py-framework catalogs into the production paths the
   # panel reads at startup, then reload it. Also runs from provision_new_software
@@ -6958,25 +7230,62 @@ install_adminer() {
   mkdir -p "${adminer_dir}"
 
   # Upstream single-file Adminer build. Pin v4.8.1 for reproducibility.
+  #
+  # Checksum-verified like every other third-party artifact in this file
+  # (wp-cli, phpMyAdmin, Stalwart, Kratos, Bulwark, maldet, yara-x). Adminer is
+  # served on the panel vhost behind jabali SSO with full database access, so a
+  # tampered or swapped upstream asset is arbitrary PHP running as www-data
+  # with the operator's DB credentials — and nothing in install or CI would
+  # notice. Download to a temp path first so a mismatch can never leave a
+  # partially-verified file in the docroot.
   if [[ ! -f "${adminer_dir}/adminer.php" ]]; then
     _log "downloading adminer.php"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "${adminer_dir}/adminer.php" "${adminer_url}"; then
+    local adminer_tmp
+    adminer_tmp="$(mktemp)"
+    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$adminer_tmp" "${adminer_url}"; then
+      rm -f "$adminer_tmp"
       _err "failed to download adminer from ${adminer_url}"
       return 1
     fi
+    local adminer_expected adminer_actual
+    adminer_expected="$(grep -v '^#' "${REPO_DIR}/install/adminer.sha256" | awk '{print $1}')"
+    adminer_actual="$(sha256sum "$adminer_tmp" | awk '{print $1}')"
+    if [[ -z "$adminer_expected" || "$adminer_expected" != "$adminer_actual" ]]; then
+      rm -f "$adminer_tmp"
+      _err "adminer checksum mismatch: expected ${adminer_expected:-<missing pin>}, got $adminer_actual"
+      return 1
+    fi
+    mv "$adminer_tmp" "${adminer_dir}/adminer.php"
+    _ok "adminer.php checksum verified"
   else
     _ok "adminer.php already present"
   fi
 
-  # Adminer's plugin loader (separate from the main file).
+  # Adminer's plugin loader (separate from the main file). Checksum-verified
+  # too: it is loaded by adminer.php, so it executes with the same privileges.
   if [[ ! -f "${adminer_dir}/plugin.php" ]]; then
     _log "downloading Adminer plugin loader"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "${adminer_dir}/plugin.php" "${adminer_plugin_url}"; then
+    local plugin_tmp
+    plugin_tmp="$(mktemp)"
+    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$plugin_tmp" "${adminer_plugin_url}"; then
       # Non-fatal: the plugin loader only enhances Adminer (jabali-sso plugin).
       # A transient GitHub-raw hiccup shouldn't brick the whole install; the DB
       # admin tool still works, and `jabali update` / repair can refetch it.
+      rm -f "$plugin_tmp"
       _warn "failed to download adminer plugin loader (non-fatal) — Adminer SSO plugin disabled until next update"
-      rm -f "${adminer_dir}/plugin.php"
+    else
+      local plugin_expected plugin_actual
+      plugin_expected="$(grep -v '^#' "${REPO_DIR}/install/adminer-plugin.sha256" | awk '{print $1}')"
+      plugin_actual="$(sha256sum "$plugin_tmp" | awk '{print $1}')"
+      if [[ -z "$plugin_expected" || "$plugin_expected" != "$plugin_actual" ]]; then
+        # A MISMATCH is not the same as a failed download: the file served is
+        # not the pinned one, so refuse it rather than degrade quietly.
+        rm -f "$plugin_tmp"
+        _warn "adminer plugin loader checksum mismatch (expected ${plugin_expected:-<missing pin>}, got $plugin_actual) — refusing it; SSO plugin disabled"
+      else
+        mv "$plugin_tmp" "${adminer_dir}/plugin.php"
+        _ok "adminer plugin loader checksum verified"
+      fi
     fi
   else
     _ok "adminer plugin loader already present"
@@ -12465,7 +12774,7 @@ _install_spam_rules() {
 }
 
 install_bulwark() {
-  local bulwark_version="1.7.8"
+  local bulwark_version="1.8.0"
   local arch="linux-amd64"
   local tarball="bulwark-standalone-${bulwark_version}-${arch}.tar.gz"
   local url="https://github.com/bulwarkmail/webmail/releases/download/${bulwark_version}/${tarball}"
@@ -14323,6 +14632,38 @@ EOF
     install_php_opcache_tuning
   fi
 
+  # JAB-230 — CLI mail() shim routing; self-heal on every update so existing
+  # hosts' cron/wp-cli mail() converges alongside the fleet backfill.
+  if declare -f install_php_cli_sendmail_path >/dev/null 2>&1; then
+    install_php_cli_sendmail_path
+  fi
+  # JAB-230 — the shim binary itself. Closes the two-hop trap where the
+  # previous panel binary's update code installs everything EXCEPT the new
+  # binary it doesn't know about.
+  if declare -f ensure_jabali_sendmail_binary >/dev/null 2>&1; then
+    ensure_jabali_sendmail_binary
+  fi
+
+  # JAB-213 — free-hostname helper scripts + heartbeat units live under
+  # install_jabali_slices, which the trimmed update path does NOT call. Without
+  # this, Server-Settings activation on an UPDATED (vs freshly-installed) box
+  # would set the hostname + token but silently skip the heartbeat + wildcard
+  # cert. Self-heal on every update; idempotent installs.
+  if [[ -d "$REPO_DIR/install/hostname" ]]; then
+    install -d -m 0755 /usr/local/libexec/jabali
+    install -m 0755 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.sh" /usr/local/libexec/jabali/jabali-hostname-heartbeat.sh
+    install -m 0755 "$REPO_DIR/install/hostname/certbot-auth-hook.sh" /usr/local/libexec/jabali/certbot-auth-hook.sh
+    install -m 0755 "$REPO_DIR/install/hostname/certbot-cleanup-hook.sh" /usr/local/libexec/jabali/certbot-cleanup-hook.sh
+    install -m 0755 "$REPO_DIR/install/hostname/jabali-hostname-cert.sh" /usr/local/libexec/jabali/jabali-hostname-cert.sh
+    install -m 0644 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.service" /etc/systemd/system/jabali-hostname-heartbeat.service
+    install -m 0644 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.timer" /etc/systemd/system/jabali-hostname-heartbeat.timer
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    if [[ -r /etc/jabali-panel/hostname.env ]]; then
+      systemctl enable --now jabali-hostname-heartbeat.timer >/dev/null 2>&1 || true
+    fi
+    _ok "JAB-213 free-hostname helpers refreshed"
+  fi
+
   # MariaDB buffer-pool sizing (#597) — reconcile the RAM-scaled drop-in on every
   # update so existing hosts pick up the raised brackets. Idempotent + restart-
   # on-change; guarded on mariadb being installed.
@@ -14491,6 +14832,7 @@ main() {
   install_mariadb_skip_networking
   tune_mariadb_for_ram
   install_php_opcache_tuning   # #597: opcache defaults for multi-tenant WP
+  install_php_cli_sendmail_path  # JAB-230: CLI mail() through the shim
   # M48 Phase 8 (opt-in): install_docker_engine no longer runs on
   # fresh install. Operator flips server_settings.docker_marketplace_enabled
   # in Server Settings; panel-api dispatches docker.install which

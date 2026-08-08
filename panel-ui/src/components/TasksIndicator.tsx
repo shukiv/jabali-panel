@@ -1,7 +1,8 @@
 // TasksIndicator — topbar icon showing long-running operations in flight
 // (panel/system-package updates, backups, malware scans). Polls
-// /admin/active-tasks every 8s; spins + badges the count when tasks are
-// active, and lists them in a dropdown. Admin shell only.
+// /admin/active-tasks every 3s WHILE tasks are running and every 30s when
+// idle; spins + badges the count when tasks are active, and lists them in a
+// dropdown. Admin shell only.
 import { useTranslation } from "react-i18next";
 import { Badge, Button, Dropdown, Empty, Space, Tag, Tooltip, Typography } from "antd";
 import type { MenuProps } from "antd";
@@ -40,9 +41,14 @@ export function TasksIndicator() {
       const { data } = await apiClient.get<ActiveTasksResponse>("/admin/active-tasks");
       return data;
     },
-    // Poll every 3s so a task that starts (or finishes) shows/clears
-    // promptly. Cheap: two DB queries + one systemctl glob.
-    refetchInterval: 3000,
+    // Adaptive cadence. A flat 3s meant ~28k requests a day per always-open
+    // admin tab for a component that renders null ~99% of the time. Poll fast
+    // only while something is actually in flight — that is when "shows/clears
+    // promptly" matters — and back off to 30s when idle, which still notices a
+    // task an operator just started well within a human's attention span.
+    // (The previous comment claimed 8s; the code did 3s. Now they agree.)
+    refetchInterval: (query) =>
+      (query.state.data?.tasks?.length ?? 0) > 0 ? 3000 : 30000,
     retry: false,
   });
 

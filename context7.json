@@ -1,0 +1,12 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Jabali Panel",
+  "description": "Open-source web hosting control panel — domains, DNS, SSL, mail, one-click apps, databases, backups. Docs cover architecture (ADRs), operations (RUNBOOK), configuration (ENV), and conventions.",
+  "folders": ["docs"],
+  "excludeFiles": ["docs/HANDOFF.md", "docs/BLUEPRINT.md"],
+  "rules": [
+    "The panel API is the single write path; agents and reconcilers converge state from the database",
+    "Panel serves on port 8443; user sites on 443",
+    "Every API endpoint enforces ownership: claims.UserID == resource.UserID or is_admin"
+  ]
+}

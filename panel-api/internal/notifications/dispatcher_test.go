@@ -54,8 +54,8 @@ func (f *fakeSender) Send(ctx context.Context, ch models.NotificationChannel, en
 // --- fake repos ---
 
 type fakeChannels struct {
-	mu     sync.Mutex
-	byID   map[string]*models.NotificationChannel
+	mu      sync.Mutex
+	byID    map[string]*models.NotificationChannel
 	enabled []models.NotificationChannel
 }
 
@@ -135,8 +135,8 @@ var errNotFound = errors.New("not found")
 // ListAll wrapper below.
 
 type fakeHistory struct {
-	mu     sync.Mutex
-	rows   map[string]*models.NotificationHistory
+	mu       sync.Mutex
+	rows     map[string]*models.NotificationHistory
 	outcomes []string
 }
 
@@ -161,7 +161,7 @@ func (f *fakeHistory) UpdateOutcome(ctx context.Context, id, outcome, errMsg str
 	f.outcomes = append(f.outcomes, outcome)
 	return nil
 }
-func (f *fakeHistory) MarkRead(ctx context.Context, id string) error              { return nil }
+func (f *fakeHistory) MarkRead(ctx context.Context, id string) error                   { return nil }
 func (f *fakeHistory) MarkAllReadForUser(ctx context.Context, u string) (int64, error) { return 0, nil }
 func (f *fakeHistory) DeleteAllForUser(ctx context.Context, u string, b bool) (int64, error) {
 	return 0, nil
@@ -192,10 +192,10 @@ func (f *fakeHistory) ListRecentByEvent(ctx context.Context, kind string, since 
 }
 
 type fakeWebhook struct {
-	mu         sync.Mutex
-	failures   map[string]int
-	lastError  map[string]string
-	successes  map[string]int
+	mu        sync.Mutex
+	failures  map[string]int
+	lastError map[string]string
+	successes map[string]int
 }
 
 func (f *fakeWebhook) ensure() {
@@ -476,7 +476,9 @@ type fakeUserRoutes struct {
 	routes map[string]map[string][]string
 }
 
-func (f *fakeUserRoutes) Create(ctx context.Context, r *models.UserNotificationRoute) error { return nil }
+func (f *fakeUserRoutes) Create(ctx context.Context, r *models.UserNotificationRoute) error {
+	return nil
+}
 func (f *fakeUserRoutes) ListByUser(ctx context.Context, userID string) ([]models.UserNotificationRoute, error) {
 	return nil, nil
 }
@@ -487,7 +489,7 @@ func (f *fakeUserRoutes) ListByUserEvent(ctx context.Context, userID, eventKind 
 	}
 	return out, nil
 }
-func (f *fakeUserRoutes) Delete(ctx context.Context, id string) error            { return nil }
+func (f *fakeUserRoutes) Delete(ctx context.Context, id string) error                 { return nil }
 func (f *fakeUserRoutes) DeleteByChannel(ctx context.Context, channelID string) error { return nil }
 
 func ptr(s string) *string { return &s }
@@ -501,9 +503,9 @@ func ids(chs []models.NotificationChannel) map[string]bool {
 }
 
 func TestResolveTargets_PerUserRouting(t *testing.T) {
-	g1 := models.NotificationChannel{ID: "G1", Enabled: true, UserID: nil}                 // server-wide
-	a1 := models.NotificationChannel{ID: "A1", Enabled: true, UserID: ptr("userA")}        // tenant A owns
-	b1 := models.NotificationChannel{ID: "B1", Enabled: true, UserID: ptr("userB")}        // tenant B owns
+	g1 := models.NotificationChannel{ID: "G1", Enabled: true, UserID: nil}          // server-wide
+	a1 := models.NotificationChannel{ID: "A1", Enabled: true, UserID: ptr("userA")} // tenant A owns
+	b1 := models.NotificationChannel{ID: "B1", Enabled: true, UserID: ptr("userB")} // tenant B owns
 	fc := &fakeChannels{
 		byID:    map[string]*models.NotificationChannel{"G1": &g1, "A1": &a1, "B1": &b1},
 		enabled: []models.NotificationChannel{g1, a1, b1},
@@ -554,10 +556,11 @@ type fakeSettings struct {
 	err error
 }
 
-func (f *fakeSettings) Get(context.Context) (*models.ServerSettings, error) { return f.st, f.err }
-func (f *fakeSettings) Upsert(context.Context, *models.ServerSettings) error { return nil }
-func (f *fakeSettings) EnsureVAPID(context.Context, string) (bool, error)    { return false, nil }
-func (f *fakeSettings) SetDigestLastSent(context.Context, string) error      { return nil }
+func (f *fakeSettings) Get(context.Context) (*models.ServerSettings, error)        { return f.st, f.err }
+func (f *fakeSettings) Upsert(context.Context, *models.ServerSettings) error       { return nil }
+func (f *fakeSettings) EnsureVAPID(context.Context, string) (bool, error)          { return false, nil }
+func (f *fakeSettings) SetDigestLastSent(context.Context, string) error            { return nil }
+func (f *fakeSettings) RecordDRSync(context.Context, string, string, string) error { return nil }
 
 // JAB-171 phase 4e: the master gate + kind allowlist are a LIVE delivery kill
 // switch, not just a create-time gate.

@@ -39,6 +39,9 @@ func (f *fakeDigestSettings) SetDigestLastSent(_ context.Context, day string) er
 	f.srv.DigestLastSentDate = day
 	return nil
 }
+func (f *fakeDigestSettings) RecordDRSync(context.Context, string, string, string) error {
+	return nil
+}
 
 type fakeDigestQueue struct {
 	envs []notifications.Envelope

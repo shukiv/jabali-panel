@@ -25,6 +25,10 @@ export interface ServerCapabilities {
   public_ipv4: string;
   /** GH #361: the server's public IPv6, for the dashboard. "" when unset. */
   public_ipv6: string;
+  /** GH #331: this box is a DR standby (read-only replica). Drives the banner. */
+  is_standby: boolean;
+  /** GH #331: human label for the primary this standby replicates. "" when unset. */
+  dr_peer_label: string;
 }
 
 export function useServerCapabilities() {
@@ -47,6 +51,8 @@ export function useServerCapabilities() {
         root_terminal_enabled: !!data.root_terminal_enabled,
         public_ipv4: data.public_ipv4 ?? "",
         public_ipv6: data.public_ipv6 ?? "",
+        is_standby: !!data.is_standby,
+        dr_peer_label: data.dr_peer_label ?? "",
       };
     },
     staleTime: 60_000,

@@ -9,20 +9,20 @@ import (
 // DNS configuration. Operators edit these from the admin Settings page;
 // at first boot the row is seeded from the installer's config.toml.
 type ServerSettings struct {
-	ID         uint8  `gorm:"primaryKey;default:1"                json:"id"`
-	Hostname   string `gorm:"type:varchar(253);not null;default:''" json:"hostname"`
+	ID       uint8  `gorm:"primaryKey;default:1"                json:"id"`
+	Hostname string `gorm:"type:varchar(253);not null;default:''" json:"hostname"`
 	// PreviewBase (GH #836, migration 000244) overrides the derived
 	// preview-URL base. Empty = preview.<hostname>. Set a custom domain
 	// (preview.example.com) or a magic-DNS base (203-0-113-7.sslip.io)
 	// when the hostname does not resolve publicly.
 	PreviewBase string `gorm:"type:varchar(253);not null;default:''" json:"preview_base"`
-	PublicIPv4 string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
-	PublicIPv6 string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`
-	NS1Name    string `gorm:"type:varchar(253);not null;default:''" json:"ns1_name"`
-	NS1IPv4    string `gorm:"type:varchar(45);not null;default:''"  json:"ns1_ipv4"`
-	NS2Name    string `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
-	NS2IPv4    string `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
-	AdminEmail string `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
+	PublicIPv4  string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
+	PublicIPv6  string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`
+	NS1Name     string `gorm:"type:varchar(253);not null;default:''" json:"ns1_name"`
+	NS1IPv4     string `gorm:"type:varchar(45);not null;default:''"  json:"ns1_ipv4"`
+	NS2Name     string `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
+	NS2IPv4     string `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
+	AdminEmail  string `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
 	// DefaultDNSTTL is the TTL (seconds) applied to newly-created DNS
 	// records when the API caller doesn't pass one. Editable via
 	// Server Settings → DNS in the admin UI. Range 60–86400 enforced
@@ -282,6 +282,33 @@ type ServerSettings struct {
 	// their own scheduled backup; the admin owns the timing (resource
 	// planning). Default 03:00 daily.
 	TenantBackupCron string `gorm:"column:tenant_backup_cron;type:varchar(64);not null;default:'0 3 * * *'" json:"tenant_backup_cron"`
+	// TenantBackupWindowStart/End (GH #454 7B) is the admin-owned UTC maintenance
+	// window ("HH:MM") that tenant window-governed schedules fire inside. The
+	// scheduler enqueues a due tenant schedule only when now is within the window
+	// and smears multiple due schedules across it. Defaults 02:00–05:00.
+	// tenant_backup_cron stays authoritative for legacy single-schedule installs;
+	// the window governs schedules created through the multi-schedule surface
+	// (backup_schedules.cadence != '').
+	TenantBackupWindowStart string `gorm:"column:tenant_backup_window_start;type:varchar(5);not null;default:'02:00'" json:"tenant_backup_window_start"`
+	TenantBackupWindowEnd   string `gorm:"column:tenant_backup_window_end;type:varchar(5);not null;default:'05:00'" json:"tenant_backup_window_end"`
+
+	// DR / standby (GH #331). ServerRole is 'primary' (default — box is fully
+	// active) or 'standby' (a one-way async replica: pulls the primary's state,
+	// serves no live traffic until manually promoted). The whole DR feature is
+	// inert until `jabali dr pair` flips this. DRDestinationID is the read-only
+	// backup destination the standby pulls from / the primary ships to; the
+	// standby never holds a primary-mutating credential (least privilege).
+	ServerRole      string     `gorm:"column:server_role;type:varchar(16);not null;default:'primary'" json:"server_role"`
+	DRPairedAt      *time.Time `gorm:"column:dr_paired_at;type:datetime(6)" json:"dr_paired_at,omitempty"`
+	DRPeerLabel     string     `gorm:"column:dr_peer_label;type:varchar(255);not null;default:''" json:"dr_peer_label"`
+	DRDestinationID *string    `gorm:"column:dr_destination_id;type:char(26)" json:"dr_destination_id,omitempty"`
+	// DR standby sync liveness (GH #331 Step 2, migration 000255). Written only
+	// by the drsync loop on a standby; a primary leaves these at their defaults.
+	// See models.DRSyncStatus* for the status vocabulary.
+	DRLastSyncAt     *time.Time `gorm:"column:dr_last_sync_at;type:datetime(6)" json:"dr_last_sync_at,omitempty"`
+	DRLastSnapshotID string     `gorm:"column:dr_last_snapshot_id;type:varchar(64);not null;default:''" json:"dr_last_snapshot_id"`
+	DRLastSyncStatus string     `gorm:"column:dr_last_sync_status;type:varchar(16);not null;default:''" json:"dr_last_sync_status"`
+	DRLastSyncError  string     `gorm:"column:dr_last_sync_error;type:varchar(1024);not null;default:''" json:"dr_last_sync_error"`
 
 	// BackupMaxConcurrentJobs caps how many backup_jobs the in-process
 	// dispatcher will keep in status=running at once. Scheduler ticks

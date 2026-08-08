@@ -12,6 +12,8 @@ interface SafeOptions {
   // GH #879 tri-state: absent/null = inherit the server-wide default
   // (Server Settings → Page Templates), true/false = force per-domain.
   intercept_errors?: boolean | null;
+  // GH #962: PATH_INFO support for front-controller PHP apps (osTicket, …).
+  path_info?: boolean;
 }
 
 // The form's Select uses string values; map to the wire tri-state.
@@ -69,6 +71,7 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
           security_headers: !!values.security_headers,
           gzip: !!values.gzip,
           intercept_errors: choiceToIntercept(values.intercept_choice),
+          path_info: !!values.path_info,
         },
       });
       message.success("Domain options saved — applied on the next reconcile");
@@ -102,6 +105,13 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
         </Form.Item>
         <Form.Item name="gzip" valuePropName="checked">
           <Checkbox>Enable gzip compression for text content</Checkbox>
+        </Form.Item>
+        <Form.Item
+          name="path_info"
+          valuePropName="checked"
+          tooltip="Some PHP apps route requests through /script.php/extra/path URLs (osTicket's /scp/ajax.php/…, and similar front-controller apps). The default nginx config only serves URLs ending in .php, so those requests fail. Turn this on for apps that need PATH_INFO. Leave off otherwise — plain PHP sites (WordPress, etc.) don't need it."
+        >
+          <Checkbox>Enable PATH_INFO for front-controller apps (osTicket, etc.)</Checkbox>
         </Form.Item>
         <Form.Item
           name="intercept_choice"

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -36,11 +37,18 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: aa-smoke [--timeout=2s] <socket-path> [...]")
+		fmt.Fprintln(os.Stderr, "usage: aa-smoke [--timeout=2s] <socket-path|tcp:host:port> [...]")
 		os.Exit(2)
 	}
 	for _, p := range args {
-		c, err := net.DialTimeout("unix", p, *timeout)
+		// JAB-230: `tcp:host:port` entries verify loopback TCP mediation
+		// (jabali-sendmail dials the submission port, not a unix socket).
+		// Bare paths stay unix dials, unchanged.
+		network, addr := "unix", p
+		if rest, ok := strings.CutPrefix(p, "tcp:"); ok {
+			network, addr = "tcp", rest
+		}
+		c, err := net.DialTimeout(network, addr, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAIL: %s — %v\n", p, err)
 			os.Exit(1)

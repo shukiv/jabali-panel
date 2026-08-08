@@ -58,6 +58,11 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// webmail.vhost_remove uses; the single reload below covers it.
 	removeMailVhostFiles(p.Domain)
 
+	// JAB-230: reap the domain's relay credential (and re-point the owner's
+	// default.cred). Placed HERE — the shared chokepoint every delete path
+	// funnels through — per the #754 lesson, so no panel-side path can skip it.
+	removeSendmailCredForDomain(p.Domain)
+
 	// Reload nginx
 	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOutput bytes.Buffer

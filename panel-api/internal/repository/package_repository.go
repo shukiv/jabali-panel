@@ -118,7 +118,10 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		// update handler but missed here, so the admin's backup-limit changes
 		// reported success yet silently never persisted (reverted on reload) —
 		// the allowlist silent-drop scar exactly as warned above.
-		"max_backups", "scheduled_backups_enabled",
+		// GH #454 7B: max_backup_schedules was added later than the other four
+		// and missed here too — editing "Max Backup Schedules" on a package
+		// reported success but reverted on reload (same silent-drop scar).
+		"max_backups", "max_backup_schedules", "scheduled_backups_enabled",
 		"allowed_backup_destination_kinds", "backup_retention_policy",
 		"updated_at",
 	).Updates(p).Error; err != nil {

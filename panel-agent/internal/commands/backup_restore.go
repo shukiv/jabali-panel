@@ -49,7 +49,16 @@ type backupRestoreParams struct {
 	Overwrite      bool              `json:"overwrite"`
 	RepoURL        string            `json:"repo_url,omitempty"`
 	CredentialsRef string            `json:"credentials_ref,omitempty"`
-	SFTP           *backupSFTPInputs `json:"sftp,omitempty"`
+	// PasswordFile lets the caller point restic at a repo password other
+	// than the box-wide /etc/jabali-panel/restic-repo.password. GH #954
+	// (Jabali→Jabali migration): the pulled source repo is encrypted with
+	// the SOURCE box's restic password, so the import stages it and passes
+	// that password's path here — reading the foreign repo without rekeying
+	// it. Empty falls back to the box-wide file (every existing caller).
+	// Exact parity with backup.account_list_manifests, which already threads
+	// this field.
+	PasswordFile string            `json:"password_file,omitempty"`
+	SFTP         *backupSFTPInputs `json:"sftp,omitempty"`
 	// ApplyStaged: when false the handler stops after materializing
 	// stages into /var/lib/jabali-backups/restore-staging/<job_id>/
 	// (recon mode). Default true → home+db are applied onto the live
@@ -101,6 +110,13 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	if req.ManifestSnapshotID == "" {
 		return nil, bkInvalidArg("manifest_snapshot_id required")
 	}
+	// target_username flows into useradd/loginctl argv and into the rsync
+	// destination path join, neither of which is containment-checked
+	// downstream. Validate the shape here, next to the ulid check, matching
+	// what every other backup handler does.
+	if req.TargetUsername != "" && !backupUsernameRE.MatchString(req.TargetUsername) {
+		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
+	}
 
 	// Single global flock — held for the duration of the restore. Use
 	// LOCK_NB so a busy host returns an error rather than blocking
@@ -118,7 +134,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
 
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.SFTP)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}
@@ -479,7 +495,15 @@ func applyAccountRestore(
 				warnings = append(warnings, "mail: Stalwart inactive — message import skipped")
 				continue
 			}
-			impRes, impErr := importMaildirTree(ctx, mailTree, "", migrationStagingRoots)
+			// GH #954: scope filesafe to THIS restore's staging dir, not
+			// migrationStagingRoots. The mail tree materializes under
+			// /var/lib/jabali-backups/restore-staging/<job>/mail, which is NOT a
+			// migration root — so openMaildirFileInStaging refused every message
+			// file's open, and every account-restore silently imported 0 bodies
+			// (the "messages not replayed" symptom). stagingRoot is agent-owned,
+			// not tenant-writable; RESOLVE_BENEATH under it still blocks symlink
+			// escape inside the restored tree.
+			impRes, impErr := importMaildirTree(ctx, mailTree, "", []string{stagingRoot})
 			if impErr != nil {
 				warnings = append(warnings, fmt.Sprintf("mail: import: %v", impErr))
 				continue

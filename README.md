@@ -22,7 +22,6 @@
 </p>
 
 <p>
-  <img src="https://img.shields.io/badge/status-release_candidate-f59e0b" alt="Release candidate">
   <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white" alt="Go 1.25">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19">
   <img src="https://img.shields.io/badge/Ant_Design-5-0170FE?logo=antdesign&logoColor=white" alt="Ant Design 5">
@@ -38,10 +37,6 @@
 </p>
 
 </div>
-
-> [!NOTE]
-> Jabali Panel is currently a release candidate. Expect rapid iteration and
-> breaking changes until 1.0.
 
 ## Demo and Website
 

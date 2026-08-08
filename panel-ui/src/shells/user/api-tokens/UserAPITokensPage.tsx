@@ -65,6 +65,7 @@ import {
 import { apiClient } from "../../../apiClient";
 import { APIDocsPage } from "../../shared/APIDocsPage";
 import { DDNSSetupGuide } from "./DDNSSetupGuide";
+import { MCPSetupGuide } from "./MCPSetupGuide";
 
 type UserAPIToken = {
   id: string;
@@ -349,6 +350,7 @@ export function UserAPITokensPage(): JSX.Element {
         items={[
           { key: "tokens", label: "Tokens", children: tokensCard },
           { key: "ddns", label: "Dynamic DNS", children: <DDNSSetupGuide /> },
+          { key: "mcp", label: "MCP", children: <MCPSetupGuide /> },
           { key: "docs", label: "Automation API", children: <APIDocsPage /> },
         ]}
       />

@@ -49,4 +49,11 @@ func TestRepoPoolTemplatePinsJailAndOpcache(t *testing.T) {
 	if !strings.Contains(s, "php_admin_value[opcache.max_accelerated_files] = 20000") {
 		t.Error("opcache.max_accelerated_files must be raised above one site's file count (JAB-200)")
 	}
+
+	// JAB-230: without a sendmail_path every PHP mail()/wp_mail() call on the
+	// box fails (install.sh purges all MTAs). php_admin_value so tenants
+	// cannot repoint the exec path.
+	if !strings.Contains(s, "php_admin_value[sendmail_path] = /usr/local/libexec/jabali/jabali-sendmail -t -i") {
+		t.Error("sendmail_path must point at the jabali-sendmail shim (JAB-230)")
+	}
 }

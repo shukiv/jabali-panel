@@ -28,6 +28,15 @@ func TestPreviewNaming(t *testing.T) {
 	if got := EffectivePreviewBase(&ServerSettings{}); got != "" {
 		t.Errorf("no hostname, no base -> empty, got %q", got)
 	}
+	// JAB-213: a free jabalihosted.com hostname bases previews on the hostname
+	// itself (one label deep), so the wildcard A + cert cover them.
+	if got := EffectivePreviewBase(&ServerSettings{Hostname: "203-0-113-7.jabalihosted.com"}); got != "203-0-113-7.jabalihosted.com" {
+		t.Errorf("free-hostname base = %q, want the hostname itself", got)
+	}
+	// An explicit preview_base still wins even on a free hostname.
+	if got := EffectivePreviewBase(&ServerSettings{Hostname: "203-0-113-7.jabalihosted.com", PreviewBase: "prev.example.com"}); got != "prev.example.com" {
+		t.Errorf("explicit base must still win, got %q", got)
+	}
 }
 
 // The flattening is not injective — this pins the collision pair the

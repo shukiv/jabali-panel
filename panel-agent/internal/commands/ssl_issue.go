@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/certbot"
 )
+
+// WebrootNotReadyMarker is the stable sentinel the panel reconciler matches on
+// to tell "the document root does not exist yet" apart from a real ACME failure
+// (GH #887). Keep it in the AgentError message so it survives the wire round-trip.
+const WebrootNotReadyMarker = "webroot_not_ready"
 
 // sslIssueParams is the input shape for ssl.issue.
 //
@@ -80,6 +86,24 @@ func sslIssueHandler(ctx context.Context, params json.RawMessage) (any, error) {
 				Code:    agentwire.CodeInvalidArgument,
 				Message: fmt.Sprintf("invalid hostname %q in hostnames[]", h),
 			}
+		}
+	}
+
+	// GH #887: on a fresh domain — especially a subdomain whose document root
+	// the panel provisions asynchronously — the webroot may not exist yet on an
+	// early ACME attempt. certbot's webroot plugin would fail with a raw
+	// "…/public_html does not exist or is not a directory" that the panel then
+	// surfaces as an alarming certificate error. Detect it here and return a
+	// typed, self-explanatory "not ready" signal instead: the reconciler treats
+	// it as a quiet retry (the domain keeps its self-signed cert meanwhile) so
+	// the challenge is deferred until the docroot is created, and no Let's
+	// Encrypt request is spent failing. Checked last, after the format
+	// validations above, so a malformed request still gets its precise error.
+	if fi, statErr := os.Stat(p.Webroot); statErr != nil || !fi.IsDir() {
+		return nil, &agentwire.AgentError{
+			Code: agentwire.CodeFailedPrecondition,
+			Message: fmt.Sprintf("%s: %s does not exist yet; deferring ACME until the document root is created",
+				WebrootNotReadyMarker, p.Webroot),
 		}
 	}
 

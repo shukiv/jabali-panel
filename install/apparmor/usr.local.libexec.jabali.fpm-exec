@@ -33,6 +33,12 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   /usr/local/libexec/jabali/fpm-exec r,
   /bin/bash rix,
   /usr/bin/bash rix,
+  # PHP mail() runs sendmail_path via popen(3) — that is `/bin/sh -c`, and
+  # Debian's /bin/sh is dash. Without these the enforce-mode profile kills
+  # the sh exec before the shim's Px transition is even reached (JAB-230).
+  /bin/sh rix,
+  /bin/dash rix,
+  /usr/bin/dash rix,
   /usr/bin/cat rix,
   /run/php/jabali-*/phpver r,
   /usr/sbin/php-fpm* rix,
@@ -82,6 +88,12 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   /var/lib/php/sessions/** rwk,
   /run/php/** rw,
 
+  # PHP mail() submission shim (JAB-230). Px — the shim runs under its OWN
+  # child profile below, so a compromised tenant worker exec'ing it gains
+  # network submit + cred-read only, and the shim gains none of the
+  # docroot/session write surface of this profile.
+  /usr/local/libexec/jabali/jabali-sendmail Px -> jabali-sendmail,
+
   # Backing services over unix sockets.
   unix (connect, receive, send) type=stream,
   /run/redis/redis.sock rw,
@@ -99,4 +111,51 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   deny /root/** rwklx,
   deny /home/*/.ssh/** rwklx,
   deny /etc/jabali-panel/migration-secrets/** rwklx,
+}
+
+# jabali-sendmail (JAB-230) — child profile for the PHP mail() shim. Runs as
+# the tenant uid (inherited from the FPM worker). Needs exactly: read its own
+# binary, read the relay-credential tree (POSIX 0640 root:<usergroup> already
+# scopes WHICH creds this uid can open; the profile bounds the reachable
+# paths), TCP to the local submission port, TLS roots, and syslog. No exec,
+# no writes, no /home. Lives in this file so it loads/flips with the parent
+# (aa-complain/aa-enforce operate per-file) — if the parent is already
+# enforced on a host, this loads enforced too, which is why `make aa-smoke`
+# must pass before shipping any edit here.
+profile jabali-sendmail /usr/local/libexec/jabali/jabali-sendmail flags=(attach_disconnected) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+
+  /usr/local/libexec/jabali/jabali-sendmail mr,
+
+  # Go runtime introspection (GOMAXPROCS reads the cgroup limits at start).
+  # Observed as would-deny on the testserver soak; read-only metadata.
+  owner /proc/*/cgroup r,
+  owner /proc/*/mountinfo r,
+  /sys/fs/cgroup/ r,
+  /sys/fs/cgroup/** r,
+
+  # Relay credentials — traverse + read only.
+  /etc/jabali-panel/sendmail/ r,
+  /etc/jabali-panel/sendmail/*/ r,
+  /etc/jabali-panel/sendmail/*/*.cred r,
+
+  # Submission to Stalwart on 127.0.0.1:587 (STARTTLS).
+  network inet stream,
+  network inet6 stream,
+
+  # One syslog line per attempt (mail facility).
+  /dev/log w,
+
+  # A message-parsing bug must never become a filesystem primitive. The `r`
+  # matters twice: the shim inherits the FPM worker's open fd on the tenant's
+  # .php script (popen keeps parent fds), and an explicit deny both revokes
+  # that fd AND silences the per-send file_inherit audit noise it would
+  # otherwise log in enforce mode. The shim needs nothing from /home.
+  deny /home/** rwklx,
+  deny /etc/shadow r,
+  deny /etc/gshadow r,
+  deny /root/** rwklx,
 }

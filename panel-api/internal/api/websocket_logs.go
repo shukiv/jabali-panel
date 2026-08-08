@@ -345,7 +345,8 @@ func (h *logStreamHandler) renderGoAccessHTTP(c *gin.Context) {
 	// browser from holding a stale dashboard between iframe refreshes.
 	c.Header("Cache-Control", "no-store, max-age=0")
 
-	if _, statErr := os.Stat(accessLogPath); statErr != nil {
+	st, statErr := os.Stat(accessLogPath)
+	if statErr != nil {
 		c.String(http.StatusOK,
 			"<!doctype html><html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
 				"<h2>No access log yet</h2>"+
@@ -357,7 +358,11 @@ func (h *logStreamHandler) renderGoAccessHTTP(c *gin.Context) {
 
 	cmdCtx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
-	out, err := runGoAccess(cmdCtx, accessLogPath)
+	// Cached: the iframe re-requests every 10s while the modal is open, and
+	// every render is a full parse of the whole access log. See
+	// goaccess_cache.go — at most one render per log per TTL, shared by all
+	// viewers.
+	out, err := renderGoAccessCached(cmdCtx, accessLogPath, st, time.Now, runGoAccess)
 	if err != nil {
 		h.cfg.Log.Warn("goaccess render failed", "err", err, "path", accessLogPath)
 		c.String(http.StatusOK,

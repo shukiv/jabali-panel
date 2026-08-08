@@ -32,6 +32,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"gorm.io/gorm"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
@@ -104,6 +105,21 @@ failed stage. Already-done stages are skipped.`,
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: mark job failed: %v\n", uErr)
 				}
 				return err
+			}
+
+			// GH #954 jabali: Path-Y import. The source account was backed up to a
+			// restic repo pulled into staging; restore it via the DR account-restore
+			// path, which CREATES the destination user (with the source's ULID) and
+			// reconstructs its domains/DBs/etc. This BYPASSES the cpanel tarball
+			// pipeline below, so it MUST branch out here — before the user-resolution
+			// block auto-creates the target user. Pre-creating it makes the DR restore
+			// hit a create-conflict and land the data ORPHANED (no panel rows / no
+			// vhost) — the drill's #1 failure. Do NOT move this after L~214.
+			if job.SourceKind == models.MigrationSourceJabali {
+				if err := runJabaliImport(ctx, cmd, job, jobsRepo, usersRepo, domainsRepo, targetUser, keepStaging); err != nil {
+					return failJob(err)
+				}
+				return nil
 			}
 
 			// DA preflight pivot: SSH principals (root/admin) aren't
@@ -769,6 +785,197 @@ failed stage. Already-done stages are skipped.`,
 	cmd.Flags().StringVar(&targetPassword, "target-password", "", "destination user password (only used when auto-creating; ≥10 chars)")
 	cmd.Flags().StringVar(&targetPackageID, "target-package-id", "", "hosting package ULID (only used when auto-creating)")
 	return cmd
+}
+
+// runJabaliImport (GH #954) is the dest-side import arm for a Jabali source. The
+// pull stage staged a restic account_backup repo (+ the source box's restic
+// password) under /var/lib/jabali-migrations/<job>/. This restores it via the DR
+// account-restore path: list the account's manifest snapshot, preflight for
+// collisions, dispatch backup.restore with target_user_id=<source ULID> (so the
+// user is CREATED, not looked up), then reconstruct the panel rows from the meta
+// bundle — the step that makes the migrated resources panel-managed rather than
+// orphaned. Bypasses migrate.Runner entirely, so it stamps its own state +
+// migration_stages rows.
+func runJabaliImport(
+	ctx context.Context,
+	cmd *cobra.Command,
+	job *models.MigrationJob,
+	jobsRepo repository.MigrationJobRepository,
+	usersRepo repository.UserRepository,
+	domainsRepo repository.DomainRepository,
+	targetUserFlag string,
+	keepStaging bool,
+) error {
+	localDir := filepath.Join("/var/lib/jabali-migrations", job.ID)
+	repoDir := filepath.Join(localDir, "repo")
+	pwPath := filepath.Join(localDir, "source-restic.password")
+	if _, err := os.Stat(repoDir); err != nil {
+		return fmt.Errorf("jabali import: staged repo %s missing — run `jabali migrate pull-source --job-id %s` first: %w", repoDir, job.ID, err)
+	}
+	if _, err := os.Stat(pwPath); err != nil {
+		return fmt.Errorf("jabali import: staged source password %s missing — re-run pull-source: %w", pwPath, err)
+	}
+
+	// Destination username = the source account username (1:1), unless the
+	// operator overrode it. Never a reserved system account.
+	targetUser := targetUserFlag
+	if targetUser == "" {
+		targetUser = job.SourceUser
+	}
+	if migrate.IsReservedAccount(targetUser) {
+		return fmt.Errorf("jabali import: refusing to migrate into reserved system user %q", targetUser)
+	}
+
+	_ = jobsRepo.UpdateState(ctx, job.ID, models.MigrationStateRestoring, nil)
+	stRestore := wpMigStartStage(ctx, jobsRepo, job.ID, "restore")
+
+	// Synthetic in-memory local destination over the pulled repo — no persisted
+	// backup_destinations row (nothing to clean up). buildRestoreParams +
+	// account_list_manifests only read .URL/.Kind/.Name off it.
+	picked := &models.BackupDestination{
+		Kind: models.BackupDestinationKindLocal,
+		URL:  repoDir,
+		Name: "jabali-migrate-" + job.ID,
+	}
+
+	ag := agent.NewClient(agent.Config{Timeout: 1 * time.Hour})
+
+	// 1. List the account's manifest snapshots in the pulled repo, opening it
+	//    with the SOURCE box password via password_file (no rekey).
+	listCtx, listCancel := context.WithTimeout(ctx, 5*time.Minute)
+	rawList, err := ag.Call(listCtx, "backup.account_list_manifests", map[string]any{
+		"repo_url":      repoDir,
+		"password_file": pwPath,
+	})
+	listCancel()
+	if err != nil {
+		return fmt.Errorf("jabali import: list account manifests: %w", err)
+	}
+	var listResp struct {
+		Manifests []accountManifestRow `json:"manifests"`
+		Total     int                  `json:"total"`
+	}
+	if err := json.Unmarshal(rawList, &listResp); err != nil {
+		return fmt.Errorf("jabali import: decode manifests: %w", err)
+	}
+	// The repo carries exactly one freshly-backed-up account. 0 manifests ⇒ the
+	// source backup did not finish; >1 distinct user_id ⇒ wrong/dirty repo. Fail
+	// loudly rather than silently restore the wrong thing (GH #327 scar).
+	userIDs := map[string]bool{}
+	for _, m := range listResp.Manifests {
+		if m.UserID != "" {
+			userIDs[m.UserID] = true
+		}
+	}
+	if len(listResp.Manifests) == 0 || len(userIDs) == 0 {
+		return fmt.Errorf("jabali import: no account manifests in the staged repo — the source backup did not complete; re-run pull-source")
+	}
+	if len(userIDs) > 1 {
+		return fmt.Errorf("jabali import: staged repo carries %d distinct users — expected exactly 1; refusing", len(userIDs))
+	}
+	// Manifests are newest-first from the agent.
+	snap := listResp.Manifests[0]
+	sourceULID := snap.UserID
+	snapshotID := snap.SnapshotID
+	if sourceULID == "" || snapshotID == "" {
+		return fmt.Errorf("jabali import: manifest missing user_id/snapshot_id (got user_id=%q snapshot=%q)", sourceULID, snapshotID)
+	}
+
+	// 2. Collision preflight (this replaces the bypassed Validate stage). Neither
+	//    the target username NOR the source ULID may already exist on this box —
+	//    the DR restore CREATES both, and a collision would clobber a live account.
+	if u, lookupErr := usersRepo.FindByUsername(ctx, targetUser); lookupErr == nil && u != nil {
+		return fmt.Errorf("jabali import: destination username %q already exists (id=%s) — pick a different --target-user or remove it first", targetUser, u.ID)
+	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrNotFound) {
+		return fmt.Errorf("jabali import: lookup username %q: %w", targetUser, lookupErr)
+	}
+	if u, lookupErr := usersRepo.FindByID(ctx, sourceULID); lookupErr == nil && u != nil {
+		return fmt.Errorf("jabali import: a user with the source's id %s already exists here — refusing (would collide). Migrate to a fresh box or remove it first", sourceULID)
+	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrNotFound) {
+		return fmt.Errorf("jabali import: lookup id %s: %w", sourceULID, lookupErr)
+	}
+
+	// 3. Restore via the DR path (creates the user + reconstructs resources).
+	restoreJobID := ids.NewULID()
+	params := buildRestoreParams(restoreJobID, snapshotID, sourceULID, targetUser, true, picked)
+	params["password_file"] = pwPath // open the foreign-password repo (no rekey)
+	fmt.Fprintf(cmd.OutOrStdout(),
+		"→ jabali account-restore job=%s target_user=%s(id=%s) snapshot=%s\n",
+		restoreJobID, targetUser, sourceULID, snapshotID)
+	callCtx, callCancel := context.WithTimeout(ctx, 1*time.Hour)
+	rawRestore, err := ag.Call(callCtx, "backup.restore", params)
+	callCancel()
+	if err != nil {
+		return fmt.Errorf("jabali import: agent backup.restore: %w", err)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "✓ agent backup.restore returned")
+
+	// 4. Reconstruct the panel-DB rows from the meta stage. WITHOUT this the data
+	//    lands on disk but no panel rows exist (orphaned) — the account-restore CLI
+	//    runs the same step after its agent call, and so must we.
+	var resp struct {
+		User     accountRestoreUserBlock `json:"user"`
+		Metadata json.RawMessage         `json:"metadata"`
+		Applied  []string                `json:"applied"`
+		Warnings []string                `json:"warnings"`
+	}
+	if jerr := json.Unmarshal(rawRestore, &resp); jerr == nil {
+		if len(resp.Metadata) > 0 {
+			applyPanelMetadata(ctx, cmd, resp.Metadata)
+		} else if resp.User.ID != "" {
+			if cerr := ensurePanelUserRow(ctx, cmd, resp.User); cerr != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "WARNING: panel user row reconstruction failed: %v\n", cerr)
+			}
+		}
+		for _, w := range resp.Warnings {
+			fmt.Fprintf(cmd.OutOrStdout(), "  restore warning: %s\n", w)
+		}
+	} else {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: decode restore reply: %v (data may be applied but panel rows unverified)\n", jerr)
+	}
+
+	wpMigDoneStage(ctx, jobsRepo, stRestore)
+	_ = jobsRepo.UpdateState(ctx, job.ID, models.MigrationStateDone, nil)
+
+	// JAB-87 observability: stamp dest_user + dest_domain so the admin Migrations
+	// list shows where it landed.
+	if uerr := jobsRepo.UpdateDestUser(ctx, job.ID, targetUser); uerr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: record dest_user: %v\n", uerr)
+	}
+	if dom := firstDomainForUser(ctx, domainsRepo, sourceULID); dom != "" {
+		if derr := jobsRepo.UpdateDestDomain(ctx, job.ID, dom); derr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: record dest_domain: %v\n", derr)
+		}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(),
+		"✓ jabali migration complete: user %s restored (source id %s preserved).\n"+
+			"  NOTE: check the \"login:\" line above — when it says NOT restored, issue a\n"+
+			"  password-reset link with: jabali user password %s --link\n"+
+			"  Mailbox message bodies are replayed into Stalwart (see the mail → line for\n"+
+			"  the count); a source mailbox with no messages simply shows 0.\n",
+		targetUser, sourceULID, targetUser)
+
+	// Staging cleanup (mirrors the tarball path). This also removes the staged
+	// source restic password. --keep-staging retains it for debugging.
+	if !keepStaging {
+		if rmErr := os.RemoveAll(localDir); rmErr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: staging cleanup failed for %s: %v\n", localDir, rmErr)
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "staging dir %s removed (pass --keep-staging to retain)\n", localDir)
+		}
+	}
+	return nil
+}
+
+// firstDomainForUser returns the name of the user's first domain (JAB-87
+// observability best-effort), or "" if none / on error.
+func firstDomainForUser(ctx context.Context, domainsRepo repository.DomainRepository, userID string) string {
+	doms, _, err := domainsRepo.ListByUserID(ctx, userID, repository.ListOptions{Limit: 1})
+	if err != nil || len(doms) == 0 {
+		return ""
+	}
+	return doms[0].Name
 }
 
 // cpanelRunPayload is the opaque payload threaded through every

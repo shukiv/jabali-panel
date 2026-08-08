@@ -432,6 +432,29 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:       k.UseWWW,
 		}, deps)
 		adminPassword = itflowPass
+	case "osticket":
+		ostPass := paramOr(k.Params, "admin_password", "")
+		if ostPass == "" {
+			ostPass = ids.NewULID()
+		}
+		go createOsTicketInstallAndKickAgent(ctx, osticketKickArgs{
+			InstallID:     k.InstallID,
+			UserID:        k.UserID,
+			OSUser:        k.OSUser,
+			DocRoot:       k.DocRoot,
+			SiteURL:       k.SiteURL,
+			DBName:        k.Chain.DBName,
+			DBUser:        k.Chain.DBUsername,
+			DBPassword:    k.Chain.DBPassword,
+			HelpdeskName:  paramOr(k.Params, "helpdesk_name", "Support"),
+			HelpdeskEmail: paramOr(k.Params, "helpdesk_email", ""),
+			AdminFirst:    paramOr(k.Params, "admin_first_name", "Admin"),
+			AdminLast:     paramOr(k.Params, "admin_last_name", "User"),
+			AdminEmail:    k.AdminEmail,
+			AdminUsername: paramOr(k.Params, "admin_username", "sysadmin"),
+			AdminPass:     ostPass,
+		}, deps)
+		adminPassword = ostPass
 	case "prestashop":
 		prestaPass := paramOr(k.Params, "admin_password", "")
 		if prestaPass == "" {

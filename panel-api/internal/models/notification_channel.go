@@ -31,13 +31,15 @@ type NotificationChannel struct {
 	// UserID scopes ownership (JAB-171): NULL = server-wide (admin-owned,
 	// existing behaviour); set = owned by that tenant. The dispatcher filters
 	// on this from phase 2 onward.
-	UserID    *string                   `gorm:"column:user_id;type:char(26)" json:"user_id,omitempty"`
-	Name      string                    `gorm:"type:varchar(120);not null" json:"name"`
-	Kind      string                    `gorm:"type:varchar(16);not null;index:idx_notification_channels_kind_enabled,priority:1" json:"kind"`
-	Config    NotificationChannelConfig `gorm:"column:config_json;type:json;not null" json:"config"`
-	Enabled   bool                      `gorm:"type:tinyint(1);not null;default:1;index:idx_notification_channels_kind_enabled,priority:2" json:"enabled"`
-	CreatedAt time.Time                 `gorm:"type:datetime(6);not null;default:CURRENT_TIMESTAMP(6)" json:"created_at"`
-	UpdatedAt time.Time                 `gorm:"type:datetime(6);not null;default:CURRENT_TIMESTAMP(6)" json:"updated_at"`
+	UserID *string                   `gorm:"column:user_id;type:char(26)" json:"user_id,omitempty"`
+	Name   string                    `gorm:"type:varchar(120);not null" json:"name"`
+	Kind   string                    `gorm:"type:varchar(16);not null;index:idx_notification_channels_kind_enabled,priority:1" json:"kind"`
+	Config NotificationChannelConfig `gorm:"column:config_json;type:json;not null" json:"config"`
+	// No gorm default:1 — a channel can be created --disabled; default:1 would
+	// bind true for a false struct value on INSERT (feedback_gorm_default1_bool_zero_value).
+	Enabled   bool      `gorm:"type:tinyint(1);not null;index:idx_notification_channels_kind_enabled,priority:2" json:"enabled"`
+	CreatedAt time.Time `gorm:"type:datetime(6);not null;default:CURRENT_TIMESTAMP(6)" json:"created_at"`
+	UpdatedAt time.Time `gorm:"type:datetime(6);not null;default:CURRENT_TIMESTAMP(6)" json:"updated_at"`
 }
 
 func (NotificationChannel) TableName() string { return "notification_channels" }

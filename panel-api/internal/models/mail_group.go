@@ -25,10 +25,17 @@ type MailGroup struct {
 	DisplayName    string    `gorm:"column:display_name;type:varchar(255);not null;default:''" json:"display_name"`
 	Description    string    `gorm:"type:varchar(255);not null;default:''" json:"description"`
 	GroupKind      string    `gorm:"column:group_kind;type:varchar(16);not null;default:'resource'" json:"group_kind"`
-	HasMailbox     bool      `gorm:"column:has_mailbox;type:tinyint(1);not null;default:1" json:"has_mailbox"`
-	HasCalendar    bool      `gorm:"column:has_calendar;type:tinyint(1);not null;default:1" json:"has_calendar"`
-	HasAddressbook bool      `gorm:"column:has_addressbook;type:tinyint(1);not null;default:1" json:"has_addressbook"`
-	HasFiles       bool      `gorm:"column:has_files;type:tinyint(1);not null;default:1" json:"has_files"`
+	// NOTE: NO gorm `default:1` on these four bools. GORM substitutes the DB
+	// default for a Go zero value (false) on INSERT — see
+	// feedback_gorm_default1_bool_zero_value — so with `default:1` a group
+	// created with a feature UNCHECKED (e.g. has_files=false) silently landed
+	// enabled. Every create site sets all four explicitly (API via
+	// boolOr(req, true); CLI hardcodes true), so the tag was pure footgun. The
+	// DB column keeps its DEFAULT 1 from the migration for raw/non-app inserts.
+	HasMailbox     bool      `gorm:"column:has_mailbox;type:tinyint(1);not null" json:"has_mailbox"`
+	HasCalendar    bool      `gorm:"column:has_calendar;type:tinyint(1);not null" json:"has_calendar"`
+	HasAddressbook bool      `gorm:"column:has_addressbook;type:tinyint(1);not null" json:"has_addressbook"`
+	HasFiles       bool      `gorm:"column:has_files;type:tinyint(1);not null" json:"has_files"`
 	InternalOnly   bool      `gorm:"column:internal_only;type:tinyint(1);not null;default:0" json:"internal_only"` // GH #348
 	CreatedAt      time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt      time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`

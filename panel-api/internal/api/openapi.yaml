@@ -886,6 +886,47 @@ paths:
       summary: Set your scheduled-backup content, destination, and on/off
       responses: { "200": { description: OK } }
 
+  /me/backup-schedules:
+    get:
+      tags: [Backups]
+      summary: List your backup schedules (multi-schedule plans) + the admin window
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Backups]
+      summary: Create a backup schedule (content, cadence, destination, retention)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content, cadence]
+              properties:
+                enabled:        { type: boolean }
+                content:        { type: string, enum: [full, files, database, folders] }
+                cadence:        { type: string, enum: [hourly, every_6h, every_12h, daily, weekly] }
+                destination_id: { type: string, format: ulid }
+                keep_daily:     { type: integer, nullable: true }
+      responses:
+        "201": { description: Created }
+        "403": { description: Cap reached or content/destination not allowed by your plan }
+
+  /me/backup-schedules/{id}:
+    put:
+      tags: [Backups]
+      summary: Update one of your backup schedules
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found or not yours }
+    delete:
+      tags: [Backups]
+      summary: Delete one of your backup schedules
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found or not yours }
+
   /me/backups/{id}/restore:
     post:
       tags: [Backups]
@@ -944,6 +985,49 @@ paths:
 
   # ----------------------------------------------- Admin: Server Settings ---
 
+  /admin/settings/free-hostname/register:
+    post:
+      tags: [Server Settings]
+      summary: Request a free jabalihosted.com hostname verification code (admin, JAB-213)
+      description: |
+        Proxies to the Jabali free-hostname service, which emails a 6-digit
+        code. The panel box's observed public IP becomes the hostname label
+        at claim time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string }
+      responses:
+        "200": { description: Code sent }
+        "422": { description: Invalid email }
+        "429": { description: Rate limited }
+        "502": { description: Hostname service unreachable }
+  /admin/settings/free-hostname/claim:
+    post:
+      tags: [Server Settings]
+      summary: Claim a free jabalihosted.com hostname with the emailed code (admin, JAB-213)
+      description: |
+        Verifies the code, persists the relay credential (agent), and switches
+        the panel hostname to <label>.jabalihosted.com.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string }
+                code:  { type: string }
+      responses:
+        "200": { description: "Claimed; body carries fqdn" }
+        "422": { description: "code_invalid / code_attempts / bad_source" }
+        "502": { description: Hostname service unreachable }
   /admin/settings:
     get:
       tags: [Server Settings]
@@ -3021,6 +3105,17 @@ paths:
       summary: Goaccess.Html stream
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: stream_key, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /logs/tail:
+    get:
+      tags: [Logs]
+      summary: Tail a domain's nginx access or error log (last N lines, snapshot)
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: query, name: domain_id, required: true, schema: { type: string } }
+        - { in: query, name: log_type, required: true, schema: { type: string, enum: [access, error] } }
+        - { in: query, name: lines, schema: { type: integer, minimum: 1, maximum: 2000 } }
       responses: { "200": { description: OK } }
 
   /logs/types:

@@ -50,3 +50,46 @@ func TestMailboxShare_ListByUserID_ScopesInSQL(t *testing.T) {
 	require.Equal(t, "share-1", rows[0].ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// DeleteByOwner must carry the owner scope in the SQL itself, and report
+// ErrNotFound when the row belongs to someone else.
+//
+// The route is DELETE /mailboxes/:mbid/shares/:shareId. The handler
+// authenticates :mbid, but the delete used to run on the bare :shareId, so any
+// authenticated tenant who learned another tenant's share-row id could delete
+// it by passing their OWN mailbox as :mbid — and the reconciler would then
+// strip that share's JMAP shareWith on Stalwart. Scoping in the query (rather
+// than a read-then-check in the handler) makes the authorization
+// un-forgettable and un-raceable.
+func TestMailboxShare_DeleteByOwner_ScopesInSQL(t *testing.T) {
+	db, mock, raw := newMockShareDB(t)
+	defer raw.Close()
+	repo := NewMailboxShareRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM .mailbox_shares. WHERE id = \? AND owner_mailbox_id = \?`).
+		WithArgs("share-1", "own-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.DeleteByOwner(context.Background(), "share-1", "own-1"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMailboxShare_DeleteByOwner_ForeignRowIsNotFound(t *testing.T) {
+	db, mock, raw := newMockShareDB(t)
+	defer raw.Close()
+	repo := NewMailboxShareRepository(db)
+
+	mock.ExpectBegin()
+	// Another tenant's share: the owner-scoped predicate matches nothing.
+	mock.ExpectExec(`DELETE FROM .mailbox_shares. WHERE id = \? AND owner_mailbox_id = \?`).
+		WithArgs("victim-share", "attacker-mailbox").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err := repo.DeleteByOwner(context.Background(), "victim-share", "attacker-mailbox")
+	require.ErrorIs(t, err, ErrNotFound,
+		"deleting a share owned by another mailbox must not succeed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}

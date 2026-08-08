@@ -17,6 +17,7 @@ var managedBinaries = []string{
 	"/usr/local/bin/jabali-agent",
 	"/usr/local/bin/jabali-ssh-shell",
 	"/usr/local/bin/jabali-mailhook",
+	"/usr/local/libexec/jabali/jabali-sendmail",
 }
 
 // binarySnapshot holds byte copies of the binaries as they were before an
