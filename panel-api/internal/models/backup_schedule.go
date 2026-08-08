@@ -32,8 +32,13 @@ type BackupSchedule struct {
 	// pre-7B single tenant schedule) that keeps using CronExpr + NextRunAt. A
 	// non-empty cadence routes the schedule through the window-guarded dispatch
 	// path (internal/backup.NextTenantRun), where CronExpr is ignored.
-	Cadence     string     `gorm:"column:cadence;type:varchar(16);not null;default:''" json:"cadence"`
-	Enabled     bool       `gorm:"not null;default:1" json:"enabled"`
+	Cadence string `gorm:"column:cadence;type:varchar(16);not null;default:''" json:"cadence"`
+	// No gorm default:1 — a destination/schedule can be created --disabled
+	// (Enabled=false), and GORM binds the DB default for a zero-valued bool on
+	// INSERT, so default:1 would silently re-enable it. See
+	// feedback_gorm_default1_bool_zero_value. Every create site sets Enabled
+	// explicitly; the DB column keeps its DEFAULT 1 for raw inserts.
+	Enabled     bool       `gorm:"not null" json:"enabled"`
 	KeepDaily   *int       `gorm:"type:int" json:"keep_daily,omitempty"`
 	KeepWeekly  *int       `gorm:"type:int" json:"keep_weekly,omitempty"`
 	KeepMonthly *int       `gorm:"type:int" json:"keep_monthly,omitempty"`
