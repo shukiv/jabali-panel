@@ -14,7 +14,13 @@ hit `/api/v1/automation/*`.
    - `read:*` is the wildcard shortcut. Tick it only when the
      caller really does need every read.
    - Otherwise pick from `read:domains`, `read:users`,
-     `read:applications`, `read:status`.
+     `read:applications`, `read:status`, `read:mail`, `read:packages`.
+   - Write/delete scopes (`write:users`, `delete:users`, …) gate the
+     JAB-140/ADR-0164 mutation endpoints — treat any token holding them
+     as an admin credential (IP allowlist + expiry + `writes_enabled`
+     kill switch; see ADR-0157). Billing panels (WHMCS/Blesta/WiseCP)
+     need `read:status`, `read:users`, `write:users` and, for
+     termination, `delete:users`.
 5. Click **Mint**.
 6. The one-time-secret modal pops with the plaintext token.
    **Copy it now**: the server only keeps an AES-GCM-encrypted
