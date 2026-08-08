@@ -37,6 +37,12 @@ var hostnameChown = os.Chown
 var freeFQDNRegex = regexp.MustCompile(`^[a-z0-9-]+\.jabalihosted\.com$`)
 var freeLabelRegex = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
 
+// freeTokenRegex allowlists the bearer token's charset. hostname.env is read
+// by root-run scripts, so the token must never be able to carry shell
+// metacharacters ($(...), backticks, ${...}) or a newline that could forge an
+// extra KEY=VALUE line.
+var freeTokenRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+
 type hostnameFreeApplyParams struct {
 	FQDN  string `json:"fqdn"`
 	Label string `json:"label"`
@@ -62,8 +68,14 @@ func hostnameFreeApplyHandler(ctx context.Context, params json.RawMessage) (any,
 	if _, err := requireEmail(p.Email); err != nil {
 		return nil, err
 	}
-	if p.Token == "" || strings.ContainsAny(p.Token, "\n\r ") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "token required, single-line"}
+	// Allowlist the token's charset rather than excluding whitespace. The
+	// old "no \n\r or space" check still permitted $(...), backticks, and
+	// ${...} — and hostname.env is read by root-run scripts (heartbeat timer,
+	// certbot renew hooks). Those readers no longer `source` the file, but a
+	// writer is the right place to reject remote data outright, and this keeps
+	// the value safe for any future consumer.
+	if !freeTokenRegex.MatchString(p.Token) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "token must be [A-Za-z0-9_-]+"}
 	}
 	if !strings.HasPrefix(p.API, "https://") || strings.ContainsAny(p.API, "\n\r ") {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "api must be an https URL"}

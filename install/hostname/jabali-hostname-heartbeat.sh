@@ -7,8 +7,18 @@ set -euo pipefail
 
 ENV=/etc/jabali-panel/hostname.env
 [[ -r "$ENV" ]] || exit 0
-# shellcheck disable=SC1090
-source "$ENV"
+# Read values WITHOUT executing the file. `source` would run any shell
+# metacharacters the hosted service put in a value — this script runs as root
+# from a timer/renew hook, so a token containing $(...) or backticks would be
+# root code execution on every fire, forever. Parse instead.
+jh_env() {
+  local line
+  line="$(grep -m1 "^$1=" "$ENV" 2>/dev/null)" || return 1
+  printf '%s' "${line#*=}"
+}
+TOKEN="$(jh_env TOKEN)"
+API="$(jh_env API)"
+FQDN="$(jh_env FQDN)"
 [[ -n "${TOKEN:-}" && -n "${API:-}" ]] || exit 0
 
 resp="$(curl -sS --max-time 30 -w $'\n%{http_code}' -H 'Content-Type: application/json' \

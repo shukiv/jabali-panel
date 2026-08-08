@@ -1107,6 +1107,14 @@ jh_free_hostname_flow() {
   done
   fqdn="$(jh_field "$body" fqdn)"; label="$(jh_field "$body" label)"; token="$(jh_field "$body" token)"
   [[ -z "$fqdn" || -z "$token" ]] && { echo "  malformed claim response — using a manual hostname" >&2; return 1; }
+  # Validate every field before it lands in hostname.env. The readers no longer
+  # `source` that file, but this is the boundary where remote data enters the
+  # box, and a value carrying shell metacharacters or a newline could still
+  # break or spoof a later parse. Reject rather than sanitize so a
+  # compromised/MITM'd service can't smuggle anything through.
+  [[ "$token" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "  claim response token has an unexpected format — using a manual hostname" >&2; return 1; }
+  [[ "$label" =~ ^[A-Za-z0-9-]+$ ]]  || { echo "  claim response label has an unexpected format — using a manual hostname" >&2; return 1; }
+  [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || { echo "  email has an unexpected format — using a manual hostname" >&2; return 1; }
   umask 077
   {
     printf 'LABEL=%s\nFQDN=%s\nEMAIL=%s\nTOKEN=%s\nAPI=%s\n' "$label" "$fqdn" "$email" "$token" "$JH_API"
