@@ -214,6 +214,17 @@ type Reconciler struct {
 	// sshKeysDispatchState. sync.Map = lock-free for the common
 	// "many readers, one writer per key" pattern.
 	sshKeysDispatchCache sync.Map
+
+	// dnsZoneDispatchCache: per-zone hash of the last-pushed record set +
+	// timestamp, same shape and rationale as sshKeysDispatchCache. Without
+	// it reconcileDNSZone rewrote the SOA serial, UPDATEd dns_zones, and
+	// pushed a full zone to the agent for EVERY enabled domain every tick —
+	// and the agent then DELETEs and re-INSERTs every record row in
+	// PowerDNS's SQL backend and shells out three times (purge auth cache,
+	// wipe recursor cache, NOTIFY slaves). Because the serial changed on
+	// every pass, the payload could never converge, so no downstream gate
+	// could ever fire. Keyed by zone ID; value type dnsZoneDispatchState.
+	dnsZoneDispatchCache sync.Map
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -2140,10 +2151,6 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	}
 	compiled := dnscompile.Compile(zone, records, srv)
 
-	// Bump serial on push.
-	zone.Serial = time.Now().UTC().Unix()
-	_ = r.dnsZones.Update(ctx, zone)
-
 	// Derive AXFR and NOTIFY lists from ServerSettings.
 	var allowAXFR, alsoNotify []string
 	if srv != nil && srv.NS2IPv4 != "" {
@@ -2155,6 +2162,26 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// `dig AXFR @127.0.0.1` — add that for debugging.
 	allowAXFR = append(allowAXFR, "127.0.0.1")
 
+	// Gate the whole push on a content compare. Unconditionally stamping the
+	// serial and pushing meant EVERY enabled domain, EVERY tick: one
+	// dns_zones UPDATE, plus an agent RPC that DELETEs and re-INSERTs every
+	// record row in PowerDNS's SQL backend and shells out three times (purge
+	// auth cache, wipe recursor cache, NOTIFY slaves). With a slave
+	// configured that also meant NOTIFY/AXFR churn every minute, and
+	// `rec_control wipe-cache` meant recursor entries for hosted zones never
+	// outlived one tick. dnsZonePushNeeded self-heals every
+	// dnsZoneReDispatchInterval, so out-of-band pdns drift is still corrected.
+	now := time.Now().UTC()
+	hash := desiredDNSZoneHash(compiled, allowAXFR, alsoNotify)
+	if !r.dnsZonePushNeeded(zone.ID, hash, now) {
+		return
+	}
+
+	// Bump the serial only when we are actually pushing changed content —
+	// a serial that moves every tick is what made this unconvergeable.
+	zone.Serial = now.Unix()
+	_ = r.dnsZones.Update(ctx, zone)
+
 	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := r.agent.Call(pushCtx, "dns.zone.upsert", map[string]any{
@@ -2163,8 +2190,13 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		"allow_axfr_from": allowAXFR,
 		"also_notify":     alsoNotify,
 	}); err != nil {
+		// Do NOT record the hash on failure: the agent may hold older
+		// content, so the next tick must retry rather than believe it is
+		// converged.
 		r.log.Error("dns.zone.upsert failed", "zone", zone.Name, "err", err)
+		return
 	}
+	r.dnsZonePushed(zone.ID, hash, now)
 }
 
 // reconcileDNSZoneDeleted tears down a DNS zone on the agent after its DB row
