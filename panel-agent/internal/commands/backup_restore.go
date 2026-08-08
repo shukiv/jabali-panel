@@ -110,6 +110,13 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	if req.ManifestSnapshotID == "" {
 		return nil, bkInvalidArg("manifest_snapshot_id required")
 	}
+	// target_username flows into useradd/loginctl argv and into the rsync
+	// destination path join, neither of which is containment-checked
+	// downstream. Validate the shape here, next to the ulid check, matching
+	// what every other backup handler does.
+	if req.TargetUsername != "" && !backupUsernameRE.MatchString(req.TargetUsername) {
+		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
+	}
 
 	// Single global flock — held for the duration of the restore. Use
 	// LOCK_NB so a busy host returns an error rather than blocking

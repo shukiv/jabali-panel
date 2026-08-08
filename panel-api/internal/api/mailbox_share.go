@@ -178,12 +178,16 @@ func (h *shareHandler) create(c *gin.Context) {
 func (h *shareHandler) del(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
-	_, _, err := h.loadMailbox(ctx, c.Param("mbid"), claims)
+	mb, _, err := h.loadMailbox(ctx, c.Param("mbid"), claims)
 	if err != nil {
 		h.writeErr(c, err)
 		return
 	}
-	if err := h.cfg.MailboxShares.Delete(ctx, c.Param("shareId")); err != nil {
+	// Scope the delete to the authenticated mailbox. Authenticating :mbid and
+	// then deleting by bare :shareId let any authenticated tenant delete
+	// another tenant's share — passing their OWN mailbox as :mbid — and the
+	// reconciler would then strip that share's JMAP shareWith on Stalwart.
+	if err := h.cfg.MailboxShares.DeleteByOwner(ctx, c.Param("shareId"), mb.ID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return

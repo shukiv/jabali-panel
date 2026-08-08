@@ -22,7 +22,6 @@ type BrowseEntry = { name: string; is_dir: boolean };
 type BrowseResp = {
   doc_root: string;
   path: string;
-  abs_path: string;
   entries: BrowseEntry[];
 };
 
