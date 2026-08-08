@@ -29,6 +29,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sslorigin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
@@ -1846,8 +1847,20 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// JAB-170: a shared-cert domain serves the ONE shared pair by path,
 	// independent of any per-domain ssl_certificates row. The agent stats the
 	// path and falls back to HTTP if the shared cert is not on disk yet.
+	// GH #896: redirectHTTPS decides whether the agent renders the :80→:443
+	// redirect (and the :443 block). Default: redirect whenever a trusted cert
+	// is on disk. Suppress ONLY while an LE/auto-mode domain is still on its
+	// self-signed BOOTSTRAP placeholder — redirecting there throws a
+	// cert-authority warning (the reporter's "can't access until LE"), and an
+	// HSTS-pinned browser hard-fails on the self-signed cert just the same.
+	// Serve plain HTTP + the ACME challenge until a real cert lands. Always set
+	// explicitly (false in the no-cert branch too) so a current panel never
+	// sends nil.
+	redirectHTTPS := false
 	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" {
-		params["ssl_cert_path"], params["ssl_key_path"] = sharedCertPaths(*domain.SharedCertificateID)
+		certPath, keyPath := sharedCertPaths(*domain.SharedCertificateID)
+		params["ssl_cert_path"], params["ssl_key_path"] = certPath, keyPath
+		redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, certPath)
 	} else if r.sslCerts != nil {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
 		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
@@ -1856,8 +1869,10 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			cert.CertPath != nil && cert.KeyPath != nil {
 			params["ssl_cert_path"] = *cert.CertPath
 			params["ssl_key_path"] = *cert.KeyPath
+			redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, *cert.CertPath)
 		}
 	}
+	params["redirect_https"] = redirectHTTPS
 
 	// Preview URL params (temp URLs) — nil when disabled or no hostname.
 	for k, v := range r.previewParams(ctx, domain) {
@@ -1874,6 +1889,35 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain", domain.Name,
 			"err", err)
 	}
+}
+
+// redirectHTTPSForCert decides whether the agent should render the :80→:443
+// redirect (and the :443 block) for a domain, given its SSL mode and the cert
+// path that will actually be served.
+//
+// GH #896/#887: default is to redirect whenever a cert is on disk. The one case
+// we suppress it — serving the docroot over plain HTTP + the ACME challenge
+// instead — is an LE/auto-mode domain still parked on its self-signed BOOTSTRAP
+// placeholder. Redirecting there sends browsers to an untrusted cert (the
+// reporter's "can't access until LE" warning); an HSTS-pinned visitor hard-fails
+// on that self-signed cert just the same. The redirect (and HSTS) begin on the
+// tick a real cert lands.
+//
+// The decision is by PATH, not row status: a renewal-failing domain that still
+// has a VALID Let's Encrypt cert on disk keeps redirecting, while one dropped to
+// a self-signed fallback correctly serves HTTP. SSLModeSelf and SSLModeCustom
+// may point at the same self-signed directory, but there the placeholder is the
+// operator's deliberate choice — so the carve-out is gated on the LE/legacy-empty
+// auto modes only, which are the ones for which self-signed is transient.
+func redirectHTTPSForCert(mode, certPath string) bool {
+	if certPath == "" {
+		return false
+	}
+	if (mode == models.SSLModeLE || mode == "") &&
+		sslorigin.KindForPath(certPath) == sslorigin.KindSelfSigned {
+		return false
+	}
+	return true
 }
 
 // sharedCertDir mirrors the agent's sslSharedRoot: /etc/jabali/ssl/shared/<id>

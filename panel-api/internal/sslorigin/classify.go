@@ -80,6 +80,13 @@ func certPathFromVhost(body string) string {
 	return ""
 }
 
+// KindForPath classifies a certificate purely by its on-disk location, without
+// reading the file. jabali owns both directory layouts, so the path is
+// authoritative for its own certificates. Exported for the reconciler's GH #896
+// redirect decision: a cert under jabaliSelfSignedDir is the self-signed
+// bootstrap placeholder, one under letsEncryptLiveDir is a real LE cert.
+func KindForPath(path string) Kind { return kindForPath(path) }
+
 // kindForPath classifies purely by where the certificate lives. jabali owns both
 // directory layouts, so the path is authoritative for its own certificates.
 func kindForPath(path string) Kind {
