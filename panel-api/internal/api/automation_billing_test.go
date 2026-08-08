@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -478,6 +479,122 @@ func TestAutomationUserDelete_ScopeWriteInsufficient(t *testing.T) {
 	w := abReq(r, http.MethodDelete, "/users/u1", body, tok)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("write:* on delete route: want 403, got %d", w.Code)
+	}
+}
+
+// --- login token (ADR-0165) ---
+
+// fakeKratosAdmin serves POST /admin/recovery/code the way Kratos does,
+// so the handler runs against the real kratosclient wrapper.
+func fakeKratosAdmin(t *testing.T) (*httptest.Server, *int) {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin/recovery/code" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		calls++
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"recovery_link":"https://panel.example.com:8443/.ory/self-service/recovery?flow=f1&code=c1","recovery_code":"c1","expires_at":"2026-08-08T00:05:00Z"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func TestAutomationLoginToken_HappyPath(t *testing.T) {
+	srv, calls := fakeKratosAdmin(t)
+	kid := "11111111-2222-3333-4444-555555555555"
+	un := "bob"
+	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un, KratosIdentityID: &kid})
+	cfg := billingCfg(users)
+	cfg.KratosClient = kratosclient.NewClient(srv.URL, srv.URL)
+
+	body := `{"ttl_s":120}`
+	r := abRouterWithBody(cfg, billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users/u1/login-token", body, billingTok())
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeBody(t, w)
+	if resp["ok"] != true || resp["url"] == "" || resp["expires_in"] != float64(120) {
+		t.Fatalf("bad login-token envelope: %v", resp)
+	}
+	if *calls != 1 {
+		t.Fatalf("expected exactly one kratos recovery call, got %d", *calls)
+	}
+}
+
+func TestAutomationLoginToken_AdminRefused(t *testing.T) {
+	srv, calls := fakeKratosAdmin(t)
+	kid := "11111111-2222-3333-4444-555555555555"
+	users := newAbUsers(&models.User{ID: "adm", Email: "root@x", IsAdmin: true, KratosIdentityID: &kid})
+	cfg := billingCfg(users)
+	cfg.KratosClient = kratosclient.NewClient(srv.URL, srv.URL)
+
+	body := `{}`
+	r := abRouterWithBody(cfg, billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users/adm/login-token", body, billingTok())
+	if w.Code != http.StatusConflict {
+		t.Fatalf("admin login link: want 409, got %d", w.Code)
+	}
+	if *calls != 0 {
+		t.Fatal("must never reach kratos for an admin target")
+	}
+}
+
+func TestAutomationLoginToken_NoIdentity409(t *testing.T) {
+	srv, _ := fakeKratosAdmin(t)
+	un := "bob"
+	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un})
+	cfg := billingCfg(users)
+	cfg.KratosClient = kratosclient.NewClient(srv.URL, srv.URL)
+
+	body := `{}`
+	r := abRouterWithBody(cfg, billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users/u1/login-token", body, billingTok())
+	if w.Code != http.StatusConflict {
+		t.Fatalf("identity-less user: want 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAutomationLoginToken_TTLClamped(t *testing.T) {
+	srv, _ := fakeKratosAdmin(t)
+	kid := "11111111-2222-3333-4444-555555555555"
+	un := "bob"
+	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un, KratosIdentityID: &kid})
+	cfg := billingCfg(users)
+	cfg.KratosClient = kratosclient.NewClient(srv.URL, srv.URL)
+
+	body := `{"ttl_s":999999}`
+	r := abRouterWithBody(cfg, billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users/u1/login-token", body, billingTok())
+	resp := decodeBody(t, w)
+	if resp["expires_in"] != float64(3600) {
+		t.Fatalf("ttl must clamp to 3600, got %v", resp["expires_in"])
+	}
+}
+
+func TestAutomationLoginToken_NotMountedWithoutKratos(t *testing.T) {
+	// No KratosClient → route absent and capability not advertised.
+	users := newAbUsers()
+	cfg := billingCfg(users)
+
+	r := abRouterWithBody(cfg, billingTok(), "{}")
+	w := abReq(r, http.MethodPost, "/users/u1/login-token", "{}", billingTok())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("route must be absent without Kratos, got %d", w.Code)
+	}
+
+	w2 := abReq(r, http.MethodGet, "/capabilities", "", billingTok())
+	var body struct {
+		Actions []capability `json:"actions"`
+	}
+	_ = json.Unmarshal(w2.Body.Bytes(), &body)
+	for _, a := range body.Actions {
+		if a.Action == "users.login_token" {
+			t.Fatal("users.login_token must not be advertised without Kratos")
+		}
 	}
 }
 

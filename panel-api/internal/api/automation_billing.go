@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"net/mail"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +113,12 @@ func registerAutomationBilling(g *gin.RouterGroup, cfg AutomationConfig, wl *wri
 
 		g.DELETE("/users/:id", wl.middleware(), requireWriteScope("delete:users"), userDeleteHandler(cfg))
 		caps = append(caps, capability{"users.delete", "DELETE", "/automation/users/:id", "delete:users", false})
+
+		// ADR-0165: one-time panel login via Kratos admin recovery links.
+		if cfg.KratosClient != nil {
+			g.POST("/users/:id/login-token", wl.middleware(), requireWriteScope("write:users"), userLoginTokenHandler(cfg))
+			caps = append(caps, capability{"users.login_token", "POST", "/automation/users/:id/login-token", "write:users", false})
+		}
 	}
 
 	// Billing reads. Not write actions, but advertised so the modules can
@@ -410,6 +417,75 @@ func userDeleteHandler(cfg AutomationConfig) gin.HandlerFunc {
 		notifyWrite(cfg, "automation.user.deleted", "warning", "Automation deleted a user",
 			"User "+u.Email+" and all owned resources were deleted via the automation API.", "/jabali-admin/users")
 		autoOK(c, "user "+id+" deleted")
+	}
+}
+
+// --- login token (ADR-0165) ---
+
+type automationLoginTokenReq struct {
+	TTLSeconds int `json:"ttl_s,omitempty"`
+	// ClientIP is accepted for wire-compat with the integration contract
+	// but not enforced — Kratos recovery codes are not IP-bindable
+	// (ADR-0165 compensating controls: single-use, short TTL, HTTPS).
+	ClientIP string `json:"client_ip,omitempty"`
+}
+
+func userLoginTokenHandler(cfg AutomationConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tok := middleware.AutomationToken(c)
+		const action = "POST /automation/users/:id/login-token"
+		id := c.Param("id")
+		var req automationLoginTokenReq
+		if !bindSigned(c, &req) {
+			return
+		}
+		ttl := req.TTLSeconds
+		if ttl <= 0 {
+			ttl = 300
+		}
+		if ttl < 60 {
+			ttl = 60
+		}
+		if ttl > 3600 {
+			ttl = 3600
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		u, err := cfg.Users.FindByID(ctx, id)
+		if err != nil || u == nil {
+			auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultError)
+			autoErr(c, http.StatusNotFound, "not_found", "user not found")
+			return
+		}
+		// A login link is a full session — never mint one for an admin
+		// from a headless key (ADR-0164 blanket refusal).
+		if u.IsAdmin {
+			auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultDenied)
+			autoErr(c, http.StatusConflict, "conflict", "refusing to mint a login link for an admin user")
+			return
+		}
+		if u.KratosIdentityID == nil || *u.KratosIdentityID == "" {
+			auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultError)
+			autoErr(c, http.StatusConflict, "conflict", "user has no identity-provider record")
+			return
+		}
+
+		rc, err := cfg.KratosClient.CreateRecoveryCode(ctx, *u.KratosIdentityID, strconv.Itoa(ttl)+"s")
+		if err != nil {
+			auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultError)
+			autoErr(c, http.StatusBadGateway, "internal", "identity provider could not issue a login link")
+			return
+		}
+
+		// Audit the MINT, never the link or code.
+		auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultOK)
+		c.JSON(http.StatusOK, gin.H{
+			"ok":         true,
+			"url":        rc.RecoveryLink,
+			"expires_in": ttl,
+			"message":    "one-time login link minted",
+		})
 	}
 }
 
