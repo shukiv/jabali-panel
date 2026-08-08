@@ -5235,6 +5235,45 @@ ensure_swap() {
   _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
 }
 
+# ensure_tmp_hardening — assert the kernel's /tmp symlink + hardlink
+# protections, and persist them.
+#
+# install.sh downloads several artifacts to PREDICTABLE root-owned paths in
+# world-writable /tmp (the Go tarball, wp-cli, phpMyAdmin, Kratos, Stalwart,
+# the maldet log). Their contents are sha256-verified, so a content swap
+# fails — but an unprivileged local user who pre-creates one of those names as
+# a symlink can still redirect a root write. Some of those paths are shared
+# ON PURPOSE (concurrent installer re-entry races on the same download), so
+# converting them to mktemp would break that design; hardening the directory
+# semantics fixes the whole class without touching any of them.
+#
+# fs.protected_symlinks / protected_hardlinks default to 1 on Debian, but the
+# installer never checked, and a host with a hand-rolled sysctl.conf can have
+# them off. protected_regular / protected_fifos extend the same idea to
+# O_CREAT writes into sticky world-writable dirs. Idempotent.
+ensure_tmp_hardening() {
+  cat >/etc/sysctl.d/60-jabali-tmp-hardening.conf <<'SYSCTL_TMP'
+# Managed by jabali install.sh. Refuse to follow symlinks/hardlinks in
+# world-writable sticky dirs (/tmp) when the follower and the owner differ —
+# the classic root-writes-through-a-planted-symlink hazard.
+fs.protected_symlinks = 1
+fs.protected_hardlinks = 1
+fs.protected_regular = 2
+fs.protected_fifos = 1
+SYSCTL_TMP
+  sysctl -w fs.protected_symlinks=1  >/dev/null 2>&1 || true
+  sysctl -w fs.protected_hardlinks=1 >/dev/null 2>&1 || true
+  sysctl -w fs.protected_regular=2   >/dev/null 2>&1 || true
+  sysctl -w fs.protected_fifos=1     >/dev/null 2>&1 || true
+  local sym
+  sym="$(sysctl -n fs.protected_symlinks 2>/dev/null || echo '?')"
+  if [[ "$sym" == "1" ]]; then
+    _ok "tmp hardening: fs.protected_symlinks/hardlinks enforced"
+  else
+    _warn "tmp hardening: fs.protected_symlinks is '$sym' — root downloads to /tmp are not symlink-protected on this kernel"
+  fi
+}
+
 # JAB-159 phase 3: echo the host deploy profile. "demo" selects a demo build
 # (-tags demo + VITE_DEMO=1); absent/unreadable = production (empty output).
 _deploy_profile() {
@@ -14054,6 +14093,32 @@ install_cloudflare_realip() {
     _warn "cloudflare ips-v6 fetch failed; using 2026-Q2 fallback ranges"
   fi
 
+  # Validate every line before it becomes an nginx directive. These bodies
+  # come off the network, and a 200 response is not proof of content: a
+  # captive portal, a TLS-intercepting middlebox, or a CF error page all
+  # return 200 with HTML. Unfiltered, that HTML was written verbatim as
+  # `set_real_ip_from <garbage>;` — and a line containing a ';' could inject
+  # arbitrary http-context directives (e.g. flipping real_ip_header to
+  # X-Forwarded-For, which would make every client IP forgeable and neuter
+  # IP-based blocking). Accept only well-formed CIDRs.
+  local cf_v4_clean cf_v6_clean
+  cf_v4_clean="$(printf '%s\n' "$cf_v4" | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$' || true)"
+  cf_v6_clean="$(printf '%s\n' "$cf_v6" | grep -E '^[0-9a-fA-F:]+/[0-9]{1,3}$' || true)"
+
+  # A drastically short list means the fetch returned something that merely
+  # looked like data. Keeping the existing file beats silently narrowing the
+  # trusted-proxy set, which would start attributing real client IPs to the
+  # Cloudflare edge again. Same guard as refresh-cf-ranges.sh.
+  local v4_count v6_count
+  v4_count="$(printf '%s\n' "$cf_v4_clean" | grep -c . || true)"
+  v6_count="$(printf '%s\n' "$cf_v6_clean" | grep -c . || true)"
+  if [[ "$v4_count" -lt 5 || "$v6_count" -lt 3 ]]; then
+    _warn "cloudflare ranges look wrong after validation (v4=$v4_count v6=$v6_count) — keeping the existing real-IP config"
+    return 0
+  fi
+  cf_v4="$cf_v4_clean"
+  cf_v6="$cf_v6_clean"
+
   local conf_file=/etc/nginx/conf.d/jabali-cloudflare-realip.conf
   local tmp
   tmp="$(mktemp --tmpdir jabali-cf-realip.XXXXXX)"
@@ -14074,13 +14139,30 @@ install_cloudflare_realip() {
 
   if [[ ! -f "$conf_file" ]] || ! cmp -s "$tmp" "$conf_file"; then
     _log "writing $conf_file (Cloudflare real-IP rewrite)"
+    # Keep the previous file so a failed nginx -t can be ROLLED BACK. Writing
+    # into conf.d and leaving a bad file behind on failure meant the next
+    # nginx start — possibly a reboot much later, with nobody watching —
+    # failed on a config this function wrote and warned about once.
+    local prev=""
+    if [[ -f "$conf_file" ]]; then
+      prev="$(mktemp --tmpdir jabali-cf-realip-prev.XXXXXX)"
+      cp -p "$conf_file" "$prev"
+    fi
     install -m 0644 -o root -g root "$tmp" "$conf_file"
     if nginx -t >/dev/null 2>&1; then
       systemctl reload nginx 2>/dev/null || _warn "nginx reload failed after cloudflare-realip update"
       _ok "nginx Cloudflare real-IP rewrite installed/refreshed"
     else
-      _warn "nginx -t failed after cloudflare-realip write — check $conf_file"
+      if [[ -n "$prev" ]]; then
+        install -m 0644 -o root -g root "$prev" "$conf_file"
+        _warn "nginx -t failed after cloudflare-realip write — REVERTED $conf_file to the previous version"
+      else
+        rm -f "$conf_file"
+        _warn "nginx -t failed after cloudflare-realip write — REMOVED $conf_file (it did not exist before)"
+      fi
+      nginx -t >/dev/null 2>&1 || _warn "nginx -t STILL failing after rollback — the problem is elsewhere in the nginx config"
     fi
+    [[ -n "$prev" ]] && rm -f "$prev"
   fi
   rm -f "$tmp"
 }
@@ -14783,6 +14865,10 @@ main() {
   # DNS, panel identity) uses it.
   apply_system_hostname
   preflight
+  # Before ANY download lands in /tmp (Go toolchain, wp-cli, phpMyAdmin,
+  # Kratos, Stalwart): make sure the kernel refuses to follow a symlink an
+  # unprivileged user planted at one of those predictable root-owned paths.
+  ensure_tmp_hardening
   # Swap MUST land before install_base_packages — apt + CrowdSec hub
   # downloads + npm ci all pull 100MB+ into RAM, OOM-killing each
   # other on a 2 GB VPS. ensure_swap is idempotent + cheap on hosts
@@ -15084,7 +15170,7 @@ This will remove:
   • /usr/local/libexec/jabali/
   • /etc/jabali-panel/, /etc/jabali/, /etc/stalwart/
   • /etc/profile.d/jabali-go.sh, /etc/apt/sources.list.d/sury-php.list + crowdsec.list
-  • /etc/sysctl.d/60-jabali-malware.conf, /etc/nftables.d/jabali-per-user-egress{,-boot}.nft
+  • /etc/sysctl.d/60-jabali-malware.conf, /etc/sysctl.d/60-jabali-tmp-hardening.conf, /etc/nftables.d/jabali-per-user-egress{,-boot}.nft
   • /etc/crowdsec/acquis.d/jabali-*.yaml, /etc/crowdsec/appsec-configs/jabali-appsec.yaml
   • /etc/audit/rules.d/jabali-exec.rules
   • AppArmor profiles for jabali daemons + stalwart-mail
@@ -15292,6 +15378,7 @@ RESOLV
   rm -f  /etc/apt/sources.list.d/crowdsec.list
   rm -f  /etc/apt/keyrings/crowdsec.gpg
   rm -f  /etc/sysctl.d/60-jabali-malware.conf
+  rm -f  /etc/sysctl.d/60-jabali-tmp-hardening.conf
   sysctl --system >/dev/null 2>&1 || true
   rm -f  /etc/nftables.d/jabali-per-user-egress.nft
   rm -f  /etc/nftables.d/jabali-per-user-egress-boot.nft
