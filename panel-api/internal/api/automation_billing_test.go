@@ -324,6 +324,25 @@ func TestAutomationUserCreate_UsernameCollisionDifferentEmail409(t *testing.T) {
 	}
 }
 
+func TestAutomationUserCreate_EmptyEmailUsernameCollision409(t *testing.T) {
+	// Account-adoption guard: a create with NO email that collides on an
+	// existing username must be a 409 conflict, never a 200 "exists"
+	// pointing at that unrelated user — a billing panel must not be bound
+	// to the wrong tenant.
+	un := "victim"
+	users := newAbUsers(&models.User{ID: "vuln", Email: "victim@example.com", Username: &un})
+	body := `{"username":"victim","password":"longenough1"}`
+	r := abRouterWithBody(billingCfg(users), billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users", body, billingTok())
+	if w.Code != http.StatusConflict {
+		t.Fatalf("empty-email username collision: want 409, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeBody(t, w)
+	if resp["status"] == "exists" {
+		t.Fatalf("must never return 'exists' for an empty-email collision: %v", resp)
+	}
+}
+
 func TestAutomationUserCreate_ExistsRetryWithDerivedUsername(t *testing.T) {
 	// Retry that supplies only the email must still resolve "exists" via
 	// the SAME username derivation userops.Create uses.
@@ -484,26 +503,52 @@ func TestAutomationUserDelete_ScopeWriteInsufficient(t *testing.T) {
 
 // --- login token (ADR-0165) ---
 
+// kratosProbe records what the handler sent to Kratos so tests can assert
+// on the actual request (not just the echoed response).
+type kratosProbe struct {
+	calls     int
+	lastExpIn string // the expires_in field the handler asked Kratos for
+	status    int    // response status to return (0 → 201 created)
+}
+
 // fakeKratosAdmin serves POST /admin/recovery/code the way Kratos does,
 // so the handler runs against the real kratosclient wrapper.
-func fakeKratosAdmin(t *testing.T) (*httptest.Server, *int) {
+func fakeKratosAdmin(t *testing.T) (*httptest.Server, *kratosProbe) {
 	t.Helper()
-	calls := 0
+	p := &kratosProbe{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/admin/recovery/code" || r.Method != http.MethodPost {
 			http.NotFound(w, r)
 			return
 		}
-		calls++
+		p.calls++
+		var body struct {
+			ExpiresIn string `json:"expires_in"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		p.lastExpIn = body.ExpiresIn
+		if p.status != 0 {
+			w.WriteHeader(p.status)
+			_, _ = w.Write([]byte(`{"error":{"message":"kratos boom"}}`))
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"recovery_link":"https://panel.example.com:8443/.ory/self-service/recovery?flow=f1&code=c1","recovery_code":"c1","expires_at":"2026-08-08T00:05:00Z"}`))
+		_, _ = w.Write([]byte(`{"recovery_link":"https://panel.example.com:8443/.ory/self-service/recovery?flow=f1&code=SECRETCODE","recovery_code":"SECRETCODE","expires_at":"2026-08-08T00:05:00Z"}`))
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &calls
+	return srv, p
+}
+
+// auditRows exposes the recorded audit events for leak assertions.
+func auditRows(cfg AutomationConfig) []*models.AuditEvent {
+	if a, ok := cfg.Audits.(*awAudit); ok {
+		return a.rows
+	}
+	return nil
 }
 
 func TestAutomationLoginToken_HappyPath(t *testing.T) {
-	srv, calls := fakeKratosAdmin(t)
+	srv, probe := fakeKratosAdmin(t)
 	kid := "11111111-2222-3333-4444-555555555555"
 	un := "bob"
 	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un, KratosIdentityID: &kid})
@@ -520,13 +565,13 @@ func TestAutomationLoginToken_HappyPath(t *testing.T) {
 	if resp["ok"] != true || resp["url"] == "" || resp["expires_in"] != float64(120) {
 		t.Fatalf("bad login-token envelope: %v", resp)
 	}
-	if *calls != 1 {
-		t.Fatalf("expected exactly one kratos recovery call, got %d", *calls)
+	if probe.calls != 1 {
+		t.Fatalf("expected exactly one kratos recovery call, got %d", probe.calls)
 	}
 }
 
 func TestAutomationLoginToken_AdminRefused(t *testing.T) {
-	srv, calls := fakeKratosAdmin(t)
+	srv, probe := fakeKratosAdmin(t)
 	kid := "11111111-2222-3333-4444-555555555555"
 	users := newAbUsers(&models.User{ID: "adm", Email: "root@x", IsAdmin: true, KratosIdentityID: &kid})
 	cfg := billingCfg(users)
@@ -538,7 +583,7 @@ func TestAutomationLoginToken_AdminRefused(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("admin login link: want 409, got %d", w.Code)
 	}
-	if *calls != 0 {
+	if probe.calls != 0 {
 		t.Fatal("must never reach kratos for an admin target")
 	}
 }
@@ -558,8 +603,8 @@ func TestAutomationLoginToken_NoIdentity409(t *testing.T) {
 	}
 }
 
-func TestAutomationLoginToken_TTLClamped(t *testing.T) {
-	srv, _ := fakeKratosAdmin(t)
+func TestAutomationLoginToken_TTLClampedOnKratosRequest(t *testing.T) {
+	srv, probe := fakeKratosAdmin(t)
 	kid := "11111111-2222-3333-4444-555555555555"
 	un := "bob"
 	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un, KratosIdentityID: &kid})
@@ -571,7 +616,59 @@ func TestAutomationLoginToken_TTLClamped(t *testing.T) {
 	w := abReq(r, http.MethodPost, "/users/u1/login-token", body, billingTok())
 	resp := decodeBody(t, w)
 	if resp["expires_in"] != float64(3600) {
-		t.Fatalf("ttl must clamp to 3600, got %v", resp["expires_in"])
+		t.Fatalf("ttl must clamp to 3600 in the response, got %v", resp["expires_in"])
+	}
+	// The clamp must reach KRATOS, not just the echoed response.
+	if probe.lastExpIn != "3600s" {
+		t.Fatalf("kratos was asked for expires_in=%q, want 3600s", probe.lastExpIn)
+	}
+}
+
+func TestAutomationLoginToken_NeverLeaksLinkOrCodeToAudit(t *testing.T) {
+	srv, _ := fakeKratosAdmin(t)
+	kid := "11111111-2222-3333-4444-555555555555"
+	un := "bob"
+	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un, KratosIdentityID: &kid})
+	cfg := billingCfg(users)
+	cfg.KratosClient = kratosclient.NewClient(srv.URL, srv.URL)
+
+	body := `{}`
+	r := abRouterWithBody(cfg, billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users/u1/login-token", body, billingTok())
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	for _, ev := range auditRows(cfg) {
+		blob := ev.Action + ev.TargetID + string(ev.Meta)
+		if strings.Contains(blob, "SECRETCODE") || strings.Contains(blob, "recovery") {
+			t.Fatalf("audit row leaked the recovery link/code: %+v", ev)
+		}
+	}
+}
+
+func TestAutomationLoginToken_KratosErrorNoLeak(t *testing.T) {
+	srv, probe := fakeKratosAdmin(t)
+	probe.status = http.StatusInternalServerError
+	kid := "11111111-2222-3333-4444-555555555555"
+	un := "bob"
+	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un, KratosIdentityID: &kid})
+	cfg := billingCfg(users)
+	cfg.KratosClient = kratosclient.NewClient(srv.URL, srv.URL)
+
+	body := `{}`
+	r := abRouterWithBody(cfg, billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users/u1/login-token", body, billingTok())
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("kratos failure: want 502, got %d: %s", w.Code, w.Body.String())
+	}
+	// The generic error must not echo the Kratos response body.
+	if strings.Contains(w.Body.String(), "kratos boom") {
+		t.Fatalf("client response leaked the kratos error body: %s", w.Body.String())
+	}
+	// Failure is audited (result=error), never the code.
+	rows := auditRows(cfg)
+	if len(rows) == 0 || rows[len(rows)-1].Result != models.AuditResultError {
+		t.Fatalf("expected an error audit row, got %+v", rows)
 	}
 }
 

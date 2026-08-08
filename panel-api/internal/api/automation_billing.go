@@ -221,16 +221,27 @@ func userIsErrTaken(err error) bool {
 }
 
 // findExactUserMatch returns the existing user an identical create retry
-// refers to. Email is deliberately NOT unique post-M54 (one billing client
-// may own several accounts), so the only deterministic key is the username
-// — supplied, or derived from the email exactly the way userops.Create
-// derives it. The match must then also agree on the email, so a retry can
-// never adopt someone else's account.
+// refers to — or nil, which the caller turns into a 409 conflict.
+//
+// "Identical" must be proven POSITIVELY on BOTH identifiers, so a retry can
+// never bind the caller to someone else's account (a create that collides
+// on username must not hand back an unrelated user's id — that would let a
+// billing panel manage the wrong tenant). Rules:
+//   - No email supplied → we cannot confirm identity beyond a unique
+//     username, and the original create may have carried an email, so we
+//     refuse to call it a match (→ 409). Username is the only unique key
+//     (email is NOT unique post-M54), but username-alone is insufficient
+//     for an "exists" claim.
+//   - Email supplied → resolve by username (given, else derived the same
+//     way userops.Create derives it) AND require the stored email to agree.
 func findExactUserMatch(ctx context.Context, users repository.UserRepository, email string, username *string) *models.User {
+	if email == "" {
+		return nil
+	}
 	effective := ""
 	if username != nil && *username != "" {
 		effective = *username
-	} else if email != "" {
+	} else {
 		effective = userops.UserFromEmail(email)
 	}
 	if effective == "" {
@@ -240,7 +251,10 @@ func findExactUserMatch(ctx context.Context, users repository.UserRepository, em
 	if err != nil || u == nil {
 		return nil
 	}
-	if email != "" && !strings.EqualFold(u.Email, email) {
+	// EqualFold is case-insensitive but not accent-folding; the DB collation
+	// (utf8mb4_unicode_ci) is stricter, so a mismatch here is fail-closed
+	// (spurious 409, never adoption).
+	if !strings.EqualFold(u.Email, email) {
 		return nil
 	}
 	return u
