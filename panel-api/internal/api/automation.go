@@ -84,6 +84,11 @@ type AutomationConfig struct {
 	// nil-guard, never a bare *reconciler.Reconciler that might be nil).
 	LimitsReconciler userops.LimitsReconciler
 	DomainReconciler userops.DomainReconciler
+	// DomainCreate carries the same deps the GUI domain handler uses, so
+	// JAB-233 account-create-with-domain runs the exact createDomainOp
+	// orchestration. Nil-safe: when unset (or its repos nil), a create that
+	// carries `domain` degrades to a domain_warning rather than panicking.
+	DomainCreate DomainHandlerConfig
 	// Usage reads (bulk-safe: snapshots + one batched bw_daily query —
 	// the automation usage endpoints NEVER call the agent).
 	DiskSnapshots repository.DiskUsageSnapshotRepository

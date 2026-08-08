@@ -25,10 +25,10 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/webmailsso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/webui"
 	panelui "git.jabali-panel.com/shukivaknin/jabali2/panel-ui"
@@ -444,6 +444,23 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DiskSnapshots:    repository.NewDiskUsageSnapshotRepository(deps.DB),
 				BWDaily:          deps.BWDaily,
 				Log:              deps.Log,
+				// JAB-233: the exact deps the GUI domain handler uses (mirrors
+				// the DomainHandlerConfig below), so account-create with a
+				// `domain` runs createDomainOp with identical semantics.
+				DomainCreate: api.DomainHandlerConfig{
+					Domains:        deps.Domains,
+					Users:          deps.Users,
+					Packages:       deps.Packages,
+					Agent:          deps.Agent,
+					Reconciler:     deps.Reconciler,
+					SSLCerts:       deps.SSLCerts,
+					SharedCerts:    deps.SharedCerts,
+					DNSZones:       deps.DNSZones,
+					DNSRecords:     deps.DNSRecords,
+					ManagedIPs:     deps.ManagedIPs,
+					ServerSettings: deps.ServerSettings,
+					BWDaily:        deps.BWDaily,
+				},
 			})
 		}
 

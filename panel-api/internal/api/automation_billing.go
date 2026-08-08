@@ -106,6 +106,12 @@ func registerAutomationBilling(g *gin.RouterGroup, cfg AutomationConfig, wl *wri
 		caps = append(caps,
 			capability{"users.create", "POST", "/automation/users", "write:users", false},
 			capability{"users.password", "POST", "/automation/users/:id/password", "write:users", false})
+		// JAB-233: account-create can auto-create a primary domain when the
+		// request carries `domain` (needs write:domains too). Advertised only
+		// when the domain deps are wired.
+		if cfg.DomainCreate.Domains != nil {
+			caps = append(caps, capability{"domains.create", "POST", "/automation/users", "write:domains", false})
+		}
 
 		if cfg.Packages != nil {
 			g.PUT("/users/:id/package", wl.middleware(), requireWriteScope("write:users"), userPackageHandler(cfg))
@@ -180,6 +186,36 @@ func userCreateHandler(cfg AutomationConfig) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
 
+		// JAB-233: optional primary-domain auto-create. Pre-validate the domain
+		// (scope + FQDN + global name-conflict) BEFORE the account exists, so a
+		// bad/taken domain fails fast and never leaves a half-created user.
+		// Absent `domain` → write:users only, unchanged from before.
+		var domName string
+		if strings.TrimSpace(req.Domain) != "" {
+			if !tok.Scopes.Has("write:domains") {
+				auditWrite(c, cfg.Audits, tok, action, "user", req.Email, models.AuditResultDenied)
+				autoErr(c, http.StatusForbidden, "scope_denied", "creating a domain requires the write:domains scope")
+				return
+			}
+			domName = normalizeDomainName(req.Domain)
+			if verr := validateDomainName(domName); verr != nil {
+				autoErr(c, http.StatusBadRequest, "validation", "invalid domain: "+verr.Error())
+				return
+			}
+			domName = htmlTagRe.ReplaceAllString(domName, "")
+			// Fail-fast conflict: taken by anyone other than the user this
+			// (possibly retried) create resolves to. The same-owner retry case
+			// falls through and is handled idempotently after the account
+			// resolves (createAutomationDomain).
+			if existing, ferr := cfg.DomainCreate.Domains.FindByName(ctx, domName); ferr == nil && existing != nil {
+				owner := findExactUserMatch(ctx, cfg.Users, req.Email, req.Username)
+				if owner == nil || existing.UserID != owner.ID {
+					autoErr(c, http.StatusConflict, "conflict", "domain already exists")
+					return
+				}
+			}
+		}
+
 		// is_admin is NOT exposed: automation can never mint an admin.
 		res, err := userops.Create(ctx, billingUserOpsDeps(cfg), userops.CreateInput{
 			Email:     req.Email,
@@ -194,7 +230,17 @@ func userCreateHandler(cfg AutomationConfig) gin.HandlerFunc {
 			if userIsErrTaken(err) {
 				if existing := findExactUserMatch(ctx, cfg.Users, req.Email, req.Username); existing != nil {
 					auditWrite(c, cfg.Audits, tok, action, "user", existing.ID, models.AuditResultOK)
-					c.JSON(http.StatusOK, gin.H{"ok": true, "status": "exists", "user_id": existing.ID, "message": "user already exists"})
+					resp := gin.H{"ok": true, "status": "exists", "user_id": existing.ID, "message": "user already exists"}
+					// JAB-233: idempotent domain on retry — create if the user
+					// doesn't own it yet, no-op (return its id) if they do.
+					if domName != "" {
+						if did, warn := createAutomationDomain(c, cfg, tok, existing.ID, domName); did != "" {
+							resp["domain_id"] = did
+						} else if warn != "" {
+							resp["domain_warning"] = warn
+						}
+					}
+					c.JSON(http.StatusOK, resp)
 					return
 				}
 				auditWrite(c, cfg.Audits, tok, action, "user", req.Email, models.AuditResultError)
@@ -213,8 +259,56 @@ func userCreateHandler(cfg AutomationConfig) gin.HandlerFunc {
 		if res.ProvisionWarning != "" {
 			msg = res.ProvisionWarning
 		}
-		c.JSON(http.StatusCreated, gin.H{"ok": true, "status": "created", "user_id": res.User.ID, "message": msg})
+		resp := gin.H{"ok": true, "status": "created", "user_id": res.User.ID, "message": msg}
+		// JAB-233: create the primary domain. A failure here does NOT roll back
+		// the account (ProvisionWarning precedent) — surface domain_warning on
+		// the 201 and let the operator retry the domain.
+		if domName != "" {
+			if did, warn := createAutomationDomain(c, cfg, tok, res.User.ID, domName); did != "" {
+				resp["domain_id"] = did
+			} else if warn != "" {
+				resp["domain_warning"] = warn
+			}
+		}
+		c.JSON(http.StatusCreated, resp)
 	}
+}
+
+// createAutomationDomain creates ownerID's primary domain via the shared GUI
+// orchestration (createDomainOp), with inline SSL skipped — the reconciler
+// bootstraps the cert on its first tick, exactly like `jabali domain create`.
+// Idempotent: if the owner already owns a domain of that name, returns its id
+// with no warning. A failure AFTER the account exists never rolls back; it
+// returns an empty id + a warning the caller surfaces as `domain_warning`.
+// Audits the domain-scoped write (success/failure) and bells on success.
+func createAutomationDomain(c *gin.Context, cfg AutomationConfig, tok *models.AutomationToken, ownerID, name string) (domainID, warning string) {
+	const action = "POST /automation/users (domain)"
+	ctx := c.Request.Context()
+	if cfg.DomainCreate.Domains == nil {
+		return "", "domain not created: domain support not wired on this panel"
+	}
+	// Idempotent no-op: owner already owns it.
+	if existing, err := cfg.DomainCreate.Domains.FindByName(ctx, name); err == nil && existing != nil {
+		if existing.UserID == ownerID {
+			return existing.ID, ""
+		}
+		auditWrite(c, cfg.Audits, tok, action, "domain", name, models.AuditResultDenied)
+		return "", "domain already exists"
+	}
+	h := &domainHandler{cfg: cfg.DomainCreate}
+	dom, oerr := createDomainOp(ctx, h, createDomainInput{OwnerID: ownerID, Name: name, SkipInlineSSL: true})
+	if oerr != nil {
+		auditWrite(c, cfg.Audits, tok, action, "domain", name, models.AuditResultError)
+		w := oerr.Code
+		if oerr.Detail != "" {
+			w = oerr.Code + ": " + oerr.Detail
+		}
+		return "", "domain not created: " + w
+	}
+	auditWrite(c, cfg.Audits, tok, action, "domain", dom.ID, models.AuditResultOK)
+	notifyWrite(cfg, "automation.domain.created", "info", "Automation created a domain",
+		"Domain "+dom.Name+" was created via the automation API.", "/jabali-panel/domains")
+	return dom.ID, ""
 }
 
 func userIsErrTaken(err error) bool {
