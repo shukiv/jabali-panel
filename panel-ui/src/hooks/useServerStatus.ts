@@ -147,7 +147,7 @@ export interface Alert {
   detail: string;
 }
 
-export function useServerStatus(opts?: { enabled?: boolean }) {
+export function useServerStatus(opts?: { enabled?: boolean; refetchInterval?: number }) {
   return useQuery<ServerStatusEnvelope>({
     queryKey: ["admin", "server-status"],
     queryFn: async () => {
@@ -160,7 +160,13 @@ export function useServerStatus(opts?: { enabled?: boolean }) {
     // polling with `enabled` instead of fetching the heavy aggregate
     // on every render.
     enabled: opts?.enabled ?? true,
-    refetchInterval: 5000,
+    // refetchInterval lets a low-priority subscriber (the header health
+    // badge, mounted on every admin page) ask for a slower cadence. React
+    // Query dedupes across observers of one key and honours the SHORTEST
+    // requested interval, so the badge costs nothing extra while a page
+    // with a faster cadence is open, and drops to its own interval once
+    // that page unmounts.
+    refetchInterval: opts?.refetchInterval ?? 5000,
     refetchIntervalInBackground: false,
   });
 }
