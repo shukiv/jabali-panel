@@ -38,6 +38,17 @@ func (rl *rateLimiter) allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := rl.now()
+	// Evict idle buckets opportunistically. Without this the map grows by one
+	// permanent entry per distinct key ever seen — and since keys come from
+	// client-controlled input on a public endpoint, that was a slow
+	// memory-exhaustion vector on its own. A bucket that has been idle long
+	// enough to have fully refilled carries no state worth keeping.
+	idleFull := time.Duration(float64(time.Minute) * 2)
+	for k, b := range rl.bucket {
+		if k != key && now.Sub(b.last) > idleFull {
+			delete(rl.bucket, k)
+		}
+	}
 	b, ok := rl.bucket[key]
 	if !ok {
 		rl.bucket[key] = &tokenBucket{tokens: float64(rl.perMin) - 1, last: now}

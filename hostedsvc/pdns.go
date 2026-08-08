@@ -109,6 +109,14 @@ func (p *PDNS) SetChallenge(ctx context.Context, label, value string) error {
 	if err != nil {
 		return err
 	}
+	// Same cap as the Cloudflare backend: add-only challenges must not let a
+	// token holder accumulate unbounded TXT records in the shared zone. Two is
+	// the legitimate maximum (apex + wildcard); the constant leaves headroom
+	// for a retry that raced cleanup.
+	if len(existing) >= maxChallengeRecordsPerLabel {
+		return fmt.Errorf("too many pending ACME challenges for %s (%d) — run cleanup first",
+			name, len(existing))
+	}
 	recs := []record{{Content: quoted}}
 	for _, c := range existing {
 		if c != quoted {
