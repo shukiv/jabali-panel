@@ -138,6 +138,17 @@ REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 # 9.9.9.9 via UDP.
 DNS_FORWARDER="${JABALI_DNS_FORWARDER:-}"
 GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
+# SHA-256 of the pinned Go tarballs, from https://go.dev/dl/?mode=json.
+# Pinned HERE rather than in install/ because install_go runs BEFORE
+# clone_or_update_repo — on a fresh install $REPO_DIR does not exist yet, so a
+# pin under install/ could never be read (and the ordering guard test would
+# rightly flag the attempt). install.sh itself is the bootstrap artifact and is
+# sha256-verified by bootstrap.sh, so a pin here carries the same weight.
+# Bump together with GO_VERSION. An unpinned version (JABALI_GO_VERSION
+# override, or the CDN-gap fallback) verifies against go.dev's published
+# checksum instead — see install_go.
+GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053}"
+GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
@@ -1826,10 +1837,29 @@ EARLYDNS
     local _composer_tmp
     _composer_tmp="$(mktemp)"
     if curl -fsSL -o "$_composer_tmp" https://getcomposer.org/installer; then
-      "php${primary_version}" "$_composer_tmp" \
-        --install-dir=/usr/local/bin --filename=composer --quiet
-      rm -f "$_composer_tmp"
-      _ok "composer installed at /usr/local/bin/composer"
+      # Verify the installer's SHA-384 before executing it as root — this is
+      # Composer's own documented procedure, and without it a MITM or a
+      # compromise of getcomposer.org is immediate root code execution during
+      # install/update. The signature is served from composer.github.io, a
+      # DIFFERENT host than the installer, so an attacker has to compromise
+      # both for the check to pass. Not pinned in-repo on purpose: the
+      # installer is rebuilt upstream regularly and a stale pin would fail
+      # every install.
+      local _composer_sig _composer_sum
+      _composer_sig="$(curl -fsSL --max-time 20 https://composer.github.io/installer.sig || true)"
+      _composer_sum="$(sha384sum "$_composer_tmp" | awk '{print $1}')"
+      if [[ -z "$_composer_sig" ]]; then
+        rm -f "$_composer_tmp"
+        _warn "could not fetch composer installer signature — refusing to run an unverified installer as root; composer unavailable"
+      elif [[ "$_composer_sig" != "$_composer_sum" ]]; then
+        rm -f "$_composer_tmp"
+        _err "composer installer checksum mismatch (expected $_composer_sig, got $_composer_sum) — NOT executing it"
+      else
+        "php${primary_version}" "$_composer_tmp" \
+          --install-dir=/usr/local/bin --filename=composer --quiet
+        rm -f "$_composer_tmp"
+        _ok "composer installed at /usr/local/bin/composer (installer signature verified)"
+      fi
     else
       rm -f "$_composer_tmp"
       _warn "failed to download composer installer — composer will be unavailable"
@@ -4814,7 +4844,47 @@ install_go() {
       fi
     done
     [[ -n "$_got" ]] || _die "failed to download Go: pinned go${failed_pin} and every published stable fallback 404'd from go.dev -- check egress to go.dev / dl.google.com from this host"
+    # A downgrade is a security-relevant event, not a detail: the host is now
+    # building the panel with an older toolchain that may carry known CVEs, and
+    # simply making the pinned URL fail is enough to trigger it. Say so loudly.
+    _warn "GO TOOLCHAIN DOWNGRADE: pinned go${failed_pin} was unavailable; installing go${GO_VERSION} instead. The panel/agent binaries will be built with this older toolchain — re-run once go${failed_pin} is reachable."
   fi
+  # Verify BEFORE extracting into /usr/local. The tarball builds the panel and
+  # agent binaries, so a tampered toolchain compromises every artifact this
+  # host produces — and nothing downstream would notice. Prefer the in-repo
+  # pin (protects even against a compromised go.dev); fall back to go.dev's own
+  # published sha256 for a version the pin can't know in advance (the CDN-gap
+  # fallback, or a JABALI_GO_VERSION override). Refuse to install unverified.
+  local go_tar_name go_expected go_actual
+  go_tar_name="$(basename "$tarball")"
+  go_expected=""
+  # Only the PINNED version has a checksum baked in; the fallback path lands on
+  # a version chosen at runtime, so it verifies against go.dev instead.
+  if [[ "$go_tar_name" == "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" ]]; then
+    case "$GO_ARCH" in
+      amd64) go_expected="$GO_SHA256_AMD64" ;;
+      arm64) go_expected="$GO_SHA256_ARM64" ;;
+    esac
+  fi
+  if [[ -z "$go_expected" ]]; then
+    _log "no pinned checksum for ${go_tar_name} — verifying against go.dev's published checksum"
+    # go.dev's listing is pretty-printed with "sha256" a few lines below the
+    # matching "filename", so take the first sha256 in that window.
+    go_expected="$("${go_curl[@]}" "https://go.dev/dl/?mode=json" 2>/dev/null \
+      | grep -A 5 "\"filename\": \"${go_tar_name}\"" \
+      | grep -oE '"sha256": "[a-f0-9]{64}"' \
+      | grep -oE '[a-f0-9]{64}' | head -1)"
+  fi
+  go_actual="$(sha256sum "$tarball" | awk '{print $1}')"
+  if [[ -z "$go_expected" ]]; then
+    rm -f "$tarball"
+    _die "could not determine an expected checksum for ${go_tar_name} — refusing to install an unverified Go toolchain"
+  fi
+  if [[ "$go_expected" != "$go_actual" ]]; then
+    rm -f "$tarball"
+    _die "Go toolchain checksum mismatch for ${go_tar_name}: expected $go_expected, got $go_actual — NOT extracting"
+  fi
+  _ok "Go toolchain checksum verified (${go_tar_name})"
   tar -C /usr/local -xzf "$tarball"
   rm -f "$tarball"
 
@@ -5052,6 +5122,16 @@ clone_or_update_repo() {
     # other trees that may legitimately be group-owned differently
     # don't get clobbered.
     chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR/.git"
+    # Self-heal a stale remote URL. Boxes provisioned before the codeberg→GitHub
+    # source-of-truth switch still have origin pointing at the DROPPED codeberg
+    # remote, which is frozen: `git fetch origin` there silently pulls
+    # long-obsolete code (e.g. missing install/hostname/* and other newer
+    # files), then a later install step hard-fails on a file the current
+    # install.sh references. Force origin to the canonical $REPO_URL before
+    # fetching so the pull always tracks the real source. Idempotent — a no-op
+    # when origin is already correct.
+    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" remote set-url origin "$REPO_URL" 2>/dev/null \
+      || _warn "could not reset origin URL to $REPO_URL — continuing with the existing remote"
     # No --quiet: under `set -e` a failed fetch/clone aborts install.sh
     # without any output because --quiet suppresses git's stderr, leaving
     # the operator with a silent exit. Let git's error reach the trace.
@@ -7142,25 +7222,62 @@ install_adminer() {
   mkdir -p "${adminer_dir}"
 
   # Upstream single-file Adminer build. Pin v4.8.1 for reproducibility.
+  #
+  # Checksum-verified like every other third-party artifact in this file
+  # (wp-cli, phpMyAdmin, Stalwart, Kratos, Bulwark, maldet, yara-x). Adminer is
+  # served on the panel vhost behind jabali SSO with full database access, so a
+  # tampered or swapped upstream asset is arbitrary PHP running as www-data
+  # with the operator's DB credentials — and nothing in install or CI would
+  # notice. Download to a temp path first so a mismatch can never leave a
+  # partially-verified file in the docroot.
   if [[ ! -f "${adminer_dir}/adminer.php" ]]; then
     _log "downloading adminer.php"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "${adminer_dir}/adminer.php" "${adminer_url}"; then
+    local adminer_tmp
+    adminer_tmp="$(mktemp)"
+    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$adminer_tmp" "${adminer_url}"; then
+      rm -f "$adminer_tmp"
       _err "failed to download adminer from ${adminer_url}"
       return 1
     fi
+    local adminer_expected adminer_actual
+    adminer_expected="$(grep -v '^#' "${REPO_DIR}/install/adminer.sha256" | awk '{print $1}')"
+    adminer_actual="$(sha256sum "$adminer_tmp" | awk '{print $1}')"
+    if [[ -z "$adminer_expected" || "$adminer_expected" != "$adminer_actual" ]]; then
+      rm -f "$adminer_tmp"
+      _err "adminer checksum mismatch: expected ${adminer_expected:-<missing pin>}, got $adminer_actual"
+      return 1
+    fi
+    mv "$adminer_tmp" "${adminer_dir}/adminer.php"
+    _ok "adminer.php checksum verified"
   else
     _ok "adminer.php already present"
   fi
 
-  # Adminer's plugin loader (separate from the main file).
+  # Adminer's plugin loader (separate from the main file). Checksum-verified
+  # too: it is loaded by adminer.php, so it executes with the same privileges.
   if [[ ! -f "${adminer_dir}/plugin.php" ]]; then
     _log "downloading Adminer plugin loader"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "${adminer_dir}/plugin.php" "${adminer_plugin_url}"; then
+    local plugin_tmp
+    plugin_tmp="$(mktemp)"
+    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$plugin_tmp" "${adminer_plugin_url}"; then
       # Non-fatal: the plugin loader only enhances Adminer (jabali-sso plugin).
       # A transient GitHub-raw hiccup shouldn't brick the whole install; the DB
       # admin tool still works, and `jabali update` / repair can refetch it.
+      rm -f "$plugin_tmp"
       _warn "failed to download adminer plugin loader (non-fatal) — Adminer SSO plugin disabled until next update"
-      rm -f "${adminer_dir}/plugin.php"
+    else
+      local plugin_expected plugin_actual
+      plugin_expected="$(grep -v '^#' "${REPO_DIR}/install/adminer-plugin.sha256" | awk '{print $1}')"
+      plugin_actual="$(sha256sum "$plugin_tmp" | awk '{print $1}')"
+      if [[ -z "$plugin_expected" || "$plugin_expected" != "$plugin_actual" ]]; then
+        # A MISMATCH is not the same as a failed download: the file served is
+        # not the pinned one, so refuse it rather than degrade quietly.
+        rm -f "$plugin_tmp"
+        _warn "adminer plugin loader checksum mismatch (expected ${plugin_expected:-<missing pin>}, got $plugin_actual) — refusing it; SSO plugin disabled"
+      else
+        mv "$plugin_tmp" "${adminer_dir}/plugin.php"
+        _ok "adminer plugin loader checksum verified"
+      fi
     fi
   else
     _ok "adminer plugin loader already present"
