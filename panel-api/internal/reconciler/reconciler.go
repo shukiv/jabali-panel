@@ -206,6 +206,13 @@ type Reconciler struct {
 	// dispatch omits directory_privacy_rules → no htpasswd files
 	// written, no auth_basic location blocks rendered.
 	domainDirPrivacy repository.DomainDirectoryPrivacyRepository
+	// bwEnforce* rate-limits the bandwidth-quota suspension sweep to
+	// bwEnforceInterval. Its input (bw_daily) is written once a day, so
+	// running it every 60s recomputed an identical verdict ~1439 times out of
+	// 1440 — at a cost of several queries per eligible user each time.
+	bwEnforceMu      sync.Mutex
+	bwEnforceLastRun time.Time
+
 	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
 	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
 	// the desired state hasn't changed since the last dispatch. Self-

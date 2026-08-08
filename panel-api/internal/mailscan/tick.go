@@ -210,8 +210,15 @@ func scanMailbox(ctx context.Context, client *Client, deps Deps, cfg Settings, p
 		return 0, fmt.Errorf("Email/query: %w", err)
 	}
 	if len(emailIDs) == 0 {
-		state.ScannedAt = time.Now().UTC()
-		_ = deps.State.Upsert(ctx, state)
+		// Nothing new: do NOT write. This branch used to bump ScannedAt and
+		// Upsert on every idle mailbox, every 5 minutes, forever — one DB
+		// write per mailbox per tick purely to record "still nothing".
+		//
+		// Safe to skip because the scan cursor is LastReceivedAt, not
+		// ScannedAt: `since` above reads LastReceivedAt, and nothing else in
+		// the codebase consumes ScannedAt. A brand-new mailbox with no state
+		// row also stays unwritten until it actually has mail to scan, which
+		// is when the row starts carrying information.
 		return 0, nil
 	}
 

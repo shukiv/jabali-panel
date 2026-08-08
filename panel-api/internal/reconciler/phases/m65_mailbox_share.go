@@ -45,14 +45,41 @@ func (p *mailboxSharePhase) ReconcileMailbox(ctx context.Context, mb *models.Mai
 	}
 
 	// Build target email → rights map.
+	//
+	// Batch the lookups (JAB-147 pattern): resolving each grant with its own
+	// FindByID pair ran 2 queries per share on the 60s reconcile hot path,
+	// even though FindByIDs already exists on both repositories.
+	targetIDs := make([]string, 0, len(shares))
+	for _, s := range shares {
+		targetIDs = append(targetIDs, s.SharedWithMailboxID)
+	}
+	targets, terr := p.mailboxes.FindByIDs(ctx, targetIDs)
+	if terr != nil {
+		return fmt.Errorf("batch-load share targets: %w", terr)
+	}
+	targetByID := make(map[string]models.Mailbox, len(targets))
+	domIDs := make([]string, 0, len(targets))
+	for _, t := range targets {
+		targetByID[t.ID] = t
+		domIDs = append(domIDs, t.DomainID)
+	}
+	targetDomains, derr := p.domains.FindByIDs(ctx, domIDs)
+	if derr != nil {
+		return fmt.Errorf("batch-load share target domains: %w", derr)
+	}
+	domByID := make(map[string]models.Domain, len(targetDomains))
+	for _, d := range targetDomains {
+		domByID[d.ID] = d
+	}
+
 	sharesByEmail := make(map[string]models.Rights, len(shares))
 	for _, s := range shares {
-		target, err := p.mailboxes.FindByID(ctx, s.SharedWithMailboxID)
-		if err != nil {
+		target, ok := targetByID[s.SharedWithMailboxID]
+		if !ok {
 			continue
 		}
-		tdom, err := p.domains.FindByID(ctx, target.DomainID)
-		if err != nil {
+		tdom, ok := domByID[target.DomainID]
+		if !ok {
 			continue
 		}
 		sharesByEmail[target.LocalPart+"@"+tdom.Name] = s.Rights

@@ -80,3 +80,55 @@ func TestVerifyChain_PrunedTailVerifiesFromAnchor(t *testing.T) {
 	require.Equal(t, "", broken)
 	require.Equal(t, 1, checked)
 }
+
+// Verifying in batches must give byte-identical answers to verifying the
+// whole slice at once. That equivalence is what lets the API stream the
+// append-only table instead of loading every row into memory for one admin
+// request.
+func TestVerifyChainBatch_MatchesWholeSliceVerification(t *testing.T) {
+	var rows []models.AuditEvent
+	prev := ""
+	for i := 1; i <= 25; i++ {
+		r := sealed(string(rune('a'+i%26))+"row", int64(i), prev)
+		prev = *r.RowHash
+		rows = append(rows, r)
+	}
+
+	wantBroken, wantChecked, wantOK := VerifyChain(rows, "")
+
+	// Fold the same rows in batches of 4, threading the chain state.
+	gotPrev, gotChecked, gotOK, gotBroken := "", 0, true, ""
+	for i := 0; i < len(rows); i += 4 {
+		end := i + 4
+		if end > len(rows) {
+			end = len(rows)
+		}
+		b, n, next, ok := VerifyChainBatch(rows[i:end], gotPrev)
+		gotChecked += n
+		gotPrev = next
+		if !ok {
+			gotBroken, gotOK = b, false
+			break
+		}
+	}
+	require.Equal(t, wantOK, gotOK)
+	require.Equal(t, wantBroken, gotBroken)
+	require.Equal(t, wantChecked, gotChecked, "batched verification must check the same number of rows")
+}
+
+// A break mid-stream must be reported with the same row id, and the batched
+// walk must be able to stop there rather than reading the rest of the table.
+func TestVerifyChainBatch_ReportsBreakAndStops(t *testing.T) {
+	r1 := sealed("01", 1, "")
+	r2 := sealed("02", 2, *r1.RowHash)
+	tampered := r2
+	bad := "deadbeef"
+	tampered.RowHash = &bad
+	r3 := sealed("03", 3, *r2.RowHash)
+
+	broken, checked, next, ok := VerifyChainBatch([]models.AuditEvent{r1, tampered, r3}, "")
+	require.False(t, ok)
+	require.Equal(t, "02", broken, "must name the first bad row")
+	require.Equal(t, 1, checked, "only the rows before the break count as checked")
+	require.Equal(t, *r1.RowHash, next, "chain state stops at the last good row")
+}

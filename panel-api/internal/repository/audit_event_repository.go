@@ -73,6 +73,8 @@ type AuditEventRepository interface {
 	// panel scale; a very large log would need chunked streaming
 	// verification (future, tracked in ADR-0106 §risks).
 	AllForVerify(ctx context.Context) ([]models.AuditEvent, error)
+	// EachForVerify streams the chain in batches (see implementation).
+	EachForVerify(ctx context.Context, batchSize int, fn func([]models.AuditEvent) bool) error
 
 	// PruneOlderThan deletes rows with ts < cutoff and returns the
 	// count. ADR-0106's eventual target is a whole-partition DROP
@@ -251,6 +253,37 @@ func (r *auditEventRepo) ListUnsealed(ctx context.Context, limit int) ([]models.
 	return rows, nil
 }
 
+// EachForVerify walks the whole chain in id/ts order, handing the caller one
+// batch at a time. fn returns false to stop early (a broken row is found).
+//
+// AllForVerify below loads the entire append-only table into memory; on a busy
+// box that is hundreds of thousands of rows and O(table) memory for a single
+// admin request. The chain state is scalar, so verification does not need the
+// rows all at once.
+func (r *auditEventRepo) EachForVerify(ctx context.Context, batchSize int, fn func([]models.AuditEvent) bool) error {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	var batch []models.AuditEvent
+	return r.db.WithContext(ctx).
+		Order("ts ASC, id ASC").
+		FindInBatches(&batch, batchSize, func(tx *gorm.DB, _ int) error {
+			if !fn(batch) {
+				// Returning an error is how FindInBatches stops; translate it
+				// back to "clean stop" in the caller.
+				return errVerifyStop
+			}
+			return nil
+		}).Error
+}
+
+// errVerifyStop signals an intentional early exit from EachForVerify.
+var errVerifyStop = errors.New("verify: stop")
+
+// IsVerifyStop reports whether an EachForVerify error is the intentional
+// early-exit sentinel rather than a real failure.
+func IsVerifyStop(err error) bool { return errors.Is(err, errVerifyStop) }
+
 func (r *auditEventRepo) AllForVerify(ctx context.Context) ([]models.AuditEvent, error) {
 	var rows []models.AuditEvent
 	err := r.db.WithContext(ctx).
@@ -316,4 +349,3 @@ func (r *auditEventRepo) ChainAnchor(ctx context.Context) (string, error) {
 	}
 	return *row.AuditChainAnchor, nil
 }
-

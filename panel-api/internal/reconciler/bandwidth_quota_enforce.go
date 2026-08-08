@@ -28,6 +28,11 @@ import (
 const (
 	bwSuspendCritPercent = 100.0
 	bwSuspendWarnPercent = 80.0
+
+	// bwEnforceInterval bounds how often the suspension sweep runs. bw_daily
+	// is written once a day, so anything faster is recomputing a verdict that
+	// cannot have changed.
+	bwEnforceInterval = time.Hour
 )
 
 // reconcileBandwidthQuotaEnforce is the per-tick suspension loop.
@@ -42,6 +47,20 @@ func (r *Reconciler) reconcileBandwidthQuotaEnforce(ctx context.Context) {
 		return
 	}
 
+	// Evaluate hourly, not every tick. The input (bw_daily) is written once a
+	// day by the bandwidth ticker, so 1439 of every 1440 evaluations recompute
+	// an identical answer — and each one costs, per eligible user, a package
+	// lookup, a join+SUM over month-to-date bandwidth, and a domain list.
+	// Suspension still lands within an hour of the daily rollup, which is the
+	// only moment the verdict can actually change.
+	r.bwEnforceMu.Lock()
+	if !r.bwEnforceLastRun.IsZero() && time.Since(r.bwEnforceLastRun) < bwEnforceInterval {
+		r.bwEnforceMu.Unlock()
+		return
+	}
+	r.bwEnforceLastRun = time.Now()
+	r.bwEnforceMu.Unlock()
+
 	users, _, err := r.users.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		r.log.Warn("bandwidth_quota_enforce: list users failed", "err", err)
@@ -50,13 +69,25 @@ func (r *Reconciler) reconcileBandwidthQuotaEnforce(ctx context.Context) {
 
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	pkgByID := make(map[string]*models.HostingPackage)
 
 	for _, u := range users {
 		if u.IsAdmin || u.PackageID == nil || *u.PackageID == "" {
 			continue
 		}
-		pkg, err := r.packages.FindByID(ctx, *u.PackageID)
-		if err != nil || pkg == nil || pkg.BandwidthQuotaMB == 0 {
+		// Package rows are a small static table and many users share one, so
+		// resolve each distinct id once per pass instead of once per user.
+		pkg, ok := pkgByID[*u.PackageID]
+		if !ok {
+			p, perr := r.packages.FindByID(ctx, *u.PackageID)
+			if perr != nil || p == nil {
+				pkgByID[*u.PackageID] = nil
+				continue
+			}
+			pkgByID[*u.PackageID] = p
+			pkg = p
+		}
+		if pkg == nil || pkg.BandwidthQuotaMB == 0 {
 			continue
 		}
 		bytesByDomain, err := r.bwDaily.SumByDomainForUser(ctx, u.ID, monthStart, now)
