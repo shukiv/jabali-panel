@@ -80,3 +80,31 @@ Needs its own ADR (Kratos session minting) before any implementation.
 - `userops` grows three functions with the GUI handlers as thin shells —
   future callers (CLI, migrations) inherit them for free.
 - No schema changes; no migration.
+
+## Addendum — JAB-233: `domain` on create is now honored
+
+**Status:** accepted, 2026-08-08. Amends the "domain accepted but not
+auto-created in v1" deferral.
+
+`POST /automation/users` now creates the primary domain when the request
+carries `domain`. The deferral's real cost was that the ~265-line GUI
+domain-creation orchestration lived inline in `domainHandler.create`; it was
+extracted to `createDomainOp` (zero-behavior-change; GUI domain regression
+tests pass unmodified), which the automation handler now reuses.
+
+Semantics:
+- **Scope:** `domain` present requires `write:users` **and** `write:domains`
+  (both already in `AllowedAutomationScopes`). Absent → `write:users` only,
+  unchanged. New capability `domains.create` (advertised when wired).
+- **Order / atomicity:** the domain is pre-validated (scope, FQDN, global
+  name-conflict) BEFORE `userops.Create`, so a bad/taken domain fails fast
+  (403/400/409) and never leaves a half-created account. Inline SSL is skipped
+  on this path — the reconciler bootstraps the cert on its first tick (like
+  `jabali domain create`).
+- **Failure after the account exists** (agent down, insert race) does NOT roll
+  back: `201` + `domain_warning`, audited; the operator retries the domain.
+- **Idempotent retry** (`status:"exists"`): create the domain if the user
+  doesn't own it, no-op (return its id) if they do, `409` if owned by another.
+- **Delete:** unchanged — `userops.DeleteCascade` already purges owned domains.
+
+No schema changes; no migration.
