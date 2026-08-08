@@ -100,6 +100,21 @@ func RegisterAutomation(rg *gin.RouterGroup, cfg AutomationConfig) {
 	if cfg.BcryptCost == 0 {
 		cfg.BcryptCost = bcrypt.DefaultCost
 	}
+	// LO-4 (security review 2026-08-08): with a nil Redis the SETNX replay
+	// gate is silently absent — a captured signed request replays freely
+	// inside the skew window. Now that destructive verbs mount here
+	// (ADR-0164 delete:users), make the downgraded mode loudly visible.
+	// Production always wires Redis (M14); this fires only on dev/test
+	// topologies.
+	if cfg.Redis == nil {
+		log := cfg.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("automation API mounted WITHOUT the Redis replay gate — " +
+			"signed requests are replayable within the clock-skew window; " +
+			"never run this topology in production")
+	}
 	g := rg.Group("/automation",
 		middleware.RequireAutomationHMAC(cfg.AutomationTokens, cfg.Key, cfg.Redis),
 	)
