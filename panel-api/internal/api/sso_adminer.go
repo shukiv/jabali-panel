@@ -10,8 +10,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -120,8 +118,16 @@ func (h *ssoAdminerHandler) issueSSOToken(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	tokenHash := sha256.Sum256([]byte(token))
-	hashPrefix := hex.EncodeToString(tokenHash[:8])
+	// Hash the DECODED token bytes with the same prefix length the validate
+	// handler uses, so "issued" and "validated"/"unauthorized" lines for one
+	// token share a prefix and can actually be correlated.
+	//
+	// This previously hashed the base64url STRING and logged 8 bytes, while
+	// validate hashes the raw bytes and logs 4 — a different digest at a
+	// different length, so the two halves of the SSO audit chain could never
+	// be joined. Not exploitable, but it broke the trail exactly when it
+	// matters: during an incident.
+	hashPrefix := ssoTokenHashPrefix(token)
 	h.audit(ctx, claims.UserID, req.DatabaseID, hashPrefix, engine, "issued")
 
 	baseURL := h.getAdminerBaseURL(c)

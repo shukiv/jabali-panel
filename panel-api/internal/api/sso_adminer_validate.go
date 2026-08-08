@@ -95,6 +95,25 @@ func (h *ssoAdminerValidateHandler) validate(c *gin.Context) {
 	// Adminer). Per-user tokens carry a real DatabaseID, so this
 	// early branch never affects the per-user path below.
 	if token.DatabaseID == ssoAdminAllSentinel {
+		// JAB-8 applies here too: the per-user path below re-checks panel
+		// state at validation time, but this admin branch redeemed straight
+		// into ROOT-EQUIVALENT database credentials without ever loading the
+		// user row. Suspending an admin is refused by design, but DEMOTION is
+		// the sanctioned flow (users_suspend.go), so a demoted admin's
+		// in-flight token stayed redeemable for the rest of its TTL. Narrow
+		// window and single-use, but the credential it hands out is the
+		// broadest one the panel can issue — re-check before resolving it.
+		admin, aerr := h.cfg.Users.FindByID(ctx, token.UserID)
+		if aerr != nil || admin == nil {
+			h.audit(ctx, token.UserID, token.DatabaseID, token.Engine, hashPrefix, "unauthorized:admin_user_gone")
+			c.JSON(http.StatusUnauthorized, ssoErrorResponse{Error: "unauthorized"})
+			return
+		}
+		if admin.Suspended || !admin.IsAdmin {
+			h.audit(ctx, token.UserID, token.DatabaseID, token.Engine, hashPrefix, "unauthorized:no_longer_admin")
+			c.JSON(http.StatusUnauthorized, ssoErrorResponse{Error: "unauthorized"})
+			return
+		}
 		cred, cerr := ssoadmin.AdminCredential("postgres")
 		if cerr != nil {
 			h.cfg.Log.ErrorContext(ctx, "pg superuser credential resolve failed", "err", cerr)
