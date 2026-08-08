@@ -282,7 +282,11 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 // minimum that catches obvious failures; Step 4 will extend with
 // service-specific rules and a link to the relevant remediation page.
 func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]string) []ServerStatusAlert {
-	var alerts []ServerStatusAlert
+	// Init non-nil: a HEALTHY server produces no alerts, and a nil slice marshals
+	// as JSON `null`, not `[]` (feedback_go_nil_slice_json_null_spa_crash). The SPA
+	// guards `alerts` with `?? []`, but non-SPA API clients (jabali-mcp,
+	// integrations, curl) get `null` and break on a list operation. Return `[]`.
+	alerts := []ServerStatusAlert{}
 
 	for name, msg := range errMap {
 		if name == "nginx" {
