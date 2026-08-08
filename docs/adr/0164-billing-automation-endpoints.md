@@ -36,11 +36,16 @@ handlers and automation handlers both call the extracted functions. The
 delete cascade's docker-teardown-failure block (Gitea #532) is preserved
 as a typed error both callers map to 409.
 
-**Create is idempotent by target state**: an exact email+username match
-on one existing user returns `200 {ok:true,status:"exists",user_id}`;
-partial matches stay `409 conflict`. Billing panels retry beyond the
-replay-nonce window; handing back the same user_id makes retries safe
-without weakening the uniqueness contract.
+**Create is idempotent by target state** — keyed on the **username**
+(supplied, or derived from the email the same way `userops.Create`
+derives it), which is the panel's only unique identity post-M54. A retry
+whose username resolves to an existing user **with the same email**
+returns `200 {ok:true,status:"exists",user_id}`; a username collision
+with a different email stays `409 conflict`. Email is deliberately NOT
+unique (one billing client legitimately owns several accounts) — live-
+verified on mx 2026-08-08: same email + new username creates a second
+account. Billing modules therefore resolve accounts by stored ULID
+first, then username; an email-only lookup can be ambiguous.
 
 **Admin-target refusal is blanket** (create can't mint one; delete/
 password/package refuse `is_admin` rows) — a headless server-wide key

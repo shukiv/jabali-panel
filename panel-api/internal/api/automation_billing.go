@@ -213,28 +213,30 @@ func userIsErrTaken(err error) bool {
 	return errorsIsAny(err, userops.ErrEmailTaken, userops.ErrUsernameTaken)
 }
 
-// findExactUserMatch returns the existing user only when EVERY supplied
-// identifier points at it (email match AND, when given, username match).
+// findExactUserMatch returns the existing user an identical create retry
+// refers to. Email is deliberately NOT unique post-M54 (one billing client
+// may own several accounts), so the only deterministic key is the username
+// — supplied, or derived from the email exactly the way userops.Create
+// derives it. The match must then also agree on the email, so a retry can
+// never adopt someone else's account.
 func findExactUserMatch(ctx context.Context, users repository.UserRepository, email string, username *string) *models.User {
-	var byEmail *models.User
-	if email != "" {
-		if u, err := users.FindByEmail(ctx, email); err == nil {
-			byEmail = u
-		}
-	}
+	effective := ""
 	if username != nil && *username != "" {
-		byName, err := users.FindByUsername(ctx, *username)
-		if err != nil || byName == nil {
-			return nil
-		}
-		if email != "" {
-			if byEmail == nil || byEmail.ID != byName.ID {
-				return nil
-			}
-		}
-		return byName
+		effective = *username
+	} else if email != "" {
+		effective = userops.UserFromEmail(email)
 	}
-	return byEmail
+	if effective == "" {
+		return nil
+	}
+	u, err := users.FindByUsername(ctx, effective)
+	if err != nil || u == nil {
+		return nil
+	}
+	if email != "" && !strings.EqualFold(u.Email, email) {
+		return nil
+	}
+	return u
 }
 
 func mapUserOpsErr(c *gin.Context, err error) {

@@ -24,11 +24,15 @@ userops/repo/agent path the GUI uses → `auditWrite` (success AND failure)
 - **Admin targets are refused outright** on delete/password/package (and
   create can never produce one: `is_admin` is not exposed and forced
   false). Blanket refusal beats last-admin counting for a headless key.
-- **Create idempotency = by target state.** Retrying an identical create
-  (same email AND same username already on one existing user) returns
-  `200 {ok:true, status:"exists", user_id}`. Any partial match → `409
-  conflict`. Rationale: billing panels retry; the replay nonce only
-  covers identical signatures inside the skew window.
+- **Create idempotency = by target state, keyed on username.** Post-M54
+  the username is the panel's only unique identity; email is deliberately
+  NOT unique (one client, many accounts — live-verified on mx). A retry
+  whose (supplied or email-derived) username hits an existing user with
+  the same email returns `200 {ok:true, status:"exists", user_id}`; a
+  username collision with a different email → `409 conflict`; same email
+  with a new username is a legitimate second account (201). Rationale:
+  billing panels retry; the replay nonce only covers identical signatures
+  inside the skew window.
 - **`bindSigned` is plain json.Unmarshal — gin `binding` tags are dead
   here.** Handlers validate explicitly: password min-10 (mirror the REST
   contract), email via mail.ParseAddress when non-empty, username via

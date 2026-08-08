@@ -60,10 +60,9 @@ func (r *abUsers) FindByUsername(_ context.Context, username string) (*models.Us
 }
 
 func (r *abUsers) Create(_ context.Context, u *models.User) error {
+	// Mirror the real schema: username carries a unique index; email is
+	// deliberately NOT unique post-M54 (one client, many accounts).
 	for _, ex := range r.rows {
-		if ex.Email == u.Email && u.Email != "" {
-			return repository.ErrConflict
-		}
 		if ex.Username != nil && u.Username != nil && *ex.Username == *u.Username {
 			return repository.ErrConflict
 		}
@@ -297,15 +296,47 @@ func TestAutomationUserCreate_IdempotentExactRetry(t *testing.T) {
 	}
 }
 
-func TestAutomationUserCreate_PartialMatchConflict(t *testing.T) {
-	// Same email, DIFFERENT username → 409, never "exists".
+func TestAutomationUserCreate_SameEmailNewUsernameCreatesSecondAccount(t *testing.T) {
+	// Email is NOT unique post-M54 (live-verified on mx 2026-08-08): one
+	// billing client may own several hosting accounts. Same email +
+	// different username is a legitimate second create, not a conflict.
 	un := "otheruser"
 	users := newAbUsers(&models.User{ID: "u9", Email: "a@example.com", Username: &un})
 	body := `{"email":"a@example.com","password":"longenough1","username":"newuser"}`
 	r := abRouterWithBody(billingCfg(users), billingTok(), body)
 	w := abReq(r, http.MethodPost, "/users", body, billingTok())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("second account for same email: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAutomationUserCreate_UsernameCollisionDifferentEmail409(t *testing.T) {
+	// Same username but a DIFFERENT email must stay a conflict — the
+	// exists-retry path may never adopt someone else's account.
+	un := "sameuser"
+	users := newAbUsers(&models.User{ID: "u9", Email: "owner@example.com", Username: &un})
+	body := `{"email":"attacker@example.com","password":"longenough1","username":"sameuser"}`
+	r := abRouterWithBody(billingCfg(users), billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users", body, billingTok())
 	if w.Code != http.StatusConflict {
-		t.Fatalf("partial match: want 409, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("username collision with different email: want 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAutomationUserCreate_ExistsRetryWithDerivedUsername(t *testing.T) {
+	// Retry that supplies only the email must still resolve "exists" via
+	// the SAME username derivation userops.Create uses.
+	derived := "derivedbob"
+	users := newAbUsers(&models.User{ID: "u7", Email: "derivedbob@example.com", Username: &derived})
+	body := `{"email":"derivedbob@example.com","password":"longenough1"}`
+	r := abRouterWithBody(billingCfg(users), billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users", body, billingTok())
+	if w.Code != http.StatusOK {
+		t.Fatalf("email-only exact retry: want 200 exists, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeBody(t, w)
+	if resp["status"] != "exists" || resp["user_id"] != "u7" {
+		t.Fatalf("bad exists envelope: %v", resp)
 	}
 }
 
