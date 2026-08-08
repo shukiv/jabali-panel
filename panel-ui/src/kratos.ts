@@ -372,6 +372,67 @@ function humanizeKratosError(err: AxiosError): string {
   return err.message ?? "Login failed";
 }
 
+/**
+ * JAB-232 (ADR-0165 addendum): redeem a billing-SSO login link.
+ *
+ * The panel-api mints a URL like `/recovery?flow=<id>&code=<code>`. Kratos's
+ * code recovery flow carries NO CSRF node, so a same-origin POST of the code
+ * creates a session for the TARGET identity. On success Kratos answers
+ * `422 browser_location_change_required` — the session cookie is already set on
+ * that response. We deliberately do NOT follow its `/settings?flow=` target
+ * (that is Kratos's optional "now set a new password" step); for an SSO login
+ * we only need the user authenticated, so the caller lands them on their shell
+ * home instead. Any other outcome (2xx flow re-render, 400/410/422 without the
+ * location-change signal) means the code did not redeem — expired or reused.
+ */
+export type RecoveryRedeemResult =
+  | { kind: "ok" }
+  | { kind: "error"; message: string };
+
+export async function redeemRecoveryCode(
+  flow: string,
+  code: string,
+): Promise<RecoveryRedeemResult> {
+  if (!flow || !code) {
+    return { kind: "error", message: "This login link is missing its token." };
+  }
+  try {
+    await kratosClient.post(
+      `/self-service/recovery?flow=${encodeURIComponent(flow)}`,
+      { method: "code", code },
+    );
+    // A 2xx carries a re-rendered flow body, not a session — i.e. the code was
+    // rejected. Success is exclusively the 422 location-change path below.
+    return {
+      kind: "error",
+      message: "This login link is invalid or has already been used.",
+    };
+  } catch (err) {
+    const ax = err as AxiosError<{
+      error?: { id?: string };
+      redirect_browser_to?: string;
+    }>;
+    const status = ax.response?.status;
+    const errorId = ax.response?.data?.error?.id;
+    if (status === 422 && errorId === "browser_location_change_required") {
+      return { kind: "ok" };
+    }
+    if (status === 410) {
+      return {
+        kind: "error",
+        message: "This login link has expired — ask for a new one.",
+      };
+    }
+    if (status === 400 || status === 422) {
+      return {
+        kind: "error",
+        message: "This login link is invalid or has already been used.",
+      };
+    }
+    return { kind: "error", message: humanizeKratosError(ax) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Renderer helpers — project flow.ui.nodes to a flat shape the React form
 // can render without caring about Kratos's internal taxonomy.

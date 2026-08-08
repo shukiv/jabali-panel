@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"net/mail"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -492,11 +493,29 @@ func userLoginTokenHandler(cfg AutomationConfig) gin.HandlerFunc {
 			return
 		}
 
+		// JAB-232 (ADR-0165 addendum): Kratos's code-strategy admin recovery
+		// API returns a link WITHOUT the code embedded (the code is a separate
+		// field designed for out-of-band email delivery), and opening that bare
+		// link lands on /login unauthenticated. We keep the code strategy and
+		// fold the code into the URL as a query param — the SPA's public
+		// /recovery route reads flow+code and submits the redemption, which
+		// creates the session. The code-in-URL is the same sensitivity class as
+		// the link itself (both are full single-use, short-TTL login
+		// credentials over HTTPS); it is never logged (audit records the mint
+		// only, below). Parse+re-encode so we never assume `?flow=` vs `&`.
+		loginURL := rc.RecoveryLink
+		if parsed, perr := neturl.Parse(rc.RecoveryLink); perr == nil {
+			q := parsed.Query()
+			q.Set("code", rc.RecoveryCode)
+			parsed.RawQuery = q.Encode()
+			loginURL = parsed.String()
+		}
+
 		// Audit the MINT, never the link or code.
 		auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultOK)
 		c.JSON(http.StatusOK, gin.H{
 			"ok":         true,
-			"url":        rc.RecoveryLink,
+			"url":        loginURL,
 			"expires_in": ttl,
 			"message":    "one-time login link minted",
 		})

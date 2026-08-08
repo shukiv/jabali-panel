@@ -66,3 +66,44 @@ mounts when Users + KratosClient are wired.
 - A minted link in the wrong hands is a full account login for its TTL:
   the runbook's write-token guidance (IP allowlist, expiry, kill switch)
   applies to any token holding `write:users`.
+
+## Addendum — JAB-232: redemption was broken; code-in-URL + SPA /recovery page
+
+**Status:** accepted, 2026-08-08. Amends the original decision.
+
+The original premise — "opening the minted `recovery_link` gives the user an
+active session" — did **not** hold. Kratos's **code** recovery strategy returns
+a link with **no token in the URL** (the 6-digit code is a separate response
+field designed for out-of-band email delivery), and the SPA had **no `/recovery`
+route** — the catch-all bounced the visitor to `/login`, unauthenticated. The
+one-click `link` strategy that would embed a token is disabled in `kratos.yml`.
+Verified broken in a clean browser on 192.168.100.86 (see jabali-integration
+HANDOFF §6).
+
+**Decision (Option B — keep the code strategy, add a redeem page):**
+
+1. `userLoginTokenHandler` folds `recovery_code` into the minted URL as a query
+   param → `https://<panel>:8443/recovery?flow=<id>&code=<code>`. The code-in-URL
+   is the **same sensitivity class** as the link itself (both are single-use,
+   short-TTL, full-login credentials over HTTPS); it is never logged (the audit
+   still records the mint only).
+2. A new **public** SPA route `/recovery` (`RecoveryRedeem`) reads `flow`+`code`
+   and POSTs `{method:"code", code}` to `/.ory/self-service/recovery?flow=<id>`.
+   Code flows carry no CSRF node, so a same-origin POST works. Kratos creates the
+   target session and answers `422 browser_location_change_required`; the page
+   then does a **full** navigation to `/` so `AuthProvider` re-runs `whoami` and
+   `LandingRedirect` drops the now-authenticated user on their dashboard.
+
+**Why Option B over enabling the Kratos `link` strategy (Option A):** Option A is
+a smaller code change but a **global** Kratos config change that also widens the
+email-recovery LINK surface (enumeration/delivery review); Option B changes no
+Kratos config, keeps the blast radius to this feature, and also fixes the
+identically-broken `jabali user password --link` UX (same missing page).
+
+**Dashboard landing (former follow-up #3):** resolved here — we deliberately do
+NOT follow Kratos's post-recovery `/settings?flow=` (its optional "set a new
+password" step); the recovery session is a valid aal1 session, so an SSO login
+lands on the dashboard, not a password-reset prompt.
+
+Modules are unaffected — they still consume only `url` from the response
+envelope.

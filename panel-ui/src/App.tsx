@@ -35,6 +35,7 @@ import { queryClient } from "./query";
 import { AdminLayout } from "./shells/AdminLayout";
 import { UserLayout } from "./shells/UserLayout";
 import { LandingRedirect } from "./shells/LandingRedirect";
+import { RecoveryRedeem } from "./shells/RecoveryRedeem";
 import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
 import { useApplyBrandingToTitle, useBranding } from "./hooks/useBranding";
 import { PANEL_COLORS } from "./lib/panelColors";
@@ -447,6 +448,11 @@ const ThemedApp = () => {
               so this route just preserves ?flow=<id> while bouncing
               to the user-shell profile path. */}
           <Route path="/settings" element={<KratosSettingsRedirect />} />
+
+          {/* JAB-232 (ADR-0165 addendum): billing-SSO login-link redemption.
+              Public — runs before a session exists; reads ?flow=&code= and
+              submits the Kratos code recovery, then lands the user authenticated. */}
+          <Route path="/recovery" element={<RecoveryRedeem />} />
 
           {/* landing / catch-all */}
           <Route path="/" element={<LandingRedirect />} />

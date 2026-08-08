@@ -533,7 +533,10 @@ func fakeKratosAdmin(t *testing.T) (*httptest.Server, *kratosProbe) {
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"recovery_link":"https://panel.example.com:8443/.ory/self-service/recovery?flow=f1&code=SECRETCODE","recovery_code":"SECRETCODE","expires_at":"2026-08-08T00:05:00Z"}`))
+		// Kratos's code strategy returns the link WITHOUT the code embedded
+		// (the code is a separate out-of-band field). JAB-232: the handler must
+		// fold recovery_code into the URL so the SPA /recovery page can redeem.
+		_, _ = w.Write([]byte(`{"recovery_link":"https://panel.example.com:8443/recovery?flow=f1","recovery_code":"SECRETCODE","expires_at":"2026-08-08T00:05:00Z"}`))
 	}))
 	t.Cleanup(srv.Close)
 	return srv, p
@@ -564,6 +567,12 @@ func TestAutomationLoginToken_HappyPath(t *testing.T) {
 	resp := decodeBody(t, w)
 	if resp["ok"] != true || resp["url"] == "" || resp["expires_in"] != float64(120) {
 		t.Fatalf("bad login-token envelope: %v", resp)
+	}
+	// JAB-232: the minted URL must carry BOTH the flow and the code, so the
+	// SPA /recovery page can redeem it (a bare recovery_link lands on /login).
+	gotURL, _ := resp["url"].(string)
+	if !strings.Contains(gotURL, "flow=f1") || !strings.Contains(gotURL, "code=SECRETCODE") {
+		t.Fatalf("login-token url must contain flow + code, got %q", gotURL)
 	}
 	if probe.calls != 1 {
 		t.Fatalf("expected exactly one kratos recovery call, got %d", probe.calls)
