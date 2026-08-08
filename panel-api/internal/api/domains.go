@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -644,259 +643,49 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
-	// GH #884: normalize the domain to lowercase (and trim edge whitespace)
-	// before anything consumes it. DNS is case-insensitive, but the name is
-	// used verbatim for the docroot path, cert lineage, DNS zone, and vhost
-	// server_name — so a mobile keyboard's autocorrected "MyDomain.com" was
-	// accepted and then produced a site that didn't resolve. Normalizing
-	// here (the create source of truth) fixes every downstream consumer at
-	// once; validateDomainName still enforces RFC shape on the result.
+	// GH #884: normalize (lowercase + trim) before anything consumes the name.
 	req.Name = normalizeDomainName(req.Name)
 
-	// SECURITY: Validate domain name to prevent XSS and path traversal
+	// SECURITY: validate the name (XSS / path traversal) BEFORE the HTML strip
+	// so a name carrying tags is rejected rather than silently sanitized. The
+	// op re-validates the stripped name (defense + for the automation caller),
+	// a no-op here.
 	if err := validateDomainName(req.Name); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "invalid_domain_name",
-			"detail": err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_domain_name", "detail": err.Error()})
 		return
 	}
-
-	// Sanitize domain name by removing any potential HTML tags
 	req.Name = htmlTagRe.ReplaceAllString(req.Name, "")
 
 	targetUserID := req.UserID
 	if !claims.IsAdmin {
 		targetUserID = claims.UserID
 	}
-	if targetUserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
-	ctx := c.Request.Context()
-
-	user, err := h.cfg.Users.FindByID(ctx, targetUserID)
-	if err != nil {
-		if isNotFound(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "user not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Admins are panel-only — they have no /home/<name>, so domains
-	// can't be hosted under them. Bad request, not authz failure.
-	if user.IsAdmin {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "admin_cannot_host",
-			"detail": "admin users are panel-only — create a regular user to host domains",
-		})
-		return
-	}
-
-	// Suspended users can't acquire new domains — a fresh vhost would
-	// be live + reachable while the panel/SFTP/login stays locked,
-	// defeating the suspend cascade. Operator must unsuspend first.
-	if user.Suspended {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":  "user_suspended",
-			"detail": "user is suspended — unsuspend before adding domains",
-		})
-		return
-	}
-
-	// Username should always be set for non-admin users.
-	if user.Username == nil || *user.Username == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Quota check.
-	if user.PackageID != nil && *user.PackageID != "" {
-		count, err := h.cfg.Domains.CountByUserID(ctx, targetUserID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
-		if err == nil && pkg.MaxDomains > 0 && count >= int64(pkg.MaxDomains) {
-			c.JSON(http.StatusConflict, gin.H{"error": "domain_quota_exceeded"})
-			return
-		}
-	}
-
-	// SECURITY: Validate custom document root path
-	if err := validateDocumentRoot(req.DocRoot, *user.Username, req.Name); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "invalid_document_root",
-			"detail": err.Error(),
-		})
-		return
-	}
-
-	docRoot := req.DocRoot
-	if docRoot == "" {
-		// Per-domain subtree under /home/<user>/domains/<name>/ so sibling
-		// paths like logs/, ssl/, backups/ can live alongside public_html
-		// without polluting the user's home.
-		// SECURITY: Domain name is now validated, safe to use in path construction
-		docRoot = "/home/" + *user.Username + "/domains/" + req.Name + "/public_html"
-	}
-
-	// GH#181 mail provider: default jabali; validate + normalise tokens;
-	// EmailEnabled/SkipAutoSAN are DERIVED (never client-set directly).
-	mailProvider := req.MailProvider
-	if mailProvider == "" {
-		mailProvider = models.MailProviderJabali
-	}
-	if !models.ValidMailProvider(mailProvider) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_mail_provider"})
-		return
-	}
-	m365Tenant, err := dnscompile.NormaliseM365Onmicrosoft(req.M365Onmicrosoft)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_m365_onmicrosoft", "detail": err.Error()})
-		return
-	}
-	googleDKIM, err := dnscompile.ValidateGoogleDKIM(req.GoogleDKIM)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_google_dkim", "detail": err.Error()})
-		return
-	}
-	sslMode := req.SSLMode
-	if sslMode == "" {
-		sslMode = models.SSLModeLE
-	}
-	if !models.ValidSSLMode(sslMode) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_ssl_mode"})
-		return
-	}
-	if sslMode == models.SSLModeCustom {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ssl_mode_custom_requires_upload", "detail": "create the domain with le/self/none, then upload a custom cert via the SSL settings"})
-		return
-	}
-	if sslMode == models.SSLModeShared {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ssl_mode_shared_requires_attach", "detail": "create the domain with le/self/none, then attach a shared cert via POST /domains/:id/ssl/shared"})
-		return
-	}
-
-	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
-	// Email-enabled + no TLS is contradictory (MTA-STS / autoconfig need HTTPS).
-	if sslMode == models.SSLModeNone && mailEnabled {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ssl_none_with_email", "detail": "a mail-enabled domain needs TLS; choose le/self or set mail provider to none"})
-		return
-	}
-
-	now := time.Now().UTC()
-	domain := &models.Domain{
-		ID:         ids.NewULID(),
-		UserID:     targetUserID,
-		Name:       req.Name,
-		DocRoot:    docRoot,
-		IsEnabled:  true,
-		SSLMode:    sslMode,
-		SSLEnabled: models.SSLEnabledForMode(sslMode),
-		// ADR-0080: email on by default for new domains. Set explicitly
-		// rather than relying on the DB default so GORM emits
-		// email_enabled=1 in the INSERT (a Go zero-value bool would be
-		// elided, the DB default would still kick in, but explicit is
-		// clearer and unit-test fixtures that bypass DB defaults stay
-		// correct). Admin can opt-out per-domain via the existing
-		// disable endpoint.
-		MailProvider:    mailProvider,
-		M365Onmicrosoft: strPtrOrNil(m365Tenant),
-		GoogleDKIM:      strPtrOrNil(googleDKIM),
-		EmailEnabled:    mailEnabled,
-		SkipAutoSAN:     mailSkipSAN,
+	// JAB-233: the orchestration lives in createDomainOp so the automation
+	// account-create handler can reuse the exact GUI semantics.
+	dom, oerr := createDomainOp(c.Request.Context(), h, createDomainInput{
+		OwnerID:         targetUserID,
+		Name:            req.Name,
+		DocRoot:         req.DocRoot,
+		MailProvider:    req.MailProvider,
+		M365Onmicrosoft: req.M365Onmicrosoft,
+		GoogleDKIM:      req.GoogleDKIM,
+		SSLMode:         req.SSLMode,
 		CreateWWW:       req.CreateWWW,
 		TempURLEnabled:  req.TempURLEnabled,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}
-
-	// Preview slugs flatten dots to dashes, which is not injective
-	// (my.site.com and my-site.com both slug to my-site-com). Refuse the
-	// second enable of a colliding pair — first-wins at the nginx layer
-	// would silently serve the wrong site.
-	if domain.TempURLEnabled {
-		if other := h.previewSlugConflict(ctx, domain.Name, ""); other != "" {
-			c.JSON(http.StatusConflict, gin.H{"error": "temp_url_slug_conflict", "detail": "preview URL would collide with " + other})
-			return
+	})
+	if oerr != nil {
+		body := gin.H{"error": oerr.Code}
+		if oerr.Detail != "" {
+			body["detail"] = oerr.Detail
 		}
-	}
-
-	if err := h.cfg.Domains.Create(ctx, domain); err != nil {
-		if isConflict(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "domain_already_exists"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		c.JSON(oerr.Status, body)
 		return
 	}
 
-	// JAB-170 phase 5: if a shared cert (server-wide or the owner's) covers the
-	// new hostname, auto-attach so a matching subdomain gets HTTPS instantly —
-	// no ACME, no upload — and skip the ACME inline below.
-	attachedShared := false
-	if h.cfg.SharedCerts != nil {
-		if cert := h.findCoveringSharedCert(ctx, domain.Name, domain.UserID); cert != nil {
-			if err := h.cfg.Domains.SetSharedCertificate(ctx, domain.ID, &cert.ID, models.SSLModeShared); err == nil {
-				domain.SSLMode = models.SSLModeShared
-				domain.SharedCertificateID = &cert.ID
-				attachedShared = true
-				if h.cfg.Reconciler != nil {
-					h.cfg.Reconciler.Schedule(domain.ID)
-				}
-			}
-		}
-	}
-
-	// Attempt SSL inline (30s timeout): try ACME first with fallback to self-signed.
-	// Never errors out — just logs; cert state is already in DB.
-	if !attachedShared && h.cfg.Reconciler != nil {
-		inlineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		h.cfg.Reconciler.ReconcileSSLInline(inlineCtx, domain)
-		cancel()
-	}
-
-	// Auto-enable email. Best-effort per ADR-0013: a failure here (agent
-	// down, Stalwart refuses the name, DNS sync hiccup) degrades back to
-	// the pre-auto-enable model — email_enabled stays 0 and the operator
-	// sees the UI's "Enable email" retry switch on the domain's Email
-	// tab. DNS-autoconfig warnings aren't returned in the create
-	// response (that would change the wire shape); they're surfaced to
-	// the operator on the next GET /domains/:id/email poll, which
-	// computes live DNS status anyway. Hard errors go to slog.
-	if mailProvider == models.MailProviderJabali && h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
-		if _, _, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
-			Agent:          h.cfg.Agent,
-			Domains:        h.cfg.Domains,
-			DNSZones:       h.cfg.DNSZones,
-			DNSRecords:     h.cfg.DNSRecords,
-			ServerSettings: h.cfg.ServerSettings,
-			SSLCerts:       h.cfg.SSLCerts,
-			SSLReconciler:  h.cfg.Reconciler,
-		}, domain); err != nil {
-			slog.Warn("auto-enable email failed during domain.create (operator can retry from UI)",
-				"domain_id", domain.ID, "domain", domain.Name, "err", err)
-		} else if len(warnings) > 0 {
-			slog.Info("auto-enable email DNS autoconfig warnings",
-				"domain_id", domain.ID, "domain", domain.Name, "warnings", warnings)
-		}
-	}
-
-	// Schedule reconciliation. The reconciler will converge the domain's
-	// OS-level state (nginx vhost, PHP pool, etc.) with the DB state.
-	// This is non-blocking and out-of-band.
-	if h.cfg.Reconciler != nil {
-		h.cfg.Reconciler.Schedule(domain.ID)
-	}
-
-	// EnableDomainEmailInline mutated domain in place on success so the
-	// response already carries email_enabled=true, dkim_selector, etc.
-	c.JSON(http.StatusCreated, domain)
+	// EnableDomainEmailInline mutated domain in place on success so the response
+	// already carries email_enabled=true, dkim_selector, etc.
+	c.JSON(http.StatusCreated, dom)
 }
 
 func (h *domainHandler) update(c *gin.Context) {
