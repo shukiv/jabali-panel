@@ -115,10 +115,23 @@ type agentStatus struct {
 }
 
 func (f *Finalizer) tickOnce(ctx context.Context) {
-	rows, _, err := f.deps.Jobs.ListAll(ctx, MaxJobsPerTick, 0)
+	// Query running jobs directly. Paging the newest MaxJobsPerTick rows of
+	// ANY status and filtering here used to drop the oldest-created running
+	// jobs of a large fan-out — the dispatcher admits work oldest-first, so
+	// those are exactly the running ones — and a dropped job could then
+	// neither be finalized nor stall-timed-out. It stayed `running` forever,
+	// holding a dispatcher slot, until the whole backup queue deadlocked.
+	rows, err := f.deps.Jobs.ListRunning(ctx, MaxJobsPerTick)
 	if err != nil {
 		f.deps.Log.Error("finalizer list-running failed", "err", err)
 		return
+	}
+	if len(rows) == MaxJobsPerTick {
+		// Never silently cap coverage: if there are more running jobs than
+		// one tick handles, say so — the rest are picked up next tick
+		// (oldest-started first, so nothing starves).
+		f.deps.Log.Info("finalizer tick full; remaining running jobs deferred to next tick",
+			"limit", MaxJobsPerTick)
 	}
 	now := time.Now().UTC()
 	for _, j := range rows {

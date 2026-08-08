@@ -343,8 +343,15 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 		}
 		for i := range targets {
 			u := &targets[i]
+			// Resolve the hosting package ONCE per user, not once per
+			// (user, destination): it is the same static row for every
+			// destination, and on a large host this loop ran
+			// users × destinations lookups inside the 60s enqueue tick.
+			// The cap check itself stays per-pair — each enqueue adds a job,
+			// so the count it reads genuinely changes.
+			pkg := s.userPackage(ctx, u)
 			for j := range enabledDests {
-				if ok := s.enqueueAccountBackup(ctx, sched, u, &enabledDests[j], runID); ok {
+				if ok := s.enqueueAccountBackup(ctx, sched, u, pkg, &enabledDests[j], runID); ok {
 					anyUser = true
 				}
 			}
@@ -376,14 +383,16 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 // enqueueAccountBackup creates one backup_jobs row in status=queued
 // for the given (user, destination) pair. Per ADR-0080 the destination
 // is a first-class field on backup_jobs.
-func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, dest *models.BackupDestination, runID string) bool {
+// pkg is the user's hosting package, resolved once by the caller for all of
+// that user's destinations (nil when unresolvable or not wired).
+func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, pkg *models.HostingPackage, dest *models.BackupDestination, runID string) bool {
 	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID, "destination_id", dest.ID, "run_id", runID)
 	// Retention cap (GH #454): honour the tenant's package policy on scheduled
 	// backups, matching the on-demand path. Only enforced when the package repo
 	// is wired AND the plan actually caps backups; otherwise the scheduled
 	// backup proceeds unchanged (no regression for uncapped/unresolvable plans).
 	if s.deps.Packages != nil {
-		if pkg := s.userPackage(ctx, user); pkg != nil && pkg.BackupsEnabled() && s.atOrOverCap(ctx, user.ID, int(pkg.MaxBackups)) {
+		if pkg != nil && pkg.BackupsEnabled() && s.atOrOverCap(ctx, user.ID, int(pkg.MaxBackups)) {
 			if pkg.BackupRetentionPrunes() && s.pruneOldestForUser(ctx, user, int(pkg.MaxBackups)) {
 				s.notifyBackupLimit(ctx, user, "prune", pkg.MaxBackups)
 			} else {
@@ -435,7 +444,10 @@ func (s *Scheduler) userPackage(ctx context.Context, user *models.User) *models.
 
 // atOrOverCap reports whether the user already holds >= maxBackups jobs.
 func (s *Scheduler) atOrOverCap(ctx context.Context, userID string, maxBackups int) bool {
-	_, total, err := s.deps.Jobs.ListForUser(ctx, userID, 1, 0)
+	// COUNT only. This used to call ListForUser(userID, 1, 0), which runs a
+	// COUNT(*) *and* a LIMIT 1 SELECT just to read the total — paid once per
+	// (user, destination) pair inside the 60s enqueue tick.
+	total, err := s.deps.Jobs.CountForUser(ctx, userID)
 	if err != nil {
 		return false
 	}
@@ -446,8 +458,15 @@ func (s *Scheduler) atOrOverCap(ctx context.Context, userID string, maxBackups i
 // under maxBackups. Owner-scoped: OldestAccountBackupForUser filters by
 // user_id, so a scheduled prune only ever touches the target tenant's own
 // backups. Returns true once under the cap (GH #454).
+// maxPrunesPerTick bounds how many snapshots one enqueue tick will forget.
+// Each backup.forget is a synchronous `restic forget` (30s timeout) that
+// takes the repo lock, so an unbounded loop — e.g. after an operator lowers
+// a plan's cap from 10 to 2 — blocked the 60s tick for minutes and contended
+// with any running backup. Whatever is left over is pruned on the next tick.
+const maxPrunesPerTick = 5
+
 func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, maxBackups int) bool {
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < maxPrunesPerTick; i++ {
 		if !s.atOrOverCap(ctx, user.ID, maxBackups) {
 			return true
 		}
@@ -457,16 +476,33 @@ func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, m
 		}
 		if s.deps.Agent != nil {
 			fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_, _ = s.deps.Agent.Call(fctx, "backup.forget", map[string]any{
+			_, ferr := s.deps.Agent.Call(fctx, "backup.forget", map[string]any{
 				"job_id": oldest.ID, "user_id": oldest.UserID, "kind": oldest.Kind,
 			})
 			cancel()
+			if ferr != nil {
+				// Do NOT delete the row when the snapshot is still in the
+				// repo. Dropping it would orphan the data: the repo keeps
+				// growing while the panel's retention accounting believes
+				// the tenant is under cap, and nothing ever revisits it.
+				// Leave the row so a later tick retries the forget.
+				s.deps.Log.Error("retention prune: backup.forget failed; keeping job row for retry",
+					"user_id", user.ID, "job_id", oldest.ID, "snapshot_id", oldest.SnapshotID, "err", ferr)
+				return false
+			}
 		}
 		if derr := s.deps.Jobs.Delete(ctx, oldest.ID); derr != nil {
 			return false
 		}
 	}
-	return false
+	// Still over cap after this tick's budget — report that so the caller
+	// rejects rather than silently proceeding, and the next tick continues.
+	if s.atOrOverCap(ctx, user.ID, maxBackups) {
+		s.deps.Log.Info("retention prune hit the per-tick budget; continuing next tick",
+			"user_id", user.ID, "pruned", maxPrunesPerTick)
+		return false
+	}
+	return true
 }
 
 // notifyBackupLimit fires backup.limit.reached to the tenant's inbox
