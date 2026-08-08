@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"strings"
 
@@ -129,19 +130,43 @@ func AuditRecord(rec audit.Recorder) gin.HandlerFunc {
 // (e.g. the automation write audit). Same proxy-authoritative resolution.
 func RealClientIP(c *gin.Context) string { return clientIP(c) }
 
+// clientIP is the address every per-IP decision keys on: the Kratos
+// login/recovery rate limit, API rate tiers, the automation-token IP
+// allowlist, the login whitelist, and audit rows.
+//
+// Forwarding headers are honoured ONLY when the connection carries peer
+// credentials, i.e. it arrived over the unix socket where nginx sets X-Real-IP
+// itself (ADR-0050). A direct TCP client can never present peer credentials,
+// so it can no longer choose its own key.
+//
+// Trusting those headers from any peer meant that on a direct-bind deployment
+// a caller could rotate X-Real-IP per request to: brute-force logins without
+// ever tripping the per-IP Kratos limit, bypass API rate tiers, defeat an
+// automation token's IP allowlist with a stolen token, and write arbitrary
+// addresses into the audit log — the one record you consult after an
+// incident. Production is fronted by nginx, which overwrites the header, so
+// this closes the direct-bind case without changing the proxied one.
 func clientIP(c *gin.Context) string {
-	if xr := strings.TrimSpace(c.GetHeader("X-Real-IP")); xr != "" {
-		return xr
-	}
-	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			xff = xff[:i]
+	if _, viaLocalSocket := PeerUID(c); viaLocalSocket {
+		if xr := strings.TrimSpace(c.GetHeader("X-Real-IP")); xr != "" {
+			return xr
 		}
-		if xff = strings.TrimSpace(xff); xff != "" {
-			return xff
+		if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+			if i := strings.IndexByte(xff, ','); i >= 0 {
+				xff = xff[:i]
+			}
+			if xff = strings.TrimSpace(xff); xff != "" {
+				return xff
+			}
 		}
 	}
-	return c.ClientIP()
+	// No peer credentials: the peer IS the client. gin's ClientIP would
+	// itself consult forwarding headers for trusted proxies, so take the
+	// socket address directly and leave nothing header-controlled.
+	if host, _, err := net.SplitHostPort(c.Request.RemoteAddr); err == nil {
+		return host
+	}
+	return c.Request.RemoteAddr
 }
 
 // deriveTarget is best-effort and informational only (target is not a
