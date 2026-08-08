@@ -12,7 +12,7 @@ userops/repo/agent path the GUI uses → `auditWrite` (success AND failure)
 
 ## Scope decisions
 
-- **Login-token SSO is DEFERRED.** No panel one-time-login mechanism
+- **Login-token SSO: shipped as ADR-0165** (Kratos admin recovery links — see that ADR; the rest of this bullet is the original deferral analysis kept for history). Originally: No panel one-time-login mechanism
   exists (Kratos is sole auth; impersonation is cookie-session; M22
   magic-link is app-level). Minting a Kratos session from a one-time URL
   is a standalone auth milestone. Reserved: capability `users.login_token`,
