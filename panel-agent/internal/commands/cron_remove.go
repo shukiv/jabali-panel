@@ -43,6 +43,14 @@ func cronRemoveHandler(ctx context.Context, params json.RawMessage) (any, error)
 			Message: "username required",
 		}
 	}
+	// Same rule as cron.apply: job_id lands in root-side unit paths that this
+	// handler unlinks, so validate the shape before building any path.
+	if !ulidRE.MatchString(p.JobID) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "job_id must be a 26-char ULID",
+		}
+	}
 	if p.JobID == "" {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
