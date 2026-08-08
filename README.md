@@ -39,10 +39,6 @@
 
 </div>
 
-> [!NOTE]
-> Jabali Panel is currently a release candidate. Expect rapid iteration and
-> breaking changes until 1.0.
-
 ## Demo and Website
 
 - Website: https://jabali-panel.com/
