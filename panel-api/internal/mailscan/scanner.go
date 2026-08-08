@@ -93,7 +93,16 @@ func scanBytes(ctx context.Context, data []byte, attachmentName string) ScanResu
 	// yr flags: -w silences rule warnings (rfxn pack triggers tons of
 	// "deprecated" notices); --disable-console-logs hides scan progress.
 	args := []string{"scan", "-w", "--disable-console-logs"}
-	args = append(args, rules...)
+	// Prefer a precompiled rule blob: yara-x compiles its sources on EVERY
+	// `yr scan`, and the rfxn pack is thousands of rules, so that compile —
+	// not the scan — dominates the cost of every attachment. compiledRules
+	// returns "" whenever the cache is unavailable for any reason, in which
+	// case we fall back to scanning from source exactly as before.
+	if blob := compiledRules(ctx, rules); blob != "" {
+		args = append(args, "--compiled-rules", blob)
+	} else {
+		args = append(args, rules...)
+	}
 	args = append(args, tmp.Name())
 	cmd := exec.CommandContext(ctx, yrPath(), args...) //nolint:gosec // argv form, no shell, paths controlled
 	var stdout, stderr bytes.Buffer
