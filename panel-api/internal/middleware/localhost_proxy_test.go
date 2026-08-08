@@ -67,13 +67,17 @@ func TestRequireLocalhost_AllowsDirectAgentSocketCall(t *testing.T) {
 // still refused — the pre-existing behaviour, unchanged.
 func TestRequireLocalhost_TCPBehaviourUnchanged(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("JABALI_ALLOW_TCP_INTERNAL", "")
 
+	// Loopback TCP is now refused by default (see
+	// TestRequireLocalhost_RejectsLoopbackTCPByDefault for why); non-loopback
+	// was and remains refused.
 	cases := []struct {
 		remote  string
 		allowed bool
 	}{
-		{"127.0.0.1:54321", true},
-		{"[::1]:54321", true},
+		{"127.0.0.1:54321", false},
+		{"[::1]:54321", false},
 		{"203.0.113.7:54321", false},
 		{"10.0.0.5:1234", false},
 	}

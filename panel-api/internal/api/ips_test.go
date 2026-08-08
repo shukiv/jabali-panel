@@ -435,11 +435,15 @@ func TestRequireLocalhost_Accept(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 	req := httptest.NewRequest("GET", "/internal", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
+	// Unix-socket peer ("@" is what net/http sets), which is the production
+	// transport for internal routes. Loopback TCP is deliberately no longer
+	// accepted by default — on a multi-tenant box any tenant process can
+	// bind 127.0.0.1, so it is not a trust boundary.
+	req.RemoteAddr = "@"
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("loopback got %d, want 200; body=%s", w.Code, w.Body.String())
+		t.Errorf("unix-socket peer got %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 }
 
