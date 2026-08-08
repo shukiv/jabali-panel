@@ -371,9 +371,9 @@ func (h *userHandler) update(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 				return
 			}
-			_, err := h.cfg.Packages.FindByID(ctx, *req.PackageID)
-			if err != nil {
-				if errors.Is(err, repository.ErrNotFound) {
+			// Shared validation with the automation API (ADR-0164).
+			if err := userops.ValidatePackage(ctx, h.userOpsDeps(), *req.PackageID); err != nil {
+				if errors.Is(err, userops.ErrInvalidPackage) {
 					c.JSON(http.StatusBadRequest, gin.H{
 						"error":  "invalid_package_id",
 						"detail": "hosting package not found",
@@ -453,55 +453,33 @@ func (h *userHandler) update(c *gin.Context) {
 				return
 			}
 		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), h.cfg.BcryptCost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		if existing.KratosIdentityID == nil || *existing.KratosIdentityID == "" {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":  "no_kratos_identity",
-				"detail": "user has no Kratos identity to update",
-			})
-			return
-		}
-		if h.cfg.KratosClient == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "kratos_unavailable"})
-			return
-		}
-		kctx, kcancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := h.cfg.KratosClient.SetPassword(kctx, *existing.KratosIdentityID, string(hash)); err != nil {
-			kcancel()
-			slog.Warn("kratos SetPassword failed", "user_id", id, "err", err)
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error":  "kratos_error",
-				"detail": err.Error(),
-			})
-			return
-		}
-		kcancel()
-		if !existing.IsAdmin && existing.Username != nil && *existing.Username != "" && h.cfg.Agent != nil {
-			actx, acancel := context.WithTimeout(ctx, 10*time.Second)
-			_, agentErr := h.cfg.Agent.Call(actx, "user.password", map[string]any{
-				"username": *existing.Username,
-				"password": *req.Password,
-			})
-			acancel()
-			if agentErr != nil {
-				slog.Warn("agent user.password failed", "user_id", id, "err", agentErr)
+		// Shared rotation pipeline (ADR-0164): hash → Kratos → agent → DB.
+		// The automation API calls the same userops.RotatePassword.
+		if err := userops.RotatePassword(ctx, h.userOpsDeps(), existing, *req.Password); err != nil {
+			switch {
+			case errors.Is(err, userops.ErrNoKratosIdentity):
+				c.JSON(http.StatusConflict, gin.H{
+					"error":  "no_kratos_identity",
+					"detail": "user has no Kratos identity to update",
+				})
+			case errors.Is(err, userops.ErrKratosUnavailable):
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "kratos_unavailable"})
+			case errors.Is(err, userops.ErrKratosSetPassword):
+				c.JSON(http.StatusBadGateway, gin.H{
+					"error":  "kratos_error",
+					"detail": errDetail(err, userops.ErrKratosSetPassword),
+				})
+			case errors.Is(err, userops.ErrAgentPassword):
 				c.JSON(http.StatusBadGateway, gin.H{
 					"error":         "agent_error",
-					"detail":        agentErr.Error(),
+					"detail":        errDetail(err, userops.ErrAgentPassword),
 					"kratos_synced": true,
 					"db_synced":     false,
 					"os_synced":     false,
 				})
-				return
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			}
-		}
-		existing.PasswordHash = string(hash)
-		if err := h.cfg.Repo.Update(ctx, existing); err != nil {
-			h.translateErr(c, err)
 			return
 		}
 	}
@@ -542,267 +520,73 @@ func (h *userHandler) delete(c *gin.Context) {
 		}
 	}
 
-	// Cascade-delete all domains owned by this user. DB first, then
-	// out-of-band agent teardown via the reconciler. Best-effort: any
-	// per-domain failure is logged, never fails the user delete.
-	if h.cfg.Domains != nil {
-		// Page through to avoid loading millions of rows in one shot.
-		// Realistically a user has a handful of domains, but bound the
-		// loop anyway.
-		const batchSize = 500
-		for {
-			owned, _, err := h.cfg.Domains.ListByUserID(c.Request.Context(), id, repository.ListOptions{Limit: batchSize})
-			if err != nil {
-				slog.Warn("cascade delete: list user domains failed",
-					"user_id", id, "err", err)
-				break
-			}
-			if len(owned) == 0 {
-				break
-			}
-			for i := range owned {
-				d := &owned[i]
-				name := d.Name
-				// Purge EVERY Stalwart registry account under this domain
-				// BEFORE the domain delete FK-cascades the panel mailbox
-				// rows away (the domain must still be registered in
-				// Stalwart for the purge to resolve it). jabali user
-				// delete otherwise left the Stalwart account behind →
-				// re-creating/re-migrating the same address collided with
-				// {"type":"primaryKeyViolation","properties":["email"]}.
-				//
-				// Purge BY DOMAIN, not per panel mailbox row: a row-driven
-				// loop skips orphans (a migration that pushed mail to
-				// Stalwart without a matching row, or a failed prior
-				// delete that removed the row but not the account), which
-				// is exactly how the orphan kept surviving. A domain
-				// belongs to one user, so destroying all its accounts on
-				// that user's delete is correct. Best-effort: a failure
-				// here logs + continues (orphan is recoverable; a blocked
-				// user delete is worse).
-				if h.cfg.Agent != nil {
-					if delErr := userops.PurgeDomainMail(c.Request.Context(), h.cfg.Agent, name); delErr != nil {
-						slog.Warn("cascade delete: stalwart domain purge failed",
-							"user_id", id, "domain", name, "err", delErr)
-					}
-				}
-				if err := h.cfg.Domains.Delete(c.Request.Context(), d.ID); err != nil {
-					slog.Warn("cascade delete: domain DB delete failed",
-						"user_id", id, "domain_id", d.ID, "domain", name, "err", err)
-					continue
-				}
-				if h.cfg.Reconciler != nil {
-					// Fire-and-forget — don't block the user delete on nginx
-					// teardown. Use a fresh context because c.Request.Context
-					// ends when the handler returns.
-					name := name // capture
-					go func() {
-						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-						h.cfg.Reconciler.ReconcileDeleted(ctx, name)
-					}()
-				}
-			}
-			if len(owned) < batchSize {
-				break
-			}
-		}
-	}
-
-	// Capture username BEFORE deleting so we can tear down the OS user
-	// even after the DB row is gone. For admins, username is NULL.
-	var username string
-	if target.Username != nil {
-		username = *target.Username
-	}
-
-	// Cascade-drop MariaDB schemas + grants on the data plane BEFORE the
-	// panel row goes (which CASCADEs the metadata rows). Best-effort: any
-	// per-DB failure is logged, never blocks the user delete. Operator
-	// chose destructive — every panel-managed artefact must follow.
-	if h.cfg.Databases != nil && h.cfg.Agent != nil && username != "" {
-		const batchSize = 500
-		for {
-			dbs, _, dbErr := h.cfg.Databases.ListByUserID(c.Request.Context(), id, repository.ListOptions{Limit: batchSize})
-			if dbErr != nil {
-				slog.Warn("cascade delete: list user databases failed",
-					"user_id", id, "err", dbErr)
-				break
-			}
-			if len(dbs) == 0 {
-				break
-			}
-			for i := range dbs {
-				dbName := dbs[i].Name
-				agentCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-				_, dropErr := h.cfg.Agent.Call(agentCtx, "db.drop", map[string]any{
-					"db_name": dbName,
-				})
-				cancel()
-				if dropErr != nil {
-					slog.Warn("cascade delete: db.drop failed",
-						"user_id", id, "db_name", dbName, "err", dropErr)
-				}
-			}
-			if len(dbs) < batchSize {
-				break
-			}
-		}
-	}
-	if h.cfg.DatabaseUsers != nil && h.cfg.Agent != nil && username != "" {
-		const batchSize = 500
-		for {
-			dbus, _, duErr := h.cfg.DatabaseUsers.ListByUserID(c.Request.Context(), id, repository.ListOptions{Limit: batchSize})
-			if duErr != nil {
-				slog.Warn("cascade delete: list user database_users failed",
-					"user_id", id, "err", duErr)
-				break
-			}
-			if len(dbus) == 0 {
-				break
-			}
-			for i := range dbus {
-				duName := dbus[i].Username
-				agentCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-				_, dropErr := h.cfg.Agent.Call(agentCtx, "db_user.drop", map[string]any{
-					"db_user_name": duName,
-				})
-				cancel()
-				if dropErr != nil {
-					slog.Warn("cascade delete: db_user.drop failed",
-						"user_id", id, "db_user_name", duName, "err", dropErr)
-				}
-			}
-			if len(dbus) < batchSize {
-				break
-			}
-		}
-	}
-
-	// Drop the per-user MariaDB shadow-admin account (<osuser>_mysqladmin).
-	// db.mysqladmin.ensure provisions it for tenant DB management, but it is
-	// NOT a database_users row, so the loop above never reaps it — leaving an
-	// orphaned MySQL login with a valid password after the account is gone
-	// (found live: ~20 <user>_mysqladmin accounts survived their deleted
-	// owners). Construct the canonical name from the OS username rather than
-	// the stored users.mysqladmin_username, which is null for accounts
-	// provisioned outside the API (e.g. migrated users) whose shadow account
-	// still exists. Reuse db_user.drop (idempotent DROP USER IF EXISTS), so a
-	// user without a shadow account is a harmless no-op.
-	if h.cfg.Agent != nil && username != "" {
-		shadowUser := username + "_mysqladmin"
-		agentCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-		_, dropErr := h.cfg.Agent.Call(agentCtx, "db_user.drop", map[string]any{
-			"db_user_name": shadowUser,
-		})
-		cancel()
-		if dropErr != nil {
-			slog.Warn("cascade delete: mysqladmin shadow drop failed",
-				"user_id", id, "mysqladmin_user", shadowUser, "err", dropErr)
-		}
-	}
-
-	// Cascade-tear-down the user's docker apps (M49, GH #170) BEFORE the panel
-	// row CASCADEs the docker_apps metadata. The FK drops the rows, but the
-	// CONTAINERS + data trees on the host outlive the DB without an explicit
-	// agent teardown. Best-effort: a failure is logged, never blocks the delete.
-	if h.cfg.DockerApps != nil && h.cfg.Agent != nil {
-		apps, derr := h.cfg.DockerApps.ListByUserID(c.Request.Context(), id)
-		if derr != nil {
-			slog.Warn("cascade delete: list user docker apps failed", "user_id", id, "err", derr)
-		}
-		var teardownFailed []string
-		for _, app := range apps {
-			agentCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Minute)
-			// purge_volumes=true so the agent rm -rf's the app data tree, not
-			// just `compose down` — otherwise a deleted user's docker data is
-			// orphaned under /var/lib/jabali/docker-apps (Gitea #523).
-			_, delErr := h.cfg.Agent.Call(agentCtx, "docker_app.delete", map[string]any{"slug": app.EffectiveSlug(), "purge_volumes": true})
-			cancel()
-			if delErr != nil {
-				slog.Warn("cascade delete: docker_app.delete failed",
-					"user_id", id, "slug", app.EffectiveSlug(), "err", delErr)
-				teardownFailed = append(teardownFailed, app.EffectiveSlug())
-			}
-		}
-		// Gitea #532: if any Docker teardown failed, do NOT remove the owner — the
-		// container/data may still exist on the host and would be left with no
-		// owner row, quota accounting, suspension, or lifecycle controls. Block
-		// the delete so the operator can resolve it (and retry).
-		if len(teardownFailed) > 0 {
+	// Full cascade extracted to userops.DeleteCascade (ADR-0164) so the
+	// automation API and this handler share one destructive write path:
+	// domains (+Stalwart purge, reconciler teardown) → MariaDB schemas +
+	// users + mysqladmin shadow → docker apps (blocking on failure, Gitea
+	// #532) → Kratos identity → Redis cache ACLs → users row → OS teardown.
+	err = userops.DeleteCascade(c.Request.Context(), h.userOpsDeps(), userops.DeleteDeps{
+		Databases:     h.cfg.Databases,
+		DatabaseUsers: h.cfg.DatabaseUsers,
+		Reconciler:    reconcilerOrNil(h.cfg.Reconciler),
+		RevokeCacheACLs: func(ctx context.Context, osUser string) error {
+			return revokeAllUserCacheACLs(ctx, h.cfg.Redis, osUser)
+		},
+	}, target, claims.UserID)
+	if err != nil {
+		var dte *userops.DockerTeardownError
+		if errors.As(err, &dte) {
 			c.JSON(http.StatusConflict, gin.H{
 				"error":  "docker_teardown_failed",
-				"detail": "refusing to delete user: Docker app teardown failed for " + strings.Join(teardownFailed, ", ") + " — resolve on the host and retry",
+				"detail": "refusing to delete user: Docker app teardown failed for " + strings.Join(dte.Slugs, ", ") + " — resolve on the host and retry",
 			})
 			return
 		}
-	}
-
-	// Remove the Kratos identity so the username + email free up immediately.
-	// Without this the identity is orphaned and recreating the same user
-	// collides on the unique identifier ("username_taken" / kratos conflict) —
-	// the user "still exists" even after delete (GH#132 follow-up, johnnyq).
-	// Synchronous + before the DB delete so a 200 means the identity is gone
-	// and recreate works right away. DeleteIdentity treats 404 as success.
-	// Best-effort on a Kratos outage: log loudly rather than strand the DB
-	// delete, but the common (Kratos-up) path now fully cleans up.
-	if h.cfg.KratosClient != nil && target.KratosIdentityID != nil && *target.KratosIdentityID != "" {
-		kctx, kcancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
-		if kerr := h.cfg.KratosClient.DeleteIdentity(kctx, *target.KratosIdentityID); kerr != nil {
-			slog.Warn("user delete: kratos identity delete failed (orphan may block recreate)",
-				"user_id", id, "identity_id", *target.KratosIdentityID, "err", kerr)
-		}
-		kcancel()
-	}
-
-	// Revoke the tenant's WordPress-cache Redis ACL user (GH #408 / ADR-0148).
-	// The OS account + all its installs are being torn down, so wp_<username>
-	// must not linger in the aclfile — a recycled username would otherwise
-	// re-derive the same token and inherit the stale principal + keyspace.
-	// Best-effort: a revoke failure is logged, never blocks the delete.
-	if h.cfg.Redis != nil && username != "" {
-		rctx, rcancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		if rErr := revokeAllUserCacheACLs(rctx, h.cfg.Redis, username); rErr != nil {
-			slog.Warn("cascade delete: revoke tenant cache ACL failed",
-				"user_id", id, "username", username, "err", rErr)
-		}
-		rcancel()
-	}
-
-	if err := h.cfg.Repo.Delete(c.Request.Context(), id); err != nil {
 		h.translateErr(c, err)
 		return
 	}
 
-	// Always-destructive OS teardown. The "delete user" operation in the
-	// UI/CLI now removes EVERYTHING the user owns — domains (above),
-	// MariaDB schemas + users (above), then the OS account + home dir
-	// here. There is no "preserve tenant data" mode anymore; the operator
-	// chose to delete and the cascade follows.
-	if h.cfg.Agent != nil && username != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_, err := h.cfg.Agent.Call(ctx, "user.delete", map[string]any{
-				"username":    username,
-				"remove_home": true,
-			})
-			if err != nil {
-				slog.Warn("user agent teardown failed",
-					"user_id", id, "username", username, "err", err)
-			}
-			// M33: re-evaluate maldet inotify watches after teardown.
-			reloadMalwareMonitor(h.cfg.Agent)
-		}()
-	}
-
-	slog.Info("audit",
-		"event", "user_deleted",
-		"actor_id", claims.UserID,
-		"target_id", id,
-		"target_email", target.Email)
-
 	c.Status(http.StatusNoContent)
+}
+
+// userOpsDeps builds the shared userops dependency set from the handler
+// config (one write path — ADR-0083/0164).
+func (h *userHandler) userOpsDeps() userops.Deps {
+	log := h.cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	return userops.Deps{
+		Users:        h.cfg.Repo,
+		Packages:     h.cfg.Packages,
+		Domains:      h.cfg.Domains,
+		DockerApps:   h.cfg.DockerApps,
+		Agent:        h.cfg.Agent,
+		KratosClient: h.cfg.KratosClient,
+		BcryptCost:   h.cfg.BcryptCost,
+		Log:          log,
+	}
+}
+
+// reconcilerOrNil avoids a typed-nil *reconciler.Reconciler boxed in the
+// DomainReconciler interface (the != nil guard would pass, then SIGSEGV —
+// the exact class of bug HANDOFF §9 warns about).
+func reconcilerOrNil(r *reconciler.Reconciler) userops.DomainReconciler {
+	if r == nil {
+		return nil
+	}
+	return r
+}
+
+// errDetail strips a userops sentinel prefix ("<sentinel>: ") from a
+// wrapped error so REST responses keep their pre-extraction detail text.
+func errDetail(err, sentinel error) string {
+	s := err.Error()
+	prefix := sentinel.Error() + ": "
+	if strings.HasPrefix(s, prefix) {
+		return strings.TrimPrefix(s, prefix)
+	}
+	return s
 }
 
 func (h *userHandler) reprovision(c *gin.Context) {
