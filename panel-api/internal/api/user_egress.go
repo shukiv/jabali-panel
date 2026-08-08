@@ -499,7 +499,8 @@ func (h *userEgressHandler) adminDropEvents(c *gin.Context) {
 	}
 	raw, aerr := h.cfg.Agent.Call(c.Request.Context(), "security.egress.drops", map[string]any{"username": *u.Username})
 	if aerr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "drop_events_failed", "detail": aerr.Error()})
+		// JAB-114: agent error logged server-side, not echoed.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "drop_events_failed"})
 		return
 	}
 	c.Data(http.StatusOK, "application/json", raw)

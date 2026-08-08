@@ -80,6 +80,7 @@ type ssoFakeMailboxRepo struct {
 	mbs map[string]*models.Mailbox
 }
 
+func (r *ssoFakeMailboxRepo) CountAll(context.Context) (int64, error) { return 0, nil }
 func (r *ssoFakeMailboxRepo) FindByID(ctx context.Context, id string) (*models.Mailbox, error) {
 	if mb, ok := r.mbs[id]; ok {
 		return mb, nil

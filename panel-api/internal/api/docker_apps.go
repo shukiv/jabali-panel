@@ -538,7 +538,8 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 				if aerr := h.cfg.Domains.AttachDockerApp(ctx, existingDom.ID, app.ID, rules); aerr != nil {
 					msg := "domain attach failed: " + firstLineString(aerr.Error())
 					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
-					c.JSON(http.StatusConflict, gin.H{"error": "domain_attach_failed", "detail": aerr.Error(), "id": app.ID})
+					// JAB-114: log the agent error, return only the stable code + id.
+					c.JSON(http.StatusConflict, gin.H{"error": "domain_attach_failed", "id": app.ID})
 					return
 				}
 			} else {

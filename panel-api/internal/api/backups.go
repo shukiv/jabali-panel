@@ -2467,7 +2467,8 @@ func (h *meBackupHandler) restoreSelective(c *gin.Context) {
 		if aerr != nil {
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), restoreJob.ID, models.BackupJobStatusFailed,
 				"", "", 0, 0, nil, nil, aerr.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "restore_failed", "detail": aerr.Error()})
+			// Agent errors carry restic/host internals — log, don't echo (JAB-114).
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "restore_failed"})
 			return
 		}
 		var ar struct {

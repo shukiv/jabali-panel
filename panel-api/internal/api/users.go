@@ -489,9 +489,14 @@ func (h *userHandler) update(c *gin.Context) {
 			acancel()
 			if agentErr != nil {
 				slog.Warn("agent user.password failed", "user_id", id, "err", agentErr)
+				// JAB-114: the agent error is logged above, never echoed. This
+				// path is reachable by a NON-ADMIN owner via PATCH /users/:id,
+				// so a tenant changing their password while the agent is
+				// failing would otherwise receive the root daemon's raw stderr
+				// and filesystem paths. The sync flags below are the part the
+				// client legitimately needs.
 				c.JSON(http.StatusBadGateway, gin.H{
 					"error":         "agent_error",
-					"detail":        agentErr.Error(),
 					"kratos_synced": true,
 					"db_synced":     false,
 					"os_synced":     false,
@@ -864,10 +869,9 @@ func (h *userHandler) reprovision(c *gin.Context) {
 		}
 		slog.Warn("reprovision agent call failed",
 			"user_id", id, "username", username, "err", agentErr)
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error":  "agent_error",
-			"detail": agentErr.Error(),
-		})
+		// Logged above; not echoed (JAB-114) — agent errors carry root-daemon
+		// stderr and host paths.
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error"})
 		return
 	}
 

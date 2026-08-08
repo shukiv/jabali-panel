@@ -214,7 +214,14 @@ func RegisterAutomation(rg *gin.RouterGroup, cfg AutomationConfig) {
 		mg.GET("/summary", func(c *gin.Context) {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 			defer cancel()
-			mailboxes, _ := cfg.Mailboxes.ListAllWithDomain(ctx)
+			// COUNT, not a full-table read. This endpoint is polled by fleet
+			// monitors; loading every mailbox row (two JOINs, every column
+			// including password material) just to len() it was the single
+			// most expensive thing here.
+			mailboxCount := 0
+			if n, err := cfg.Mailboxes.CountAll(ctx); err == nil {
+				mailboxCount = int(n)
+			}
 			mailDomains := 0
 			if cfg.Domains != nil {
 				if doms, _, err := cfg.Domains.List(ctx, repository.ListOptions{Limit: 500}); err == nil {
@@ -239,7 +246,7 @@ func RegisterAutomation(rg *gin.RouterGroup, cfg AutomationConfig) {
 			}
 			c.JSON(http.StatusOK, gin.H{
 				"mail_domains": mailDomains,
-				"mailboxes":    len(mailboxes),
+				"mailboxes":    mailboxCount,
 				"forwarders":   forwarders,
 				"mail_groups":  groups,
 			})
