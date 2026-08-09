@@ -4,24 +4,8 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Alert,
-  Descriptions,
-  Drawer,
-  Button,
-  Card,
-  Input,
-  Modal,
-  Popconfirm,
-  Radio,
-  Space,
-  Switch,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-  message,
-} from "antd";
+import { Alert, Descriptions, Drawer, Button, Card, Input, Modal, Popconfirm, Radio, Space, Switch, Table, Tag, Tooltip, Typography, message } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import {
   type SnuffleupagusIncident,
@@ -124,7 +108,7 @@ export function AdminSecuritySnuffleupagus() {
             onChange={(e) => {
               const next = e.target.value as SnuffleupagusMode;
               if (next === "enforce") {
-                Modal.confirm({
+                feedback.modal.confirm({
                   title: "Switch PHP Defense to enforce mode?",
                   content:
                     "Tenant requests that match a hardening rule will be blocked. Run a soak in simulation first if you haven't already.",

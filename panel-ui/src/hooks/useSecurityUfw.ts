@@ -3,7 +3,7 @@
 //
 // Enable / disable POST bodies MUST include {"confirm":"YES"} —
 // returning 400 confirmation_required otherwise. The UI surfaces a
-// Modal.confirm with a typed YES gate before invoking these hooks.
+// feedback.modal.confirm with a typed YES gate before invoking these hooks.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";

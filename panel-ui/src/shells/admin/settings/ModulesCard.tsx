@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import { Button, Card, Space, Spin, Switch, Tag, Typography, notification } from "antd";
+import { Button, Card, Space, Spin, Switch, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { ReloadOutlined } from "@ant-design/icons";
 
 import { apiClient } from "../../../apiClient";
@@ -82,7 +83,7 @@ export const ModulesCard = () => {
           });
         }
       } catch {
-        if (mounted.current) notification.error({ message: "Failed to load module settings" });
+        if (mounted.current) feedback.notification.error({ message: "Failed to load module settings" });
       } finally {
         if (mounted.current) setLoading(false);
       }
@@ -118,7 +119,7 @@ export const ModulesCard = () => {
       await apiClient.patch("/admin/settings", { [key]: next });
       setState((prev) => ({ ...prev, [key]: next }));
       const statusKey = STATUS_KEY[key];
-      notification.success({
+      feedback.notification.success({
         message: `${label} ${next ? "enabled" : "disabled"}`,
         description:
           next && statusKey
@@ -129,7 +130,7 @@ export const ModulesCard = () => {
       });
       if (next && statusKey) void pollUntilUp(statusKey);
     } catch {
-      notification.error({ message: `Failed to update ${label}` });
+      feedback.notification.error({ message: `Failed to update ${label}` });
     } finally {
       setSaving(null);
     }
@@ -138,10 +139,10 @@ export const ModulesCard = () => {
   const onRetry = async (statusKey: string, label: string) => {
     try {
       await apiClient.post("/admin/settings/modules/install", { key: statusKey });
-      notification.info({ message: `Reinstalling ${label}…` });
+      feedback.notification.info({ message: `Reinstalling ${label}…` });
       void pollUntilUp(statusKey);
     } catch {
-      notification.error({ message: `Failed to start install for ${label}` });
+      feedback.notification.error({ message: `Failed to start install for ${label}` });
     }
   };
 

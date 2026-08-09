@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Alert, Card, Select, Space, Switch, Typography, notification } from "antd";
+import { Alert, Card, Select, Space, Switch, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 import { kindLabels, type ChannelKind } from "../notifications/channelKindConfig";
@@ -44,7 +45,7 @@ export const TenantNotificationsCard = () => {
           setKinds(resp.data.tenant_notification_kinds ?? []);
         }
       } catch {
-        if (!cancelled) notification.error({ message: "Failed to load notification settings" });
+        if (!cancelled) feedback.notification.error({ message: "Failed to load notification settings" });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -59,9 +60,9 @@ export const TenantNotificationsCard = () => {
     try {
       await apiClient.patch("/admin/settings", { tenant_notifications_enabled: next });
       setEnabled(next);
-      notification.success({ message: next ? "Tenant notifications enabled" : "Tenant notifications disabled" });
+      feedback.notification.success({ message: next ? "Tenant notifications enabled" : "Tenant notifications disabled" });
     } catch {
-      notification.error({ message: "Failed to update setting" });
+      feedback.notification.error({ message: "Failed to update setting" });
     } finally {
       setSavingToggle(false);
     }
@@ -75,9 +76,9 @@ export const TenantNotificationsCard = () => {
       });
       // The server sanitizes (drops unknown kinds) and returns the effective set.
       setKinds(resp.data.tenant_notification_kinds ?? next);
-      notification.success({ message: "Allowed channel kinds updated" });
+      feedback.notification.success({ message: "Allowed channel kinds updated" });
     } catch {
-      notification.error({ message: "Failed to update allowed kinds" });
+      feedback.notification.error({ message: "Failed to update allowed kinds" });
     } finally {
       setSavingKinds(false);
     }

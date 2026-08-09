@@ -20,26 +20,8 @@
 // migrating it into the wizard is M35.2 work.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Tag,
-  Collapse,
-  Select,
-  Drawer,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Radio,
-  Card,
-  Space,
-  Spin,
-  Steps,
-  Typography,
-  message,
-} from "antd";
+import { Alert, Button, Checkbox, Tag, Collapse, Select, Drawer, Form, Input, InputNumber, Radio, Card, Space, Spin, Steps, Typography, message } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -278,7 +260,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
       // existing draft" action instead of dead-ending the operator.
       if (resp?.error === "host_user_kind_in_use" && resp.existing_job_id && draftId) {
         const existing = resp.existing_job_id;
-        Modal.confirm({
+        feedback.modal.confirm({
           title: "An existing draft already owns this source",
           content:
             "A migration job is already configured for this (host, user, source kind). Switch to that draft and discard the new one?",
@@ -373,7 +355,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
     },
     onSuccess: (data) => {
       if (data?.next_step === "upload_tarball") {
-        Modal.info({
+        feedback.modal.info({
           title: "Migration submitted — manual upload required",
           width: 560,
           content: (

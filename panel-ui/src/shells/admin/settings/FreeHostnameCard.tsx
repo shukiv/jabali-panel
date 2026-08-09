@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Form, Input, Space, Tag, Typography, notification } from "antd";
+import { Alert, Button, Card, Form, Input, Space, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 
@@ -45,9 +46,9 @@ export const FreeHostnameCard = () => {
     try {
       await apiClient.post("/admin/settings/free-hostname/register", { email: email.trim() });
       setStep("code_sent");
-      notification.success({ message: `Verification code sent to ${email.trim()}` });
+      feedback.notification.success({ message: `Verification code sent to ${email.trim()}` });
     } catch (e: unknown) {
-      notification.error({ message: errText(e, "Could not send the code") });
+      feedback.notification.error({ message: errText(e, "Could not send the code") });
     } finally {
       setSending(false);
     }
@@ -63,13 +64,13 @@ export const FreeHostnameCard = () => {
       setHostname(resp.data.fqdn);
       setStep("idle");
       setCode("");
-      notification.success({
+      feedback.notification.success({
         message: `Hostname activated: ${resp.data.fqdn}`,
         description:
           "DNS + TLS are provisioning. The panel URL will change to the new hostname shortly.",
       });
     } catch (e: unknown) {
-      notification.error({ message: errText(e, "Could not claim the hostname") });
+      feedback.notification.error({ message: errText(e, "Could not claim the hostname") });
     } finally {
       setClaiming(false);
     }

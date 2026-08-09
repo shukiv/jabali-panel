@@ -6,7 +6,8 @@
 // Flip false: panel-api dispatches `docker.disable` (stops + disables
 //   docker units). Data under /var/lib/jabali/docker-apps/ stays.
 import { useTranslation } from "react-i18next";
-import { App, Alert, Button, Card, Checkbox, Modal, Space, Spin, Switch, Tag, Typography } from "antd";
+import { App, Alert, Button, Card, Checkbox, Space, Spin, Switch, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
@@ -163,7 +164,7 @@ export function DockerMarketplaceCard() {
 
   const onToggleForUsers = (v: boolean) => {
     if (v) {
-      Modal.confirm({
+      feedback.modal.confirm({
         title: "Enable Docker Apps for users?",
         okText: "Enable",
         okButtonProps: { danger: true },

@@ -2,7 +2,8 @@
 // volumes / build cache. Backed by docker.disk_usage + docker.prune
 // agent verbs (see panel-agent/internal/commands/docker_lifecycle.go).
 import { useTranslation } from "react-i18next";
-import { App, Button, Card, Col, Modal, Row, Space, Statistic, Switch, Typography } from "antd";
+import { App, Button, Card, Col, Row, Space, Statistic, Switch, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -67,7 +68,7 @@ export const MaintenanceTab = () => {
   });
 
   const confirmPrune = () => {
-    Modal.confirm({
+    feedback.modal.confirm({
       title: "Run docker prune?",
       content: (
         <div>

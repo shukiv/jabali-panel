@@ -18,7 +18,8 @@ import {
   ToolOutlined,
   FolderOutlined,
 } from "@icons";
-import { Button, Card, Dropdown, Modal, Space, Table, Tag, Tooltip, Typography, notification } from "antd";
+import { Button, Card, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
@@ -387,7 +388,7 @@ export const UserDomainList = () => {
                             await apiClient.patch(`/domains/${r.id}`, {
                               temp_url_enabled: !r.temp_url_enabled,
                             });
-                            notification.success({
+                            feedback.notification.success({
                               message: r.temp_url_enabled
                                 ? "Preview URL disabled"
                                 : "Preview URL enabled — live within a minute",
@@ -395,7 +396,7 @@ export const UserDomainList = () => {
                             qc.invalidateQueries({ queryKey: ["list", "domains"] });
                           } catch (err) {
                             const e = err as { response?: { data?: { detail?: string; error?: string } } };
-                            notification.error({
+                            feedback.notification.error({
                               message: "Failed to toggle preview URL",
                               description: e.response?.data?.detail ?? e.response?.data?.error ?? (err as Error).message,
                             });
@@ -413,13 +414,13 @@ export const UserDomainList = () => {
                             await apiClient.patch(`/domains/${r.id}`, {
                               is_enabled: !r.is_enabled,
                             });
-                            notification.success({
+                            feedback.notification.success({
                               message: r.is_enabled ? "Domain disabled" : "Domain enabled",
                             });
                             qc.invalidateQueries({ queryKey: ["list", "domains"] });
                             qc.invalidateQueries({ queryKey: ["one", "domains", r.id] });
                           } catch (err) {
-                            notification.error({
+                            feedback.notification.error({
                               message: "Failed to toggle",
                               description: (err as Error).message,
                             });
@@ -435,7 +436,7 @@ export const UserDomainList = () => {
                         icon: <DeleteOutlined />,
                         danger: true,
                         onClick: () =>
-                          Modal.confirm({
+                          feedback.modal.confirm({
                             title: `Delete domain "${r.name}"?`,
                             content: "This cannot be undone.",
                             okText: "Delete",

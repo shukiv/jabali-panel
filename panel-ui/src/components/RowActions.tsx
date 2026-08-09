@@ -4,7 +4,7 @@
 // icon. This keeps dense tables narrow and uniform across the whole panel — the
 // default shape for any row that has more than one action.
 //
-// Destructive actions pass `confirm` (a Modal.confirm pops before onClick), so
+// Destructive actions pass `confirm` (a feedback.modal.confirm pops before onClick), so
 // the menu can hold a Delete without nesting a Popconfirm inside the dropdown.
 //
 // Usage:
@@ -17,7 +17,8 @@
 //   ]} />
 
 import type { ReactNode } from "react";
-import { Dropdown, Modal, Space, Tooltip } from "antd";
+import { Dropdown, Space, Tooltip } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { MoreOutlined } from "@icons";
 import { RowActionButton } from "./RowActionButton";
 
@@ -36,7 +37,7 @@ export interface RowAction {
   hidden?: boolean;
   /** Tooltip for the first button (e.g. why it's disabled). */
   tooltip?: string;
-  /** When set, a Modal.confirm pops before onClick runs. */
+  /** When set, a feedback.modal.confirm pops before onClick runs. */
   confirm?: { title?: string; description?: ReactNode; okText?: string };
 }
 
@@ -45,7 +46,7 @@ function run(a: RowAction) {
     a.onClick?.();
     return;
   }
-  Modal.confirm({
+  feedback.modal.confirm({
     title: a.confirm.title ?? "Are you sure?",
     content: a.confirm.description,
     okText: a.confirm.okText ?? "OK",

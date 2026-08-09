@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Card, Switch, Typography, notification } from "antd";
+import { Card, Switch, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 
@@ -25,7 +26,7 @@ export const TenantDomainOptionsCard = () => {
           setDocroot(resp.data.tenant_docroot_editable !== false);
         }
       } catch {
-        if (!cancelled) notification.error({ message: "Failed to load tenant domain options setting" });
+        if (!cancelled) feedback.notification.error({ message: "Failed to load tenant domain options setting" });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -40,9 +41,9 @@ export const TenantDomainOptionsCard = () => {
     try {
       await apiClient.patch("/admin/settings", { tenant_domain_options_enabled: next });
       setEnabled(next);
-      notification.success({ message: next ? "Tenant domain options enabled" : "Tenant domain options disabled" });
+      feedback.notification.success({ message: next ? "Tenant domain options enabled" : "Tenant domain options disabled" });
     } catch {
-      notification.error({ message: "Failed to update setting" });
+      feedback.notification.error({ message: "Failed to update setting" });
     } finally {
       setSaving(false);
     }
@@ -53,9 +54,9 @@ export const TenantDomainOptionsCard = () => {
     try {
       await apiClient.patch("/admin/settings", { tenant_docroot_editable: next });
       setDocroot(next);
-      notification.success({ message: next ? "Tenant document-root editing enabled" : "Tenant document-root editing disabled" });
+      feedback.notification.success({ message: next ? "Tenant document-root editing enabled" : "Tenant document-root editing disabled" });
     } catch {
-      notification.error({ message: "Failed to update setting" });
+      feedback.notification.error({ message: "Failed to update setting" });
     } finally {
       setSavingDocroot(false);
     }

@@ -20,18 +20,8 @@ import {
   ExclamationCircleOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
-import {
-  Alert,
-  Button,
-  Card,
-  Modal,
-  Skeleton,
-  Space,
-  Switch,
-  Tag,
-  Typography,
-  message,
-} from "antd";
+import { Alert, Button, Card, Skeleton, Space, Switch, Tag, Typography, message } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
@@ -142,7 +132,7 @@ export function DatabasesCard() {
   };
 
   const handleUninstall = () => {
-    Modal.confirm({
+    feedback.modal.confirm({
       title: "Uninstall PostgreSQL?",
       icon: <ExclamationCircleOutlined />,
       content:

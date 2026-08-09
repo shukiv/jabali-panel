@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, notification, Spin, Table, Tag, Tooltip } from "antd";
+import { Alert, Spin, Table, Tag, Tooltip } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   CheckCircleOutlined,
   DeleteOutlined,
@@ -52,7 +53,7 @@ export const VersionsTab = () => {
       );
       setStatusData(response.data);
     } catch (error) {
-      notification.error({
+      feedback.notification.error({
         message: "Failed to fetch PHP versions",
         description: extractApiError(error, "Unknown error occurred"),
         duration: 5,
@@ -75,7 +76,7 @@ export const VersionsTab = () => {
       while (true) {
         await new Promise((r) => setTimeout(r, 5000));
         if (Date.now() > deadline) {
-          notification.warning({
+          feedback.notification.warning({
             message: `PHP ${version} is still installing`,
             description:
               "The install is taking longer than expected; it will continue in the background. Refresh to check.",
@@ -92,7 +93,7 @@ export const VersionsTab = () => {
         const v = st.data.versions.find((x) => x.version === version);
         if (v?.installed) {
           setStatusData(st.data);
-          notification.success({
+          feedback.notification.success({
             message: `PHP ${version} installed successfully`,
             duration: 3,
           });
@@ -100,7 +101,7 @@ export const VersionsTab = () => {
         }
       }
     } catch (error) {
-      notification.error({
+      feedback.notification.error({
         message: `Failed to install PHP ${version}`,
         description: extractApiError(error, "Installation failed"),
         duration: 5,
@@ -118,13 +119,13 @@ export const VersionsTab = () => {
       await apiClient.delete(`/admin/php/versions/${version}`, {
         timeout: 5 * 60 * 1000,
       });
-      notification.success({
+      feedback.notification.success({
         message: `PHP ${version} uninstalled`,
         duration: 3,
       });
       await fetchStatus();
     } catch (error) {
-      notification.error({
+      feedback.notification.error({
         message: `Failed to uninstall PHP ${version}`,
         description: extractApiError(error, "Uninstall failed"),
         duration: 5,
@@ -138,14 +139,14 @@ export const VersionsTab = () => {
     setReloadingVersion(version);
     try {
       await apiClient.post(`/admin/php/versions/${version}/reload`);
-      notification.success({
+      feedback.notification.success({
         message: `PHP ${version} reloaded successfully`,
         duration: 3,
       });
     } catch (error) {
       const errorMsg =
         error instanceof Error ? error.message : "Reload failed";
-      notification.error({
+      feedback.notification.error({
         message: `Failed to reload PHP ${version}`,
         description: errorMsg,
         duration: 5,
@@ -159,7 +160,7 @@ export const VersionsTab = () => {
     setSettingDefaultVersion(version);
     try {
       await apiClient.post(`/admin/php/versions/${version}/default`);
-      notification.success({
+      feedback.notification.success({
         message: `PHP ${version} is now the default`,
         duration: 3,
       });
@@ -169,7 +170,7 @@ export const VersionsTab = () => {
     } catch (error) {
       const errorMsg =
         error instanceof Error ? error.message : "Request failed";
-      notification.error({
+      feedback.notification.error({
         message: `Could not set PHP ${version} as default`,
         description: errorMsg,
         duration: 5,

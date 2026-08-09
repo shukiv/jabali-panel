@@ -5,19 +5,8 @@
 // client-side and provides password rotation, SSO mint, and delete actions.
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
-import {
-  Button,
-  Empty,
-  Form,
-  Modal,
-  Progress,
-  Skeleton,
-  Space,
-  Tag,
-  Tooltip,
-  Typography,
-  message,
-} from "antd";
+import { Button, Empty, Form, Modal, Progress, Skeleton, Space, Tag, Tooltip, Typography, message } from "antd";
+import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../../components/RowActions";
 import { SearchableTableStringQ } from "../../../../components/SearchableTable";
 import {
@@ -462,7 +451,7 @@ export const MailboxesTab = () => {
                     icon: <DeleteOutlined />,
                     danger: true,
                     onClick: () => {
-                      Modal.confirm({
+                      feedback.modal.confirm({
                         title: `Delete ${row.email}?`,
                         content: "All mail in this mailbox will be removed. This cannot be undone.",
                         okText: "Delete",

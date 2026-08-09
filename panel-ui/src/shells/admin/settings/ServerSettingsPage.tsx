@@ -17,29 +17,12 @@ import {
   AppstoreOutlined,
   ToolOutlined,
 } from "@icons";
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Divider,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Row,
-  Grid,
-  Select,
-  Space,
-  Switch,
-  Tabs,
-  Typography,
-  notification,
-} from "antd";
+import { Alert, Button, Card, Col, Divider, Form, Input, InputNumber, Row, Grid, Select, Space, Switch, Tabs, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 // Post-M21 notify shim: matches the Refine useNotification().open
 // contract (`{ type, message, description }`) so callers don't have
-// to change. Forwards to AntD's native `notification.open`.
+// to change. Forwards to AntD's native `feedback.notification.open`.
 type NotifyInput = {
   type?: "success" | "error" | "warning" | "info";
   message: string;
@@ -47,7 +30,7 @@ type NotifyInput = {
 };
 function useNotify() {
   return (input: NotifyInput) => {
-    notification.open({
+    feedback.notification.open({
       message: input.message,
       description: input.description,
       type: input.type,
@@ -940,7 +923,7 @@ const SSHSettingsTab = () => {
               currentSSHUserPasswordAuth !== originalSSHUserPasswordAuth;
 
             if (sshPortChanged || sshAuthChanged || sshUserAuthChanged) {
-              Modal.confirm({
+              feedback.modal.confirm({
                 title: "Confirm SSH Configuration Change",
                 content: (
                   <Alert

@@ -4,7 +4,8 @@
 // disabled page (or the tenant's docroot) as appropriate.
 import { useState } from "react";
 import { PauseCircleOutlined, PlayCircleOutlined } from "@icons";
-import { Button, notification } from "antd";
+import { Button } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";
@@ -26,13 +27,13 @@ export const DomainToggleButton = ({ domain }: { domain: DomainToggleTarget }) =
       await apiClient.patch(`/domains/${domain.id}`, {
         is_enabled: !domain.is_enabled,
       });
-      notification.success({
+      feedback.notification.success({
         message: domain.is_enabled ? "Domain disabled" : "Domain enabled",
       });
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
     } catch (err) {
-      notification.error({
+      feedback.notification.error({
         message: "Failed to toggle",
         description: (err as Error).message,
       });

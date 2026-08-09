@@ -1,26 +1,8 @@
 // M30.1 Schedules admin tab. Lists every backup_schedules row, drawer
 // for create/edit, multi-select destinations, "Run now" button.
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Drawer,
-  Form,
-  InputNumber,
-  Modal,
-  Radio,
-  Segmented,
-  Select,
-  Space,
-  Switch,
-  Table,
-  Tag,
-  TimePicker,
-  Tooltip,
-  Typography,
-  message,
-} from "antd";
+import { Alert, Button, Checkbox, Drawer, Form, InputNumber, Radio, Segmented, Select, Space, Switch, Table, Tag, TimePicker, Tooltip, Typography, message } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../components/RowActions";
 import { shortDateTime } from "../../../utils/datetime";
 import dayjs, { type Dayjs } from "dayjs";
@@ -502,7 +484,7 @@ export function SchedulesTab() {
   }, []);
 
   const handleDelete = async (row: BackupSchedule) => {
-    Modal.confirm({
+    feedback.modal.confirm({
       title: `Delete schedule?`,
       content: `Backups already produced by this schedule remain. Future runs will not fire.`,
       okType: "danger",

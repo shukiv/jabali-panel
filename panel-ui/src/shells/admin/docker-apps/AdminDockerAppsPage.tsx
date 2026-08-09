@@ -1,7 +1,8 @@
 // AdminDockerAppsPage — landing page for the M48 marketplace.
 // Two tabs: Catalog (browse + install) and Installed (lifecycle).
 import { useTranslation } from "react-i18next";
-import { Alert, App, Avatar, Button, Col, Drawer, Empty, Input, Modal, Row, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { Alert, App, Avatar, Button, Col, Drawer, Empty, Input, Row, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useTabParam } from "../../../hooks/useTabParam";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { humanBytes } from "../../../utils/bytes";
@@ -384,7 +385,7 @@ export const AdminDockerAppsPage = () => {
                     render: (_, r) => {
                       const running = r.status === "running";
                       const confirmDelete = () =>
-                        Modal.confirm({
+                        feedback.modal.confirm({
                           title: `Uninstall ${r.name}?`,
                           content: "Volumes will be purged. This cannot be undone.",
                           okText: "Uninstall",

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Card, Switch, Tag, Typography, notification } from "antd";
+import { Card, Switch, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 
@@ -19,7 +20,7 @@ export const Dkim2ToggleCard = () => {
         const resp = await apiClient.get<{ dkim2_signing_enabled?: boolean }>("/admin/settings");
         if (!cancelled) setEnabled(resp.data.dkim2_signing_enabled === true);
       } catch {
-        if (!cancelled) notification.error({ message: "Failed to load DKIM2 setting" });
+        if (!cancelled) feedback.notification.error({ message: "Failed to load DKIM2 setting" });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -34,14 +35,14 @@ export const Dkim2ToggleCard = () => {
     try {
       await apiClient.patch("/admin/settings", { dkim2_signing_enabled: next });
       setEnabled(next);
-      notification.success({
+      feedback.notification.success({
         message: next ? "DKIM2 signing enabled" : "DKIM2 signing disabled",
         description: next
           ? "Every mail domain gets a DKIM2 signature on the next reconcile — no DNS changes needed."
           : "DKIM2 signatures are being removed; classic DKIM keeps signing.",
       });
     } catch {
-      notification.error({ message: "Failed to update DKIM2 setting" });
+      feedback.notification.error({ message: "Failed to update DKIM2 setting" });
     } finally {
       setSaving(false);
     }

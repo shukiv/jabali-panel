@@ -8,20 +8,8 @@
 // sees `?flow=<id>` it fetches the flow and renders the Kratos node
 // tree inline inside the Security card — no extra page, no extra tab.
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Button,
-  Card,
-  Checkbox,
-  Descriptions,
-  Form,
-  Input,
-  Modal,
-  Space,
-  Spin,
-  Typography,
-  message,
-} from "antd";
+import { Alert, Button, Card, Checkbox, Descriptions, Form, Input, Space, Spin, Typography, message } from "antd";
+import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
@@ -381,7 +369,7 @@ function PasskeySettingsCard({
                   danger
                   size="small"
                   onClick={() =>
-                    Modal.confirm({
+                    feedback.modal.confirm({
                       title: "Remove this passkey?",
                       content:
                         "This device or key will no longer be able to sign you in. If it's your only passkey, make sure you still know your password.",
@@ -469,7 +457,7 @@ function WebauthnSettingsCard({
                   danger
                   size="small"
                   onClick={() =>
-                    Modal.confirm({
+                    feedback.modal.confirm({
                       title: "Remove this security key?",
                       content:
                         "This key will no longer work as your second factor. If it's your only 2FA method, you'll sign in with just your password until you add another.",
@@ -627,7 +615,7 @@ function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
                         onPress();
                         return;
                       }
-                      Modal.confirm({
+                      feedback.modal.confirm({
                         title: confirmTitle(f.name),
                         content: confirmBody(f.name),
                         okText: "Yes, disable",

@@ -3,28 +3,12 @@
 // typed-YES Modal gate.
 //
 // Conventions: Drawer (not Modal) for create per CONVENTIONS.md.
-// Tables consume <Table.Column> children. Modal.confirm stays for the
+// Tables consume <Table.Column> children. feedback.modal.confirm stays for the
 // enable/disable typed-YES gate — that's a destructive confirmation,
 // not a create form, so it's the right antd primitive.
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Button,
-  Card,
-  Drawer,
-  Empty,
-  Form,
-  Grid,
-  Input,
-  message,
-  Modal,
-  Popconfirm,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Drawer, Empty, Form, Grid, Input, message, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 
 import { DeleteOutlined } from "@icons";
@@ -110,7 +94,7 @@ export const AdminSecurityUfw = () => {
 
   const openToggleModal = (enable: boolean) => {
     let typed = "";
-    Modal.confirm({
+    feedback.modal.confirm({
       title: enable ? "Enable firewall" : "Disable firewall",
       content: (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>

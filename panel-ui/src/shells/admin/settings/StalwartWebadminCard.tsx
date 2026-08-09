@@ -4,6 +4,7 @@
 // this is the only door. Default off. Lives on the Server Settings → Email tab.
 import { useTranslation } from "react-i18next";
 import { App, Alert, Button, Card, Input, Modal, Space, Switch, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
@@ -65,7 +66,7 @@ export function StalwartWebadminCard() {
 
   const onToggle = (val: boolean) => {
     if (val) {
-      Modal.confirm({
+      feedback.modal.confirm({
         title: "Expose the Stalwart WebAdmin to the internet?",
         okText: "Enable",
         okButtonProps: { danger: true },
@@ -119,7 +120,7 @@ export function StalwartWebadminCard() {
   };
 
   const confirmRotateAdmin = () =>
-    Modal.confirm({
+    feedback.modal.confirm({
       title: "Rotate the Stalwart admin password?",
       okText: "Rotate",
       okButtonProps: { danger: true },

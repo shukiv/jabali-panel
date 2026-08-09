@@ -19,26 +19,8 @@ import { useTranslation } from "react-i18next";
 import type { ReactNode } from "react";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
-import {
-  Breadcrumb,
-  Button,
-  Card,
-  Drawer,
-  Dropdown,
-  Empty,
-  Grid,
-  Input,
-  Modal,
-  Space,
-  Spin,
-  Table,
-  Tag,
-  Tooltip,
-  Tree,
-  Typography,
-  message,
-  theme,
-} from "antd";
+import { Breadcrumb, Button, Card, Drawer, Dropdown, Empty, Grid, Input, Modal, Space, Spin, Table, Tag, Tooltip, Tree, Typography, message, theme } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import type { DataNode } from "antd/es/tree";
 import {
   DeleteOutlined,
@@ -590,7 +572,7 @@ export const FileManagerPage = () => {
   };
 
   const confirmDelete = (entry: FileEntry) => {
-    Modal.confirm({
+    feedback.modal.confirm({
       title: `Delete "${entry.name}"?`,
       content: entry.is_dir ? "Folder and everything inside will be removed." : undefined,
       okText: "Delete",
@@ -818,7 +800,7 @@ export const FileManagerPage = () => {
   const handleBulkDelete = useCallback(() => {
     if (selectedPaths.length === 0) return;
     const anyDir = selectedEntries.some((e) => e.is_dir);
-    Modal.confirm({
+    feedback.modal.confirm({
       title: `Delete ${selectedPaths.length} item${selectedPaths.length === 1 ? "" : "s"}?`,
       content: anyDir
         ? "Folders will be removed with everything inside them. This cannot be undone."

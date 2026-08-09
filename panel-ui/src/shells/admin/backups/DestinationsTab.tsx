@@ -8,24 +8,8 @@
 // "Generate new key" inline action that calls the same endpoint with
 // POST.
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Button,
-  Drawer,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Radio,
-  Select,
-  Space,
-  Switch,
-  Table,
-  Tag,
-  Typography,
-  message,
-  notification,
-} from "antd";
+import { Alert, Button, Drawer, Form, Input, InputNumber, Modal, Radio, Select, Space, Switch, Table, Tag, Typography, message } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../components/RowActions";
 import {
   CheckCircleOutlined,
@@ -228,7 +212,7 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
             resp.data.detail ? `Saved + tested OK — ${resp.data.detail}` : "Saved + tested OK",
           );
         } catch (testErr) {
-          notification.error({
+          feedback.notification.error({
             message: editing ? "Saved, but test failed" : "Created, but test failed",
             description: extractApiError(testErr, "Test failed"),
             duration: 0,
@@ -606,7 +590,7 @@ export function DestinationsTab() {
   }, []);
 
   const handleDelete = async (row: BackupDestination) => {
-    Modal.confirm({
+    feedback.modal.confirm({
       title: `Delete destination "${row.name}"?`,
       content:
         "Existing backups copied to this destination remain on the remote (panel does not " +
@@ -626,7 +610,7 @@ export function DestinationsTab() {
   };
 
   const handleRotatePassword = async (row: BackupDestination) => {
-    Modal.confirm({
+    feedback.modal.confirm({
       title: `Rotate restic password for "${row.name}"?`,
       content: (
         <div>
@@ -652,7 +636,7 @@ export function DestinationsTab() {
             password: string;
             password_rotated_at: string;
           }>(`/admin/backup-destinations/${row.id}/rotate-password`, {});
-          Modal.info({
+          feedback.modal.info({
             title: `New restic password — ${row.name}`,
             width: 560,
             content: (

@@ -3,7 +3,8 @@
 // `index ...;` directives; see indexDirectiveFor() in the agent.
 import { useEffect, useState } from "react";
 import { FileTextOutlined, CheckOutlined } from "@icons";
-import { Button, Modal, Radio, Typography, notification } from "antd";
+import { Button, Modal, Radio, Typography } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";
@@ -71,7 +72,7 @@ export const DomainIndexButton = ({
       await apiClient.patch(`/domains/${domain.id}`, {
         index_priority: value,
       });
-      notification.success({ message: "Index priority saved" });
+      feedback.notification.success({ message: "Index priority saved" });
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
       handleClose();
@@ -80,7 +81,7 @@ export const DomainIndexButton = ({
         response?: { data?: { detail?: string } };
         message?: string;
       };
-      notification.error({
+      feedback.notification.error({
         message: "Failed to save",
         description: e.response?.data?.detail ?? e.message ?? "Unknown error",
       });

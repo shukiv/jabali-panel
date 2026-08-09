@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Card, Switch, Typography, notification } from "antd";
+import { Card, Switch, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 
@@ -20,7 +21,7 @@ export const WebmailToggleCard = () => {
         const resp = await apiClient.get<{ webmail_enabled?: boolean }>("/admin/settings");
         if (!cancelled) setEnabled(resp.data.webmail_enabled !== false);
       } catch {
-        if (!cancelled) notification.error({ message: "Failed to load webmail setting" });
+        if (!cancelled) feedback.notification.error({ message: "Failed to load webmail setting" });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -35,14 +36,14 @@ export const WebmailToggleCard = () => {
     try {
       await apiClient.patch("/admin/settings", { webmail_enabled: next });
       setEnabled(next);
-      notification.success({
+      feedback.notification.success({
         message: next ? "Webmail enabled" : "Webmail disabled",
         description: next
           ? "The webmail vhosts will be (re)served on the next reconcile."
           : "Webmail vhosts are being torn down and the webmail service stopped.",
       });
     } catch {
-      notification.error({ message: "Failed to update webmail setting" });
+      feedback.notification.error({ message: "Failed to update webmail setting" });
     } finally {
       setSaving(false);
     }

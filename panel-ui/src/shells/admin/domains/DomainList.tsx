@@ -3,7 +3,8 @@
 // "..." overflow with Info/Redirects/Index/Settings/Caching/Toggle/Delete.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Button, Card, Dropdown, Modal, Space, Table, Tag, Tooltip, Typography, notification } from "antd";
+import { Button, Card, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   DeleteOutlined,
   MoreOutlined,
@@ -211,11 +212,11 @@ export const DomainList = () => {
     setTogglingId(r.id);
     try {
       await apiClient.patch(`/domains/${r.id}`, { is_enabled: !r.is_enabled });
-      notification.success({ message: r.is_enabled ? "Domain disabled" : "Domain enabled" });
+      feedback.notification.success({ message: r.is_enabled ? "Domain disabled" : "Domain enabled" });
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", r.id] });
     } catch (err) {
-      notification.error({ message: "Failed to toggle", description: (err as Error).message });
+      feedback.notification.error({ message: "Failed to toggle", description: (err as Error).message });
     } finally {
       setTogglingId(null);
     }
@@ -447,7 +448,7 @@ export const DomainList = () => {
                               label: "Delete",
                               danger: true,
                               onClick: () =>
-                                Modal.confirm({
+                                feedback.modal.confirm({
                                   title: `Delete domain "${r.name}"?`,
                                   okText: "Delete",
                                   okButtonProps: { danger: true },
