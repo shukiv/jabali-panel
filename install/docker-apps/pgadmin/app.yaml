@@ -1,0 +1,56 @@
+slug: pgadmin
+popularity: 40
+name: pgAdmin
+tags: ["Developer tools", "Database"]
+version: "9.17"
+description: |
+  Web-based administration and management tool for PostgreSQL. Browse
+  schemas, run queries, manage roles and backups from the browser. Admin
+  tool — install it server-level and point it at your PostgreSQL servers
+  (credentials are entered in pgAdmin, not passed automatically).
+icon: icon.svg
+upstream: https://www.pgadmin.org/
+documentation: https://www.pgadmin.org/docs/
+
+image_channel: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
+update_mode: manual
+
+# pgAdmin runs as the unprivileged "pgadmin" user (uid/gid 5050) and reads
+# its SQLite config store from the bind-mounted volume on first launch; the
+# agent chowns the volume dir to 5050 so it doesn't crash-loop on EACCES.
+volume_owner: "5050:5050"
+
+resources:
+  cpu: "0.5"
+  memory: "512m"
+  pids: 200
+
+volumes:
+  - name: data
+    container_path: /var/lib/pgadmin
+
+ports:
+  - name: http
+    container_port: 8080
+    protocol: tcp
+    default_enabled: true
+    default_bind: loopback
+    default_reverse_proxy: true
+    health_path: /misc/ping
+
+env:
+  # Login for the pgAdmin web UI. Override the email at install time; the
+  # password is auto-generated and stored in the app's .env (0600), masked
+  # in the panel.
+  - name: PGADMIN_DEFAULT_EMAIL
+    value: "admin@example.com"
+  - name: PGADMIN_DEFAULT_PASSWORD
+    secret: true
+    generate: password32
+
+post_install_note: |
+  Open https://{{domain}} and sign in with PGADMIN_DEFAULT_EMAIL (default
+  admin@example.com) and the generated password (see this app's env). Then
+  add a server connection: for a PostgreSQL container on this host use the
+  "host.docker.internal" hostname; enter the database credentials yourself
+  (pgAdmin does not receive them from the panel).
