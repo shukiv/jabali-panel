@@ -259,26 +259,34 @@ export const UserDatabaseList = () => {
               const isLoading = loadingPhpMyAdminId === r.id;
               const isAdminerLoading = loadingAdminerId === r.id;
 
+              const pmaAction = {
+                key: "pma",
+                label: "Open in phpMyAdmin",
+                icon: <LinkOutlined />,
+                onClick: () => handleOpenPhpMyAdmin(r),
+                disabled: isPostgres || isLoading,
+                loading: isLoading,
+                tooltip: isPostgres ? "phpMyAdmin supports MySQL/MariaDB only" : undefined,
+              };
+              const adminerAction = {
+                key: "adminer",
+                label: "Open in Adminer",
+                icon: <LinkOutlined />,
+                onClick: () => handleOpenAdminer(r),
+                disabled: isAdminerLoading,
+                loading: isAdminerLoading,
+              };
+              // Adminer is the native admin tool for Postgres (phpMyAdmin
+              // is MariaDB-only and shows disabled), so lead with it there;
+              // MariaDB keeps phpMyAdmin first. (GH #1005)
+              const dbTools = isPostgres
+                ? [adminerAction, pmaAction]
+                : [pmaAction, adminerAction];
+
               return (
                 <RowActions
                   actions={[
-                    {
-                      key: "pma",
-                      label: "Open in phpMyAdmin",
-                      icon: <LinkOutlined />,
-                      onClick: () => handleOpenPhpMyAdmin(r),
-                      disabled: isPostgres || isLoading,
-                      loading: isLoading,
-                      tooltip: isPostgres ? "phpMyAdmin supports MySQL/MariaDB only" : undefined,
-                    },
-                    {
-                      key: "adminer",
-                      label: "Open in Adminer",
-                      icon: <LinkOutlined />,
-                      onClick: () => handleOpenAdminer(r),
-                      disabled: isAdminerLoading,
-                      loading: isAdminerLoading,
-                    },
+                    ...dbTools,
                     {
                       key: "delete",
                       label: "Delete",
