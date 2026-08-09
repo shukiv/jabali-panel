@@ -270,6 +270,18 @@ func repairSteps() []repairStep {
 			fix: nil,
 		},
 		{
+			// GH #889/#953: a crash-looping per-user PHP-FPM master 500/502s
+			// every site it serves. Name the cause here instead of asking each
+			// reporter to paste `journalctl -u jabali-fpm@<user>`.
+			id:     "fpm-masters-down",
+			label:  "a per-user PHP-FPM master is crash-looping (sites 500/502 with missing fpm.sock)",
+			detect: detectFPMMastersDown,
+			// Detect-only: the cause is a bad extension / php.ini / AppArmor
+			// deny / Snuffleupagus rule; a blind restart won't clear it and
+			// would mask the real problem. The reason string points at it.
+			fix: nil,
+		},
+		{
 			id:          "git-pointer",
 			label:       "/opt/jabali-panel/.git is a corrupted worktree pointer",
 			destructive: true,

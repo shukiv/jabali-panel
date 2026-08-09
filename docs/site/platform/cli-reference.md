@@ -4581,6 +4581,7 @@ jabali repair [flags]
 - `--dirty-migration` — Fix only: database schema is dirty — panel-api cannot start
 - `--docroot-www-data-group` — Fix only: web docroot files not group www-data / dirs not setgid (nginx 403 on newly uploaded media)
 - `--etc-jabali-perms` — Fix only: /etc/jabali not traversable by hosting users (SSH/SFTP locked out — sandbox-mode unreadable)
+- `--fpm-masters-down` — Fix only: a per-user PHP-FPM master is crash-looping (sites 500/502 with missing fpm.sock)
 - `--git-ownership` — Fix only: /opt/jabali-panel/.git owned by wrong user
 - `--git-pointer` — Fix only: /opt/jabali-panel/.git is a corrupted worktree pointer
 - `--git-stale-worktrees` — Fix only: /opt/jabali-panel/.git/worktrees has stale entries
