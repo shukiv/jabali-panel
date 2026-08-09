@@ -451,7 +451,12 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			AdminFirst:    paramOr(k.Params, "admin_first_name", "Admin"),
 			AdminLast:     paramOr(k.Params, "admin_last_name", "User"),
 			AdminEmail:    k.AdminEmail,
-			AdminUsername: paramOr(k.Params, "admin_username", "sysadmin"),
+			// k.AdminUsername is the stored install credential (generated
+			// server-side, or the operator's admin_username param — the
+			// service already folded that in). Re-deriving from Params here
+			// seeded "sysadmin" while the UI showed the generated name, so
+			// the displayed login never worked (JAB-231 E2E).
+			AdminUsername: k.AdminUsername,
 			AdminPass:     ostPass,
 		}, deps)
 		adminPassword = ostPass

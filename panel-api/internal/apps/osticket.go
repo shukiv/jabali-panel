@@ -66,9 +66,12 @@ var OSTicket = App{
 		"admin_username": {
 			Type:     "string",
 			Required: false,
-			Default:  "sysadmin",
+			Pattern:  &adminUsernamePattern,
+			// No default: blank means the service's generated username is
+			// used AND stored — a "sysadmin" default here diverged from the
+			// generated credential the UI displays (JAB-231 E2E).
 			// osTicket bans admin/admins/username/osticket as the login name.
-			Description: "Administrator login username for the agent panel (/scp). Cannot be 'admin', 'admins', 'username' or 'osticket'.",
+			Description: "Administrator login username for the agent panel (/scp). Leave blank for a random one. Cannot be 'admin', 'admins', 'username' or 'osticket'.",
 		},
 		"admin_password": {
 			Type:        "password",
