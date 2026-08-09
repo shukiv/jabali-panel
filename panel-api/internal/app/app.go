@@ -1215,6 +1215,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			}
 			api.RegisterApplicationRoutes(v1, appCfg)
 
+			// GH #1016: per-tenant Redis credentials (reuses appCfg's Redis +
+			// cache-token secret/salts + Users).
+			api.RegisterRedisAccessRoutes(v1, appCfg)
+
 			// Log access routes (M13)
 			if deps.LogAccessStreams != nil && deps.Domains != nil && deps.Users != nil {
 				api.RegisterLogRoutes(v1, api.LogHandlerConfig{

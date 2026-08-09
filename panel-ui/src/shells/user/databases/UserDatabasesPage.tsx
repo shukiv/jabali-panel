@@ -5,10 +5,12 @@
 // scoped to its own username prefix.
 import { UserDatabaseList } from "./UserDatabaseList";
 import { UserDatabaseUsersList } from "../database-users/UserDatabaseUsersList";
+import { RedisAccessCard } from "./RedisAccessCard";
 
 export const UserDatabasesPage = () => (
   <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
     <UserDatabaseList />
     <UserDatabaseUsersList />
+    <RedisAccessCard />
   </div>
 );

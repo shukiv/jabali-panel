@@ -123,6 +123,10 @@ func revokeAllUserCacheACLs(ctx context.Context, rdb *redis.Client, osUser strin
 		return nil
 	}
 	_ = rdb.Do(ctx, "ACL", "DELUSER", "wp_"+osUser).Err() // legacy shared user
+	// GH #1016: the general per-tenant Redis credential (t_<osUser>) shares this
+	// tenant's OS user, so tear it down on the same delete path — a recycled
+	// username must not inherit the old principal + keyspace.
+	_ = rdb.Do(ctx, "ACL", "DELUSER", tenantRedisACLUser(osUser)).Err()
 	lines, err := rdb.Do(ctx, "ACL", "LIST").StringSlice()
 	if err != nil {
 		return err

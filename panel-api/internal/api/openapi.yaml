@@ -3453,6 +3453,20 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/redis-access:
+    get:
+      tags: [Me]
+      summary: Get your Redis access credentials
+      description: |
+        Returns a ready-to-use, scoped Redis credential for the calling
+        tenant (GH #1016): unix socket path, ACL username `t_<osuser>`,
+        password, and the key prefix `jt:<osuser>:` your keys must use. The
+        credential can only read/write keys under that prefix; keyspace-scan
+        and admin commands are denied. Provisioned on first request
+        (idempotent). Redis has no TCP listener — socket only.
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/php-cli-version:
     get:
       tags: [Me]
@@ -5219,6 +5233,17 @@ paths:
       responses:
         "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
         "422": { description: Validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /users/{id}/redis-access:
+    get:
+      tags: [Users]
+      summary: Get a tenant's Redis access credentials (admin)
+      description: |
+        Admin view of a specific tenant's scoped Redis credential (GH #1016).
+        Same payload as /me/redis-access. Admin only.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
 
   /users/{id}:
     delete:
