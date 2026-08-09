@@ -171,9 +171,18 @@ func classifyRepoProbe(lowerStderr string) repoProbeClass {
 // `restic init` if the repo doesn't exist yet. Idempotent — succeeds
 // on already-initialized repos. Local destinations get the parent dir
 // created if missing; failures bubble up.
-func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind string, sftp *backupSFTPInputs) error {
+func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, passwordFile string, sftp *backupSFTPInputs) error {
 	if repoURL == "" {
 		return nil
+	}
+	// A destination with its own sealed password (M30.2.x) must be probed
+	// AND initialised with THAT password. Probing with the legacy shared
+	// file made a rotated destination look unopenable — and once the
+	// reconciler purges the legacy file (all destinations migrated), this
+	// probe hard-failed before any stage could run.
+	pwFile := passwordFile
+	if pwFile == "" {
+		pwFile = backup.DefaultPasswordFile
 	}
 	var extraEnv []string
 	if credentialsRef != "" {
@@ -183,7 +192,7 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind st
 		}
 		extraEnv = env
 	}
-	_, snapStderr, snapErr := backup.SnapshotsRemote(ctx, nil, repoURL, backup.DefaultPasswordFile, extraEnv, bkResticOptions(sftp))
+	_, snapStderr, snapErr := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
 	if snapErr == nil {
 		return nil
 	}
@@ -217,7 +226,10 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind st
 			return fmt.Errorf("ssh mkdir: %w", err)
 		}
 	}
-	_, initStderr, initErr := backup.InitRemote(ctx, nil, repoURL, backup.DefaultPasswordFile, extraEnv, bkResticOptions(sftp))
+	// Init with the SAME password the probe used: a fresh repo for a
+	// destination that carries its own sealed password must be created under
+	// that password, or every later open fails.
+	_, initStderr, initErr := backup.InitRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
 	if initErr != nil {
 		ls := strings.ToLower(strings.TrimSpace(string(initStderr)))
 		if strings.Contains(ls, "already initialized") ||

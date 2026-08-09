@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,8 +60,21 @@ func isFPMAlreadyInstalled(version string) bool {
 // phpRequiredExts are the extension packages every supported one-click app
 // (WordPress, Drupal, Joomla, MediaWiki) and most migrated sites need. mysql
 // provides mysqli + pdo_mysql; a version installed without it 500s on every
-// mysqli_connect() (GH #531).
-var phpRequiredExts = []string{"mysql", "mbstring", "zip", "gd", "curl", "xml"}
+// mysqli_connect() (GH #531). intl is required too: idn_to_ascii backs IDN
+// handling in commercial panels (WiseCP) and Laravel/Symfony apps, and every
+// sury build 7.4–8.5 ships php<v>-intl.
+//
+// Keep this list and phpOptionalExts in sync with install.sh's
+// install_base_packages + provision_php_extensions — install.sh converges the
+// fleet on `jabali update`; these lists close the gap for versions added via
+// the panel between updates.
+var phpRequiredExts = []string{"mysql", "mbstring", "zip", "gd", "curl", "xml", "intl"}
+
+// phpOptionalExts are installed when the apt archive for the version has them,
+// and skipped otherwise (packaging drifts between sury versions — 8.5 folds
+// opcache into -common). redis + igbinary back WordPress object caching
+// (GH #606); sqlite3 backs restored Nextcloud instances (JAB-39).
+var phpOptionalExts = []string{"bcmath", "opcache", "redis", "igbinary", "sqlite3"}
 
 // isPkgInstalled reports whether a dpkg package is installed and fully
 // configured. Used to backfill only the missing required extensions instead of
@@ -73,36 +87,85 @@ func isPkgInstalled(pkg string) bool {
 	return strings.Contains(string(out), "install ok installed")
 }
 
-// ensureRequiredPHPExts installs any mandatory extension package (php<v>-mysql
-// etc.) that is missing for an ALREADY-installed version. isFPMAlreadyInstalled
+// ensureRequiredPHPExts installs any extension package (php<v>-mysql etc.)
+// that is missing for an ALREADY-installed version. isFPMAlreadyInstalled
 // only checks for php<v> on PATH, so a version pulled in as a dependency,
 // apt-installed by hand without -mysql, or left partial by an interrupted
 // install can satisfy that check yet still lack mysqli — and a migrated domain
 // binding to its pool then 500s (GH #531). dpkg-checks each package first so a
 // complete version is a no-op (no apt invocation).
+//
+// Required extensions failing to install fails the call; optional ones only
+// log. When anything was installed, tenant FPM masters pinned to the version
+// are reloaded so the running runtime actually gains the extension.
+// Seams for ensureRequiredPHPExts tests — the function's batching and
+// failure semantics matter (a flaky optional package must never fail the
+// call) and the real implementations shell out to dpkg/apt/systemctl.
+var (
+	isPkgInstalledFunc        = isPkgInstalled
+	probePackageFunc          = probePackage
+	installPackagesFunc       = installPackages
+	reloadVersionFPMUnitsFunc = reloadVersionFPMUnits
+)
+
 func ensureRequiredPHPExts(ctx context.Context, version string) error {
-	var missing []string
-	for _, ext := range phpRequiredExts {
-		pkg := fmt.Sprintf("php%s-%s", version, ext)
-		if isPkgInstalled(pkg) {
-			continue
+	missingPkgs := func(exts []string) []string {
+		var missing []string
+		for _, ext := range exts {
+			pkg := fmt.Sprintf("php%s-%s", version, ext)
+			if isPkgInstalledFunc(pkg) {
+				continue
+			}
+			if !probePackageFunc(pkg) {
+				continue // not in apt sources for this version — mirror base-install skip
+			}
+			missing = append(missing, pkg)
 		}
-		if !probePackage(pkg) {
-			continue // not in apt sources for this version — mirror base-install skip
-		}
-		missing = append(missing, pkg)
+		return missing
 	}
-	if len(missing) == 0 {
+
+	install := func(pkgs []string) error {
+		done := make(chan error, 1)
+		go func() { done <- installPackagesFunc(pkgs) }()
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout installing %v", pkgs)
+		case err := <-done:
+			return err
+		}
+	}
+
+	required := missingPkgs(phpRequiredExts)
+	optional := missingPkgs(phpOptionalExts)
+	if len(required) == 0 && len(optional) == 0 {
 		return nil
 	}
-	done := make(chan error, 1)
-	go func() { done <- installPackages(missing) }()
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("timeout installing %v", missing)
-	case err := <-done:
-		return err
+
+	// Required and optional install separately so a flaky optional package
+	// (redis, sqlite3, …) can never fail the call for a version whose required
+	// runtime is intact.
+	if len(required) > 0 {
+		if err := install(required); err != nil {
+			return err
+		}
 	}
+	if len(optional) > 0 {
+		if err := install(optional); err != nil {
+			slog.Warn("optional PHP extensions failed to install", "version", version, "err", err)
+			optional = nil
+		}
+	}
+
+	// The dpkg postinst enables the new inis, but tenant masters already
+	// running on this version keep the old runtime until reloaded. Best-effort:
+	// a master that fails reload is a unit problem, not an extension problem.
+	if len(required) > 0 || len(optional) > 0 {
+		if _, failures := reloadVersionFPMUnitsFunc(ctx, version); len(failures) > 0 {
+			slog.Warn("FPM reload after extension backfill failed for some units",
+				"version", version, "failures", strings.Join(failures, "; "))
+		}
+	}
+	return nil
 }
 
 // ensureRequiredPHPExtsFunc is a seam for tests.
@@ -291,12 +354,12 @@ func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
-	// Build package list. mysql + mbstring + xml + curl + gd + zip are
-	// mandatory: every supported one-click app (WordPress, Drupal,
-	// Joomla, MediaWiki) refuses to install without them, and the
-	// operator sees an opaque "missing MySQL extension" error months
-	// later instead of a clear failure here. intl/bcmath/opcache are
-	// optional (nice-to-have, distros sometimes bundle into -common).
+	// Build package list. phpRequiredExts are mandatory: every supported
+	// one-click app (WordPress, Drupal, Joomla, MediaWiki) refuses to
+	// install without them, and the operator sees an opaque "missing
+	// MySQL extension" error months later instead of a clear failure
+	// here. phpOptionalExts are probed per version (distros sometimes
+	// bundle them into -common).
 	required := []string{
 		fmt.Sprintf("php%s-fpm", p.Version),
 		fmt.Sprintf("php%s-cli", p.Version),
@@ -320,9 +383,8 @@ func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
-	optionalNames := []string{"intl", "bcmath", "opcache"}
 	var optional []string
-	for _, ext := range optionalNames {
+	for _, ext := range phpOptionalExts {
 		pkg := fmt.Sprintf("php%s-%s", p.Version, ext)
 		if probePackage(pkg) {
 			optional = append(optional, pkg)

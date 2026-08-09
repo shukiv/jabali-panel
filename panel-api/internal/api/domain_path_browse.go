@@ -49,8 +49,12 @@ type domainBrowseEntry struct {
 
 type domainBrowseResult struct {
 	DocRoot string              `json:"doc_root"`
-	Path    string              `json:"path"`     // canonical relative path (no trailing /)
-	AbsPath string              `json:"abs_path"` // server-side absolute (for debugging)
+	Path string `json:"path"` // canonical relative path (no trailing /)
+	// NOTE: the server-side absolute path is deliberately NOT returned. It
+	// leaks /home/<linux-user>/..., i.e. the tenant's Linux username, which
+	// is useful pre-recon for SSH/password attacks against that account.
+	// Auth and containment here are correct; this was pure over-disclosure.
+	// It stays available server-side for logs.
 	Entries []domainBrowseEntry `json:"entries"`
 }
 
@@ -108,7 +112,6 @@ func (h *domainPathBrowseHandler) browse(c *gin.Context) {
 	out := domainBrowseResult{
 		DocRoot: dom.DocRoot,
 		Path:    rel,
-		AbsPath: abs,
 		Entries: make([]domainBrowseEntry, 0, len(agentResp.Entries)),
 	}
 	for _, e := range agentResp.Entries {

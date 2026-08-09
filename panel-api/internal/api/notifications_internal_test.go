@@ -44,7 +44,10 @@ func TestInternalEnqueue_Happy(t *testing.T) {
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/notifications/enqueue", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.RemoteAddr = "127.0.0.1:1234"
+	// Internal routes are called by the agent over the unix socket in
+	// production; "@" is what net/http sets for a unix peer. Loopback TCP is
+	// no longer trusted by default (see RequireLocalhost).
+	req.RemoteAddr = "@"
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -65,7 +68,10 @@ func TestInternalEnqueue_MissingQueueReturns503(t *testing.T) {
 	r := newTestRouter(t, nil)
 	body, _ := json.Marshal(map[string]any{"event_kind": "service.down", "severity": "error", "title": "t"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/notifications/enqueue", bytes.NewReader(body))
-	req.RemoteAddr = "127.0.0.1:1234"
+	// Internal routes are called by the agent over the unix socket in
+	// production; "@" is what net/http sets for a unix peer. Loopback TCP is
+	// no longer trusted by default (see RequireLocalhost).
+	req.RemoteAddr = "@"
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
@@ -77,7 +83,10 @@ func TestInternalEnqueue_BadEventKind(t *testing.T) {
 	r := newTestRouter(t, q)
 	body, _ := json.Marshal(map[string]any{"event_kind": "nope", "severity": "error", "title": "t"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/notifications/enqueue", bytes.NewReader(body))
-	req.RemoteAddr = "127.0.0.1:1234"
+	// Internal routes are called by the agent over the unix socket in
+	// production; "@" is what net/http sets for a unix peer. Loopback TCP is
+	// no longer trusted by default (see RequireLocalhost).
+	req.RemoteAddr = "@"
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
@@ -105,7 +114,10 @@ func TestInternalEnqueue_TitleTooLong(t *testing.T) {
 	}
 	body, _ := json.Marshal(map[string]any{"event_kind": "service.down", "severity": "error", "title": string(title)})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/notifications/enqueue", bytes.NewReader(body))
-	req.RemoteAddr = "127.0.0.1:1234"
+	// Internal routes are called by the agent over the unix socket in
+	// production; "@" is what net/http sets for a unix peer. Loopback TCP is
+	// no longer trusted by default (see RequireLocalhost).
+	req.RemoteAddr = "@"
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)

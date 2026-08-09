@@ -41,6 +41,60 @@ func WithDestPasswordFile(
 	ssoKey *ssokey.Key,
 	fn func(passwordFile string) error,
 ) error {
+	return withDestPasswordFile(ctx, dest, agentClient, ssoKey, true, fn)
+}
+
+// WithDestPasswordFileAsync is WithDestPasswordFile for agent calls that
+// return BEFORE the work needing the password has finished — today that
+// means backup.create, which spawns its orchestrator goroutine (up to 90
+// minutes) and replies immediately.
+//
+// It does NOT unlink the tempfile when fn returns: doing so removed the
+// password seconds into a long job, so every stage and the manifest
+// snapshot failed to open a per-destination repo. Ownership passes to the
+// agent, whose orchestrator unlinks the file when the job actually ends
+// (removePasswordTempFile in backup_create.go). /run is tmpfs and the
+// agent's RuntimeDirectory is preserved=no, so even a crashed job leaks
+// nothing past reboot.
+//
+// Use WithDestPasswordFile for synchronous calls (restore, status,
+// materialize) — there the deferred cleanup is correct and tighter.
+func WithDestPasswordFileAsync(
+	ctx context.Context,
+	dest *models.BackupDestination,
+	agentClient agent.AgentInterface,
+	ssoKey *ssokey.Key,
+	fn func(passwordFile string) error,
+) error {
+	return withDestPasswordFile(ctx, dest, agentClient, ssoKey, false, fn)
+}
+
+// WithOptionalDestPassword is WithDestPasswordFile for callers that may not
+// have a destination at all (a legacy job with NULL destination_id) or that
+// run without an SSO key. Those cases invoke fn("") — the agent then falls
+// back to the shared password file — instead of erroring, so a caller can
+// wrap unconditionally without repeating the nil dance.
+func WithOptionalDestPassword(
+	ctx context.Context,
+	dest *models.BackupDestination,
+	agentClient agent.AgentInterface,
+	ssoKey *ssokey.Key,
+	fn func(passwordFile string) error,
+) error {
+	if dest == nil || len(dest.PasswordEnc) == 0 || ssoKey == nil || agentClient == nil {
+		return fn("")
+	}
+	return WithDestPasswordFile(ctx, dest, agentClient, ssoKey, fn)
+}
+
+func withDestPasswordFile(
+	ctx context.Context,
+	dest *models.BackupDestination,
+	agentClient agent.AgentInterface,
+	ssoKey *ssokey.Key,
+	cleanup bool,
+	fn func(passwordFile string) error,
+) error {
 	if dest == nil {
 		return errors.New("dest required")
 	}
@@ -70,14 +124,16 @@ func WithDestPasswordFile(
 	if err := json.Unmarshal(raw, &resp); err != nil || resp.Path == "" {
 		return fmt.Errorf("agent write_temp: bad response %s", string(raw))
 	}
-	defer func() {
-		// Best-effort cleanup. Path-prefix check on the agent side
-		// keeps a misbehaving caller from asking it to unlink anything
-		// outside /run/jabali/restic-pw/, so the worst case here is a
-		// stale tmpfs file that vanishes on reboot.
-		_, _ = agentClient.Call(context.Background(),
-			"backup.repo.password.cleanup_temp",
-			map[string]any{"path": resp.Path})
-	}()
+	if cleanup {
+		defer func() {
+			// Best-effort cleanup. Path-prefix check on the agent side
+			// keeps a misbehaving caller from asking it to unlink anything
+			// outside /run/jabali/restic-pw/, so the worst case here is a
+			// stale tmpfs file that vanishes on reboot.
+			_, _ = agentClient.Call(context.Background(),
+				"backup.repo.password.cleanup_temp",
+				map[string]any{"path": resp.Path})
+		}()
+	}
 	return fn(resp.Path)
 }

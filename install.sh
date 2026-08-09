@@ -138,6 +138,17 @@ REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 # 9.9.9.9 via UDP.
 DNS_FORWARDER="${JABALI_DNS_FORWARDER:-}"
 GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
+# SHA-256 of the pinned Go tarballs, from https://go.dev/dl/?mode=json.
+# Pinned HERE rather than in install/ because install_go runs BEFORE
+# clone_or_update_repo — on a fresh install $REPO_DIR does not exist yet, so a
+# pin under install/ could never be read (and the ordering guard test would
+# rightly flag the attempt). install.sh itself is the bootstrap artifact and is
+# sha256-verified by bootstrap.sh, so a pin here carries the same weight.
+# Bump together with GO_VERSION. An unpinned version (JABALI_GO_VERSION
+# override, or the CDN-gap fallback) verifies against go.dev's published
+# checksum instead — see install_go.
+GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053}"
+GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
@@ -1107,6 +1118,14 @@ jh_free_hostname_flow() {
   done
   fqdn="$(jh_field "$body" fqdn)"; label="$(jh_field "$body" label)"; token="$(jh_field "$body" token)"
   [[ -z "$fqdn" || -z "$token" ]] && { echo "  malformed claim response — using a manual hostname" >&2; return 1; }
+  # Validate every field before it lands in hostname.env. The readers no longer
+  # `source` that file, but this is the boundary where remote data enters the
+  # box, and a value carrying shell metacharacters or a newline could still
+  # break or spoof a later parse. Reject rather than sanitize so a
+  # compromised/MITM'd service can't smuggle anything through.
+  [[ "$token" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "  claim response token has an unexpected format — using a manual hostname" >&2; return 1; }
+  [[ "$label" =~ ^[A-Za-z0-9-]+$ ]]  || { echo "  claim response label has an unexpected format — using a manual hostname" >&2; return 1; }
+  [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || { echo "  email has an unexpected format — using a manual hostname" >&2; return 1; }
   umask 077
   {
     printf 'LABEL=%s\nFQDN=%s\nEMAIL=%s\nTOKEN=%s\nAPI=%s\n' "$label" "$fqdn" "$email" "$token" "$JH_API"
@@ -1826,10 +1845,29 @@ EARLYDNS
     local _composer_tmp
     _composer_tmp="$(mktemp)"
     if curl -fsSL -o "$_composer_tmp" https://getcomposer.org/installer; then
-      "php${primary_version}" "$_composer_tmp" \
-        --install-dir=/usr/local/bin --filename=composer --quiet
-      rm -f "$_composer_tmp"
-      _ok "composer installed at /usr/local/bin/composer"
+      # Verify the installer's SHA-384 before executing it as root — this is
+      # Composer's own documented procedure, and without it a MITM or a
+      # compromise of getcomposer.org is immediate root code execution during
+      # install/update. The signature is served from composer.github.io, a
+      # DIFFERENT host than the installer, so an attacker has to compromise
+      # both for the check to pass. Not pinned in-repo on purpose: the
+      # installer is rebuilt upstream regularly and a stale pin would fail
+      # every install.
+      local _composer_sig _composer_sum
+      _composer_sig="$(curl -fsSL --max-time 20 https://composer.github.io/installer.sig || true)"
+      _composer_sum="$(sha384sum "$_composer_tmp" | awk '{print $1}')"
+      if [[ -z "$_composer_sig" ]]; then
+        rm -f "$_composer_tmp"
+        _warn "could not fetch composer installer signature — refusing to run an unverified installer as root; composer unavailable"
+      elif [[ "$_composer_sig" != "$_composer_sum" ]]; then
+        rm -f "$_composer_tmp"
+        _err "composer installer checksum mismatch (expected $_composer_sig, got $_composer_sum) — NOT executing it"
+      else
+        "php${primary_version}" "$_composer_tmp" \
+          --install-dir=/usr/local/bin --filename=composer --quiet
+        rm -f "$_composer_tmp"
+        _ok "composer installed at /usr/local/bin/composer (installer signature verified)"
+      fi
     else
       rm -f "$_composer_tmp"
       _warn "failed to download composer installer — composer will be unavailable"
@@ -4814,7 +4852,47 @@ install_go() {
       fi
     done
     [[ -n "$_got" ]] || _die "failed to download Go: pinned go${failed_pin} and every published stable fallback 404'd from go.dev -- check egress to go.dev / dl.google.com from this host"
+    # A downgrade is a security-relevant event, not a detail: the host is now
+    # building the panel with an older toolchain that may carry known CVEs, and
+    # simply making the pinned URL fail is enough to trigger it. Say so loudly.
+    _warn "GO TOOLCHAIN DOWNGRADE: pinned go${failed_pin} was unavailable; installing go${GO_VERSION} instead. The panel/agent binaries will be built with this older toolchain — re-run once go${failed_pin} is reachable."
   fi
+  # Verify BEFORE extracting into /usr/local. The tarball builds the panel and
+  # agent binaries, so a tampered toolchain compromises every artifact this
+  # host produces — and nothing downstream would notice. Prefer the in-repo
+  # pin (protects even against a compromised go.dev); fall back to go.dev's own
+  # published sha256 for a version the pin can't know in advance (the CDN-gap
+  # fallback, or a JABALI_GO_VERSION override). Refuse to install unverified.
+  local go_tar_name go_expected go_actual
+  go_tar_name="$(basename "$tarball")"
+  go_expected=""
+  # Only the PINNED version has a checksum baked in; the fallback path lands on
+  # a version chosen at runtime, so it verifies against go.dev instead.
+  if [[ "$go_tar_name" == "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" ]]; then
+    case "$GO_ARCH" in
+      amd64) go_expected="$GO_SHA256_AMD64" ;;
+      arm64) go_expected="$GO_SHA256_ARM64" ;;
+    esac
+  fi
+  if [[ -z "$go_expected" ]]; then
+    _log "no pinned checksum for ${go_tar_name} — verifying against go.dev's published checksum"
+    # go.dev's listing is pretty-printed with "sha256" a few lines below the
+    # matching "filename", so take the first sha256 in that window.
+    go_expected="$("${go_curl[@]}" "https://go.dev/dl/?mode=json" 2>/dev/null \
+      | grep -A 5 "\"filename\": \"${go_tar_name}\"" \
+      | grep -oE '"sha256": "[a-f0-9]{64}"' \
+      | grep -oE '[a-f0-9]{64}' | head -1)"
+  fi
+  go_actual="$(sha256sum "$tarball" | awk '{print $1}')"
+  if [[ -z "$go_expected" ]]; then
+    rm -f "$tarball"
+    _die "could not determine an expected checksum for ${go_tar_name} — refusing to install an unverified Go toolchain"
+  fi
+  if [[ "$go_expected" != "$go_actual" ]]; then
+    rm -f "$tarball"
+    _die "Go toolchain checksum mismatch for ${go_tar_name}: expected $go_expected, got $go_actual — NOT extracting"
+  fi
+  _ok "Go toolchain checksum verified (${go_tar_name})"
   tar -C /usr/local -xzf "$tarball"
   rm -f "$tarball"
 
@@ -5052,6 +5130,16 @@ clone_or_update_repo() {
     # other trees that may legitimately be group-owned differently
     # don't get clobbered.
     chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR/.git"
+    # Self-heal a stale remote URL. Boxes provisioned before the codeberg→GitHub
+    # source-of-truth switch still have origin pointing at the DROPPED codeberg
+    # remote, which is frozen: `git fetch origin` there silently pulls
+    # long-obsolete code (e.g. missing install/hostname/* and other newer
+    # files), then a later install step hard-fails on a file the current
+    # install.sh references. Force origin to the canonical $REPO_URL before
+    # fetching so the pull always tracks the real source. Idempotent — a no-op
+    # when origin is already correct.
+    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" remote set-url origin "$REPO_URL" 2>/dev/null \
+      || _warn "could not reset origin URL to $REPO_URL — continuing with the existing remote"
     # No --quiet: under `set -e` a failed fetch/clone aborts install.sh
     # without any output because --quiet suppresses git's stderr, leaving
     # the operator with a silent exit. Let git's error reach the trace.
@@ -5145,6 +5233,45 @@ ensure_swap() {
   echo 'vm.swappiness=10' > /etc/sysctl.d/99-jabali-swappiness.conf
   sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
   _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
+}
+
+# ensure_tmp_hardening — assert the kernel's /tmp symlink + hardlink
+# protections, and persist them.
+#
+# install.sh downloads several artifacts to PREDICTABLE root-owned paths in
+# world-writable /tmp (the Go tarball, wp-cli, phpMyAdmin, Kratos, Stalwart,
+# the maldet log). Their contents are sha256-verified, so a content swap
+# fails — but an unprivileged local user who pre-creates one of those names as
+# a symlink can still redirect a root write. Some of those paths are shared
+# ON PURPOSE (concurrent installer re-entry races on the same download), so
+# converting them to mktemp would break that design; hardening the directory
+# semantics fixes the whole class without touching any of them.
+#
+# fs.protected_symlinks / protected_hardlinks default to 1 on Debian, but the
+# installer never checked, and a host with a hand-rolled sysctl.conf can have
+# them off. protected_regular / protected_fifos extend the same idea to
+# O_CREAT writes into sticky world-writable dirs. Idempotent.
+ensure_tmp_hardening() {
+  cat >/etc/sysctl.d/60-jabali-tmp-hardening.conf <<'SYSCTL_TMP'
+# Managed by jabali install.sh. Refuse to follow symlinks/hardlinks in
+# world-writable sticky dirs (/tmp) when the follower and the owner differ —
+# the classic root-writes-through-a-planted-symlink hazard.
+fs.protected_symlinks = 1
+fs.protected_hardlinks = 1
+fs.protected_regular = 2
+fs.protected_fifos = 1
+SYSCTL_TMP
+  sysctl -w fs.protected_symlinks=1  >/dev/null 2>&1 || true
+  sysctl -w fs.protected_hardlinks=1 >/dev/null 2>&1 || true
+  sysctl -w fs.protected_regular=2   >/dev/null 2>&1 || true
+  sysctl -w fs.protected_fifos=1     >/dev/null 2>&1 || true
+  local sym
+  sym="$(sysctl -n fs.protected_symlinks 2>/dev/null || echo '?')"
+  if [[ "$sym" == "1" ]]; then
+    _ok "tmp hardening: fs.protected_symlinks/hardlinks enforced"
+  else
+    _warn "tmp hardening: fs.protected_symlinks is '$sym' — root downloads to /tmp are not symlink-protected on this kernel"
+  fi
 }
 
 # JAB-159 phase 3: echo the host deploy profile. "demo" selects a demo build
@@ -7142,25 +7269,62 @@ install_adminer() {
   mkdir -p "${adminer_dir}"
 
   # Upstream single-file Adminer build. Pin v4.8.1 for reproducibility.
+  #
+  # Checksum-verified like every other third-party artifact in this file
+  # (wp-cli, phpMyAdmin, Stalwart, Kratos, Bulwark, maldet, yara-x). Adminer is
+  # served on the panel vhost behind jabali SSO with full database access, so a
+  # tampered or swapped upstream asset is arbitrary PHP running as www-data
+  # with the operator's DB credentials — and nothing in install or CI would
+  # notice. Download to a temp path first so a mismatch can never leave a
+  # partially-verified file in the docroot.
   if [[ ! -f "${adminer_dir}/adminer.php" ]]; then
     _log "downloading adminer.php"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "${adminer_dir}/adminer.php" "${adminer_url}"; then
+    local adminer_tmp
+    adminer_tmp="$(mktemp)"
+    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$adminer_tmp" "${adminer_url}"; then
+      rm -f "$adminer_tmp"
       _err "failed to download adminer from ${adminer_url}"
       return 1
     fi
+    local adminer_expected adminer_actual
+    adminer_expected="$(grep -v '^#' "${REPO_DIR}/install/adminer.sha256" | awk '{print $1}')"
+    adminer_actual="$(sha256sum "$adminer_tmp" | awk '{print $1}')"
+    if [[ -z "$adminer_expected" || "$adminer_expected" != "$adminer_actual" ]]; then
+      rm -f "$adminer_tmp"
+      _err "adminer checksum mismatch: expected ${adminer_expected:-<missing pin>}, got $adminer_actual"
+      return 1
+    fi
+    mv "$adminer_tmp" "${adminer_dir}/adminer.php"
+    _ok "adminer.php checksum verified"
   else
     _ok "adminer.php already present"
   fi
 
-  # Adminer's plugin loader (separate from the main file).
+  # Adminer's plugin loader (separate from the main file). Checksum-verified
+  # too: it is loaded by adminer.php, so it executes with the same privileges.
   if [[ ! -f "${adminer_dir}/plugin.php" ]]; then
     _log "downloading Adminer plugin loader"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "${adminer_dir}/plugin.php" "${adminer_plugin_url}"; then
+    local plugin_tmp
+    plugin_tmp="$(mktemp)"
+    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$plugin_tmp" "${adminer_plugin_url}"; then
       # Non-fatal: the plugin loader only enhances Adminer (jabali-sso plugin).
       # A transient GitHub-raw hiccup shouldn't brick the whole install; the DB
       # admin tool still works, and `jabali update` / repair can refetch it.
+      rm -f "$plugin_tmp"
       _warn "failed to download adminer plugin loader (non-fatal) — Adminer SSO plugin disabled until next update"
-      rm -f "${adminer_dir}/plugin.php"
+    else
+      local plugin_expected plugin_actual
+      plugin_expected="$(grep -v '^#' "${REPO_DIR}/install/adminer-plugin.sha256" | awk '{print $1}')"
+      plugin_actual="$(sha256sum "$plugin_tmp" | awk '{print $1}')"
+      if [[ -z "$plugin_expected" || "$plugin_expected" != "$plugin_actual" ]]; then
+        # A MISMATCH is not the same as a failed download: the file served is
+        # not the pinned one, so refuse it rather than degrade quietly.
+        rm -f "$plugin_tmp"
+        _warn "adminer plugin loader checksum mismatch (expected ${plugin_expected:-<missing pin>}, got $plugin_actual) — refusing it; SSO plugin disabled"
+      else
+        mv "$plugin_tmp" "${adminer_dir}/plugin.php"
+        _ok "adminer plugin loader checksum verified"
+      fi
     fi
   else
     _ok "adminer plugin loader already present"
@@ -12492,7 +12656,7 @@ _install_stalwart_binary() {
 # speaks the v0.16 JMAP management API, used by install.sh bootstrap and
 # the reconciler. Idempotent against version reported by --version.
 _install_stalwart_cli() {
-  local cli_version="1.0.11"
+  local cli_version="1.0.12"
   local cli_binary="/usr/local/bin/stalwart-cli"
   local arch="x86_64-unknown-linux-gnu"
   local tarball="stalwart-cli-${arch}.tar.xz"
@@ -13929,6 +14093,32 @@ install_cloudflare_realip() {
     _warn "cloudflare ips-v6 fetch failed; using 2026-Q2 fallback ranges"
   fi
 
+  # Validate every line before it becomes an nginx directive. These bodies
+  # come off the network, and a 200 response is not proof of content: a
+  # captive portal, a TLS-intercepting middlebox, or a CF error page all
+  # return 200 with HTML. Unfiltered, that HTML was written verbatim as
+  # `set_real_ip_from <garbage>;` — and a line containing a ';' could inject
+  # arbitrary http-context directives (e.g. flipping real_ip_header to
+  # X-Forwarded-For, which would make every client IP forgeable and neuter
+  # IP-based blocking). Accept only well-formed CIDRs.
+  local cf_v4_clean cf_v6_clean
+  cf_v4_clean="$(printf '%s\n' "$cf_v4" | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$' || true)"
+  cf_v6_clean="$(printf '%s\n' "$cf_v6" | grep -E '^[0-9a-fA-F:]+/[0-9]{1,3}$' || true)"
+
+  # A drastically short list means the fetch returned something that merely
+  # looked like data. Keeping the existing file beats silently narrowing the
+  # trusted-proxy set, which would start attributing real client IPs to the
+  # Cloudflare edge again. Same guard as refresh-cf-ranges.sh.
+  local v4_count v6_count
+  v4_count="$(printf '%s\n' "$cf_v4_clean" | grep -c . || true)"
+  v6_count="$(printf '%s\n' "$cf_v6_clean" | grep -c . || true)"
+  if [[ "$v4_count" -lt 5 || "$v6_count" -lt 3 ]]; then
+    _warn "cloudflare ranges look wrong after validation (v4=$v4_count v6=$v6_count) — keeping the existing real-IP config"
+    return 0
+  fi
+  cf_v4="$cf_v4_clean"
+  cf_v6="$cf_v6_clean"
+
   local conf_file=/etc/nginx/conf.d/jabali-cloudflare-realip.conf
   local tmp
   tmp="$(mktemp --tmpdir jabali-cf-realip.XXXXXX)"
@@ -13949,13 +14139,30 @@ install_cloudflare_realip() {
 
   if [[ ! -f "$conf_file" ]] || ! cmp -s "$tmp" "$conf_file"; then
     _log "writing $conf_file (Cloudflare real-IP rewrite)"
+    # Keep the previous file so a failed nginx -t can be ROLLED BACK. Writing
+    # into conf.d and leaving a bad file behind on failure meant the next
+    # nginx start — possibly a reboot much later, with nobody watching —
+    # failed on a config this function wrote and warned about once.
+    local prev=""
+    if [[ -f "$conf_file" ]]; then
+      prev="$(mktemp --tmpdir jabali-cf-realip-prev.XXXXXX)"
+      cp -p "$conf_file" "$prev"
+    fi
     install -m 0644 -o root -g root "$tmp" "$conf_file"
     if nginx -t >/dev/null 2>&1; then
       systemctl reload nginx 2>/dev/null || _warn "nginx reload failed after cloudflare-realip update"
       _ok "nginx Cloudflare real-IP rewrite installed/refreshed"
     else
-      _warn "nginx -t failed after cloudflare-realip write — check $conf_file"
+      if [[ -n "$prev" ]]; then
+        install -m 0644 -o root -g root "$prev" "$conf_file"
+        _warn "nginx -t failed after cloudflare-realip write — REVERTED $conf_file to the previous version"
+      else
+        rm -f "$conf_file"
+        _warn "nginx -t failed after cloudflare-realip write — REMOVED $conf_file (it did not exist before)"
+      fi
+      nginx -t >/dev/null 2>&1 || _warn "nginx -t STILL failing after rollback — the problem is elsewhere in the nginx config"
     fi
+    [[ -n "$prev" ]] && rm -f "$prev"
   fi
   rm -f "$tmp"
 }
@@ -14056,6 +14263,12 @@ provision_new_software() {
   # anything else in the provision chain touches PHP.
   ensure_jabali_panel_dir_traversable
   ensure_snuffleupagus_loadable
+  # Also on UPDATE, not just fresh install: `jabali update` runs this trimmed
+  # path, not main(), so wiring the call only into main() left every EXISTING
+  # host — the ones that have been downloading to predictable /tmp paths for
+  # months — without the protection. Caught on the testserver deploy: the
+  # function was present in install.sh and had simply never run.
+  ensure_tmp_hardening
 
   # Keep the app-marketplace catalogs current on `jabali update` (build_backend,
   # which also calls this, is NOT in the update path). New docker-app /
@@ -14658,6 +14871,10 @@ main() {
   # DNS, panel identity) uses it.
   apply_system_hostname
   preflight
+  # Before ANY download lands in /tmp (Go toolchain, wp-cli, phpMyAdmin,
+  # Kratos, Stalwart): make sure the kernel refuses to follow a symlink an
+  # unprivileged user planted at one of those predictable root-owned paths.
+  ensure_tmp_hardening
   # Swap MUST land before install_base_packages — apt + CrowdSec hub
   # downloads + npm ci all pull 100MB+ into RAM, OOM-killing each
   # other on a 2 GB VPS. ensure_swap is idempotent + cheap on hosts
@@ -14959,7 +15176,7 @@ This will remove:
   • /usr/local/libexec/jabali/
   • /etc/jabali-panel/, /etc/jabali/, /etc/stalwart/
   • /etc/profile.d/jabali-go.sh, /etc/apt/sources.list.d/sury-php.list + crowdsec.list
-  • /etc/sysctl.d/60-jabali-malware.conf, /etc/nftables.d/jabali-per-user-egress{,-boot}.nft
+  • /etc/sysctl.d/60-jabali-malware.conf, /etc/sysctl.d/60-jabali-tmp-hardening.conf, /etc/nftables.d/jabali-per-user-egress{,-boot}.nft
   • /etc/crowdsec/acquis.d/jabali-*.yaml, /etc/crowdsec/appsec-configs/jabali-appsec.yaml
   • /etc/audit/rules.d/jabali-exec.rules
   • AppArmor profiles for jabali daemons + stalwart-mail
@@ -15167,6 +15384,7 @@ RESOLV
   rm -f  /etc/apt/sources.list.d/crowdsec.list
   rm -f  /etc/apt/keyrings/crowdsec.gpg
   rm -f  /etc/sysctl.d/60-jabali-malware.conf
+  rm -f  /etc/sysctl.d/60-jabali-tmp-hardening.conf
   sysctl --system >/dev/null 2>&1 || true
   rm -f  /etc/nftables.d/jabali-per-user-egress.nft
   rm -f  /etc/nftables.d/jabali-per-user-egress-boot.nft

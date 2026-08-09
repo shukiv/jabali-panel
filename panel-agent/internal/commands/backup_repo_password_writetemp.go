@@ -94,22 +94,38 @@ func backupRepoPasswordCleanupTempHandler(ctx context.Context, raw json.RawMessa
 			Message: fmt.Sprintf("malformed JSON: %v", err),
 		}
 	}
-	// Belt-and-suspenders: only allow removal of files we own
-	// underneath passwordTempDir. Prevents a misbehaving caller from
-	// asking the agent to unlink anything else on disk.
-	clean := filepath.Clean(p.Path)
+	if err := removePasswordTempFile(p.Path); err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true}, nil
+}
+
+// removePasswordTempFile unlinks a per-destination password tempfile.
+//
+// Belt-and-suspenders: only allow removal of files we own underneath
+// passwordTempDir. Prevents a misbehaving caller from asking the agent to
+// unlink anything else on disk. A blank path is a no-op (the legacy
+// shared-password path never writes a tempfile).
+//
+// Shared with the async backup orchestrator, which owns the file for the
+// lifetime of its job — see runBackupOrchestrator.
+func removePasswordTempFile(path string) *agentwire.AgentError {
+	if path == "" {
+		return nil
+	}
+	clean := filepath.Clean(path)
 	if !strings.HasPrefix(clean, passwordTempDir+string(os.PathSeparator)) {
-		return nil, &agentwire.AgentError{
+		return &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
 			Message: "path must be under " + passwordTempDir,
 		}
 	}
 	if err := os.Remove(clean); err != nil && !os.IsNotExist(err) {
-		return nil, &agentwire.AgentError{
+		return &agentwire.AgentError{
 			Code: agentwire.CodeInternal, Message: err.Error(),
 		}
 	}
-	return map[string]any{"ok": true}, nil
+	return nil
 }
 
 func init() {

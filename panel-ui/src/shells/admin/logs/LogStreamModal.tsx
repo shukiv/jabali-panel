@@ -16,6 +16,18 @@ interface LogStreamModalProps {
 // Trim a single trailing CR/LF (or both) — accommodates servers that
 // send "line\n", "line\r\n", or "line" interchangeably. Keeps inner
 // newlines untouched in case a single frame carries a multi-line block.
+// The stream is "recent lines", not an archive: without a ceiling every frame
+// appended to React state and each render re-joined the WHOLE array, so cost
+// grew quadratically over the stream's lifetime. On a moderately busy domain
+// (~10 lines/s) a 15-minute stream reaches ~9k lines and the tab janks within
+// minutes while memory keeps climbing. Keep the newest MAX_LOG_LINES, which is
+// far more than fits on screen and matches what the feature advertises.
+const MAX_LOG_LINES = 2000;
+
+function capLogLines(lines: string[]): string[] {
+  return lines.length > MAX_LOG_LINES ? lines.slice(-MAX_LOG_LINES) : lines;
+}
+
 const stripTrailingNewline = (s: string): string => {
   if (typeof s !== "string") return s;
   if (s.endsWith("\r\n")) return s.slice(0, -2);
@@ -145,10 +157,16 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
         } else {
           // Strip trailing CR/LF so the render-time join("\n") doesn't
           // double-space lines that arrived with their own newline.
-          setLogs(prev => [...prev, stripTrailingNewline(logLine)]);
+          setLogs(prev => capLogLines([...prev, stripTrailingNewline(logLine)]));
         }
       } else {
         pausedLogsRef.current.push(stripTrailingNewline(event.data));
+        // The paused buffer needs the same ceiling: a stream paused on a busy
+        // log otherwise grows unbounded in memory and then floods the view in
+        // one go when the operator resumes.
+        if (pausedLogsRef.current.length > MAX_LOG_LINES) {
+          pausedLogsRef.current = pausedLogsRef.current.slice(-MAX_LOG_LINES);
+        }
       }
     };
 
@@ -190,7 +208,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
 
     if (!newPaused && pausedLogsRef.current.length > 0) {
       // Resume: add paused logs to display
-      setLogs(prev => [...prev, ...pausedLogsRef.current]);
+      setLogs(prev => capLogLines([...prev, ...pausedLogsRef.current]));
       pausedLogsRef.current = [];
     }
   };

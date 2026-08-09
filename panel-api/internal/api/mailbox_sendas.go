@@ -92,11 +92,18 @@ func (h *sendAsHandler) list(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// Batch-load the grantor mailboxes in one query instead of a FindByID per
+	// row (JAB-147 pattern; mailboxMapByID already exists for exactly this).
+	grantorIDs := make([]string, 0, len(rows))
+	for _, d := range rows {
+		grantorIDs = append(grantorIDs, d.GrantorMailboxID)
+	}
+	grantorByID := mailboxMapByID(ctx, h.cfg.Mailboxes, grantorIDs)
+
 	out := make([]sendAsGrantorResponse, 0, len(rows))
 	for _, d := range rows {
-		gr, gErr := h.cfg.Mailboxes.FindByID(ctx, d.GrantorMailboxID)
 		grantorEmail := ""
-		if gErr == nil {
+		if gr := grantorByID[d.GrantorMailboxID]; gr != nil {
 			grantorEmail = gr.EmailCached
 		}
 		out = append(out, sendAsGrantorResponse{

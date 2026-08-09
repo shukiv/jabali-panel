@@ -42,6 +42,7 @@ type ApplyResult struct {
 	DatabaseUsers  int
 	DatabaseGrants int
 	AppInstalls    int
+	DockerApps     int
 	SSHKeys        int
 	CronJobs       int
 	Skipped        int
@@ -397,6 +398,41 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				continue
 			}
 			r.AppInstalls++
+		}
+	}
+
+	// 5b) Docker apps (GH #954): rebuild the panel row + published ports so the
+	// restored app is panel-managed. The DATA tree + compose-up land via the
+	// stage=docker restore (#1017); without this row the app is orphaned on disk.
+	if d.DockerApps != nil {
+		for _, a := range m.DockerApps {
+			uid := m.User.ID
+			row := &models.DockerApp{
+				ID: a.ID, UserID: &uid, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
+				Name: a.Name, CatalogVersion: a.CatalogVersion, ImageSHA: a.ImageSHA,
+				Status: a.Status, UpdateMode: a.UpdateMode,
+				CPULimit: a.CPULimit, MemoryLimit: a.MemoryLimit, PIDsLimit: a.PIDsLimit,
+				CreatedAt: now, UpdatedAt: now,
+			}
+			if err := d.DockerApps.Create(ctx, row); err != nil {
+				if errors.Is(err, repository.ErrConflict) {
+					r.Skipped++
+					continue
+				}
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: create: %v", a.ID, err))
+				continue
+			}
+			for _, p := range a.Ports {
+				port := &models.DockerAppPublishedPort{
+					ID: p.ID, AppID: a.ID, PortName: p.PortName, ContainerPort: p.ContainerPort,
+					BindInterface: p.BindInterface, HostPort: p.HostPort, Protocol: p.Protocol,
+					ReverseProxy: p.ReverseProxy, Enabled: p.Enabled, CreatedAt: now,
+				}
+				if err := d.DockerApps.CreatePort(ctx, port); err != nil {
+					r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s port %s: create: %v", a.ID, p.PortName, err))
+				}
+			}
+			r.DockerApps++
 		}
 	}
 

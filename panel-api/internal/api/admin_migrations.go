@@ -750,7 +750,8 @@ func (h *adminMigrationsHandler) uploadTarball(c *gin.Context) {
 				})
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "stream_failed", "detail": cerr.Error()})
+			// JAB-114: agent/stream internals stay server-side.
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "stream_failed"})
 			return
 		}
 		if err := dst.Close(); err != nil {

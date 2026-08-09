@@ -28,6 +28,7 @@ func bootTestUsers() []EgressUser {
 //
 // while the boot variant loaded and left six enforcing rules in place.
 func TestRenderEgressBootNFT_HasNoCgroupPaths(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
@@ -49,6 +50,7 @@ func TestRenderEgressBootNFT_HasNoCgroupPaths(t *testing.T) {
 // still does its job. Fail-closed matters more here than anywhere else: this
 // is the ruleset covering the window where nothing else is running.
 func TestRenderEgressBootNFT_EnforcesEveryNonOffUserByUID(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
@@ -77,6 +79,7 @@ func TestRenderEgressBootNFT_EnforcesEveryNonOffUserByUID(t *testing.T) {
 // tenant process. Narrower than the steady-state floor; wider than the nothing
 // that loaded before.
 func TestRenderEgressBootNFT_KeepsSSRFFloor(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
@@ -108,6 +111,7 @@ func TestRenderEgressBootNFT_KeepsSSRFFloor(t *testing.T) {
 // to be loadable even with nothing to enforce, because the boot unit runs
 // unconditionally and a parse error there is a failed unit on every boot.
 func TestRenderEgressBootNFT_NoUsersIsStillValid(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	out := RenderEgressBootNFT(nil, CanonicalDefaults())
@@ -131,6 +135,7 @@ func TestRenderEgressBootNFT_NoUsersIsStillValid(t *testing.T) {
 // there is no way to match the user's traffic, and inventing one would be
 // worse than omitting them.
 func TestRenderEgressBootNFT_SkipsUsersWithoutUID(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	out := RenderEgressBootNFT([]EgressUser{
@@ -153,6 +158,7 @@ func TestRenderEgressBootNFT_SkipsUsersWithoutUID(t *testing.T) {
 // did not alter the steady-state ruleset, which is the one actually enforcing
 // for almost all of a host's uptime.
 func TestRenderEgressNFT_CgroupVariantUnchanged(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	out := RenderEgressNFT(bootTestUsers(), CanonicalDefaults(), func(string) bool { return true })

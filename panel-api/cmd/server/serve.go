@@ -948,6 +948,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Domains:        deps.Domains,
 		Mailboxes:      deps.Mailboxes,
 		AppInstalls:    deps.WordPressInstalls,
+		DockerApps:     deps.DockerApps,
 		Settings:       deps.ServerSettings,
 		Packages:       deps.Packages,
 		Notify:         deps.NotificationQueue,
@@ -978,6 +979,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Schedules:    deps.BackupSchedules,
 		Destinations: deps.BackupDestinations,
 		Agent:        deps.Agent,
+		SSOKey:       deps.SSOKey,
 		Log:          log,
 	}); fin != nil {
 		go fin.Start(ctx)

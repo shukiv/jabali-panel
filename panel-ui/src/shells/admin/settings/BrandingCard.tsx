@@ -22,9 +22,9 @@ import {
   Space,
   Typography,
   Upload,
-  message,
 } from "antd";
 import type { UploadProps } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQueryClient } from "@tanstack/react-query";
 
 import { DeleteOutlined, SaveOutlined, UploadOutlined } from "@icons";
@@ -57,7 +57,7 @@ export const BrandingCard = () => {
         if (cancelled) return;
         form.setFieldsValue({ panel_brand_text: resp.data.panel_brand_text ?? "" });
       } catch (err) {
-        message.error(err instanceof Error ? err.message : "Load failed");
+        feedback.message.error(err instanceof Error ? err.message : "Load failed");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -74,9 +74,9 @@ export const BrandingCard = () => {
         panel_brand_text: values.panel_brand_text ?? "",
       });
       qc.invalidateQueries({ queryKey: ["branding", "public"] });
-      message.success("Branding text saved");
+      feedback.message.success("Branding text saved");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Save failed");
+      feedback.message.error(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
@@ -88,7 +88,7 @@ export const BrandingCard = () => {
     showUploadList: false,
     beforeUpload: (file) => {
       if (file.size > MAX_LOGO_BYTES) {
-        message.error(`Logo must be <= ${Math.round(MAX_LOGO_BYTES / 1024)} KB`);
+        feedback.message.error(`Logo must be <= ${Math.round(MAX_LOGO_BYTES / 1024)} KB`);
         return Upload.LIST_IGNORE;
       }
       return true;
@@ -101,11 +101,11 @@ export const BrandingCard = () => {
           headers: { "Content-Type": "multipart/form-data" },
         });
         qc.invalidateQueries({ queryKey: ["branding", "public"] });
-        message.success(`${variant === "light" ? "Light" : "Dark"} logo uploaded`);
+        feedback.message.success(`${variant === "light" ? "Light" : "Dark"} logo uploaded`);
         onSuccess?.({} as unknown);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Upload failed";
-        message.error(msg);
+        feedback.message.error(msg);
         onError?.(err as Error);
       }
     },
@@ -115,9 +115,9 @@ export const BrandingCard = () => {
     try {
       await apiClient.delete(`/admin/settings/branding/logo/${variant}`);
       qc.invalidateQueries({ queryKey: ["branding", "public"] });
-      message.success(`${variant === "light" ? "Light" : "Dark"} logo cleared`);
+      feedback.message.success(`${variant === "light" ? "Light" : "Dark"} logo cleared`);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Clear failed");
+      feedback.message.error(err instanceof Error ? err.message : "Clear failed");
     }
   };
 

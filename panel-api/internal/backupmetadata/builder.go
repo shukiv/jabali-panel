@@ -42,6 +42,7 @@ type Deps struct {
 	Domains        repository.DomainRepository
 	Mailboxes      repository.MailboxRepository
 	AppInstalls    repository.ApplicationInstallRepository
+	DockerApps     repository.DockerAppRepository
 	SSLCerts       repository.SSLCertificateRepository
 	PHPPools       repository.PHPPoolRepository
 	PHPPoolIni     repository.PHPPoolIniOverrideRepository
@@ -151,8 +152,8 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				ID: pool.ID, PHPVersion: pool.PHPVersion,
 				PmMode: pool.PmMode, PmMaxChildren: pool.PmMaxChildren,
 				ProcessIdleTimeoutSeconds: pool.ProcessIdleTimeoutSeconds,
-				Status:    pool.Status,
-				CreatedAt: timeRFC(pool.CreatedAt),
+				Status:                    pool.Status,
+				CreatedAt:                 timeRFC(pool.CreatedAt),
 			}
 			if d.PHPPoolIni != nil {
 				if overrides, ierr := d.PHPPoolIni.ListByPool(ctx, pool.ID); ierr == nil {
@@ -265,7 +266,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 							mbRow.SharedWith = append(mbRow.SharedWith,
 								internalbackup.MetadataMailboxShare{
 									ID: sh.ID, SharedWithMailboxID: sh.SharedWithMailboxID,
-									Rights: string(rights),
+									Rights:    string(rights),
 									CreatedAt: timeRFC(sh.CreatedAt),
 								})
 						}
@@ -331,6 +332,38 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 		}
 	}
 
+	// Docker apps (GH #954): capture the tenant docker-app rows + their
+	// published ports so a restore can rebuild the panel row. The DATA tree
+	// rides the stage=docker snapshot (#1017); without this row the restored
+	// app is orphaned on disk.
+	if d.DockerApps != nil {
+		apps, err := d.DockerApps.ListByUserID(ctx, user.ID)
+		if err != nil {
+			d.warn("metadata: list docker apps", err, "user_id", user.ID)
+		}
+		for _, a := range apps {
+			row := internalbackup.MetadataDockerApp{
+				ID: a.ID, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
+				Name: a.Name, CatalogVersion: a.CatalogVersion,
+				ImageSHA: a.ImageSHA, Status: a.Status, UpdateMode: a.UpdateMode,
+				CPULimit: a.CPULimit, MemoryLimit: a.MemoryLimit, PIDsLimit: a.PIDsLimit,
+				CreatedAt: timeRFC(a.CreatedAt),
+			}
+			if ports, perr := d.DockerApps.ListPortsForApp(ctx, a.ID); perr == nil {
+				for _, p := range ports {
+					row.Ports = append(row.Ports, internalbackup.MetadataDockerAppPort{
+						ID: p.ID, PortName: p.PortName, ContainerPort: p.ContainerPort,
+						BindInterface: p.BindInterface, HostPort: p.HostPort,
+						Protocol: p.Protocol, ReverseProxy: p.ReverseProxy, Enabled: p.Enabled,
+					})
+				}
+			} else {
+				d.warn("metadata: list docker app ports", perr, "app_id", a.ID)
+			}
+			m.DockerApps = append(m.DockerApps, row)
+		}
+	}
+
 	if d.SSHKeys != nil {
 		keys, _ := d.SSHKeys.ListByUserID(ctx, user.ID)
 		for _, k := range keys {
@@ -361,7 +394,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				DiskQuotaMB: lo.DiskQuotaMB, CPUQuotaPercent: lo.CPUQuotaPercent,
 				MemoryLimitMB: lo.MemoryLimitMB,
 				IOReadMbps:    lo.IOReadMbps, IOWriteMbps: lo.IOWriteMbps,
-				MaxTasks:      lo.MaxTasks,
+				MaxTasks: lo.MaxTasks,
 			}
 			break
 		}

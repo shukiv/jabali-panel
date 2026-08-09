@@ -63,36 +63,45 @@ func TestRequireAutomationHMAC_IPAllowlist(t *testing.T) {
 	}
 }
 
-// JAB-140 follow-up: behind the unix-socket nginx proxy the real client IP is in
-// X-Real-IP; the allowlist must match THAT, not the socket peer. Here the request
-// "arrives" from 192.0.2.1 (httptest default) but X-Real-IP says 203.0.113.5, and
-// the allowlist covers 203.0.113.0/24 → allowed.
-func TestRequireAutomationHMAC_IPAllowlistUsesXRealIP(t *testing.T) {
+// JAB-140 follow-up, revised: behind the unix-socket nginx proxy the real
+// client IP is in X-Real-IP and the allowlist must match THAT. But that header
+// is only believed from a peer that presented credentials (the socket) —
+// otherwise a stolen token plus a forged X-Real-IP satisfies any allowlist,
+// which defeats the point of having one.
+//
+// httptest supplies no peer credentials, so these cases exercise the
+// direct-connection path: the allowlist keys on the real peer address, and a
+// spoofed header gets no pass.
+func TestRequireAutomationHMAC_IPAllowlistIgnoresSpoofedHeader(t *testing.T) {
 	repo := &fakeAutoTokenRepo{tokens: map[string]*models.AutomationToken{}}
 	k := newTestKey(t)
 	id, secret := mintTestToken(t, repo, k, models.AutomationScopes{"read:*"})
 	repo.tokens[id].IPAllowlist = models.CIDRList{"203.0.113.0/24"}
 	r := setupHMACRouter(repo, k)
-
 	ts := fmt.Sprintf("%d", time.Now().Unix())
+
+	// Peer really IS in the allowlist -> allowed.
 	sig := signRequest(secret, "GET", "/p", ts, "")
 	req := httptest.NewRequest(http.MethodGet, "/p", nil)
 	req.Header.Set("Authorization", fmt.Sprintf("Jabali-HMAC kid=%s, ts=%s, sig=%s", id, ts, sig))
-	req.Header.Set("X-Real-IP", "203.0.113.5")
+	req.RemoteAddr = "203.0.113.5:41000"
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("X-Real-IP in allowlist: want 200, got %d", w.Code)
+		t.Fatalf("allowlisted peer: want 200, got %d", w.Code)
 	}
 
-	// A forwarded IP outside the allowlist is rejected even if the socket peer would pass.
-	req2 := httptest.NewRequest(http.MethodGet, "/p", nil)
+	// Peer is OUTSIDE the allowlist but claims an allowlisted X-Real-IP.
+	// Without peer credentials that header carries no authority: this is the
+	// stolen-token-plus-forged-header case and must be refused.
 	sig2 := signRequest(secret, "GET", "/p", ts, "")
+	req2 := httptest.NewRequest(http.MethodGet, "/p", nil)
 	req2.Header.Set("Authorization", fmt.Sprintf("Jabali-HMAC kid=%s, ts=%s, sig=%s", id, ts, sig2))
-	req2.Header.Set("X-Real-IP", "10.9.9.9")
+	req2.RemoteAddr = "10.9.9.9:41000"
+	req2.Header.Set("X-Real-IP", "203.0.113.5")
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusUnauthorized {
-		t.Fatalf("X-Real-IP outside allowlist: want 401, got %d", w2.Code)
+		t.Fatalf("spoofed X-Real-IP from an uncredentialed peer: want 401, got %d", w2.Code)
 	}
 }

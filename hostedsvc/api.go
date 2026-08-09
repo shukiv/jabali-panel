@@ -24,6 +24,12 @@ type API struct {
 	// ipMu serialises claim per source IP so two concurrent claims from one
 	// NAT can't race the collision-suffix scan into the same label.
 	ipMu sync.Mutex
+
+	// registerLimiter bounds unauthenticated /v1/register calls per source
+	// address. Lazily built so a zero-value API still works (tests, callers
+	// that construct the struct directly). See iprate.go.
+	registerLimiterOnce sync.Once
+	registerLimiter     *ipRateLimiter
 }
 
 func (a *API) Routes() http.Handler {
@@ -73,6 +79,17 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	email, ok := normEmail(req.Email)
 	if !ok {
 		writeErr(w, http.StatusUnprocessableEntity, "bad_email", "not a valid email address")
+		return
+	}
+	// Per-source-IP cap. The per-email resend gap below stops a user
+	// double-clicking; it does not stop someone mailing one victim every 60s
+	// forever, or fanning out across millions of addresses using this
+	// service's authenticated relay as a spam relay. Checked BEFORE minting a
+	// code or touching the store so a bulk sender does no work here.
+	if ip := ClientIP(r); ip != nil && !a.registerRateLimiter().allow(ip.String()) {
+		a.Log.Warn("register: per-IP cap reached", "ip", ip.String())
+		writeErr(w, http.StatusTooManyRequests, "rate_limited",
+			"too many registrations from this address — try again later")
 		return
 	}
 	code, err := NewCode()
@@ -133,42 +150,30 @@ func (a *API) claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.ipMu.Lock()
-	defer a.ipMu.Unlock()
-	label := base
-	for n := 1; ; n++ {
-		exists, err := a.Store.LabelExists(label)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal", "try again later")
-			return
-		}
-		if !exists {
-			break
-		}
-		if n > 26 {
-			writeErr(w, http.StatusConflict, "label_space_exhausted", "too many hosts behind this IP")
-			return
-		}
-		label = CollisionLabel(base, n)
+	// The lock covers ONLY the check-then-act it exists for: the
+	// collision-suffix scan and the row insert. Remote DNS calls used to sit
+	// inside it, so every claim fleet-wide serialised behind the slowest
+	// Cloudflare round-trip (two 15s-timeout calls), capping throughput at a
+	// few claims a second and stalling all of them on a slow CF day.
+	label, raw, herr := a.reserveLabel(base, ip.String(), email)
+	if herr != nil {
+		writeErr(w, herr.status, herr.code, herr.msg)
+		return
 	}
 
-	raw, hash, err := NewToken()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "token generation failed")
-		return
-	}
-	if err := a.Store.CreateLabel(label, ip.String(), email, hash); err != nil {
-		if errors.Is(err, ErrEmailCap) {
-			writeErr(w, http.StatusForbidden, "email_cap", "this email already holds the maximum number of hostnames")
-			return
-		}
-		a.Log.Error("claim: create", "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal", "try again later")
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	if err := a.DNS.EnsureA(ctx, label, ip.String()); err != nil {
+		// Roll the reservation back. Leaving it would orphan the row: the
+		// caller never receives the token, so the label can never heartbeat
+		// (invisible to the reaper — moved_at stays NULL) while still
+		// consuming one of this IP's 26 collision suffixes and one slot in
+		// the claimer's per-email cap. Sustained DNS errors would then
+		// permanently exhaust an IP's label space and silently eat the
+		// user's quota, needing manual DB cleanup.
+		if derr := a.Store.DeleteLabel(label); derr != nil {
+			a.Log.Error("claim: rollback failed — orphaned label row", "label", label, "err", derr)
+		}
 		a.Log.Error("claim: dns", "label", label, "err", err)
 		writeErr(w, http.StatusInternalServerError, "dns_failed", "could not publish the record — try again")
 		return
@@ -182,6 +187,60 @@ func (a *API) claim(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Log.Info("label claimed", "label", label, "ip", ip.String())
 	writeJSON(w, http.StatusOK, ClaimResponse{Label: label, FQDN: FQDN(label), Token: raw})
+}
+
+// registerRateLimiter returns the lazily-built per-IP limiter for /v1/register.
+func (a *API) registerRateLimiter() *ipRateLimiter {
+	a.registerLimiterOnce.Do(func() {
+		a.registerLimiter = newIPRateLimiter(registerIPHourlyCap, registerIPWindow)
+	})
+	return a.registerLimiter
+}
+
+// httpErr is a handler-ready error: status + wire code + user-facing message.
+type httpErr struct {
+	status int
+	code   string
+	msg    string
+}
+
+// reserveLabel picks a free label for base and inserts its row, returning the
+// label and the caller's raw token. Everything here is DB-only and runs under
+// ipMu, which is what the check-then-act (LabelExists → CreateLabel) needs;
+// remote DNS publishing happens afterwards, outside the lock.
+//
+// On any failure nothing is left behind, so a caller can retry cleanly.
+func (a *API) reserveLabel(base, ipv4, email string) (label, rawToken string, herr *httpErr) {
+	a.ipMu.Lock()
+	defer a.ipMu.Unlock()
+
+	label = base
+	for n := 1; ; n++ {
+		exists, err := a.Store.LabelExists(label)
+		if err != nil {
+			return "", "", &httpErr{http.StatusInternalServerError, "internal", "try again later"}
+		}
+		if !exists {
+			break
+		}
+		if n > 26 {
+			return "", "", &httpErr{http.StatusConflict, "label_space_exhausted", "too many hosts behind this IP"}
+		}
+		label = CollisionLabel(base, n)
+	}
+
+	raw, hash, err := NewToken()
+	if err != nil {
+		return "", "", &httpErr{http.StatusInternalServerError, "internal", "token generation failed"}
+	}
+	if err := a.Store.CreateLabel(label, ipv4, email, hash); err != nil {
+		if errors.Is(err, ErrEmailCap) {
+			return "", "", &httpErr{http.StatusForbidden, "email_cap", "this email already holds the maximum number of hostnames"}
+		}
+		a.Log.Error("claim: create", "err", err)
+		return "", "", &httpErr{http.StatusInternalServerError, "internal", "try again later"}
+	}
+	return label, raw, nil
 }
 
 // byToken resolves the caller's label from the bearer token — the ONLY

@@ -174,6 +174,17 @@ func (c *CloudflareDNS) SetChallenge(ctx context.Context, label, value string) e
 			return nil // already present
 		}
 	}
+	// SetChallenge is add-only by design (a wildcard cert needs the apex and
+	// the wildcard challenge live at the SAME name simultaneously), so without
+	// a cap a token holder could script distinct values and accumulate
+	// thousands of TXT records in the shared jabalihosted.com zone, degrading
+	// zone size and list performance for every other tenant. Two is the
+	// legitimate maximum; maxChallengeRecordsPerLabel leaves headroom for a
+	// retry that raced cleanup.
+	if len(existing) >= maxChallengeRecordsPerLabel {
+		return fmt.Errorf("too many pending ACME challenges for %s (%d) — run cleanup first",
+			name, len(existing))
+	}
 	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/zones/%s/dns_records", c.ZoneID),
 		cfRecord{Type: "TXT", Name: name, Content: value, TTL: 60, Proxied: false})
 	if err != nil {

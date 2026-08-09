@@ -29,8 +29,10 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -38,6 +40,15 @@ import (
 	"sync"
 	"time"
 )
+
+// maxClaims bounds the in-memory claim store. Entries live for the full TTL
+// and each holds up to ~16 KiB, on an unauthenticated endpoint — without a
+// ceiling the heap grows until the process is OOM-killed.
+const maxClaims = 10000
+
+// errStoreFull is returned when maxClaims is reached; the handler maps it to
+// 503 so the caller can retry later rather than seeing a generic failure.
+var errStoreFull = errors.New("claim store is full")
 
 const (
 	// codeAlphabet is Crockford base32 minus vowels/ambiguous chars, so a code
@@ -104,6 +115,14 @@ func (s *store) put(p redeemPayload, now time.Time) (string, time.Time, error) {
 	}
 	if code == "" {
 		return "", time.Time{}, fmt.Errorf("could not allocate a unique code")
+	}
+	// Hard cap. Claims are held in memory for the full TTL (14 days) and each
+	// carries up to ~16 KiB of payload, on an unauthenticated endpoint — with
+	// no ceiling, a caller simply posting claims grows the heap until the
+	// process is OOM-killed, taking down the service support depends on.
+	// Refuse new claims instead; existing ones still redeem.
+	if len(s.claims) >= maxClaims {
+		return "", time.Time{}, errStoreFull
 	}
 	exp := now.Add(s.ttl)
 	s.claims[code] = claim{Payload: p, ExpiresAt: exp}
@@ -179,6 +198,14 @@ func (srv *server) handleIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	code, exp, err := srv.store.put(redeemPayload(req), srv.now())
 	if err != nil {
+		if errors.Is(err, errStoreFull) {
+			// Distinguish "at capacity, retry later" from a genuine internal
+			// fault so an operator sees the real cause in the response and
+			// the log rather than a generic 500.
+			log.Printf("claim store full (%d entries) — refusing new claim", maxClaims)
+			http.Error(w, "claim store is full, try again later", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -241,13 +268,29 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// clientIP returns the address the rate limiter keys on.
+//
+// X-Forwarded-For is honoured ONLY when the immediate peer is loopback, i.e. a
+// reverse proxy on this host that sets the header itself. Trusting it from any
+// peer made the per-IP limit meaningless — a direct caller could rotate the
+// header on every request to bypass the 30/min cap on the open POST /claims,
+// and each distinct value also allocated a permanent bucket entry, so the same
+// trick grew the process heap without bound. Nothing in code or deployment
+// guarantees this service is proxy-fronted, and :8088 is reachable directly.
+// Mirrors hostedsvc/realip.go.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
 	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i >= 0 {
-		host = host[:i]
+	if peer := net.ParseIP(host); peer != nil && peer.IsLoopback() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+				if ip := net.ParseIP(first); ip != nil {
+					return ip.String()
+				}
+			}
+		}
 	}
 	return host
 }

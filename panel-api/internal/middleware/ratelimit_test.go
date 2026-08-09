@@ -118,7 +118,11 @@ func TestKratosFlows_GatesCredentialPostsOnly(t *testing.T) {
 		r.Use(func(c *gin.Context) { c.Request.Header.Set("X-Forwarded-For", ip); c.Next() })
 		r.Any("/*any", mw, func(c *gin.Context) { c.Status(http.StatusOK) })
 		req := httptest.NewRequest(method, path, nil)
-		req.Header.Set("X-Forwarded-For", ip)
+		// Distinct peers, not distinct headers: clientIP only honours
+		// forwarding headers from a peer that presented credentials (the
+		// unix socket nginx uses). A header-only "IP" is exactly what an
+		// attacker would rotate to evade this limiter, so it must not key it.
+		req.RemoteAddr = ip + ":54321"
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		return w.Code

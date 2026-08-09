@@ -46,6 +46,10 @@ type BackupHandlerConfig struct {
 	Domains        repository.DomainRepository
 	Mailboxes      repository.MailboxRepository
 	AppInstalls    repository.ApplicationInstallRepository
+	// DockerApps resolves the account's docker app slugs so the backup
+	// covers their data trees (GH #954). Optional: nil means no slugs and
+	// the docker stage records "no docker apps".
+	DockerApps repository.DockerAppRepository
 
 	// Schema-v2 metadata producers — every nullable repo here is queried
 	// when building the per-user metadata bundle so disaster recovery
@@ -326,14 +330,24 @@ func (h *backupHandler) resolveDest(c *gin.Context, destID string) (*models.Back
 // Without this the download always opened the local repo and 404'd remote
 // backups with "no snapshots for job" (GH #462).
 func materializeDestParams(ctx context.Context, dests repository.BackupDestinationRepository, job *models.BackupJob) map[string]any {
+	_, params := materializeDest(ctx, dests, job)
+	return params
+}
+
+// materializeDest is materializeDestParams plus the destination row itself,
+// which the caller needs to bridge a per-destination restic password
+// (M30.2.x) into the download. Without that password the agent cannot open a
+// rotated destination's repo, so the download fails even though the backup
+// is fine.
+func materializeDest(ctx context.Context, dests repository.BackupDestinationRepository, job *models.BackupJob) (*models.BackupDestination, map[string]any) {
 	if dests == nil || job.DestinationID == nil || *job.DestinationID == "" {
-		return nil
+		return nil, nil
 	}
 	d, err := dests.Get(ctx, *job.DestinationID)
 	if err != nil || d == nil {
-		return nil
+		return nil, nil
 	}
-	return destWireParams(d)
+	return d, destWireParams(d)
 }
 
 // destWireParams projects a destination into the JSON keys the agent
@@ -468,6 +482,7 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 			"databases":          dbs,
 			"databases_postgres": pgDbs,
 			"mailboxes":          mbs,
+			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID),
 			"content":            req.Content,
 			"folders":            req.Folders,
 			"compression":        req.Compression,
@@ -743,7 +758,21 @@ func (h *backupHandler) download(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "no_completed_snapshot"})
 		return
 	}
-	streamBackupArtifact(c, h.cfg.Agent, job, materializeDestParams(c.Request.Context(), h.cfg.Destinations, job), h.cfg.logErr)
+	dest, destParams := materializeDest(c.Request.Context(), h.cfg.Destinations, job)
+	// Bridge the destination's own restic password (M30.2.x) for the
+	// materialize call; without it a rotated destination's snapshot cannot
+	// be opened and the download fails. No-op for legacy/local jobs.
+	_ = backupwrapperhelpers.WithOptionalDestPassword(c.Request.Context(), dest, h.cfg.Agent, h.cfg.SSOKey,
+		func(passwordFile string) error {
+			if passwordFile != "" {
+				if destParams == nil {
+					destParams = map[string]any{}
+				}
+				destParams["password_file"] = passwordFile
+			}
+			streamBackupArtifact(c, h.cfg.Agent, job, destParams, h.cfg.logErr)
+			return nil
+		})
 }
 
 // streamBackupArtifact materializes a SUCCEEDED backup job's restic snapshot
@@ -1071,7 +1100,7 @@ func (cfg MeBackupsHandlerConfig) logErr(msg string, err error, kv ...any) {
 func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
 	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
 		Databases: cfg.Databases, DatabaseUsers: cfg.DatabaseUsers, DatabaseGrants: cfg.DatabaseGrants,
-		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls,
+		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs,
@@ -1114,6 +1143,42 @@ func (cfg BackupHandlerConfig) allUserDatabasesByEngine(ctx context.Context, use
 		if r.Engine == engine || (engine == "mariadb" && r.Engine == "") {
 			out = append(out, r.Name)
 		}
+	}
+	return out
+}
+
+// allUserDockerApps returns the slugs of every docker app the user owns.
+// Their data trees live at /var/lib/jabali/docker-apps/<slug> — outside
+// the home — so the agent has to be told about them explicitly or the
+// backup silently omits the app (GH #954).
+//
+// Nil repo (older wiring, or a deployment without the docker surface)
+// yields no slugs and the stage records "no docker apps", which is the
+// same outcome as an account that has none.
+func (cfg BackupHandlerConfig) allUserDockerApps(ctx context.Context, userID string) []string {
+	if cfg.DockerApps == nil {
+		return nil
+	}
+	rows, err := cfg.DockerApps.ListByUserID(ctx, userID)
+	if err != nil {
+		cfg.logErr("list docker apps for backup", err, "user_id", userID)
+		return nil
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r == nil {
+			continue
+		}
+		// EffectiveSlug, NOT Slug: the data tree is
+		// /var/lib/jabali/docker-apps/<effective-slug>, and a second
+		// instance of a catalog app carries an InstanceSlug that differs
+		// from the catalog slug. Using Slug backs up the wrong path (or
+		// the first instance twice).
+		slug := r.EffectiveSlug()
+		if slug == "" {
+			continue
+		}
+		out = append(out, slug)
 	}
 	return out
 }
@@ -1168,6 +1233,10 @@ type MeBackupsHandlerConfig struct {
 	Domains        repository.DomainRepository
 	Mailboxes      repository.MailboxRepository
 	AppInstalls    repository.ApplicationInstallRepository
+	// DockerApps — see the note on BackupHandlerConfig.DockerApps. The
+	// tenant's own backup must cover their docker apps too, or a
+	// self-service restore comes back without them.
+	DockerApps repository.DockerAppRepository
 
 	SSLCerts       repository.SSLCertificateRepository
 	PHPPools       repository.PHPPoolRepository
@@ -1200,7 +1269,42 @@ type MeBackupsHandlerConfig struct {
 	Schedules repository.BackupScheduleRepository
 	Settings  repository.ServerSettingsRepository
 
+	// SSOKey unseals a destination's per-row restic password (M30.2.x) so a
+	// tenant download can open a rotated destination's repo. Optional: nil
+	// falls back to the agent's shared password file.
+	SSOKey *ssokey.Key
+
 	Log *slog.Logger
+}
+
+// allUserDockerApps mirrors BackupHandlerConfig.allUserDockerApps for the
+// tenant's own backup path.
+func (cfg MeBackupsHandlerConfig) allUserDockerApps(ctx context.Context, userID string) []string {
+	if cfg.DockerApps == nil {
+		return nil
+	}
+	rows, err := cfg.DockerApps.ListByUserID(ctx, userID)
+	if err != nil {
+		cfg.logErr("list docker apps for backup", err, "user_id", userID)
+		return nil
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r == nil {
+			continue
+		}
+		// EffectiveSlug, NOT Slug: the data tree is
+		// /var/lib/jabali/docker-apps/<effective-slug>, and a second
+		// instance of a catalog app carries an InstanceSlug that differs
+		// from the catalog slug. Using Slug backs up the wrong path (or
+		// the first instance twice).
+		slug := r.EffectiveSlug()
+		if slug == "" {
+			continue
+		}
+		out = append(out, slug)
+	}
+	return out
 }
 
 // buildAccountMetadata projects MeBackupsHandlerConfig into the shared
@@ -1208,7 +1312,7 @@ type MeBackupsHandlerConfig struct {
 func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
 	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
 		Databases: cfg.Databases, DatabaseUsers: cfg.DatabaseUsers, DatabaseGrants: cfg.DatabaseGrants,
-		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls,
+		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs,
@@ -1635,6 +1739,7 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			"databases":          dbs,
 			"databases_postgres": pgDbs,
 			"mailboxes":          mbs,
+			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID),
 			"content":            req.Content,
 			"folders":            req.Folders,
 			"compression":        req.Compression,
@@ -2438,7 +2543,8 @@ func (h *meBackupHandler) restoreSelective(c *gin.Context) {
 		if aerr != nil {
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), restoreJob.ID, models.BackupJobStatusFailed,
 				"", "", 0, 0, nil, nil, aerr.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "restore_failed", "detail": aerr.Error()})
+			// Agent errors carry restic/host internals — log, don't echo (JAB-114).
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "restore_failed"})
 			return
 		}
 		var ar struct {
@@ -2602,5 +2708,19 @@ func (h *meBackupHandler) download(c *gin.Context) {
 	// returned job metadata as JSON, so the browser's <a href> download
 	// got a JSON blob, never a file). Same agent-materialize path as the
 	// admin handler, scoped to the caller's own job by the check above.
-	streamBackupArtifact(c, h.cfg.Agent, job, materializeDestParams(c.Request.Context(), h.cfg.Destinations, job), h.cfg.logErr)
+	dest, destParams := materializeDest(c.Request.Context(), h.cfg.Destinations, job)
+	// Bridge the destination's own restic password (M30.2.x) for the
+	// materialize call; without it a rotated destination's snapshot cannot
+	// be opened and the download fails. No-op for legacy/local jobs.
+	_ = backupwrapperhelpers.WithOptionalDestPassword(c.Request.Context(), dest, h.cfg.Agent, h.cfg.SSOKey,
+		func(passwordFile string) error {
+			if passwordFile != "" {
+				if destParams == nil {
+					destParams = map[string]any{}
+				}
+				destParams["password_file"] = passwordFile
+			}
+			streamBackupArtifact(c, h.cfg.Agent, job, destParams, h.cfg.logErr)
+			return nil
+		})
 }

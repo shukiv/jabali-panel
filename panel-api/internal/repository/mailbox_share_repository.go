@@ -22,6 +22,9 @@ type MailboxShareRepository interface {
 	Create(ctx context.Context, share *models.MailboxShare) error
 	Update(ctx context.Context, share *models.MailboxShare) error
 	Delete(ctx context.Context, id string) error
+	// DeleteByOwner is the owner-scoped delete the HTTP layer must use; see
+	// the implementation for why the scope belongs in the query.
+	DeleteByOwner(ctx context.Context, id, ownerMailboxID string) error
 }
 
 type mailboxShareRepo struct {
@@ -129,6 +132,28 @@ func (r *mailboxShareRepo) Update(ctx context.Context, share *models.MailboxShar
 
 func (r *mailboxShareRepo) Delete(ctx context.Context, id string) error {
 	res := r.db.WithContext(ctx).Delete(&models.MailboxShare{}, "id = ?", id)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteByOwner removes a share only when it belongs to ownerMailboxID,
+// returning ErrNotFound otherwise.
+//
+// The owner scope is part of the DELETE rather than a separate read-then-check
+// so the authorization can't be raced, and so no caller can forget it. The
+// route is DELETE /mailboxes/:mbid/shares/:shareId: authenticating :mbid alone
+// and then deleting by bare :shareId let any authenticated tenant delete
+// another tenant's share row by passing their own mailbox as :mbid. Mirrors
+// MailboxSendDelegation.DeleteByPair, which had this right.
+func (r *mailboxShareRepo) DeleteByOwner(ctx context.Context, id, ownerMailboxID string) error {
+	res := r.db.WithContext(ctx).
+		Where("id = ? AND owner_mailbox_id = ?", id, ownerMailboxID).
+		Delete(&models.MailboxShare{})
 	if res.Error != nil {
 		return res.Error
 	}

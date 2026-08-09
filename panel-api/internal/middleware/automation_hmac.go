@@ -2,11 +2,11 @@
 //
 // Authorization header format:
 //
-//   Authorization: Jabali-HMAC kid=<token-id>, ts=<unix>, sig=<hex>
+//	Authorization: Jabali-HMAC kid=<token-id>, ts=<unix>, sig=<hex>
 //
 // Server recomputes:
 //
-//   sig = hex(HMAC_SHA256(secret, METHOD || "\n" || PATH || "\n" || ts || "\n" || sha256(BODY)))
+//	sig = hex(HMAC_SHA256(secret, METHOD || "\n" || PATH || "\n" || ts || "\n" || sha256(BODY)))
 //
 // Constant-time compares against the header sig. ts must be within a
 // 5-minute window of the server clock; signatures already seen in
@@ -23,10 +23,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -72,11 +74,36 @@ func AutomationToken(c *gin.Context) *models.AutomationToken {
 //
 // Failure cases all 401 with a generic JSON error — no information
 // leak about why a particular request failed.
-// rdb is nullable. When nil, replay defense is skipped + a single
-// info log fires at first request (operator can decide whether to
-// wire Redis or accept the timestamp-only window). On a fresh
-// install Redis is always present (M14 dispatcher requires it),
-// so production paths exercise the SETNX gate.
+// rdb is nullable. When nil, replay defense is skipped and a single WARN
+// fires at the first signed request — see warnNoReplayStore; the log the
+// original comment promised did not actually exist, so a Redis-less panel ran
+// with the gate off and no signal. On a fresh install Redis is always present
+// (the M14 dispatcher requires it), so production paths exercise the SETNX
+// gate.
+// noReplayStoreWarnOnce makes the "replay defense is OFF" warning fire once
+// per process rather than per request.
+var noReplayStoreWarnOnce sync.Once
+
+// warnNoReplayStore announces that the automation API is serving signed
+// requests with NO replay protection.
+//
+// The doc comment above has always promised this log; it never existed, so a
+// Redis-less panel ran with the gate silently off and the operator had no
+// signal at all. Worth saying out loud because the failure is invisible and
+// asymmetric: with Redis present a transient error fails CLOSED (503 —
+// "a missing replay store is a security regression, not best effort"), yet
+// with no Redis configured the same protection was skipped without comment.
+// Anyone who captures one valid signed request can replay it freely inside
+// the ~5-minute timestamp window (e.g. re-firing
+// POST /automation/users/:id/disable).
+func warnNoReplayStore() {
+	noReplayStoreWarnOnce.Do(func() {
+		slog.Warn("automation API: replay defense DISABLED — no Redis configured; " +
+			"a captured signed request can be replayed within the timestamp window. " +
+			"Configure Redis to enable the SETNX replay gate.")
+	})
+}
+
 func RequireAutomationHMAC(repo repository.AutomationTokenRepository, key *ssokey.Key, rdb *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if repo == nil || key == nil {
@@ -193,6 +220,9 @@ func RequireAutomationHMAC(repo repository.AutomationTokenRepository, key *ssoke
 		// security regression, not 'best effort'. The middleware
 		// returns 503 so the caller knows the auth substrate is
 		// degraded rather than silently dropping the gate.
+		if rdb == nil {
+			warnNoReplayStore()
+		}
 		if rdb != nil {
 			rkey := fmtReplayKey(kid, sig)
 			rctx, rcancel := context.WithTimeout(c.Request.Context(), 1*time.Second)

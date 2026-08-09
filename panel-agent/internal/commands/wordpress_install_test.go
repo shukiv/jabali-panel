@@ -9,6 +9,7 @@ import (
 )
 
 func TestValidateDocrootPath(t *testing.T) {
+	requireHostMutationAllowed(t)
 	tests := []struct {
 		name    string
 		osUser  string
@@ -58,6 +59,7 @@ func TestValidateDocrootPath(t *testing.T) {
 }
 
 func TestWordPressInstallHandler_InvalidInput(t *testing.T) {
+	requireHostMutationAllowed(t)
 	tests := []struct {
 		name      string
 		input     wordpressInstallReq

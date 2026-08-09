@@ -90,3 +90,13 @@ func ValidLabel(s string) bool {
 
 // FQDN returns the fully-qualified hostname for a label.
 func FQDN(label string) string { return label + "." + BaseDomain }
+
+// maxChallengeRecordsPerLabel bounds how many ACME challenge TXT records may
+// exist simultaneously at one label's _acme-challenge name.
+//
+// SetChallenge is add-only on purpose: issuing a wildcard cert needs the apex
+// and the wildcard challenge live at the SAME name at the same time, so a
+// replace would break renewal. That also means nothing stops a valid token
+// holder from scripting distinct values, so the count is capped. Legitimate
+// use needs 2; 8 leaves room for a retry that raced cleanup.
+const maxChallengeRecordsPerLabel = 8

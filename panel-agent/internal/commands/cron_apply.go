@@ -54,10 +54,17 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			Message: "username required",
 		}
 	}
-	if p.JobID == "" {
+	// job_id is interpolated into root-written unit paths under
+	// /etc/systemd/system (and the per-user units dir), so it must be
+	// format-checked, not merely non-empty: a value like "../ssh" would make
+	// this handler clobber /etc/systemd/system/ssh.service, and the remove
+	// path unlink arbitrary *.service / *.timer files as root. panel-api only
+	// ever passes DB-minted ULIDs today — this is the agent doing its own
+	// last-line validation rather than trusting that to stay true.
+	if !ulidRE.MatchString(p.JobID) {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: "job_id required",
+			Message: "job_id must be a 26-char ULID",
 		}
 	}
 

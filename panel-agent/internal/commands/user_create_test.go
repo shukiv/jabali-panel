@@ -12,6 +12,7 @@ import (
 )
 
 func TestUserCreateHandler_InvalidUsername(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []struct {
@@ -46,6 +47,7 @@ func TestUserCreateHandler_InvalidUsername(t *testing.T) {
 }
 
 func TestUserCreateHandler_InvalidHomeDir(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []struct {
@@ -77,6 +79,7 @@ func TestUserCreateHandler_InvalidHomeDir(t *testing.T) {
 }
 
 func TestUserCreateHandler_ValidUsername(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []string{
@@ -98,6 +101,7 @@ func TestUserCreateHandler_ValidUsername(t *testing.T) {
 }
 
 func TestUserCreateHandler_InvalidParams(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	_, err := userCreateHandler(context.Background(), []byte("not json"))
@@ -112,6 +116,7 @@ func TestUserCreateHandler_InvalidParams(t *testing.T) {
 // This test is skipped by default since it requires root and modifies the system.
 // Use `go test -tags=integration` to run it.
 func TestUserCreateHandler_Integration(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	t.Skip("Integration test skipped: requires root and creates system users")

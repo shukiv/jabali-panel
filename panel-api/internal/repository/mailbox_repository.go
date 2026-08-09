@@ -24,6 +24,8 @@ type MailboxRepository interface {
 	FindByEmail(ctx context.Context, email string) (*models.Mailbox, error)
 	ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.Mailbox, int64, error)
 	ListAllWithDomain(ctx context.Context) ([]MailboxWithDomain, error)
+	// CountAll counts mailboxes without loading rows (see implementation).
+	CountAll(ctx context.Context) (int64, error)
 	ListByOwnerWithDomain(ctx context.Context, userID string) ([]MailboxWithDomain, error)
 	CountByDomainID(ctx context.Context, domainID string) (int64, error)
 	Create(ctx context.Context, mb *models.Mailbox) error
@@ -119,6 +121,18 @@ type MailboxWithDomain struct {
 	DomainName   string `gorm:"column:domain_name" json:"domain_name"`
 	OwnerUserID  string `gorm:"column:owner_user_id" json:"owner_user_id"`
 	UserUsername string `gorm:"column:user_username" json:"user_username"`
+}
+
+// CountAll returns the number of mailboxes without materialising any rows.
+//
+// The automation mail summary used to call ListAllWithDomain and take len() of
+// the result: a full-table read with two JOINs, pulling every column including
+// the bcrypt hash and the AES ciphertext (up to 512 bytes/row), purely to
+// produce one integer — on an endpoint a fleet monitor polls.
+func (r *mailboxRepo) CountAll(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&models.Mailbox{}).Count(&n).Error
+	return n, err
 }
 
 // ListAllWithDomain returns every mailbox on the server joined with its

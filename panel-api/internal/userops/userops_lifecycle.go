@@ -55,6 +55,23 @@ func (e *DockerTeardownError) Error() string {
 	return "userops: docker app teardown failed for " + strings.Join(e.Slugs, ", ")
 }
 
+// DBCleanupError reports MariaDB objects (schemas, logins, the mysqladmin
+// shadow) whose host-side drop failed during DeleteCascade. The user row is NOT
+// deleted when this is returned: deleting it CASCADEs the databases/
+// database_users metadata away, so a failed drop would strand the MariaDB
+// object on the host with no panel row left to name it — invisible to
+// `jabali db list`, excluded from backups, grants still live (#1010 / db fix
+// 541612543+4d455c150, originally inline in the delete handler; kept here so the
+// automation delete path gets the same guarantee). Retrying the delete is safe:
+// the domain/docker/ACL steps are idempotent and re-list empty on the retry.
+type DBCleanupError struct {
+	Objects []string
+}
+
+func (e *DBCleanupError) Error() string {
+	return "userops: host-side MariaDB drop failed for " + strings.Join(e.Objects, ", ")
+}
+
 // RotatePassword rotates a user's auth password. Order is load-bearing
 // (moved verbatim from the REST update handler): bcrypt hash → Kratos
 // SetPassword (authoritative post-M20; failure = old password keeps
@@ -243,7 +260,11 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 	}
 
 	// Cascade-drop MariaDB schemas + grants BEFORE the panel row goes
-	// (which CASCADEs the metadata rows). Best-effort per DB.
+	// (which CASCADEs the metadata rows). A failed drop is NOT best-effort:
+	// collect the failures and abort before the row delete below, so the panel
+	// row stays as the only handle on the orphaned MariaDB object (see
+	// DBCleanupError).
+	var undropped []string
 	if dd.Databases != nil && d.Agent != nil && username != "" {
 		const batchSize = 500
 		for {
@@ -261,7 +282,8 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 				_, dropErr := d.Agent.Call(agentCtx, "db.drop", map[string]any{"db_name": dbName})
 				cancel()
 				if dropErr != nil {
-					logWarn(d, "cascade delete: db.drop failed",
+					undropped = append(undropped, dbName)
+					logError(d, "cascade delete: db.drop failed — aborting so the row stays addressable",
 						"user_id", id, "db_name", dbName, "err", dropErr)
 				}
 			}
@@ -287,7 +309,8 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 				_, dropErr := d.Agent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": duName})
 				cancel()
 				if dropErr != nil {
-					logWarn(d, "cascade delete: db_user.drop failed",
+					undropped = append(undropped, duName)
+					logError(d, "cascade delete: db_user.drop failed — aborting so the row stays addressable",
 						"user_id", id, "db_user_name", duName, "err", dropErr)
 				}
 			}
@@ -306,7 +329,11 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 		_, dropErr := d.Agent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": shadowUser})
 		cancel()
 		if dropErr != nil {
-			logWarn(d, "cascade delete: mysqladmin shadow drop failed",
+			// Counts toward the abort like any other login: it has a valid
+			// password and is not a database_users row, so nothing downstream
+			// would ever find it again — the exact orphan class this guards.
+			undropped = append(undropped, shadowUser)
+			logError(d, "cascade delete: mysqladmin shadow drop failed — aborting so the login is not orphaned",
 				"user_id", id, "mysqladmin_user", shadowUser, "err", dropErr)
 		}
 	}
@@ -359,6 +386,16 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 				"user_id", id, "username", username, "err", rErr)
 		}
 		rcancel()
+	}
+
+	// Point of no return: deleting the row CASCADEs databases/database_users
+	// away. If any host-side drop above failed, stop here — the panel rows are
+	// the only remaining handle on those MariaDB objects. Placed after the
+	// best-effort kratos/redis steps, mirroring the original inline order.
+	if len(undropped) > 0 {
+		logError(d, "cascade delete: aborted, host-side drops failed",
+			"user_id", id, "objects", undropped)
+		return &DBCleanupError{Objects: undropped}
 	}
 
 	if err := d.Users.Delete(ctx, id); err != nil {
@@ -435,5 +472,11 @@ func PreviewDeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, userID str
 func logWarn(d Deps, msg string, args ...any) {
 	if d.Log != nil {
 		d.Log.Warn(msg, args...)
+	}
+}
+
+func logError(d Deps, msg string, args ...any) {
+	if d.Log != nil {
+		d.Log.Error(msg, args...)
 	}
 }

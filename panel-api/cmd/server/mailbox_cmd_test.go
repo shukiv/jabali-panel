@@ -148,6 +148,7 @@ func (f *fakeMailboxRepo) UpdateQuota(_ context.Context, id string, quotaBytes u
 func (f *fakeMailboxRepo) UpdateDisplayName(_ context.Context, _ string, _ string) error { return nil }
 func (f *fakeMailboxRepo) SetDisabled(_ context.Context, _ string, _ bool) error         { return nil }
 func (f *fakeMailboxRepo) SetSendOnly(_ context.Context, _ string, _ bool) error         { return nil }
+func (f *fakeMailboxRepo) CountAll(context.Context) (int64, error) { return 0, nil }
 func (f *fakeMailboxRepo) ListAllWithDomain(_ context.Context) ([]repository.MailboxWithDomain, error) {
 	return nil, nil
 }

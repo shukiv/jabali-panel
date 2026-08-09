@@ -115,19 +115,23 @@ func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	cmd.Stdin = f
 
 	if err := cmd.Run(); err != nil {
-		// Always delete the file, whether restore succeeds or fails.
-		_ = os.Remove(p.Path)
+		// Always delete the file, whether restore succeeds or fails — but
+		// through the SCOPE, not os.Remove. The scope's RESOLVE_BENEATH
+		// applies to the open above; a raw os.Remove(p.Path) re-walks the
+		// unvalidated path string from /, so a symlink or a swapped parent
+		// directory in between would send this ROOT-privileged unlink
+		// somewhere the scope never approved (the Gitea #501 class, which the
+		// open was already hardened against).
+		_ = restoreScope.RemoveInScope(p.Path, false)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: "failed to restore database",
 		}
 	}
 
-	// Delete the file on success.
-	if err := os.Remove(p.Path); err != nil {
-		// Log but don't fail if cleanup fails; restore succeeded.
-		// In production, admin might need to manually clean up.
-	}
+	// Delete the file on success — again through the scope (see above).
+	// Cleanup failure does not fail the restore; it already succeeded.
+	_ = restoreScope.RemoveInScope(p.Path, false)
 
 	return dbRestoreResponse{OK: true}, nil
 }

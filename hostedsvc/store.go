@@ -177,6 +177,20 @@ func (s *Store) CreateLabel(label, ipv4, email, tokenHash string) error {
 	return nil
 }
 
+// DeleteLabel hard-deletes a label row. This is the ROLLBACK path for a claim
+// that reserved the row and then failed to publish DNS — nothing was ever
+// handed to the caller, so the name must become available again.
+//
+// RevokeLabel is deliberately NOT a substitute: a revoked name is burned by
+// design (never reissued), so using it here would leak one of the 26 collision
+// suffixes for that source IP on every transient DNS outage, and would still
+// count against the claimer's per-email cap. Do not use this for anything a
+// user has actually been given.
+func (s *Store) DeleteLabel(label string) error {
+	_, err := s.db.Exec(`DELETE FROM labels WHERE label = ?`, label)
+	return err
+}
+
 // LabelExists reports whether a label row exists (revoked rows count: a
 // revoked label's name is burned, never reissued to someone else).
 func (s *Store) LabelExists(label string) (bool, error) {

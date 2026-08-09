@@ -1053,6 +1053,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:        deps.Domains,
 				Mailboxes:      deps.Mailboxes,
 				AppInstalls:    deps.WordPressInstalls,
+				DockerApps:     deps.DockerApps,
 				DNSZones:       deps.DNSZones,
 				DNSRecords:     deps.DNSRecords,
 				Log:            deps.Log,
@@ -1062,6 +1063,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:          deps.Agent,
 				Jobs:           deps.BackupJobs,
 				Destinations:   deps.BackupDestinations,
+				SSOKey:         deps.SSOKey,
 				Users:          deps.Users,
 				Packages:       deps.Packages,
 				Databases:      deps.Databases,
@@ -1070,6 +1072,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:        deps.Domains,
 				Mailboxes:      deps.Mailboxes,
 				AppInstalls:    deps.WordPressInstalls,
+				DockerApps:     deps.DockerApps,
 				DNSZones:       deps.DNSZones,
 				DNSRecords:     deps.DNSRecords,
 				// GH #454 Step 4: tenant scheduled-backup card. Schedules +

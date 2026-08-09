@@ -192,6 +192,7 @@ func TestVhost_RuleBuilderRootProxyDoesNotDuplicateLocation(t *testing.T) {
 		IsEnabled:      true,
 		SSLCertPath:    "/etc/ssl/x.crt",
 		SSLKeyPath:     "/etc/ssl/x.key",
+		RedirectHTTPS:  true, // GH #896: :443 + :80-redirect block gated on this
 		ListenIPv4:     "1.2.3.4",
 		RuleDirectives: ruleBlock,
 		RootOverridden: directivesOverrideRoot("", ruleBlock),

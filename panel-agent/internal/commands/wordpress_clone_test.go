@@ -9,6 +9,7 @@ import (
 )
 
 func TestWordPressClone_InvalidInput(t *testing.T) {
+	requireHostMutationAllowed(t)
 	tests := []struct {
 		name      string
 		input     wordpressCloneReq
@@ -277,6 +278,7 @@ func TestWordPressClone_InvalidInput(t *testing.T) {
 }
 
 func TestWordPressClone_ValidRequest(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// Test that valid input produces a non-error response
 	// Note: This test doesn't actually run the clone (that requires systemd-run, rsync, mysql, etc.)
 	// but it validates the request parsing and path validation logic.

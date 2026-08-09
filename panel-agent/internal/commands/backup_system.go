@@ -61,6 +61,12 @@ type systemBackupParams struct {
 	CredentialsRef  string            `json:"credentials_ref,omitempty"`
 	DestinationKind string            `json:"destination_kind,omitempty"`
 	SFTP            *backupSFTPInputs `json:"sftp,omitempty"`
+	// PasswordFile points at the destination's own sealed restic password
+	// (M30.2.x), written by the agent under /run/jabali/restic-pw/. Blank
+	// means the legacy shared /etc/jabali-panel/restic-repo.password. A
+	// system backup writes to the same destinations as account backups, so
+	// it needs this too — without it a rotated destination fails outright.
+	PasswordFile string `json:"password_file,omitempty"`
 }
 
 type systemBackupResult struct {
@@ -96,11 +102,11 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	jl := backup.NewJobLogger(req.JobID)
 	defer jl.Close()
 	jl.Printf("system_backup start include_accounts=%v destination=%s", req.IncludeAccounts, req.RepoURL)
-	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP); err != nil {
+	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.PasswordFile, req.SFTP); err != nil {
 		jl.Printf("ensure_repo_failed=%v", err)
 		return fmt.Errorf("ensure repo: %w", err)
 	}
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.SFTP)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return fmt.Errorf("restic config: %w", cerr)
 	}

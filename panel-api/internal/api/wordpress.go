@@ -941,6 +941,30 @@ func (h *wordPressHandler) cloneCore(ctx context.Context, sourceInstallID, destD
 		UpdatedAt:     now,
 	}
 	if err := h.cfg.ApplicationInstalls.Create(ctx, cloneInstall); err != nil {
+		// Unwind the MariaDB side too. This path used to drop only the panel
+		// rows, leaving the database and user that the three agent calls
+		// above had just created with nothing left to reference them — the
+		// same invisible orphan the delete path produced, made silently
+		// (it did not even log a drop attempt).
+		//
+		// Same rule as everywhere else: the rows only go once the host-side
+		// objects actually did.
+		if h.cfg.Agent != nil {
+			dropFailed := false
+			if _, dErr := h.cfg.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": destDBUsername}); dErr != nil {
+				dropFailed = true
+				slog.ErrorContext(ctx, "wordpress clone rollback: db_user.drop failed — keeping the panel rows so the account stays visible instead of becoming an orphan",
+					"err", dErr, "db_user", destDBUsername)
+			}
+			if _, dErr := h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": destDBName}); dErr != nil {
+				dropFailed = true
+				slog.ErrorContext(ctx, "wordpress clone rollback: db.drop failed — keeping the panel rows so the database stays visible instead of becoming an orphan",
+					"err", dErr, "db_name", destDBName)
+			}
+			if dropFailed {
+				return nil, fmt.Errorf("create clone install: %w", err)
+			}
+		}
 		h.cfg.DatabaseGrants.Delete(ctx, destGrantID)
 		h.cfg.DatabaseUsers.Delete(ctx, destDBUserID)
 		h.cfg.Databases.Delete(ctx, destDBID)
@@ -1212,42 +1236,67 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, userID, appT
 		removeAppCrons(ctx, cfg, userID, osUser, appType, appInstallPath(docroot, subdirectory))
 	}
 
-	// Best-effort DB-side cleanup. Drop the mariadb database + user on the
-	// host via the agent and remove the panel-side rows so the slot is
-	// freed up. Order matters:
-	//   grants → users → wp install row → database
-	// because fk_wpinstalls_db is RESTRICT — deleting the databases row
-	// before the wordpress_installs row that references it fails (silently,
-	// since the error is swallowed) and leaves an orphan databases row.
+	// DB-side cleanup: drop the mariadb database + user on the host via the
+	// agent, then remove the panel-side rows so the slot is freed up.
+	//
+	// The panel row is only removed once the host-side object is actually
+	// gone. This used to log the drop failure and delete the row anyway,
+	// which is how an invisible orphan is made: the agent call is a root RPC
+	// and an agent restart, a timeout, or a long-call 502 is enough to fail
+	// it, after which the MariaDB database and user survive with no panel row
+	// left to name them — absent from `jabali db list`, absent from the
+	// account backup, still holding their grants. testserver carries four
+	// such orphan pairs, two of them complete WordPress schemas (75 and 64
+	// tables) that no backup has ever covered.
+	//
+	// Keeping the rows instead leaves an ordinary, visible database the owner
+	// can retry from the Databases page, and databases.go's delete refuses to
+	// remove the row unless its own drop succeeds — so the retry cannot
+	// reintroduce the orphan.
+	dropFailed := false
+
+	// The agent command is `db_user.drop` with `db_user_name` — NOT
+	// `mysql.user.delete` (which doesn't exist; the prior call silently
+	// no-op'd and the account survived every WP delete).
+	if dbUserID != "" && dbUserUsername != "" {
+		if _, agentErr := cfg.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": dbUserUsername}); agentErr != nil {
+			dropFailed = true
+			slog.ErrorContext(ctx, "wordpress delete: db_user.drop failed — keeping the panel rows so the account stays visible instead of becoming an orphan",
+				"err", agentErr, "db_user", dbUserUsername)
+		}
+	}
+
+	// Agent command is `db.drop` with `db_name` — NOT
+	// `mysql.database.delete` (same silent-no-op bug as above, the schema
+	// survived every delete).
+	if databaseID != "" {
+		if db, dbErr := cfg.Databases.FindByID(ctx, databaseID); dbErr == nil && db != nil {
+			if _, agentErr := cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": db.Name}); agentErr != nil {
+				dropFailed = true
+				slog.ErrorContext(ctx, "wordpress delete: db.drop failed — keeping the panel rows so the database stays visible instead of becoming an orphan",
+					"err", agentErr, "db_name", db.Name)
+			}
+		}
+	}
+
+	// The install's files are gone (the app.delete above succeeded or we
+	// returned), so its row goes either way. Deleting it before the databases
+	// row also releases fk_wpinstalls_db, which is RESTRICT.
+	cfg.ApplicationInstalls.Delete(ctx, installID)
+
+	if dropFailed {
+		return
+	}
+
 	if dbUserID != "" {
 		if grants, gErr := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, dbUserID); gErr == nil {
 			for _, g := range grants {
 				cfg.DatabaseGrants.Delete(ctx, g.ID)
 			}
 		}
-		// Drop the mariadb user on the host. The agent command is
-		// `db_user.drop` with `db_user_name` — NOT `mysql.user.delete`
-		// (which doesn't exist; the prior call silently no-op'd and the
-		// account survived every WP delete).
-		if dbUserUsername != "" {
-			if _, agentErr := cfg.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": dbUserUsername}); agentErr != nil {
-				slog.WarnContext(ctx, "wordpress delete: db_user.drop failed", "err", agentErr, "db_user", dbUserUsername)
-			}
-		}
 		cfg.DatabaseUsers.Delete(ctx, dbUserID)
 	}
-	// Delete the WP install row BEFORE the database panel row so the
-	// fk_wpinstalls_db RESTRICT constraint releases.
-	cfg.ApplicationInstalls.Delete(ctx, installID)
 	if databaseID != "" {
-		if db, dbErr := cfg.Databases.FindByID(ctx, databaseID); dbErr == nil && db != nil {
-			// Agent command is `db.drop` with `db_name` — NOT
-			// `mysql.database.delete` (same silent-no-op bug as above,
-			// the schema survived every delete).
-			if _, agentErr := cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": db.Name}); agentErr != nil {
-				slog.WarnContext(ctx, "wordpress delete: db.drop failed", "err", agentErr, "db_name", db.Name)
-			}
-		}
 		cfg.Databases.Delete(ctx, databaseID)
 	}
 }

@@ -39,6 +39,22 @@ type NginxSafeOptions struct {
 	// (location-scoped, 50x-only error_page so app 404/403 pages survive),
 	// so the reconciler plumbs it as its own domain.create param instead.
 	InterceptErrors *bool `json:"intercept_errors,omitempty"`
+	// PathInfo (GH #962) enables PATH_INFO for front-controller PHP apps that
+	// route through /script.php/extra/path URLs — osTicket (/scp/ajax.php/…),
+	// and similar. The default vhost only has an end-anchored `location ~ \.php$`,
+	// so those URLs never reach FPM correctly and 400/404. When true, the agent
+	// emits an extra PATH_INFO location.
+	//
+	// Tenant-safe: the location only matches a real `.php` followed by a further
+	// `/segment`, and an existence guard (`if (!-f …) return 404`) plus the pool's
+	// security.limit_extensions=.php mean an uploaded non-PHP file can't be
+	// walk-back executed — so it grants no privilege the tenant doesn't already
+	// have by putting a .php in their own docroot. Default off ⇒ byte-identical.
+	//
+	// NOT rendered by Render(): the location needs the domain's FPM socket, which
+	// Render() can't see, so the reconciler plumbs it as its own domain.create
+	// param (same reason as InterceptErrors).
+	PathInfo bool `json:"path_info,omitempty"`
 }
 
 // maxBodyCapMB bounds client_max_body_size so a tenant can't set an absurd

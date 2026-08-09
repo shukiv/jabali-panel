@@ -30,6 +30,10 @@ func renderVhost(t *testing.T, v4, v6 string, ssl bool) string {
 	if ssl {
 		vd.SSLCertPath = "/etc/ssl/example.com.pem"
 		vd.SSLKeyPath = "/etc/ssl/example.com.key"
+		// GH #896: the redirect + :443 block is now gated on RedirectHTTPS
+		// (a trusted cert), not merely on SSLCertPath. ssl=true here models a
+		// domain serving HTTPS, so set it.
+		vd.RedirectHTTPS = true
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, vd); err != nil {

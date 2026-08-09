@@ -110,6 +110,13 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	if req.ManifestSnapshotID == "" {
 		return nil, bkInvalidArg("manifest_snapshot_id required")
 	}
+	// target_username flows into useradd/loginctl argv and into the rsync
+	// destination path join, neither of which is containment-checked
+	// downstream. Validate the shape here, next to the ulid check, matching
+	// what every other backup handler does.
+	if req.TargetUsername != "" && !backupUsernameRE.MatchString(req.TargetUsername) {
+		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
+	}
 
 	// Single global flock — held for the duration of the restore. Use
 	// LOCK_NB so a busy host returns an error rather than blocking
@@ -364,6 +371,51 @@ func applyAccountRestore(
 				applied = append(applied, fmt.Sprintf("stripped source cache constants from %d wp-config(s)", n))
 			}
 			applied = append(applied, fmt.Sprintf("home → /home/%s", username))
+
+		case backup.StageDocker:
+			if len(st.Items) == 0 {
+				warnings = append(warnings, "docker: manifest stage missing items[0] app slug")
+				continue
+			}
+			slug := st.Items[0]
+			// The slug lands in a filesystem path and a compose invocation,
+			// so re-validate it here: the manifest came out of the repo and
+			// the repo is untrusted.
+			if err := validateSlug(slug); err != nil {
+				warnings = append(warnings, fmt.Sprintf("docker: refusing slug %q: %v", slug, err))
+				continue
+			}
+			// restic preserves absolute paths, so the staged tree is at
+			// stagingRoot/docker/var/lib/jabali/docker-apps/<slug>/.
+			src := filepath.Join(stagingRoot, backup.StageDocker, dockerAppDataRoot, slug) + "/"
+			if _, err := os.Stat(filepath.Clean(src)); err != nil {
+				warnings = append(warnings, fmt.Sprintf("docker %s: source %s missing: %v", slug, src, err))
+				continue
+			}
+			dst := filepath.Join(dockerAppDataRoot, slug)
+			// Bring the stack down first — rsyncing over volumes a running
+			// container is writing is how you get a half-restored database.
+			// A down failure on an app that was never up here (the normal
+			// case on a migration destination) is not fatal.
+			if _, err := runDockerCompose(ctx, dst, "down"); err != nil {
+				warnings = append(warnings, fmt.Sprintf("docker %s: compose down: %v (continuing)", slug, err))
+			}
+			if err := os.MkdirAll(dst, 0o750); err != nil {
+				warnings = append(warnings, fmt.Sprintf("docker %s: mkdir %s: %v", slug, dst, err))
+				continue
+			}
+			// -aH, not -aHAX: same reasoning as the home stage — never apply
+			// ACLs/xattrs/capabilities carried by an untrusted snapshot.
+			if err := exec.CommandContext(ctx, "rsync", "-aH", "--delete", src, dst+"/").Run(); err != nil {
+				warnings = append(warnings, fmt.Sprintf("docker %s: rsync: %v", slug, err))
+				continue
+			}
+			// Deliberately NOT `compose up -d`. The restored tree carries a
+			// compose.yml from the repo, and starting it here would run
+			// untrusted compose as root without the tenant safety gate that
+			// docker_app.restore applies (Gitea #509). The data is in place;
+			// the app is started from the panel, which validates first.
+			applied = append(applied, fmt.Sprintf("docker %s → %s (stopped; start it from the panel)", slug, dst))
 
 		case backup.StageDB:
 			if len(st.Items) == 0 {

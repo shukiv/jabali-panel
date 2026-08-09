@@ -13,6 +13,7 @@ func allExist(string) bool  { return true }
 func noneExist(string) bool { return false }
 
 func TestRenderEgressNFT_EmitsHeaderAndDefaults(t *testing.T) {
+	requireHostMutationAllowed(t)
 	out := RenderEgressNFT(nil, CanonicalDefaults(), allExist)
 
 	require.Contains(t, out, "table inet jabali_per_user {")
@@ -31,6 +32,7 @@ func TestRenderEgressNFT_EmitsHeaderAndDefaults(t *testing.T) {
 }
 
 func TestRenderEgressNFT_OffStateSkipped(t *testing.T) {
+	requireHostMutationAllowed(t)
 	users := []EgressUser{
 		{Username: "alice", State: "off"},
 		{Username: "bob", State: "enforced"},
@@ -49,6 +51,7 @@ func TestRenderEgressNFT_OffStateSkipped(t *testing.T) {
 }
 
 func TestRenderEgressNFT_LearningEmitsLogAndAccept(t *testing.T) {
+	requireHostMutationAllowed(t)
 	users := []EgressUser{{Username: "carol", State: "learning"}}
 	out := RenderEgressNFT(users, CanonicalDefaults(), allExist)
 
@@ -59,6 +62,7 @@ func TestRenderEgressNFT_LearningEmitsLogAndAccept(t *testing.T) {
 }
 
 func TestRenderEgressNFT_VmapKeyMatchesM18Topology(t *testing.T) {
+	requireHostMutationAllowed(t)
 	users := []EgressUser{{Username: "dave", State: "enforced"}}
 	out := RenderEgressNFT(users, CanonicalDefaults(), allExist)
 
@@ -68,6 +72,7 @@ func TestRenderEgressNFT_VmapKeyMatchesM18Topology(t *testing.T) {
 }
 
 func TestRenderEgressNFT_MissingSliceNoUIDSkipped(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// No uid + missing slice — cannot enforce; skipped + surfaced as fail-open.
 	users := []EgressUser{{Username: "eve", State: "enforced"}}
 	out := RenderEgressNFT(users, CanonicalDefaults(), noneExist)
@@ -78,6 +83,7 @@ func TestRenderEgressNFT_MissingSliceNoUIDSkipped(t *testing.T) {
 }
 
 func TestRenderEgressNFT_MissingSliceUIDFallback(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// GH #708: missing slice BUT uid known -> enforced by uid, not fail-open.
 	users := []EgressUser{{Username: "eve", State: "enforced", UID: 1001}}
 	out := RenderEgressNFT(users, CanonicalDefaults(), noneExist)
@@ -88,6 +94,7 @@ func TestRenderEgressNFT_MissingSliceUIDFallback(t *testing.T) {
 }
 
 func TestRenderEgressNFT_AllowedExtraEmittedInChain(t *testing.T) {
+	requireHostMutationAllowed(t)
 	port := 443
 	users := []EgressUser{{
 		Username: "frank",
@@ -104,6 +111,7 @@ func TestRenderEgressNFT_AllowedExtraEmittedInChain(t *testing.T) {
 }
 
 func TestRenderEgressNFT_DeterministicOrdering(t *testing.T) {
+	requireHostMutationAllowed(t)
 	a := []EgressUser{
 		{Username: "zara", State: "enforced"},
 		{Username: "alice", State: "enforced"},
@@ -118,6 +126,7 @@ func TestRenderEgressNFT_DeterministicOrdering(t *testing.T) {
 }
 
 func TestParseNFTCounters_HappyPath(t *testing.T) {
+	requireHostMutationAllowed(t)
 	raw := []byte(`{
 	  "nftables": [
 	    {"metainfo": {"version":"1.1.3"}},
@@ -140,6 +149,7 @@ func TestParseNFTCounters_HappyPath(t *testing.T) {
 }
 
 func TestExtractUsernameFromCounter_ShapeRequired(t *testing.T) {
+	requireHostMutationAllowed(t)
 	cases := map[string]struct {
 		want string
 		ok   bool
@@ -161,12 +171,14 @@ func TestExtractUsernameFromCounter_ShapeRequired(t *testing.T) {
 }
 
 func TestSlicePathFor_M18Format(t *testing.T) {
+	requireHostMutationAllowed(t)
 	require.Equal(t,
 		"jabali.slice/jabali-user.slice/jabali-user-shukivaknin.slice",
 		SlicePathFor("shukivaknin"))
 }
 
 func TestPortStrings(t *testing.T) {
+	requireHostMutationAllowed(t)
 	require.Equal(t, "53,80,443", portStrings([]int{53, 80, 443}))
 	// guard against accidental empty-list panic
 	require.True(t, !strings.Contains(portStrings(nil), ","))
@@ -175,6 +187,7 @@ func TestPortStrings(t *testing.T) {
 // GH #401: an always-on SSRF floor drops link-local / cloud-metadata for any
 // tenant slice (level 2), before the per-user vmap, regardless of enrollment.
 func TestRenderEgressNFT_SSRFFloor(t *testing.T) {
+	requireHostMutationAllowed(t)
 	out := RenderEgressNFT(nil, CanonicalDefaults(), allExist)
 	for _, want := range []string{
 		"counter ssrf_floor_drops {}",
@@ -206,6 +219,7 @@ func indexOf(s, sub string) int { return strings.Index(s, sub) }
 // The rendered file must atomically replace the table (add+delete+redefine)
 // so reconcile-tick reloads don't accumulate duplicate chain rules.
 func TestRenderEgressNFT_AtomicReplaceHeader(t *testing.T) {
+	requireHostMutationAllowed(t)
 	out := RenderEgressNFT(nil, CanonicalDefaults(), allExist)
 	add := indexOf(out, "add table inet jabali_per_user")
 	del := indexOf(out, "delete table inet jabali_per_user")

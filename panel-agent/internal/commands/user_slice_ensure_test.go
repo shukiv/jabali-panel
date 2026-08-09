@@ -16,6 +16,7 @@ import (
 )
 
 func TestUserSliceEnsure_InvalidUsername(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []struct {
@@ -49,6 +50,7 @@ func TestUserSliceEnsure_InvalidUsername(t *testing.T) {
 }
 
 func TestUserSliceEnsure_ValidUsernames(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []string{
@@ -68,6 +70,7 @@ func TestUserSliceEnsure_ValidUsernames(t *testing.T) {
 }
 
 func TestUserSliceEnsure_UserNotFound(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// Note: no t.Parallel() due to global mock state
 
 	// Mock runCmd to simulate user not existing
@@ -102,6 +105,7 @@ func TestUserSliceEnsure_UserNotFound(t *testing.T) {
 }
 
 func TestUserSliceEnsure_HappyPath_FilesWritten(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// Note: no t.Parallel() due to global mock state
 
 	tmpdir := t.TempDir()
@@ -164,6 +168,7 @@ func TestUserSliceEnsure_HappyPath_FilesWritten(t *testing.T) {
 }
 
 func TestUserSliceEnsure_ShortCircuit_FilesMatch(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// Note: no t.Parallel() due to global mock state
 
 	tmpdir := t.TempDir()
@@ -232,6 +237,7 @@ func TestUserSliceEnsure_ShortCircuit_FilesMatch(t *testing.T) {
 }
 
 func TestUserSliceEnsure_InvalidParams(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	_, err := userSliceEnsureHandler(context.Background(), []byte("invalid json"))
@@ -243,6 +249,7 @@ func TestUserSliceEnsure_InvalidParams(t *testing.T) {
 }
 
 func TestUserSliceEnsure_ReloadFailure(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// Note: no t.Parallel() due to global mock state
 
 	tmpdir := t.TempDir()
@@ -287,6 +294,7 @@ func TestUserSliceEnsure_ReloadFailure(t *testing.T) {
 }
 
 func TestFileMatch(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tmpdir := t.TempDir()
@@ -307,6 +315,7 @@ func TestFileMatch(t *testing.T) {
 }
 
 func TestWriteFileAtomically(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tmpdir := t.TempDir()
@@ -325,6 +334,7 @@ func TestWriteFileAtomically(t *testing.T) {
 }
 
 func TestBuildSliceUnitContent(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	content := buildSliceUnitContent("testuser")
@@ -337,6 +347,7 @@ func TestBuildSliceUnitContent(t *testing.T) {
 }
 
 func TestBuildFPMDropinContent(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	content := buildFPMDropinContent("testuser")
@@ -346,6 +357,7 @@ func TestBuildFPMDropinContent(t *testing.T) {
 }
 
 func TestBuildLoginDropinContent(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	content := buildLoginDropinContent("testuser")
@@ -357,6 +369,7 @@ func TestBuildLoginDropinContent(t *testing.T) {
 // GH #410 follow-up: user.slice.ensure self-heals jabali-redis-clients
 // membership so migrated/reprovisioned tenants can reach the Redis socket.
 func TestUserSliceEnsure_RedisGroupSelfHeal(t *testing.T) {
+	requireHostMutationAllowed(t)
 	run := func(t *testing.T, idNGOut string) []string {
 		t.Helper()
 		tmpdir := t.TempDir()

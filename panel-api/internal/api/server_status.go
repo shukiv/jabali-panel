@@ -58,9 +58,8 @@ type adminServerStatusHandler struct {
 }
 
 const (
-	subCallTimeout   = 5 * time.Second
-	nginxTestTimeout = 45 * time.Second
-	maxInFlight      = 8
+	subCallTimeout = 5 * time.Second
+	maxInFlight    = 8
 )
 
 // ServerStatusEnvelope is the shape returned to /admin/server-status. Sub-
@@ -149,11 +148,17 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	call("services", "system.service_details", nil, subCallTimeout)
 	call("user_slices", "system.user_slices", nil, subCallTimeout)
 	call("software", "system.software", nil, subCallTimeout)
-	// nginx.test runs `nginx -t` which can take 15-30s on hosts with many
-	// vhosts + AppSec rule compile (CRS + vpatch = 200+ rules). Bumped from
-	// the 5s default so the health check doesn't false-alarm with
-	// "i/o timeout" on every server-status refresh.
-	call("nginx", "nginx.test", nil, nginxTestTimeout)
+	// nginx.status, NOT nginx.test: this envelope is polled every few
+	// seconds from any open admin tab, and `nginx -t` recompiles every
+	// vhost plus the whole CrowdSec AppSec/CRS rule set (~19s at >60% CPU
+	// on such hosts) — so the poller alone kept a core busy. nginx.status
+	// asks systemd for the unit state instead (sub-50ms) and is the verb
+	// that was added for exactly this caller. It is also the semantically
+	// correct check: the alert below says "nginx service not running",
+	// which is liveness, while nginx.test answers config validity — a
+	// config typo used to raise a misleading "not running" critical.
+	// nginx.test remains the gate for nginx.reload, where it belongs.
+	call("nginx", "nginx.status", nil, subCallTimeout)
 
 	// M31.1 — Redis queue depths run in parallel with the agent calls.
 	// Three XLEN/XPending pipelines, each with its own short timeout so

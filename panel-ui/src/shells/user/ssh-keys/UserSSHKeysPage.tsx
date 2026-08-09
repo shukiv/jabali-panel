@@ -15,10 +15,10 @@ import {
   Modal,
   Form,
   Input,
-  message,
   Popconfirm,
   Tooltip,
 } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   PlusSquareOutlined,
   DeleteOutlined,
@@ -111,7 +111,7 @@ export const UserSSHKeysPage = () => {
       // Client-side validation
       const keyError = validatePublicKey(values.public_key);
       if (keyError) {
-        message.error(keyError);
+        feedback.message.error(keyError);
         return;
       }
 
@@ -120,21 +120,21 @@ export const UserSSHKeysPage = () => {
         public_key: values.public_key,
       });
 
-      message.success("SSH key added successfully");
+      feedback.message.success("SSH key added successfully");
       form.resetFields();
       setModalOpen(false);
       refetch();
     } catch (error: unknown) {
       const err = error as any;
       if (err?.response?.data?.error === "invalid_key") {
-        message.error(
+        feedback.message.error(
           "The public key could not be parsed. Make sure you paste the line from ~/.ssh/id_ed25519.pub (or similar), not a private key.",
         );
       } else if (err?.response?.data?.error === "duplicate_key") {
-        message.error("This key is already registered.");
+        feedback.message.error("This key is already registered.");
       } else {
         const msg = err?.message ?? "Failed to add SSH key";
-        message.error(msg);
+        feedback.message.error(msg);
       }
     } finally {
       setLoading(false);
@@ -150,16 +150,16 @@ export const UserSSHKeysPage = () => {
       setGeneratedName(values.name);
       setGenOpen(false);
       genForm.resetFields();
-      message.success("SSH key generated — save the private key now");
+      feedback.message.success("SSH key generated — save the private key now");
       refetch();
     } catch (error: unknown) {
       const err = error as { response?: { data?: { error?: string } }; message?: string };
       if (err?.response?.data?.error === "duplicate_key") {
         // Extraordinarily unlikely with 32 random bytes, but if the
         // user re-clicks fast enough we could race their own list.
-        message.error("This key is already registered — try again.");
+        feedback.message.error("This key is already registered — try again.");
       } else {
-        message.error(err?.message ?? "Failed to generate SSH key");
+        feedback.message.error(err?.message ?? "Failed to generate SSH key");
       }
     } finally {
       setGenerating(false);
@@ -185,9 +185,9 @@ export const UserSSHKeysPage = () => {
     if (!generatedPrivate) return;
     try {
       await navigator.clipboard.writeText(generatedPrivate);
-      message.success("Private key copied to clipboard");
+      feedback.message.success("Private key copied to clipboard");
     } catch {
-      message.error("Copy failed — select and copy manually");
+      feedback.message.error("Copy failed — select and copy manually");
     }
   };
 
@@ -195,11 +195,11 @@ export const UserSSHKeysPage = () => {
     setDeletingId(key.id);
     try {
       await deleteSSHKey(key.id);
-      message.success("SSH key deleted successfully");
+      feedback.message.success("SSH key deleted successfully");
       refetch();
     } catch (error) {
       const msg = (error as any)?.message ?? "Failed to delete SSH key";
-      message.error(msg);
+      feedback.message.error(msg);
     } finally {
       setDeletingId(null);
     }

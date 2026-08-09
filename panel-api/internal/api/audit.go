@@ -72,17 +72,40 @@ func RegisterAuditRoutes(g *gin.RouterGroup, cfg AuditHandlerConfig) {
 // verify recomputes the tamper-evidence hash chain over every audit row
 // (read-only) and reports the checked/total counts + the first broken row.
 func (h *auditHandler) verify(c *gin.Context) {
-	rows, err := h.cfg.Repo.AllForVerify(c.Request.Context())
-	if err != nil {
+	ctx := c.Request.Context()
+	anchor, _ := h.cfg.Repo.ChainAnchor(ctx)
+
+	// Stream the chain in batches rather than materialising the whole
+	// append-only table. It can reach hundreds of thousands of rows between
+	// prunes, and this was the one endpoint that loaded all of them into
+	// memory for a single admin request. The chain state is scalar, so a fold
+	// over batches gives an identical answer at bounded memory.
+	var (
+		prev     = anchor
+		checked  int
+		total    int
+		brokenID string
+		ok       = true
+	)
+	err := h.cfg.Repo.EachForVerify(ctx, 1000, func(batch []models.AuditEvent) bool {
+		total += len(batch)
+		bID, n, nextPrev, batchOK := audit.VerifyChainBatch(batch, prev)
+		checked += n
+		prev = nextPrev
+		if !batchOK {
+			brokenID, ok = bID, false
+			return false // stop early: the chain is already broken
+		}
+		return true
+	})
+	if err != nil && !repository.IsVerifyStop(err) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	anchor, _ := h.cfg.Repo.ChainAnchor(c.Request.Context())
-	brokenID, checked, ok := audit.VerifyChain(rows, anchor)
 	c.JSON(http.StatusOK, gin.H{
 		"ok":        ok,
 		"checked":   checked,
-		"total":     len(rows),
+		"total":     total,
 		"broken_id": brokenID,
 	})
 }

@@ -9,6 +9,7 @@ import (
 )
 
 func TestWordPressDelete_InvalidInput(t *testing.T) {
+	requireHostMutationAllowed(t)
 	tests := []struct {
 		name      string
 		input     wordpressDeleteReq
@@ -108,6 +109,7 @@ func TestWordPressDelete_InvalidInput(t *testing.T) {
 }
 
 func TestWordPressDelete_ValidRequest(t *testing.T) {
+	requireHostMutationAllowed(t)
 	// Test that valid input produces a non-error response
 	// Note: This test doesn't actually run the deletion (that requires systemd-run)
 	// but it validates the request parsing and path validation logic.

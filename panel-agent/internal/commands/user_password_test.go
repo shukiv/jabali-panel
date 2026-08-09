@@ -12,6 +12,7 @@ import (
 )
 
 func TestUserPasswordHandler_RejectsInvalidUsername(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []struct {
@@ -45,6 +46,7 @@ func TestUserPasswordHandler_RejectsInvalidUsername(t *testing.T) {
 }
 
 func TestUserPasswordHandler_RejectsProtectedUser(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []string{
@@ -72,6 +74,7 @@ func TestUserPasswordHandler_RejectsProtectedUser(t *testing.T) {
 }
 
 func TestUserPasswordHandler_RejectsEmptyPassword(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	params := userPasswordParams{

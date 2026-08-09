@@ -4,7 +4,6 @@ import {
   Alert,
   Card,
   Input,
-  notification,
   Select,
   Space,
   Spin,
@@ -12,6 +11,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { ApiOutlined, DeleteOutlined, DownloadOutlined, PauseCircleOutlined, PlayCircleOutlined, SearchOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
@@ -74,7 +74,7 @@ export const PHPExtensionsTab = () => {
           : installed[0] ?? null;
         setSelectedVersion(def);
       } catch (err) {
-        notification.error({
+        feedback.notification.error({
           message: "Failed to fetch PHP versions",
           description: extractApiError(err, "Unknown error"),
         });
@@ -101,7 +101,7 @@ export const PHPExtensionsTab = () => {
       );
       setExtensions(data.extensions);
     } catch (err) {
-      notification.error({
+      feedback.notification.error({
         message: `Failed to fetch extensions for PHP ${version}`,
         description: extractApiError(err, "Unknown error"),
       });
@@ -119,14 +119,14 @@ export const PHPExtensionsTab = () => {
         `/admin/php/versions/${selectedVersion}/extensions/${ext}/apply`,
         { action }
       );
-      notification.success({
+      feedback.notification.success({
         message: `${ext}: ${action} applied for PHP ${selectedVersion}`,
         duration: 2,
       });
       // Server is source of truth; refetch instead of optimistic update.
       await loadExtensions(selectedVersion);
     } catch (err) {
-      notification.error({
+      feedback.notification.error({
         message: `${action} ${ext} failed`,
         description: extractApiError(err, "Unknown error"),
         duration: 5,

@@ -73,8 +73,13 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 	if p.ManifestSnapshotID == "" {
 		return nil, bkInvalidArg("manifest_snapshot_id required")
 	}
-	if p.TargetUsername == "" {
-		return nil, bkInvalidArg("target_username required")
+	// Format-validate, not just non-empty: target_username reaches useradd
+	// argv (a leading "-" parses as flags) and is joined into the rsync
+	// destination path, where a "../" component would turn a root rsync
+	// --delete into an arbitrary-directory mirror. Every sibling backup
+	// handler already validates with this same regex.
+	if !backupUsernameRE.MatchString(p.TargetUsername) {
+		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
 	}
 	if len(p.Databases) == 0 && !p.RestoreHome && len(p.Mailboxes) == 0 {
 		return nil, bkInvalidArg("select at least one database, mailbox, and/or home")

@@ -3,28 +3,40 @@ package middleware
 import (
 	"net"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
 
-// RequireLocalhost rejects every request whose remote address is not on
-// the loopback interface OR delivered over the local unix socket. Used
-// by panel-api endpoints the agent (or any other local daemon) calls —
-// the SPA must never reach them. This is a defence-in-depth check on
-// top of the bind-level expectation that panel-api binds to 127.0.0.1
-// (legacy) or /run/jabali-panel/api.sock (M25).
+// allowTCPInternalRoutes reports whether internal routes may be served over a
+// TCP listener, where the kernel gives us no peer identity.
 //
-// Implementation notes:
-//   - For TCP peers, split host:port from RemoteAddr and accept only
-//     when net.IP.IsLoopback() returns true.
-//   - For unix-socket peers, Go's net/http sets RemoteAddr to "@" (the
-//     empty abstract address) since unix sockets don't have a remote
-//     IP. A unix-socket connection is localhost by definition — the
-//     peer process has to be on the same host (or in a mount namespace
-//     that bind-mounted the socket, which is equivalent). Accept these.
-//   - Empty RemoteAddr is also treated as unix-socket for safety: some
-//     adapters drop the "@" sentinel. The net effect is the same since
-//     any non-unix peer through an HTTP server will have a RemoteAddr.
+// Opt-in on purpose, and read per call rather than cached at init so a test
+// (and an operator restarting with the variable set) sees the current value.
+// The default is refuse: production binds the unix socket, and silently
+// trusting loopback on a multi-tenant host is exactly the exposure this gate
+// exists to prevent.
+func allowTCPInternalRoutes() bool {
+	return os.Getenv("JABALI_ALLOW_TCP_INTERNAL") == "1"
+}
+
+// RequireLocalhost gates the routes only a local daemon (the agent) may call —
+// /api/v1/internal/* and the malware ingest — so the SPA and the public
+// internet can never reach them.
+//
+// The gate is layered, strongest first:
+//
+//  1. Proxy headers (X-Forwarded-*, X-Real-IP) are positive proof the request
+//     came through nginx, which shares the same unix socket the agent uses.
+//     Their presence is an immediate reject.
+//  2. SO_PEERCRED: ask the kernel which uid opened the connection. Set at
+//     connect time, unforgeable, unproxyable. root passes, anything else (nginx
+//     is www-data) is rejected. This is the real check.
+//  3. No peer credentials means a TCP listener. Loopback is NOT a trust
+//     boundary on a multi-tenant box — every tenant process can bind it — so
+//     these are refused unless the operator opts in via
+//     JABALI_ALLOW_TCP_INTERNAL=1. Only then does the loopback address check
+//     below apply.
 func RequireLocalhost() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// A request that arrived through nginx is NOT a local caller, even
@@ -52,19 +64,48 @@ func RequireLocalhost() gin.HandlerFunc {
 		// Ask the kernel who actually opened this socket. SO_PEERCRED is set
 		// at connect time and cannot be forged or proxied, so this is the
 		// structural answer to "is this really the agent?" -- nginx runs as
-		// www-data and can never satisfy it. Falls through when the peer is
-		// unknown (loopback TCP, or ConnContext unwired), leaving the checks
-		// below to decide.
-		if !requirePeerRoot(c) {
+		// www-data and can never satisfy it.
+		if uid, ok := PeerUID(c); ok {
+			if uid != rootUID {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "localhost_only"})
+				return
+			}
+			c.Next()
 			return
 		}
 
+		// No peer credentials. Two very different cases hide here, and they
+		// must not be treated alike.
 		remote := c.Request.RemoteAddr
-		// Unix-socket accept: RemoteAddr is "@" or "" (see net/http
-		// httputil docs). Accept — the connection is by definition
-		// local to this host.
+
+		// (a) Unix socket whose credentials we could not read — RemoteAddr is
+		// "@" or "" (net/http sets no address for unix conns; some adapters
+		// drop the "@" sentinel). Go ALWAYS sets a real host:port for TCP, so
+		// a remote attacker cannot manufacture this case: it really is a local
+		// unix peer. Accept, as before. This keeps the agent working if
+		// ConnContext is ever unwired by a refactor.
 		if remote == "" || remote == "@" {
 			c.Next()
+			return
+		}
+
+		// (b) A real TCP peer. Loopback is NOT a trust boundary on a
+		// multi-tenant box — every local process (a tenant's PHP-FPM pool,
+		// their cron jobs, an SSH shell) can connect to 127.0.0.1. Accepting
+		// "any loopback peer" let any of them POST unauthenticated to
+		// /api/v1/internal/* — flooding admin notifications to bury real
+		// alerts, or forging malware/quarantine rows pointing at arbitrary
+		// paths. The unix socket is the production transport (ADR-0050), so
+		// refuse by default and let a legacy [host]:port deployment opt in
+		// knowingly.
+		if !allowTCPInternalRoutes() {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "localhost_only",
+				"detail": "internal routes require the unix socket (peer credentials); " +
+					"this panel is bound to TCP, where any local process could call them. " +
+					"Bind server.addr to unix:/run/jabali-panel/api.sock, or set " +
+					"JABALI_ALLOW_TCP_INTERNAL=1 to accept the risk.",
+			})
 			return
 		}
 		host, _, err := net.SplitHostPort(remote)

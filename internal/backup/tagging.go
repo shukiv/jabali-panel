@@ -22,6 +22,7 @@ const (
 	TagKeyUserID     = "user-id"
 	TagKeySystem     = "system"
 	TagKeyDB         = "db"
+	TagKeyApp        = "app"
 	TagKeyScheduleID = "schedule-id"
 )
 
@@ -43,9 +44,19 @@ const (
 // back together at restore.
 const (
 	// account-backup stages
-	StageHome     = "home"
-	StageDB       = "db"
-	StageMail     = "mail"
+	StageHome = "home"
+	StageDB   = "db"
+	StageMail = "mail"
+	// StageDocker captures the data trees of the account's docker apps
+	// (/var/lib/jabali/docker-apps/<slug>). They live outside the user
+	// home, so the home stage never saw them — an account with a docker
+	// app used to back up without its app data, and a migration or DR
+	// restore brought the account back without the app (GH #954).
+	//
+	// docker_app.backup also snapshots these trees, but into the
+	// operator's standalone repo (JABALI_RESTIC_REPO), not the account's
+	// destination — which is why the omission stayed invisible.
+	StageDocker = "docker"
 	StageDNS      = "dns"
 	StageCron     = "cron"
 	StageSSH      = "ssh"

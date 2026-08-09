@@ -12,6 +12,7 @@ import (
 )
 
 func TestUserDeleteHandler_InvalidUsername(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []struct {
@@ -45,6 +46,7 @@ func TestUserDeleteHandler_InvalidUsername(t *testing.T) {
 }
 
 func TestUserDeleteHandler_ProtectedUsers(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []string{
@@ -72,6 +74,7 @@ func TestUserDeleteHandler_ProtectedUsers(t *testing.T) {
 }
 
 func TestUserDeleteHandler_InvalidParams(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	_, err := userDeleteHandler(context.Background(), []byte("not json"))
@@ -83,6 +86,7 @@ func TestUserDeleteHandler_InvalidParams(t *testing.T) {
 }
 
 func TestUserDeleteHandler_ValidUsername(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	tests := []string{
@@ -106,6 +110,7 @@ func TestUserDeleteHandler_ValidUsername(t *testing.T) {
 // TestUserDeleteHandler_Integration tests the full flow with actual system commands.
 // This test is skipped by default since it requires root and modifies the system.
 func TestUserDeleteHandler_Integration(t *testing.T) {
+	requireHostMutationAllowed(t)
 	t.Parallel()
 
 	t.Skip("Integration test skipped: requires root and deletes system users")

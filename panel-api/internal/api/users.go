@@ -470,9 +470,14 @@ func (h *userHandler) update(c *gin.Context) {
 					"detail": errDetail(err, userops.ErrKratosSetPassword),
 				})
 			case errors.Is(err, userops.ErrAgentPassword):
+				// JAB-114/#995: the agent error is logged inside
+				// userops.RotatePassword, NEVER echoed. This path is reachable
+				// by a NON-ADMIN owner via PATCH /users/:id, so echoing the
+				// agent error would hand a tenant the root daemon's raw stderr
+				// and filesystem paths. The sync flags below are the part the
+				// client legitimately needs.
 				c.JSON(http.StatusBadGateway, gin.H{
 					"error":         "agent_error",
-					"detail":        errDetail(err, userops.ErrAgentPassword),
 					"kratos_synced": true,
 					"db_synced":     false,
 					"os_synced":     false,
@@ -539,6 +544,20 @@ func (h *userHandler) delete(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{
 				"error":  "docker_teardown_failed",
 				"detail": "refusing to delete user: Docker app teardown failed for " + strings.Join(dte.Slugs, ", ") + " — resolve on the host and retry",
+			})
+			return
+		}
+		// #1010 / db fix 541612543+4d455c150 (was inline; now shared via
+		// DeleteCascade): a host-side MariaDB drop failed, so the account was KEPT
+		// — the panel row is the only remaining handle on the orphaned schema or
+		// login. Report which objects and keep the row addressable for a retry.
+		var dbe *userops.DBCleanupError
+		if errors.As(err, &dbe) {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":   "db_cleanup_failed",
+				"objects": dbe.Objects,
+				"detail": "the MariaDB database(s)/user(s) listed could not be dropped, so the account was kept; " +
+					"deleting it now would leave them on the host with no panel row to reach them. Retry the delete once the agent is healthy.",
 			})
 			return
 		}
@@ -648,10 +667,9 @@ func (h *userHandler) reprovision(c *gin.Context) {
 		}
 		slog.Warn("reprovision agent call failed",
 			"user_id", id, "username", username, "err", agentErr)
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error":  "agent_error",
-			"detail": agentErr.Error(),
-		})
+		// Logged above; not echoed (JAB-114) — agent errors carry root-daemon
+		// stderr and host paths.
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error"})
 		return
 	}
 

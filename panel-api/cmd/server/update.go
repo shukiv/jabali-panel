@@ -583,6 +583,30 @@ chmod 0750 "$WR"`)
 			}
 			return nil
 		}},
+		{"sync AppArmor profiles (GH #1001 custom docroot)", func() error {
+			// The FPM AppArmor profile scoped PHP file access to
+			// <domain>/public_html/**, so a custom document root pointing
+			// anywhere else in the domain tree (admin GH #265 / tenant GH #526,
+			// e.g. a Laravel app rooted at .../public) 403'd with "Unable to
+			// open primary script ... Permission denied" — an AppArmor deny,
+			// not POSIX or open_basedir (GH #1001). The broadened rule ships in
+			// install/apparmor/, but jabali update never re-applied AppArmor
+			// profiles — only fresh installs ran install_apparmor — so the fix
+			// would never reach existing hosts. Re-apply here (PRELUDE, every
+			// update, incl. the fast path) so it lands. apply_apparmor_profiles
+			// re-copies each profile, reloads via apparmor_parser -r, and
+			// PRESERVES the current complain/enforce mode; it no-ops in
+			// containers and when AppArmor is disabled. Idempotent.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && apply_apparmor_profiles 0"); err != nil {
+				fmt.Printf("  (apply_apparmor_profiles failed: %v -- continuing)\n", err)
+			}
+			return nil
+		}},
 		{"self-heal panel-hostname vhost + landing (GH#135)", func() error {
 			// jabali update never re-renders the server-scope nginx vhosts
 			// (only fresh installs run install_nginx_default_vhost), so the

@@ -24,6 +24,20 @@ import "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 // prune (JAB-105), so the surviving chain verifies against the pruned tail's
 // last sealed hash.
 func VerifyChain(rows []models.AuditEvent, startPrev string) (brokenID string, checked int, ok bool) {
+	brokenID, checked, _, ok = VerifyChainBatch(rows, startPrev)
+	return brokenID, checked, ok
+}
+
+// VerifyChainBatch verifies one contiguous slice of the chain and returns the
+// hash to continue from, so a caller can walk the table in batches instead of
+// loading all of it.
+//
+// The chain state is scalar (the previous row hash plus a count), which is why
+// streaming is possible at all: the audit table is append-only and can reach
+// hundreds of thousands of rows between prunes, and verify was the one
+// endpoint that materialised every one of them at once — O(table) memory on a
+// box the panel shares with everything else.
+func VerifyChainBatch(rows []models.AuditEvent, startPrev string) (brokenID string, checked int, nextPrev string, ok bool) {
 	prev := startPrev
 	for i := range rows {
 		r := &rows[i]
@@ -31,10 +45,10 @@ func VerifyChain(rows []models.AuditEvent, startPrev string) (brokenID string, c
 			continue // pre-chain (folded/historical/fallback-pending)
 		}
 		if want := computeRowHash(prev, r); *r.RowHash != want {
-			return r.ID, checked, false
+			return r.ID, checked, prev, false
 		}
 		checked++
 		prev = *r.RowHash
 	}
-	return "", checked, true
+	return "", checked, prev, true
 }

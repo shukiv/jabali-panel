@@ -45,6 +45,18 @@ type domainCreateParams struct {
 	// (display_errors off), so without interception visitors get the
 	// browser's raw error screen. false ⇒ vhost byte-identical.
 	InterceptErrors bool `json:"intercept_errors"`
+	// PathInfo (GH #962) — emit an extra PATH_INFO location for front-controller
+	// PHP apps (osTicket, …) that route through /script.php/extra/path URLs.
+	// false ⇒ vhost byte-identical (feature off).
+	PathInfo bool `json:"path_info"`
+	// RedirectHTTPS (GH #896) — whether the :80 vhost force-redirects to HTTPS
+	// (and, with it, whether the :443 block renders at all). The reconciler
+	// sets it false while an LE/auto-mode domain is still parked on its
+	// self-signed BOOTSTRAP placeholder, so the site serves plain HTTP + the
+	// ACME challenge (no cert-authority warning, no HSTS hard-fail) until a
+	// trusted cert issues. Pointer so a pre-#896 panel that omits the field
+	// falls back to the historical "redirect whenever a cert is present".
+	RedirectHTTPS *bool `json:"redirect_https,omitempty"`
 	// CacheEnabled (ADR-0108) — per-domain nginx FastCGI micro-cache
 	// opt-in. false ⇒ vhost byte-identical to the pre-0108 shape.
 	CacheEnabled bool   `json:"cache_enabled"`
@@ -76,8 +88,8 @@ type domainCreateParams struct {
 	PreviewHost     string `json:"preview_host,omitempty"`
 	PreviewCertPath string `json:"preview_cert_path,omitempty"`
 	PreviewKeyPath  string `json:"preview_key_path,omitempty"`
-	SSLCertPath         string   `json:"ssl_cert_path"`
-	SSLKeyPath          string   `json:"ssl_key_path"`
+	SSLCertPath     string `json:"ssl_cert_path"`
+	SSLKeyPath      string `json:"ssl_key_path"`
 	// PHP INI overrides: omitted if not set on the domain.
 	PHPMemoryLimit       string `json:"php_memory_limit,omitempty"`
 	PHPUploadMaxFilesize string `json:"php_upload_max_filesize,omitempty"`
@@ -185,10 +197,15 @@ const vhostTemplate = `server {
         auth_basic off;
     }
 {{ end }}
-{{ if .SSLCertPath }}
-    # Redirect HTTP to HTTPS when SSL is configured. Scoped to the
-    # default location so the ^~ ACME location above wins for
-    # challenge paths — see the rationale comment there.
+{{ if .RedirectHTTPS }}
+    # Redirect HTTP to HTTPS once a TRUSTED cert is serving. Gated on
+    # RedirectHTTPS (not merely "a cert exists") so a fresh LE-mode domain
+    # still on its self-signed bootstrap placeholder serves the docroot over
+    # plain HTTP — the shared tail below attaches to THIS :80 server when the
+    # :443 block is absent — instead of 301'ing browsers into a cert-authority
+    # warning (GH #896/#887). The redirect + :443 appear on the tick a real
+    # cert lands. Scoped to the default location so the ^~ ACME location above
+    # wins for challenge paths — see the rationale comment there.
     location / {
         return 301 https://$host$request_uri;
     }
@@ -520,7 +537,25 @@ server {
         add_header Cache-Control "private, no-cache, max-age=0" always;
 {{ end }}
     }
-{{ end }}
+{{ if .EnablePathInfo }}
+    # PATH_INFO for front-controller PHP apps (GH #962): osTicket
+    # (/scp/ajax.php/…) and similar route through /script.php/extra/path URLs,
+    # which the end-anchored  location ~ \.php$  above never matches — so they
+    # 400/404 without this. Fires ONLY for a real .php followed by a further
+    # /segment, so plain .php and clean URLs stay on the default handler. The
+    # -f existence guard is the JAB-187 second lock (the pool's
+    # security.limit_extensions = .php is the first): it refuses a walk-back
+    # onto an uploaded non-.php file before the request can reach FPM. The
+    # regex is non-greedy so /a.php/b.php/c splits on the FIRST .php.
+    location ~ ^(?<jabali_pi_script>.+?\.php)(?<jabali_pi_suffix>/.+)$ {
+        if (!-f $realpath_root$jabali_pi_script) { return 404; }
+        fastcgi_pass unix:{{.FPMSocket}};
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$jabali_pi_script;
+        fastcgi_param PATH_INFO $jabali_pi_suffix;
+{{ if .PHPValueParam }}        fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}    }
+{{ end }}{{ end }}
 
     access_log /var/log/nginx/{{.Domain}}-access.log;
     error_log /var/log/nginx/{{.Domain}}-error.log;
@@ -619,23 +654,28 @@ server {
 {{ end }}`
 
 type vhostData struct {
-	Domain               string
-	PreviewHost          string
-	PreviewCertPath      string
-	PreviewKeyPath       string
-	PreviewUpstream      string
-	DocRoot              string
-	HasPHP               bool
-	PHPVersion           string
-	Username             string
-	FPMSocket            string
-	IndexDirective       string
-	RedirectDirectives   string
-	RuleDirectives       string
-	CustomDirectives     string
-	IsEnabled            bool
-	SSLCertPath          string
-	SSLKeyPath           string
+	Domain             string
+	PreviewHost        string
+	PreviewCertPath    string
+	PreviewKeyPath     string
+	PreviewUpstream    string
+	DocRoot            string
+	HasPHP             bool
+	PHPVersion         string
+	Username           string
+	FPMSocket          string
+	IndexDirective     string
+	RedirectDirectives string
+	RuleDirectives     string
+	CustomDirectives   string
+	IsEnabled          bool
+	SSLCertPath        string
+	SSLKeyPath         string
+	// RedirectHTTPS (GH #896) gates the HTTP→HTTPS redirect AND the :443
+	// server block. When false the shared tail (root/PHP/locations) attaches
+	// to the :80 server so the docroot is served over plain HTTP — the
+	// self-signed bootstrap window. Always false when SSLCertPath is empty.
+	RedirectHTTPS        bool
 	PHPMemoryLimit       string
 	PHPUploadMaxFilesize string
 	PHPPostMaxSize       string
@@ -670,6 +710,9 @@ type vhostData struct {
 	// fastcgi_intercept_errors + a 50x-only location-scoped error_page in
 	// the PHP locations. false ⇒ byte-identical.
 	InterceptErrors bool
+	// EnablePathInfo (GH #962) — render an extra PATH_INFO location for
+	// front-controller PHP apps (osTicket, …). false ⇒ byte-identical.
+	EnablePathInfo bool
 	// ADR-0108 FastCGI micro-cache. All three are panel/agent-controlled
 	// (never user data). When CacheEnabled is false the template emits
 	// none of the cache/static directives → byte-identical to pre-0108.
@@ -921,7 +964,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS bool) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -949,6 +992,14 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 			sslKeyPath = ""
 		}
 	}
+	// GH #896/#213: the redirect + :443 block only renders when RedirectHTTPS
+	// is set, and a redirect is meaningless (and #213-dangerous) without a cert
+	// file on disk. If the stat-fallback above just zeroed the cert path, force
+	// the redirect off too so we never emit `ssl_certificate <empty>;` — the
+	// :80 ACME location + docroot then serve HTTP-only until the cert re-lands.
+	if sslCertPath == "" {
+		redirectHTTPS = false
+	}
 	// Same missing-file fallback for the preview wildcard pair: the shared
 	// *.preview.<hostname> cert may not be issued yet when the first
 	// preview-enabled domain converges — serve the preview HTTP-only until
@@ -975,7 +1026,11 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		if listenIPv4 != "" {
 			upstreamAddr = listenIPv4
 		}
-		if sslCertPath != "" {
+		// Hairpin to https only when the main vhost actually serves a :443
+		// block — i.e. RedirectHTTPS (GH #896). During the self-signed
+		// bootstrap window the main vhost is HTTP-only, so the preview must
+		// proxy over http or it would hit a dead :443.
+		if redirectHTTPS {
 			previewUpstream = "https://" + upstreamAddr + ":443"
 		} else {
 			previewUpstream = "http://" + upstreamAddr + ":80"
@@ -1012,6 +1067,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		IsEnabled:                  isEnabled,
 		SSLCertPath:                sslCertPath,
 		SSLKeyPath:                 sslKeyPath,
+		RedirectHTTPS:              redirectHTTPS,
 		PHPMemoryLimit:             phpMemLimit,
 		PHPUploadMaxFilesize:       phpUploadMax,
 		PHPPostMaxSize:             phpPostMax,
@@ -1022,6 +1078,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		ListenIPv4:                 listenIPv4,
 		ListenIPv6:                 listenIPv6,
 		InterceptErrors:            interceptErrors,
+		EnablePathInfo:             pathInfo,
 		CacheEnabled:               cacheEnabled,
 		CachePath:                  cachePath,
 		CacheGate:                  cacheGate,
@@ -1259,7 +1316,15 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 	dirPrivacyDirectives := buildDirectoryPrivacyDirectives(p.DirectoryPrivacyRules)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors)
+	// GH #896: default to the historical "redirect whenever a cert is present"
+	// so a pre-#896 panel that omits redirect_https keeps working. A current
+	// panel always sends the field; writeVhost still forces it false if the
+	// cert file turns out to be missing on disk (#213).
+	redirectHTTPS := p.SSLCertPath != ""
+	if p.RedirectHTTPS != nil {
+		redirectHTTPS = *p.RedirectHTTPS
+	}
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

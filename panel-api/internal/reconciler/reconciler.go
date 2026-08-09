@@ -29,6 +29,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sslorigin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
@@ -206,6 +207,13 @@ type Reconciler struct {
 	// dispatch omits directory_privacy_rules → no htpasswd files
 	// written, no auth_basic location blocks rendered.
 	domainDirPrivacy repository.DomainDirectoryPrivacyRepository
+	// bwEnforce* rate-limits the bandwidth-quota suspension sweep to
+	// bwEnforceInterval. Its input (bw_daily) is written once a day, so
+	// running it every 60s recomputed an identical verdict ~1439 times out of
+	// 1440 — at a cost of several queries per eligible user each time.
+	bwEnforceMu      sync.Mutex
+	bwEnforceLastRun time.Time
+
 	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
 	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
 	// the desired state hasn't changed since the last dispatch. Self-
@@ -214,6 +222,17 @@ type Reconciler struct {
 	// sshKeysDispatchState. sync.Map = lock-free for the common
 	// "many readers, one writer per key" pattern.
 	sshKeysDispatchCache sync.Map
+
+	// dnsZoneDispatchCache: per-zone hash of the last-pushed record set +
+	// timestamp, same shape and rationale as sshKeysDispatchCache. Without
+	// it reconcileDNSZone rewrote the SOA serial, UPDATEd dns_zones, and
+	// pushed a full zone to the agent for EVERY enabled domain every tick —
+	// and the agent then DELETEs and re-INSERTs every record row in
+	// PowerDNS's SQL backend and shells out three times (purge auth cache,
+	// wipe recursor cache, NOTIFY slaves). Because the serial changed on
+	// every pass, the payload could never converge, so no downstream gate
+	// could ever fire. Keyed by zone ID; value type dnsZoneDispatchState.
+	dnsZoneDispatchCache sync.Map
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -1773,6 +1792,11 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// Server-wide default with a per-domain tri-state override.
 	params["intercept_errors"] = r.effectiveInterceptErrors(ctx, domain)
 
+	// GH #962: PATH_INFO location for front-controller PHP apps (osTicket, …).
+	// Per-domain nginx_safe_options toggle; needs the FPM socket so it travels
+	// as its own param rather than via Render(). Default off ⇒ byte-identical.
+	params["path_info"] = domain.NginxSafeOptions.PathInfo
+
 	params["redirect_directives"] = redirects.Compile(domain)
 	params["rule_directives"] = nginxrules.Compile(domain)
 
@@ -1830,8 +1854,20 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// JAB-170: a shared-cert domain serves the ONE shared pair by path,
 	// independent of any per-domain ssl_certificates row. The agent stats the
 	// path and falls back to HTTP if the shared cert is not on disk yet.
+	// GH #896: redirectHTTPS decides whether the agent renders the :80→:443
+	// redirect (and the :443 block). Default: redirect whenever a trusted cert
+	// is on disk. Suppress ONLY while an LE/auto-mode domain is still on its
+	// self-signed BOOTSTRAP placeholder — redirecting there throws a
+	// cert-authority warning (the reporter's "can't access until LE"), and an
+	// HSTS-pinned browser hard-fails on the self-signed cert just the same.
+	// Serve plain HTTP + the ACME challenge until a real cert lands. Always set
+	// explicitly (false in the no-cert branch too) so a current panel never
+	// sends nil.
+	redirectHTTPS := false
 	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" {
-		params["ssl_cert_path"], params["ssl_key_path"] = sharedCertPaths(*domain.SharedCertificateID)
+		certPath, keyPath := sharedCertPaths(*domain.SharedCertificateID)
+		params["ssl_cert_path"], params["ssl_key_path"] = certPath, keyPath
+		redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, certPath)
 	} else if r.sslCerts != nil {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
 		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
@@ -1840,8 +1876,10 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			cert.CertPath != nil && cert.KeyPath != nil {
 			params["ssl_cert_path"] = *cert.CertPath
 			params["ssl_key_path"] = *cert.KeyPath
+			redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, *cert.CertPath)
 		}
 	}
+	params["redirect_https"] = redirectHTTPS
 
 	// Preview URL params (temp URLs) — nil when disabled or no hostname.
 	for k, v := range r.previewParams(ctx, domain) {
@@ -1858,6 +1896,35 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain", domain.Name,
 			"err", err)
 	}
+}
+
+// redirectHTTPSForCert decides whether the agent should render the :80→:443
+// redirect (and the :443 block) for a domain, given its SSL mode and the cert
+// path that will actually be served.
+//
+// GH #896/#887: default is to redirect whenever a cert is on disk. The one case
+// we suppress it — serving the docroot over plain HTTP + the ACME challenge
+// instead — is an LE/auto-mode domain still parked on its self-signed BOOTSTRAP
+// placeholder. Redirecting there sends browsers to an untrusted cert (the
+// reporter's "can't access until LE" warning); an HSTS-pinned visitor hard-fails
+// on that self-signed cert just the same. The redirect (and HSTS) begin on the
+// tick a real cert lands.
+//
+// The decision is by PATH, not row status: a renewal-failing domain that still
+// has a VALID Let's Encrypt cert on disk keeps redirecting, while one dropped to
+// a self-signed fallback correctly serves HTTP. SSLModeSelf and SSLModeCustom
+// may point at the same self-signed directory, but there the placeholder is the
+// operator's deliberate choice — so the carve-out is gated on the LE/legacy-empty
+// auto modes only, which are the ones for which self-signed is transient.
+func redirectHTTPSForCert(mode, certPath string) bool {
+	if certPath == "" {
+		return false
+	}
+	if (mode == models.SSLModeLE || mode == "") &&
+		sslorigin.KindForPath(certPath) == sslorigin.KindSelfSigned {
+		return false
+	}
+	return true
 }
 
 // sharedCertDir mirrors the agent's sslSharedRoot: /etc/jabali/ssl/shared/<id>
@@ -2135,10 +2202,6 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	}
 	compiled := dnscompile.Compile(zone, records, srv)
 
-	// Bump serial on push.
-	zone.Serial = time.Now().UTC().Unix()
-	_ = r.dnsZones.Update(ctx, zone)
-
 	// Derive AXFR and NOTIFY lists from ServerSettings.
 	var allowAXFR, alsoNotify []string
 	if srv != nil && srv.NS2IPv4 != "" {
@@ -2150,6 +2213,26 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// `dig AXFR @127.0.0.1` — add that for debugging.
 	allowAXFR = append(allowAXFR, "127.0.0.1")
 
+	// Gate the whole push on a content compare. Unconditionally stamping the
+	// serial and pushing meant EVERY enabled domain, EVERY tick: one
+	// dns_zones UPDATE, plus an agent RPC that DELETEs and re-INSERTs every
+	// record row in PowerDNS's SQL backend and shells out three times (purge
+	// auth cache, wipe recursor cache, NOTIFY slaves). With a slave
+	// configured that also meant NOTIFY/AXFR churn every minute, and
+	// `rec_control wipe-cache` meant recursor entries for hosted zones never
+	// outlived one tick. dnsZonePushNeeded self-heals every
+	// dnsZoneReDispatchInterval, so out-of-band pdns drift is still corrected.
+	now := time.Now().UTC()
+	hash := desiredDNSZoneHash(compiled, allowAXFR, alsoNotify)
+	if !r.dnsZonePushNeeded(zone.ID, hash, now) {
+		return
+	}
+
+	// Bump the serial only when we are actually pushing changed content —
+	// a serial that moves every tick is what made this unconvergeable.
+	zone.Serial = now.Unix()
+	_ = r.dnsZones.Update(ctx, zone)
+
 	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := r.agent.Call(pushCtx, "dns.zone.upsert", map[string]any{
@@ -2158,8 +2241,13 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		"allow_axfr_from": allowAXFR,
 		"also_notify":     alsoNotify,
 	}); err != nil {
+		// Do NOT record the hash on failure: the agent may hold older
+		// content, so the next tick must retry rather than believe it is
+		// converged.
 		r.log.Error("dns.zone.upsert failed", "zone", zone.Name, "err", err)
+		return
 	}
+	r.dnsZonePushed(zone.ID, hash, now)
 }
 
 // reconcileDNSZoneDeleted tears down a DNS zone on the agent after its DB row

@@ -115,5 +115,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(OpenEMR); err != nil {
 		return err
 	}
+	if err := r.Register(OSTicket); err != nil {
+		return err
+	}
 	return nil
 }
