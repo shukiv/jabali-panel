@@ -202,7 +202,10 @@ func (h *databaseHandler) list(c *gin.Context) {
 		rows[i] = databaseListRow{Database: db, SizeBytes: 0}
 
 		// Fetch size from agent
-		result, err := h.cfg.Agent.Call(ctx, "db.size", map[string]string{"db_name": db.Name})
+		// GH #1005: pass the engine so the agent uses pg_database_size() for a
+		// Postgres database instead of MariaDB's information_schema (which has
+		// no row for it and always summed to 0 B).
+		result, err := h.cfg.Agent.Call(ctx, "db.size", map[string]string{"db_name": db.Name, "engine": db.Engine})
 		if err != nil {
 			// Log at INFO and continue with size_bytes=0
 			slog.Info("failed to fetch database size",
