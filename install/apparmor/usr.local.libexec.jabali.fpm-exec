@@ -68,13 +68,23 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
 
   # Tenant docroots (POSIX perms enforce per-user isolation; this layer bounds
   # escape to system files, not cross-tenant). Two layouts: native jabali +
-  # cPanel/DA use domains/<dom>/public_html; HestiaCP-migrated accounts use
-  # web/<dom>/public_html (JAB-37 — the enforced profile denied restored Nextcloud
-  # PHP under web/ even though POSIX perms + open_basedir allowed it).
+  # cPanel/DA use domains/<dom>/; HestiaCP-migrated accounts use web/<dom>/
+  # (JAB-37 — the enforced profile denied restored Nextcloud PHP under web/
+  # even though POSIX perms + open_basedir allowed it).
+  #
+  # GH #1001: the whole per-domain tree is granted, not just <dom>/public_html.
+  # A custom document root (admin GH #265 / tenant GH #526) may point at the
+  # domain base itself or a sibling of public_html — e.g. a Laravel/Symfony app
+  # whose docroot is .../public, or an app that keeps shared code one level up.
+  # Scoping the read to public_html/** made every such docroot 403 with
+  # "Unable to open primary script ... (Permission denied)" even though the
+  # panel accepted the docroot and POSIX perms + open_basedir allowed it. The
+  # tree is the tenant's own space; cross-tenant isolation is still POSIX, and
+  # the deny rules below still bound escape to system files.
   /home/*/domains/*/ r,
-  /home/*/domains/*/public_html/** rwkl,
+  /home/*/domains/*/** rwkl,
   /home/*/web/*/ r,
-  /home/*/web/*/public_html/** rwkl,
+  /home/*/web/*/** rwkl,
   # Tenant PHP error logs (cPanel/DA convention ~/logs/php.error.log —
   # tenants point error_log there via php.ini/ini_set; migrated accounts
   # arrive with it preset). Owner-scoped: a worker only touches its own
