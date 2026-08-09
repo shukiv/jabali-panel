@@ -164,6 +164,7 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 // sideEffectState captures the pre-change values that decide which host side
 // effects fire (mirrors the REST handler's prev* locals).
 type sideEffectState struct {
+	hostname       string
 	postgres       bool
 	dockerMarket   bool
 	dockerForUsers bool
@@ -172,6 +173,7 @@ type sideEffectState struct {
 
 func sideEffectSnapshot(s *models.ServerSettings) sideEffectState {
 	return sideEffectState{
+		hostname:       s.Hostname,
 		postgres:       s.PostgresEnabled,
 		dockerMarket:   s.DockerMarketplaceEnabled,
 		dockerForUsers: s.DockerAppsForUsersEnabled,
@@ -184,6 +186,18 @@ func sideEffectSnapshot(s *models.ServerSettings) sideEffectState {
 // failure (the DB is already persisted at this point).
 func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repository.ServerSettingsRepository, s *models.ServerSettings, prev sideEffectState) error {
 	out := cmd.OutOrStdout()
+
+	// Hostname → apply to the OS. Mirrors the REST PATCH, which dispatches
+	// system.set_hostname when Hostname changes (there in a background
+	// goroutine; here synchronous like the rest of this command so the operator
+	// sees the result inline). The panel-cert reconciler reissues the panel
+	// certificate for the new name on its next pass — same as the UI flow.
+	if s.Hostname != prev.hostname {
+		fmt.Fprintf(out, "Applying hostname change (system.set_hostname %s)…\n", s.Hostname)
+		if err := callAgentTimeout(ctx, 30*time.Second, "system.set_hostname", map[string]any{"hostname": s.Hostname}); err != nil {
+			return fmt.Errorf("DB updated, but system.set_hostname failed: %w", err)
+		}
+	}
 
 	if s.PostgresEnabled != prev.postgres {
 		method := "db.postgres.disable"
@@ -324,6 +338,25 @@ func nginxBoolKey(help string, set func(*models.ServerSettings, bool)) settingDe
 // the keys with clear CLI semantics + the acceptance-criteria toggles/tunables.
 // It is NOT full-model coverage (branding/colors/VAPID/etc. stay UI-only).
 var settableKeys = map[string]settingDef{
+	// hostname: the one field that previously had NO CLI writer, so the
+	// free-hostname (JAB-213) conversion couldn't be driven headlessly — the
+	// panel only serves on a name once its stored hostname is that name, and
+	// that write lived only behind the settings PATCH / free-hostname claim
+	// endpoints (admin session). Setting it here runs the same OS apply
+	// (system.set_hostname) the REST PATCH fires; the panel-cert reconciler then
+	// reissues the panel cert for the new name, exactly as the UI path does.
+	// FQDN-format validation is enforced by api.ValidateServerSettings below.
+	"hostname": settingDef{
+		help: "panel hostname / FQDN (applies to the OS via system.set_hostname; the panel-cert reconciler reissues the cert)",
+		apply: func(s *models.ServerSettings, raw string) error {
+			v := strings.TrimSpace(raw)
+			if v == "" {
+				return fmt.Errorf("hostname cannot be empty")
+			}
+			s.Hostname = v
+			return nil
+		},
+	},
 	"postgres_enabled":              boolKey("enable/disable Postgres (installs/stops the engine)", func(s *models.ServerSettings, b bool) { s.PostgresEnabled = b }),
 	"webmail_enabled":               boolKey("enable/disable webmail (DB flag)", func(s *models.ServerSettings, b bool) { s.WebmailEnabled = b }),
 	"docker_marketplace_enabled":    boolKey("enable/disable the Docker marketplace (installs/stops Docker)", func(s *models.ServerSettings, b bool) { s.DockerMarketplaceEnabled = b }),
