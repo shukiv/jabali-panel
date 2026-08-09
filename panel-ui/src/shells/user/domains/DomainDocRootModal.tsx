@@ -4,7 +4,8 @@
 // entrypoint is a subdir (e.g. Laravel's public/). Surfaced only when the admin
 // has enabled tenant domain options; the backend re-validates regardless.
 import { useState } from "react";
-import { Modal, Form, Input, Typography, message } from "antd";
+import { Modal, Form, Input, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -35,13 +36,13 @@ export function DomainDocRootModal({ domainId, domainName, currentDocRoot, onClo
       await apiClient.patch(`/domains/${domainId}`, { doc_root: docRoot });
     },
     onSuccess: () => {
-      message.success("Document root updated");
+      feedback.message.success("Document root updated");
       void qc.invalidateQueries({ queryKey: ["list", "domains"] });
       onClose();
     },
     onError: (err: unknown) => {
       const detail = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data;
-      message.error(detail?.detail ?? detail?.error ?? "Failed to update document root");
+      feedback.message.error(detail?.detail ?? detail?.error ?? "Failed to update document root");
     },
   });
 

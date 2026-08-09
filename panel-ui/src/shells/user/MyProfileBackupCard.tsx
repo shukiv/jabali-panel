@@ -4,7 +4,8 @@
 // scoped via /me/backups (auth-gated to caller's user_id).
 import { useTranslation } from "react-i18next";
 import { downloadUrl } from "../../utils/download";
-import { Button, Card, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Card, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
@@ -93,11 +94,11 @@ export const MyProfileBackupCard = () => {
     setSavingExcl(true);
     try {
       await apiClient.put("/me/backups/exclusions", { patterns: exclusions });
-      message.success("Backup exclusions saved");
+      feedback.message.success("Backup exclusions saved");
       setExclDirty(false);
       exclQuery.refetch();
     } catch (err) {
-      message.error(extractApiError(err, "Save failed"));
+      feedback.message.error(extractApiError(err, "Save failed"));
     } finally {
       setSavingExcl(false);
     }
@@ -107,10 +108,10 @@ export const MyProfileBackupCard = () => {
     setSubmitting(true);
     try {
       await apiClient.post("/me/backups", { content, compression, destination_id: destinationId });
-      message.success("Backup queued");
+      feedback.message.success("Backup queued");
       query.refetch();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Create failed");
+      feedback.message.error(err instanceof Error ? err.message : "Create failed");
     } finally {
       setSubmitting(false);
     }
@@ -119,10 +120,10 @@ export const MyProfileBackupCard = () => {
   const handleDelete = async (id: string) => {
     try {
       await apiClient.delete(`/me/backups/${id}`);
-      message.success("Backup deleted");
+      feedback.message.success("Backup deleted");
       query.refetch();
     } catch (err) {
-      message.error(extractApiError(err, "Delete failed"));
+      feedback.message.error(extractApiError(err, "Delete failed"));
     }
   };
 

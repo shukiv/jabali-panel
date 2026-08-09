@@ -8,7 +8,8 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 
-import { Drawer, Empty, Spin, Timeline, Typography, message } from "antd";
+import { Drawer, Empty, Spin, Timeline, Typography } from "antd";
+import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../../apiClient";
 
@@ -52,7 +53,7 @@ export const MailLogDetailDrawer = ({ queueId, open, onClose }: Props) => {
       .get<DetailResponse>(`/mail/logs/detail?queue_id=${encodeURIComponent(queueId)}`)
       .then((resp) => setData(resp.data))
       .catch((err) =>
-        message.error(err instanceof Error ? err.message : "Could not load trail"),
+        feedback.message.error(err instanceof Error ? err.message : "Could not load trail"),
       )
       .finally(() => setLoading(false));
   }, [open, queueId]);

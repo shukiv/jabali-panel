@@ -5,7 +5,8 @@
 // card, a schedule needs a real destination row — the implicit "local default"
 // is skipped by the scheduler fan-out — so only concrete destinations are offered.
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Card, InputNumber, Select, Space, Switch, Typography, message } from "antd";
+import { Alert, Button, Card, InputNumber, Select, Space, Switch, Typography } from "antd";
+import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { ClockCircleOutlined } from "@icons";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -70,10 +71,10 @@ export const MyProfileScheduleCard = () => {
         destination_id: destinationId,
         keep_daily: keepDaily,
       });
-      message.success("Schedule saved");
+      feedback.message.success("Schedule saved");
       schedQuery.refetch();
     } catch (err) {
-      message.error(extractApiError(err, "Save failed"));
+      feedback.message.error(extractApiError(err, "Save failed"));
     } finally {
       setSaving(false);
     }

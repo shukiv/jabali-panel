@@ -2,7 +2,8 @@
 // /jabali-panel/databases/create page route). Backend prepends the
 // caller's username to the final database name.
 import { useTranslation } from "react-i18next";
-import { Button, Drawer, Form, Grid, Input, Segmented, Space, message } from "antd";
+import { Button, Drawer, Form, Grid, Input, Segmented, Space } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
@@ -43,10 +44,10 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
   const handleFinish = async (values: UserDatabaseCreateInput) => {
     try {
       await createMutation.mutateAsync(values);
-      message.success("Database created");
+      feedback.message.success("Database created");
       onClose();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Failed to create database");
+      feedback.message.error(err instanceof Error ? err.message : "Failed to create database");
     }
   };
 

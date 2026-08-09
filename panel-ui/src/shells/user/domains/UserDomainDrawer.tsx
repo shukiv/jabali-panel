@@ -1,7 +1,8 @@
 // UserDomainDrawer — tenant Add-domain Drawer (replaces the
 // /jabali-panel/domains/create page route).
 import { useTranslation } from "react-i18next";
-import { Button, Checkbox, Drawer, Form, Grid, Input, Select, Space, message } from "antd";
+import { Button, Checkbox, Drawer, Form, Grid, Input, Select, Space } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect } from "react";
 
 import { useCreateMutation } from "../../../hooks/useQueries";
@@ -40,10 +41,10 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
   const handleFinish = async (values: UserDomainCreateInput) => {
     try {
       await createMutation.mutateAsync(values);
-      message.success("Domain added");
+      feedback.message.success("Domain added");
       onClose();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Failed to add domain");
+      feedback.message.error(err instanceof Error ? err.message : "Failed to add domain");
     }
   };
 
