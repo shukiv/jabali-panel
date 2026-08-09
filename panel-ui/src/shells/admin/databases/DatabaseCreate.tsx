@@ -3,7 +3,8 @@
 // on the server (see panel-api/internal/api/databases.go). Admins
 // create without a prefix. The helper text reflects that distinction.
 import { useTranslation } from "react-i18next";
-import { Button, Card, Form, Input, Typography, message } from "antd";
+import { Button, Card, Form, Input, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useNavigate } from "react-router";
 
 import { useCreateMutation } from "../../../hooks/useQueries";
@@ -25,12 +26,12 @@ export const DatabaseCreate = () => {
   const handleFinish = async (values: DatabaseCreateInput) => {
     try {
       await createMutation.mutateAsync(values);
-      message.success("Database created");
+      feedback.message.success("Database created");
       navigate("/jabali-admin/databases");
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Failed to create database";
-      message.error(msg);
+      feedback.message.error(msg);
     }
   };
 

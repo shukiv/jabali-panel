@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Input, Modal, Select, Skeleton, Space, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Input, Modal, Select, Skeleton, Space, Tag, Tooltip } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { ReloadOutlined } from "@icons";
 import { Link } from "react-router";
 
@@ -117,7 +118,7 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
         setCert(null);
         setCertMissing(true);
       } else {
-        message.error("Failed to load SSL status");
+        feedback.message.error("Failed to load SSL status");
       }
     } finally {
       setLoading(false);
@@ -154,13 +155,13 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
       setCovering(all.filter((c) => certCoversHost(c, domainName)));
     } catch {
       setCovering([]);
-      message.error("Failed to load shared certificates");
+      feedback.message.error("Failed to load shared certificates");
     }
   };
 
   const attachShared = async () => {
     if (!selectedShared) {
-      message.error("Choose a shared certificate");
+      feedback.message.error("Choose a shared certificate");
       return;
     }
     setSharedBusy(true);
@@ -171,12 +172,12 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
       setSslMode("shared");
       setSharedCertId(selectedShared);
       setSharedPickerOpen(false);
-      message.success("Shared certificate attached");
+      feedback.message.success("Shared certificate attached");
       onToggled();
       await fetchCert();
     } catch (err: unknown) {
       const resp = (err as { response?: { data?: { error?: string; detail?: string } } })?.response?.data;
-      message.error(resp?.detail ?? "Failed to attach shared certificate");
+      feedback.message.error(resp?.detail ?? "Failed to attach shared certificate");
     } finally {
       setSharedBusy(false);
     }
@@ -188,11 +189,11 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
       await apiClient.delete(`/domains/${domainId}/ssl/shared`);
       setSslMode("le");
       setSharedCertId(undefined);
-      message.success("Shared certificate detached (reverted to Let's Encrypt)");
+      feedback.message.success("Shared certificate detached (reverted to Let's Encrypt)");
       onToggled();
       await fetchCert();
     } catch {
-      message.error("Failed to detach shared certificate");
+      feedback.message.error("Failed to detach shared certificate");
     } finally {
       setSharedBusy(false);
     }
@@ -211,12 +212,12 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
     try {
       await apiClient.patch(`/domains/${domainId}`, { ssl_mode: mode });
       setSslMode(mode);
-      message.success("Certificate mode updated");
+      feedback.message.success("Certificate mode updated");
       onToggled();
       await fetchCert();
     } catch (err: unknown) {
       const resp = (err as { response?: { data?: { error?: string; detail?: string } } })?.response?.data;
-      message.error(resp?.detail ?? "Failed to change certificate mode");
+      feedback.message.error(resp?.detail ?? "Failed to change certificate mode");
     } finally {
       setModeChanging(false);
     }
@@ -224,7 +225,7 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
 
   const uploadCustom = async () => {
     if (!certPem.trim() || !keyPem.trim()) {
-      message.error("Paste both the certificate and the private key");
+      feedback.message.error("Paste both the certificate and the private key");
       return;
     }
     setUploading(true);
@@ -237,12 +238,12 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
       setCustomOpen(false);
       setCertPem("");
       setKeyPem("");
-      message.success("Custom certificate installed");
+      feedback.message.success("Custom certificate installed");
       onToggled();
       await fetchCert();
     } catch (err: unknown) {
       const resp = (err as { response?: { data?: { error?: string; detail?: string } } })?.response?.data;
-      message.error(resp?.detail ?? "Failed to install custom certificate");
+      feedback.message.error(resp?.detail ?? "Failed to install custom certificate");
     } finally {
       setUploading(false);
     }
@@ -252,10 +253,10 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
     setRenewing(true);
     try {
       await apiClient.post(`/domains/${domainId}/ssl/renew`);
-      message.success("Renewal scheduled");
+      feedback.message.success("Renewal scheduled");
       await fetchCert();
     } catch {
-      message.error("Failed to schedule renewal");
+      feedback.message.error("Failed to schedule renewal");
     } finally {
       setRenewing(false);
     }
@@ -265,10 +266,10 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
     setRenewing(true);
     try {
       await apiClient.post(`/domains/${domainId}/ssl/retry`);
-      message.success("Retry queued");
+      feedback.message.success("Retry queued");
       await fetchCert();
     } catch {
-      message.error("Failed to queue retry");
+      feedback.message.error("Failed to queue retry");
     } finally {
       setRenewing(false);
     }

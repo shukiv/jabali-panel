@@ -1,4 +1,5 @@
-import { Card, Space, Table, Tag, Typography, message } from "antd";
+import { Card, Space, Table, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { GlobalOutlined } from "@ant-design/icons";
 
 import type { NetworkInterface } from "../../../hooks/useServerStatus";
@@ -67,7 +68,7 @@ function IPChips({ ips }: { ips: string[] }) {
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(ip);
-              message.success("Copied " + ip);
+              feedback.message.success("Copied " + ip);
             } catch {
               // ignore
             }

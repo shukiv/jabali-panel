@@ -4,7 +4,8 @@
 // Kill icon buttons (SIGTERM / SIGKILL) with confirm Modal. The agent
 // owns the denylist.
 import { useState } from "react";
-import { Button, Card, Modal, Space, Statistic, Table, message } from "antd";
+import { Button, Card, Modal, Space, Statistic, Table } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { CloseOutlined, ThunderboltOutlined } from "@icons";
@@ -30,10 +31,10 @@ export function ProcessesCard({ processes }: Props) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "server-status"] });
-      message.success("Signal sent");
+      feedback.message.success("Signal sent");
     },
     onError: (e: unknown) => {
-      message.error(e instanceof Error ? e.message : "Kill failed");
+      feedback.message.error(e instanceof Error ? e.message : "Kill failed");
     },
   });
 

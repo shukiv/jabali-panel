@@ -3,7 +3,8 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { apiClient } from "../../../apiClient";
-import { Alert, Badge, Button, Card, Popconfirm, Select, Space, Statistic, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Alert, Badge, Button, Card, Popconfirm, Select, Space, Statistic, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import {
   type AideSampleRow,
@@ -86,7 +87,7 @@ export const AdminSecurityAide = () => {
                   "/admin/security/aide/report",
                 );
                 if (!data.available || !data.report) {
-                  void message.warning("No AIDE report available yet");
+                  void feedback.message.warning("No AIDE report available yet");
                   return;
                 }
                 const blob = new Blob([data.report], { type: "text/plain" });
@@ -97,7 +98,7 @@ export const AdminSecurityAide = () => {
                 a.click();
                 URL.revokeObjectURL(url);
               } catch {
-                void message.error("Report download failed");
+                void feedback.message.error("Report download failed");
               }
             }}
           >
@@ -109,8 +110,8 @@ export const AdminSecurityAide = () => {
             loading={runCheck.isPending}
             onClick={() =>
               runCheck.mutate(undefined, {
-                onSuccess: () => message.success("Check complete"),
-                onError: () => message.error("Check failed — see agent logs"),
+                onSuccess: () => feedback.message.success("Check complete"),
+                onError: () => feedback.message.error("Check failed — see agent logs"),
               })
             }
           >
@@ -121,8 +122,8 @@ export const AdminSecurityAide = () => {
             loading={runRebuild.isPending}
             onClick={() =>
               runRebuild.mutate(true, {
-                onSuccess: (d) => message.info(`Dry run: would run ${d.plan ?? "aideinit -y -f"}`),
-                onError: () => message.error("Dry run failed — see agent logs"),
+                onSuccess: (d) => feedback.message.info(`Dry run: would run ${d.plan ?? "aideinit -y -f"}`),
+                onError: () => feedback.message.error("Dry run failed — see agent logs"),
               })
             }
           >
@@ -135,8 +136,8 @@ export const AdminSecurityAide = () => {
             okButtonProps={{ danger: true }}
             onConfirm={() =>
               runRebuild.mutate(false, {
-                onSuccess: () => message.success("Baseline rebuilt"),
-                onError: () => message.error("Rebuild failed — see agent logs"),
+                onSuccess: () => feedback.message.success("Baseline rebuilt"),
+                onError: () => feedback.message.error("Rebuild failed — see agent logs"),
               })
             }
           >

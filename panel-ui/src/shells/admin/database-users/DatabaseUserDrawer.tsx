@@ -4,7 +4,8 @@
 // modal isn't trapped inside it.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Button, Drawer, Form, Grid, Input, Segmented, Space, message } from "antd";
+import { Button, Drawer, Form, Grid, Input, Segmented, Space } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
@@ -52,7 +53,7 @@ export const DatabaseUserDrawer = ({
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
         "Failed to create database user";
-      message.error(msg);
+      feedback.message.error(msg);
     } finally {
       setSubmitting(false);
     }

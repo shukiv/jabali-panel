@@ -8,7 +8,8 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
-import { Button, Card, Space, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { KeyOutlined, PlusOutlined, UserOutlined, DeleteOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 import { useQueryClient } from "@tanstack/react-query";
@@ -111,7 +112,7 @@ export const DatabaseUsersList = () => {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error ?? "Failed to rotate password";
-      message.error(msg);
+      feedback.message.error(msg);
     } finally {
       setRotatingId(null);
     }
@@ -121,7 +122,7 @@ export const DatabaseUsersList = () => {
     setRevokingId(grant.id);
     try {
       await apiClient.delete(`/database-user-grants/${grant.id}`);
-      message.success(
+      feedback.message.success(
         `Revoked ${grantLabel(grant).toLowerCase()} on ${grant.database_name}`,
       );
       refresh();
@@ -129,7 +130,7 @@ export const DatabaseUsersList = () => {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error ?? "Failed to revoke grant";
-      message.error(msg);
+      feedback.message.error(msg);
     } finally {
       setRevokingId(null);
     }

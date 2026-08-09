@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Checkbox, Form, InputNumber, Modal, Select, Typography, message } from "antd";
+import { Checkbox, Form, InputNumber, Modal, Select, Typography } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../apiClient";
 
@@ -50,7 +51,7 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
           });
         }
       } catch {
-        if (!cancelled) message.error("Failed to load domain options");
+        if (!cancelled) feedback.message.error("Failed to load domain options");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -74,10 +75,10 @@ export const DomainNginxOptionsModal = ({ domainId, onClose }: DomainNginxOption
           path_info: !!values.path_info,
         },
       });
-      message.success("Domain options saved — applied on the next reconcile");
+      feedback.message.success("Domain options saved — applied on the next reconcile");
       onClose();
     } catch {
-      message.error("Failed to save domain options");
+      feedback.message.error("Failed to save domain options");
     } finally {
       setSaving(false);
     }

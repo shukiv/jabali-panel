@@ -3,7 +3,8 @@
 // account_restore route to /admin/backups/:id/logs; system_backup +
 // system_restore go to /admin/system/backups/:id/logs (same agent
 // command on the other side, just different mount point).
-import { Button, Modal, Spin, Tag, Typography, message } from "antd";
+import { Button, Modal, Spin, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { ReloadOutlined } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -47,7 +48,7 @@ export const BackupLogModal = ({ job, onClose }: BackupLogModalProps) => {
       const resp = await apiClient.get<{ data: LogResponse }>(logsPathFor(job.kind, job.id));
       setData(resp.data?.data ?? null);
     } catch (err) {
-      message.error(extractApiError(err, "Failed to load logs"));
+      feedback.message.error(extractApiError(err, "Failed to load logs"));
     } finally {
       setLoading(false);
     }

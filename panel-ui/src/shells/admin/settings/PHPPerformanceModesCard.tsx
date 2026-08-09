@@ -2,7 +2,8 @@
 // PHP Performance Mode presets that L1 users select from. Edits are the ceiling
 // templates; per-package clamping happens at apply.
 import { useTranslation } from "react-i18next";
-import { Button, Card, Collapse, Form, InputNumber, Select, Typography, message } from "antd";
+import { Button, Card, Collapse, Form, InputNumber, Select, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiClient } from "../../../apiClient";
@@ -30,11 +31,11 @@ const ModeForm = ({ mode }: { mode: Mode }) => {
     setSaving(true);
     try {
       await apiClient.put(`/php-performance-modes/${mode.mode}`, vals);
-      message.success(`${mode.mode} preset saved`);
+      feedback.message.success(`${mode.mode} preset saved`);
       qc.invalidateQueries({ queryKey: ["php-performance-modes"] });
     } catch (e) {
       const err = e as { response?: { data?: { detail?: string; error?: string } } };
-      message.error(err.response?.data?.detail ?? err.response?.data?.error ?? "Failed");
+      feedback.message.error(err.response?.data?.detail ?? err.response?.data?.error ?? "Failed");
     } finally {
       setSaving(false);
     }

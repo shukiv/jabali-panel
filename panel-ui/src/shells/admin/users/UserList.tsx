@@ -9,7 +9,8 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
-import { Badge, Button, Card, Input, message, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Badge, Button, Card, Input, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { DeleteOutlined, EditOutlined, LoginOutlined, PauseCircleOutlined, PlayCircleOutlined, SafetyOutlined, SearchOutlined, TeamOutlined } from "@icons";
 import { RowActions, type RowAction } from "../../../components/RowActions";
 import { Link } from "react-router";
@@ -81,7 +82,7 @@ function UserRowActions({
       await startImpersonation(user.id);
       window.location.assign("/jabali-panel");
     } catch {
-      message.error(t("users.error.login_as"));
+      feedback.message.error(t("users.error.login_as"));
     }
   };
 

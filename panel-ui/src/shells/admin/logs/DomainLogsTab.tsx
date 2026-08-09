@@ -3,7 +3,8 @@
 // one tab of the consolidated Logs & Statistics page.
 import { useState } from "react";
 import { RowActions } from "../../../components/RowActions";
-import { Card, Typography, Button, Space, Table, message } from "antd";
+import { Card, Typography, Button, Space, Table } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   ReloadOutlined,
   FileTextOutlined,
@@ -71,7 +72,7 @@ export const DomainLogsTab = () => {
           ? // @ts-expect-error axios error shape
             error.response?.data?.error
           : undefined;
-      message.error(msg || "Failed to create log stream");
+      feedback.message.error(msg || "Failed to create log stream");
     }
   };
 

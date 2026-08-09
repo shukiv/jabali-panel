@@ -2,7 +2,8 @@
 // (M24 Step 9). Two AntD Selects with a "use server default" sentinel
 // option per family. Submitting "default" PATCHes listen_ipv*_id: null,
 // which the API resolves to the family default at render time.
-import { Button, Form, Select, Space, Tag, Typography, message } from "antd";
+import { Button, Form, Select, Space, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect } from "react";
 
 import { useListQuery, useUpdateMutation } from "../../../hooks/useQueries";
@@ -87,9 +88,9 @@ export const DomainListenIPSection = ({
     };
     try {
       await updateMutation.mutateAsync({ id: domainId, input: patch });
-      message.success("Listen-IP binding updated");
+      feedback.message.success("Listen-IP binding updated");
     } catch (err: unknown) {
-      message.error(err instanceof Error ? err.message : "Failed to update binding");
+      feedback.message.error(err instanceof Error ? err.message : "Failed to update binding");
     }
   };
 

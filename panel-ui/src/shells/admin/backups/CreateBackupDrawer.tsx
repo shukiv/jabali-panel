@@ -3,7 +3,8 @@
 // orchestrator runs the actual stages; the panel just creates the
 // workflow row + dispatches.
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Drawer, Form, Grid, Input, Radio, Select, Space, message } from "antd";
+import { Alert, Button, Drawer, Form, Grid, Input, Radio, Select, Space } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
@@ -70,7 +71,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
     setSubmitting(true);
     try {
       if (!values.destination_id) {
-        message.error("Pick a destination");
+        feedback.message.error("Pick a destination");
         return;
       }
       if (values.kind === "system_backup" || values.kind === "full_server") {
@@ -82,12 +83,12 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
           include_accounts: full,
           destination_id: values.destination_id,
         });
-        message.success(full ? "Full server backup queued" : "System backup queued");
+        feedback.message.success(full ? "Full server backup queued" : "System backup queued");
         onCreated();
         return;
       }
       if (!values.user_id) {
-        message.error("Pick a user");
+        feedback.message.error("Pick a user");
         return;
       }
       const payload = {
@@ -105,10 +106,10 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         compression: values.compression ?? "",
       };
       await apiClient.post(`/admin/users/${values.user_id}/backups`, payload);
-      message.success("Backup queued");
+      feedback.message.success("Backup queued");
       onCreated();
     } catch (err) {
-      message.error(extractApiError(err, "Create failed"));
+      feedback.message.error(extractApiError(err, "Create failed"));
     } finally {
       setSubmitting(false);
     }

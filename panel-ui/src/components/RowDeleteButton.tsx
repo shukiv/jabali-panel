@@ -13,7 +13,8 @@
 // /email/ }).getByRole("button", ...)) rather than encoding the row
 // identity into the button label.
 import { DeleteOutlined } from "@icons";
-import { Button, Popconfirm, message } from "antd";
+import { Button, Popconfirm } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 
 interface RowDeleteButtonProps {
   onConfirm: () => Promise<void>;
@@ -34,14 +35,14 @@ export function RowDeleteButton({
   const handleConfirm = async () => {
     try {
       await onConfirm();
-      message.success(successMessage);
+      feedback.message.success(successMessage);
     } catch (err: unknown) {
       if (onError) {
         onError(err);
         return;
       }
       const msg = err instanceof Error ? err.message : "Delete failed";
-      message.error(msg);
+      feedback.message.error(msg);
     }
   };
 

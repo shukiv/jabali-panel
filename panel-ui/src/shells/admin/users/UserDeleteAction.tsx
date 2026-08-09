@@ -4,7 +4,8 @@
 // jobs, OS account, /home, related rows). Parent (UserList RowActions)
 // drives `open` via its dropdown menu.
 import { useState } from "react";
-import { Button, Modal, message } from "antd";
+import { Button, Modal } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -30,7 +31,7 @@ export const UserDeleteAction = ({
     try {
       await apiClient.delete(`/users/${encodeURIComponent(recordItemId)}`);
 
-      message.success(`User "${userEmail}" and all related data deleted`);
+      feedback.message.success(`User "${userEmail}" and all related data deleted`);
 
       // Invalidate every ["list", "users", *] variant so admin tabs
       // and the parent badge counters all refetch after a delete.
@@ -41,7 +42,7 @@ export const UserDeleteAction = ({
     } catch (err: unknown) {
       const errMsg =
         err instanceof Error ? err.message : "Failed to delete user";
-      message.error(errMsg);
+      feedback.message.error(errMsg);
     } finally {
       setIsLoading(false);
     }

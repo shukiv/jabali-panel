@@ -4,7 +4,8 @@
 // RowDeleteButton. Delete handles the 409 ip_in_use case by surfacing
 // the affected-domains list returned by the API.
 import { useTranslation } from "react-i18next";
-import { Button, Card, Modal, Space, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Modal, Space, Table, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { DeleteOutlined, EditOutlined, EthernetPortOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 import { useState } from "react";
@@ -79,7 +80,7 @@ export const AdminIPList = () => {
   const handleDelete = async (row: ManagedIP) => {
     try {
       await deleteMutation.mutateAsync({ id: String(row.id) });
-      message.success(`Removed ${row.address} from the pool`);
+      feedback.message.success(`Removed ${row.address} from the pool`);
     } catch (err: unknown) {
       // Conflict surfaces the affected-domains list in a Modal — admin
       // needs to reassign those domains before deleting.
@@ -88,7 +89,7 @@ export const AdminIPList = () => {
         setConflictModal(body);
         return;
       }
-      message.error(err instanceof Error ? err.message : "Delete failed");
+      feedback.message.error(err instanceof Error ? err.message : "Delete failed");
     }
   };
 

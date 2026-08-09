@@ -7,7 +7,8 @@
 // action modals and the dropdown items can use stock AntD styling.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Modal, message } from "antd";
+import { Modal } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 
@@ -31,12 +32,12 @@ export const UserReset2FAAction = ({
     setIsLoading(true);
     try {
       await apiClient.post(`/admin/users/${encodeURIComponent(userId)}/2fa/reset`);
-      message.success(`Two-factor authentication reset for "${userEmail}"`);
+      feedback.message.success(`Two-factor authentication reset for "${userEmail}"`);
       onClose();
     } catch (err: unknown) {
       const errMsg =
         err instanceof Error ? err.message : "Failed to reset two-factor authentication";
-      message.error(errMsg);
+      feedback.message.error(errMsg);
     } finally {
       setIsLoading(false);
     }

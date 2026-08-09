@@ -8,7 +8,8 @@ import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { RowActions } from "../../../components/RowActions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography, message } from "antd";
+import { Alert, Button, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { EditOutlined, DeleteOutlined } from "@icons";
 import type { ColumnsType } from "antd/es/table";
 
@@ -43,17 +44,17 @@ export const MailThrottlesPage = () => {
     mutationFn: (body: Partial<Policy>) => apiClient.post("/admin/mail/throttles", body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "mail", "throttles"] });
-      message.success("Throttle created — reconciler will push to Stalwart on next tick");
+      feedback.message.success("Throttle created — reconciler will push to Stalwart on next tick");
       setDrawer({ open: false });
     },
-    onError: (e: any) => message.error(e?.response?.data?.error ?? "create failed"),
+    onError: (e: any) => feedback.message.error(e?.response?.data?.error ?? "create failed"),
   });
 
   const updateMut = useMutation({
     mutationFn: (b: { id: string; body: Partial<Policy> }) => apiClient.put(`/admin/mail/throttles/${b.id}`, b.body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "mail", "throttles"] });
-      message.success("Throttle updated");
+      feedback.message.success("Throttle updated");
       setDrawer({ open: false });
     },
   });
@@ -62,7 +63,7 @@ export const MailThrottlesPage = () => {
     mutationFn: (id: string) => apiClient.delete(`/admin/mail/throttles/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "mail", "throttles"] });
-      message.success("Throttle removed");
+      feedback.message.success("Throttle removed");
     },
   });
 

@@ -33,7 +33,8 @@ import {
   UserOutlined,
 } from "@icons";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Row, Skeleton, Space, Statistic, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Row, Skeleton, Space, Statistic, Tag, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 
@@ -132,7 +133,7 @@ export function AdminUserOverview() {
       await startImpersonation(id);
       window.location.assign(path);
     } catch {
-      message.error("Could not open the user panel as this user");
+      feedback.message.error("Could not open the user panel as this user");
       setImpersonating(false);
     }
   };

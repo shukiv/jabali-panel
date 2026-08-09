@@ -1,7 +1,8 @@
 // AdminBackupsPage — admin overview of every backup run.
 // Scheduler-fired jobs roll up under their run_id (one parent row,
 // expandable to per-user children). Manual creates render flat.
-import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { downloadUrl } from "../../../utils/download";
 import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
 import { shortDateTime } from "../../../utils/datetime";
@@ -213,7 +214,7 @@ export const AdminBackupsPage = () => {
         });
       }
     } catch (err) {
-      message.error(extractApiError(err, "Load failed"));
+      feedback.message.error(extractApiError(err, "Load failed"));
     } finally {
       setLoading(false);
     }
@@ -247,7 +248,7 @@ export const AdminBackupsPage = () => {
       );
       setRunJobs((m) => ({ ...m, [runID]: resp.data.data ?? [] }));
     } catch (err) {
-      message.error(extractApiError(err, "Load run failed"));
+      feedback.message.error(extractApiError(err, "Load run failed"));
     }
   };
 
@@ -268,7 +269,7 @@ export const AdminBackupsPage = () => {
     // GH #502: a `partial` backup has a valid snapshot too (a non-critical
     // stage failed but the manifest was written) — allow downloading it.
     if (row.status !== "succeeded" && row.status !== "partial") {
-      message.warning("Backup must complete before download");
+      feedback.message.warning("Backup must complete before download");
       return;
     }
     // GH #462: anchor-download, not window.location.href — navigating aborts the
@@ -279,10 +280,10 @@ export const AdminBackupsPage = () => {
   const handleCancel = async (row: BackupJob) => {
     try {
       await apiClient.post(`/admin/backups/${row.id}/cancel`);
-      message.success(`Cancellation requested for ${row.id}`);
+      feedback.message.success(`Cancellation requested for ${row.id}`);
       void reload();
     } catch (err) {
-      message.error(extractApiError(err, "Cancel failed"));
+      feedback.message.error(extractApiError(err, "Cancel failed"));
     }
   };
 
@@ -299,10 +300,10 @@ export const AdminBackupsPage = () => {
         overwrite: true,
         destination_id: row.destination_id,
       });
-      message.success(`Restore queued for ${usernameById(row.user_id)}`);
+      feedback.message.success(`Restore queued for ${usernameById(row.user_id)}`);
       void reload();
     } catch (err) {
-      message.error(extractApiError(err, "Restore failed"));
+      feedback.message.error(extractApiError(err, "Restore failed"));
     }
   };
 
@@ -311,10 +312,10 @@ export const AdminBackupsPage = () => {
   const handleDelete = async (row: BackupJob) => {
     try {
       await apiClient.delete(`/admin/backups/${row.id}`);
-      message.success("Backup deleted");
+      feedback.message.success("Backup deleted");
       void reload();
     } catch (err) {
-      message.error(extractApiError(err, "Delete failed"));
+      feedback.message.error(extractApiError(err, "Delete failed"));
     }
   };
 
@@ -329,15 +330,15 @@ export const AdminBackupsPage = () => {
       );
       const { deleted, skipped_running, failed } = resp.data;
       if (failed > 0 || skipped_running > 0) {
-        message.warning(
+        feedback.message.warning(
           `Deleted ${deleted} job(s); ${skipped_running} running/queued skipped, ${failed} failed`,
         );
       } else {
-        message.success(`Deleted ${deleted} backup job(s)`);
+        feedback.message.success(`Deleted ${deleted} backup job(s)`);
       }
       void reload();
     } catch (err) {
-      message.error(extractApiError(err, "Bulk delete failed"));
+      feedback.message.error(extractApiError(err, "Bulk delete failed"));
     }
   };
 

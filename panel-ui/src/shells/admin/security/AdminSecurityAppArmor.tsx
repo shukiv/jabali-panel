@@ -4,7 +4,8 @@
 // 50 rows) below the profile table — answers "what did AppArmor
 // actually drop?" without dropping to journalctl.
 import { useTranslation } from "react-i18next";
-import { Alert, Badge, Button, Card, Checkbox, Descriptions, Drawer, Empty, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Alert, Badge, Button, Card, Checkbox, Descriptions, Drawer, Empty, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 
 import {
@@ -280,10 +281,10 @@ export const AdminSecurityAppArmor = () => {
             { profile: pendingFlip.profile, mode: pendingFlip.nextMode },
             {
               onSuccess: () => {
-                message.success(`${pendingFlip.profile} → ${pendingFlip.nextMode}`);
+                feedback.message.success(`${pendingFlip.profile} → ${pendingFlip.nextMode}`);
                 setPendingFlip(null);
               },
-              onError: () => message.error("Flip failed — check agent logs"),
+              onError: () => feedback.message.error("Flip failed — check agent logs"),
             },
           );
         }}

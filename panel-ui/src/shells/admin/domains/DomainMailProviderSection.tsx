@@ -4,7 +4,8 @@
 // DNS and reissues the cert on the next reconcile.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, Button, Input, Select, Space, Typography, message } from "antd";
+import { Alert, Button, Input, Select, Space, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -52,9 +53,9 @@ export const DomainMailProviderSection = ({
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["domains"] });
-      message.success("Mail provider updated — DNS and cert reconcile shortly");
+      feedback.message.success("Mail provider updated — DNS and cert reconcile shortly");
     },
-    onError: () => message.error("Failed to update mail provider"),
+    onError: () => feedback.message.error("Failed to update mail provider"),
   });
 
   return (

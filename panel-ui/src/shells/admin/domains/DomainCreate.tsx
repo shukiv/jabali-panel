@@ -4,7 +4,8 @@
 // auto-generates doc_root when blank. Post-M21: Form.useForm +
 // useCreateMutation, no Refine wrappers.
 import { useTranslation } from "react-i18next";
-import { Button, Card, Checkbox, Form, Input, Select, Typography, message } from "antd";
+import { Button, Card, Checkbox, Form, Input, Select, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 import { useNavigate } from "react-router";
@@ -46,12 +47,12 @@ export const DomainCreate = () => {
   const handleFinish = async (values: DomainCreateInput) => {
     try {
       await createMutation.mutateAsync(values);
-      message.success("Domain created");
+      feedback.message.success("Domain created");
       navigate("/jabali-admin/domains");
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Failed to create domain";
-      message.error(msg);
+      feedback.message.error(msg);
     }
   };
 

@@ -7,7 +7,8 @@
 // its own enable click anyway. This tab exposes the same toggle the
 // bell dropdown footer offers, with a bit more context around it.
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Card, Space, Typography, message } from "antd";
+import { Alert, Button, Card, Space, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { BellOutlined } from "@icons";
 
 import { useWebPushSubscription } from "../../../hooks/useWebPushSubscription";
@@ -19,18 +20,18 @@ export const WebPushTab = () => {
   const handleEnable = async () => {
     try {
       await webpush.subscribe();
-      message.success("Browser push enabled");
+      feedback.message.success("Browser push enabled");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Subscribe failed");
+      feedback.message.error(err instanceof Error ? err.message : "Subscribe failed");
     }
   };
 
   const handleDisable = async () => {
     try {
       await webpush.unsubscribe();
-      message.success("Browser push disabled");
+      feedback.message.success("Browser push disabled");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Unsubscribe failed");
+      feedback.message.error(err instanceof Error ? err.message : "Unsubscribe failed");
     }
   };
 

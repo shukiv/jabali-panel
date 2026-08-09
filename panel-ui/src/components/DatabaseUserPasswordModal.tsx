@@ -6,7 +6,8 @@
 // fallback so the password isn't casually left on screen.
 import { useState } from "react";
 import { CopyOutlined, EyeInvisibleOutlined, EyeOutlined } from "@icons";
-import { Alert, Button, Input, Modal, Space, Typography, message } from "antd";
+import { Alert, Button, Input, Modal, Space, Typography } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 
 interface DatabaseUserPasswordModalProps {
   open: boolean;
@@ -28,9 +29,9 @@ export function DatabaseUserPasswordModal({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(password);
-      message.success("Password copied to clipboard");
+      feedback.message.success("Password copied to clipboard");
     } catch {
-      message.error("Copy failed — select the field and copy manually");
+      feedback.message.error("Copy failed — select the field and copy manually");
     }
   };
 

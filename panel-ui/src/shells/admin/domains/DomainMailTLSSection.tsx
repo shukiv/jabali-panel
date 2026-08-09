@@ -12,7 +12,8 @@
 //   POST   /api/v1/domains/:id/mail-certificate/reissue
 import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Skeleton, Space, Switch, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Alert, Button, Skeleton, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { ReloadOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
@@ -73,7 +74,7 @@ export const DomainMailTLSSection = ({ domainId }: Props) => {
       const res = await apiClient.get<MailCertResponse>(`/domains/${domainId}/mail-certificate`);
       setCert(res.data);
     } catch {
-      message.error("Failed to load mail TLS status");
+      feedback.message.error("Failed to load mail TLS status");
     } finally {
       setLoading(false);
     }
@@ -88,15 +89,15 @@ export const DomainMailTLSSection = ({ domainId }: Props) => {
     try {
       if (next) {
         await apiClient.post(`/domains/${domainId}/mail-certificate/enable`);
-        message.success("Mail TLS enabled — reconciler will request a Let's Encrypt cert shortly");
+        feedback.message.success("Mail TLS enabled — reconciler will request a Let's Encrypt cert shortly");
       } else {
         await apiClient.post(`/domains/${domainId}/mail-certificate/disable`);
-        message.success("Mail TLS disabled");
+        feedback.message.success("Mail TLS disabled");
       }
       await fetchStatus();
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(detail ?? "Toggle failed");
+      feedback.message.error(detail ?? "Toggle failed");
     } finally {
       setBusy(false);
     }
@@ -106,10 +107,10 @@ export const DomainMailTLSSection = ({ domainId }: Props) => {
     setBusy(true);
     try {
       await apiClient.post(`/domains/${domainId}/mail-certificate/reissue`);
-      message.success("Re-issue queued — reconciler will retry on the next tick");
+      feedback.message.success("Re-issue queued — reconciler will retry on the next tick");
       await fetchStatus();
     } catch {
-      message.error("Re-issue failed");
+      feedback.message.error("Re-issue failed");
     } finally {
       setBusy(false);
     }

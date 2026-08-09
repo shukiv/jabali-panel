@@ -7,7 +7,8 @@
 // facing audit text visible on the row. Parent (UserList RowActions)
 // drives `open` via its dropdown menu.
 import { useState } from "react";
-import { Input, Modal, message } from "antd";
+import { Input, Modal } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -50,19 +51,19 @@ export const UserSuspendAction = ({
       }>(`/admin/users/${encodeURIComponent(userId)}/${endpoint}`, body);
       const data = res.data;
       if (suspended) {
-        message.success(
+        feedback.message.success(
           `Unsuspended "${userEmail}" — ${data.domains_enabled ?? 0} domain(s) re-enabled.`,
         );
       } else {
-        message.success(
+        feedback.message.success(
           `Suspended "${userEmail}" — ${data.domains_disabled ?? 0} domain(s) disabled.`,
         );
       }
       if (data.kratos_warning) {
-        message.warning(`Kratos: ${data.kratos_warning}`);
+        feedback.message.warning(`Kratos: ${data.kratos_warning}`);
       }
       if (data.domain_warning) {
-        message.warning(`Domains: ${data.domain_warning}`);
+        feedback.message.warning(`Domains: ${data.domain_warning}`);
       }
       qc.invalidateQueries({ queryKey: ["list", "users"] });
       handleClose();
@@ -73,7 +74,7 @@ export const UserSuspendAction = ({
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error ??
         (err instanceof Error ? err.message : "Action failed");
-      message.error(errMsg);
+      feedback.message.error(errMsg);
     } finally {
       setIsLoading(false);
     }

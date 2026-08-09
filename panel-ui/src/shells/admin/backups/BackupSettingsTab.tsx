@@ -2,7 +2,8 @@
 // scheduler/dispatcher. Backed by server_settings (PATCH /admin/settings).
 // Retention is per-schedule (Schedules tab) — not server-wide.
 import { useTranslation } from "react-i18next";
-import { Button, Form, Input, InputNumber, Spin, message } from "antd";
+import { Button, Form, Input, InputNumber, Spin } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { SaveOutlined } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -50,7 +51,7 @@ export const BackupSettingsTab = () => {
           tenant_backup_window_end: resp.data.tenant_backup_window_end ?? "05:00",
         });
       } catch (err) {
-        message.error(extractApiError(err, "Load failed"));
+        feedback.message.error(extractApiError(err, "Load failed"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -64,9 +65,9 @@ export const BackupSettingsTab = () => {
     setSaving(true);
     try {
       await apiClient.patch("/admin/settings", values);
-      message.success("Settings saved");
+      feedback.message.success("Settings saved");
     } catch (err) {
-      message.error(extractApiError(err, "Save failed"));
+      feedback.message.error(extractApiError(err, "Save failed"));
     } finally {
       setSaving(false);
     }

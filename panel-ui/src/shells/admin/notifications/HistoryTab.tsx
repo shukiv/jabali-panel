@@ -5,7 +5,8 @@
 // NULL) via ListForAdminInbox on the backend. Click a row to mark it
 // read and (if a deeplink exists) navigate there.
 import { useTranslation } from "react-i18next";
-import { Button, Descriptions, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Descriptions, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -103,9 +104,9 @@ export const HistoryTab = () => {
     try {
       await apiClient.post("/notifications/inbox/read-all");
       qc.invalidateQueries({ queryKey: ["notifications"] });
-      message.success("Marked all as read");
+      feedback.message.success("Marked all as read");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Mark-all failed");
+      feedback.message.error(err instanceof Error ? err.message : "Mark-all failed");
     }
   };
 
@@ -113,9 +114,9 @@ export const HistoryTab = () => {
     try {
       await apiClient.delete("/notifications/inbox");
       qc.invalidateQueries({ queryKey: ["notifications"] });
-      message.success("All notifications cleared");
+      feedback.message.success("All notifications cleared");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Clear failed");
+      feedback.message.error(err instanceof Error ? err.message : "Clear failed");
     }
   };
 

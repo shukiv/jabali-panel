@@ -12,7 +12,8 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 
-import { Spin, message } from "antd";
+import { Spin } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { Navigate } from "react-router";
 
 import { useServerCapabilities, type ServerCapabilities } from "../hooks/useServerCapabilities";
@@ -25,7 +26,7 @@ interface CapabilityRouteProps {
 
 function DisabledRedirect({ fallback }: { fallback: string }) {
   useEffect(() => {
-    message.info("That feature isn't enabled on this server.");
+    feedback.message.info("That feature isn't enabled on this server.");
   }, []);
   return <Navigate to={fallback} replace />;
 }

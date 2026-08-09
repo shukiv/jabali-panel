@@ -5,7 +5,8 @@
 // ro → "Read only") or custom privileges. Supports granular privilege
 // checkbox set (SELECT/INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/INDEX).
 import { useEffect, useState } from "react";
-import { Alert, Form, Modal, Radio, Select, Checkbox, Space, message } from "antd";
+import { Alert, Form, Modal, Radio, Select, Checkbox, Space } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../apiClient";
 import { useListQuery } from "../hooks/useQueries";
@@ -87,14 +88,14 @@ export function AddGrantModal({
       }
 
       await apiClient.post(`/database-users/${userId}/grants`, payload);
-      message.success("Access granted");
+      feedback.message.success("Access granted");
       onSuccess();
       onClose();
     } catch (err) {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error ?? "Failed to grant access";
-      message.error(msg);
+      feedback.message.error(msg);
     } finally {
       setSubmitting(false);
     }

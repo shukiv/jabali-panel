@@ -5,7 +5,8 @@
 // parent (UserList RowActions) drives `open`.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Modal, Typography, message } from "antd";
+import { Modal, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 
@@ -28,9 +29,9 @@ export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Pr
         `/admin/users/${encodeURIComponent(userId)}/password/reset`,
       );
       setTempPassword(res.data.password);
-      message.success(`Password reset for "${userEmail}"`);
+      feedback.message.success(`Password reset for "${userEmail}"`);
     } catch (err: unknown) {
-      message.error(err instanceof Error ? err.message : "Failed to reset password");
+      feedback.message.error(err instanceof Error ? err.message : "Failed to reset password");
     } finally {
       setIsLoading(false);
     }

@@ -5,7 +5,8 @@
 // or the helper subdomains aren't DNS-resolvable.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, Skeleton, Space, Switch, Typography, message } from "antd";
+import { Alert, Skeleton, Space, Switch, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -46,13 +47,13 @@ export const DomainSkipAutoSANToggle = ({ domainId }: Props) => {
       await qc.invalidateQueries({
         queryKey: ["domain-skip-auto-san", domainId],
       });
-      message.success(
+      feedback.message.success(
         resp.enabled
           ? "Auto-SAN disabled — cert will cover only the base domain"
           : "Auto-SAN enabled — cert will include mail / autoconfig",
       );
     },
-    onError: () => message.error("Failed to update"),
+    onError: () => feedback.message.error("Failed to update"),
   });
 
   if (isLoading) return <Skeleton active paragraph={{ rows: 1 }} />;

@@ -6,7 +6,8 @@
 //
 // Validation rules mirror the server's so the form rejects early.
 // Password on edit is optional — blank means "keep current".
-import { Button, Drawer, Form, Grid, Input, Select, Space, Spin, Switch, message } from "antd";
+import { Button, Drawer, Form, Grid, Input, Select, Space, Spin, Switch } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect } from "react";
 
 import { CheckOutlined, CloseOutlined } from "@icons";
@@ -92,14 +93,14 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
           payload.package_id = "" as unknown as string;
         }
         await update.mutateAsync({ id: editingId, input: payload });
-        message.success("User updated");
+        feedback.message.success("User updated");
       } else {
         await create.mutateAsync(values);
-        message.success("User created");
+        feedback.message.success("User created");
       }
       onClose();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Save failed");
+      feedback.message.error(err instanceof Error ? err.message : "Save failed");
     }
   };
 

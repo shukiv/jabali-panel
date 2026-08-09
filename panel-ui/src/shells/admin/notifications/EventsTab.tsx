@@ -2,7 +2,8 @@
 // toggle. Defaults seeded by panel-api first-boot per
 // models.AllNotificationEventKinds (important = on).
 import { useTranslation } from "react-i18next";
-import { Switch, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Switch, Table, Tag, Tooltip, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -46,7 +47,7 @@ export const EventsTab = () => {
       });
       qc.invalidateQueries({ queryKey: LIST_KEY });
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Toggle failed");
+      feedback.message.error(err instanceof Error ? err.message : "Toggle failed");
     }
   };
 

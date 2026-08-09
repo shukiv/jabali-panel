@@ -10,7 +10,8 @@
 // (colorBgElevated / borderRadiusLG / boxShadowSecondary) so the
 // popup is visually identical to every other AntD dropdown.
 import { useTranslation } from "react-i18next";
-import { Badge, Button, Divider, Dropdown, Empty, Grid, Popconfirm, Space, Tag, Tooltip, Typography, message, theme } from "antd";
+import { Badge, Button, Divider, Dropdown, Empty, Grid, Popconfirm, Space, Tag, Tooltip, Typography, theme } from "antd";
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import type { MenuProps } from "antd";
 import type { CSSProperties, ReactElement } from "react";
 import { cloneElement, useEffect, useState } from "react";
@@ -142,7 +143,7 @@ export function NotificationBell() {
       await apiClient.post("/notifications/inbox/read-all");
       qc.invalidateQueries({ queryKey: ["notifications"] });
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Mark all failed");
+      feedback.message.error(err instanceof Error ? err.message : "Mark all failed");
     }
   };
 
@@ -150,9 +151,9 @@ export function NotificationBell() {
     try {
       await apiClient.delete("/notifications/inbox");
       qc.invalidateQueries({ queryKey: ["notifications"] });
-      message.success("All notifications cleared");
+      feedback.message.success("All notifications cleared");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Clear failed");
+      feedback.message.error(err instanceof Error ? err.message : "Clear failed");
     }
   };
 
@@ -193,7 +194,7 @@ export function NotificationBell() {
         size="small"
         onClick={() => {
           if (webpush.error) {
-            message.error(webpush.error);
+            feedback.message.error(webpush.error);
             return;
           }
           void webpush.subscribe();

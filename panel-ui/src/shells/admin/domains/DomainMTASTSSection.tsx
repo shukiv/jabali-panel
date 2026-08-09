@@ -12,7 +12,8 @@
 // operator knows the toggle worked and the wait is intentional.
 import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Skeleton, Space, Switch, Typography, message } from "antd";
+import { Alert, Skeleton, Space, Switch, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { CheckOutlined, CloseOutlined, SafetyOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
@@ -40,7 +41,7 @@ export const DomainMTASTSSection = ({ domainId }: Props) => {
       const res = await apiClient.get<MTAStsState>(`/domains/${domainId}/mta-sts`);
       setState(res.data);
     } catch {
-      message.error("Failed to load MTA-STS status");
+      feedback.message.error("Failed to load MTA-STS status");
     } finally {
       setLoading(false);
     }
@@ -57,13 +58,13 @@ export const DomainMTASTSSection = ({ domainId }: Props) => {
         enabled: next,
       });
       setState(res.data);
-      message.success(
+      feedback.message.success(
         next
           ? "MTA-STS enabled — DNS records published"
           : "MTA-STS disabled — records removed",
       );
     } catch {
-      message.error("Failed to toggle MTA-STS");
+      feedback.message.error("Failed to toggle MTA-STS");
       await fetchState();
     } finally {
       setToggling(false);

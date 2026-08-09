@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useState, useEffect, useRef } from "react";
-import { Modal, Typography, Button, Space, message, Spin, theme } from "antd";
+import { Modal, Typography, Button, Space, Spin, theme } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
 
 const { Text } = Typography;
@@ -135,7 +136,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
     ws.onopen = () => {
       setConnected(true);
       setConnecting(false);
-      message.success("Connected to log stream");
+      feedback.message.success("Connected to log stream");
       console.log("WebSocket connected");
     };
 
@@ -174,16 +175,16 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
       setConnected(false);
       setConnecting(false);
       if (event.code === 1000) {
-        message.info("Log stream ended");
+        feedback.message.info("Log stream ended");
       } else {
-        message.error("Connection lost");
+        feedback.message.error("Connection lost");
       }
       console.log("WebSocket closed", event.code, event.reason);
     };
 
     ws.onerror = (error) => {
       setConnecting(false);
-      message.error("WebSocket connection error");
+      feedback.message.error("WebSocket connection error");
       console.error("WebSocket error:", error);
     };
 

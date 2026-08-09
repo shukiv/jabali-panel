@@ -4,7 +4,8 @@
 // page-level header; the "Add channel" button stays here because it's
 // tab-specific (the History tab has a different action).
 import { useTranslation } from "react-i18next";
-import { Button, Space, Switch, Table, Tag, message } from "antd";
+import { Button, Space, Switch, Table, Tag } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 
 import { DeleteOutlined, EditOutlined, PlusOutlined, SendOutlined } from "@icons";
@@ -39,16 +40,16 @@ export const ChannelsTab = () => {
     try {
       await updateMutation.mutateAsync({ id: row.id, input: { enabled: next } });
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Toggle failed");
+      feedback.message.error(err instanceof Error ? err.message : "Toggle failed");
     }
   };
 
   const handleDelete = async (row: NotificationChannel) => {
     try {
       await deleteMutation.mutateAsync({ id: row.id });
-      message.success(`Deleted ${row.name}`);
+      feedback.message.success(`Deleted ${row.name}`);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Delete failed");
+      feedback.message.error(err instanceof Error ? err.message : "Delete failed");
     }
   };
 
@@ -56,13 +57,13 @@ export const ChannelsTab = () => {
     try {
       const res = await apiClient.post<{ delivered?: boolean }>(`/${RESOURCE}/${row.id}/test`);
       if (res.data?.delivered) {
-        message.success(`Test delivered to ${row.name}`);
+        feedback.message.success(`Test delivered to ${row.name}`);
       } else {
-        message.success(`Test queued for ${row.name} — see the History tab for the result`);
+        feedback.message.success(`Test queued for ${row.name} — see the History tab for the result`);
       }
     } catch (err) {
       // Synchronous send surfaces the real delivery error (e.g. SMTP auth).
-      message.error(err instanceof Error ? err.message : "Test failed");
+      feedback.message.error(err instanceof Error ? err.message : "Test failed");
     }
   };
 
