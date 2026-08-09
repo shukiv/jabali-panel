@@ -5,6 +5,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"gorm.io/gorm"
@@ -157,15 +158,17 @@ func (r *mailStatsRepo) DomainSeries(ctx context.Context, since time.Time) ([]Do
 }
 
 func (r *mailStatsRepo) LastDomainSampleAt(ctx context.Context) (time.Time, error) {
-	var t *time.Time
+	// sql.NullTime (not *time.Time) so an empty table's NULL MAX() scans
+	// cleanly on MariaDB rather than relying on GORM's **time.Time handling.
+	var nt sql.NullTime
 	err := r.db.WithContext(ctx).
 		Model(&DomainStatSample{}).
 		Select("MAX(sampled_at)").
-		Scan(&t).Error
-	if err != nil || t == nil {
+		Scan(&nt).Error
+	if err != nil || !nt.Valid {
 		return time.Time{}, err
 	}
-	return *t, nil
+	return nt.Time, nil
 }
 
 func (r *mailStatsRepo) PruneDomain(ctx context.Context, olderThan time.Time) (int64, error) {

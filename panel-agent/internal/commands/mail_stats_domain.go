@@ -106,6 +106,13 @@ func mailStatsDomainSampleHandler(_ context.Context, raw json.RawMessage) (any, 
 	}
 
 	for _, path := range mailLogFiles() {
+		// Skip rotated files whose newest line predates the window — bounds the
+		// per-tick work to the current (and any in-window) log instead of
+		// re-parsing every archived file forever. mtime is the last append, so
+		// mtime < since means no line in this file is in (since, now].
+		if fi, serr := os.Stat(path); serr == nil && fi.ModTime().Before(since) {
+			continue
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			continue

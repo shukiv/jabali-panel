@@ -268,6 +268,11 @@ export const MailStatsTab = () => {
             mail flows.
           </Typography.Text>
         ) : (
+          <>
+          <Typography.Paragraph type="secondary" style={{ marginTop: 0, fontSize: 12 }}>
+            Counted from the delivery log by envelope sender/recipient, so totals
+            won't exactly match the server-wide tiles above.
+          </Typography.Paragraph>
           <Table
             size="small"
             rowKey="domain"
@@ -296,6 +301,7 @@ export const MailStatsTab = () => {
               },
             ]}
           />
+          </>
         )}
       </Card>
 
