@@ -24,6 +24,7 @@ import { App as AntdApp, ConfigProvider, Empty, Spin } from "antd";
 import type { ReactNode } from "react";
 import { lazy, Suspense, useEffect } from "react";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
+import { FeedbackBridge } from "./lib/feedback";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { RequireAdmin } from "./auth/RequireAdmin";
@@ -197,7 +198,19 @@ const ThemedApp = () => {
         direction={isRTL(lng) ? "rtl" : "ltr"}
         renderEmpty={() => <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
       >
-        <AntdApp>
+        <AntdApp
+          // GH #970: one house style for every toast — slim, top-centre,
+          // capped so bursts don't stack. message has no placement (always
+          // top-centre); notification is pulled to `top` to sit with it. These
+          // config the App-scoped (hook + FeedbackBridge) instances; the static
+          // fallbacks are matched in main.tsx.
+          message={{ top: 24, duration: 3, maxCount: 3 }}
+          notification={{ placement: "top", top: 24, duration: 4.5, maxCount: 3 }}
+        >
+        {/* Binds the theme-aware message/notification/modal instances into
+            lib/feedback so any call site (incl. non-component code) is
+            consistent + themed (GH #970). Renders no DOM. */}
+        <FeedbackBridge />
         {/* JAB-159 phase 2: demo UI is compiled out of production bundles.
             VITE_DEMO is statically replaced by Vite; when it is not "1" the
             dynamic import above is tree-shaken, dropping DemoBanner +

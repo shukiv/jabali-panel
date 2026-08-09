@@ -8,8 +8,18 @@ import "antd/dist/reset.css";
 import "./global.css";
 
 import "./i18n";
+import { message, notification } from "antd";
 import App from "./App";
 import { registerServiceWorker } from "./lib/registerServiceWorker";
+
+// GH #970: give the STATIC message/notification methods (still used across the
+// app) the same house style as the App-scoped config in App.tsx, so every toast
+// shares one placement + duration regardless of which mechanism a page uses.
+// message has no placement (always top-centre); notification is pulled to `top`
+// to sit with it. Theme/RTL awareness for static methods still needs the
+// lib/feedback bridge — see that file — but position is unified here.
+message.config({ top: 24, duration: 3, maxCount: 3 });
+notification.config({ placement: "top", top: 24, duration: 4.5, maxCount: 3 });
 
 // A dynamic import (lazy route chunk) failing almost always means the tab was
 // open across a panel deploy: the shell in memory references old asset hashes
