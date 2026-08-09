@@ -14263,6 +14263,12 @@ provision_new_software() {
   # anything else in the provision chain touches PHP.
   ensure_jabali_panel_dir_traversable
   ensure_snuffleupagus_loadable
+  # Also on UPDATE, not just fresh install: `jabali update` runs this trimmed
+  # path, not main(), so wiring the call only into main() left every EXISTING
+  # host — the ones that have been downloading to predictable /tmp paths for
+  # months — without the protection. Caught on the testserver deploy: the
+  # function was present in install.sh and had simply never run.
+  ensure_tmp_hardening
 
   # Keep the app-marketplace catalogs current on `jabali update` (build_backend,
   # which also calls this, is NOT in the update path). New docker-app /
