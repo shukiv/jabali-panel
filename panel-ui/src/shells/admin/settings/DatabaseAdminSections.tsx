@@ -30,8 +30,10 @@ import {
   message,
 } from "antd";
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+import { listInstalled } from "../docker-apps/api";
 
 type Engine = "mariadb" | "postgres";
 
@@ -313,6 +315,19 @@ function ConfigTunerSection() {
 function AdminDbConsoleSection() {
   const [busy, setBusy] = useState<string | null>(null);
 
+  // If a pgAdmin docker app (GH #1005) is installed, running and reverse-
+  // proxied, surface a direct link next to the Postgres console. pgAdmin has
+  // its own login and receives no credentials from the panel — this is just
+  // a shortcut to the installed instance.
+  const { data: installedApps } = useQuery({
+    queryKey: ["admin", "docker-apps", "installed"],
+    queryFn: listInstalled,
+    staleTime: 60_000,
+  });
+  const pgAdmin = installedApps?.find(
+    (a) => a.slug === "pgadmin" && a.status === "running" && !!a.domain,
+  );
+
   const open = async (path: string, label: string) => {
     setBusy(label);
     try {
@@ -358,6 +373,19 @@ function AdminDbConsoleSection() {
         >
           Open Adminer (all PostgreSQL)
         </Button>
+        {pgAdmin && (
+          <Button
+            onClick={() =>
+              window.open(
+                `https://${pgAdmin.domain}`,
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+          >
+            Open pgAdmin
+          </Button>
+        )}
       </Space>
     </Card>
   );
