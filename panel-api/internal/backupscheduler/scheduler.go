@@ -760,6 +760,7 @@ func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, lo
 		Domains:        deps.Domains,
 		Mailboxes:      deps.Mailboxes,
 		AppInstalls:    deps.AppInstalls,
+		DockerApps:     deps.DockerApps,
 		SSLCerts:       deps.SSLCerts,
 		PHPPools:       deps.PHPPools,
 		PHPPoolIni:     deps.PHPPoolIni,

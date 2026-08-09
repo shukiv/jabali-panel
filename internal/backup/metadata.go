@@ -51,14 +51,19 @@ type AccountMetadata struct {
 	// Application installs (WordPress, Joomla, Drupal, …).
 	AppInstalls []MetadataAppInstall `json:"app_installs,omitempty"`
 
+	// DockerApps are the account's tenant docker-app rows (GH #954). Their
+	// data trees ride the stage=docker snapshot (#1017); these rows make the
+	// restored apps panel-managed rather than orphaned.
+	DockerApps []MetadataDockerApp `json:"docker_apps,omitempty"`
+
 	// SSH keys + cron jobs hang off the user, not a domain.
 	SSHKeys  []MetadataSSHKey  `json:"ssh_keys,omitempty"`
 	CronJobs []MetadataCronJob `json:"cron_jobs,omitempty"`
 
 	// User-level egress + limit overrides (M18 / M34).
-	EgressPolicy   *MetadataEgressPolicy    `json:"egress_policy,omitempty"`
-	EgressRequests []MetadataEgressRequest  `json:"egress_requests,omitempty"`
-	LimitOverride  *MetadataLimitOverride   `json:"limit_override,omitempty"`
+	EgressPolicy   *MetadataEgressPolicy   `json:"egress_policy,omitempty"`
+	EgressRequests []MetadataEgressRequest `json:"egress_requests,omitempty"`
+	LimitOverride  *MetadataLimitOverride  `json:"limit_override,omitempty"`
 }
 
 // MetadataUser mirrors models.User. Pointers preserve NULL semantics
@@ -87,7 +92,6 @@ type MetadataKratos struct {
 	// Raw exported identity data from Kratos export API, stored as JSON
 	ExportedIdentity string `json:"exported_identity"`
 }
-
 
 // MetadataDomain mirrors models.Domain plus the per-domain children
 // (SSL cert, mailboxes, forwarders, autoresponders, mailbox shares,
@@ -128,14 +132,14 @@ type MetadataDomain struct {
 	DNSSECEnabledAt       string  `json:"dnssec_enabled_at,omitempty"`
 	CreatedAt             string  `json:"created_at,omitempty"`
 
-	SSLCertificate *MetadataSSLCert       `json:"ssl_certificate,omitempty"`
-	Mailboxes      []MetadataMailbox      `json:"mailboxes,omitempty"`
-	Forwarders     []MetadataForwarder    `json:"forwarders,omitempty"`
+	SSLCertificate *MetadataSSLCert    `json:"ssl_certificate,omitempty"`
+	Mailboxes      []MetadataMailbox   `json:"mailboxes,omitempty"`
+	Forwarders     []MetadataForwarder `json:"forwarders,omitempty"`
 	// DNSRecords (GH #267) captures the user-created DNS rows so a restore can
 	// re-insert them. Managed records (BootstrapRecords + mail) are excluded —
 	// they re-derive from domain config via the reconciler.
-	DNSRecords     []MetadataDNSRecord    `json:"dns_records,omitempty"`
-	DNSSECKeys     []MetadataDNSSECKey    `json:"dnssec_keys,omitempty"`
+	DNSRecords []MetadataDNSRecord `json:"dns_records,omitempty"`
+	DNSSECKeys []MetadataDNSSECKey `json:"dnssec_keys,omitempty"`
 }
 
 // MetadataSSLCert mirrors models.SSLCertificate (sans large per-cert
@@ -190,11 +194,11 @@ type MetadataDatabase struct {
 // (one DBUser → many DatabaseIDs). Restore preserves password_hash so
 // the user's existing MariaDB credentials keep working.
 type MetadataDatabaseUser struct {
-	ID           string                       `json:"id"`
-	Username     string                       `json:"username"`
-	PasswordHash string                       `json:"password_hash,omitempty"`
-	CreatedAt    string                       `json:"created_at,omitempty"`
-	Grants       []MetadataDatabaseUserGrant  `json:"grants,omitempty"`
+	ID           string                      `json:"id"`
+	Username     string                      `json:"username"`
+	PasswordHash string                      `json:"password_hash,omitempty"`
+	CreatedAt    string                      `json:"created_at,omitempty"`
+	Grants       []MetadataDatabaseUserGrant `json:"grants,omitempty"`
 }
 
 // MetadataDatabaseUserGrant pairs a database user with the database it
@@ -214,16 +218,16 @@ type MetadataDatabaseUserGrant struct {
 // autoresponder + share rows. PasswordEnc carries the AES-256-GCM
 // blob used by the webmail SSO flow — round-tripped as base64 in JSON.
 type MetadataMailbox struct {
-	ID             string                  `json:"id"`
-	LocalPart      string                  `json:"local_part"`
-	EmailCached    string                  `json:"email_cached,omitempty"`
-	PasswordHash   string                  `json:"password_hash,omitempty"`
-	PasswordEnc    []byte                  `json:"password_enc,omitempty"`
-	QuotaBytes     uint64                  `json:"quota_bytes"`
-	IsDisabled     bool                    `json:"is_disabled"`
-	CreatedAt      string                  `json:"created_at,omitempty"`
-	Autoresponder  *MetadataAutoresponder  `json:"autoresponder,omitempty"`
-	SharedWith     []MetadataMailboxShare  `json:"shared_with,omitempty"`
+	ID            string                 `json:"id"`
+	LocalPart     string                 `json:"local_part"`
+	EmailCached   string                 `json:"email_cached,omitempty"`
+	PasswordHash  string                 `json:"password_hash,omitempty"`
+	PasswordEnc   []byte                 `json:"password_enc,omitempty"`
+	QuotaBytes    uint64                 `json:"quota_bytes"`
+	IsDisabled    bool                   `json:"is_disabled"`
+	CreatedAt     string                 `json:"created_at,omitempty"`
+	Autoresponder *MetadataAutoresponder `json:"autoresponder,omitempty"`
+	SharedWith    []MetadataMailboxShare `json:"shared_with,omitempty"`
 }
 
 // MetadataForwarder mirrors models.EmailForwarder. Each forwarder
@@ -291,6 +295,42 @@ type MetadataAppInstall struct {
 	Status        string  `json:"status"`
 	AppType       string  `json:"app_type"`
 	CreatedAt     string  `json:"created_at,omitempty"`
+}
+
+// MetadataDockerApp mirrors models.DockerApp — the panel row for a tenant
+// docker-app install (GH #954). The app's DATA tree is a separate restic
+// stage=docker snapshot (#1017); this row is what makes the restored app
+// panel-managed instead of orphaned on-disk. The reverse-proxy domain link is
+// carried by the domain's own proxy_pass rule (reconstructed with the domain),
+// so preserving the app ID + published host ports keeps them consistent.
+type MetadataDockerApp struct {
+	ID             string  `json:"id"`
+	Slug           string  `json:"slug"`
+	InstanceSlug   string  `json:"instance_slug"`
+	Name           string  `json:"name"`
+	CatalogVersion string  `json:"catalog_version"`
+	ImageSHA       *string `json:"image_sha,omitempty"`
+	Status         string  `json:"status"`
+	UpdateMode     string  `json:"update_mode"`
+	CPULimit       *string `json:"cpu_limit,omitempty"`
+	MemoryLimit    *string `json:"memory_limit,omitempty"`
+	PIDsLimit      *int    `json:"pids_limit,omitempty"`
+	CreatedAt      string  `json:"created_at,omitempty"`
+	// Ports are the published-port rows (host_port pins the reverse-proxy
+	// target the migrated domain's proxy_pass points at).
+	Ports []MetadataDockerAppPort `json:"ports,omitempty"`
+}
+
+// MetadataDockerAppPort mirrors models.DockerAppPublishedPort.
+type MetadataDockerAppPort struct {
+	ID            string `json:"id"`
+	PortName      string `json:"port_name"`
+	ContainerPort int    `json:"container_port"`
+	BindInterface string `json:"bind_interface"`
+	HostPort      int    `json:"host_port"`
+	Protocol      string `json:"protocol"`
+	ReverseProxy  bool   `json:"reverse_proxy"`
+	Enabled       bool   `json:"enabled"`
 }
 
 // MetadataSSHKey mirrors models.SSHKey.

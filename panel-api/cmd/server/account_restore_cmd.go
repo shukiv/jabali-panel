@@ -51,6 +51,7 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		DatabaseUsers:  repository.NewDatabaseUserRepository(sharedDB),
 		DatabaseGrants: repository.NewDatabaseUserGrantRepository(sharedDB),
 		AppInstalls:    repository.NewApplicationInstallRepository(sharedDB),
+		DockerApps:     repository.NewDockerAppRepository(sharedDB),
 		SSLCerts:       repository.NewSSLCertificateRepository(sharedDB),
 		PHPPools:       repository.NewPHPPoolRepository(sharedDB),
 		PHPPoolIni:     repository.NewPHPPoolIniOverrideRepository(sharedDB),
@@ -73,6 +74,7 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	fmt.Fprintf(w, "  mailboxes:      %d (forwarders: %d)\n", r.Mailboxes, r.Forwarders)
 	fmt.Fprintf(w, "  databases:      %d (users: %d, grants: %d)\n", r.Databases, r.DatabaseUsers, r.DatabaseGrants)
 	fmt.Fprintf(w, "  app_installs:   %d\n", r.AppInstalls)
+	fmt.Fprintf(w, "  docker_apps:    %d\n", r.DockerApps)
 	fmt.Fprintf(w, "  ssh_keys:       %d\n", r.SSHKeys)
 	fmt.Fprintf(w, "  cron_jobs:      %d\n", r.CronJobs)
 	fmt.Fprintf(w, "  skipped:        %d (already present)\n", r.Skipped)
