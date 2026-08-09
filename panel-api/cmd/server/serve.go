@@ -915,6 +915,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Agent:    sharedAgent,
 			Stats:    repository.NewMailStatsRepository(sharedDB),
 			Settings: deps.ServerSettings,
+			Domains:  deps.Domains,
 			Log:      log,
 		})
 	}

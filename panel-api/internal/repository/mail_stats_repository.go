@@ -29,6 +29,25 @@ type MailboxStorageRow struct {
 	QuotaBytes uint64 `gorm:"column:quota_bytes" json:"quota_bytes"`
 }
 
+// DomainStatSample is one per-domain traffic delta point (GH #873 round 3).
+// Value is the count of `Metric` events (sent|received|delivered|failed)
+// attributed to `Domain` in the window ending at `SampledAt`.
+type DomainStatSample struct {
+	Domain    string    `gorm:"column:domain"     json:"domain"`
+	Metric    string    `gorm:"column:metric"     json:"metric"`
+	SampledAt time.Time `gorm:"column:sampled_at" json:"sampled_at"`
+	Value     int64     `gorm:"column:value"      json:"value"`
+}
+
+func (DomainStatSample) TableName() string { return "mail_stats_domain_samples" }
+
+// DomainCount is one (domain, metric, count) delta to persist for a window.
+type DomainCount struct {
+	Domain string
+	Metric string
+	Count  int64
+}
+
 type MailStatsRepository interface {
 	// InsertSamples writes one row per metric at the given time.
 	InsertSamples(ctx context.Context, at time.Time, metrics map[string]float64) error
@@ -39,6 +58,18 @@ type MailStatsRepository interface {
 	// StorageDrilldown returns every mailbox with its usage and owner
 	// chain (usage is the mailbox-usage ticker's last sample).
 	StorageDrilldown(ctx context.Context) ([]MailboxStorageRow, error)
+
+	// InsertDomainSamples writes the per-domain traffic deltas for one window
+	// (all rows share `at`). No-op on an empty slice.
+	InsertDomainSamples(ctx context.Context, at time.Time, counts []DomainCount) error
+	// DomainSeries returns per-domain samples since `since`, ordered by
+	// domain, metric, then time.
+	DomainSeries(ctx context.Context, since time.Time) ([]DomainStatSample, error)
+	// LastDomainSampleAt returns the newest domain sample time, or zero time
+	// when the table is empty (first run). Drives the collector's watermark.
+	LastDomainSampleAt(ctx context.Context) (time.Time, error)
+	// PruneDomain deletes per-domain samples older than `olderThan`.
+	PruneDomain(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 type mailStatsRepo struct{ db *gorm.DB }
@@ -94,6 +125,53 @@ func (r *mailStatsRepo) Prune(ctx context.Context, olderThan time.Time) (int64, 
 	res := r.db.WithContext(ctx).
 		Where("sampled_at < ?", olderThan).
 		Delete(&MailStatSample{})
+	return res.RowsAffected, res.Error
+}
+
+func (r *mailStatsRepo) InsertDomainSamples(ctx context.Context, at time.Time, counts []DomainCount) error {
+	if len(counts) == 0 {
+		return nil
+	}
+	vals := make([]any, 0, len(counts)*4)
+	ph := ""
+	for i, c := range counts {
+		if i > 0 {
+			ph += ","
+		}
+		ph += "(?,?,?,?)"
+		vals = append(vals, c.Domain, c.Metric, at, c.Count)
+	}
+	// INSERT IGNORE so a retried tick at the same sampled_at is a no-op rather
+	// than a double-count.
+	return r.db.WithContext(ctx).
+		Exec("INSERT IGNORE INTO mail_stats_domain_samples (domain, metric, sampled_at, value) VALUES "+ph, vals...).Error
+}
+
+func (r *mailStatsRepo) DomainSeries(ctx context.Context, since time.Time) ([]DomainStatSample, error) {
+	var rows []DomainStatSample
+	err := r.db.WithContext(ctx).
+		Where("sampled_at >= ?", since).
+		Order("domain ASC, metric ASC, sampled_at ASC").
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *mailStatsRepo) LastDomainSampleAt(ctx context.Context) (time.Time, error) {
+	var t *time.Time
+	err := r.db.WithContext(ctx).
+		Model(&DomainStatSample{}).
+		Select("MAX(sampled_at)").
+		Scan(&t).Error
+	if err != nil || t == nil {
+		return time.Time{}, err
+	}
+	return *t, nil
+}
+
+func (r *mailStatsRepo) PruneDomain(ctx context.Context, olderThan time.Time) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Where("sampled_at < ?", olderThan).
+		Delete(&DomainStatSample{})
 	return res.RowsAffected, res.Error
 }
 

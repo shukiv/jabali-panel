@@ -17,8 +17,9 @@ import (
 
 type fakeMailStatsSeriesRepo struct {
 	repository.MailStatsRepository
-	rows    []repository.MailStatSample
-	storage []repository.MailboxStorageRow
+	rows       []repository.MailStatSample
+	storage    []repository.MailboxStorageRow
+	domainRows []repository.DomainStatSample
 }
 
 func (f *fakeMailStatsSeriesRepo) Series(context.Context, time.Time) ([]repository.MailStatSample, error) {
@@ -26,6 +27,9 @@ func (f *fakeMailStatsSeriesRepo) Series(context.Context, time.Time) ([]reposito
 }
 func (f *fakeMailStatsSeriesRepo) StorageDrilldown(context.Context) ([]repository.MailboxStorageRow, error) {
 	return f.storage, nil
+}
+func (f *fakeMailStatsSeriesRepo) DomainSeries(context.Context, time.Time) ([]repository.DomainStatSample, error) {
+	return f.domainRows, nil
 }
 
 // GH #873: rates are positive deltas per metric, clamped at zero across a
@@ -44,6 +48,15 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 		storage: []repository.MailboxStorageRow{
 			{Username: "notary", DomainName: "n.example", Email: "a@n.example", UsageBytes: 1024, QuotaBytes: 4096},
 		},
+		// Two windows of per-domain deltas; the handler sums them per domain and
+		// orders busiest-first (by sent+received).
+		domainRows: []repository.DomainStatSample{
+			{Domain: "busy.example", Metric: "sent", SampledAt: t0, Value: 3},
+			{Domain: "busy.example", Metric: "sent", SampledAt: t0.Add(15 * time.Minute), Value: 2},
+			{Domain: "busy.example", Metric: "received", SampledAt: t0, Value: 4},
+			{Domain: "quiet.example", Metric: "received", SampledAt: t0, Value: 1},
+			{Domain: "quiet.example", Metric: "failed", SampledAt: t0, Value: 2},
+		},
 	}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -61,6 +74,7 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 		Rates   map[string][]api.MailStatPoint `json:"rates"`
 		Current map[string]float64             `json:"current"`
 		Storage []repository.MailboxStorageRow `json:"storage"`
+		Traffic []api.DomainTrafficRow         `json:"traffic"`
 	}
 	assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 
@@ -75,5 +89,14 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 	assert.Equal(t, float64(4), resp.Current["queue_size"])
 	if assert.Len(t, resp.Storage, 1) {
 		assert.Equal(t, "a@n.example", resp.Storage[0].Email)
+	}
+	// Per-domain traffic: summed across windows, busiest first.
+	if assert.Len(t, resp.Traffic, 2) {
+		assert.Equal(t, "busy.example", resp.Traffic[0].Domain, "busiest domain first")
+		assert.Equal(t, int64(5), resp.Traffic[0].Sent)     // 3 + 2
+		assert.Equal(t, int64(4), resp.Traffic[0].Received) // 4
+		assert.Equal(t, "quiet.example", resp.Traffic[1].Domain)
+		assert.Equal(t, int64(1), resp.Traffic[1].Received)
+		assert.Equal(t, int64(2), resp.Traffic[1].Failed)
 	}
 }
