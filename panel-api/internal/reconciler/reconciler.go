@@ -2134,27 +2134,6 @@ func (r *Reconciler) resolveListenIPAddress(ctx context.Context, id *uint64, fam
 	return row.Address
 }
 
-// been removed. Called by the DELETE handler after it deletes the row,
-// because once the row is gone ReconcileOne(id) can no longer find it
-// and orphan detection in ReconcileAll is intentionally conservative
-// (log-only). This is the explicit "yes, actually tear this down" path.
-func (r *Reconciler) ReconcileDeleted(ctx context.Context, domainName string) {
-	if domainName == "" {
-		return
-	}
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	_, err := r.agent.Call(callCtx, "domain.delete", map[string]string{"domain": domainName})
-	if err != nil {
-		r.log.Warn("domain delete failed on agent",
-			"domain", domainName,
-			"err", err)
-	}
-
-	// Reconcile DNS zone deletion if DNS repos are wired
-	r.reconcileDNSZoneDeleted(ctx, domainName)
-}
-
 // reconcileDNSZone ensures a domain's DNS zone and records are provisioned
 // on the agent. Called during domain reconciliation to push the zone state
 // to PowerDNS via the agent.
@@ -2279,22 +2258,6 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		return
 	}
 	r.dnsZonePushed(zone.ID, hash, now)
-}
-
-// reconcileDNSZoneDeleted tears down a DNS zone on the agent after its DB row
-// has been deleted. Called by the domain deletion handler.
-func (r *Reconciler) reconcileDNSZoneDeleted(ctx context.Context, zoneName string) {
-	if r.dnsZones == nil {
-		return // DNS feature not wired — skip
-	}
-	if zoneName == "" {
-		return
-	}
-	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if _, err := r.agent.Call(pushCtx, "dns.zone.delete", map[string]string{"zone": zoneName}); err != nil {
-		r.log.Warn("dns.zone.delete failed", "zone", zoneName, "err", err)
-	}
 }
 
 // linuxUserFromEmail derives the Linux username from an email address.

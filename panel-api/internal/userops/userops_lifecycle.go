@@ -27,12 +27,6 @@ type LimitsReconciler interface {
 	ReconcileUserLimits(ctx context.Context)
 }
 
-// DomainReconciler is the narrow reconciler slice DeleteCascade needs
-// (satisfied by *reconciler.Reconciler).
-type DomainReconciler interface {
-	ReconcileDeleted(ctx context.Context, domainName string)
-}
-
 // Lifecycle sentinels. Callers map to HTTP codes:
 // ErrNoKratosIdentity→409, ErrKratosUnavailable→503,
 // ErrKratosSetPassword→502, ErrAgentPassword→502 (kratos already
@@ -181,7 +175,6 @@ func SetPackage(ctx context.Context, d Deps, user *models.User, packageID *strin
 type DeleteDeps struct {
 	Databases     repository.DatabaseRepository
 	DatabaseUsers repository.DatabaseUserRepository
-	Reconciler    DomainReconciler
 	// RevokeCacheACLs revokes the tenant's wp_<osuser> Redis cache ACLs
 	// (GH #408 / ADR-0148). Passed as a callback so userops stays free of
 	// the redis client dependency.
