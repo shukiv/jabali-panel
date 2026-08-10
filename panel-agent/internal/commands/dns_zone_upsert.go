@@ -21,10 +21,10 @@ type dnsRecordParam struct {
 
 type dnsZoneUpsertParams struct {
 	// Zone is the apex name, no trailing dot. "example.com".
-	Zone            string             `json:"zone"`
-	Records         []dnsRecordParam   `json:"records"`
-	AllowAXFRFrom   []string           `json:"allow_axfr_from,omitempty"`
-	AlsoNotify      []string           `json:"also_notify,omitempty"`
+	Zone          string           `json:"zone"`
+	Records       []dnsRecordParam `json:"records"`
+	AllowAXFRFrom []string         `json:"allow_axfr_from,omitempty"`
+	AlsoNotify    []string         `json:"also_notify,omitempty"`
 }
 
 type dnsZoneUpsertResponse struct {
@@ -85,6 +85,17 @@ func dnsZoneUpsertHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 
 	// Signal PowerDNS:
+	//   0. rediscover — refresh pdns-auth's cached LIST of known zones so a
+	//      brand-new zone becomes servable IMMEDIATELY. jabali sets
+	//      zone-cache-refresh-interval=10, so pdns caches which zones it hosts
+	//      and won't answer for a just-inserted one until the next refresh —
+	//      measured ~20s of NXDOMAIN from the authoritative server itself for a
+	//      freshly-created (sub)domain (GH #896: dead page + certbot NXDOMAIN in
+	//      that window; verified `pdns_control help` lists `rediscover: discover
+	//      any new zones` on the installed pdns-auth). purge (below) only clears
+	//      the RECORD/packet cache, not the zone-list cache — so rediscover must
+	//      run first, else purge can't help a zone the server still thinks
+	//      doesn't exist. Cheap no-op when nothing new was added.
 	//   1. purge <zone>$ — invalidate the in-process query/packet cache
 	//      for this zone (the '$' suffix targets the zone + all names
 	//      under it). Without this, pdns serves the OLD answer from
@@ -96,9 +107,9 @@ func dnsZoneUpsertHandler(ctx context.Context, params json.RawMessage) (any, err
 	//      kept-alive by repeated queries and never evicted).
 	//   2. notify <zone> — tells slave NSes to AXFR. Cheap no-op when
 	//      there are no slaves.
-	// Both are best-effort: if pdns_control isn't reachable, the SQL
-	// change is still committed and a real pdns restart will pick up
-	// the change.
+	// All best-effort: if pdns_control isn't reachable, the SQL change is
+	// still committed and a real pdns restart will pick up the change.
+	_ = exec.CommandContext(ctx, "pdns_control", "rediscover").Run()
 	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.Zone+"$").Run()
 	// Also wipe pdns-recursor cache — its forward-cached answer
 	// will outlast the Auth purge otherwise (incident 2026-05-21:
