@@ -104,7 +104,7 @@ func acmeChallengeName(domain string) string {
 // writes propagate to its authoritative nameservers in seconds, but a
 // failed validation costs rate-limited quota while a short sleep is free
 // (same reasoning as the pdns path's 3s).
-const cfChallengeSettle = 5 * time.Second
+const cfChallengeSettle = 10 * time.Second
 
 // hookDNS01Setup builds the shared provider-decision config (JAB-235). The
 // Cloudflare client is non-nil only when a token is stored AND the sso key

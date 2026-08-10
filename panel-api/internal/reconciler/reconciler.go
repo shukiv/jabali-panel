@@ -2892,7 +2892,13 @@ const acmeMaxRetries = 20
 // (e.g., email just got enabled → mail.<domain> must land on the cert).
 // tryACMEOrFallback calls ssl.issue which uses --expand when needed.
 func (r *Reconciler) sslRenewForDomain(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
-	if len(sanHostnamesForDomain(domain)) > 0 {
+	// JAB-235: DNS-01 lineages also reroute. Normally the certbot timer
+	// renews them via the persisted manual hooks and ssl.renew would be a
+	// fast noop — but with a broken timer, ssl.renew runs the full DNS-01
+	// round trip (two hook invocations + validation poll) against this
+	// call's default budget. tryACMEOrFallback re-detects fronting and
+	// gives the DNS-01 path its 4-minute budget.
+	if len(sanHostnamesForDomain(domain)) > 0 || cert.IssueMethod == issueMethodDNS01 {
 		r.tryACMEOrFallback(ctx, domain, cert)
 		return
 	}
