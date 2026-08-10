@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -31,6 +32,13 @@ func NewCloudflareDNS(token, zoneID string) *CloudflareDNS {
 		HTTP:   &http.Client{Timeout: 10 * time.Second},
 		api:    "https://api.cloudflare.com/client/v4",
 	}
+}
+
+// NewCloudflareAPI returns a client bound to no particular zone — the
+// customer-zone ACME DNS-01 path (JAB-235) resolves the zone id per domain
+// via FindZoneID and passes it to the *TXT methods explicitly.
+func NewCloudflareAPI(token string) *CloudflareDNS {
+	return NewCloudflareDNS(token, "")
 }
 
 type cfRecord struct {
@@ -81,8 +89,12 @@ func (c *CloudflareDNS) do(ctx context.Context, method, path string, body any) (
 // listRecords returns every record for name+type (a name can hold multiple
 // TXT records — needed for the dual-value wildcard challenge).
 func (c *CloudflareDNS) listRecords(ctx context.Context, name, rtype string) ([]cfRecord, error) {
+	return c.listRecordsIn(ctx, c.ZoneID, name, rtype)
+}
+
+func (c *CloudflareDNS) listRecordsIn(ctx context.Context, zoneID, name, rtype string) ([]cfRecord, error) {
 	q := url.Values{"name": {name}, "type": {rtype}}
-	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/zones/%s/dns_records?%s", c.ZoneID, q.Encode()), nil)
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/zones/%s/dns_records?%s", zoneID, q.Encode()), nil)
 	if err != nil {
 		return nil, fmt.Errorf("cf list: %w", err)
 	}
@@ -164,8 +176,21 @@ func (c *CloudflareDNS) EnsureWildcardA(ctx context.Context, label, ipv4 string)
 // so a replace would clobber the first. On CF, multiple values = multiple TXT
 // records at one name; we create one per value, skipping an exact duplicate.
 func (c *CloudflareDNS) SetChallenge(ctx context.Context, label, value string) error {
-	name := "_acme-challenge." + FQDN(label)
-	existing, err := c.listRecords(ctx, name, "TXT")
+	return c.SetChallengeTXT(ctx, c.ZoneID, "_acme-challenge."+FQDN(label), value)
+}
+
+// SetChallengeTXT adds a challenge value at an explicit record name in an
+// explicit zone — the JAB-235 customer-zone path, where the name is a full
+// customer FQDN (_acme-challenge.example.co.il) rather than a hostedsvc
+// label. Same semantics as SetChallenge: add-only (a wildcard cert needs
+// the apex and the wildcard challenge live at the SAME name at once, so a
+// replace would clobber the first), duplicate-value idempotent, and capped —
+// without the cap a token holder could script distinct values and
+// accumulate thousands of TXT records, degrading the zone for everyone.
+// maxChallengeRecordsPerLabel leaves headroom for a retry that raced
+// cleanup.
+func (c *CloudflareDNS) SetChallengeTXT(ctx context.Context, zoneID, name, value string) error {
+	existing, err := c.listRecordsIn(ctx, zoneID, name, "TXT")
 	if err != nil {
 		return err
 	}
@@ -174,18 +199,11 @@ func (c *CloudflareDNS) SetChallenge(ctx context.Context, label, value string) e
 			return nil // already present
 		}
 	}
-	// SetChallenge is add-only by design (a wildcard cert needs the apex and
-	// the wildcard challenge live at the SAME name simultaneously), so without
-	// a cap a token holder could script distinct values and accumulate
-	// thousands of TXT records in the shared jabalihosted.com zone, degrading
-	// zone size and list performance for every other tenant. Two is the
-	// legitimate maximum; maxChallengeRecordsPerLabel leaves headroom for a
-	// retry that raced cleanup.
 	if len(existing) >= maxChallengeRecordsPerLabel {
 		return fmt.Errorf("too many pending ACME challenges for %s (%d) — run cleanup first",
 			name, len(existing))
 	}
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/zones/%s/dns_records", c.ZoneID),
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/zones/%s/dns_records", zoneID),
 		cfRecord{Type: "TXT", Name: name, Content: value, TTL: 60, Proxied: false})
 	if err != nil {
 		return fmt.Errorf("cf add challenge: %w", err)
@@ -203,19 +221,95 @@ func (c *CloudflareDNS) SetChallenge(ctx context.Context, label, value string) e
 
 // ClearChallenge removes ALL challenge TXT records at the label's name.
 func (c *CloudflareDNS) ClearChallenge(ctx context.Context, label string) error {
-	name := "_acme-challenge." + FQDN(label)
-	recs, err := c.listRecords(ctx, name, "TXT")
+	return c.ClearChallengeTXT(ctx, c.ZoneID, "_acme-challenge."+FQDN(label))
+}
+
+// ClearChallengeTXT removes ALL challenge TXT records at an explicit record
+// name in an explicit zone. Idempotent — clearing an absent name is a no-op.
+func (c *CloudflareDNS) ClearChallengeTXT(ctx context.Context, zoneID, name string) error {
+	recs, err := c.listRecordsIn(ctx, zoneID, name, "TXT")
 	if err != nil {
 		return err
 	}
 	for _, r := range recs {
-		resp, derr := c.do(ctx, http.MethodDelete, fmt.Sprintf("/zones/%s/dns_records/%s", c.ZoneID, r.ID), nil)
+		resp, derr := c.do(ctx, http.MethodDelete, fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, r.ID), nil)
 		if derr != nil {
 			return fmt.Errorf("cf clear challenge: %w", derr)
 		}
 		resp.Body.Close()
 	}
 	return nil
+}
+
+type cfZone struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type cfZoneListResp struct {
+	Success    bool    `json:"success"`
+	Errors     []cfErr `json:"errors"`
+	Result     []cfZone `json:"result"`
+	ResultInfo struct {
+		TotalCount int `json:"total_count"`
+	} `json:"result_info"`
+}
+
+// FindZoneID resolves the zone id for an EXACT zone name via the stored
+// token. Returns "" (no error) when the token has no access to the zone —
+// the caller surfaces that as "customer must grant access", not a failure.
+func (c *CloudflareDNS) FindZoneID(ctx context.Context, name string) (string, error) {
+	q := url.Values{"name": {name}, "status": {"active"}, "per_page": {"5"}}
+	resp, err := c.do(ctx, http.MethodGet, "/zones?"+q.Encode(), nil)
+	if err != nil {
+		return "", fmt.Errorf("cf zone lookup: %w", err)
+	}
+	defer resp.Body.Close()
+	var zr cfZoneListResp
+	if err := json.NewDecoder(resp.Body).Decode(&zr); err != nil {
+		return "", fmt.Errorf("cf zone lookup decode: %w", err)
+	}
+	if !zr.Success {
+		return "", fmt.Errorf("cf zone lookup %s: %v", name, zr.Errors)
+	}
+	for _, z := range zr.Result {
+		if strings.EqualFold(z.Name, name) {
+			return z.ID, nil
+		}
+	}
+	return "", nil
+}
+
+// VerifyToken checks the token against Cloudflare's verify endpoint and
+// reports how many zones it can see — shown to the operator so "token
+// saved" also says "and it covers N zones".
+func (c *CloudflareDNS) VerifyToken(ctx context.Context) (zones int, err error) {
+	resp, err := c.do(ctx, http.MethodGet, "/user/tokens/verify", nil)
+	if err != nil {
+		return 0, fmt.Errorf("cf token verify: %w", err)
+	}
+	var vr cfWriteResp
+	verr := json.NewDecoder(resp.Body).Decode(&vr)
+	resp.Body.Close()
+	if verr != nil {
+		return 0, fmt.Errorf("cf token verify decode: %w", verr)
+	}
+	if !vr.Success {
+		return 0, fmt.Errorf("cloudflare rejected the token: %v", vr.Errors)
+	}
+	zresp, err := c.do(ctx, http.MethodGet, "/zones?per_page=1", nil)
+	if err != nil {
+		return 0, fmt.Errorf("cf zone count: %w", err)
+	}
+	defer zresp.Body.Close()
+	var zr cfZoneListResp
+	if err := json.NewDecoder(zresp.Body).Decode(&zr); err != nil {
+		return 0, fmt.Errorf("cf zone count decode: %w", err)
+	}
+	if !zr.Success {
+		return 0, fmt.Errorf("cf zone count: %v", zr.Errors)
+	}
+	return zr.ResultInfo.TotalCount, nil
 }
 
 func (c *CloudflareDNS) RemoveLabel(ctx context.Context, label string) error {

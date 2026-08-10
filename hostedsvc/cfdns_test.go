@@ -3,6 +3,7 @@ package hostedsvc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,12 +16,13 @@ import (
 type fakeCF struct {
 	mu      sync.Mutex
 	records map[string]cfRecord // id -> record
+	zones   map[string]string   // zone name -> id (JAB-235 account-level API)
 	nextID  int
 	writes  []cfRecord // every created/updated record, in order
 }
 
 func newFakeCF(t *testing.T) (*httptest.Server, *fakeCF) {
-	f := &fakeCF{records: map[string]cfRecord{}}
+	f := &fakeCF{records: map[string]cfRecord{}, zones: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -29,6 +31,24 @@ func newFakeCF(t *testing.T) (*httptest.Server, *fakeCF) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+
+		// Account-level endpoints (JAB-235): token verify + zone list.
+		if r.URL.Path == "/user/tokens/verify" {
+			json.NewEncoder(w).Encode(cfWriteResp{Success: true})
+			return
+		}
+		if r.URL.Path == "/zones" {
+			var out []cfZone
+			if name := r.URL.Query().Get("name"); name != "" {
+				if id, ok := f.zones[name]; ok {
+					out = append(out, cfZone{ID: id, Name: name})
+				}
+			}
+			zr := cfZoneListResp{Success: true, Result: out}
+			zr.ResultInfo.TotalCount = len(f.zones)
+			json.NewEncoder(w).Encode(zr)
+			return
+		}
 
 		// /zones/{zone}/dns_records[/{id}]
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
@@ -190,6 +210,85 @@ func TestCloudflareDNS_RemoveLabel(t *testing.T) {
 	}
 	if _, ok := f.byName("_acme-challenge.192-0-2-7.jabalihosted.com", "TXT"); ok {
 		t.Error("challenge survived RemoveLabel")
+	}
+}
+
+// JAB-235: challenge writes into an explicit customer zone with a full
+// FQDN record name — no hostedsvc base-domain coupling.
+func TestCloudflareDNS_ChallengeTXTCustomerZone(t *testing.T) {
+	c, f := newTestCFDNS(t)
+	ctx := context.Background()
+	name := "_acme-challenge.arama.co.il"
+	if err := c.SetChallengeTXT(ctx, "zone-cust", name, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := f.byName(name, "TXT")
+	if !ok || rec.Content != "v1" || rec.Proxied {
+		t.Fatalf("customer-zone challenge TXT wrong: %+v ok=%v", rec, ok)
+	}
+	// Add-only multi-value + duplicate idempotence survive the generalization.
+	if err := c.SetChallengeTXT(ctx, "zone-cust", name, "v2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetChallengeTXT(ctx, "zone-cust", name, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := c.listRecordsIn(ctx, "zone-cust", name, "TXT")
+	if len(recs) != 2 {
+		t.Fatalf("want 2 challenge values, got %d", len(recs))
+	}
+	// The cap still holds for arbitrary FQDNs: fill to the limit, then the
+	// next distinct value must be refused.
+	for i := len(recs); i < maxChallengeRecordsPerLabel; i++ {
+		if err := c.SetChallengeTXT(ctx, "zone-cust", name, fmt.Sprintf("fill-%d", i)); err != nil {
+			t.Fatalf("fill %d: %v", i, err)
+		}
+	}
+	if err := c.SetChallengeTXT(ctx, "zone-cust", name, "one-too-many"); err == nil {
+		t.Fatal("value beyond maxChallengeRecordsPerLabel must be refused")
+	}
+	if err := c.ClearChallengeTXT(ctx, "zone-cust", name); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := c.listRecordsIn(ctx, "zone-cust", name, "TXT"); len(recs) != 0 {
+		t.Fatalf("cleanup left %d records", len(recs))
+	}
+	if err := c.ClearChallengeTXT(ctx, "zone-cust", name); err != nil {
+		t.Fatalf("idempotent clear errored: %v", err)
+	}
+}
+
+func TestCloudflareDNS_FindZoneID(t *testing.T) {
+	c, f := newTestCFDNS(t)
+	f.mu.Lock()
+	f.zones["arama.co.il"] = "zid-1"
+	f.mu.Unlock()
+	ctx := context.Background()
+	id, err := c.FindZoneID(ctx, "arama.co.il")
+	if err != nil || id != "zid-1" {
+		t.Fatalf("FindZoneID = %q, %v", id, err)
+	}
+	// A zone the token cannot see returns "" with NO error — the caller
+	// turns that into "customer must grant access", not a retry loop.
+	id, err = c.FindZoneID(ctx, "uncovered.co.il")
+	if err != nil || id != "" {
+		t.Fatalf("uncovered zone: FindZoneID = %q, %v", id, err)
+	}
+}
+
+func TestCloudflareDNS_VerifyToken(t *testing.T) {
+	c, f := newTestCFDNS(t)
+	f.mu.Lock()
+	f.zones["a.com"] = "1"
+	f.zones["b.com"] = "2"
+	f.mu.Unlock()
+	n, err := c.VerifyToken(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("VerifyToken = %d, %v", n, err)
+	}
+	bad := &CloudflareDNS{Token: "wrong", HTTP: c.HTTP, api: c.api}
+	if _, err := bad.VerifyToken(context.Background()); err == nil {
+		t.Fatal("bad token must fail verification")
 	}
 }
 
