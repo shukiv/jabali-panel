@@ -67,6 +67,16 @@ func TestReconcileSSL_ModeRouting(t *testing.T) {
 		require.True(t, hasCall(ag, "ssl.issue"), "self_signed le domain must attempt the LE upgrade")
 	})
 
+	// JAB-226 follow-up: a cert stuck in 'failed' (e.g. a hard ACME error)
+	// previously had NO dispatch case and was never retried — the domain stayed
+	// on plain HTTP forever. It must now route back through ACME so a transient
+	// failure self-heals instead of stranding the site.
+	t.Run("le mode failed cert retries via ACME", func(t *testing.T) {
+		cp, kp := "/etc/ssl/jabali-selfsigned/example.com/cert.pem", "/etc/ssl/jabali-selfsigned/example.com/key.pem"
+		ag := run(models.SSLModeLE, &models.SSLCertificate{ID: "c1", Status: models.SSLStatusFailed, CertPath: &cp, KeyPath: &kp})
+		require.True(t, hasCall(ag, "ssl.issue"), "a failed cert must be retried via ACME, not left stranded on HTTP")
+	})
+
 	t.Run("none mode revokes issued cert", func(t *testing.T) {
 		ag := run(models.SSLModeNone, &models.SSLCertificate{ID: "c1", Status: models.SSLStatusIssued})
 		require.True(t, hasCall(ag, "ssl.revoke"), "none mode must revoke an issued cert")

@@ -2510,6 +2510,17 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 			r.tryACMEOrFallback(ctx, domain, cert)
 		case cert.Status == models.SSLStatusPendingACMERetry && cert.NextRetryAt != nil && cert.NextRetryAt.Before(time.Now().UTC()):
 			r.tryACMEOrFallback(ctx, domain, cert)
+		// A cert that hit a hard failure (unparseable agent result, a self-sign
+		// error) had NO dispatch case — it stayed 'failed' forever: no :443, no
+		// retry, no self-signed fallback, stranding the domain on plain HTTP
+		// until an operator ran `jabali ssl renew` by hand. That is how a
+		// one-time SAN failure (JAB-226) became a permanent outage instead of a
+		// transient retry. Route 'failed' back through the ACME-or-self-sign
+		// path: tryACMEOrFallback either issues, or self-signs + moves the row
+		// to pending_acme_retry (scheduled, so no per-tick hammering). This also
+		// auto-heals rows already stuck in 'failed' once this ships.
+		case cert.Status == models.SSLStatusFailed:
+			r.tryACMEOrFallback(ctx, domain, cert)
 		case cert.Status == models.SSLStatusRenewing:
 			r.sslRenewForDomain(ctx, domain, cert)
 		case cert.Status == models.SSLStatusSelfSigned:
@@ -2574,16 +2585,6 @@ func (r *Reconciler) sslEnsureSelfSigned(ctx context.Context, domain *models.Dom
 		return
 	}
 	r.log.Info("ssl: self-signed (self mode)", "domain", domain.Name, "expires_at", expiresAt.Format(time.RFC3339))
-}
-
-// needsIssue returns true when a certificate should be issued fresh: either
-// there is no cert row yet, or the row is in a state that wants to try again
-// (pending after API enable, or failed from a prior attempt).
-func needsIssue(cert *models.SSLCertificate) bool {
-	if cert == nil {
-		return true
-	}
-	return cert.Status == models.SSLStatusPending || cert.Status == models.SSLStatusFailed
 }
 
 // tryACMEOrFallback attempts ACME issuance; on failure, calls ssl.self_sign
