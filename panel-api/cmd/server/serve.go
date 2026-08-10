@@ -377,6 +377,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// sso.key to seal/unseal the relay passwords; nil key (fresh install
 		// mid-bootstrap) just disables the loop until the key exists.
 		rec.WithSendmailCreds(mailboxRepo, ssoKeyPtr)
+		// JAB-235 — DNS-01 fallback for CDN-fronted domains. The same sso.key
+		// unseals the stored Cloudflare API token; nil key keeps Cloudflare
+		// DNS-01 unavailable (pdns-authoritative zones still work).
+		rec.WithDNS01Key(ssoKeyPtr)
 		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo

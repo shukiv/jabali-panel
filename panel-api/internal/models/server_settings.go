@@ -426,6 +426,16 @@ type ServerSettings struct {
 	// stays verifiable after a prune. NULL/empty = never pruned (root at "").
 	AuditChainAnchor *string `gorm:"column:audit_chain_anchor;type:char(64)" json:"audit_chain_anchor,omitempty"`
 
+	// CFAPITokenEnc (JAB-235) is the operator's Cloudflare API token, sealed
+	// with ssokey (AES-256-GCM) — used by the ACME DNS-01 fallback to write
+	// _acme-challenge TXT records into Cloudflare-hosted customer zones.
+	// json:"-": the token must NEVER appear in any API response; the
+	// dedicated /admin/ssl/cloudflare-token endpoints are the only writers
+	// and report configured/not-configured only. Least privilege: the token
+	// needs Zone:DNS:Edit + Zone:Read on the zones it should cover — advise
+	// operators to mint a dedicated scoped token, not a global one.
+	CFAPITokenEnc []byte `gorm:"column:cf_api_token_enc;type:varbinary(512)" json:"-"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

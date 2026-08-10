@@ -14,6 +14,8 @@ import (
 type fakeSSLCertRepo struct {
 	byDomain map[string]*models.SSLCertificate
 	revoked  map[string]bool
+	// JAB-235: records SetIssueMethod calls (cert id → method)
+	issueMethods map[string]string
 	// JAB-224 ssl_resurrect
 	exhausted    []models.SSLCertificate
 	exhaustedErr error
@@ -25,7 +27,11 @@ type fakeSSLCertRepo struct {
 }
 
 func newFakeSSLCertRepo() *fakeSSLCertRepo {
-	return &fakeSSLCertRepo{byDomain: map[string]*models.SSLCertificate{}, revoked: map[string]bool{}}
+	return &fakeSSLCertRepo{
+		byDomain:     map[string]*models.SSLCertificate{},
+		revoked:      map[string]bool{},
+		issueMethods: map[string]string{},
+	}
 }
 
 func (f *fakeSSLCertRepo) Create(context.Context, *models.SSLCertificate) error { return nil }
@@ -40,6 +46,13 @@ func (f *fakeSSLCertRepo) FindByDomainIDs(context.Context, []string) ([]models.S
 	return nil, nil
 }
 func (f *fakeSSLCertRepo) UpdateStatus(context.Context, string, string, *string) error { return nil }
+func (f *fakeSSLCertRepo) SetIssueMethod(_ context.Context, id, method string) error {
+	if f.issueMethods != nil {
+		f.issueMethods[id] = method
+	}
+	return nil
+}
+
 func (f *fakeSSLCertRepo) UpdateAfterIssuance(context.Context, string, time.Time, time.Time, string, string) error {
 	return nil
 }

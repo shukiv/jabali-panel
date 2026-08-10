@@ -42,6 +42,7 @@ type SSLCertificateRepository interface {
 	FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.SSLCertificate, error)
 	UpdateStatus(ctx context.Context, id string, status string, lastError *string) error
 	UpdateAfterIssuance(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
+	SetIssueMethod(ctx context.Context, id, method string) error
 	UpdateAfterRenewal(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
 	MarkRevoked(ctx context.Context, id string) error
 	DeleteByDomainID(ctx context.Context, domainID string) error
@@ -124,6 +125,14 @@ func (r *sslCertificateRepo) UpdateAfterIssuance(ctx context.Context, id string,
 			"last_attempt_at": time.Now(),
 			"updated_at":      time.Now(),
 		}).Error
+}
+
+// SetIssueMethod records which ACME challenge type produced the current
+// cert ('http-01' | 'dns-01', JAB-235). Separate from UpdateAfterIssuance
+// so its many call sites keep their signature.
+func (r *sslCertificateRepo) SetIssueMethod(ctx context.Context, id, method string) error {
+	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
+		Update("issue_method", method).Error
 }
 
 // UpdateAfterRenewal does what UpdateAfterIssuance does plus bumps the

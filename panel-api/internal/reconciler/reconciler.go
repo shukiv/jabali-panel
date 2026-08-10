@@ -56,6 +56,9 @@ type Reconciler struct {
 	log          *slog.Logger
 	interval     time.Duration
 
+	// JAB-235 DNS-01 routing state — see dns01_routing.go.
+	dns01State
+
 	// sslIssueMu serialises certbot-touching work across the JAB-205
 	// domain worker pool AND the out-of-band ReconcileOne path: certbot
 	// holds a global /var/lib/letsencrypt lock, so two concurrent runs
@@ -2662,6 +2665,11 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 	// outbound :53 blocked — must fall through to the ACME attempt, or a
 	// resolver outage on our side would strand every domain on "waiting
 	// for DNS" without ever trying.
+	staging := false
+	if r.cfg != nil {
+		staging = r.cfg.ACME.StagingOnly
+	}
+
 	{
 		preCtx, preCancel := context.WithTimeout(ctx, 6*time.Second)
 		addrs, queried := r.dnsPreflight(preCtx, domain.Name)
@@ -2672,11 +2680,26 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 					"Let's Encrypt is not attempted until the name resolves (it would fail with NXDOMAIN); retrying automatically")
 			return
 		}
-	}
-
-	staging := false
-	if r.cfg != nil {
-		staging = r.cfg.ACME.StagingOnly
+		// JAB-235: the apex resolves — but to a CDN/proxy, not to us. An
+		// HTTP-01 challenge would be answered (and rejected) at the edge
+		// before it ever reaches this origin, burning LE's failed-auth
+		// quota for nothing. Route through DNS-01 instead: the TXT is
+		// written wherever the zone is really hosted (our pdns or the
+		// customer's Cloudflare zone via the stored token), or the domain
+		// is parked with a clear reason when neither is available. Needs
+		// positive evidence on both sides (frontedByCDN) — a resolver
+		// outage or unknown public IP keeps today's HTTP-01 behaviour.
+		var ourAddrs []string
+		if srv.PublicIPv4 != "" {
+			ourAddrs = append(ourAddrs, srv.PublicIPv4)
+		}
+		if srv.PublicIPv6 != "" {
+			ourAddrs = append(ourAddrs, srv.PublicIPv6)
+		}
+		if queried && frontedByCDN(addrs, ourAddrs) {
+			r.tryDNS01OrPark(ctx, domain, cert, srv, staging)
+			return
+		}
 	}
 
 	// Try ACME with 60s timeout
@@ -2724,6 +2747,7 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 			r.log.Error("ssl: write issuance failed", "domain", domain.Name, "err", err)
 			return
 		}
+		_ = r.sslCerts.SetIssueMethod(ctx, cert.ID, issueMethodHTTP01)
 		r.log.Info("ssl: issued", "domain", domain.Name, "expires_at", expires.Format(time.RFC3339))
 		return
 	}

@@ -48,6 +48,7 @@ func TestSSLCertificateRepository_Create(t *testing.T) {
 			nil,              // key_path
 			nil,              // next_retry_at
 			0,                // retry_count
+			"",               // issue_method (JAB-235)
 			nil,              // last_attempt_at
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
