@@ -2,7 +2,7 @@ slug: n8n
 popularity: 88
 name: n8n
 tags: ["Automation", "Developer tools"]
-version: "2.25.5"
+version: "2.28.2"
 description: |
   Workflow automation tool. Build, run, and share workflows that
   connect APIs, databases, and services. Self-hosted, single

@@ -2,7 +2,7 @@ slug: enclosed
 tenant_installable: true
 name: Enclosed
 tags: ["Developer tools"]
-version: "latest"
+version: "1.16.0"
 description: |
   Minimalist, open-source web app for sending private and encrypted
   notes and files. Zero-knowledge: content is end-to-end encrypted in
