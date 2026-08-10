@@ -59,6 +59,10 @@ type Reconciler struct {
 	// JAB-235 DNS-01 routing state — see dns01_routing.go.
 	dns01State
 
+	// JAB-236 durable domain deletion — see domain_teardowns.go.
+	domainTeardowns repository.DomainTeardownRepository
+	lastOrphanKey   string
+
 	// sslIssueMu serialises certbot-touching work across the JAB-205
 	// domain worker pool AND the out-of-band ReconcileOne path: certbot
 	// holds a global /var/lib/letsencrypt lock, so two concurrent runs
@@ -915,7 +919,14 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		"jabali-panel":    true,
 	}
 
-	// 3. Orphan in agent set (no DB row) -> log warning but don't auto-delete
+	// JAB-236: drive pending teardown tombstones FIRST — a site being torn
+	// down through its tombstone is handled, not orphaned, and must not
+	// show up in the orphan report below.
+	pendingTeardowns := r.processDomainTeardowns(ctx)
+
+	// 3. Orphan in agent set (no DB row) -> aggregate ONE warning (on set
+	// change only — see reportOrphanSites for the mandate), never auto-delete.
+	var orphanSites []string
 	for site := range agentSites {
 		if knownSystemSites[site] {
 			continue
@@ -929,8 +940,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 		if _, found := enabledDomains[site]; !found {
 			if _, found := disabledDomains[site]; !found {
-				r.log.Warn("reconcile: orphan site found in agent, no DB row", "site", site,
-					"detail", "manual cleanup may be needed")
+				if !pendingTeardowns[site] {
+					orphanSites = append(orphanSites, site)
+				}
 				// M6.3: also drop the recursor forwarder — idempotent, so
 				// safe even if it was never added. Keeps the forwards file
 				// from accumulating stale zones when a domain gets deleted
@@ -941,6 +953,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			}
 		}
 	}
+	r.reportOrphanSites(orphanSites)
 
 	tt.mark("disable_orphan_sweep")
 
