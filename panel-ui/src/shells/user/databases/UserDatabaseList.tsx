@@ -6,7 +6,8 @@ import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Space, Table, Typography, message } from "antd";
+import { Button, Card, Space, Table, Typography } from "antd";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   DatabaseOutlined,
   LinkOutlined,
@@ -115,7 +116,7 @@ export const UserDatabaseList = () => {
       if (tab) tab.close();
       const errorMsg =
         error instanceof Error ? error.message : "Could not open phpMyAdmin";
-      message.error(`Could not open phpMyAdmin: ${errorMsg}`);
+      feedback.message.error(`Could not open phpMyAdmin: ${errorMsg}`);
     } finally {
       setLoadingPhpMyAdminId(null);
     }
@@ -142,7 +143,7 @@ export const UserDatabaseList = () => {
       if (tab) tab.close();
       const errorMsg =
         error instanceof Error ? error.message : "Could not open Adminer";
-      message.error(`Could not open Adminer: ${errorMsg}`);
+      feedback.message.error(`Could not open Adminer: ${errorMsg}`);
     } finally {
       setLoadingAdminerId(null);
     }
