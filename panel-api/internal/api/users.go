@@ -40,6 +40,9 @@ type UserHandlerConfig struct {
 	DockerApps      repository.DockerAppRepository
 	Mailboxes       repository.MailboxRepository
 	Packages        repository.PackageRepository
+	// DomainTeardowns persists the JAB-236 tombstones that make the
+	// cascade's domain teardown durable across panel restarts.
+	DomainTeardowns repository.DomainTeardownRepository
 	Reconciler      *reconciler.Reconciler
 	Log             *slog.Logger
 	// Redis is the shared client used to revoke a tenant's wp_<osuser> cache
@@ -533,7 +536,6 @@ func (h *userHandler) delete(c *gin.Context) {
 	err = userops.DeleteCascade(c.Request.Context(), h.userOpsDeps(), userops.DeleteDeps{
 		Databases:     h.cfg.Databases,
 		DatabaseUsers: h.cfg.DatabaseUsers,
-		Reconciler:    reconcilerOrNil(h.cfg.Reconciler),
 		RevokeCacheACLs: func(ctx context.Context, osUser string) error {
 			return revokeAllUserCacheACLs(ctx, h.cfg.Redis, osUser)
 		},
@@ -576,25 +578,16 @@ func (h *userHandler) userOpsDeps() userops.Deps {
 		log = slog.Default()
 	}
 	return userops.Deps{
-		Users:        h.cfg.Repo,
-		Packages:     h.cfg.Packages,
-		Domains:      h.cfg.Domains,
-		DockerApps:   h.cfg.DockerApps,
-		Agent:        h.cfg.Agent,
-		KratosClient: h.cfg.KratosClient,
-		BcryptCost:   h.cfg.BcryptCost,
-		Log:          log,
+		Users:           h.cfg.Repo,
+		Packages:        h.cfg.Packages,
+		Domains:         h.cfg.Domains,
+		DockerApps:      h.cfg.DockerApps,
+		DomainTeardowns: h.cfg.DomainTeardowns,
+		Agent:           h.cfg.Agent,
+		KratosClient:    h.cfg.KratosClient,
+		BcryptCost:      h.cfg.BcryptCost,
+		Log:             log,
 	}
-}
-
-// reconcilerOrNil avoids a typed-nil *reconciler.Reconciler boxed in the
-// DomainReconciler interface (the != nil guard would pass, then SIGSEGV —
-// the exact class of bug HANDOFF §9 warns about).
-func reconcilerOrNil(r *reconciler.Reconciler) userops.DomainReconciler {
-	if r == nil {
-		return nil
-	}
-	return r
 }
 
 // errDetail strips a userops sentinel prefix ("<sentinel>: ") from a

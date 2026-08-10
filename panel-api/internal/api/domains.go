@@ -23,16 +23,21 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 type DomainHandlerConfig struct {
-	Domains     repository.DomainRepository
-	Users       repository.UserRepository
-	SSLCerts    repository.SSLCertificateRepository
-	SharedCerts repository.SharedCertificateRepository
-	Packages    repository.PackageRepository
-	Agent       agent.AgentInterface
-	Reconciler  *reconciler.Reconciler
+	Domains repository.DomainRepository
+	// DomainTeardowns persists the JAB-236 tombstones: delete writes one
+	// BEFORE the row goes, so the host-side teardown survives a panel
+	// restart and gets retried by the reconciler until it succeeds.
+	DomainTeardowns repository.DomainTeardownRepository
+	Users           repository.UserRepository
+	SSLCerts        repository.SSLCertificateRepository
+	SharedCerts     repository.SharedCertificateRepository
+	Packages        repository.PackageRepository
+	Agent           agent.AgentInterface
+	Reconciler      *reconciler.Reconciler
 	// DNSZones + DNSRecords feed the auto-enable-email path on create.
 	// Both optional — when unset, create proceeds without flipping email
 	// on (matches the pre-auto-enable behaviour). The explicit
@@ -1140,27 +1145,27 @@ func (h *domainHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Capture name BEFORE deleting — once the DB row is gone, the
-	// reconciler can't look it up by ID. We pass the name to
-	// ReconcileDeleted which targets the agent-side teardown directly.
-	name := domain.Name
-	if err := h.cfg.Domains.Delete(ctx, domain.ID); err != nil {
+	// JAB-236: durable delete via the shared userops path — tombstone
+	// BEFORE the row goes (the row is the only natural handle), Stalwart
+	// purge + vhost + pdns teardown inside the executor, retried by the
+	// reconciler sweep if the async attempt fails or the panel restarts.
+	// The user still sees the row gone immediately (async attempt).
+	_, err = userops.DeleteDomain(ctx, userops.Deps{
+		Domains:         h.cfg.Domains,
+		DomainTeardowns: h.cfg.DomainTeardowns,
+		Agent:           h.cfg.Agent,
+	}, domain.ID, domain.Name, true)
+	if err != nil {
 		// M6.4 (ADR-0048): the panel-primary row is delete-protected at
 		// the repo layer. Translate to 403 with a specific error code
 		// so the panel UI can render a tooltip instead of a generic 500.
+		// DeleteDomain guarantees NOTHING host-side ran in this case.
 		if errors.Is(err, repository.ErrCannotDeletePanelPrimary) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "panel_primary_protected"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
-	}
-
-	// Tear down OS-level resources out-of-band. Best-effort: the user
-	// sees the row gone immediately; if agent teardown fails, the next
-	// ReconcileAll tick logs the orphan for ops to investigate.
-	if h.cfg.Reconciler != nil {
-		go h.cfg.Reconciler.ReconcileDeleted(context.Background(), name)
 	}
 
 	c.Status(http.StatusNoContent)

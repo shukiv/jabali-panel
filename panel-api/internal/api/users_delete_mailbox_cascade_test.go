@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -141,9 +142,16 @@ func TestUserDelete_DestroysStalwartAccounts(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
 	// The whole domain's Stalwart accounts must be purged (by domain, not
-	// per panel row — so orphans without a row are caught too). Fires
-	// synchronously in the cascade before the response.
-	if !ag.purgedDomain("victim.example.com") {
-		t.Errorf("expected mail.domain.purge_accounts for victim.example.com; calls=%v", ag.calls)
+	// per panel row — so orphans without a row are caught too). JAB-236
+	// moved the purge into the durable async teardown executor (it must
+	// never run before a delete the repo layer could still refuse), so
+	// the assertion awaits the detached goroutine.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ag.purgedDomain("victim.example.com") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	t.Errorf("expected mail.domain.purge_accounts for victim.example.com; calls=%v", ag.calls)
 }

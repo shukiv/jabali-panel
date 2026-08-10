@@ -66,14 +66,15 @@ func automationUserLookupResponse(c *gin.Context, u *models.User, err error) {
 // automation config (mirror of userHandler.userOpsDeps — one write path).
 func billingUserOpsDeps(cfg AutomationConfig) userops.Deps {
 	return userops.Deps{
-		Users:        cfg.Users,
-		Packages:     cfg.Packages,
-		Domains:      cfg.Domains,
-		DockerApps:   cfg.DockerApps,
-		Agent:        cfg.Agent,
-		KratosClient: cfg.KratosClient,
-		BcryptCost:   cfg.BcryptCost,
-		Log:          cfg.Log,
+		Users:           cfg.Users,
+		Packages:        cfg.Packages,
+		Domains:         cfg.Domains,
+		DockerApps:      cfg.DockerApps,
+		DomainTeardowns: cfg.DomainTeardowns,
+		Agent:           cfg.Agent,
+		KratosClient:    cfg.KratosClient,
+		BcryptCost:      cfg.BcryptCost,
+		Log:             cfg.Log,
 	}
 }
 
@@ -81,7 +82,6 @@ func billingDeleteDeps(cfg AutomationConfig) userops.DeleteDeps {
 	dd := userops.DeleteDeps{
 		Databases:     cfg.Databases,
 		DatabaseUsers: cfg.DatabaseUsers,
-		Reconciler:    cfg.DomainReconciler,
 	}
 	if cfg.Redis != nil {
 		rdb := cfg.Redis

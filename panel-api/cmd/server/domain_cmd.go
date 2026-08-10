@@ -237,12 +237,16 @@ func newDomainDeleteCmd() *cobra.Command {
 				}
 			}
 
-			if _, err := deleteDomainDirect(ctx, d.ID); err != nil {
+			_, teardownPending, err := deleteDomainDirect(ctx, d.ID)
+			if err != nil {
 				return err
 			}
 			cliAuditOK(ctx, "domain.delete", "domain", d.ID, &d.UserID)
-			fmt.Printf("Domain %s deleted (reconciler will tear down nginx vhost within %s)\n",
-				d.Name, sharedCfg.Agent.ReconcilerInterval)
+			if teardownPending {
+				fmt.Printf("Domain %s deleted; host-side teardown is PENDING (agent unreachable or teardown failed) — the reconciler retries it until it succeeds\n", d.Name)
+			} else {
+				fmt.Printf("Domain %s deleted (nginx vhost, mail accounts, and DNS zone torn down)\n", d.Name)
+			}
 			return nil
 		},
 	}

@@ -268,6 +268,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Users = userRepo
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
+		deps.DomainTeardowns = repository.NewDomainTeardownRepository(sharedDB)
 		deps.SSO = ssoService
 		// M37 Phase 4: Adminer SSO bridge — engine-aware mint + PG shadow.
 		deps.AdminerSSO = sso.NewAdminerService(ssoService, adminerSSOTokenRepo)
@@ -381,6 +382,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// unseals the stored Cloudflare API token; nil key keeps Cloudflare
 		// DNS-01 unavailable (pdns-authoritative zones still work).
 		rec.WithDNS01Key(ssoKeyPtr)
+		// JAB-236 — retry engine for durable domain deletion.
+		rec.WithDomainTeardowns(deps.DomainTeardowns)
 		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo

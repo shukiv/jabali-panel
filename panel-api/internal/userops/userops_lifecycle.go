@@ -220,30 +220,14 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 			}
 			for i := range owned {
 				dom := &owned[i]
-				name := dom.Name
-				// Purge EVERY Stalwart registry account under this domain BEFORE
-				// the domain delete FK-cascades the panel mailbox rows away. Purge
-				// BY DOMAIN (not per row) so orphans die too. Best-effort.
-				if d.Agent != nil {
-					if delErr := PurgeDomainMail(ctx, d.Agent, name); delErr != nil {
-						logWarn(d, "cascade delete: stalwart domain purge failed",
-							"user_id", id, "domain", name, "err", delErr)
-					}
-				}
-				if err := d.Domains.Delete(ctx, dom.ID); err != nil {
+				// JAB-236: the shared durable path — tombstone before the row
+				// delete, teardown (Stalwart purge + vhost + pdns zone) inside
+				// the executor, retried by the reconciler if the async attempt
+				// fails or the panel restarts mid-cascade. Per-domain failure
+				// is logged, never fails the user delete.
+				if _, err := DeleteDomain(ctx, d, dom.ID, dom.Name, true); err != nil {
 					logWarn(d, "cascade delete: domain DB delete failed",
-						"user_id", id, "domain_id", dom.ID, "domain", name, "err", err)
-					continue
-				}
-				if dd.Reconciler != nil {
-					// Fire-and-forget — don't block the user delete on nginx
-					// teardown. Fresh context: the request ctx ends with the caller.
-					name := name
-					go func() {
-						bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-						dd.Reconciler.ReconcileDeleted(bgCtx, name)
-					}()
+						"user_id", id, "domain_id", dom.ID, "domain", dom.Name, "err", err)
 				}
 			}
 			if len(owned) < batchSize {

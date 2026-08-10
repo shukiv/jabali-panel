@@ -245,26 +245,42 @@ func setDomainEnabledDirect(ctx context.Context, domainID string, enabled bool) 
 	return d, nil
 }
 
-// deleteDomainDirect removes a domain row. The reconciler detects the
-// missing row on its next tick and tears down the nginx vhost + SSL cert
-// backlog. No inline nginx call — matches the HTTP handler.
-func deleteDomainDirect(ctx context.Context, domainID string) (*models.Domain, error) {
+// deleteDomainDirect deletes a domain durably (JAB-236): tombstone before
+// the row, then the SYNCHRONOUS host-side teardown (Stalwart purge, nginx
+// vhost, pdns zone) via the shared userops path. teardownPending=true means
+// the row is gone but the agent-side teardown failed — the tombstone stays
+// and the reconciler retries it until it succeeds. Before this, the CLI
+// deleted only the DB row and left the domain SERVING.
+func deleteDomainDirect(ctx context.Context, domainID string) (d *models.Domain, teardownPending bool, err error) {
 	if err := initConfig(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := initDB(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	domains := domainRepoFromDB()
-	d, err := domains.FindByID(ctx, domainID)
+	d, err = domains.FindByID(ctx, domainID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return nil, fmt.Errorf("domain %q not found", domainID)
+			return nil, false, fmt.Errorf("domain %q not found", domainID)
 		}
-		return nil, fmt.Errorf("lookup domain: %w", err)
+		return nil, false, fmt.Errorf("lookup domain: %w", err)
 	}
-	if err := domains.Delete(ctx, domainID); err != nil {
-		return nil, fmt.Errorf("delete domain row: %w", err)
+	// Agent is best-effort at init: without it the row still deletes and
+	// the tombstone carries the teardown to the reconciler.
+	var caller userops.AgentCaller
+	if err := initAgent(); err == nil && sharedAgent != nil {
+		caller = sharedAgent
 	}
-	return d, nil
+	deps := userops.Deps{
+		Domains:         domains,
+		DomainTeardowns: repository.NewDomainTeardownRepository(sharedDB),
+		Agent:           caller,
+		Log:             sharedLog,
+	}
+	teardownPending, err = userops.DeleteDomain(ctx, deps, domainID, d.Name, false)
+	if err != nil {
+		return nil, false, fmt.Errorf("delete domain: %w", err)
+	}
+	return d, teardownPending, nil
 }

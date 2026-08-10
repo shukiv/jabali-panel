@@ -38,10 +38,13 @@ import (
 // argument list short. Anything a handler family needs — Kratos client,
 // repositories — plugs in here.
 type Deps struct {
-	KratosClient        *kratosclient.Client
-	Users               repository.UserRepository
-	Packages            repository.PackageRepository
-	Domains             repository.DomainRepository
+	KratosClient *kratosclient.Client
+	Users        repository.UserRepository
+	Packages     repository.PackageRepository
+	Domains      repository.DomainRepository
+	// DomainTeardowns persists the JAB-236 tombstones for durable domain
+	// deletion (REST + billing cascade + reconciler retry sweep).
+	DomainTeardowns     repository.DomainTeardownRepository
 	Databases           repository.DatabaseRepository
 	DatabaseUsers       repository.DatabaseUserRepository
 	DatabaseUserGrants  repository.DatabaseUserGrantRepository
@@ -440,7 +443,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DockerApps:       deps.DockerApps,
 				KratosClient:     deps.KratosClient,
 				LimitsReconciler: automationLimitsReconciler(deps.Reconciler),
-				DomainReconciler: automationDomainReconciler(deps.Reconciler),
+				DomainTeardowns:  deps.DomainTeardowns,
 				DiskSnapshots:    repository.NewDiskUsageSnapshotRepository(deps.DB),
 				BWDaily:          deps.BWDaily,
 				Log:              deps.Log,
@@ -609,6 +612,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Databases:       deps.Databases,
 				DatabaseUsers:   deps.DatabaseUsers,
 				DockerApps:      deps.DockerApps,
+				DomainTeardowns: deps.DomainTeardowns,
 				Mailboxes:       deps.Mailboxes,
 				Packages:        deps.Packages,
 				Reconciler:      deps.Reconciler,
@@ -640,13 +644,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainRoutes(v1, api.DomainHandlerConfig{
-				Domains:     deps.Domains,
-				Users:       deps.Users,
-				Packages:    deps.Packages,
-				Agent:       deps.Agent,
-				Reconciler:  deps.Reconciler,
-				SSLCerts:    deps.SSLCerts,
-				SharedCerts: deps.SharedCerts,
+				Domains: deps.Domains,
+				// JAB-236: durable delete — tombstone before the row goes.
+				DomainTeardowns: deps.DomainTeardowns,
+				Users:           deps.Users,
+				Packages:        deps.Packages,
+				Agent:           deps.Agent,
+				Reconciler:      deps.Reconciler,
+				SSLCerts:        deps.SSLCerts,
+				SharedCerts:     deps.SharedCerts,
 				// DNS repos feed the auto-enable-email path in create.
 				// Panel profiles without PowerDNS leave these nil and
 				// create still works — auto-enable is skipped cleanly.
@@ -1443,17 +1449,10 @@ func cacheHMACSecret() string {
 }
 
 // automationOps builds the JAB-140 async-operation repo (nil when no DB).
-// automationLimitsReconciler / automationDomainReconciler adapt the concrete
+// automationLimitsReconciler adapts the concrete
 // reconciler to the narrow userops interfaces WITHOUT boxing a typed nil
 // into the interface (the != nil guard would pass, then SIGSEGV — HANDOFF §9).
 func automationLimitsReconciler(r *reconciler.Reconciler) userops.LimitsReconciler {
-	if r == nil {
-		return nil
-	}
-	return r
-}
-
-func automationDomainReconciler(r *reconciler.Reconciler) userops.DomainReconciler {
 	if r == nil {
 		return nil
 	}

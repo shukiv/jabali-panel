@@ -83,7 +83,9 @@ type AutomationConfig struct {
 	// Narrow reconciler slices (typed-nil-safe: wire via the app's
 	// nil-guard, never a bare *reconciler.Reconciler that might be nil).
 	LimitsReconciler userops.LimitsReconciler
-	DomainReconciler userops.DomainReconciler
+	// DomainTeardowns persists the JAB-236 tombstones for durable
+	// domain teardown on the billing delete cascade.
+	DomainTeardowns repository.DomainTeardownRepository
 	// DomainCreate carries the same deps the GUI domain handler uses, so
 	// JAB-233 account-create-with-domain runs the exact createDomainOp
 	// orchestration. Nil-safe: when unset (or its repos nil), a create that
