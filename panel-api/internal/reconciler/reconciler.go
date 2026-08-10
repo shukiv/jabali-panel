@@ -1020,6 +1020,15 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	r.reconcileDNSZone(dnsCtx, domain)
 	dnsCancel()
 
+	// GH #896: add the pdns-recursor forwarder in this immediate reconcile too,
+	// not just the periodic loop. reconcileDNSZone above pushed the zone to the
+	// authoritative server; without also binding the recursor forwarder here, a
+	// freshly-created domain scheduled via the create handler doesn't resolve on
+	// the box's own recursor until the next full loop pass adds it — the tens of
+	// seconds johnnyq saw even after the zone existed. The forwarder add is
+	// idempotent and self-heals, so running it here + on the loop is safe.
+	r.reconcileRecursorForward(ctx, domain.Name)
+
 	// Converge SSL state next so createDomainOnAgent picks up any
 	// newly-issued (or revoked) cert paths when it regenerates the vhost.
 	sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
