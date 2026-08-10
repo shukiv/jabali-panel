@@ -37,14 +37,18 @@ type AgentCaller interface {
 // + BcryptCost are required; Agent / Kratos / Packages are
 // optional (callbacks gracefully skip when nil).
 type Deps struct {
-	Users        repository.UserRepository
-	Packages     repository.PackageRepository
-	Domains      repository.DomainRepository
-	DockerApps   repository.DockerAppRepository
-	Agent        AgentCaller
-	KratosClient *kratosclient.Client
-	BcryptCost   int
-	Log          *slog.Logger
+	Users      repository.UserRepository
+	Packages   repository.PackageRepository
+	Domains    repository.DomainRepository
+	DockerApps repository.DockerAppRepository
+	// DomainTeardowns persists the JAB-236 tombstones that make domain
+	// deletion durable. Optional: nil keeps the pre-tombstone behaviour
+	// (teardown attempted once, not retried).
+	DomainTeardowns repository.DomainTeardownRepository
+	Agent           AgentCaller
+	KratosClient    *kratosclient.Client
+	BcryptCost      int
+	Log             *slog.Logger
 }
 
 // CreateInput is the shared input shape. Both callers (REST + the
