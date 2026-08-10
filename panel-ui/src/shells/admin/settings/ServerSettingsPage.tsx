@@ -57,6 +57,7 @@ import { StalwartWebadminCard } from "./StalwartWebadminCard";
 import { PageTemplatesCard } from "./PageTemplatesCard";
 import { AccountSkeletonCard } from "./AccountSkeletonCard";
 import { PanelSSLCard } from "./PanelSSLCard";
+import { CloudflareTokenCard } from "./CloudflareTokenCard";
 import { NspawnImagesCard } from "./NspawnImagesCard";
 import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
 import { TenantDomainOptionsCard } from "./TenantDomainOptionsCard";
@@ -315,6 +316,7 @@ const GeneralSettingsTab = () => {
 
       <SSOMaintenanceCard />
       <PanelSSLCard />
+      <CloudflareTokenCard />
       <Card title={t("settings.root_terminal_m45")} style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col xs={24}>

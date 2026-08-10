@@ -914,9 +914,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.ServerSettings != nil {
 			api.RegisterServerSettingsRoutes(v1, api.ServerSettingsHandlerConfig{
-				Repo:  deps.ServerSettings,
-				Agent: deps.Agent,
-				Log:   deps.Log,
+				Repo:   deps.ServerSettings,
+				Agent:  deps.Agent,
+				Log:    deps.Log,
+				SSOKey: deps.SSOKey,
 			})
 			// M28 — admin logo upload/delete. Public GET lives on the
 			// root router above so it's reachable pre-auth.

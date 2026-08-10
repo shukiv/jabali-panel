@@ -33,6 +33,8 @@ func (m *mockSSLCertsForBadge) FindByDomainIDs(_ context.Context, ids []string) 
 }
 
 // Stubs to satisfy SSLCertificateRepository.
+func (m *mockSSLCertsForBadge) SetIssueMethod(context.Context, string, string) error { return nil }
+
 func (m *mockSSLCertsForBadge) Create(context.Context, *models.SSLCertificate) error {
 	return nil
 }

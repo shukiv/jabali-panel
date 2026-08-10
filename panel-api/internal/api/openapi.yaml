@@ -1028,6 +1028,41 @@ paths:
         "200": { description: "Claimed; body carries fqdn" }
         "422": { description: "code_invalid / code_attempts / bad_source" }
         "502": { description: Hostname service unreachable }
+  /admin/settings/cloudflare-token:
+    get:
+      tags: [Server Settings]
+      summary: Whether a Cloudflare API token is configured for the DNS-01 fallback (admin, JAB-235)
+      description: |
+        Reports configured yes/no only — the token itself is sealed at rest
+        (sso.key AES-256-GCM) and never returned by any endpoint.
+      responses:
+        "200": { description: "{ configured: bool }" }
+    put:
+      tags: [Server Settings]
+      summary: Store the Cloudflare API token behind the ACME DNS-01 fallback (admin, JAB-235)
+      description: |
+        Verifies the token against Cloudflare (/user/tokens/verify) before
+        storing it sealed. The token needs Zone:DNS:Edit + Zone:Read on the
+        customer zones it should cover; a dedicated scoped token is advised.
+        The response reports how many zones the token can see.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200": { description: "{ configured: true, zones: n }" }
+        "422": { description: Cloudflare rejected the token }
+        "503": { description: sso.key unavailable — cannot store securely }
+    delete:
+      tags: [Server Settings]
+      summary: Clear the stored Cloudflare API token (admin, JAB-235)
+      responses:
+        "200": { description: "{ configured: false }" }
   /admin/settings:
     get:
       tags: [Server Settings]

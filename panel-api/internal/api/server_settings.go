@@ -21,12 +21,20 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 type ServerSettingsHandlerConfig struct {
 	Repo  repository.ServerSettingsRepository
 	Agent agent.AgentInterface
 	Log   *slog.Logger
+	// SSOKey seals the Cloudflare API token at rest (JAB-235). Nil disables
+	// the token endpoints (503) — a panel without sso.key must not hold the
+	// secret in plaintext.
+	SSOKey *ssokey.Key
+	// CFVerify overrides the Cloudflare token-verification call in tests.
+	// Nil = verify against the real Cloudflare API.
+	CFVerify func(ctx context.Context, token string) (zones int, err error)
 }
 
 // RegisterServerSettingsRoutes mounts server settings endpoints under the
@@ -47,6 +55,10 @@ func RegisterServerSettingsRoutes(g *gin.RouterGroup, cfg ServerSettingsHandlerC
 	// JAB-213: activate a free jabalihosted.com hostname from Server Settings.
 	admin.POST("/free-hostname/register", h.freeHostnameRegister)
 	admin.POST("/free-hostname/claim", h.freeHostnameClaim)
+	// JAB-235: the Cloudflare API token behind the ACME DNS-01 fallback.
+	admin.GET("/cloudflare-token", h.cfTokenStatus)
+	admin.PUT("/cloudflare-token", h.cfTokenSet)
+	admin.DELETE("/cloudflare-token", h.cfTokenClear)
 }
 
 type serverSettingsHandler struct{ cfg ServerSettingsHandlerConfig }
