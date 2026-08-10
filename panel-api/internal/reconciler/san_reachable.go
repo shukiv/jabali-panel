@@ -25,6 +25,16 @@ import (
 //
 // So the question is not "does this name resolve" but "will a challenge for it
 // reach US".
+//
+// And "reach us" is not the same test for every name. The apex and www.<apex>
+// are served from the domain docroot certbot writes the token into, so their
+// challenge survives a CDN — they keep the fronted (apex-match) allowance. The
+// mail helpers (mail./autoconfig./autodiscover./mta-sts.) are served from a
+// different vhost + webroot (/var/www/jabali-acme) and carry their own cert via
+// ssl_mail_issue; behind a proxy the token 404s even though they resolve like
+// the apex. So helpers must resolve DIRECTLY to us — see
+// webNameKeepsFrontedAllowance. (arizot-e.com: mail. resolved to Cloudflare
+// like the apex, passed the fronted test, 404'd, and failed the whole cert.)
 
 // sanReachability decides which SANs can plausibly pass HTTP-01 against this
 // server.
@@ -57,6 +67,27 @@ func sanReachability(sanAddrs, apexAddrs, ourAddrs []string) bool {
 		return true
 	}
 	return false
+}
+
+// webNameKeepsFrontedAllowance reports whether a SAN is a website name — the
+// apex or www.<apex> — that is served from the domain docroot certbot writes
+// the HTTP-01 token into, so its challenge reaches us even behind a CDN. Those
+// keep the fronted (apex-match) allowance.
+//
+// Everything else here is an auto-derived mail helper (mail./autoconfig./
+// autodiscover./mta-sts.<apex>, from sanHostnamesForDomain). Those are NOT
+// served from the domain docroot — they have their own vhost rooted at
+// /var/www/jabali-acme and their own certificate via ssl_mail_issue — so
+// "resolves to the apex's CDN" does NOT mean an HTTP-01 challenge for them
+// reaches this server: the proxy forwards it to the origin, the origin's mail
+// vhost serves the token dir from a different webroot, and it 404s. One such
+// failure fails the WHOLE web cert, apex included (arizot-e.com behind
+// Cloudflare: mail. resolved to CF like the apex, survived the fronted test,
+// and 404'd — taking the site's cert down with it). Helpers must therefore
+// resolve DIRECTLY to us to ride the web cert; otherwise they are dropped and
+// stay the mail cert's responsibility.
+func webNameKeepsFrontedAllowance(name, apex string) bool {
+	return name == apex || name == "www."+apex
 }
 
 func intersects(a, b []string) bool {
@@ -117,7 +148,16 @@ func (r *Reconciler) reachableSANs(ctx context.Context, apex string, names []str
 			lookupCtx, c := context.WithTimeout(ctx, 6*time.Second)
 			defer c()
 			addrs := dnsverify.LookupHostExternal(lookupCtx, name)
-			resCh <- result{name: name, keep: sanReachability(addrs, apexAddrs, ourAddrs)}
+			// Web names (apex, www.<apex>) keep the fronted allowance; the mail
+			// helpers must resolve directly to us — see
+			// webNameKeepsFrontedAllowance. Passing nil apex to sanReachability
+			// gives direct-only while preserving its fail-open when ourAddrs is
+			// also empty.
+			apexForName := apexAddrs
+			if !webNameKeepsFrontedAllowance(name, apex) {
+				apexForName = nil
+			}
+			resCh <- result{name: name, keep: sanReachability(addrs, apexForName, ourAddrs)}
 		}(n)
 	}
 
