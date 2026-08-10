@@ -20,7 +20,11 @@ func (r *Reconciler) reconcileRecursorForward(ctx context.Context, zone string) 
 	if zone == "" {
 		return
 	}
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// 30s (was 10s): the agent's AddZone now retries the post-add probe with a
+	// short backoff so a freshly-created zone's forwarder isn't rolled back on
+	// the first racy probe (GH #896). The retry budget must fit inside this
+	// timeout. Existing zones still confirm on the first probe (~1-2s).
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	raw, err := r.agent.Call(cctx, "pdns.recursor_add_zone", map[string]any{
 		"zone": zone,

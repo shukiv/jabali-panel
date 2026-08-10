@@ -33,17 +33,19 @@ func (f *fakeExec) Run(_ context.Context, name string, args ...string) ([]byte, 
 }
 
 type fakeProbe struct {
-	mu      sync.Mutex
-	calls   []string
-	fail    bool
-	failErr error
+	mu        sync.Mutex
+	calls     []string
+	fail      bool
+	failFirst int // fail the first N calls, then succeed (GH #896 retry test)
+	failErr   error
 }
 
 func (f *fakeProbe) ProbeZone(_ context.Context, zone string) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, zone)
+	n := len(f.calls)
 	f.mu.Unlock()
-	if f.fail {
+	if f.fail || (f.failFirst > 0 && n <= f.failFirst) {
 		if f.failErr != nil {
 			return f.failErr
 		}
@@ -66,6 +68,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeExec, *fakeProbe, string) {
 		Prober:       probe,
 		SkipChown:    true, // no pdns/pdns-recursor group on CI boxes
 		Clock:        func() time.Time { return time.Unix(1700000000, 0) },
+		ProbeGap:     time.Millisecond, // keep the GH #896 retry loop instant in tests
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -159,6 +162,51 @@ func TestAddZone_RollbackOnProbeFail(t *testing.T) {
 	after := readLive(t, m)
 	if after != before {
 		t.Errorf("rollback failed.\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+// GH #896: a freshly-created zone's forwarder must survive an INITIAL probe
+// failure — the probe is retried and the forwarder is KEPT once the auth
+// catches up, instead of rolling back and leaving the zone unresolvable until
+// the next reconcile pass (the dead-domain window johnnyq reported).
+func TestAddZone_ProbeRetry_KeepsForwarderWhenAuthCatchesUp(t *testing.T) {
+	m, _, probe, _ := newTestManager(t)
+	ctx := context.Background()
+
+	// Fail the first 2 probes, then answer — mimics a fresh auth zone that
+	// takes a moment after reload-zones to respond.
+	probe.failFirst = 2
+	changed, err := m.AddZone(ctx, Entry{"fresh.example", "127.0.0.1", 5300})
+	if err != nil {
+		t.Fatalf("AddZone should succeed once the probe retries into a good answer: %v", err)
+	}
+	if !changed {
+		t.Error("AddZone should report Changed=true")
+	}
+	if got := len(probe.calls); got != 3 {
+		t.Errorf("expected 3 probe attempts (2 fail + 1 pass); got %d", got)
+	}
+	if !strings.Contains(readLive(t, m), "fresh.example=127.0.0.1:5300") {
+		t.Errorf("forwarder must be KEPT after the probe eventually succeeds; live=%q", readLive(t, m))
+	}
+}
+
+// A forwarder whose probe NEVER answers still rolls back after exhausting the
+// retries — the safety the rollback provides is preserved.
+func TestAddZone_ProbeRetry_RollsBackWhenNeverAnswers(t *testing.T) {
+	m, _, probe, _ := newTestManager(t)
+	ctx := context.Background()
+
+	probe.fail = true
+	_, err := m.AddZone(ctx, Entry{"dead.example", "127.0.0.1", 5300})
+	if err == nil {
+		t.Fatal("AddZone with a permanently-failing probe must error")
+	}
+	if got := len(probe.calls); got != m.opts.ProbeAttempts {
+		t.Errorf("expected %d probe attempts before giving up; got %d", m.opts.ProbeAttempts, got)
+	}
+	if strings.Contains(readLive(t, m), "dead.example") {
+		t.Errorf("forwarder must be rolled back when the probe never answers; live=%q", readLive(t, m))
 	}
 }
 

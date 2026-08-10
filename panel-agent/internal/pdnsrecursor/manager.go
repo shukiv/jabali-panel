@@ -54,6 +54,16 @@ type Options struct {
 	// Prober probes "zone NS" against the recursor's loopback bind. Default:
 	// netResolverProbe querying 127.0.0.1:53 with 2s timeout.
 	Prober Prober
+	// ProbeAttempts is how many times a post-add probe is retried before the
+	// forwarder is rolled back (GH #896). A freshly-created authoritative zone
+	// can take a couple of seconds after `rec_control reload-zones` to answer
+	// the recursor's NS query; a single attempt used to roll the forwarder
+	// back on that race, so the zone stayed unresolvable until the next
+	// reconcile pass re-added it. Default 5.
+	ProbeAttempts int
+	// ProbeGap is the wait between probe attempts. Default 2s. Tests set it to
+	// 0 for speed.
+	ProbeGap time.Duration
 	// Clock is injectable for deterministic tests; default time.Now.
 	Clock func() time.Time
 	// FileMode for the forwards file; default 0640.
@@ -91,8 +101,8 @@ type Prober interface {
 
 // Manager serializes writes + reloads against recursor.forwards.
 type Manager struct {
-	mu    sync.Mutex
-	opts  Options
+	mu   sync.Mutex
+	opts Options
 }
 
 // New constructs a Manager with defaults applied.
@@ -118,6 +128,12 @@ func New(opts Options) (*Manager, error) {
 	}
 	if opts.Clock == nil {
 		opts.Clock = time.Now
+	}
+	if opts.ProbeAttempts < 1 {
+		opts.ProbeAttempts = 5
+	}
+	if opts.ProbeGap == 0 {
+		opts.ProbeGap = 2 * time.Second
 	}
 	if opts.FileMode == 0 {
 		opts.FileMode = 0o640
@@ -297,19 +313,16 @@ func (m *Manager) applyChange(ctx context.Context, desired map[string]Entry, zon
 		m.rollback()
 		return fmt.Errorf("rec_control reload-zones: %w", err)
 	}
-	// Wipe cached answers for the zone that just got its forwarder
-	// (re-)bound. Without this, recursor's positive cache returns the
-	// PRE-forwarder-change answer until cache-ttl evicts (same class
-	// of bug as PRs #86/#87/#88 on pdns-server). Add path only — the
-	// remove path's negative cache is short-lived (~10s default).
+	// Post-probe only on add (zoneToProbe != nil). Retry with a short backoff:
+	// a freshly-created authoritative zone can take a couple of seconds after
+	// reload-zones to answer the recursor's NS query, and a single-shot probe
+	// used to roll the forwarder back on that race — leaving the zone
+	// unresolvable until the NEXT reconcile pass re-added it (GH #896: a fresh
+	// (sub)domain dead for up to minutes). probeForwarder wipes the cache
+	// before each attempt so a just-cached NXDOMAIN can't pin every retry to
+	// failure. Removals need no positive signal — absent zone = success.
 	if zoneToProbe != nil && *zoneToProbe != "" {
-		_, _ = m.opts.Exec.Run(ctx, "rec_control", "wipe-cache", *zoneToProbe+"$")
-	}
-
-	// Post-probe only on add (zoneToProbe != nil). Removals need no
-	// positive signal — absent zone = successful removal.
-	if zoneToProbe != nil {
-		if err := m.opts.Prober.ProbeZone(ctx, *zoneToProbe); err != nil {
+		if err := m.probeForwarder(ctx, *zoneToProbe); err != nil {
 			m.rollback()
 			// Re-reload after rollback to re-unload any half-applied state.
 			_, _ = m.opts.Exec.Run(ctx, "rec_control", "reload-zones")
@@ -317,6 +330,35 @@ func (m *Manager) applyChange(ctx context.Context, desired map[string]Entry, zon
 		}
 	}
 	return nil
+}
+
+// probeForwarder verifies the just-added forwarder answers for the zone,
+// retrying up to ProbeAttempts times (ProbeGap apart) and wiping the recursor
+// cache before each attempt. Returns nil on the first success, or the last
+// error after exhausting attempts. Context cancellation aborts early.
+func (m *Manager) probeForwarder(ctx context.Context, zone string) error {
+	var err error
+	for i := 0; i < m.opts.ProbeAttempts; i++ {
+		// Clear any cached (possibly negative) answer so this attempt reflects
+		// the current auth state, not a stale NXDOMAIN from before the zone
+		// finished loading. Also clears the positive PRE-forwarder answer on
+		// a re-bind (the original single-wipe rationale, PRs #86/#87/#88).
+		_, _ = m.opts.Exec.Run(ctx, "rec_control", "wipe-cache", zone+"$")
+		if err = m.opts.Prober.ProbeZone(ctx, zone); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if i < m.opts.ProbeAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(m.opts.ProbeGap):
+			}
+		}
+	}
+	return err
 }
 
 // rollback moves .bak back to live. Best-effort; if there's no .bak (first
