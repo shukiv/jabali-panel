@@ -683,6 +683,17 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
+	// GH #896: trigger an immediate targeted reconcile for the new domain so its
+	// DNS zone (and vhost) converge in SECONDS instead of waiting for the next
+	// periodic full reconcile. On an idle box the loop picks it up quickly, but
+	// on a box with many domains the full pass can lag minutes — during which a
+	// fresh domain doesn't resolve (dead page + certbot NXDOMAIN) even though the
+	// authoritative record is only a push away. This is the same Schedule the
+	// DNS-record and SSL-mode handlers already fire on a change.
+	if h.cfg.Reconciler != nil {
+		h.cfg.Reconciler.Schedule(dom.ID)
+	}
+
 	// EnableDomainEmailInline mutated domain in place on success so the response
 	// already carries email_enabled=true, dkim_selector, etc.
 	c.JSON(http.StatusCreated, dom)
