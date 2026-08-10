@@ -71,10 +71,23 @@ func TestReconcileSSL_ModeRouting(t *testing.T) {
 	// previously had NO dispatch case and was never retried — the domain stayed
 	// on plain HTTP forever. It must now route back through ACME so a transient
 	// failure self-heals instead of stranding the site.
-	t.Run("le mode failed cert retries via ACME", func(t *testing.T) {
+	t.Run("le mode failed cert BELOW the cap retries via ACME", func(t *testing.T) {
 		cp, kp := "/etc/ssl/jabali-selfsigned/example.com/cert.pem", "/etc/ssl/jabali-selfsigned/example.com/key.pem"
-		ag := run(models.SSLModeLE, &models.SSLCertificate{ID: "c1", Status: models.SSLStatusFailed, CertPath: &cp, KeyPath: &kp})
-		require.True(t, hasCall(ag, "ssl.issue"), "a failed cert must be retried via ACME, not left stranded on HTTP")
+		ag := run(models.SSLModeLE, &models.SSLCertificate{ID: "c1", Status: models.SSLStatusFailed, RetryCount: 3, CertPath: &cp, KeyPath: &kp})
+		require.True(t, hasCall(ag, "ssl.issue"), "a sub-cap failed cert must be retried via ACME, not left stranded on HTTP")
+	})
+
+	// JAB-226 follow-up regression: once a cert EXHAUSTS the retry cap,
+	// fallbackToSelfSignAndRetry parks it in status=failed as a TERMINAL state so
+	// the reconciler stops hammering Let's Encrypt. The failed-cert dispatch must
+	// respect that cap — retrying a capped row every tick just re-caps it and
+	// churns LE into rate-limiting the whole account ("too many failed
+	// authorizations"). Observed live on the aramapp fleet: ~45 hopeless
+	// Cloudflare-fronted domains cycling failed→retry→cap→failed every tick.
+	t.Run("le mode failed cert AT the cap is terminal, no ACME hammer", func(t *testing.T) {
+		cp, kp := "/etc/ssl/jabali-selfsigned/example.com/cert.pem", "/etc/ssl/jabali-selfsigned/example.com/key.pem"
+		ag := run(models.SSLModeLE, &models.SSLCertificate{ID: "c1", Status: models.SSLStatusFailed, RetryCount: 20, CertPath: &cp, KeyPath: &kp})
+		require.False(t, hasCall(ag, "ssl.issue"), "a cap-exhausted failed cert must NOT be retried — it is terminal until an operator resets it")
 	})
 
 	t.Run("none mode revokes issued cert", func(t *testing.T) {

@@ -2511,15 +2511,25 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 		case cert.Status == models.SSLStatusPendingACMERetry && cert.NextRetryAt != nil && cert.NextRetryAt.Before(time.Now().UTC()):
 			r.tryACMEOrFallback(ctx, domain, cert)
 		// A cert that hit a hard failure (unparseable agent result, a self-sign
-		// error) had NO dispatch case — it stayed 'failed' forever: no :443, no
-		// retry, no self-signed fallback, stranding the domain on plain HTTP
-		// until an operator ran `jabali ssl renew` by hand. That is how a
-		// one-time SAN failure (JAB-226) became a permanent outage instead of a
-		// transient retry. Route 'failed' back through the ACME-or-self-sign
-		// path: tryACMEOrFallback either issues, or self-signs + moves the row
-		// to pending_acme_retry (scheduled, so no per-tick hammering). This also
-		// auto-heals rows already stuck in 'failed' once this ships.
-		case cert.Status == models.SSLStatusFailed:
+		// error) below the retry cap had NO dispatch case — it stayed 'failed'
+		// forever: no :443, no retry, no self-signed fallback, stranding the
+		// domain on plain HTTP until an operator ran `jabali ssl renew` by hand.
+		// That is how a one-time SAN failure (JAB-226) became a permanent outage
+		// instead of a transient retry. Route such rows back through the
+		// ACME-or-self-sign path: tryACMEOrFallback either issues, or self-signs
+		// + moves the row to pending_acme_retry (backoff-scheduled).
+		//
+		// But ONLY below the cap. Past acmeMaxRetries, status=failed is the
+		// deliberate TERMINAL state fallbackToSelfSignAndRetry parks a cert in so
+		// the reconciler stops hammering Let's Encrypt — which otherwise
+		// rate-limits the whole account ("too many failed authorizations (5) per
+		// hostname per hour"). Retrying a capped row every tick just re-caps it
+		// (newRetryCount = cap+1 ≥ cap → marked failed again) and hammers LE
+		// forever — observed on the aramapp fleet: ~45 hopeless Cloudflare-fronted
+		// domains cycling failed→retry→cap→failed every tick, retry_count climbing
+		// into the 60s. Capped rows wait for an operator "Retry" (which resets
+		// retry_count to 0 and flips status back to pending).
+		case cert.Status == models.SSLStatusFailed && cert.RetryCount < acmeMaxRetries:
 			r.tryACMEOrFallback(ctx, domain, cert)
 		case cert.Status == models.SSLStatusRenewing:
 			r.sslRenewForDomain(ctx, domain, cert)
