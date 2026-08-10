@@ -16,9 +16,10 @@ import { DisclaimerTab } from "./tabs/DisclaimerTab";
 import { SharedFoldersTab } from "./tabs/SharedFoldersTab";
 import { SharedResourcesTab } from "./tabs/SharedResourcesTab";
 import { LogsTab } from "./tabs/LogsTab";
+import { StatisticsTab } from "./tabs/StatisticsTab";
 import { CreateMailboxWizardModal } from "./CreateMailboxWizardModal";
 
-const TAB_KEYS = ["mailboxes", "groups", "forwarders", "catchall", "disclaimer", "shared", "resources", "logs"] as const;
+const TAB_KEYS = ["mailboxes", "groups", "forwarders", "catchall", "disclaimer", "shared", "resources", "logs", "statistics"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "mailboxes";
 
@@ -31,6 +32,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   shared: "Shared Folders",
   resources: "Shared Resources",
   logs: "Logs",
+  statistics: "Statistics",
 };
 
 export const MailTabsPage = () => {
@@ -66,6 +68,8 @@ export const MailTabsPage = () => {
         return <SharedResourcesTab />;
       case "logs":
         return <LogsTab />;
+      case "statistics":
+        return <StatisticsTab />;
     }
   };
 

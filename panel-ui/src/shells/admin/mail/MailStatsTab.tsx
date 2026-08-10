@@ -33,14 +33,34 @@ type MailStats = {
   }[];
   // GH #873 round 3: per-domain traffic totals over the selected range,
   // busiest first. Empty until the per-domain sampler has collected a window.
-  traffic: {
-    domain: string;
+  traffic: DomainTraffic[];
+  // GH #873 round 4: the same traffic rolled up per owning user, each with
+  // their domains nested. Busiest user first.
+  by_user: {
+    username: string | null;
+    user_id: string;
     sent: number;
     received: number;
     delivered: number;
     failed: number;
+    domains: DomainTraffic[];
   }[];
 };
+
+type DomainTraffic = {
+  domain: string;
+  sent: number;
+  received: number;
+  delivered: number;
+  failed: number;
+};
+
+const TRAFFIC_COLUMNS = [
+  { title: "Sent", dataIndex: "sent", width: 90, align: "right" as const },
+  { title: "Received", dataIndex: "received", width: 100, align: "right" as const },
+  { title: "Delivered", dataIndex: "delivered", width: 100, align: "right" as const },
+  { title: "Failed", dataIndex: "failed", width: 90, align: "right" as const },
+];
 
 const fmtBytes = (n: number): string => {
   if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GiB`;
@@ -302,6 +322,49 @@ export const MailStatsTab = () => {
             ]}
           />
           </>
+        )}
+      </Card>
+
+      <Card
+        size="small"
+        title={`Traffic by user (${hours >= 168 ? `${hours / 24}d` : `${hours}h`})`}
+        style={{ marginBottom: 16 }}
+        loading={stats.isLoading}
+      >
+        {(s?.by_user?.length ?? 0) === 0 ? (
+          <Typography.Text type="secondary">
+            Collecting — per-user totals appear once mail flows for a user's
+            domains.
+          </Typography.Text>
+        ) : (
+          <Table
+            size="small"
+            rowKey="user_id"
+            pagination={false}
+            dataSource={s?.by_user ?? []}
+            columns={[
+              {
+                title: "User",
+                dataIndex: "username",
+                render: (u: string | null) => u ?? "(admin)",
+              },
+              ...TRAFFIC_COLUMNS,
+            ]}
+            expandable={{
+              expandedRowRender: (u) => (
+                <Table
+                  size="small"
+                  rowKey="domain"
+                  pagination={false}
+                  dataSource={u.domains}
+                  columns={[
+                    { title: "Domain", dataIndex: "domain" },
+                    ...TRAFFIC_COLUMNS,
+                  ]}
+                />
+              ),
+            }}
+          />
         )}
       </Card>
 

@@ -3143,6 +3143,14 @@ paths:
       parameters: [ { in: query, name: hours, required: false, schema: { type: integer, minimum: 1, maximum: 2160, default: 24 } } ]
       responses: { "200": { description: OK } }
 
+  /mail/stats:
+    get:
+      tags: [Mail]
+      summary: Tenant mail traffic — per-domain totals for the caller's own domains (GH #873 round 4)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: query, name: hours, required: false, schema: { type: integer, minimum: 1, maximum: 2160, default: 24 } } ]
+      responses: { "200": { description: OK } }
+
   /admin/mail/queue:
     get:
       tags: [Mail]

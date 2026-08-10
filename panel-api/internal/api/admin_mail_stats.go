@@ -55,6 +55,19 @@ type DomainTrafficRow struct {
 	Failed    int64  `json:"failed"`
 }
 
+// UserTrafficRow rolls a tenant's domains' traffic up to one row (GH #873
+// round 4) — "which users generate the mail volume", with their domains nested
+// for the drilldown. Username is null for admin-owned domains.
+type UserTrafficRow struct {
+	Username  *string            `json:"username"`
+	UserID    string             `json:"user_id"`
+	Sent      int64              `json:"sent"`
+	Received  int64              `json:"received"`
+	Delivered int64              `json:"delivered"`
+	Failed    int64              `json:"failed"`
+	Domains   []DomainTrafficRow `json:"domains"`
+}
+
 type mailStatsResponse struct {
 	// Points and Rates are keyed by metric name.
 	Points  map[string][]MailStatPoint     `json:"points"`
@@ -64,6 +77,9 @@ type mailStatsResponse struct {
 	// Traffic is the per-domain send/receive breakdown for the range, busiest
 	// first. Empty until the per-domain sampler has collected a window.
 	Traffic []DomainTrafficRow `json:"traffic"`
+	// ByUser rolls Traffic up per owning tenant (GH #873 round 4), busiest
+	// first, each with their domains nested.
+	ByUser []UserTrafficRow `json:"by_user"`
 }
 
 func (h *adminMailStatsHandler) stats(c *gin.Context) {
@@ -90,6 +106,11 @@ func (h *adminMailStatsHandler) stats(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "traffic failed"})
 		return
 	}
+	owners, err := h.cfg.Stats.DomainOwners(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "owners failed"})
+		return
+	}
 
 	resp := mailStatsResponse{
 		Points:  map[string][]MailStatPoint{},
@@ -97,6 +118,7 @@ func (h *adminMailStatsHandler) stats(c *gin.Context) {
 		Current: map[string]float64{},
 		Storage: storage,
 		Traffic: aggregateDomainTraffic(domainRows),
+		ByUser:  aggregateUserTraffic(domainRows, owners),
 	}
 	// rows arrive ordered (metric, time) — walk once.
 	for i := 0; i < len(rows); i++ {
@@ -146,6 +168,45 @@ func aggregateDomainTraffic(rows []repository.DomainStatSample) []DomainTrafficR
 			return li > lj
 		}
 		return out[i].Domain < out[j].Domain
+	})
+	return out
+}
+
+// aggregateUserTraffic rolls the per-domain rows up to one row per owning user
+// (GH #873 round 4), each with their domains nested, busiest first. Domains
+// with no current owner (removed since the sample) are dropped.
+func aggregateUserTraffic(rows []repository.DomainStatSample, owners []repository.DomainOwner) []UserTrafficRow {
+	ownerByDomain := make(map[string]repository.DomainOwner, len(owners))
+	for _, o := range owners {
+		ownerByDomain[o.Domain] = o
+	}
+	byUser := map[string]*UserTrafficRow{}
+	for _, dr := range aggregateDomainTraffic(rows) { // busiest-first per domain
+		o, ok := ownerByDomain[dr.Domain]
+		if !ok {
+			continue
+		}
+		u := byUser[o.UserID]
+		if u == nil {
+			u = &UserTrafficRow{Username: o.Username, UserID: o.UserID}
+			byUser[o.UserID] = u
+		}
+		u.Sent += dr.Sent
+		u.Received += dr.Received
+		u.Delivered += dr.Delivered
+		u.Failed += dr.Failed
+		u.Domains = append(u.Domains, dr)
+	}
+	out := make([]UserTrafficRow, 0, len(byUser))
+	for _, u := range byUser {
+		out = append(out, *u)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		li, lj := out[i].Sent+out[i].Received, out[j].Sent+out[j].Received
+		if li != lj {
+			return li > lj
+		}
+		return out[i].UserID < out[j].UserID
 	})
 	return out
 }

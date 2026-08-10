@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -49,6 +50,14 @@ type DomainCount struct {
 	Count  int64
 }
 
+// DomainOwner maps a domain to its owning tenant (GH #873 round 4). Username is
+// NULL for admin-owned domains. Used to roll per-domain traffic up per user.
+type DomainOwner struct {
+	Domain   string  `gorm:"column:domain"   json:"domain"`
+	UserID   string  `gorm:"column:user_id"  json:"user_id"`
+	Username *string `gorm:"column:username" json:"username"`
+}
+
 type MailStatsRepository interface {
 	// InsertSamples writes one row per metric at the given time.
 	InsertSamples(ctx context.Context, at time.Time, metrics map[string]float64) error
@@ -66,6 +75,13 @@ type MailStatsRepository interface {
 	// DomainSeries returns per-domain samples since `since`, ordered by
 	// domain, metric, then time.
 	DomainSeries(ctx context.Context, since time.Time) ([]DomainStatSample, error)
+	// DomainSeriesForUser is DomainSeries scoped to the domains owned by
+	// `userID` (GH #873 round 4 tenant view). A tenant only ever sees traffic
+	// for their own domains; an empty domain set yields no rows.
+	DomainSeriesForUser(ctx context.Context, since time.Time, userID string) ([]DomainStatSample, error)
+	// DomainOwners returns every domain with its owning user (GH #873 round 4),
+	// so the admin per-user drilldown can roll domain traffic up per tenant.
+	DomainOwners(ctx context.Context) ([]DomainOwner, error)
 	// LastDomainSampleAt returns the newest domain sample time, or zero time
 	// when the table is empty (first run). Drives the collector's watermark.
 	LastDomainSampleAt(ctx context.Context) (time.Time, error)
@@ -154,6 +170,32 @@ func (r *mailStatsRepo) DomainSeries(ctx context.Context, since time.Time) ([]Do
 		Where("sampled_at >= ?", since).
 		Order("domain ASC, metric ASC, sampled_at ASC").
 		Find(&rows).Error
+	return rows, err
+}
+
+func (r *mailStatsRepo) DomainSeriesForUser(ctx context.Context, since time.Time, userID string) ([]DomainStatSample, error) {
+	if userID == "" {
+		return nil, nil
+	}
+	var rows []DomainStatSample
+	// Scope to the caller's domains by subquery on domains.user_id — a tenant
+	// never sees another tenant's traffic. domain is matched by name, the same
+	// key the sampler stores.
+	err := r.db.WithContext(ctx).
+		Where("sampled_at >= ? AND domain IN (?)",
+			since,
+			r.db.Model(&models.Domain{}).Select("name").Where("user_id = ?", userID)).
+		Order("domain ASC, metric ASC, sampled_at ASC").
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *mailStatsRepo) DomainOwners(ctx context.Context) ([]DomainOwner, error) {
+	var rows []DomainOwner
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT d.name AS domain, d.user_id AS user_id, u.username AS username
+		FROM domains d
+		JOIN users u ON u.id = d.user_id`).Scan(&rows).Error
 	return rows, err
 }
 

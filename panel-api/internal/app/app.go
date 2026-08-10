@@ -783,6 +783,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			SharedResources: srRepo,
 			SendDelegations: sendDelegRepo,
 		})
+		// GH #873 round 4 — tenant-scoped mail traffic (own domains only).
+		if deps.DB != nil {
+			api.RegisterTenantMailStatsRoutes(mailGroup, api.TenantMailStatsHandlerConfig{
+				Stats: repository.NewMailStatsRepository(deps.DB),
+			})
+		}
 		// DNSSEC per-domain (ADR-0076). Standalone mount; not part of M6.5.
 		api.RegisterDomainDNSSECRoutes(v1, api.DomainDNSSECHandlerConfig{
 			Agent:   deps.Agent,

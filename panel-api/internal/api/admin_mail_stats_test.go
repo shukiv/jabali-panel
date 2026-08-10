@@ -20,6 +20,7 @@ type fakeMailStatsSeriesRepo struct {
 	rows       []repository.MailStatSample
 	storage    []repository.MailboxStorageRow
 	domainRows []repository.DomainStatSample
+	owners     []repository.DomainOwner
 }
 
 func (f *fakeMailStatsSeriesRepo) Series(context.Context, time.Time) ([]repository.MailStatSample, error) {
@@ -30,6 +31,9 @@ func (f *fakeMailStatsSeriesRepo) StorageDrilldown(context.Context) ([]repositor
 }
 func (f *fakeMailStatsSeriesRepo) DomainSeries(context.Context, time.Time) ([]repository.DomainStatSample, error) {
 	return f.domainRows, nil
+}
+func (f *fakeMailStatsSeriesRepo) DomainOwners(context.Context) ([]repository.DomainOwner, error) {
+	return f.owners, nil
 }
 
 // GH #873: rates are positive deltas per metric, clamped at zero across a
@@ -57,6 +61,11 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 			{Domain: "quiet.example", Metric: "received", SampledAt: t0, Value: 1},
 			{Domain: "quiet.example", Metric: "failed", SampledAt: t0, Value: 2},
 		},
+		// Round 4: owners roll domain traffic up per user.
+		owners: []repository.DomainOwner{
+			{Domain: "busy.example", UserID: "u_alice", Username: strptr("alice")},
+			{Domain: "quiet.example", UserID: "u_bob", Username: strptr("bob")},
+		},
 	}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -75,6 +84,7 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 		Current map[string]float64             `json:"current"`
 		Storage []repository.MailboxStorageRow `json:"storage"`
 		Traffic []api.DomainTrafficRow         `json:"traffic"`
+		ByUser  []api.UserTrafficRow           `json:"by_user"`
 	}
 	assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 
@@ -99,4 +109,17 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 		assert.Equal(t, int64(1), resp.Traffic[1].Received)
 		assert.Equal(t, int64(2), resp.Traffic[1].Failed)
 	}
+	// Round 4: per-user rollup, busiest user first, domains nested.
+	if assert.Len(t, resp.ByUser, 2) {
+		assert.Equal(t, "alice", *resp.ByUser[0].Username, "busiest user first")
+		assert.Equal(t, int64(5), resp.ByUser[0].Sent)
+		assert.Equal(t, int64(4), resp.ByUser[0].Received)
+		if assert.Len(t, resp.ByUser[0].Domains, 1) {
+			assert.Equal(t, "busy.example", resp.ByUser[0].Domains[0].Domain)
+		}
+		assert.Equal(t, "bob", *resp.ByUser[1].Username)
+		assert.Equal(t, int64(2), resp.ByUser[1].Failed)
+	}
 }
+
+func strptr(s string) *string { return &s }
