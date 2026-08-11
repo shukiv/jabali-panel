@@ -379,6 +379,17 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		})
 	}
 
+	// Mail-client autoconfiguration (GH #1039). Served from the mail vhost
+	// (autoconfig./autodiscover.<domain>) which proxies /mail/config-v1.1.xml
+	// and /autodiscover/autodiscover.xml here. Public, like the branding +
+	// webmail-SSO endpoints — a mail client has no session when it first probes.
+	if deps.Domains != nil {
+		api.RegisterMailAutoconfigRoutes(r, api.MailAutoconfigHandlerConfig{
+			Domains: deps.Domains,
+			Log:     deps.Log,
+		})
+	}
+
 	// Instantiate Kratos client + same-origin reverse proxy for /.ory/*.
 	// The SPA fetches relative Kratos self-service endpoints and panel-api
 	// binds :8443 directly (no nginx in front on that port), so we proxy

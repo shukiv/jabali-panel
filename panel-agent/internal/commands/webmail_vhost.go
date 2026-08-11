@@ -125,8 +125,47 @@ server {
     proxy_http_version 1.1;
   }
 
-  location = /autodiscover/autodiscover.xml { return 404; }
-  location = /Autodiscover/Autodiscover.xml { return 404; }
+  # Mail-client autoconfiguration (GH #1039). panel-api renders the config
+  # documents from the domain's mail settings (mail.<domain>, IMAPS 993 /
+  # SMTPS 465). Host is forwarded so panel-api derives the domain from
+  # autoconfig.<domain> / autodiscover.<domain>. These paths used to 404
+  # (autodiscover) or fall through location / to Bulwark webmail (autoconfig).
+  #
+  #   Thunderbird / Mozilla: GET  /mail/config-v1.1.xml
+  #                          GET  /.well-known/autoconfig/mail/config-v1.1.xml
+  #   Outlook / Exchange:    POST /autodiscover/autodiscover.xml (+ capitalised)
+  location = /mail/config-v1.1.xml {
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+  }
+  location = /.well-known/autoconfig/mail/config-v1.1.xml {
+    proxy_pass http://jabali_panel_api/mail/config-v1.1.xml;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+  }
+  location = /autodiscover/autodiscover.xml {
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+  }
+  location = /Autodiscover/Autodiscover.xml {
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+  }
 }
 
 server {
