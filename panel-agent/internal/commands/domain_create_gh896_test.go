@@ -23,6 +23,7 @@ func gh896VhostData(redirect bool) vhostData {
 		SSLCertPath:   "/etc/ssl/jabali-selfsigned/example.com/fullchain.pem",
 		SSLKeyPath:    "/etc/ssl/jabali-selfsigned/example.com/privkey.pem",
 		RedirectHTTPS: redirect,
+		ServeHTTPS:    redirect, // pre-JAB-237 coupling: these tests pin the DIRECT-domain shape
 	}
 	return vd
 }

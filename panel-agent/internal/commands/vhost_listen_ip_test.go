@@ -34,6 +34,7 @@ func renderVhost(t *testing.T, v4, v6 string, ssl bool) string {
 		// (a trusted cert), not merely on SSLCertPath. ssl=true here models a
 		// domain serving HTTPS, so set it.
 		vd.RedirectHTTPS = true
+		vd.ServeHTTPS = true
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, vd); err != nil {

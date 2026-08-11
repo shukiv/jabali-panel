@@ -57,6 +57,15 @@ type domainCreateParams struct {
 	// trusted cert issues. Pointer so a pre-#896 panel that omits the field
 	// falls back to the historical "redirect whenever a cert is present".
 	RedirectHTTPS *bool `json:"redirect_https,omitempty"`
+	// ServeHTTPS (JAB-237) — whether the :443 server block renders at all,
+	// decoupled from RedirectHTTPS. A CDN-fronted domain must serve :443
+	// even on its self-signed bootstrap cert (Cloudflare Full connects to
+	// origin :443 and 520s on a closed port; the browser never sees the
+	// origin cert, so the GH #896 warning rationale does not apply) while
+	// NOT redirecting :80 (an origin 301 loops CF Flexible zones). Pointer:
+	// a panel that omits the field gets the historical coupled behaviour
+	// (serve exactly when redirecting).
+	ServeHTTPS *bool `json:"serve_https,omitempty"`
 	// CacheEnabled (ADR-0108) — per-domain nginx FastCGI micro-cache
 	// opt-in. false ⇒ vhost byte-identical to the pre-0108 shape.
 	CacheEnabled bool   `json:"cache_enabled"`
@@ -201,14 +210,16 @@ const vhostTemplate = `server {
     # Redirect HTTP to HTTPS once a TRUSTED cert is serving. Gated on
     # RedirectHTTPS (not merely "a cert exists") so a fresh LE-mode domain
     # still on its self-signed bootstrap placeholder serves the docroot over
-    # plain HTTP — the shared tail below attaches to THIS :80 server when the
-    # :443 block is absent — instead of 301'ing browsers into a cert-authority
-    # warning (GH #896/#887). The redirect + :443 appear on the tick a real
-    # cert lands. Scoped to the default location so the ^~ ACME location above
-    # wins for challenge paths — see the rationale comment there.
+    # plain HTTP instead of 301'ing browsers into a cert-authority warning
+    # (GH #896/#887). Decoupled from the :443 block itself (JAB-237): a
+    # CDN-fronted domain serves :443 WITHOUT this redirect — Cloudflare
+    # owns the client-side https redirect, and an origin 301 loops CF
+    # Flexible zones. Scoped to the default location so the ^~ ACME
+    # location above wins for challenge paths.
     location / {
         return 301 https://$host$request_uri;
     }
+{{ end }}{{ if .ServeHTTPS }}
 }
 
 server {
@@ -671,11 +682,14 @@ type vhostData struct {
 	IsEnabled          bool
 	SSLCertPath        string
 	SSLKeyPath         string
-	// RedirectHTTPS (GH #896) gates the HTTP→HTTPS redirect AND the :443
-	// server block. When false the shared tail (root/PHP/locations) attaches
-	// to the :80 server so the docroot is served over plain HTTP — the
-	// self-signed bootstrap window. Always false when SSLCertPath is empty.
+	// RedirectHTTPS (GH #896) gates ONLY the :80→:443 redirect since
+	// JAB-237. ServeHTTPS gates the :443 server block; when false the
+	// shared tail (root/PHP/locations) attaches to the :80 server so the
+	// docroot is served over plain HTTP — the self-signed bootstrap
+	// window. Both always false when SSLCertPath is empty, and a redirect
+	// without a :443 block is coerced off (301 to a dead port).
 	RedirectHTTPS        bool
+	ServeHTTPS           bool
 	PHPMemoryLimit       string
 	PHPUploadMaxFilesize string
 	PHPPostMaxSize       string
@@ -964,7 +978,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -999,6 +1013,12 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	// :80 ACME location + docroot then serve HTTP-only until the cert re-lands.
 	if sslCertPath == "" {
 		redirectHTTPS = false
+		serveHTTPS = false
+	}
+	// A :80→:443 redirect without a :443 block would 301 every visitor
+	// into a connection refused — never render that combination.
+	if !serveHTTPS {
+		redirectHTTPS = false
 	}
 	// Same missing-file fallback for the preview wildcard pair: the shared
 	// *.preview.<hostname> cert may not be issued yet when the first
@@ -1027,10 +1047,10 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 			upstreamAddr = listenIPv4
 		}
 		// Hairpin to https only when the main vhost actually serves a :443
-		// block — i.e. RedirectHTTPS (GH #896). During the self-signed
-		// bootstrap window the main vhost is HTTP-only, so the preview must
-		// proxy over http or it would hit a dead :443.
-		if redirectHTTPS {
+		// block — ServeHTTPS (GH #896 bootstrap window / JAB-237 split).
+		// During the HTTP-only window the preview must proxy over http or
+		// it would hit a dead :443.
+		if serveHTTPS {
 			previewUpstream = "https://" + upstreamAddr + ":443"
 		} else {
 			previewUpstream = "http://" + upstreamAddr + ":80"
@@ -1068,6 +1088,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		SSLCertPath:                sslCertPath,
 		SSLKeyPath:                 sslKeyPath,
 		RedirectHTTPS:              redirectHTTPS,
+		ServeHTTPS:                 serveHTTPS,
 		PHPMemoryLimit:             phpMemLimit,
 		PHPUploadMaxFilesize:       phpUploadMax,
 		PHPPostMaxSize:             phpPostMax,
@@ -1173,6 +1194,23 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	}
 
 	return configPath, nil
+}
+
+// resolveHTTPSFlags maps the wire params to the two vhost gates (JAB-237).
+// redirect_https absent → historical default (redirect iff a cert path is
+// set). serve_https absent (pre-JAB-237 panel) → coupled to the redirect,
+// which is the exact historical behaviour. The redirect⇒serve coercion
+// lives in writeVhost next to the cert stat-guard.
+func resolveHTTPSFlags(p *domainCreateParams) (redirectHTTPS, serveHTTPS bool) {
+	redirectHTTPS = p.SSLCertPath != ""
+	if p.RedirectHTTPS != nil {
+		redirectHTTPS = *p.RedirectHTTPS
+	}
+	serveHTTPS = redirectHTTPS
+	if p.ServeHTTPS != nil {
+		serveHTTPS = *p.ServeHTTPS
+	}
+	return redirectHTTPS, serveHTTPS
 }
 
 func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -1320,11 +1358,8 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// so a pre-#896 panel that omits redirect_https keeps working. A current
 	// panel always sends the field; writeVhost still forces it false if the
 	// cert file turns out to be missing on disk (#213).
-	redirectHTTPS := p.SSLCertPath != ""
-	if p.RedirectHTTPS != nil {
-		redirectHTTPS = *p.RedirectHTTPS
-	}
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS)
+	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
