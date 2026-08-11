@@ -26,6 +26,15 @@ func RequireContentType() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		// Outlook autodiscover (GH #1039) POSTs a fixed text/xml request body to
+		// a well-known path whose Content-Type we don't control. It's a public
+		// discovery endpoint that parses + validates its own XML body and escapes
+		// its output, so exempt it from the JSON-or-upload guard rather than
+		// widen the accepted set for every endpoint.
+		if strings.EqualFold(c.Request.URL.Path, "/autodiscover/autodiscover.xml") {
+			c.Next()
+			return
+		}
 
 		ct := c.GetHeader("Content-Type")
 		if !strings.HasPrefix(ct, "application/json") &&

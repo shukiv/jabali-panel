@@ -41,3 +41,32 @@ func TestRequireContentType(t *testing.T) {
 		})
 	}
 }
+
+// The Outlook autodiscover POST (GH #1039) arrives as text/xml, which the guard
+// would otherwise 415. It must be exempt on its well-known path, case-insensitive.
+func TestRequireContentType_AutodiscoverExempt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequireContentType())
+	r.POST("/autodiscover/autodiscover.xml", func(c *gin.Context) { c.Status(http.StatusOK) })
+	r.POST("/Autodiscover/Autodiscover.xml", func(c *gin.Context) { c.Status(http.StatusOK) })
+	r.POST("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	for _, path := range []string{"/autodiscover/autodiscover.xml", "/Autodiscover/Autodiscover.xml"} {
+		req := httptest.NewRequest("POST", path, strings.NewReader("<Autodiscover/>"))
+		req.Header.Set("Content-Type", "text/xml")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s text/xml: got %d, want 200 (exempt)", path, w.Code)
+		}
+	}
+	// Guard still bites text/xml on a non-exempt path.
+	req := httptest.NewRequest("POST", "/x", strings.NewReader("<x/>"))
+	req.Header.Set("Content-Type", "text/xml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("non-exempt text/xml: got %d, want 415", w.Code)
+	}
+}
