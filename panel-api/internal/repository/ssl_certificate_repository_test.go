@@ -232,7 +232,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 
 	// Expect a SELECT joining ssl_certificates, domains, and users
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        sc.cert_path FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        sc.cert_path,\n\t\t        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
 		WithArgs("revoked").
 		WillReturnRows(
 			sqlmock.NewRows([]string{

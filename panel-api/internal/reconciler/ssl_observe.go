@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -78,6 +79,30 @@ func certNotAfter(path string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return c.NotAfter, nil
+}
+
+// certDNSNames parses a PEM certificate file and returns the LEAF's SAN DNS
+// names, lower-cased. Used by the SAN-drift pass (JAB-226) to compare what a
+// cert actually covers against what the domain's flags say it should. Takes the
+// first PEM block for the same reason as certNotAfter — the leaf, not the chain.
+func certDNSNames(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("%s: no PEM CERTIFICATE block", path)
+	}
+	c, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	out := make([]string, 0, len(c.DNSNames))
+	for _, n := range c.DNSNames {
+		out = append(out, strings.ToLower(n))
+	}
+	return out, nil
 }
 
 // observeSSLCerts compares each issued certificate's row against its file and

@@ -78,6 +78,11 @@ type Reconciler struct {
 	// persistently-failing install is not re-dispatched every reconcile tick.
 	moduleInstallMu      sync.Mutex
 	moduleInstallAttempt map[string]time.Time
+	// sanDriftAttempt gates the JAB-226 SAN-drift reissue pass: cert ID -> last
+	// attempt, so a cert whose missing SAN isn't reachable yet isn't re-probed
+	// (or re-issued) more than once per sslSANDriftCooldown.
+	sanDriftMu      sync.Mutex
+	sanDriftAttempt map[string]time.Time
 	// queue holds domain IDs to reconcile out-of-band (non-blocking enqueue)
 	queue chan string
 	// socketReady is a function that checks if a Unix socket is ready. Mockable for testing.
@@ -602,6 +607,14 @@ func (r *Reconciler) Start(ctx context.Context) {
 	updateRunTicker := time.NewTicker(5 * time.Second)
 	defer updateRunTicker.Stop()
 
+	// Fire the SAN-drift pass once at startup so a panel restarted by
+	// `jabali update` converges issued certs missing a desired SAN (JAB-226)
+	// without waiting a full hour for the first ssl_observe tick. Rate-limited
+	// internally, and a no-op once every cert is complete.
+	if !r.IsPaused() {
+		r.ReconcileSSLSANDrift(ctx)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -638,6 +651,10 @@ func (r *Reconciler) Start(ctx context.Context) {
 			// SSL-enabled domain is re-armed so cutover is picked up without
 			// operator action. Rate-limited inside the pass.
 			r.ReconcileSSLResurrect(ctx)
+			// JAB-226: same cadence — an issued cert missing a reachable
+			// desired SAN (e.g. autodiscover.<domain>) is reissued via
+			// certbot --expand. Rate-limited inside the pass.
+			r.ReconcileSSLSANDrift(ctx)
 		case <-updateRunTicker.C:
 			if r.IsPaused() {
 				continue
