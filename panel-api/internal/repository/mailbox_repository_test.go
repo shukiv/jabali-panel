@@ -183,6 +183,36 @@ func TestMailboxRepository_ListByDomainID(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestMailboxRepository_ListByDomainID_ExcludeSystem verifies that the
+// GH #1056 opt filters the JAB-230 relay out of BOTH the count and the row
+// query — otherwise the paginated list would show N-1 rows against a total of
+// N and the relay would still surface on the last page.
+func TestMailboxRepository_ListByDomainID_ExcludeSystem(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewMailboxRepository(db)
+
+	cols := []string{"id", "domain_id", "local_part", "email_cached", "password_hash",
+		"quota_bytes", "is_disabled", "last_usage_bytes", "last_usage_at", "created_at", "updated_at"}
+	now := time.Now()
+
+	// Both the count and the select must carry the `system = 0` predicate.
+	mock.ExpectQuery("SELECT count.* FROM `mailboxes`.*WHERE domain_id = \\? AND system = 0").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
+	mock.ExpectQuery("SELECT .* FROM `mailboxes`.*WHERE domain_id = \\? AND system = 0.*ORDER BY").
+		WillReturnRows(sqlmock.NewRows(cols).
+			AddRow("mb1", "dom1", "alice", "alice@example.com", "h1", uint64(1<<30), false, uint64(0), nil, now, now),
+		)
+
+	rows, total, err := repo.ListByDomainID(context.Background(), "dom1", ListOptions{ExcludeSystem: true})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, rows, 1)
+	require.Equal(t, "alice@example.com", rows[0].EmailCached)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestMailboxRepository_ExistsByDomainAndLocalPart(t *testing.T) {
 	db, mock, raw := newMockDB(t)
 	defer raw.Close()

@@ -227,6 +227,7 @@ func (r *Reconciler) createRelayMailbox(ctx context.Context, d *models.Domain, l
 		DomainID:     d.ID,
 		LocalPart:    localPart,
 		DisplayName:  d.Name + " (system sender)",
+		System:       true, // GH #1056: hide the JAB-230 relay from the mailbox lists
 		PasswordHash: string(hash),
 		PasswordEnc:  enc,
 		QuotaBytes:   16 * 1024 * 1024,

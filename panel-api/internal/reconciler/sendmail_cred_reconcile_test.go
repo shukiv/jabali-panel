@@ -142,6 +142,11 @@ func TestReconcileSendmailCreds_ProvisionsAndCaches(t *testing.T) {
 		if !mb.SendOnly {
 			t.Errorf("relay mailbox %s must be SendOnly", mb.ID)
 		}
+		if !mb.System {
+			// GH #1056: the relay must be flagged System so the mailbox
+			// lists filter it out — an operator never created it.
+			t.Errorf("relay mailbox %s must be System", mb.ID)
+		}
 		if mb.LocalPart != "noreply" {
 			t.Errorf("local part = %q", mb.LocalPart)
 		}
@@ -233,8 +238,8 @@ func TestReconcileSendmailCreds_SkipsAndRetries(t *testing.T) {
 		domainNames: map[string]string{"d1": "site.tld", "d-admin": "adminsite.tld"},
 	}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d-nouser", Name: "nouser.tld", UserID: "u2"},      // no Linux user
-		{ID: "d-admin", Name: "panelhost.tld", UserID: "u3"},    // admin w/ synthesized username
+		{ID: "d-nouser", Name: "nouser.tld", UserID: "u2"},   // no Linux user
+		{ID: "d-admin", Name: "panelhost.tld", UserID: "u3"}, // admin w/ synthesized username
 		{ID: "d1", Name: "site.tld", UserID: "u1"},
 	})
 	ctx := context.Background()

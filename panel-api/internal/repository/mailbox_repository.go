@@ -99,6 +99,9 @@ func (r *mailboxRepo) ListByDomainID(ctx context.Context, domainID string, opts 
 		total int64
 	)
 	base := r.db.WithContext(ctx).Model(&models.Mailbox{}).Where("domain_id = ?", domainID)
+	if opts.ExcludeSystem {
+		base = base.Where("system = 0") // GH #1056: hide the JAB-230 relay from list + count
+	}
 
 	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, mailboxListCols)
 	if err := countQ.Count(&total).Error; err != nil {

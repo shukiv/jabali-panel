@@ -36,6 +36,12 @@ type ListOptions struct {
 	// disclaimer, nginx safe-options JSON). Detail GETs and the reconciler
 	// always read full rows. Other repos ignore it.
 	OmitHeavyColumns bool
+	// ExcludeSystem — mailbox-repo-only (GH #1056); when true, drops
+	// panel-managed system principals (the JAB-230 sendmail relay) from the
+	// result AND the count, so the user-facing mailbox list never shows a
+	// mailbox the operator didn't create. Internal callers leave it false so
+	// backup/disk-usage/usage-ticker still see the relay. Other repos ignore it.
+	ExcludeSystem bool
 }
 
 // ListCols tells applyListOptions which columns are searchable (free-text
@@ -58,6 +64,7 @@ type ListCols struct {
 //   - Sort direction defaults to DESC on the default column; explicit
 //     Sort+Order can flip it.
 //   - Empty Limit leaves the query unbounded (callers should clamp).
+//
 // maxSearchLen is the hard cap on free-text search length. 128 chars is
 // ample for realistic email/name fragment searches and prevents a
 // caller from forcing giant LIKE scans with a megabyte-long pattern.

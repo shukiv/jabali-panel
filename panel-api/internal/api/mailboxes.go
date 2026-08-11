@@ -197,6 +197,7 @@ func (h *mailboxHandler) list(c *gin.Context) {
 	}
 
 	page, pageSize, opts := parseListOptions(c, defaultMailboxesPageSize, maxMailboxesPageSize)
+	opts.ExcludeSystem = true // GH #1056: the JAB-230 relay is infra, not a listed mailbox
 
 	rows, total, err := h.cfg.Mailboxes.ListByDomainID(ctx, dom.ID, opts)
 	if err != nil {
@@ -723,6 +724,9 @@ func (h *mailboxHandler) listAllAdmin(c *gin.Context) {
 	}
 	out := make([]adminMailboxResponse, 0, len(rows))
 	for _, r := range rows {
+		if r.Mailbox.System {
+			continue // GH #1056: the JAB-230 relay is infra, not a listed mailbox
+		}
 		out = append(out, adminMailboxResponse{
 			mailboxResponse: toMailboxResponse(r.Mailbox),
 			DomainName:      r.DomainName,
