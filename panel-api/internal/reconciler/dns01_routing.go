@@ -177,7 +177,80 @@ type dns01State struct {
 	dns01SSOKey     *ssokey.Key
 	dns01RouteMu    sync.Mutex
 	dns01RouteCache map[string]dns01CachedRoute
+	// JAB-237 fronted-apex cache for the vhost path — see apexFronted.
+	frontedMu    sync.Mutex
+	frontedCache map[string]frontedEntry
 	// test seams — nil in production
 	dns01LookupNS   func(ctx context.Context, name string) ([]string, bool)
 	dns01ZoneFinder dns01.ZoneFinder
+}
+
+// frontedCacheTTL bounds how long an apex-fronted decision is reused by the
+// vhost renderer before re-asking public DNS.
+const frontedCacheTTL = 15 * time.Minute
+
+type frontedEntry struct {
+	fronted bool
+	expires time.Time
+}
+
+// apexFronted reports whether name's apex publicly resolves somewhere that
+// is not this box — the vhost renderer's view of frontedByCDN (JAB-237).
+//
+// Cache rule, load-bearing: a DEFINITIVE lookup (public DNS answered)
+// updates the cache; an INCONCLUSIVE one (every resolver unreachable) keeps
+// the last known value and extends its TTL. Without that, a resolver blip
+// would flip fronted domains to "not fronted", re-render their vhosts
+// :80-only, and 520 every Cloudflare-Full zone until the resolvers return —
+// the exact outage this fix exists for. A cold cache + inconclusive answer
+// falls back to "not fronted" (the pre-JAB-237 rendering); accepted
+// residual, called out in the PR.
+func (r *Reconciler) apexFronted(ctx context.Context, name string) bool {
+	now := time.Now()
+	r.frontedMu.Lock()
+	entry, cached := r.frontedCache[name]
+	r.frontedMu.Unlock()
+	if cached && now.Before(entry.expires) {
+		return entry.fronted
+	}
+
+	var ourAddrs []string
+	if r.serverSettings != nil {
+		srvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if srv, err := r.serverSettings.Get(srvCtx); err == nil && srv != nil {
+			if srv.PublicIPv4 != "" {
+				ourAddrs = append(ourAddrs, srv.PublicIPv4)
+			}
+			if srv.PublicIPv6 != "" {
+				ourAddrs = append(ourAddrs, srv.PublicIPv6)
+			}
+		}
+		cancel()
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	addrs, queried := r.dnsPreflight(lookupCtx, name)
+	cancel()
+
+	if !queried || len(ourAddrs) == 0 {
+		// Inconclusive (or we don't know our own IP): keep the last known
+		// value alive rather than flapping; cold cache reads not-fronted.
+		if cached {
+			r.frontedMu.Lock()
+			entry.expires = now.Add(frontedCacheTTL)
+			r.frontedCache[name] = entry
+			r.frontedMu.Unlock()
+			return entry.fronted
+		}
+		return false
+	}
+
+	fronted := frontedByCDN(addrs, ourAddrs)
+	r.frontedMu.Lock()
+	if r.frontedCache == nil {
+		r.frontedCache = map[string]frontedEntry{}
+	}
+	r.frontedCache[name] = frontedEntry{fronted: fronted, expires: now.Add(frontedCacheTTL)}
+	r.frontedMu.Unlock()
+	return fronted
 }

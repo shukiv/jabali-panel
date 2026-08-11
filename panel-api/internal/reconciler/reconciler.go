@@ -1895,6 +1895,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// explicitly (false in the no-cert branch too) so a current panel never
 	// sends nil.
 	redirectHTTPS := false
+	certIssueMethod := ""
 	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" {
 		certPath, keyPath := sharedCertPaths(*domain.SharedCertificateID)
 		params["ssl_cert_path"], params["ssl_key_path"] = certPath, keyPath
@@ -1908,9 +1909,26 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			params["ssl_cert_path"] = *cert.CertPath
 			params["ssl_key_path"] = *cert.KeyPath
 			redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, *cert.CertPath)
+			certIssueMethod = cert.IssueMethod
 		}
 	}
+	// JAB-237: a CDN-fronted domain must SERVE :443 even on its self-signed
+	// bootstrap cert — Cloudflare Full dials origin :443 and 520s on a
+	// closed port, and the browser never sees the origin cert behind the
+	// edge, so the GH #896 warning rationale does not apply. It must also
+	// NOT origin-redirect :80→:443: CF Flexible fetches over :80, and an
+	// origin 301 loops it (latent for every fronted domain the moment a
+	// real cert lands). Directly-served domains keep the coupled #896
+	// behaviour. A dns-01-issued cert is fronted by construction — that
+	// path only runs for fronted domains — and needs no DNS lookup.
+	_, certSet := params["ssl_cert_path"]
+	serveHTTPS := redirectHTTPS
+	if certSet && (certIssueMethod == issueMethodDNS01 || r.apexFronted(ctx, domain.Name)) {
+		serveHTTPS = true
+		redirectHTTPS = false
+	}
 	params["redirect_https"] = redirectHTTPS
+	params["serve_https"] = serveHTTPS
 
 	// Preview URL params (temp URLs) — nil when disabled or no hostname.
 	for k, v := range r.previewParams(ctx, domain) {
