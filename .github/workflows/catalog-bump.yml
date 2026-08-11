@@ -1,4 +1,4 @@
-# Weekly Docker-apps catalog bump (JAB-234). cmd/catalog-bump checks every
+# Monthly Docker-apps catalog bump (JAB-234). cmd/catalog-bump checks every
 # catalog entry against its upstream registry and rewrites app.yaml with the
 # newest matching tag + digest; this workflow turns the diff into ONE roll-up
 # PR on the fixed branch catalog-auto-bump. A human reviews (major bumps are
@@ -11,11 +11,11 @@
 #
 # The self-hosted runner has curl + python3 but no gh CLI — REST over curl,
 # same as monthly-deps.yml / release.yml.
-name: Weekly catalog bump
+name: Monthly catalog bump
 
 on:
   schedule:
-    - cron: "30 6 * * 1" # 06:30 UTC every Monday
+    - cron: "30 6 1 * *" # 06:30 UTC on the 1st of every month (after monthly-deps at 06:00)
   workflow_dispatch: {}
 
 permissions:
@@ -62,14 +62,14 @@ jobs:
           BRANCH="catalog-auto-bump"
           git checkout -B "$BRANCH"
           git add install/docker-apps
-          git commit -m "chore(docker-apps): weekly catalog version bumps"
-          # The bot owns this branch and force-pushes weekly — never park
+          git commit -m "chore(docker-apps): monthly catalog version bumps"
+          # The bot owns this branch and force-pushes on every run — never park
           # manual edits here; push fixups to a different branch instead.
           git push -f origin "$BRANCH"
 
           {
             echo "_Auto-generated on $(date -u +'%Y-%m-%d') by \`.github/workflows/catalog-bump.yml\`._"
-            echo "_The bot force-pushes \`${BRANCH}\` weekly — do not park manual edits on this branch._"
+            echo "_The bot force-pushes \`${BRANCH}\` on every run — do not park manual edits on this branch._"
             echo
             if [[ "$HAS_PAT" != "true" ]]; then
               echo "> [!WARNING]"
@@ -90,7 +90,7 @@ jobs:
           REPO="$GITHUB_REPOSITORY"
           OWNER="${GITHUB_REPOSITORY%%/*}"
           hdr=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
-          TITLE="chore(docker-apps): weekly catalog version bumps"
+          TITLE="chore(docker-apps): monthly catalog version bumps"
 
           NUM="$(curl -sS "${hdr[@]}" "${API}/repos/${REPO}/pulls?state=open&head=${OWNER}:${BRANCH}" \
                  | python3 -c 'import json,sys; items=json.load(sys.stdin); print(items[0]["number"] if items else "")')"
