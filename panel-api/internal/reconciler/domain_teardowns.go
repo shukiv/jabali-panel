@@ -95,6 +95,7 @@ func (r *Reconciler) reportOrphanSites(orphans []string) {
 		return
 	}
 	r.log.Warn("reconcile: orphan sites found in agent with no DB rows — not auto-deleted; "+
-		"remove with `jabali agent call domain.delete` / `dns.zone.delete` if unwanted",
+		"if unwanted, re-create the domain in the panel and delete it (runs the durable teardown), "+
+		"or insert the name into domain_teardowns for the reconciler to tear down",
 		"count", len(orphans), "sites", strings.Join(orphans, ", "))
 }
