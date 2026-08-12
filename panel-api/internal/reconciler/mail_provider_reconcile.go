@@ -190,6 +190,7 @@ func (r *Reconciler) pruneJabaliMailRecords(ctx context.Context, zone *models.DN
 // duplicates an existing apex record.
 func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZone, domain *models.Domain, srv *models.ServerSettings, existing []models.DNSRecord, now time.Time) {
 	hasMX, hasSPF, hasDMARC := false, false, false
+	hasMailA, hasMailAAAA, hasMailCNAME := false, false, false
 	var dmarcRec *models.DNSRecord
 	for i := range existing {
 		e := existing[i]
@@ -201,6 +202,12 @@ func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZ
 		case e.Name == "_dmarc" && e.Type == "TXT":
 			hasDMARC = true
 			dmarcRec = &existing[i]
+		case e.Name == "mail" && e.Type == "A":
+			hasMailA = true
+		case e.Name == "mail" && e.Type == "AAAA":
+			hasMailAAAA = true
+		case e.Name == "mail" && e.Type == "CNAME":
+			hasMailCNAME = true
 		}
 	}
 	mk := func(name, typ, content string, prio int) *models.DNSRecord {
@@ -212,6 +219,29 @@ func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZ
 	if !hasMX && zone.Name != "" {
 		if err := r.dnsRecords.Create(ctx, mk("@", "MX", "mail."+zone.Name, 10)); err != nil {
 			r.log.Warn("mail-provider reconcile: restore MX", "err", err)
+		}
+	}
+	// GH #723: the `mail` A/AAAA is the MX target — mail can't deliver and the
+	// mail-cert preflight ("mail.<domain> must resolve") can't pass without it.
+	// BootstrapRecords seeds it on a FRESH zone, but a migrated zone created by
+	// the bind import (bind_parse.go drops the source's mail records via
+	// isMailInfraRecord, then creates the zone row when a non-mail record
+	// survives) makes reconcileDNSZone skip bootstrap — so restoring MX above
+	// while omitting its A target left `mail.<zone>` unresolvable. Restore it as
+	// the paired half of MX. Pinned to the server primary (the MTA listens
+	// there), like BootstrapRecords. Presence is checked by name+type only so an
+	// operator's own `mail A` is never duplicated; a `mail` CNAME blocks both
+	// families (an A/AAAA beside a same-name CNAME is a zone error).
+	if !hasMailCNAME && srv != nil {
+		if !hasMailA && srv.PublicIPv4 != "" {
+			if err := r.dnsRecords.Create(ctx, mk("mail", "A", srv.PublicIPv4, 0)); err != nil {
+				r.log.Warn("mail-provider reconcile: restore mail A", "err", err)
+			}
+		}
+		if !hasMailAAAA && srv.PublicIPv6 != "" {
+			if err := r.dnsRecords.Create(ctx, mk("mail", "AAAA", srv.PublicIPv6, 0)); err != nil {
+				r.log.Warn("mail-provider reconcile: restore mail AAAA", "err", err)
+			}
 		}
 	}
 	if !hasSPF {
