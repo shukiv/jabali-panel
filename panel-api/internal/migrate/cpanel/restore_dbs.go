@@ -51,20 +51,35 @@ type DBCredential struct {
 	DBUser   string
 	Password string // plaintext temp_pwd printed in the manifest line
 
-	// KeepSourcePassword suppresses the password rewrite in app configs.
+	// PreservedUsers is the set of ORIGINAL source DB users that were recreated
+	// on the destination with their native password HASH and granted on this
+	// DB's namespaced destination during a --preserve-source-state restore
+	// (JAB-207 / GH #723). When an app config's DB user is one of these, the
+	// rewriter keeps the config's ORIGINAL user + password untouched — that
+	// recreated user authenticates with the source password the file already
+	// holds — and only namespaces DB_NAME + normalises DB_HOST.
 	//
-	// Set when a --preserve-source-state compat user takes over the MySQL
-	// account this credential names, which happens whenever the source DB
-	// user is spelled the same as the panel-managed one (JAB-207). The
-	// agent's db_user.create runs an unconditional ALTER USER for the hash
-	// path — deliberately, so the preserved hash wins (GH #633) — so the
-	// account ends up authenticating with the ORIGINAL password while
-	// Password here holds a temp one that now matches nothing.
-	//
-	// The source config already carries the original password and it matched
-	// that hash on the source, so the correct move is to leave it alone:
-	// rewrite DB name/user/host, do not touch the password.
-	KeepSourcePassword bool
+	// This subsumes the earlier same-name-collision special case: whether the
+	// destination account keeps the source's name (source user == panel-managed
+	// user, so db_user.create ALTERs one account to the source hash) or is named
+	// differently (a second, source-named account is created), the config's user
+	// is a member here and its credentials are preserved. Empty on a preserve-off
+	// restore, or for a user we could NOT recreate (unsupported hash format) — in
+	// which case the rewriter falls back to the panel-managed credentials so the
+	// site still connects.
+	PreservedUsers map[string]bool
+}
+
+// preservesUser reports whether configUser — the DB user an app config file
+// references — was recreated as a preserved compat user for this DB. When true
+// the app-config rewriter keeps the config's original DB user + password (that
+// user authenticates with the source password already in the file) and only
+// namespaces DB_NAME / normalises DB_HOST.
+func (c DBCredential) preservesUser(configUser string) bool {
+	if configUser == "" || c.PreservedUsers == nil {
+		return false
+	}
+	return c.PreservedUsers[configUser]
 }
 
 // dbRestoreNameRe mirrors the agent's db.restore validation
@@ -137,10 +152,6 @@ func ImportDatabases(
 	// compat-user path, fix for the "migrated app sees Access denied"
 	// scar).
 	sourceToFinalDB := map[string]string{}
-	// managedUserToSourceDB maps a panel-managed MySQL user we create in this
-	// run back to the SOURCE db name its credential is keyed by. Used below to
-	// detect a compat user about to take over the same account (JAB-207).
-	managedUserToSourceDB := map[string]string{}
 	for _, dumpPath := range parsed.MySQLDumps {
 		finalName, base, ok := deriveDestDBName(dumpPath, targetUsername)
 		if !ok {
@@ -339,10 +350,6 @@ func ImportDatabases(
 									DBUser:   finalName,
 									Password: plainPwd,
 								}
-								// Remember which MySQL account this credential
-								// owns, so the compat pass below can tell when
-								// it is about to take that same account over.
-								managedUserToSourceDB[finalName] = base
 							}
 						}
 					}
@@ -402,28 +409,20 @@ func ImportDatabases(
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: db_user.create: %v", u.Name, ucErr))
 				continue
 			}
-			// JAB-207. When the source MySQL user is spelled the same as the
-			// panel-managed one — the norm when the destination account keeps
-			// the source's name — the call above did not create a second
-			// account. It ALTERed the one the dump loop just made, replacing
-			// the temp password with the source hash. That is intended (GH
-			// #633: the preserved hash must win), but it silently invalidates
-			// the temp password the app-config rewriter is about to publish,
-			// and the migrated site then fails to connect while the summary
-			// reports success.
-			//
-			// The source config still holds the original password, which
-			// matched this hash on the source. So keep it: rewrite the DB
-			// name/user/host and leave the password alone.
-			if srcDB, collides := managedUserToSourceDB[u.Name]; collides {
-				if cred, have := res.Credentials[srcDB]; have {
-					cred.KeepSourcePassword = true
-					res.Credentials[srcDB] = cred
-				}
-				res.Skipped = append(res.Skipped, fmt.Sprintf(
-					"compat_user %s: shares the panel-managed user name — the source password hash is now authoritative for this account, so %s keeps its ORIGINAL password in app configs (the temp password reported above no longer applies)",
-					u.Name, u.Name))
-			}
+			// JAB-207 / GH #723. This compat user was created with the source's
+			// native password hash. db_user.create runs an unconditional ALTER
+			// USER for the hash path (deliberate — GH #633, the preserved hash
+			// must win): when the source user is spelled the same as the
+			// panel-managed one (destination account keeps the source's name) it
+			// ALTERs that one account to the source hash; when named differently
+			// it creates a second, source-named account. Either way the account
+			// authenticates with the ORIGINAL password, not the temp one the dump
+			// loop generated. So any app config that references THIS user must
+			// keep its original user + password (the source config already holds
+			// the password that matches this hash) — the rewriter only namespaces
+			// DB_NAME + normalises DB_HOST. Recorded per DB below, but only after
+			// the grant on the namespaced destination also succeeds, so we never
+			// promise a preserve for an account that can't actually reach the DB.
 			grantedDBs := 0
 			for _, g := range u.Grant {
 				finalDB, ok := sourceToFinalDB[g.SourceDB]
@@ -453,6 +452,17 @@ func ImportDatabases(
 					continue
 				}
 				grantedDBs++
+				// The recreated user now has both the source password hash and a
+				// grant on this DB's namespaced destination — so an app config
+				// pointing at (this DB, this user) keeps its original credentials.
+				// res.Credentials is keyed by the SOURCE DB name (g.SourceDB).
+				if cred, have := res.Credentials[g.SourceDB]; have {
+					if cred.PreservedUsers == nil {
+						cred.PreservedUsers = map[string]bool{}
+					}
+					cred.PreservedUsers[u.Name] = true
+					res.Credentials[g.SourceDB] = cred
+				}
 			}
 			compatCreated++
 			res.Skipped = append(res.Skipped, fmt.Sprintf(

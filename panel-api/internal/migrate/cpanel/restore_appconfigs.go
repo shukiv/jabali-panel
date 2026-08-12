@@ -314,12 +314,19 @@ func rewriteWordPress(text string, creds map[string]DBCredential) (string, bool)
 	if !strings.Contains(text, "DB_NAME") {
 		return text, false
 	}
-	// Find the source DB_NAME first so we can match it against a credential.
-	var sourceDB string
+	// Find the source DB_NAME + DB_USER so we can match a credential and decide
+	// whether the config's user was recreated as a preserved compat user.
+	var sourceDB, sourceUser string
 	for _, m := range wpDefineRe.FindAllStringSubmatch(text, -1) {
-		if m[1] == "DB_NAME" {
-			sourceDB = m[2]
-			break
+		switch m[1] {
+		case "DB_NAME":
+			if sourceDB == "" {
+				sourceDB = m[2]
+			}
+		case "DB_USER":
+			if sourceUser == "" {
+				sourceUser = m[2]
+			}
 		}
 	}
 	creds2 := creds
@@ -340,14 +347,15 @@ func rewriteWordPress(text string, creds map[string]DBCredential) (string, bool)
 	// so the cPanel restore and the wordpress_ssh import apply one identical,
 	// proven rewriter (no drift). Behavior-preserving (same regex + php-escape,
 	// DB_HOST -> localhost).
-	// JAB-207: when a preserved compat user owns this MySQL account, the
-	// original password in the config is the one that authenticates — pass nil
-	// so DB_PASSWORD is left exactly as the source wrote it.
-	pass := &cred.Password
-	if cred.KeepSourcePassword {
-		pass = nil
+	// JAB-207 / GH #723: when the config's DB_USER was recreated as a preserved
+	// compat user (--preserve-source-state), the original user + password in the
+	// config are what authenticate — pass nil for both so they are left exactly
+	// as the source wrote them; only DB_NAME is namespaced + DB_HOST normalised.
+	user, pass := &cred.DBUser, &cred.Password
+	if cred.preservesUser(sourceUser) {
+		user, pass = nil, nil
 	}
-	return migrate.RewriteWPConfigDBFields(text, cred.DBName, cred.DBUser, pass, "localhost")
+	return migrate.RewriteWPConfigDBFields(text, cred.DBName, user, pass, "localhost")
 }
 
 var (
@@ -358,11 +366,17 @@ func rewriteJoomla(text string, creds map[string]DBCredential) (string, bool) {
 	if !strings.Contains(text, "public $db") {
 		return text, false
 	}
-	var sourceDB string
+	var sourceDB, sourceUser string
 	for _, m := range joomlaAssignRe.FindAllStringSubmatch(text, -1) {
-		if m[1] == "db" {
-			sourceDB = m[2]
-			break
+		switch m[1] {
+		case "db":
+			if sourceDB == "" {
+				sourceDB = m[2]
+			}
+		case "user":
+			if sourceUser == "" {
+				sourceUser = m[2]
+			}
 		}
 	}
 	cred, ok := creds[sourceDB]
@@ -375,16 +389,22 @@ func rewriteJoomla(text string, creds map[string]DBCredential) (string, bool) {
 	if !ok {
 		return text, false
 	}
+	// JAB-207 / GH #723: keep the original user + password when they were
+	// recreated as a preserved compat user (--preserve-source-state).
+	keep := cred.preservesUser(sourceUser)
 	out := joomlaAssignRe.ReplaceAllStringFunc(text, func(line string) string {
 		m := joomlaAssignRe.FindStringSubmatch(line)
 		switch m[1] {
 		case "db":
 			return fmt.Sprintf("public $db = '%s';", phpEscape(cred.DBName))
 		case "user":
+			if keep {
+				return m[0]
+			}
 			return fmt.Sprintf("public $user = '%s';", phpEscape(cred.DBUser))
 		case "password":
-			if cred.KeepSourcePassword {
-				return m[0] // JAB-207: preserved compat hash owns this account
+			if keep {
+				return m[0]
 			}
 			return fmt.Sprintf("public $password = '%s';", phpEscape(cred.Password))
 		case "host":
@@ -425,11 +445,17 @@ func rewriteITFlow(text string, creds map[string]DBCredential) (string, bool) {
 	if !itflowAssignRe.MatchString(text) {
 		return text, false
 	}
-	var sourceDB string
+	var sourceDB, sourceUser string
 	for _, m := range itflowAssignRe.FindAllStringSubmatch(text, -1) {
-		if m[1] == "database" {
-			sourceDB = m[2]
-			break
+		switch m[1] {
+		case "database":
+			if sourceDB == "" {
+				sourceDB = m[2]
+			}
+		case "dbusername":
+			if sourceUser == "" {
+				sourceUser = m[2]
+			}
 		}
 	}
 	cred, ok := creds[sourceDB]
@@ -442,14 +468,23 @@ func rewriteITFlow(text string, creds map[string]DBCredential) (string, bool) {
 	if !ok {
 		return text, false
 	}
+	// JAB-207 / GH #723: keep the original user + password when they were
+	// recreated as a preserved compat user (--preserve-source-state).
+	keep := cred.preservesUser(sourceUser)
 	out := itflowAssignRe.ReplaceAllStringFunc(text, func(line string) string {
 		m := itflowAssignRe.FindStringSubmatch(line)
 		switch m[1] {
 		case "database":
 			return fmt.Sprintf("$database = '%s';", phpEscape(cred.DBName))
 		case "dbusername":
+			if keep {
+				return m[0]
+			}
 			return fmt.Sprintf("$dbusername = '%s';", phpEscape(cred.DBUser))
 		case "dbpassword":
+			if keep {
+				return m[0]
+			}
 			return fmt.Sprintf("$dbpassword = '%s';", phpEscape(cred.Password))
 		case "dbhost":
 			return "$dbhost = 'localhost';"
@@ -467,11 +502,17 @@ func rewriteDrupal(text string, creds map[string]DBCredential) (string, bool) {
 	if !strings.Contains(text, "'database'") {
 		return text, false
 	}
-	var sourceDB string
+	var sourceDB, sourceUser string
 	for _, m := range drupalKVRe.FindAllStringSubmatch(text, -1) {
-		if m[1] == "database" {
-			sourceDB = m[2]
-			break
+		switch m[1] {
+		case "database":
+			if sourceDB == "" {
+				sourceDB = m[2]
+			}
+		case "username":
+			if sourceUser == "" {
+				sourceUser = m[2]
+			}
 		}
 	}
 	cred, ok := creds[sourceDB]
@@ -484,14 +525,23 @@ func rewriteDrupal(text string, creds map[string]DBCredential) (string, bool) {
 	if !ok {
 		return text, false
 	}
+	// JAB-207 / GH #723: keep the original user + password when they were
+	// recreated as a preserved compat user (--preserve-source-state).
+	keep := cred.preservesUser(sourceUser)
 	out := drupalKVRe.ReplaceAllStringFunc(text, func(line string) string {
 		m := drupalKVRe.FindStringSubmatch(line)
 		switch m[1] {
 		case "database":
 			return fmt.Sprintf("'database' => '%s'", phpEscape(cred.DBName))
 		case "username":
+			if keep {
+				return m[0]
+			}
 			return fmt.Sprintf("'username' => '%s'", phpEscape(cred.DBUser))
 		case "password":
+			if keep {
+				return m[0]
+			}
 			return fmt.Sprintf("'password' => '%s'", phpEscape(cred.Password))
 		case "host":
 			return "'host' => 'localhost'"
@@ -512,11 +562,17 @@ func rewriteMagento(text string, creds map[string]DBCredential) (string, bool) {
 	if !strings.Contains(text, "'connection'") || !strings.Contains(text, "'dbname'") {
 		return text, false
 	}
-	var sourceDB string
+	var sourceDB, sourceUser string
 	for _, m := range magentoKVRe.FindAllStringSubmatch(text, -1) {
-		if m[1] == "dbname" {
-			sourceDB = m[2]
-			break
+		switch m[1] {
+		case "dbname":
+			if sourceDB == "" {
+				sourceDB = m[2]
+			}
+		case "username":
+			if sourceUser == "" {
+				sourceUser = m[2]
+			}
 		}
 	}
 	cred, ok := creds[sourceDB]
@@ -529,14 +585,23 @@ func rewriteMagento(text string, creds map[string]DBCredential) (string, bool) {
 	if !ok {
 		return text, false
 	}
+	// JAB-207 / GH #723: keep the original user + password when they were
+	// recreated as a preserved compat user (--preserve-source-state).
+	keep := cred.preservesUser(sourceUser)
 	out := magentoKVRe.ReplaceAllStringFunc(text, func(line string) string {
 		m := magentoKVRe.FindStringSubmatch(line)
 		switch m[1] {
 		case "dbname":
 			return fmt.Sprintf("'dbname' => '%s'", phpEscape(cred.DBName))
 		case "username":
+			if keep {
+				return m[0]
+			}
 			return fmt.Sprintf("'username' => '%s'", phpEscape(cred.DBUser))
 		case "password":
+			if keep {
+				return m[0]
+			}
 			return fmt.Sprintf("'password' => '%s'", phpEscape(cred.Password))
 		case "host":
 			return "'host' => 'localhost'"

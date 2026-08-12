@@ -43,8 +43,9 @@ define('DB_HOST', 'localhost');
 			DBName:   "vidoflexco_db",
 			DBUser:   "vidoflexco_db",
 			Password: "TEMPgenerated26charvalue00",
-			// Set by the compat pass on a name collision.
-			KeepSourcePassword: true,
+			// Set by the compat pass once the source user was recreated with
+			// its native hash + granted on the namespaced destination.
+			PreservedUsers: map[string]bool{"vidoflexco_db": true},
 		},
 	}
 
@@ -59,7 +60,12 @@ define('DB_HOST', 'localhost');
 		t.Errorf("the original password must survive — it is what the preserved "+
 			"hash authenticates:\n%s", out)
 	}
-	// The rest still has to be rewritten; only the password is special.
+	// The preserved user must also survive (it is what the source password
+	// authenticates against).
+	if !strings.Contains(out, "define('DB_USER', 'vidoflexco_db');") {
+		t.Errorf("the original DB_USER must survive on the preserve path:\n%s", out)
+	}
+	// The rest still has to be rewritten; only user + password are special.
 	if !strings.Contains(out, "define('DB_HOST', 'localhost');") {
 		t.Errorf("DB_HOST should still be normalised:\n%s", out)
 	}
@@ -107,7 +113,8 @@ define('DB_USER', 'b');
 define('DB_PASSWORD', 'keepme');
 define('DB_HOST', 'oldhost');
 `
-	out, changed := migrate.RewriteWPConfigDBFields(in, "newdb", "newuser", nil, "localhost")
+	newUser := "newuser"
+	out, changed := migrate.RewriteWPConfigDBFields(in, "newdb", &newUser, nil, "localhost")
 
 	if !strings.Contains(out, "define('DB_PASSWORD', 'keepme');") {
 		t.Errorf("nil password must leave DB_PASSWORD untouched:\n%s", out)
@@ -119,6 +126,36 @@ define('DB_HOST', 'oldhost');
 	}
 	if !changed {
 		t.Error("changed should be true — name/user/host did change")
+	}
+}
+
+// GH #723: a nil DB_USER must leave DB_USER untouched too — the preserve path
+// keeps both the original user and password (the recreated compat user
+// authenticates with the source password the file already holds).
+func TestRewriteWPConfigDBFields_NilUserLeavesItAlone(t *testing.T) {
+	t.Parallel()
+
+	const in = `<?php
+define('DB_NAME', 'oldname');
+define('DB_USER', 'keepuser');
+define('DB_PASSWORD', 'keeppass');
+define('DB_HOST', 'oldhost');
+`
+	out, changed := migrate.RewriteWPConfigDBFields(in, "newdb", nil, nil, "localhost")
+
+	if !strings.Contains(out, "define('DB_USER', 'keepuser');") {
+		t.Errorf("nil user must leave DB_USER untouched:\n%s", out)
+	}
+	if !strings.Contains(out, "define('DB_PASSWORD', 'keeppass');") {
+		t.Errorf("nil password must leave DB_PASSWORD untouched:\n%s", out)
+	}
+	// DB_NAME + DB_HOST still get namespaced/normalised.
+	if !strings.Contains(out, "define('DB_NAME', 'newdb');") ||
+		!strings.Contains(out, "define('DB_HOST', 'localhost');") {
+		t.Errorf("DB_NAME and DB_HOST must still be rewritten:\n%s", out)
+	}
+	if !changed {
+		t.Error("changed should be true — name/host did change")
 	}
 }
 
@@ -135,7 +172,8 @@ define('DB_PASSWORD', 'x');
 define('DB_HOST', 'h');
 `
 	pw := `pa'ss`
-	out, _ := migrate.RewriteWPConfigDBFields(in, "d", "u", &pw, "localhost")
+	usr := "u"
+	out, _ := migrate.RewriteWPConfigDBFields(in, "d", &usr, &pw, "localhost")
 	if !strings.Contains(out, `define('DB_PASSWORD', 'pa\'ss');`) {
 		t.Errorf("quote in the password was not escaped:\n%s", out)
 	}

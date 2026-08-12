@@ -28,19 +28,22 @@ func phpSingleQuoteEscape(s string) string {
 // identical, proven rewrite. Values are PHP single-quote escaped.
 // RewriteWPConfigDB rewrites all four DB constants.
 func RewriteWPConfigDB(text, dbName, dbUser, dbPass, dbHost string) (string, bool) {
-	return RewriteWPConfigDBFields(text, dbName, dbUser, &dbPass, dbHost)
+	return RewriteWPConfigDBFields(text, dbName, &dbUser, &dbPass, dbHost)
 }
 
-// RewriteWPConfigDBFields rewrites the DB constants, leaving DB_PASSWORD alone
-// when dbPass is nil.
+// RewriteWPConfigDBFields rewrites the DB constants, leaving DB_USER and/or
+// DB_PASSWORD alone when the corresponding pointer is nil.
 //
-// Needed because a migrated site can legitimately have to KEEP the password
-// already in its config: under --preserve-source-state a compat user restores
-// the source password hash onto the very account the restore also manages, so
-// the original password is the one that authenticates and any value written in
-// its place would break the site (JAB-207). Writing a password that does not
-// work is strictly worse than writing none.
-func RewriteWPConfigDBFields(text, dbName, dbUser string, dbPass *string, dbHost string) (string, bool) {
+// Needed because a migrated site can legitimately have to KEEP the user and
+// password already in its config: under --preserve-source-state a compat user
+// restores the source password hash onto a user named exactly as the config
+// references, so the original user + password are what authenticate and any
+// value written in their place would break the site (JAB-207 / GH #723). The
+// DB name still has to change — jabali namespaces it (`<account>_<db>`) — and
+// DB_HOST is normalised to localhost; only the credentials the recreated compat
+// user backs are held. Writing credentials that do not work is strictly worse
+// than writing none.
+func RewriteWPConfigDBFields(text, dbName string, dbUser *string, dbPass *string, dbHost string) (string, bool) {
 	if !strings.Contains(text, "DB_NAME") {
 		return text, false
 	}
@@ -50,7 +53,10 @@ func RewriteWPConfigDBFields(text, dbName, dbUser string, dbPass *string, dbHost
 		case "DB_NAME":
 			return fmt.Sprintf("define('DB_NAME', '%s');", phpSingleQuoteEscape(dbName))
 		case "DB_USER":
-			return fmt.Sprintf("define('DB_USER', '%s');", phpSingleQuoteEscape(dbUser))
+			if dbUser == nil {
+				return line // keep whatever the source config had
+			}
+			return fmt.Sprintf("define('DB_USER', '%s');", phpSingleQuoteEscape(*dbUser))
 		case "DB_PASSWORD":
 			if dbPass == nil {
 				return line // keep whatever the source config had
