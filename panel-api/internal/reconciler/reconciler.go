@@ -934,6 +934,13 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		"000-default":     true,
 		"000-default-ssl": true,
 		"jabali-panel":    true,
+		// The *.preview.<hostname> catch-all vhost (preview_fallback_vhost.go)
+		// — a system site with no domain row, flagged as an orphan on every
+		// report since the sweep learned to aggregate (JAB-236). It is not
+		// deletable through the teardown executor either (no dot — fails the
+		// agent's domain validation), so listing it only invites a doomed
+		// manual cleanup attempt.
+		"jabali-preview-fallback": true,
 	}
 
 	// JAB-236: drive pending teardown tombstones FIRST — a site being torn
