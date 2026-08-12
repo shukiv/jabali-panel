@@ -80,8 +80,10 @@ export function AdminLayout() {
         icon: n.icon,
         // Right-placed hover tooltip explaining the tab (mouseEnterDelay keeps it
         // from flashing while scanning the list). Falls back to the plain label
-        // when an item has no description.
-        label: n.description ? (
+        // when an item has no description. DESKTOP ONLY (GH #1066): on touch the
+        // tooltip swallows the first tap — the user has to tap twice to navigate.
+        // The mobile Drawer shows full labels, so the tooltip adds nothing there.
+        label: isDesktop && n.description ? (
           <Tooltip title={t(n.description)} placement="right" mouseEnterDelay={0.4}>
             <span>{t(n.label)}</span>
           </Tooltip>
@@ -103,15 +105,19 @@ export function AdminLayout() {
   }, [location.pathname]);
 
   return (
-    <Layout style={{ height: "100vh", overflow: "hidden" }}>
+    // GH #1066: desktop keeps the fixed app-shell (header + sidebar pinned, only
+    // Content scrolls). On mobile that pins the version footer to the bottom of a
+    // viewport-height scroll box, eating screen space on short pages — so mobile
+    // uses natural document scroll (minHeight) and the footer flows after content.
+    <Layout style={isDesktop ? { height: "100vh", overflow: "hidden" } : { minHeight: "100vh" }}>
       <JabaliHeader
         showMenuButton={!isDesktop}
         onMenuClick={() => setDrawerOpen(true)}
         searchNav={visibleNav}
       />
       {/* Row sized to the viewport minus the 64px header, so the sidebar +
-          header stay fixed and only the Content region scrolls. */}
-      <Layout style={{ height: "calc(100vh - 64px)" }}>
+          header stay fixed and only the Content region scrolls (desktop only). */}
+      <Layout style={isDesktop ? { height: "calc(100vh - 64px)" } : undefined}>
         {isDesktop ? (
           <Sider
             theme={mode}
@@ -174,7 +180,7 @@ export function AdminLayout() {
             {menu}
           </Drawer>
         )}
-        <Layout style={{ height: "100%", overflowY: "auto" }}>
+        <Layout style={isDesktop ? { height: "100%", overflowY: "auto" } : undefined}>
           <Content
             style={{
               // Extra top gap so the page heading breathes away from
