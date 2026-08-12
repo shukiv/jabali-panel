@@ -173,6 +173,37 @@ func ImportDatabases(
 			res.AlreadyPresent++
 			res.Skipped = append(res.Skipped, fmt.Sprintf(
 				"%s: %q verified existing — left in place, not re-imported", dumpPath, finalName))
+			// GH #723 resume gap: this DB was imported by an earlier run, so we
+			// skip the re-import — but the earlier run may have died BEFORE the
+			// app-config rewrite. Without a credential entry here, the rewriter
+			// no-ops on resume and the app config is left pointing at the SOURCE
+			// DB name (which no longer exists once jabali namespaces it) →
+			// "Error establishing a database connection" that a resume never
+			// heals.
+			//
+			// Under --preserve-source-state we CAN recover safely: seed the
+			// namespaced (DBName, DBUser) so the compat pass below attaches the
+			// recreated source user (PreservedUsers) and the rewriter keeps the
+			// app config's ORIGINAL user + password while namespacing DB_NAME. No
+			// password of ours is needed, so nothing is guessed or reset.
+			//
+			// With preserve OFF the panel-managed user's temp password was random
+			// and never persisted, and the plaintext db_user.create path does not
+			// ALTER an existing user — so there is no correct password to write on
+			// resume. Leave the config untouched (as before) and say so, rather
+			// than publish an empty/guessed password that also fails to connect.
+			if preserveCredentials {
+				if res.Credentials == nil {
+					res.Credentials = map[string]DBCredential{}
+				}
+				if _, have := res.Credentials[base]; !have {
+					res.Credentials[base] = DBCredential{DBName: finalName, DBUser: finalName}
+				}
+			} else {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"%s: on resume the panel-managed password can't be recovered (preserve off) — if the app still shows a DB-connection error, reset %q's password in the panel and update the app config",
+					dumpPath, finalName))
+			}
 			continue
 		}
 
