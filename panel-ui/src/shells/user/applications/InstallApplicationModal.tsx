@@ -245,7 +245,10 @@ function renderParamField(
           extra={spec.description}
         >
           <Select
-            options={(spec.values ?? []).map((v) => ({ value: v, label: v }))}
+            options={(spec.values ?? []).map((v) => ({
+              value: v,
+              label: spec.value_labels?.[v] ?? v,
+            }))}
             showSearch
             optionFilterProp="label"
           />

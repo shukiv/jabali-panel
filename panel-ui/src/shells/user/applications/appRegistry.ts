@@ -13,6 +13,10 @@ export type ParamSpec = {
   required?: boolean;
   pattern?: string;
   values?: string[];
+  // value_labels maps an enum value to its display label ("IL" →
+  // "Israel (IL)"). The Select filters on the label, so large enums are
+  // searchable by name. Values without an entry render as themselves.
+  value_labels?: Record<string, string>;
   default?: string | boolean | number | null;
   description?: string;
 };

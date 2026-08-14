@@ -196,6 +196,67 @@ func TestApplications_CreateITFlow_SurfacesEmailAsLogin(t *testing.T) {
 	_ = ag
 }
 
+func TestApplications_CreateInvoiceShelf_SurfacesEmailAsLogin(t *testing.T) {
+	// GH #1042 follow-up: InvoiceShelf logs in by EMAIL (the seeded super
+	// admin has no username), so the descriptor is EmailLogin — the random
+	// generated username must never be what the operator is shown ("the
+	// random admin user is still be displayed").
+	wpRepo, domainRepo, userRepo := wpUserAndDomain()
+	r, ag, _ := applicationsRouter(t, "user1", false, wpRepo, domainRepo, userRepo, nil)
+
+	body := map[string]any{
+		"app_type":  "invoiceshelf",
+		"domain_id": "domain1",
+		"params": map[string]any{
+			"site_title":  "Acme Ltd",
+			"admin_email": "boss@example.com",
+			"country":     "IL",
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/applications", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status: %d body: %s", w.Code, w.Body.String())
+	}
+	var resp createApplicationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.AdminUsername != "boss@example.com" {
+		t.Errorf("EmailLogin app should surface the admin email as the login, got AdminUsername=%q", resp.AdminUsername)
+	}
+	_ = ag
+}
+
+func TestApplications_CreateInvoiceShelf_RejectsUnknownCountry(t *testing.T) {
+	// The country enum mirrors the app's own countries table; an unknown
+	// code must fail validation at the API, not silently no-op in tinker.
+	wpRepo, domainRepo, userRepo := wpUserAndDomain()
+	r, _, _ := applicationsRouter(t, "user1", false, wpRepo, domainRepo, userRepo, nil)
+
+	body := map[string]any{
+		"app_type":  "invoiceshelf",
+		"domain_id": "domain1",
+		"params": map[string]any{
+			"admin_email": "boss@example.com",
+			"country":     "XX",
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/applications", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d body: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestApplications_CreateRequiresDBFalse_SkipsDBChain(t *testing.T) {
 	wpRepo, domainRepo, userRepo := wpUserAndDomain()
 	r, ag, dbRepo := applicationsRouter(t, "user1", false, wpRepo, domainRepo, userRepo, func(reg *apps.Registry) {

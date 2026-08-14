@@ -18,9 +18,14 @@ var InvoiceShelf = App{
 	DefaultSubdirectory:  "invoices",
 	RequiresDB:           true,
 	SupportedPHPVersions: nil,
-	AgentInstallCmd:      "app.install",
-	AgentDeleteCmd:       "app.delete",
-	AgentCloneCmd:        "",
+	// Logs in by EMAIL (the seeder's super admin has no username) — the
+	// framework surfaces the admin email as the login credential instead
+	// of a meaningless random username (GH #1042 follow-up: "the random
+	// admin user is still be displayed").
+	EmailLogin:      true,
+	AgentInstallCmd: "app.install",
+	AgentDeleteCmd:  "app.delete",
+	AgentCloneCmd:   "",
 	InstallParamSchema: map[string]ParamSpec{
 		"site_title": {
 			Type:        "string",
@@ -49,6 +54,18 @@ var InvoiceShelf = App{
 			Default:     "USD",
 			Values:      []string{"AED", "ANG", "ARS", "AUD", "AWG", "BAM", "BDT", "BGN", "BRL", "CAD", "CHF", "CLP", "CNY", "COP", "CRC", "CZK", "DKK", "DOP", "DZD", "EGP", "EUR", "GBP", "GHS", "GTQ", "HKD", "HRK", "IDR", "ILS", "INR", "IQD", "JMD", "JPY", "KES", "KGS", "KWD", "LKR", "LYD", "MAD", "MKD", "MOP", "MVR", "MXN", "MYR", "MZN", "NAD", "NGN", "NOK", "NPR", "NZD", "OMR", "PEN", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SEK", "SGD", "THB", "TMT", "TND", "TRY", "TTD", "TWD", "TZS", "UAH", "USD", "UYU", "VND", "XAF", "XCD", "XOF", "ZAR"},
 			Description: "Company currency for invoices and estimates.",
+		},
+		// GH #1042 follow-up: the skipped onboarding wizard asks for the
+		// company country at its company-info step (stored as the company
+		// address row). Offer the same choice at install; values + labels
+		// mirror the app's own countries table.
+		"country": {
+			Type:        "enum",
+			Required:    false,
+			Default:     "US",
+			Values:      invoiceshelfCountryCodes,
+			ValueLabels: invoiceshelfCountryLabels,
+			Description: "Company country, used on invoice addresses and tax settings.",
 		},
 	},
 }

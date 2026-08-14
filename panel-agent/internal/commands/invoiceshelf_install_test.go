@@ -71,12 +71,19 @@ func TestInvoiceShelfNginxConf_StorageAliasServesUploads(t *testing.T) {
 func TestInvoiceShelfFinaliseTinker(t *testing.T) {
 	tk := invoiceshelfFinaliseTinker("admin@example.com")
 	for _, must := range []string{
-		`$u->name = 'Administrator';`,          // "Jane Doe" must not survive
-		`$u->email = 'admin@example.com';`,     // login identity
-		`getenv('IS_ADMIN_PASS')`,              // secret via env, never argv
+		`$u->name = 'Administrator';`,      // "Jane Doe" must not survive
+		`$u->email = 'admin@example.com';`, // login identity
+		`getenv('IS_ADMIN_PASS')`,          // secret via env, never argv
 		`Currency::where('code', getenv('IS_CURRENCY'))`,
 		`CompanySetting::setSettings(['currency' => $cur->id], $c->id)`,
-		`if($c && $cur)`,                       // unknown code keeps the seed, install survives
+		`if($c && $cur)`, // unknown code keeps the seed, install survives
+		// GH #1042 follow-up: country lands on the company address row,
+		// exactly where the skipped wizard's company-info step puts it.
+		`Country::where('code', getenv('IS_COUNTRY'))`,
+		`$a = $c->address()->firstOrNew([]);`,
+		`$a->country_id = $ct->id;`,
+		`$c->address()->save($a);`,
+		`if($c && $ct)`, // unknown code leaves no address, install survives
 		`Setting::setSetting('profile_complete','COMPLETED')`,
 	} {
 		if !strings.Contains(tk, must) {

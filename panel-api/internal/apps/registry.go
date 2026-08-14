@@ -34,6 +34,11 @@ type ParamSpec struct {
 	// Values is the closed set of acceptable values for Type=="enum".
 	// Ignored for other types.
 	Values []string `json:"values,omitempty"`
+	// ValueLabels optionally maps an enum value to its display label
+	// (e.g. "IL" → "Israel (IL)"). The UI's searchable Select filters on
+	// the label, so large enums become searchable by name instead of by
+	// bare code. Values without an entry render as themselves.
+	ValueLabels map[string]string `json:"value_labels,omitempty"`
 	// Default is sent to the UI as the prefilled control value. Use a
 	// JSON-friendly type (string/bool/number); the UI does no decoding.
 	Default any `json:"default,omitempty"`

@@ -57,7 +57,11 @@ type invoiceshelfInstallReq struct {
 	// Currency is the ISO 4217 company currency (GH #1042). Optional;
 	// empty falls back to USD. Validated to ^[A-Z]{3}$ before it goes
 	// anywhere near the tinker env.
-	Currency   string `json:"currency"`
+	Currency string `json:"currency"`
+	// Country is the ISO 3166-1 alpha-2 company country (GH #1042
+	// follow-up). Optional; empty falls back to US (the wizard's own
+	// default). Validated to ^[A-Z]{2}$ like Currency.
+	Country    string `json:"country"`
 	AdminEmail string `json:"admin_email"`
 	AdminPass  string `json:"admin_pass"`
 	DBName     string `json:"db_name"`
@@ -101,6 +105,12 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	}
 	if !regexp.MustCompile(`^[A-Z]{3}$`).MatchString(req.Currency) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "currency must be a 3-letter ISO 4217 code"}
+	}
+	if req.Country == "" {
+		req.Country = "US"
+	}
+	if !regexp.MustCompile(`^[A-Z]{2}$`).MatchString(req.Country) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "country must be a 2-letter ISO 3166-1 alpha-2 code"}
 	}
 	if err := validateDocrootPath(req.OSUser, req.Docroot); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
@@ -236,7 +246,7 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	// Password + title travel via env (never argv) into the tinker script.
 	tinker := invoiceshelfFinaliseTinker(req.AdminEmail)
 	tinkerCmd := buildSystemdRunCmdEnv(ctx, req.OSUser,
-		[]string{"IS_ADMIN_PASS=" + req.AdminPass, "IS_SITE_TITLE=" + req.SiteTitle, "IS_CURRENCY=" + req.Currency},
+		[]string{"IS_ADMIN_PASS=" + req.AdminPass, "IS_SITE_TITLE=" + req.SiteTitle, "IS_CURRENCY=" + req.Currency, "IS_COUNTRY=" + req.Country},
 		php, filepath.Join(installPath, "artisan"), "tinker", "--execute="+tinker)
 	tinkerCmd.Dir = installPath
 	if out, err := runBoundedOutput(tinkerCmd, 0); err != nil {
@@ -320,6 +330,11 @@ func init() {
 //     is where a currency would normally be picked. Resolve the requested
 //     ISO code against the app's own currencies table; an unknown code
 //     leaves the seeded default rather than failing the install.
+//   - country (GH #1042 follow-up): the wizard's company-info step stores
+//     the country as the company's address row (country_id → countries
+//     table). Mirror that: resolve the alpha-2 code and create the address
+//     row the app expects. Unknown code leaves no address, same as a
+//     wizard install where the step was skipped.
 func invoiceshelfFinaliseTinker(adminEmail string) string {
 	return `$u = App\Models\User::where('role','super admin')->first();` +
 		`$u->email = '` + adminEmail + `';` +
@@ -330,5 +345,7 @@ func invoiceshelfFinaliseTinker(adminEmail string) string {
 		`if($c){ $c->name = getenv('IS_SITE_TITLE'); $c->save(); }` +
 		`$cur = App\Models\Currency::where('code', getenv('IS_CURRENCY'))->first();` +
 		`if($c && $cur){ App\Models\CompanySetting::setSettings(['currency' => $cur->id], $c->id); }` +
+		`$ct = App\Models\Country::where('code', getenv('IS_COUNTRY'))->first();` +
+		`if($c && $ct){ $a = $c->address()->firstOrNew([]); $a->country_id = $ct->id; $c->address()->save($a); }` +
 		`App\Models\Setting::setSetting('profile_complete','COMPLETED');`
 }
