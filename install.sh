@@ -4098,12 +4098,21 @@ disable-axfr-rectify=no
 # for up to five minutes even though the SQL rows are all there.
 # Measured live: 161 s of NXDOMAIN on a fresh subdomain.
 #
-# No control-channel fix exists on 4.8: pdns_control zonecache-reload
-# is 4.9+, and rediscover / reload / purge were each verified NOT to
-# refresh this cache. Config is the only lever. 10 s keeps the cache's
-# LRU benefits while bounding new-zone blindness to a tick; the refresh
-# is one trivial SELECT over tens of zones at panel scale.
-zone-cache-refresh-interval=10
+# No control-channel fix exists: rediscover DOES refresh this cache on
+# 4.9 (verified: DLRediscoverHandler → UeberBackend::updateZoneCache in
+# the 4.9.x source), but calling it is what trips PowerDNS/pdns#11416 —
+# a concurrent rediscover + periodic refresh run replace() at the same
+# time and AuthZoneCache asserts (`pending->d_replacePending`), SIGABRT,
+# pdns down. Observed in production on 4.9.16 during bulk zone upserts.
+#
+# 0 disables the zone cache entirely: every zone lookup then hits the
+# gmysql backend directly (the pre-4.5 behaviour), so new zones are
+# servable IMMEDIATELY — better than the old =10 bound — and
+# updateZoneCache early-returns on !isEnabled(), so the assertion can
+# never fire. At panel scale (tens-hundreds of zones over a local
+# MariaDB socket, with the packet cache in front) the per-query backend
+# hit is unmeasurable; the zone cache exists for million-zone operators.
+zone-cache-refresh-interval=0
 PDNSCONF
 
   # Idempotency: if .new matches live, skip write + restart.
@@ -5324,17 +5333,21 @@ ensure_swap() {
   _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
 }
 
-# ensure_pdns_zone_cache — bound PowerDNS's new-zone blindness on EXISTING
-# boxes (GH #896).
+# ensure_pdns_zone_cache — converge PowerDNS's zone cache OFF on EXISTING
+# boxes (GH #896 for new-zone blindness; PowerDNS/pdns#11416 for the crash
+# the old rediscover workaround triggered on 4.9).
 #
 # Every panel domain gets its own pdns zone, written straight into the
-# gmysql backend. pdns caches the list of known zones and re-reads it only
-# every zone-cache-refresh-interval seconds (default 300) — until then a
-# freshly created (sub)domain answers NXDOMAIN from the parent zone even
-# though its rows are committed. Measured live: 161 s of NXDOMAIN on a
-# fresh subdomain. On pdns 4.8 there is NO control-channel refresh
-# (zonecache-reload is 4.9+; rediscover/reload/purge verified not to touch
-# this cache), so the interval itself is the only lever.
+# gmysql backend. With the zone cache enabled (default refresh 300 s) a
+# freshly created (sub)domain answers NXDOMAIN until the next refresh —
+# measured live: 161 s on a fresh subdomain. On 4.9 `pdns_control
+# rediscover` DOES refresh the cache, but concurrent rediscover + refresh
+# runs race AuthZoneCache::replace() and trip the
+# `pending->d_replacePending` assertion → SIGABRT → pdns down (observed
+# in production on 4.9.16 during bulk zone upserts). =0 disables the
+# cache: zone lookups hit gmysql directly (pre-4.5 behaviour), new zones
+# are servable immediately, and updateZoneCache() early-returns so the
+# assertion can never fire.
 #
 # Fresh installs get the setting from the 01-jabali-mysql.conf template in
 # install_powerdns. That function does NOT run on `jabali update`
@@ -5346,22 +5359,24 @@ ensure_swap() {
 ensure_pdns_zone_cache() {
   local conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
   [[ -f "$conf" ]] || return 0   # dns module never installed here
-  if grep -q '^zone-cache-refresh-interval=10$' "$conf"; then
+  if grep -q '^zone-cache-refresh-interval=0$' "$conf"; then
     return 0
   fi
   if grep -q '^zone-cache-refresh-interval=' "$conf"; then
-    sed -i 's/^zone-cache-refresh-interval=.*/zone-cache-refresh-interval=10/' "$conf"
+    sed -i 's/^zone-cache-refresh-interval=.*/zone-cache-refresh-interval=0/' "$conf"
   else
     cat >> "$conf" <<'ZONECACHE'
 
-# GH #896: bound new-zone blindness — see install_powerdns for the full
-# rationale. Appended by ensure_pdns_zone_cache on update.
-zone-cache-refresh-interval=10
+# GH #896 + PowerDNS/pdns#11416: zone cache OFF — new zones visible
+# immediately, and no zone-cache replace() for rediscover to race.
+# See install_powerdns for the full rationale. Appended by
+# ensure_pdns_zone_cache on update.
+zone-cache-refresh-interval=0
 ZONECACHE
   fi
   if systemctl is-active --quiet pdns 2>/dev/null; then
     systemctl restart pdns \
-      && _ok "pdns zone-cache-refresh-interval=10 applied (new zones visible within ~10 s)" \
+      && _ok "pdns zone-cache-refresh-interval=0 applied (zone cache off — new zones visible immediately, pdns#11416 crash path closed)" \
       || _warn "pdns restart failed after zone-cache config — new setting applies on next pdns restart"
   else
     _log "pdns not active — zone-cache setting staged in $conf for next start"
@@ -14418,8 +14433,9 @@ provision_new_software() {
   # every update, so a host that has the DNS module off stops reporting the
   # unconfigured pdns unit as "failed" on the dashboard + Server Status.
   converge_pdns_masking
-  # GH #896: carry zone-cache-refresh-interval=10 to boxes that only ever
-  # update — install_powerdns (whose template now ships it) does not run
+  # GH #896 + PowerDNS/pdns#11416: carry zone-cache-refresh-interval=0 to
+  # boxes that only ever update — install_powerdns (whose template now
+  # ships it) does not run
   # on this path.
   ensure_pdns_zone_cache
 

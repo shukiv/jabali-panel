@@ -85,17 +85,6 @@ func dnsZoneUpsertHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 
 	// Signal PowerDNS:
-	//   0. rediscover — refresh pdns-auth's cached LIST of known zones so a
-	//      brand-new zone becomes servable IMMEDIATELY. jabali sets
-	//      zone-cache-refresh-interval=10, so pdns caches which zones it hosts
-	//      and won't answer for a just-inserted one until the next refresh —
-	//      measured ~20s of NXDOMAIN from the authoritative server itself for a
-	//      freshly-created (sub)domain (GH #896: dead page + certbot NXDOMAIN in
-	//      that window; verified `pdns_control help` lists `rediscover: discover
-	//      any new zones` on the installed pdns-auth). purge (below) only clears
-	//      the RECORD/packet cache, not the zone-list cache — so rediscover must
-	//      run first, else purge can't help a zone the server still thinks
-	//      doesn't exist. Cheap no-op when nothing new was added.
 	//   1. purge <zone>$ — invalidate the in-process query/packet cache
 	//      for this zone (the '$' suffix targets the zone + all names
 	//      under it). Without this, pdns serves the OLD answer from
@@ -109,7 +98,20 @@ func dnsZoneUpsertHandler(ctx context.Context, params json.RawMessage) (any, err
 	//      there are no slaves.
 	// All best-effort: if pdns_control isn't reachable, the SQL change is
 	// still committed and a real pdns restart will pick up the change.
-	_ = exec.CommandContext(ctx, "pdns_control", "rediscover").Run()
+	//
+	// NO `pdns_control rediscover` here. It was added so a brand-new zone
+	// became servable immediately (GH #896), but on pdns 4.9 rediscover
+	// runs UeberBackend::updateZoneCache in the control-listener thread,
+	// which races the periodic zone-cache refresh thread's own
+	// AuthZoneCache::replace() and trips the `pending->d_replacePending`
+	// assertion → SIGABRT → pdns down (PowerDNS/pdns#11416, observed in
+	// production on 4.9.16 during bulk zone upserts — mail-cert sweep
+	// upserting ~30 zones in 2 s). jabali now pins
+	// zone-cache-refresh-interval=0 (install.sh install_powerdns +
+	// ensure_pdns_zone_cache): with the zone-list cache disabled, new
+	// zones are servable IMMEDIATELY (backend lookup per query, the
+	// pre-4.5 behaviour) and updateZoneCache early-returns, so the crash
+	// path is gone and rediscover has nothing left to do.
 	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.Zone+"$").Run()
 	// Also wipe pdns-recursor cache — its forward-cached answer
 	// will outlast the Auth purge otherwise (incident 2026-05-21:
