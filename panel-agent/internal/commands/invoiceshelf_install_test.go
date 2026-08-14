@@ -99,6 +99,19 @@ func TestEnvQuoted(t *testing.T) {
 	}
 }
 
+// GH #1042 follow-up: psysh's config dir must live under /tmp, NOT
+// $HOME — jabali tenant homes are root-owned 0751, so psysh's default
+// $HOME/.config is unwritable and tinker exits 1 before running.
+func TestPsyshConfigHome(t *testing.T) {
+	got := psyshConfigHome("alice")
+	if !strings.HasPrefix(got, "/tmp/") {
+		t.Errorf("psysh home %q must be /tmp-scoped (tenant homes are root-owned)", got)
+	}
+	if !strings.HasSuffix(got, "alice") {
+		t.Errorf("psysh home %q must be per-user (history file lands there)", got)
+	}
+}
+
 // Security review: removeInvoiceShelfNginx must reject a traversal subdir
 // before it reaches the snippet FILENAME (a "../.." would let os.Remove,
 // running as root, escape the domain dir and delete an arbitrary .conf).

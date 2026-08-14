@@ -244,9 +244,22 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	// admin/company/roles; we only rewrite the login credentials and the
 	// company name, then flip profile_complete so the wizard is skipped.
 	// Password + title travel via env (never argv) into the tinker script.
+	//
+	// psysh (tinker's REPL) insists on a writable config dir under
+	// $XDG_CONFIG_HOME and exits 1 BEFORE running the script when it
+	// can't create one ("Writing to directory ... is not allowed").
+	// Jabali tenant homes are root-owned 0751 BY DESIGN, so psysh's
+	// default $HOME/.config is unwritable for every fresh tenant and the
+	// finalise step fails the whole install (GH #1042 follow-up — only
+	// long-lived users with a pre-existing ~/.config/psysh ever got past
+	// it). Give psysh a private user-owned dir in /tmp instead.
+	psyshHome := psyshConfigHome(req.OSUser)
+	if out, err := runBoundedOutput(buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-m", "0700", "-p", psyshHome), 0); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("psysh config dir: %v (%s)", err, truncateStr(string(out), 256))}
+	}
 	tinker := invoiceshelfFinaliseTinker(req.AdminEmail)
 	tinkerCmd := buildSystemdRunCmdEnv(ctx, req.OSUser,
-		[]string{"IS_ADMIN_PASS=" + req.AdminPass, "IS_SITE_TITLE=" + req.SiteTitle, "IS_CURRENCY=" + req.Currency, "IS_COUNTRY=" + req.Country},
+		[]string{"IS_ADMIN_PASS=" + req.AdminPass, "IS_SITE_TITLE=" + req.SiteTitle, "IS_CURRENCY=" + req.Currency, "IS_COUNTRY=" + req.Country, "XDG_CONFIG_HOME=" + psyshHome},
 		php, filepath.Join(installPath, "artisan"), "tinker", "--execute="+tinker)
 	tinkerCmd.Dir = installPath
 	if out, err := runBoundedOutput(tinkerCmd, 0); err != nil {
@@ -283,6 +296,13 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 func envQuoted(s string) string {
 	s = strings.NewReplacer("\"", "", "\r", "", "\n", "").Replace(s)
 	return "\"" + s + "\""
+}
+
+// psyshConfigHome returns the per-user XDG_CONFIG_HOME the install uses
+// for artisan tinker. /tmp-scoped because tenant homes are root-owned
+// (not writable); per-user because psysh writes a history file there.
+func psyshConfigHome(osUser string) string {
+	return "/tmp/jabali-psysh-" + osUser
 }
 
 func invoiceshelfDownload(ctx context.Context, dest string) error {
