@@ -34,6 +34,7 @@ type PackageEditInput = {
   max_databases: number;
   max_docker_apps: number;
   max_python_apps: number;
+  max_ftp_accounts: number;
   // Tenant backup limits (GH #454). allowed_backup_destination_kinds is a CSV
   // string on the wire; the multi-Select binds an array (converted on load/save,
   // like docker_app_slugs).
@@ -305,6 +306,15 @@ export const PackageEdit = () => {
               label={t("packageedit.max_python_apps")}
               name="max_python_apps"
               tooltip="0 = Python apps not included in this package"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label={t("packageedit.max_ftp_accounts")}
+              name="max_ftp_accounts"
+              tooltip="0 = FTP/SFTP accounts not included in this package"
             >
               <InputNumber min={0} style={{ width: "100%" }} />
             </Form.Item>

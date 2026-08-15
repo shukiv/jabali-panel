@@ -46,6 +46,8 @@ export function UserLayout() {
   const visibleNav = userNav.filter((n) => {
     if (n.key === "python-apps") return !!caps?.python_apps_enabled;
     if (n.key === "docker-apps") return !!caps?.docker_apps_user_enabled;
+    // GH #1053: package-gated (max_ftp_accounts > 0) — hidden by default.
+    if (n.key === "ftp-accounts") return !!caps?.ftp_accounts_enabled;
     // M353 Phase 1 (GH #353): module flags default on (undefined = shown).
     if (n.key === "mail") return caps?.mail_enabled !== false;
     if (n.key === "dns") return caps?.dns_enabled !== false;

@@ -58,6 +58,7 @@ import { DNSPermissionsCard } from "./DNSPermissionsCard";
 import { EmailCard } from "./EmailCard";
 import { FreeHostnameCard } from "./FreeHostnameCard";
 import { WebmailToggleCard } from "./WebmailToggleCard";
+import { FtpServerCard } from "./FtpServerCard";
 import { Dkim2ToggleCard } from "./Dkim2ToggleCard";
 import { ModulesCard } from "./ModulesCard";
 import { StalwartWebadminCard } from "./StalwartWebadminCard";
@@ -1009,7 +1010,16 @@ export const ServerSettingsPage = () => {
         </>
       ),
     },
-    { key: "ssh", label: tabLabel(<CodeOutlined />, "SSH"), children: <SSHSettingsTab /> },
+    {
+      key: "ssh",
+      label: tabLabel(<CodeOutlined />, "SSH & FTP"),
+      children: (
+        <>
+          <SSHSettingsTab />
+          <FtpServerCard />
+        </>
+      ),
+    },
     { key: "storage", label: tabLabel(<HddOutlined />, "Storage"), children: <StorageSettingsTab /> },
     { key: "dns", label: tabLabel(<GlobalOutlined />, "DNS"), children: <DNSSettingsTab /> },
     {

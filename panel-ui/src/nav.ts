@@ -333,6 +333,12 @@ export const userNav: NavItem[] = [
     path: "/jabali-panel/ssh-keys",
   },
   {
+    key: "ftp-accounts",
+    label: "nav.user.ftp-accounts",
+    icon: navIcon(CloudServerOutlined),
+    path: "/jabali-panel/ftp-accounts",
+  },
+  {
     key: "api-tokens",
     label: "nav.user.api-tokens",
     icon: navIcon(ApiOutlined),

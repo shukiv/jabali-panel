@@ -99,6 +99,7 @@ const UserDockerAppsPage = lazy(() => import("./shells/user/docker-apps/UserDock
 const UserBackupsPage = lazy(() => import("./shells/user/backups/UserBackupsPage").then((m) => ({ default: m.UserBackupsPage })));
 const UserLogsPage = lazy(() => import("./shells/user/logs/UserLogsPage").then((m) => ({ default: m.UserLogsPage })));
 const UserSSHKeysPage = lazy(() => import("./shells/user/ssh-keys/UserSSHKeysPage").then((m) => ({ default: m.UserSSHKeysPage })));
+const UserFtpAccountsPage = lazy(() => import("./shells/user/ftp-accounts/UserFtpAccountsPage").then((m) => ({ default: m.UserFtpAccountsPage })));
 const UserAPITokensPage = lazy(() => import("./shells/user/api-tokens/UserAPITokensPage").then((m) => ({ default: m.UserAPITokensPage })));
 const MyNotificationsPage = lazy(() => import("./shells/user/notifications/MyNotificationsPage").then((m) => ({ default: m.MyNotificationsPage })));
 const APIDocsPage = lazy(() => import("./shells/shared/APIDocsPage").then((m) => ({ default: m.APIDocsPage })));
@@ -422,6 +423,14 @@ const ThemedApp = () => {
               }
             />
             <Route path="ssh-keys" element={<UserSSHKeysPage />} />
+            <Route
+              path="ftp-accounts"
+              element={
+                <CapabilityRoute cap="ftp_accounts_enabled" fallback="/jabali-panel/dashboard">
+                  <UserFtpAccountsPage />
+                </CapabilityRoute>
+              }
+            />
             <Route
               path="api-tokens"
               element={

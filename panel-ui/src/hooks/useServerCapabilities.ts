@@ -29,6 +29,10 @@ export interface ServerCapabilities {
   is_standby: boolean;
   /** GH #331: human label for the primary this standby replicates. "" when unset. */
   dr_peer_label: string;
+  /** GH #1053: caller's package includes FTP/SFTP subaccounts. Gates the page + nav. */
+  ftp_accounts_enabled: boolean;
+  /** GH #1053: server-level FTP opt-in — drives "SFTP only" vs "FTPS + SFTP" copy. */
+  ftp_server_enabled: boolean;
 }
 
 export function useServerCapabilities() {
@@ -53,6 +57,8 @@ export function useServerCapabilities() {
         public_ipv6: data.public_ipv6 ?? "",
         is_standby: !!data.is_standby,
         dr_peer_label: data.dr_peer_label ?? "",
+        ftp_accounts_enabled: !!data.ftp_accounts_enabled,
+        ftp_server_enabled: !!data.ftp_server_enabled,
       };
     },
     staleTime: 60_000,

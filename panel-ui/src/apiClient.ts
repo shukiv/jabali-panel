@@ -308,6 +308,57 @@ export async function deleteSSHKey(id: string): Promise<void> {
   await apiClient.delete(`/ssh-keys/${id}`);
 }
 
+// --- FTP/SFTP subaccounts (GH #1053) ---
+
+export interface FtpAccount {
+  id: string;
+  user_id: string;
+  username: string;
+  home_path: string;
+  ftp_access: boolean;
+  sftp_access: boolean;
+  is_enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface FtpAccountListResponse {
+  data: FtpAccount[];
+  total: number;
+}
+
+export async function listFtpAccounts(): Promise<FtpAccountListResponse> {
+  const resp = await apiClient.get<FtpAccountListResponse>("/me/ftp-accounts");
+  return resp.data;
+}
+
+export async function createFtpAccount(body: {
+  label: string;
+  home_path: string;
+  password: string;
+  ftp_access: boolean;
+  sftp_access?: boolean;
+}): Promise<FtpAccount> {
+  const resp = await apiClient.post<FtpAccount>("/me/ftp-accounts", body);
+  return resp.data;
+}
+
+export async function updateFtpAccount(
+  id: string,
+  body: { ftp_access?: boolean; sftp_access?: boolean; is_enabled?: boolean },
+): Promise<FtpAccount> {
+  const resp = await apiClient.patch<FtpAccount>(`/me/ftp-accounts/${id}`, body);
+  return resp.data;
+}
+
+export async function resetFtpAccountPassword(id: string, password: string): Promise<void> {
+  await apiClient.post(`/me/ftp-accounts/${id}/password`, { password });
+}
+
+export async function deleteFtpAccount(id: string): Promise<void> {
+  await apiClient.delete(`/me/ftp-accounts/${id}`);
+}
+
 export interface SSHConnection {
   host: string;
   port: number;
