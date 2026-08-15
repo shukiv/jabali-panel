@@ -264,11 +264,47 @@ func (h *userDockerAppHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, installedResponse{DockerApp: *app, Ports: ports})
 }
 
+// dockerDiskGateForStart (JAB-245): admission for bring-up lifecycle
+// actions. The reconciler stops over-quota apps, but start/restart used
+// to accept them right back — a reliable bypass loop. Same rule as the
+// install gate (Gitea #489): package disk quota reached → refuse. Loose
+// on every failure to resolve package/usage (a broken lookup must not
+// brick every app start), and never applied to stop.
+func (h *userDockerAppHandler) dockerDiskGateForStart(c *gin.Context, userID string) bool {
+	ctx := c.Request.Context()
+	user, err := h.cfg.Users.FindByID(ctx, userID)
+	if err != nil || user == nil || user.PackageID == nil {
+		return true
+	}
+	pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
+	if err != nil || pkg == nil || pkg.DiskQuotaMB <= 0 {
+		return true
+	}
+	used, err := h.cfg.Repo.SumDataBytesByUserID(ctx, userID)
+	if err != nil {
+		return true
+	}
+	if used >= int64(pkg.DiskQuotaMB)*1024*1024 {
+		c.JSON(http.StatusConflict, gin.H{"error": "disk_quota_exceeded", "detail": "your Docker app disk usage has reached your hosting package quota — free space or upgrade before starting this app"})
+		return false
+	}
+	return true
+}
+
 func (h *userDockerAppHandler) lifecycle(statusOnSuccess string, composeArgs ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		app := h.loadOwned(c)
 		if app == nil {
 			return
+		}
+		// JAB-245: an over-quota app must not come back up via start/
+		// restart — the restart-after-reconciler-stop loop was a reliable
+		// quota bypass. Gated BEFORE the agent block so it holds on every
+		// path; stop is never gated.
+		if statusOnSuccess == models.DockerAppStatusRunning {
+			if !h.dockerDiskGateForStart(c, ginctx.Claims(c).UserID) {
+				return
+			}
 		}
 		if h.cfg.Agent != nil {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)

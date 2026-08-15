@@ -368,3 +368,70 @@ func TestTenantDocker_DeleteCleansDomainLinks(t *testing.T) {
 		t.Errorf("app should be soft-deleted, got %q", repo.updated["a1"])
 	}
 }
+
+// JAB-245: start/restart of an over-quota app is refused — the
+// reconciler-stop → tenant-restart loop was a reliable disk-quota
+// bypass. Stop is never gated.
+func TestTenantDocker_StartOverQuota409(t *testing.T) {
+	cfg := UserDockerAppHandlerConfig{
+		Repo: &fakeDockerRepo{
+			sumBytes: 2 << 30, // 2 GiB used
+			owned:    map[string]*models.DockerApp{"a1": {ID: "a1", Slug: "tdemo", UserID: uname("u1"), Status: models.DockerAppStatusStopped}},
+		},
+		Catalog:  tenantCatalog(t),
+		Users:    &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+		Packages: &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5, DiskQuotaMB: 1024}}, // 1 GiB quota
+		Domains:  &fakeDomainRepo{},
+	}
+	r := tenantRouter(t, cfg, true)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docker-apps/a1/start", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "disk_quota_exceeded") {
+		t.Fatalf("want 409 disk_quota_exceeded, got %d %s", rec.Code, rec.Body.String())
+	}
+	repo := cfg.Repo.(*fakeDockerRepo)
+	if repo.updated["a1"] != "" {
+		t.Fatalf("status updated despite refused start: %q", repo.updated["a1"])
+	}
+}
+
+func TestTenantDocker_StartUnderQuotaOK(t *testing.T) {
+	cfg := UserDockerAppHandlerConfig{
+		Repo: &fakeDockerRepo{
+			sumBytes: 100 << 20, // 100 MiB used
+			owned:    map[string]*models.DockerApp{"a1": {ID: "a1", Slug: "tdemo", UserID: uname("u1"), Status: models.DockerAppStatusStopped}},
+		},
+		Catalog:  tenantCatalog(t),
+		Users:    &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+		Packages: &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5, DiskQuotaMB: 1024}},
+		Domains:  &fakeDomainRepo{},
+	}
+	r := tenantRouter(t, cfg, true)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docker-apps/a1/start", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("under-quota start = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTenantDocker_StopOverQuotaNeverGated(t *testing.T) {
+	cfg := UserDockerAppHandlerConfig{
+		Repo: &fakeDockerRepo{
+			sumBytes: 2 << 30,
+			owned:    map[string]*models.DockerApp{"a1": {ID: "a1", Slug: "tdemo", UserID: uname("u1"), Status: models.DockerAppStatusRunning}},
+		},
+		Catalog:  tenantCatalog(t),
+		Users:    &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+		Packages: &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5, DiskQuotaMB: 1024}},
+		Domains:  &fakeDomainRepo{},
+	}
+	r := tenantRouter(t, cfg, true)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docker-apps/a1/stop", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop of over-quota app = %d, want 200 — blocking stop would be perverse (%s)", rec.Code, rec.Body.String())
+	}
+}
