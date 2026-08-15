@@ -1,0 +1,19 @@
+# Dependabot: keep SHA-pinned GitHub Actions current (JAB-247).
+#
+# Actions in .github/workflows/ are pinned to full commit SHAs with the
+# human-readable version in a trailing comment; Dependabot bumps the SHA
+# and maintains that comment. All action bumps land as one grouped
+# monthly PR (same cadence as the catalog auto-bump and monthly-deps).
+#
+# Go modules and npm are deliberately NOT listed here — the
+# monthly-deps.yml workflow owns those.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
