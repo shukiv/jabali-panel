@@ -20,6 +20,16 @@ func (f *fakeFtpAccountRepo) List(context.Context) ([]models.FtpAccount, error) 
 	return f.rows, nil
 }
 
+func (f *fakeFtpAccountRepo) ListByUserID(_ context.Context, userID string) ([]models.FtpAccount, error) {
+	out := []models.FtpAccount{}
+	for _, r := range f.rows {
+		if r.UserID == userID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 type ftpUsersRepo struct {
 	repository.UserRepository
 	byID map[string]*models.User

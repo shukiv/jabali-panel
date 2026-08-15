@@ -167,6 +167,24 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		homeMode = "ssh"
 		groupMethod = "ssh.user.leave_sftp_group"
 	}
+	// GH #1053: FTP/SFTP subaccounts chroot to /home/<u> via their own
+	// Match User blocks, and sshd refuses a non-root-owned chroot. A
+	// shell-enabled tenant with subaccounts therefore keeps the root:<u>
+	// 0751 home (the M12 trade-off: top-level $HOME read-only for the
+	// tenant, subdirs untouched) — otherwise this pass and the FTP pass
+	// flip ownership back and forth and subaccount logins die right
+	// after auth (seen live: FileZilla "remote side unexpectedly closed").
+	// Group membership is unaffected: the tenant keeps their shell.
+	if homeMode == "ssh" && r.ftpAccounts != nil {
+		if accts, ferr := r.ftpAccounts.ListByUserID(ctx, userID); ferr == nil {
+			for _, a := range accts {
+				if a.IsEnabled && a.SFTPAccess {
+					homeMode = "sftp"
+					break
+				}
+			}
+		}
+	}
 	if _, err := r.agent.Call(ctx, "ssh.user.home_chown", map[string]interface{}{
 		"username": *user.Username,
 		"mode":     homeMode,
