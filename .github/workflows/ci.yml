@@ -33,6 +33,27 @@ env:
   NODE_VERSION: "20"
 
 jobs:
+  action-pins:
+    name: action refs pinned to SHAs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: reject mutable action references
+        # JAB-247: every `uses:` must be a local path (./) or pinned to a
+        # full 40-char commit SHA with the version in a trailing comment.
+        # A mutable tag/branch in a write-capable or trusted-runner
+        # workflow becomes arbitrary code the moment upstream moves it.
+        run: |
+          bad=$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows .github/actions 2>/dev/null \
+            | grep -vE 'uses:[[:space:]]+\./' \
+            | grep -vE '@[0-9a-f]{40}([[:space:]]+#.*)?$' || true)
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::mutable GitHub Action reference(s) found — pin to a full-length commit SHA (JAB-247)"
+            exit 1
+          fi
+          echo "all action references SHA-pinned"
+
   go:
     name: Go tests + vet
     runs-on: ubuntu-latest
