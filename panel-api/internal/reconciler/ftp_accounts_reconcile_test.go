@@ -52,6 +52,25 @@ func ftpCallsByMethod(a *fakeAgent) map[string][]fakeCall {
 	return out
 }
 
+// hostListAllResult adapts per-tenant entries to the list_all shape for the
+// global stray sweep (tenant hardcoded to the fixtures' "shop").
+func hostListAllResult(t *testing.T, entries []agentFtpListEntry) json.RawMessage {
+	t.Helper()
+	type allEntry struct {
+		TenantUsername string `json:"tenant_username"`
+		Username       string `json:"username"`
+	}
+	out := []allEntry{}
+	for _, e := range entries {
+		out = append(out, allEntry{TenantUsername: "shop", Username: e.Username})
+	}
+	raw, err := json.Marshal(map[string]any{"accounts": out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func hostListResult(t *testing.T, entries []agentFtpListEntry) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{"accounts": entries})
@@ -63,7 +82,8 @@ func hostListResult(t *testing.T, entries []agentFtpListEntry) json.RawMessage {
 
 func TestReconcileFtpAccounts_RecreatesMissingAlias(t *testing.T) {
 	agent := &fakeAgent{resultByMethod: map[string]json.RawMessage{
-		"ftpaccount.list": hostListResult(t, nil), // host has nothing
+		"ftpaccount.list":     hostListResult(t, nil), // host has nothing
+		"ftpaccount.list_all": hostListAllResult(t, nil),
 	}}
 	rows := []models.FtpAccount{{
 		ID: "a1", UserID: "u1", Username: "shop_deploy",
@@ -103,6 +123,10 @@ func TestReconcileFtpAccounts_RemovesStrayAlias(t *testing.T) {
 			{Username: "shop_deploy", FTPAccess: false, Locked: false}, // desired
 			{Username: "shop_old", FTPAccess: true, Locked: false},     // stray
 		}),
+		"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{
+			{Username: "shop_deploy", FTPAccess: false, Locked: false}, // desired
+			{Username: "shop_old", FTPAccess: true, Locked: false},     // stray
+		}),
 	}}
 	rows := []models.FtpAccount{{
 		ID: "a1", UserID: "u1", Username: "shop_deploy",
@@ -130,6 +154,10 @@ func TestReconcileFtpAccounts_RepairsAccessDrift(t *testing.T) {
 			// host: ftp on + unlocked; DB wants ftp off + disabled(locked)
 			{Username: "shop_deploy", FTPAccess: true, Locked: false},
 		}),
+		"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{
+			// host: ftp on + unlocked; DB wants ftp off + disabled(locked)
+			{Username: "shop_deploy", FTPAccess: true, Locked: false},
+		}),
 	}}
 	rows := []models.FtpAccount{{
 		ID: "a1", UserID: "u1", Username: "shop_deploy",
@@ -152,6 +180,11 @@ func TestReconcileFtpAccounts_RepairsAccessDrift(t *testing.T) {
 func TestReconcileFtpAccounts_SSHDSyncPayloadShape(t *testing.T) {
 	agent := &fakeAgent{resultByMethod: map[string]json.RawMessage{
 		"ftpaccount.list": hostListResult(t, []agentFtpListEntry{
+			{Username: "shop_deploy"},
+			{Username: "shop_ftponly", FTPAccess: true},
+			{Username: "shop_off", Locked: true},
+		}),
+		"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{
 			{Username: "shop_deploy"},
 			{Username: "shop_ftponly", FTPAccess: true},
 			{Username: "shop_off", Locked: true},
@@ -197,6 +230,9 @@ func TestReconcileFtpAccounts_HashGateSkipsSteadyState(t *testing.T) {
 		"ftpaccount.list": hostListResult(t, []agentFtpListEntry{
 			{Username: "shop_deploy"},
 		}),
+		"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{
+			{Username: "shop_deploy"},
+		}),
 	}}
 	rows := []models.FtpAccount{{
 		ID: "a1", UserID: "u1", Username: "shop_deploy",
@@ -219,7 +255,8 @@ func TestReconcileFtpAccounts_FailureKeepsGateOpen(t *testing.T) {
 	agent := &fakeAgent{
 		failMethod: "ftpaccount.sshd_sync",
 		resultByMethod: map[string]json.RawMessage{
-			"ftpaccount.list": hostListResult(t, []agentFtpListEntry{{Username: "shop_deploy"}}),
+			"ftpaccount.list":     hostListResult(t, []agentFtpListEntry{{Username: "shop_deploy"}}),
+			"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{{Username: "shop_deploy"}}),
 		},
 	}
 	rows := []models.FtpAccount{{
@@ -240,5 +277,39 @@ func TestReconcileFtpAccounts_NoRepoIsNoop(t *testing.T) {
 	r.reconcileFtpAccounts(context.Background())
 	if len(agent.calls) != 0 {
 		t.Fatal("nil repo must be a silent no-op")
+	}
+}
+
+// The live jabalitests finding: a manual row delete left the tenant with
+// ZERO rows, so the per-tenant diff never visited it and a working
+// credential survived. The global list_all sweep must remove it.
+func TestReconcileFtpAccounts_SweepsStrayForRowlessTenant(t *testing.T) {
+	agent := &fakeAgent{resultByMethod: map[string]json.RawMessage{
+		// Another tenant still has a row (so the pass has work at all);
+		// tenant "ghost" has an alias but NO rows anywhere.
+		"ftpaccount.list": hostListResult(t, []agentFtpListEntry{{Username: "shop_deploy"}}),
+		"ftpaccount.list_all": func() json.RawMessage {
+			raw, _ := json.Marshal(map[string]any{"accounts": []map[string]any{
+				{"tenant_username": "shop", "username": "shop_deploy"},
+				{"tenant_username": "ghost", "username": "ghost_leftover"},
+			}})
+			return raw
+		}(),
+	}}
+	rows := []models.FtpAccount{{
+		ID: "a1", UserID: "u1", Username: "shop_deploy",
+		HomePath: "/home/shop", SFTPAccess: true, IsEnabled: true,
+	}}
+	r := ftpTestReconciler(t, agent, rows, map[string]string{"u1": "shop"})
+
+	r.reconcileFtpAccounts(context.Background())
+
+	calls := ftpCallsByMethod(agent)
+	if len(calls["ftpaccount.delete"]) != 1 {
+		t.Fatalf("expected exactly 1 stray delete, got %d", len(calls["ftpaccount.delete"]))
+	}
+	p := calls["ftpaccount.delete"][0].params.(map[string]any)
+	if p["username"] != "ghost_leftover" || p["tenant_username"] != "ghost" {
+		t.Fatalf("wrong stray deleted: %v", p)
 	}
 }

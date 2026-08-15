@@ -119,6 +119,15 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 		}
 	}
 
+	// Global stray sweep. The per-tenant diff above only sees tenants that
+	// still HAVE rows — a manual row delete (or a tenant whose last row
+	// vanished out-of-band) would leave a rowless alias that is a working
+	// credential with no panel handle (proven live on jabalitests). One
+	// ftpaccount.list_all IPC catches every alias host-wide.
+	if !r.sweepStrayFtpAliases(ctx, rows) {
+		converged = false
+	}
+
 	// Render the sshd drop-in from every enabled+sftp row (all tenants,
 	// one file). StartDir is home_path relative to the tenant home —
 	// internal-sftp resolves it inside the chroot.
@@ -149,6 +158,48 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 	if converged {
 		r.ftpDispatchCache.Store("all", ftpDispatchState{Hash: fullHash, At: time.Now()})
 	}
+}
+
+// sweepStrayFtpAliases removes host subaccount aliases that no ftp_accounts
+// row accounts for, across ALL tenants — including tenants with zero
+// remaining rows, which the per-tenant diff can never see. Returns false on
+// failure so the hash gate stays open.
+func (r *Reconciler) sweepStrayFtpAliases(ctx context.Context, rows []models.FtpAccount) bool {
+	raw, err := r.agent.Call(ctx, "ftpaccount.list_all", map[string]any{})
+	if err != nil {
+		r.log.Warn("ftp: list_all failed (stray sweep skipped)", "err", err)
+		return false
+	}
+	var resp struct {
+		Accounts []struct {
+			TenantUsername string `json:"tenant_username"`
+			Username       string `json:"username"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		r.log.Warn("ftp: list_all parse failed", "err", err)
+		return false
+	}
+	wanted := map[string]struct{}{}
+	for _, a := range rows {
+		wanted[a.Username] = struct{}{}
+	}
+	ok := true
+	for _, h := range resp.Accounts {
+		if _, want := wanted[h.Username]; want {
+			continue
+		}
+		if _, err := r.agent.Call(ctx, "ftpaccount.delete", map[string]any{
+			"tenant_username": h.TenantUsername,
+			"username":        h.Username,
+		}); err != nil {
+			r.log.Warn("ftp: stray alias removal failed", "account", h.Username, "err", err)
+			ok = false
+			continue
+		}
+		r.log.Info("ftp: removed stray subaccount with no panel row", "account", h.Username, "tenant", h.TenantUsername)
+	}
+	return ok
 }
 
 // reconcileFtpTenant diffs one tenant's desired rows against the host's
@@ -213,22 +264,9 @@ func (r *Reconciler) reconcileFtpTenant(ctx context.Context, tenant string, acct
 			}
 		}
 	}
-	// Host aliases with no row: the row is the only handle — a rowless
-	// alias is unaccounted access and gets removed.
-	for name := range host {
-		if _, wanted := desired[name]; wanted {
-			continue
-		}
-		if _, err := r.agent.Call(ctx, "ftpaccount.delete", map[string]any{
-			"tenant_username": tenant,
-			"username":        name,
-		}); err != nil {
-			r.log.Warn("ftp: stray alias removal failed", "account", name, "err", err)
-			ok = false
-			continue
-		}
-		r.log.Info("ftp: removed stray subaccount with no panel row", "account", name, "tenant", tenant)
-	}
+	// Stray-alias removal deliberately does NOT live here: the per-tenant
+	// diff can only see tenants that still have rows. sweepStrayFtpAliases
+	// (one ftpaccount.list_all per pass) owns stray removal host-wide.
 
 	// M12 chroot precondition: sshd only chroots into a root-owned home.
 	// Tenants who never used SFTP themselves may still have a

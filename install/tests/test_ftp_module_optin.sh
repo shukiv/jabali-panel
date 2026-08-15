@@ -85,6 +85,25 @@ else
   fi
 fi
 
+# --- 4b. no invented vsftpd directives (live incident 2026-08-15) ---
+# Debian's vsftpd exits status 2 with NO error output on any unknown config
+# option, and systemd reports the start as successful before the crash.
+# ssl_tlsv1_2 / ssl_tlsv1_3 looked plausible and killed the daemon on a
+# real box. Pin the ssl directive set to the empirically-verified one.
+for bad in ssl_tlsv1_2 ssl_tlsv1_3; do
+  if grep -q "^${bad}=" <<<"$cfgfn"; then
+    echo "FAIL: vsftpd config uses unsupported directive ${bad} (daemon exits 2 silently)"
+    fail=1
+  fi
+done
+grep -q '^ssl_tlsv1=YES' <<<"$cfgfn" \
+  || { echo "FAIL: expected supported ssl_tlsv1=YES directive"; fail=1; }
+# The installer must not trust systemctl start's exit code (vsftpd dies
+# post-start on config errors) — require the settle + is-active gate.
+modfn=$(awk '/^install_module_ftp\(\)/,/^}/' install.sh)
+grep -q 'systemctl is-active --quiet vsftpd' <<<"$modfn" \
+  || { echo "FAIL: install_module_ftp must verify vsftpd is ACTIVE after start"; fail=1; }
+
 # --- 5. passive range consistency (vsftpd conf vs UFW rule) ---
 pasv_min=$(grep -oE '^pasv_min_port=[0-9]+' <<<"$cfgfn" | cut -d= -f2 || true)
 pasv_max=$(grep -oE '^pasv_max_port=[0-9]+' <<<"$cfgfn" | cut -d= -f2 || true)

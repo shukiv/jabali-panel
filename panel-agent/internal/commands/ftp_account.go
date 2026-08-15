@@ -505,10 +505,81 @@ func ftpAccountListHandler(ctx context.Context, params json.RawMessage) (any, er
 	return map[string]any{"accounts": entries}, nil
 }
 
+// ---- ftpaccount.list_all ----
+
+type ftpAccountListAllEntry struct {
+	TenantUsername string `json:"tenant_username"`
+	Username       string `json:"username"`
+	HomePath       string `json:"home_path"`
+	FTPAccess      bool   `json:"ftp_access"`
+	Locked         bool   `json:"locked"`
+}
+
+// ftpAccountListAllHandler reports EVERY subaccount alias on the host in
+// one call: passwd entries named "<other-entry>_<label>" that alias that
+// other entry's uid (>= minTenantUID). The reconciler diffs this against
+// the whole ftp_accounts table, so a stray alias is caught even when its
+// tenant has zero remaining rows — a rowless alias is a working credential
+// with no panel handle, which must never survive (proven live on
+// jabalitests: a manually-deleted row left a login-able alias behind).
+func ftpAccountListAllHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	passwd, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read passwd: %v", err)}
+	}
+	type pwEntry struct {
+		uid  int
+		home string
+	}
+	byName := map[string]pwEntry{}
+	var order []string
+	for _, line := range strings.Split(string(passwd), "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) < 6 {
+			continue
+		}
+		uid, _ := strconv.Atoi(parts[2])
+		byName[parts[0]] = pwEntry{uid: uid, home: parts[5]}
+		order = append(order, parts[0])
+	}
+	entries := []ftpAccountListAllEntry{}
+	for _, name := range order {
+		i := strings.LastIndex(name, "_")
+		if i <= 0 {
+			continue
+		}
+		// Walk every "_" split point: tenant names may themselves contain
+		// underscores (user_01k…), so "a_b_c" must try tenants "a_b" and "a".
+		for j := i; j > 0; j = strings.LastIndex(name[:j], "_") {
+			tenant := name[:j]
+			te, ok := byName[tenant]
+			if !ok || te.uid < minTenantUID || te.uid != byName[name].uid || tenant == name {
+				continue
+			}
+			locked := false
+			if out, perr := exec.CommandContext(ctx, "passwd", "-S", name).Output(); perr == nil {
+				fields := strings.Fields(string(out))
+				locked = len(fields) >= 2 && fields[1] == "L"
+			}
+			isFtp, _ := isUserInGroup(ctx, name, ftpGroupName)
+			entries = append(entries, ftpAccountListAllEntry{
+				TenantUsername: tenant,
+				Username:       name,
+				HomePath:       byName[name].home,
+				FTPAccess:      isFtp,
+				Locked:         locked,
+			})
+			break
+		}
+	}
+	return map[string]any{"accounts": entries}, nil
+}
+
 func init() {
 	Default.Register("ftpaccount.create", ftpAccountCreateHandler)
 	Default.Register("ftpaccount.set_password", ftpAccountSetPasswordHandler)
 	Default.Register("ftpaccount.set_access", ftpAccountSetAccessHandler)
 	Default.Register("ftpaccount.delete", ftpAccountDeleteHandler)
 	Default.Register("ftpaccount.list", ftpAccountListHandler)
+	Default.Register("ftpaccount.list_all", ftpAccountListAllHandler)
 }

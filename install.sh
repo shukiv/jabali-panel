@@ -795,6 +795,13 @@ install_module_ftp() {
   else
     systemctl start vsftpd || _die "vsftpd start failed — check 'journalctl -u vsftpd'"
   fi
+  # `systemctl start` returning 0 is NOT proof of life: vsftpd exits
+  # status 2 in ~10ms on any unknown config directive with NO stderr, and
+  # systemd has already reported the start as successful by then (caught
+  # live: the invented ssl_tlsv1_2 option). Settle, then require active.
+  sleep 1
+  systemctl is-active --quiet vsftpd \
+    || _die "vsftpd died right after start (usually a bad /etc/vsftpd.conf directive) — check 'journalctl -u vsftpd' and 'vsftpd /etc/vsftpd.conf'"
   _ok "ftp module installed (vsftpd active, FTPS required unless ftp_allow_plaintext)"
 }
 
@@ -867,14 +874,18 @@ VSFTPDEOF
     printf 'pasv_address=%s\n' "$pasv_address" >> /etc/vsftpd.conf
   fi
   if [[ "$ssl_enable" == "YES" ]]; then
+    # Protocol floor: NO ssl_tlsv1_2/ssl_tlsv1_3 directives — Debian 13's
+    # vsftpd exits status 2 (silently) on those option names; proven live
+    # on jabalitests 2026-08-15. ssl_tlsv1/sslv2/sslv3 are the supported
+    # knobs, and OpenSSL 3's system security level already floors real
+    # negotiation at TLS 1.2.
     cat >> /etc/vsftpd.conf <<VSFTPDEOF
 ssl_enable=YES
 rsa_cert_file=${tls_cert}
 rsa_private_key_file=${tls_key}
 force_local_logins_ssl=${force_ssl}
 force_local_data_ssl=${force_ssl}
-ssl_tlsv1_2=YES
-ssl_tlsv1_3=YES
+ssl_tlsv1=YES
 ssl_sslv2=NO
 ssl_sslv3=NO
 require_ssl_reuse=NO
