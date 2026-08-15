@@ -106,6 +106,44 @@ server {
     proxy_set_header Accept-Encoding "";
   }
 
+  # CalDAV / CardDAV (GH #1039 follow-up). Stalwart serves the DAV
+  # collections and the RFC 6764 autodiscovery endpoints on the same
+  # loopback HTTP listener as JMAP. The _caldavs._tcp / _carddavs._tcp
+  # SRV records already point clients at mail.<domain>:443, and
+  # /.well-known/caldav|carddav 307-redirect (relative) to /dav/cal|
+  # /dav/card — so this last hop lets Thunderbird / Apple Mail discover
+  # and mount calendars + address books. Scoped to cal + card ONLY:
+  # /dav/file (WebDAV file storage) and /dav/pal (principals) are
+  # deliberately NOT exposed on the mail vhost. The inherited sub_filter
+  # is a no-op here — sub_filter_types is application/json while DAV
+  # responses are application/xml — so it never rewrites DAV bodies.
+  location = /.well-known/caldav {
+    proxy_pass http://127.0.0.1:8446;
+    proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
+  }
+  location = /.well-known/carddav {
+    proxy_pass http://127.0.0.1:8446;
+    proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
+  }
+  location /dav/cal {
+    proxy_pass http://127.0.0.1:8446;
+    proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
+    proxy_http_version 1.1;
+    proxy_read_timeout 3600s;
+    client_max_body_size 50m;
+  }
+  location /dav/card {
+    proxy_pass http://127.0.0.1:8446;
+    proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
+    proxy_http_version 1.1;
+    proxy_read_timeout 3600s;
+    client_max_body_size 50m;
+  }
+
   # /api/* intentionally routes to Bulwark (catch-all /) — Bulwark owns
   # its own API endpoints (/api/auth/session, etc.) and proxies
   # Stalwart admin internally via STALWART_API_URL. Routing /api → 8446

@@ -107,6 +107,49 @@ func TestWebmailVhostApply_WritesAndReloads(t *testing.T) {
 	}
 }
 
+// TestWebmailVhostApply_EmitsCalDAVCardDAVLocations pins the GH #1039
+// follow-up: the mail vhost must route the CalDAV/CardDAV autodiscovery
+// endpoints + collections to Stalwart (8446) so Thunderbird / Apple Mail
+// can auto-mount calendars and address books. It must NOT expose the
+// WebDAV file-storage (/dav/file) or principals (/dav/pal) namespaces.
+func TestWebmailVhostApply_EmitsCalDAVCardDAVLocations(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:  "example.com",
+		SSLCertPath: "/etc/letsencrypt/live/example.com/fullchain.pem",
+		SSLKeyPath:  "/etc/letsencrypt/live/example.com/privkey.pem",
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "example.com-mail.conf"))
+	if err != nil {
+		t.Fatalf("read vhost: %v", err)
+	}
+	s := string(b)
+
+	for _, want := range []string{
+		"location = /.well-known/caldav {",
+		"location = /.well-known/carddav {",
+		"location /dav/cal {",
+		"location /dav/card {",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("vhost missing DAV location %q:\n%s", want, s)
+		}
+	}
+	// Security: the file-storage and principals namespaces must NOT be
+	// proxied on the mail vhost (match the location block, not the
+	// explanatory comment that names the paths).
+	for _, forbidden := range []string{"location /dav/file", "location /dav/pal"} {
+		if strings.Contains(s, forbidden) {
+			t.Errorf("vhost must not expose %q on the mail host:\n%s", forbidden, s)
+		}
+	}
+}
+
 // TestWebmailVhostApply_IdempotentSameContent — second apply with
 // identical params must not write the file again AND must not reload
 // nginx. This is the reconciler's steady-state case, called every tick.
