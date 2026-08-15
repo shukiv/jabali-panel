@@ -60,9 +60,15 @@ const mockedDownload = downloadDatabaseBackup as ReturnType<typeof vi.fn>;
 const mockedRestore = restoreDatabaseUpload as ReturnType<typeof vi.fn>;
 
 /** Opens the row's overflow menu (first action renders as a button, the
- * rest collapse into the "more" dropdown). */
+ * rest collapse into the "more" dropdown). Generous timeouts — under CI
+ * load the dropdown animation + imperative modal mount can outlast
+ * testing-library's 1s default. */
 const openRowMenu = async () => {
-  const moreBtn = await screen.findByRole("button", { name: /more/i });
+  const moreBtn = await screen.findByRole(
+    "button",
+    { name: /more/i },
+    { timeout: 5000 },
+  );
   fireEvent.click(moreBtn);
 };
 
@@ -108,12 +114,18 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
     );
 
     await openRowMenu();
-    fireEvent.click(await screen.findByText("Restore from file"));
+    fireEvent.click(
+      await screen.findByText("Restore from file", undefined, {
+        timeout: 5000,
+      }),
+    );
 
     // The confirm dialog gates the file picker.
-    const okBtn = await screen.findByRole("button", {
-      name: /choose \.sql file/i,
-    });
+    const okBtn = await screen.findByRole(
+      "button",
+      { name: /choose \.sql file/i },
+      { timeout: 5000 },
+    );
     fireEvent.click(okBtn);
 
     // The hidden file input is the upload target; simulate picking a file.
