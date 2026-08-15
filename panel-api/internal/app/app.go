@@ -313,6 +313,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// after token expiry.
 	r.Use(middleware.NoCacheAPI())
 	r.Use(middleware.RequireContentType())
+	r.Use(middleware.BodyLimit(middleware.DefaultBodyLimitBytes, bodyLimitExemptRoutes))
 
 	// /info registration + the demo write-gate live behind a build tag (JAB-159):
 	// in a production build this just registers the base /info; in a `-tags demo`

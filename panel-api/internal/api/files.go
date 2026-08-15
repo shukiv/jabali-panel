@@ -266,7 +266,11 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.POST("/archive", h.archive)
 	grp.POST("/extract", h.extract)
 	grp.POST("/copy", h.copy)
-	grp.POST("/write", h.write)
+	// /write carries whole file contents (Monaco save) — exempt from the
+	// global 1 MiB JSON cap (JAB-246), bounded by the upload knob instead.
+	grp.POST("/write", filesUploadSizeLimit(func(c *gin.Context) int64 {
+		return h.resolveMaxUploadBytes(c.Request.Context())
+	}), h.write)
 	grp.POST("/upload-chunk", h.uploadChunk)
 	// Resume support — the client HEADs this before starting to see how
 	// many bytes of the upload-staging file already exist, so a reload
