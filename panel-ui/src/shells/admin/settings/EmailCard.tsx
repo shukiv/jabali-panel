@@ -18,7 +18,7 @@ export const EmailCard = () => {
 
   if (q.isPending) {
     return (
-      <Card title={<CardTitle />}>
+      <Card title={<CardTitle />} style={{ marginBottom: 16 }}>
         <Skeleton active />
       </Card>
     );
@@ -26,7 +26,7 @@ export const EmailCard = () => {
 
   if (q.isError) {
     return (
-      <Card title={<CardTitle />}>
+      <Card title={<CardTitle />} style={{ marginBottom: 16 }}>
         <Alert
           type="error"
           message={t("emailcard.failed_to_load_email_settings")}

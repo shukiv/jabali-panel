@@ -96,7 +96,7 @@ export function NginxSettingsCard() {
 
   if (!loaded) {
     return (
-      <Card title={t("nginxsettingscard.nginx")}>
+      <Card title={t("nginxsettingscard.nginx")} style={{ marginBottom: 16 }}>
         <Spin />
       </Card>
     );

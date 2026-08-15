@@ -355,7 +355,9 @@ const GeneralSettingsTab = () => {
 
       <ModulesCard />
 
-      <Space>
+      {/* More cards follow this form inside the tab fragment — without a
+          bottom margin the Save button sits glued to the next card. */}
+      <Space style={{ marginBottom: 24 }}>
         <Button
           type="primary"
           icon={<SaveOutlined />}
@@ -695,7 +697,9 @@ const StorageSettingsTab = () => {
         </Row>
       </Card>
 
-      <Space>
+      {/* More cards follow this form inside the tab fragment — without a
+          bottom margin the Save button sits glued to the next card. */}
+      <Space style={{ marginBottom: 24 }}>
         <Button
           type="primary"
           icon={<SaveOutlined />}
@@ -914,7 +918,9 @@ const SSHSettingsTab = () => {
 
       <NspawnImagesCard />
 
-      <Space>
+      {/* More cards follow this form inside the tab fragment — without a
+          bottom margin the Save button sits glued to the next card. */}
+      <Space style={{ marginBottom: 24 }}>
         <Button
           type="primary"
           icon={<SaveOutlined />}
