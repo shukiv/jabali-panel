@@ -1,7 +1,16 @@
 # GitHub Actions CI — gate every PR against the test suite. Ported from the
 # retired Codeberg/Forgejo workflow when the project moved its source-of-truth
-# to GitHub (shukiv/jabali-panel). Runs on a self-hosted runner (host-exec,
-# dedicated box) registered with this repo.
+# to GitHub (shukiv/jabali-panel).
+#
+# JAB-238: PR CI runs on GITHUB-HOSTED runners (ubuntu-latest), NOT the
+# self-hosted box. This workflow executes arbitrary code from any fork PR,
+# and the repo is public — on a self-hosted runner that is remote code
+# execution on our own infrastructure, and a poisoned runner then persists
+# into the trusted release.yml/nightly jobs that share the box. Ephemeral
+# GitHub-hosted runners make every PR run single-use and isolated. The
+# self-hosted runner is reserved for the trusted, maintainer-only triggers:
+# push-to-main (release.yml), schedule (nightly.yml), and workflow_dispatch
+# utilities.
 #
 # Jobs (all run unconditionally): Go tests+vet, install.sh lint, vitest+eslint,
 # Playwright E2E.
@@ -26,15 +35,16 @@ env:
 jobs:
   go:
     name: Go tests + vet
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          # cache: false — the runner's persistent $GOMODCACHE already caches;
-          # setup-go's tar layer conflicts with a pre-existing cache.
-          cache: false
+          # cache: true — ephemeral GitHub-hosted runners start cold every
+          # run (JAB-238); the tar-layer conflict noted here historically
+          # was specific to the self-hosted box's persistent $GOMODCACHE.
+          cache: true
       - name: go vet
         run: make vet
       - name: go test -race
@@ -42,13 +52,13 @@ jobs:
 
   govulncheck:
     name: govulncheck (Go stdlib + deps)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
+          cache: true
       # JAB-185. Nothing in CI reported the dependency surface before this, so a
       # stale toolchain or a vulnerable module could ship unnoticed -- the manual
       # 2026-07-31 run found 32 reachable advisories against the go.mod floor,
@@ -80,7 +90,7 @@ jobs:
 
   install-sh-lint:
     name: install.sh phantom-function lint
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run lint
@@ -88,7 +98,7 @@ jobs:
 
   install-sh-tests:
     name: install.sh regression tests
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run install/tests
@@ -114,7 +124,7 @@ jobs:
 
   pinned-downloads:
     name: install.sh pinned downloads published
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Verify pinned versions resolve to published artifacts
@@ -127,13 +137,13 @@ jobs:
 
   demo-guard:
     name: demo anti-leak guard
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
+          cache: true
       # JAB-159: the security guarantee for merging demo code to main is that a
       # production (untagged) build physically excludes it. Assert the prod
       # binary carries no demo_mode marker while the -tags demo build does, and
@@ -143,7 +153,7 @@ jobs:
 
   ui-unit:
     name: panel-ui unit tests (vitest)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -178,7 +188,7 @@ jobs:
 
   e2e:
     name: Playwright E2E
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     # Serialize e2e across ALL refs — port 4173 is a host-level resource.
     concurrency:
       group: e2e-port-4173
