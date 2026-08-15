@@ -30,10 +30,15 @@ CREATE TABLE ftp_accounts (
 -- required unless the operator deliberately allows legacy cleartext.
 -- Small typed columns on purpose: server_settings is close to InnoDB's
 -- 65535-byte row-size ceiling (see 000262).
+-- ftp_pasv_address is TEXT, not VARCHAR: server_settings already sits at
+-- InnoDB's 65535-byte in-row ceiling, and a utf8mb4 VARCHAR(64) (~258
+-- in-row bytes) fails with ERROR 1118 "Row size too large" on a real box
+-- (proven on testserver 2026-08-15). TEXT is stored off-page and costs
+-- ~12 in-row bytes, so it fits. The two TINYINTs fit as-is.
 ALTER TABLE server_settings
     ADD COLUMN ftp_enabled TINYINT(1) NOT NULL DEFAULT 0,
     ADD COLUMN ftp_allow_plaintext TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN ftp_pasv_address VARCHAR(64) NOT NULL DEFAULT '';
+    ADD COLUMN ftp_pasv_address TEXT NOT NULL DEFAULT '';
 
 -- Per-package cap on tenant-created accounts. 0 = feature hidden for users
 -- on that package (tenant capabilities default OFF).

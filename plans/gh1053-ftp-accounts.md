@@ -120,7 +120,9 @@ ftp_accounts
   (`<tenant>_<label>`, validated `[a-z0-9_]`, total ≤ 32 chars) so accounts
   can't collide with real users or other tenants' accounts.
 - server_settings: `ftp_enabled` BOOL default 0, `ftp_allow_plaintext` BOOL
-  default 0, `ftp_pasv_address` VARCHAR(64) default ''.
+  default 0, `ftp_pasv_address` TEXT NOT NULL default '' (TEXT, not
+  VARCHAR — server_settings is at the InnoDB 65535-byte row-size ceiling;
+  a utf8mb4 VARCHAR(64) fails with ERROR 1118 on real boxes).
 - hosting_packages: `max_ftp_accounts` INT default 0.
 - GORM scars to respect: no `default:1` on bools that must accept false
   (`feedback_gorm_default1_bool_zero_value`), Select-allowlist on updates

@@ -460,7 +460,7 @@ type ServerSettings struct {
 	// FTPPasvAddress is the external address vsftpd advertises for passive
 	// connections when the host is behind NAT. Empty = advertise the local
 	// address.
-	FTPPasvAddress string `gorm:"column:ftp_pasv_address;type:varchar(64);not null;default:''" json:"ftp_pasv_address"`
+	FTPPasvAddress string `gorm:"column:ftp_pasv_address;type:text;not null;default:''" json:"ftp_pasv_address"`
 
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
