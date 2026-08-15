@@ -39,13 +39,35 @@ func TestImportSystemdRunArgs_PropertyBeforeCommand_GH746(t *testing.T) {
 
 func TestImportSystemdRunArgs_NoPropertyWhenNoPassword_GH746(t *testing.T) {
 	args := importSystemdRunArgs("01KYNJ4TMHTYQH133SKARBZ4R2", "demolab", nil, nil)
-	for _, a := range args {
+	// GH746's actual invariant: every --property precedes the command —
+	// one placed after /usr/local/bin/jabali lands in jabali's argv and
+	// dies with "unknown flag". (Since JAB-242 the baseline resource
+	// props are ALWAYS present, so "zero properties" is no longer the
+	// no-password shape.)
+	cmdAt := -1
+	for i, a := range args {
+		if a == "/usr/local/bin/jabali" {
+			cmdAt = i
+			break
+		}
+	}
+	if cmdAt < 0 {
+		t.Fatalf("command not found in args=%v", args)
+	}
+	for _, a := range args[cmdAt:] {
 		if strings.HasPrefix(a, "--property") {
-			t.Errorf("no --property expected without a password; args=%v", args)
+			t.Errorf("--property after the command lands in jabali argv (GH746); args=%v", args)
+		}
+	}
+	// JAB-242: baseline resource controls are always present, before the command.
+	joined := strings.Join(args[:cmdAt], " ")
+	for _, want := range []string{"MemoryMax=", "TasksMax=", "CPUWeight=", "IOWeight="} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing resource prop %s before command; args=%v", want, args)
 		}
 	}
 	// The command tail is still well-formed.
-	joined := strings.Join(args, " ")
+	joined = strings.Join(args, " ")
 	if !strings.Contains(joined, "/usr/local/bin/jabali migrate import --job-id=01KYNJ4TMHTYQH133SKARBZ4R2 --target-user=demolab") {
 		t.Errorf("malformed import command: %v", args)
 	}

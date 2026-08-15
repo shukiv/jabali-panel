@@ -187,14 +187,18 @@ func migrationPullSourceRunHandler(ctx context.Context, raw json.RawMessage) (an
 	_ = exec.CommandContext(ctx, "systemctl", "stop", "--quiet", unit).Run()
 	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", unit).Run()
 	startedAt := time.Now().UTC()
-	cmd := exec.CommandContext(ctx, "systemd-run",
-		"--unit="+unit,
+	pullArgs := []string{
+		"--unit=" + unit,
 		"--no-block",
 		"--collect",
+	}
+	pullArgs = append(pullArgs, migrationResourceProps...)
+	pullArgs = append(pullArgs,
 		"/usr/local/bin/jabali", "migrate", "pull-source",
 		"--job-id="+p.JobID,
 		"--ssh-user="+sshUser,
 	)
+	cmd := exec.CommandContext(ctx, "systemd-run", pullArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("systemd-run: %v: %s", err, string(out))}
@@ -252,6 +256,19 @@ type migrationImportRunParams struct {
 	TargetPackageID string `json:"target_package_id,omitempty"`
 }
 
+// migrationResourceProps are the systemd resource controls every
+// migration worker unit gets (JAB-242). Weights, not quotas, for CPU/IO
+// so a migration on an idle host runs at full speed and only yields
+// under contention; hard caps only for the true exhaustion vectors. An
+// OOM-killed worker exits non-zero and the job lands in state=failed —
+// the existing failure path.
+var migrationResourceProps = []string{
+	"--property=MemoryMax=4G",
+	"--property=TasksMax=512",
+	"--property=CPUWeight=50",
+	"--property=IOWeight=50",
+}
+
 // importSystemdRunArgs assembles the systemd-run argv for a migration import.
 // runProps are extra systemd-run options (e.g. --property=EnvironmentFile=…)
 // that MUST come before the command; cmdOpts are extra `jabali migrate import`
@@ -264,6 +281,7 @@ func importSystemdRunArgs(jobID, targetUser string, runProps, cmdOpts []string) 
 		"--no-block",
 		"--collect",
 	}
+	args = append(args, migrationResourceProps...)
 	args = append(args, runProps...)
 	args = append(args,
 		"/usr/local/bin/jabali", "migrate", "import",

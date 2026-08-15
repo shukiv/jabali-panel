@@ -63,6 +63,34 @@ func (h *tenantMigrationsHandler) caller(c *gin.Context) string {
 	return claims.UserID
 }
 
+// JAB-242: tenant-migration launch caps. One active worker per tenant,
+// three host-wide — each worker is a root systemd unit running dump/
+// restore tooling against shared disk, DB and network. Consts on
+// purpose (no settings knob); the admin bulk runner is operator-trust
+// and not gated here.
+const (
+	tenantMigrationPerTenantCap = 1
+	tenantMigrationGlobalCap    = 3
+)
+
+// admitLaunch runs the transactional launch gate and writes the HTTP
+// error when refused. true = admitted, proceed to the agent call.
+func (h *tenantMigrationsHandler) admitLaunch(c *gin.Context, uid, toState string, fromStates []string) bool {
+	err := h.cfg.Jobs.AdmitLaunch(c.Request.Context(), c.Param("id"), uid, toState, fromStates,
+		tenantMigrationPerTenantCap, tenantMigrationGlobalCap)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, repository.ErrMigrationLaunchBusy):
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_active_migrations", "detail": "another migration is already running — wait for it to finish and retry"})
+	case errors.Is(err, repository.ErrMigrationNotLaunchable):
+		c.JSON(http.StatusConflict, gin.H{"error": "job_not_launchable", "detail": "this job's current state cannot start that action"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "launch_gate_failed"})
+	}
+	return false
+}
+
 // ownedJob loads the :id job and confirms the caller owns it (target_user_id).
 // A job the caller does not own returns 404 (not 403) so existence never leaks.
 func (h *tenantMigrationsHandler) ownedJob(c *gin.Context, uid string) *models.MigrationJob {
@@ -227,6 +255,16 @@ func (h *tenantMigrationsHandler) pull(c *gin.Context) {
 	}
 	var req tenantPullRequest
 	_ = c.ShouldBindJSON(&req)
+	// JAB-242: transactional launch gate. analyzing is in the from-set so
+	// a job whose worker died can be re-fired (the agent stops + replaces
+	// the old unit); the gate's count excludes this job itself.
+	if !h.admitLaunch(c, uid, models.MigrationStateAnalyzing, []string{
+		models.MigrationStatePending, models.MigrationStateFailed,
+		models.MigrationStateValidating, models.MigrationStateAnalyzing,
+		models.MigrationStateDegraded,
+	}) {
+		return
+	}
 	h.callAgent(c, "migration.pull_source_run", map[string]any{
 		"job_id":   c.Param("id"),
 		"ssh_user": req.SSHUser,
@@ -258,6 +296,15 @@ func (h *tenantMigrationsHandler) importWP(c *gin.Context) {
 	user, err := h.cfg.Users.FindByID(c.Request.Context(), uid)
 	if err != nil || user.Username == nil || *user.Username == "" {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_lookup"})
+		return
+	}
+	// JAB-242: same transactional gate as pull. restoring/fix_perms in the
+	// from-set = re-fire of a stuck import; count excludes this job.
+	if !h.admitLaunch(c, uid, models.MigrationStateRestoring, []string{
+		models.MigrationStateValidating, models.MigrationStateFailed,
+		models.MigrationStateDegraded, models.MigrationStateRestoring,
+		models.MigrationStateFixPerms,
+	}) {
 		return
 	}
 	h.callAgent(c, "migration.import_wp_run", map[string]any{

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -25,6 +26,9 @@ type MigrationJobRepository interface {
 	FindBySource(ctx context.Context, sourceKind, sourceHost, sourceUser string) (*models.MigrationJob, error)
 	List(ctx context.Context, page, pageSize int) ([]models.MigrationJob, int64, error)
 	UpdateState(ctx context.Context, id, state string, lastError *string) error
+	// AdmitLaunch is the transactional tenant-migration launch gate
+	// (JAB-242): active-count caps + conditional state flip in one tx.
+	AdmitLaunch(ctx context.Context, jobID, targetUserID, toState string, fromStates []string, perTenant, global int) error
 	UpdateManifest(ctx context.Context, id, manifestJSON string) error
 	UpdateTargetUser(ctx context.Context, id, targetUserID string) error
 	ClearTargetUser(ctx context.Context, id string) error
@@ -446,4 +450,73 @@ func (r *migrationJobRepo) UpdateStage(ctx context.Context, id, state string, by
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Active-worker migration states (JAB-242): a live systemd worker exists
+// for the job. pending/validating are queue/handoff states with no
+// running process and deliberately NOT counted, so a tenant's own
+// waiting job can't consume their launch slot.
+var migrationActiveStates = []string{
+	models.MigrationStateAnalyzing,
+	models.MigrationStateFixPerms,
+	models.MigrationStateRestoring,
+}
+
+// ErrMigrationLaunchBusy — per-tenant or host-wide active-migration cap
+// reached; retryable (JAB-242).
+var ErrMigrationLaunchBusy = errors.New("too many active migrations")
+
+// ErrMigrationNotLaunchable — the job is in a state that cannot launch
+// (draft/done/cancelled, or a state outside the caller's from-set).
+var ErrMigrationNotLaunchable = errors.New("job not in a launchable state")
+
+// AdmitLaunch (JAB-242) is the transactional launch gate for tenant
+// migration workers. In ONE transaction it:
+//
+//  1. locks the currently-active migration rows (SELECT ... FOR UPDATE)
+//     so two concurrent launches serialize instead of both counting the
+//     same snapshot,
+//  2. refuses with ErrMigrationLaunchBusy when the tenant already has
+//     perTenant active workers or the host has global (the target job
+//     itself is excluded — re-firing a stuck job must pass),
+//  3. conditionally flips the target row fromStates→toState; zero rows
+//     affected means the job wasn't in a launchable state.
+//
+// The state flip IS the admission record: the worker the caller then
+// launches re-asserts the same state, and a failed launch leaves a row
+// the tenant can re-fire (fromStates includes the active state itself).
+func (r *migrationJobRepo) AdmitLaunch(ctx context.Context, jobID, targetUserID, toState string, fromStates []string, perTenant, global int) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedIDs []string
+		if err := tx.Model(&models.MigrationJob{}).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("state IN ? AND id <> ?", migrationActiveStates, jobID).
+			Pluck("id", &lockedIDs).Error; err != nil {
+			return err
+		}
+		if global > 0 && len(lockedIDs) >= global {
+			return ErrMigrationLaunchBusy
+		}
+		if perTenant > 0 {
+			var tenantActive int64
+			if err := tx.Model(&models.MigrationJob{}).
+				Where("state IN ? AND id <> ? AND target_user_id = ?", migrationActiveStates, jobID, targetUserID).
+				Count(&tenantActive).Error; err != nil {
+				return err
+			}
+			if tenantActive >= int64(perTenant) {
+				return ErrMigrationLaunchBusy
+			}
+		}
+		res := tx.Model(&models.MigrationJob{}).
+			Where("id = ? AND target_user_id = ? AND state IN ?", jobID, targetUserID, fromStates).
+			Update("state", toState)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrMigrationNotLaunchable
+		}
+		return nil
+	})
 }

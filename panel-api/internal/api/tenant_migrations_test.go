@@ -18,8 +18,21 @@ import (
 
 type fakeTMJobs struct {
 	repository.MigrationJobRepository
-	jobs    map[string]*models.MigrationJob
-	created *models.MigrationJob
+	jobs     map[string]*models.MigrationJob
+	created  *models.MigrationJob
+	admitErr error // JAB-242: non-nil = gate refuses with this error
+}
+
+// AdmitLaunch on the fake mirrors the real gate's contract shape:
+// admit by default; tests flip admitErr to exercise refusals (JAB-242).
+func (f *fakeTMJobs) AdmitLaunch(_ context.Context, jobID, targetUserID, toState string, _ []string, _, _ int) error {
+	if f.admitErr != nil {
+		return f.admitErr
+	}
+	if j, ok := f.jobs[jobID]; ok {
+		j.State = toState
+	}
+	return nil
 }
 
 func (f *fakeTMJobs) FindByID(_ context.Context, id string) (*models.MigrationJob, error) {
@@ -169,5 +182,56 @@ func TestTenantMigration_ImportForcesDestUser(t *testing.T) {
 	}
 	if ag.last["dest_user"] != "usera" {
 		t.Fatalf("dest_user not forced to caller OS user: %v", ag.last["dest_user"])
+	}
+}
+
+// JAB-242: the launch gate's refusals surface as 429 (caps) / 409 (state),
+// and a refused launch never reaches the agent.
+func TestTenantMigration_LaunchGateBusy_429(t *testing.T) {
+	h, jobs, ag := newTMHandler()
+	myUID := "USERA"
+	jobs.jobs["JOBA"] = &models.MigrationJob{ID: "JOBA", SourceKind: models.MigrationSourceWordPressSSH, TargetUserID: &myUID, State: "pending"}
+	jobs.admitErr = repository.ErrMigrationLaunchBusy
+	c, w := ctxAs("USERA", `{}`, "JOBA")
+	h.pull(c)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("busy gate = %d, want 429", w.Code)
+	}
+	if ag.last != nil {
+		t.Fatalf("agent was called despite gate refusal: %v", ag.last)
+	}
+}
+
+func TestTenantMigration_LaunchGateNotLaunchable_409(t *testing.T) {
+	h, jobs, ag := newTMHandler()
+	myUID := "USERA"
+	jobs.jobs["JOBA"] = &models.MigrationJob{ID: "JOBA", SourceKind: models.MigrationSourceWordPressSSH, TargetUserID: &myUID, State: "done"}
+	jobs.admitErr = repository.ErrMigrationNotLaunchable
+	c, w := ctxAs("USERA", `{"dest_domain":"mine.com"}`, "JOBA")
+	h.importWP(c)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("not-launchable gate = %d, want 409", w.Code)
+	}
+	if ag.last != nil {
+		t.Fatalf("agent was called despite gate refusal: %v", ag.last)
+	}
+}
+
+// JAB-242: an admitted pull flips the job into the active state as the
+// admission record before the agent fires.
+func TestTenantMigration_LaunchGateAdmitFlipsState(t *testing.T) {
+	h, jobs, ag := newTMHandler()
+	myUID := "USERA"
+	jobs.jobs["JOBA"] = &models.MigrationJob{ID: "JOBA", SourceKind: models.MigrationSourceWordPressSSH, TargetUserID: &myUID, State: "pending"}
+	c, w := ctxAs("USERA", `{}`, "JOBA")
+	h.pull(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admitted pull = %d, want 200", w.Code)
+	}
+	if jobs.jobs["JOBA"].State != models.MigrationStateAnalyzing {
+		t.Fatalf("state = %q, want analyzing (admission record)", jobs.jobs["JOBA"].State)
+	}
+	if ag.last == nil {
+		t.Fatal("agent not called after admission")
 	}
 }
