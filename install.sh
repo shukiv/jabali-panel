@@ -6295,7 +6295,7 @@ LockPersonality=true
 # JIT-compiles YARA rules to WASM and requires PROT_EXEC mmap pages.
 # Defense-in-depth still covered by NoNewPrivileges + ProtectSystem +
 # RestrictAddressFamilies + ProtectKernel* above. ADR-0079.
-ReadWritePaths=$REPO_DIR /var/lib/jabali-uploads /var/lib/jabali-migrations /var/lib/jabali-panel /etc/jabali-panel/migration-secrets /run/mysqld
+ReadWritePaths=$REPO_DIR /var/lib/jabali-uploads /var/lib/jabali-migrations /var/lib/jabali-panel /var/lib/jabali/restore /etc/jabali-panel/migration-secrets /run/mysqld
 # GH #355: systemd creates + chowns /var/lib/jabali-uploads to the panel
 # service user on EVERY start, so a drifted owner (e.g. root, from an old
 # install) self-heals on a plain restart — not only on \`jabali update\`.
@@ -6318,6 +6318,15 @@ EOF
   # restriction. Same scar story as the app-install staging dir
   # (commands/staging_tmp.go, commit 29823c3).
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-uploads
+
+  # DB restore staging (GH #1045): panel-api writes an uploaded .sql dump
+  # here (databases.go POST /databases/:id/restore), then the root agent
+  # reads + unlinks it (db.restore). Same cross-unit path problem as the
+  # upload staging dir above — the panel's ProtectSystem=strict needs the
+  # ReadWritePaths entry, and systemd refuses to start the unit when a
+  # ReadWritePaths entry doesn't exist, so create it BEFORE the reload.
+  # Owned by SERVICE_USER 0700: only the panel writes, the agent is root.
+  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/restore
 
   # GH #425: reap abandoned upload staging files (chunked uploads with no final
   # chunk) so a tenant can't slowly fill the service partition shared with

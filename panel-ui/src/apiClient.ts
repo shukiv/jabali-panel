@@ -185,6 +185,46 @@ export async function ssoAdminer(
   return resp.data;
 }
 
+/**
+ * Download a one-shot SQL dump of the given database (GH #1045).
+ * The backend writes the dump to a scratch file and streams it, so a
+ * large database can take far longer than the axios 15s default —
+ * timeout: 0 opts this request out. The filename is recovered from the
+ * server's RFC 6266 Content-Disposition so the save-as matches what a
+ * direct navigation download would produce.
+ */
+export async function downloadDatabaseBackup(
+  databaseId: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const resp = await apiClient.get<Blob>(`/databases/${databaseId}/backup`, {
+    responseType: "blob",
+    timeout: 0,
+  });
+  const cd = resp.headers["content-disposition"] as string | undefined;
+  const m = cd?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+  const filename = m
+    ? decodeURIComponent(m[1].replace(/"$/, ""))
+    : "database.sql";
+  return { blob: resp.data, filename };
+}
+
+/**
+ * Restore a single database from an uploaded .sql dump (GH #1045).
+ * Multipart field name is "file" (server contract, max 500 MB). The
+ * restore runs synchronously server-side (agent pipes the dump into the
+ * mysql client), so big dumps need the unbounded timeout too.
+ */
+export async function restoreDatabaseUpload(
+  databaseId: string,
+  file: File,
+): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  await apiClient.post(`/databases/${databaseId}/restore`, form, {
+    timeout: 0,
+  });
+}
+
 // === PHP Settings API ===
 
 export interface DomainPHPSettings {

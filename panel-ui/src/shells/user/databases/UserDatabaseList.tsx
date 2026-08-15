@@ -2,8 +2,11 @@
 // + Open-in-phpMyAdmin + Delete. phpMyAdmin SSO is wired through the
 // apiClient helper; a blank tab is opened synchronously to dodge
 // popup blockers while the SSO call runs.
+// GH #1045: per-database Backup/Restore actions (download a one-shot
+// dump; restore from an uploaded .sql file) — MariaDB only, the agent
+// verbs shell out to mariadb-dump/mysql.
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Space, Table, Typography } from "antd";
@@ -14,10 +17,17 @@ import {
   DeleteOutlined,
   PlusSquareOutlined,
   ThunderboltOutlined,
+  DownloadOutlined,
+  UploadOutlined,
 } from "@icons";
 import { sorterToParams } from "../../../utils/tableSorter";
 
-import { ssoAdminer, ssoPhpMyAdmin } from "../../../apiClient";
+import {
+  downloadDatabaseBackup,
+  restoreDatabaseUpload,
+  ssoAdminer,
+  ssoPhpMyAdmin,
+} from "../../../apiClient";
 import { EngineTag } from "../../../components/EngineTag";
 import { RowActions } from "../../../components/RowActions";
 import { columnSearchProps } from "../../../components/columnSearch";
@@ -71,8 +81,17 @@ export const UserDatabaseList = () => {
   const [loadingPhpMyAdminId, setLoadingPhpMyAdminId] = useState<string | null>(
     null,
   );
+  const [loadingBackupId, setLoadingBackupId] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
+  // Hidden file input for "Restore from file" — the row action only
+  // records which database is the target and clicks this input; the
+  // upload happens in its onChange. Kept as a ref (not state) because
+  // the target row is only needed between the click and the change
+  // event, never for rendering.
+  const restoreInputRef = useRef<HTMLInputElement | null>(null);
+  const restoreTargetRef = useRef<Database | null>(null);
 
   const handleTableChange: React.ComponentProps<
     typeof Table<Database>
@@ -149,8 +168,69 @@ export const UserDatabaseList = () => {
     }
   };
 
+  const handleDownloadBackup = async (row: Database) => {
+    try {
+      setLoadingBackupId(row.id);
+      const { blob, filename } = await downloadDatabaseBackup(row.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : "Backup failed";
+      feedback.message.error(`Backup failed: ${errorMsg}`);
+    } finally {
+      setLoadingBackupId(null);
+    }
+  };
+
+  const handlePickRestore = (row: Database) => {
+    restoreTargetRef.current = row;
+    restoreInputRef.current?.click();
+  };
+
+  const handleRestoreFile = async (
+    e: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    // Reset the input value so picking the same file twice in a row
+    // still fires onChange the second time.
+    e.target.value = "";
+    const row = restoreTargetRef.current;
+    if (!file || !row) return;
+    try {
+      setRestoringId(row.id);
+      await restoreDatabaseUpload(row.id, file);
+      feedback.message.success(
+        `Database "${row.name}" restored from ${file.name}`,
+      );
+      // Size changed — refresh the listing.
+      qc.invalidateQueries({ queryKey: ["list", "databases"] });
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : "Restore failed";
+      feedback.message.error(`Restore failed: ${errorMsg}`);
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
   return (
     <div>
+      <input
+        ref={restoreInputRef}
+        type="file"
+        accept=".sql"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          void handleRestoreFile(e);
+        }}
+      />
       <Space
         style={{
           marginBottom: 16,
@@ -270,6 +350,36 @@ export const UserDatabaseList = () => {
                 disabled: isAdminerLoading,
                 loading: isAdminerLoading,
               };
+              // GH #1045 — per-database backup/restore. The agent verbs
+              // shell out to mariadb-dump/mysql, so both are MariaDB-only
+              // (same gate as phpMyAdmin).
+              const mariaOnlyTooltip = isPostgres
+                ? "Backup/restore supports MySQL/MariaDB only"
+                : undefined;
+              const backupAction = {
+                key: "backup",
+                label: "Download backup",
+                icon: <DownloadOutlined />,
+                onClick: () => void handleDownloadBackup(r),
+                disabled: isPostgres || loadingBackupId === r.id,
+                loading: loadingBackupId === r.id,
+                tooltip: mariaOnlyTooltip,
+              };
+              const restoreAction = {
+                key: "restore",
+                label: "Restore from file",
+                icon: <UploadOutlined />,
+                onClick: () => handlePickRestore(r),
+                disabled: isPostgres || restoringId === r.id,
+                loading: restoringId === r.id,
+                tooltip: mariaOnlyTooltip,
+                confirm: {
+                  title: `Restore into "${r.name}"?`,
+                  description:
+                    "The uploaded dump runs against this database — existing tables with the same names are overwritten.",
+                  okText: "Choose .sql file",
+                },
+              };
               // Adminer is the native admin tool for Postgres (phpMyAdmin
               // is MariaDB-only and shows disabled), so lead with it there;
               // MariaDB keeps phpMyAdmin first. (GH #1005)
@@ -281,6 +391,8 @@ export const UserDatabaseList = () => {
                 <RowActions
                   actions={[
                     ...dbTools,
+                    backupAction,
+                    restoreAction,
                     {
                       key: "delete",
                       label: "Delete",

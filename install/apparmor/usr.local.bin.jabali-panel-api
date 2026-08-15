@@ -224,6 +224,14 @@ profile jabali-panel flags=(attach_disconnected) {
   # /etc/jabali-panel/** r above.)
   /var/lib/jabali-migrations/     rw,
   /var/lib/jabali-migrations/**   rwk,
+  # GH #1045: per-database restore staging. POST /databases/:id/restore
+  # writes the uploaded .sql dump to /var/lib/jabali/restore/<ulid>.sql
+  # (databases.go), then the root agent's db.restore reads + unlinks it.
+  # Same layer split as the staging dirs above: ReadWritePaths covers
+  # systemd, but enforce mode needs the explicit rule or the restore
+  # 500s on the write.
+  /var/lib/jabali/restore/        rw,
+  /var/lib/jabali/restore/**      rwk,
 
   # GH #462: the backup-artifact download tars the agent-materialized snapshot
   # under /var/lib/jabali-backups/downloads/<job>/ (backups.go streamBackupArtifact).

@@ -1,0 +1,133 @@
+// UserDatabaseList.test.tsx — GH #1045. Locks the per-database
+// Backup/Restore row actions: "Download backup" fetches the dump via
+// the apiClient helper and triggers a save-as with the server-provided
+// filename; "Restore from file" confirms first, then uploads the picked
+// .sql file to the restore endpoint. Data/URL/mutation hooks are
+// mocked; the real AntD table + RowActions menu run so a UI break
+// surfaces here.
+import { App } from "antd";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { UserDatabaseList } from "./UserDatabaseList";
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
+
+vi.mock("../../../apiClient", () => ({
+  downloadDatabaseBackup: vi.fn(),
+  restoreDatabaseUpload: vi.fn(),
+  ssoAdminer: vi.fn(),
+  ssoPhpMyAdmin: vi.fn(),
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+}));
+
+vi.mock("../../../hooks/useQueries", () => ({
+  useDeleteMutation: () => ({ mutateAsync: vi.fn() }),
+  useCreateMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
+const mariaRow = {
+  id: "db1",
+  user_id: "u1",
+  name: "shop_db",
+  engine: "mariadb",
+  charset: "utf8mb4",
+  created_at: "2026-08-01T00:00:00Z",
+  updated_at: "2026-08-01T00:00:00Z",
+};
+
+vi.mock("../../../hooks/useTableURL", () => ({
+  useTableURL: () => ({
+    items: [mariaRow],
+    total: 1,
+    isLoading: false,
+    params: { page: 1, pageSize: 20, q: "", sort: "name", order: "asc" },
+    setParams: vi.fn(),
+  }),
+}));
+
+import {
+  downloadDatabaseBackup,
+  restoreDatabaseUpload,
+} from "../../../apiClient";
+
+const mockedDownload = downloadDatabaseBackup as ReturnType<typeof vi.fn>;
+const mockedRestore = restoreDatabaseUpload as ReturnType<typeof vi.fn>;
+
+/** Opens the row's overflow menu (first action renders as a button, the
+ * rest collapse into the "more" dropdown). */
+const openRowMenu = async () => {
+  const moreBtn = await screen.findByRole("button", { name: /more/i });
+  fireEvent.click(moreBtn);
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // jsdom doesn't implement createObjectURL — stub it so the save-as
+  // path runs.
+  vi.stubGlobal("URL", {
+    ...URL,
+    createObjectURL: vi.fn(() => "blob:mock"),
+    revokeObjectURL: vi.fn(),
+  });
+});
+
+describe("UserDatabaseList backup/restore (GH #1045)", () => {
+  it("downloads a backup via the save-as dance with the server filename", async () => {
+    mockedDownload.mockResolvedValue({
+      blob: new Blob(["SQL"], { type: "application/sql" }),
+      filename: "shop_db-20260815-010203.sql",
+    });
+
+    render(
+      <App>
+        <UserDatabaseList />
+      </App>,
+    );
+
+    await openRowMenu();
+    fireEvent.click(await screen.findByText("Download backup"));
+
+    await waitFor(() => {
+      expect(mockedDownload).toHaveBeenCalledWith("db1");
+    });
+  });
+
+  it("restores from an uploaded .sql after confirmation", async () => {
+    mockedRestore.mockResolvedValue(undefined);
+
+    render(
+      <App>
+        <UserDatabaseList />
+      </App>,
+    );
+
+    await openRowMenu();
+    fireEvent.click(await screen.findByText("Restore from file"));
+
+    // The confirm dialog gates the file picker.
+    const okBtn = await screen.findByRole("button", {
+      name: /choose \.sql file/i,
+    });
+    fireEvent.click(okBtn);
+
+    // The hidden file input is the upload target; simulate picking a file.
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    expect(input).not.toBeNull();
+    const file = new File(["CREATE TABLE t (id INT);"], "dump.sql", {
+      type: "application/sql",
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(mockedRestore).toHaveBeenCalledWith("db1", file);
+    });
+  });
+});
