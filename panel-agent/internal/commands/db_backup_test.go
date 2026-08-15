@@ -74,7 +74,7 @@ func TestDBBackupHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: path not under /var/lib/jabali/backups/",
+			name: "invalid: path not under staging dir",
 			input: dbBackupParams{
 				DBName: "alice",
 				Path:   "/tmp/backup.sql",
@@ -83,10 +83,19 @@ func TestDBBackupHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
+			name: "invalid: old backups dir is no longer accepted",
+			input: dbBackupParams{
+				DBName: "alice",
+				Path:   "/var/lib/jabali/backups/x.sql",
+			},
+			wantError: true,
+			wantCode:  agentwire.CodeInvalidArgument,
+		},
+		{
 			name: "invalid: path with directory traversal",
 			input: dbBackupParams{
 				DBName: "alice",
-				Path:   "/var/lib/jabali/backups/../../etc/passwd",
+				Path:   dbBackupStagingDir + "/../../etc/passwd",
 			},
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,

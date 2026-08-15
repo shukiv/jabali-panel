@@ -73,6 +73,20 @@ type dbBackupResponse struct {
 // dbBackupNameRegex validates MariaDB database name format.
 var dbBackupNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
+// dbBackupStagingDir is where the dump is written for panel-api to stream back
+// (GH #1045). It deliberately is NOT /var/lib/jabali/backups: the panel unit
+// runs ProtectSystem=strict without that dir in ReadWritePaths, and its
+// AppArmor profile only grants read on the downloads/ subtree — so the panel
+// could neither reliably read the dump nor unlink it afterwards, stranding a
+// full dump per download. /var/lib/jabali-uploads is the established
+// agent->panel handoff dir: it is in the panel's ReadWritePaths and its
+// AppArmor profile grants rwk, so the panel can read AND delete the temp file
+// under both ProtectSystem and AppArmor enforce. The GH #425 tmpfiles reaper
+// (12h) sweeps anything a crash strands. The agent still re-owns the file to
+// the panel user (dir is 0750 jabali:jabali-sockets, not setgid, so a
+// root-written file lands root:root) — see reownBackupForPanel.
+const dbBackupStagingDir = "/var/lib/jabali-uploads"
+
 func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbBackupParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -114,14 +128,14 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 				Message: "failed to generate backup path",
 			}
 		}
-		backupPath = fmt.Sprintf("/var/lib/jabali/backups/%s.sql", hex.EncodeToString(buf))
+		backupPath = fmt.Sprintf("%s/jabali-db-backup-%s.sql", dbBackupStagingDir, hex.EncodeToString(buf))
 	}
 
-	// Validate path is under /var/lib/jabali/backups/ and reject directory traversal
-	if !strings.HasPrefix(backupPath, "/var/lib/jabali/backups/") {
+	// Validate path is under the staging dir and reject directory traversal.
+	if !strings.HasPrefix(backupPath, dbBackupStagingDir+"/") {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: "backup path must be under /var/lib/jabali/backups/",
+			Message: "backup path must be under " + dbBackupStagingDir + "/",
 		}
 	}
 
@@ -133,12 +147,13 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 
-	// Ensure directory exists with mode 0700
-	backupDir := "/var/lib/jabali/backups"
-	if err := os.MkdirAll(backupDir, 0700); err != nil {
+	// The staging dir is provisioned by install.sh (0750 jabali:jabali-sockets).
+	// MkdirAll is a defensive no-op when it already exists; on the off chance it
+	// is missing, 0750 keeps it panel-owner-writable rather than root-only.
+	if err := os.MkdirAll(dbBackupStagingDir, 0750); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: "failed to create backup directory",
+			Message: "failed to create backup staging directory",
 		}
 	}
 
