@@ -78,15 +78,18 @@ export const UserFtpAccountsPage = () => {
 
   const handleCreate = async (values: {
     label: string;
-    home_path: string;
+    home_rel?: string;
     password: string;
     ftp_access?: boolean;
   }) => {
     setSaving(true);
     try {
+      // The /home/<user> prefix is a fixed addon — users type only the
+      // part inside their home. Empty = the home directory itself.
+      const rel = (values.home_rel ?? "").replace(/^\/+|\/+$/g, "");
       await createFtpAccount({
         label: values.label,
-        home_path: values.home_path,
+        home_path: rel ? `${homePrefix}/${rel}` : homePrefix,
         password: values.password,
         ftp_access: !!values.ftp_access,
       });
@@ -277,7 +280,7 @@ export const UserFtpAccountsPage = () => {
           form={form}
           layout="vertical"
           onFinish={handleCreate}
-          initialValues={{ home_path: homePrefix, ftp_access: false }}
+          initialValues={{ ftp_access: false }}
         >
           <Form.Item
             label={t("ftpaccounts.label")}
@@ -295,19 +298,21 @@ export const UserFtpAccountsPage = () => {
           </Form.Item>
           <Form.Item
             label={t("ftpaccounts.directory")}
-            name="home_path"
+            name="home_rel"
             tooltip={t("ftpaccounts.directory_tooltip")}
             rules={[
-              { required: true },
               {
                 validator: (_, v: string) =>
-                  !v || v === homePrefix || v.startsWith(homePrefix + "/")
+                  !v || (!v.includes("..") && !/[\s"'\\:]/.test(v))
                     ? Promise.resolve()
-                    : Promise.reject(new Error(t("ftpaccounts.directory_rule", { prefix: homePrefix }))),
+                    : Promise.reject(new Error(t("ftpaccounts.directory_rel_rule"))),
               },
             ]}
           >
-            <Input placeholder={`${homePrefix}/example.com/public_html`} />
+            <Input
+              addonBefore={`${homePrefix}/`}
+              placeholder="example.com/public_html"
+            />
           </Form.Item>
           <Form.Item
             label={t("ftpaccounts.password")}

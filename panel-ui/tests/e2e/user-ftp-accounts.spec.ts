@@ -154,8 +154,10 @@ test("create drawer submits the tenant-prefixed body and never echoes the passwo
   await page.getByRole("button", { name: /Add account/ }).click();
 
   await page.getByLabel("Account name").fill("deploy");
+  // Directory input takes only the part INSIDE the home — the
+  // /home/<user>/ prefix is a fixed addon, not editable (review feedback).
   const dirInput = page.getByLabel("Directory");
-  await dirInput.fill("/home/shop/example.com/public_html");
+  await dirInput.fill("example.com/public_html");
   await page.getByLabel("Password", { exact: true }).fill("a-long-enough-password");
   await page.getByRole("button", { name: /Add account/ }).last().click();
 
