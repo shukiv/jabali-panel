@@ -447,6 +447,21 @@ type ServerSettings struct {
 	// operators to mint a dedicated scoped token, not a global one.
 	CFAPITokenEnc []byte `gorm:"column:cf_api_token_enc;type:varbinary(512)" json:"-"`
 
+	// FTP module (GH #1053, plans/gh1053-ftp-accounts.md). FTPEnabled is the
+	// server-level opt-in (operator decision: default OFF) — flipping it on
+	// installs/starts the vsftpd module (M353 install-on-enable) and opens
+	// the firewall ports; off masks the daemon and closes them. SFTP
+	// subaccounts work regardless of this flag.
+	FTPEnabled bool `gorm:"column:ftp_enabled;type:tinyint(1);not null;default:0" json:"ftp_enabled"`
+	// FTPAllowPlaintext deliberately defaults to false: with FTP enabled,
+	// TLS is still REQUIRED unless the operator explicitly allows legacy
+	// cleartext logins. Never relax this silently.
+	FTPAllowPlaintext bool `gorm:"column:ftp_allow_plaintext;type:tinyint(1);not null;default:0" json:"ftp_allow_plaintext"`
+	// FTPPasvAddress is the external address vsftpd advertises for passive
+	// connections when the host is behind NAT. Empty = advertise the local
+	// address.
+	FTPPasvAddress string `gorm:"column:ftp_pasv_address;type:varchar(64);not null;default:''" json:"ftp_pasv_address"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

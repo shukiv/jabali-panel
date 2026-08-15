@@ -37,6 +37,12 @@ type HostingPackage struct {
 	// opt-in per plan), mirroring MaxDockerApps.
 	MaxPythonApps uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_python_apps"`
 
+	// MaxFTPAccounts caps tenant-created FTP/SFTP subaccounts on this plan
+	// (GH #1053). 0 = feature NOT included and hidden in the user shell
+	// (safe default, opt-in per plan, mirrors MaxDockerApps). Explicit
+	// column tag: GORM's namer mangles consecutive-capital initialisms.
+	MaxFTPAccounts uint32 `gorm:"column:max_ftp_accounts;type:int unsigned;not null;default:0" json:"max_ftp_accounts"`
+
 	// DockerAppSlugs (GH #170 #3) is a CSV allowlist of catalog slugs a tenant
 	// on this package may install. Empty = fall back to the server-wide
 	// docker_tenant_apps curation. Always AND-ed with MaxDockerApps>0 +
