@@ -3,6 +3,10 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"os/user"
+	"path/filepath"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -109,4 +113,64 @@ func TestDBBackupHandler(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReownBackupForPanel pins the GH #1045 fix: a dump written by the agent
+// (root) is re-owned to the panel service user so panel-api can read it back.
+// The download 500'd because the file landed root:root 0640, unreadable by the
+// unprivileged panel user. Seams are injected so the test runs on CI hosts with
+// no "jabali" account and without needing root to chown.
+func TestReownBackupForPanel(t *testing.T) {
+	origLookup := dbBackupLookupUser
+	origChown := dbBackupChown
+	t.Cleanup(func() {
+		dbBackupLookupUser = origLookup
+		dbBackupChown = origChown
+	})
+
+	t.Run("chowns to the service user and pins 0640", func(t *testing.T) {
+		dbBackupLookupUser = func() (*user.User, error) {
+			return &user.User{Uid: "996", Gid: "989"}, nil
+		}
+		var gotPath string
+		var gotUID, gotGID int
+		dbBackupChown = func(path string, uid, gid int) error {
+			gotPath, gotUID, gotGID = path, uid, gid
+			return nil // real chown needs root; assert intent instead
+		}
+
+		path := filepath.Join(t.TempDir(), "dump.sql")
+		if err := os.WriteFile(path, []byte("-- dump\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := reownBackupForPanel(path); err != nil {
+			t.Fatalf("reownBackupForPanel: %v", err)
+		}
+		if gotPath != path {
+			t.Errorf("chown path = %q, want %q", gotPath, path)
+		}
+		if gotUID != 996 || gotGID != 989 {
+			t.Errorf("chown target = %d:%d, want 996:989", gotUID, gotGID)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0640 {
+			t.Errorf("mode = %o, want 640", perm)
+		}
+	})
+
+	t.Run("surfaces a lookup failure", func(t *testing.T) {
+		dbBackupLookupUser = func() (*user.User, error) {
+			return nil, errors.New("unknown user jabali")
+		}
+		dbBackupChown = func(string, int, int) error {
+			t.Fatal("chown must not run when the service user cannot be resolved")
+			return nil
+		}
+		if err := reownBackupForPanel(filepath.Join(t.TempDir(), "x.sql")); err == nil {
+			t.Fatal("expected error when service user lookup fails")
+		}
+	})
 }

@@ -489,9 +489,12 @@ func (h *databaseHandler) backup(c *gin.Context) {
 		return
 	}
 
-	// Open the backup file
+	// Open the backup file. On any failure past this point the agent has
+	// already written a full DB dump to disk; delete it before returning so a
+	// retrying client doesn't strand root-owned dumps in the backup dir.
 	f, err := openFile(resp.Path)
 	if err != nil {
+		_ = deleteFile(resp.Path)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

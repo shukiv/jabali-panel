@@ -8,11 +8,55 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
+
+// dbBackupChown is os.Chown in production; tests override it to assert the
+// agent->panel ownership handoff without needing root.
+var dbBackupChown = os.Chown
+
+// dbBackupLookupUser resolves the panel service user; tests override it so they
+// run on hosts (e.g. CI) where the "jabali" account does not exist.
+var dbBackupLookupUser = func() (*user.User, error) { return user.Lookup(systemServiceUser) }
+
+// reownBackupForPanel re-owns a freshly written dump to the panel service user
+// and pins its mode to 0640. The dump is created by the agent (root) but
+// streamed back to the HTTP client by panel-api, which runs as the unprivileged
+// service user ("jabali"). A root:root 0640 file is unreadable by that user —
+// it is not in the root group — so the panel's os.Open fails and the download
+// 500s (GH #1045). Chowning the OWNER (not just the group) is deliberate:
+// panel-api's systemd unit sets Group=jabali-sockets, so the service user's
+// primary "jabali" group is only a supplementary group and is not guaranteed
+// present on every install (see feedback_systemd_group_supplementary) —
+// owner-read on 0640 works regardless. The backup dir is 0700 jabali:jabali, so
+// the re-owned file stays reachable only by the panel, which can also unlink it
+// after streaming. Mirrors the agent->panel handoff in sendmail_cred.go.
+func reownBackupForPanel(path string) error {
+	svc, err := dbBackupLookupUser()
+	if err != nil {
+		return fmt.Errorf("resolve service user: %w", err)
+	}
+	uid, err := strconv.Atoi(svc.Uid)
+	if err != nil {
+		return fmt.Errorf("service uid %q: %w", svc.Uid, err)
+	}
+	gid, err := strconv.Atoi(svc.Gid)
+	if err != nil {
+		return fmt.Errorf("service gid %q: %w", svc.Gid, err)
+	}
+	if err := dbBackupChown(path, uid, gid); err != nil {
+		return fmt.Errorf("chown %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0640); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	return nil
+}
 
 // dbBackupParams is the input shape for db.backup.
 type dbBackupParams struct {
@@ -129,16 +173,14 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 
-	// chmod 0640 — 0600 would lock out panel-api (runs as jabali, while
-	// the agent runs as root), which is the process that streams the
-	// dump back to the HTTP client. The backup dir itself is 0700 and
-	// already jabali-group-owned, so group-readable files leak only to
-	// panel-api — exactly who needs them.
-	if err := os.Chmod(backupPath, 0640); err != nil {
+	// Hand the dump off to panel-api (runs as the unprivileged service user),
+	// which streams it to the client. See reownBackupForPanel for why this is
+	// required (GH #1045).
+	if err := reownBackupForPanel(backupPath); err != nil {
 		_ = os.Remove(backupPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: "failed to set backup file permissions",
+			Message: "failed to finalize backup file",
 		}
 	}
 
