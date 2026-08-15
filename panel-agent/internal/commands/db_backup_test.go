@@ -183,3 +183,43 @@ func TestReownBackupForPanel(t *testing.T) {
 		}
 	})
 }
+
+// JAB-244: with both global dump slots held, a new backup must answer
+// retryable-unavailable BEFORE any validation of staging or exec of
+// mysqldump.
+func TestDBBackup_GlobalSlotsExhausted_Unavailable(t *testing.T) {
+	rel1, ok1 := dbBackupSlots.TryAcquire("heldA")
+	rel2, ok2 := dbBackupSlots.TryAcquire("heldB")
+	if !ok1 || !ok2 {
+		t.Fatal("precondition: could not hold both global slots")
+	}
+	defer rel1()
+	defer rel2()
+
+	params, _ := json.Marshal(map[string]string{"db_name": "tenant_db"})
+	_, err := dbBackupHandler(context.Background(), params)
+	if err == nil {
+		t.Fatal("backup admitted with zero free slots")
+	}
+	var ae *agentwire.AgentError
+	if !errors.As(err, &ae) || ae.Code != agentwire.CodeUnavailable {
+		t.Fatalf("want CodeUnavailable, got %v", err)
+	}
+}
+
+// JAB-244: a second dump of the SAME database is refused even with a
+// global slot free (per-key cap 1 — duplicate work, duplicate disk).
+func TestDBBackup_SameDBAlreadyDumping_Unavailable(t *testing.T) {
+	rel, ok := dbBackupSlots.TryAcquire("tenant_db")
+	if !ok {
+		t.Fatal("precondition: could not hold the db slot")
+	}
+	defer rel()
+
+	params, _ := json.Marshal(map[string]string{"db_name": "tenant_db"})
+	_, err := dbBackupHandler(context.Background(), params)
+	var ae *agentwire.AgentError
+	if err == nil || !errors.As(err, &ae) || ae.Code != agentwire.CodeUnavailable {
+		t.Fatalf("want CodeUnavailable for same-db double dump, got %v", err)
+	}
+}

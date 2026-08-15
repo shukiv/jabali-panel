@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -247,6 +249,17 @@ func dbPgDumpHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	}
 	if !strings.HasPrefix(p.OutPath, "/var/lib/jabali") && !strings.HasPrefix(p.OutPath, "/run/jabali") {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "out_path must be under /var/lib/jabali or /run/jabali"}
+	}
+	// JAB-244: same dump-slot + host-floor admission as db.backup.
+	// pg_dump opens its own output handle (-f), so there is no mid-dump
+	// write cadence here — pre-checks + shared slots only.
+	release, ok := dbBackupSlots.TryAcquire("pg:" + p.DBName)
+	if !ok {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "too many concurrent database backups — retry shortly"}
+	}
+	defer release()
+	if err := hostreserve.CheckReserve(filepath.Dir(p.OutPath), 0); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "backup staging is under the host disk reserve: " + err.Error()}
 	}
 	cmd := exec.CommandContext(ctx, "sudo", "-u", "postgres", "pg_dump",
 		"-Fc", "--no-owner", "--no-privileges",

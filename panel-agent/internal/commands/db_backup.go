@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"os"
 	"os/exec"
 	"os/user"
@@ -87,6 +88,13 @@ var dbBackupNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 // root-written file lands root:root) — see reownBackupForPanel.
 const dbBackupStagingDir = "/var/lib/jabali-uploads"
 
+// dbBackupSlots (JAB-244): at most one dump per database (same-DB
+// double-fire is wasted work) and two host-wide — each dump materializes
+// a full .sql on shared staging before the panel consumes it. Refusals
+// are retryable CodeUnavailable; the 12h sweeper (GH #1045) still reaps
+// crash-stranded files.
+var dbBackupSlots = hostreserve.NewKeyedSemaphore(1, 2)
+
 func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbBackupParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -147,6 +155,24 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 
+	// JAB-244: bounded concurrency + host floor. Acquire a dump slot
+	// (never blocks — a busy host answers retryable-unavailable), then
+	// refuse outright when staging is already under the reserve floor.
+	release, ok := dbBackupSlots.TryAcquire(p.DBName)
+	if !ok {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeUnavailable,
+			Message: "too many concurrent database backups — retry shortly",
+		}
+	}
+	defer release()
+	if err := hostreserve.CheckReserve(dbBackupStagingDir, 0); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeUnavailable,
+			Message: "backup staging is under the host disk reserve: " + err.Error(),
+		}
+	}
+
 	// The staging dir is provisioned by install.sh (0750 jabali:jabali-sockets).
 	// MkdirAll is a defensive no-op when it already exists; on the off chance it
 	// is missing, 0750 keeps it panel-owner-writable rather than root-only.
@@ -177,7 +203,9 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		"--",
 		p.DBName,
 	)
-	cmd.Stdout = f
+	// JAB-244: mid-dump reserve cadence — a dump that started with room
+	// stops when concurrent writers eat the disk (256 MiB re-checks).
+	cmd.Stdout = hostreserve.GuardedWriter(f, dbBackupStagingDir)
 
 	if err := cmd.Run(); err != nil {
 		// Remove partial file on failure

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,11 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// dbBackupRequests (JAB-244): per-tenant in-flight backup-request cap.
+// The agent enforces the global and per-database dump slots; this only
+// stops one tenant stacking synchronous request windows.
+var dbBackupRequests = hostreserve.NewKeyedSemaphore(1, 0)
 
 // DatabaseHandlerConfig plugs the database handlers into the router.
 type DatabaseHandlerConfig struct {
@@ -461,6 +467,16 @@ func (h *databaseHandler) backup(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
+
+	// JAB-244: one in-flight backup request per tenant (the agent holds
+	// the global + per-database slots). Bounds the synchronous 5-minute
+	// call window a tenant can multiply.
+	release, ok := dbBackupRequests.TryAcquire(claims.UserID)
+	if !ok {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "backup_in_progress", "detail": "another backup of yours is still running — wait for it and retry"})
+		return
+	}
+	defer release()
 
 	// Call agent to create the backup
 	if h.cfg.Agent == nil {
