@@ -34,7 +34,7 @@ func TestPullFilesByFile_ManifestPastBudgetFails(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok", true)
-	c.hc = srv.Client() // SafeHTTPClient rejects loopback; the guard under test is the budget
+	c.hc = srv.Client()                         // SafeHTTPClient rejects loopback; the guard under test is the budget
 	c.SetBudget(hostreserve.NewBudget(1 << 20)) // 1 MiB job budget
 
 	dst := filepath.Join(t.TempDir(), "files.tar.gz")
