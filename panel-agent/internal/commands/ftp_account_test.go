@@ -284,3 +284,49 @@ func TestFtpAccountLifecycle_Host(t *testing.T) {
 		t.Fatalf("set_password: %v", err)
 	}
 }
+
+// --- classifyFtpAliases (ownership-marker sweep guard) ---
+
+func TestClassifyFtpAliases(t *testing.T) {
+	passwd := "" +
+		"root:x:0:0:root:/root:/bin/bash\n" +
+		"shop:x:1002:1002::/home/shop:/bin/bash\n" +
+		// ours: marker present
+		"shop_deploy:x:1002:1002:jabali-ftp-account:/home/shop/site:/usr/sbin/nologin\n" +
+		// operator's hand-made same-uid alias: NO marker — must be skipped
+		"shop_rsync:x:1002:1002:ops backup alias:/home/shop:/bin/bash\n" +
+		// marker with GECOS extra fields after a comma still matches
+		"shop_ci:x:1002:1002:jabali-ftp-account,,,:/home/shop/ci:/usr/sbin/nologin\n" +
+		// underscore-in-tenant-name walk: tenant user_01k has alias user_01k_dev
+		"user_01k:x:1003:1003::/home/user_01k:/bin/bash\n" +
+		"user_01k_dev:x:1003:1003:jabali-ftp-account:/home/user_01k/site:/usr/sbin/nologin\n" +
+		// same-name-pattern but DIFFERENT uid: unrelated real user, ignored entirely
+		"shop_other:x:1004:1004:jabali-ftp-account:/home/shop_other:/bin/bash\n" +
+		// alias of a SYSTEM uid: never ours even with a marker
+		"daemon_x:x:1:1:jabali-ftp-account:/tmp:/usr/sbin/nologin\n"
+
+	owned, skipped := classifyFtpAliases(passwd)
+
+	names := map[string]string{}
+	for _, o := range owned {
+		names[o.Username] = o.TenantUsername
+	}
+	if len(owned) != 3 {
+		t.Fatalf("expected 3 owned aliases, got %d: %v", len(owned), names)
+	}
+	if names["shop_deploy"] != "shop" || names["shop_ci"] != "shop" || names["user_01k_dev"] != "user_01k" {
+		t.Fatalf("wrong classification: %v", names)
+	}
+	if skipped != 1 {
+		t.Fatalf("expected exactly the operator alias skipped, got %d", skipped)
+	}
+}
+
+func TestGecosName(t *testing.T) {
+	if gecosName("jabali-ftp-account,,,") != "jabali-ftp-account" {
+		t.Fatal("comma-suffixed GECOS must match")
+	}
+	if gecosName("") != "" || gecosName("plain") != "plain" {
+		t.Fatal("plain GECOS mishandled")
+	}
+}

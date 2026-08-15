@@ -39,6 +39,12 @@ import (
 //     per-account Match User blocks (step 3), not this group.
 const ftpGroupName = "jabali-ftp"
 
+// ftpAliasGecos is the passwd comment (GECOS) stamped on every alias the
+// panel creates — the ownership marker that separates OUR aliases from
+// operator-made same-uid accounts. GECOS survives everything the alias
+// survives (chpasswd, usermod -L/-U, group edits).
+const ftpAliasGecos = "jabali-ftp-account"
+
 // ftpSubaccountLabelRegex validates the operator-chosen suffix. The full
 // username is "<tenant>_<label>": lowercase, digits, underscore, and the
 // whole thing must still fit useradd's 32-char ceiling.
@@ -195,6 +201,14 @@ func requireFtpSubaccount(tenant *ftpTenant, sub string) (*user.User, *agentwire
 			Message: fmt.Sprintf("passwd entry %q has uid %d, expected tenant uid %d — refusing to touch a non-subaccount user", sub, uid, tenant.UID),
 		}
 	}
+	// Ownership marker: name+uid alone can match an operator's hand-made
+	// alias — those are never ours to re-password, lock, or delete.
+	if u.Name != ftpAliasGecos {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodePermissionDenied,
+			Message: fmt.Sprintf("passwd entry %q lacks the %q ownership marker — operator-managed account, refusing", sub, ftpAliasGecos),
+		}
+	}
 	return u, nil
 }
 
@@ -305,6 +319,13 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 	// file must omit pam_shells.so, which would reject nologin.
 	// No --user-group and NO www-data (#430); jabali-ftp only via
 	// ftp_access below.
+	// --comment: the GECOS field is the panel's OWNERSHIP MARKER. The
+	// "<tenant>_<label>, same uid" naming pattern alone is guessable and
+	// predates this feature (operators hand-make same-uid aliases with the
+	// identical useradd -o trick), and every reaper in this codebase marks
+	// its property before it ever deletes (policy-rc.d marker line, DNS
+	// managed_by=acme-dns01). list_all + every mutating verb require this
+	// marker, so the stray sweep can never userdel an operator's own alias.
 	args := []string{
 		"--non-unique",
 		"--uid", strconv.Itoa(tenant.UID),
@@ -313,6 +334,7 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 		"--no-create-home",
 		"--no-user-group",
 		"--shell", "/usr/sbin/nologin",
+		"--comment", ftpAliasGecos,
 		p.Username,
 	}
 	if out, err := exec.CommandContext(ctx, "useradd", args...).CombinedOutput(); err != nil {
@@ -488,6 +510,9 @@ func ftpAccountListHandler(ctx context.Context, params json.RawMessage) (any, er
 		if uid, _ := strconv.Atoi(parts[2]); uid != tenant.UID {
 			continue // same prefix but not our alias — not ours to report
 		}
+		if gecosName(parts[4]) != ftpAliasGecos {
+			continue // operator-made alias — invisible to the panel
+		}
 		name := parts[0]
 		isFtp, _ := isUserInGroup(ctx, name, ftpGroupName)
 		locked := false
@@ -522,27 +547,38 @@ type ftpAccountListAllEntry struct {
 // tenant has zero remaining rows — a rowless alias is a working credential
 // with no panel handle, which must never survive (proven live on
 // jabalitests: a manually-deleted row left a login-able alias behind).
-func ftpAccountListAllHandler(ctx context.Context, params json.RawMessage) (any, error) {
-	passwd, err := os.ReadFile("/etc/passwd")
-	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read passwd: %v", err)}
+// gecosName returns the "name" segment of a raw passwd GECOS field (the
+// part before the first comma) — matching how os/user parses User.Name.
+func gecosName(gecos string) string {
+	if i := strings.IndexByte(gecos, ','); i >= 0 {
+		return gecos[:i]
 	}
+	return gecos
+}
+
+// classifyFtpAliases is the pure half of list_all: given raw /etc/passwd
+// content it returns the panel-owned aliases (name pattern + shared uid +
+// GECOS marker) and the count of pattern-matching entries that LACK the
+// marker — operator property the sweep must never touch, surfaced so the
+// reconciler can WARN instead of silently ignoring.
+func classifyFtpAliases(passwd string) (owned []ftpAccountListAllEntry, skippedUnmarked int) {
 	type pwEntry struct {
-		uid  int
-		home string
+		uid   int
+		home  string
+		gecos string
 	}
 	byName := map[string]pwEntry{}
 	var order []string
-	for _, line := range strings.Split(string(passwd), "\n") {
+	for _, line := range strings.Split(passwd, "\n") {
 		parts := strings.Split(line, ":")
 		if len(parts) < 6 {
 			continue
 		}
 		uid, _ := strconv.Atoi(parts[2])
-		byName[parts[0]] = pwEntry{uid: uid, home: parts[5]}
+		byName[parts[0]] = pwEntry{uid: uid, home: parts[5], gecos: parts[4]}
 		order = append(order, parts[0])
 	}
-	entries := []ftpAccountListAllEntry{}
+	owned = []ftpAccountListAllEntry{}
 	for _, name := range order {
 		i := strings.LastIndex(name, "_")
 		if i <= 0 {
@@ -556,23 +592,38 @@ func ftpAccountListAllHandler(ctx context.Context, params json.RawMessage) (any,
 			if !ok || te.uid < minTenantUID || te.uid != byName[name].uid || tenant == name {
 				continue
 			}
-			locked := false
-			if out, perr := exec.CommandContext(ctx, "passwd", "-S", name).Output(); perr == nil {
-				fields := strings.Fields(string(out))
-				locked = len(fields) >= 2 && fields[1] == "L"
+			if gecosName(byName[name].gecos) != ftpAliasGecos {
+				// Same shape, no marker: an operator's hand-made alias.
+				skippedUnmarked++
+				break
 			}
-			isFtp, _ := isUserInGroup(ctx, name, ftpGroupName)
-			entries = append(entries, ftpAccountListAllEntry{
+			owned = append(owned, ftpAccountListAllEntry{
 				TenantUsername: tenant,
 				Username:       name,
 				HomePath:       byName[name].home,
-				FTPAccess:      isFtp,
-				Locked:         locked,
 			})
 			break
 		}
 	}
-	return map[string]any{"accounts": entries}, nil
+	return owned, skippedUnmarked
+}
+
+func ftpAccountListAllHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	passwd, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read passwd: %v", err)}
+	}
+	entries, skipped := classifyFtpAliases(string(passwd))
+	for i := range entries {
+		locked := false
+		if out, perr := exec.CommandContext(ctx, "passwd", "-S", entries[i].Username).Output(); perr == nil {
+			fields := strings.Fields(string(out))
+			locked = len(fields) >= 2 && fields[1] == "L"
+		}
+		entries[i].Locked = locked
+		entries[i].FTPAccess, _ = isUserInGroup(ctx, entries[i].Username, ftpGroupName)
+	}
+	return map[string]any{"accounts": entries, "skipped_unmarked": skipped}, nil
 }
 
 func init() {

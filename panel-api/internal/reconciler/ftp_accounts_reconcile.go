@@ -175,10 +175,17 @@ func (r *Reconciler) sweepStrayFtpAliases(ctx context.Context, rows []models.Ftp
 			TenantUsername string `json:"tenant_username"`
 			Username       string `json:"username"`
 		} `json:"accounts"`
+		// Pattern-matching passwd entries WITHOUT the panel's GECOS
+		// ownership marker — operator property the agent refused to
+		// classify as ours. Surfaced, never touched.
+		SkippedUnmarked int `json:"skipped_unmarked"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		r.log.Warn("ftp: list_all parse failed", "err", err)
 		return false
+	}
+	if resp.SkippedUnmarked > 0 {
+		r.log.Warn("ftp: passwd entries look like subaccount aliases but lack the ownership marker — left untouched (operator-managed?)", "count", resp.SkippedUnmarked)
 	}
 	wanted := map[string]struct{}{}
 	for _, a := range rows {
