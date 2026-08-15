@@ -222,7 +222,10 @@ func (c *Client) pullFilesByFile(ctx context.Context, dstTarball string, maxTota
 		return err
 	}
 	defer tf.Close()
-	gz := gzip.NewWriter(tf)
+	// JAB-240: budget the BYTES THAT LAND ON DISK (post-gzip), plus the
+	// host-reserve cadence — the per-entry read caps below bound source
+	// reads, but only this wrapper bounds actual staging growth.
+	gz := gzip.NewWriter(c.budget.Writer(tf, filepath.Dir(dstTarball)))
 	tw := tar.NewWriter(gz)
 
 	var total int64
@@ -267,15 +270,14 @@ func (c *Client) tarOneFile(ctx context.Context, tw *tar.Writer, rel string, siz
 	}); err != nil {
 		return err
 	}
-	// JAB-240: `size` comes from the source's manifest — cap the read at
-	// the job budget too, so declared-small-streamed-huge cannot bypass it.
-	limit := size
-	if c.budget != nil {
-		if rem := c.budget.Remaining(); rem < limit {
-			limit = rem
-		}
+	// JAB-240: `size` comes from the source's manifest. An entry the job
+	// budget cannot cover fails the pull OUTRIGHT — fetching what fits and
+	// zero-padding the rest would write attacker-declared bytes through
+	// the tar writer unbudgeted (the padding path below trusts `size`).
+	if c.budget != nil && c.budget.Remaining() < size {
+		return fmt.Errorf("copy %s: manifest entry of %d bytes exceeds the remaining job budget", rel, size)
 	}
-	n, err := io.Copy(tw, io.LimitReader(resp.Body, limit))
+	n, err := io.Copy(tw, io.LimitReader(resp.Body, size))
 	if err != nil {
 		return fmt.Errorf("copy %s: %w", rel, err)
 	}

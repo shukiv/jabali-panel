@@ -116,7 +116,10 @@ func extractTarGzWithCap(tarPath, dest string, totalCap uint64) error {
 			if err != nil {
 				return err
 			}
-			n, err := io.Copy(w, io.LimitReader(tr, maxExtractFileBytes))
+			// GuardedWriter gives MID-ENTRY reserve cadence — one entry can
+			// be 100 GiB, and "check every 256 MiB" must hold inside it,
+			// not only at entry boundaries (JAB-241).
+			n, err := io.Copy(hostreserve.GuardedWriter(w, cleanDest), io.LimitReader(tr, maxExtractFileBytes))
 			if err != nil {
 				_ = w.Close()
 				return err
