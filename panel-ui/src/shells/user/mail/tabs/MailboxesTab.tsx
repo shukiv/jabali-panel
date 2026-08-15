@@ -15,6 +15,7 @@ import {
   ClockCircleOutlined,
   KeyOutlined,
   MailOutlined,
+  CalendarCheckOutlined,
 } from "@icons";
 import { useQueries } from "@tanstack/react-query";
 
@@ -34,6 +35,7 @@ import type { Domain } from "../../domains/UserDomainList";
 import { DatabaseUserPasswordModal } from "../../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../../components/PasswordInput";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
+import { MailSyncInfoModal } from "../../../../components/mail/MailSyncInfoModal";
 
 type MailboxRow = Mailbox & { domain_name: string };
 type GroupMembership = {
@@ -165,6 +167,7 @@ export const MailboxesTab = () => {
   const [resetTarget, setResetTarget] = useState<MailboxRow | null>(null);
   const [editTarget, setEditTarget] = useState<MailboxRow | null>(null);
   const [arTarget, setArTarget] = useState<MailboxRow | null>(null);
+  const [syncTarget, setSyncTarget] = useState<MailboxRow | null>(null);
   const [resetForm] = Form.useForm<{ password?: string }>();
 
   const deleteMutation = useDeleteMailbox();
@@ -443,6 +446,19 @@ export const MailboxesTab = () => {
                     onClick: () => openWebmail(row),
                   },
                   { key: "edit", label: "Edit", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
+                  // Send-only mailboxes (GH #371 relays like noreply@) have no
+                  // inbox/calendar/contacts, so skip the CalDAV/CardDAV action.
+                  ...(!row.send_only
+                    ? [
+                        {
+                          key: "sync",
+                          label: "Calendar & contacts",
+                          icon: <CalendarCheckOutlined />,
+                          tooltip: "CalDAV / CardDAV URLs for Thunderbird, Apple Mail, etc.",
+                          onClick: () => setSyncTarget(row),
+                        },
+                      ]
+                    : []),
                   { key: "resetpw", label: "Reset password", icon: <KeyOutlined />, onClick: () => openReset(row) },
                   { key: "autoreply", label: "Automatic replies", icon: <ClockCircleOutlined />, onClick: () => setArTarget(row) },
                   {
@@ -489,6 +505,13 @@ export const MailboxesTab = () => {
         email={arTarget?.email ?? ""}
         current={arTarget ? arByMailbox[arTarget.id] ?? null : null}
         onClose={() => setArTarget(null)}
+      />
+
+      <MailSyncInfoModal
+        open={syncTarget !== null}
+        email={syncTarget?.email ?? ""}
+        domain={syncTarget?.domain_name ?? ""}
+        onClose={() => setSyncTarget(null)}
       />
 
       <Modal
