@@ -59,6 +59,28 @@ check_url "linux-malware $LMD_V" "https://github.com/rfxn/linux-malware-detect/a
 YX_V="$(pin 'YARAX_VERSION="[0-9.]+"')"
 check_url "yara-x $YX_V"      "https://github.com/VirusTotal/yara-x/releases/download/v${YX_V}/yara-x-v${YX_V}-x86_64-unknown-linux-gnu.tar.gz"
 
+# signature-base is pinned by commit SHA (JAB-248), not a release tag —
+# verify the pinned commit actually exists upstream so a typo'd or
+# invented SHA fails CI instead of bricking the clone on every box.
+# pin() only extracts dotted versions, so pull the 40-hex SHA directly.
+SB_C="$(grep -oE 'SIGBASE_COMMIT="[0-9a-f]{40}"' "$INSTALL" | head -1 | grep -oE '[0-9a-f]{40}')"
+_gh_commit() { # repo sha
+  local code auth=()
+  [[ -n "${GITHUB_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  code="$(curl -gsSL -o /dev/null -w '%{http_code}' "${auth[@]}" \
+    -H 'Accept: application/vnd.github+json' \
+    --retry 3 --retry-delay 3 --connect-timeout 20 \
+    "https://api.github.com/repos/$1/commits/$2" 2>/dev/null)"
+  [[ "$code" == "200" ]]
+}
+if [[ -z "$SB_C" ]]; then
+  report "signature-base" fail "SIGBASE_COMMIT not found in $INSTALL (expected a 40-hex pin — JAB-248)"
+elif _gh_commit "Neo23x0/signature-base" "$SB_C"; then
+  report "signature-base ${SB_C:0:12}" ok "Neo23x0/signature-base @ ${SB_C:0:12}"
+else
+  report "signature-base ${SB_C:0:12}" fail "commit not found upstream — typo'd or unpublished pin"
+fi
+
 SW_V="$(pin 'STALWART_VERSION="[0-9.]+"')"
 check_gh  "stalwart $SW_V"    "stalwartlabs/stalwart"    "v${SW_V}"
 

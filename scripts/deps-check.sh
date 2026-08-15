@@ -126,6 +126,34 @@ for row in "${MANIFEST[@]}"; do
   ROWS_OUT+=("$disp|$cur|$lat|$status|$repo")
 done
 
+# signature-base (JAB-248) — rolling-master repo pinned by COMMIT SHA, not
+# a release tag, so it can't ride the MANIFEST loop. Compare the pinned
+# SHA against upstream master HEAD; drift means a reviewed pin bump is
+# due. Report-only, same as every other row.
+sigbase_cur="$(current_pin 'SIGBASE_COMMIT')"
+if [[ -n "$sigbase_cur" ]]; then
+  sigbase_lat=""
+  if command -v gh >/dev/null 2>&1; then
+    sigbase_lat="$(gh api "repos/Neo23x0/signature-base/commits/master" --jq '.sha' 2>/dev/null)"
+  fi
+  if [[ -z "$sigbase_lat" ]]; then
+    _tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    _auth=(); [[ -n "$_tok" ]] && _auth=(-H "Authorization: Bearer ${_tok}")
+    sigbase_lat="$(curl -fsSL "${_auth[@]}" -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/Neo23x0/signature-base/commits/master" 2>/dev/null \
+      | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-f]{40}"' | head -1 \
+      | grep -oE '[0-9a-f]{40}')"
+  fi
+  if [[ -z "$sigbase_lat" ]]; then
+    ROWS_OUT+=("signature-base|${sigbase_cur:0:12}|(fetch failed)|ok|Neo23x0/signature-base")
+  elif [[ "$sigbase_cur" == "$sigbase_lat" ]]; then
+    ROWS_OUT+=("signature-base|${sigbase_cur:0:12}|${sigbase_lat:0:12}|ok|Neo23x0/signature-base")
+  else
+    ROWS_OUT+=("signature-base|${sigbase_cur:0:12}|${sigbase_lat:0:12}|UPGRADE|Neo23x0/signature-base")
+    outdated=$((outdated+1))
+  fi
+fi
+
 # ---- go.mod --------------------------------------------------------------
 go_report() {
   command -v go >/dev/null 2>&1 || { echo "_(go not installed — skipped)_"; return; }

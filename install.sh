@@ -10567,21 +10567,41 @@ YARA_EX
 
   # signature-base (Florian Roth / Neo23x0) — ~600 actively-maintained
   # YARA rules covering webshells (PHP/ASP/JSP), crimeware, exploit kits,
-  # APT samples. Pulled via git so daily-refresh is a `git pull` (no
-  # tarball churn). Active maintenance; releases tracked on the master
-  # branch.
+  # APT samples.
+  #
+  # JAB-248: PINNED to a reviewed commit, never a moving branch. These
+  # rules feed a scanner that AUTO-QUARANTINES across every tenant home
+  # (quarantine_hits=1); tracking origin/master meant an upstream
+  # compromise — or one overbroad rule — reached mass-quarantine on every
+  # box within a day, with no Jabali review in the loop. The daily
+  # refresh timer now self-heals to this same pinned commit; new rules
+  # arrive only through a reviewed pin bump here (drift is surfaced by
+  # scripts/deps-check.sh in the monthly deps issue). signature-base has
+  # no tagged releases, so the pin is a commit SHA. Pin bumps require a
+  # PR review, same as LMD_VERSION/LMD_SHA256.
+  local SIGBASE_COMMIT="e737ebd96c27a52ee99485d4d3e02e9c256d1d3a" # 2026-08-03 "fix: FPs"
   #
   # Custom YARA scanner picks up rules via the maldet 2.0.1 drop-in dir
   # at /usr/local/maldetect/sigs/custom.yara.d/. We symlink:
   #   custom.yara.d/signature-base/  → /opt/jabali/signature-base/yara/  (subset)
   #   custom.yara.d/jabali/          → /etc/jabali/yara/                  (admin uploads)
   install -d -m 0755 /opt/jabali
+  # Fetch-by-SHA (GitHub serves reachable SHAs to shallow fetches) +
+  # detached checkout: works for both fresh installs and existing hosts
+  # that previously tracked master — one idempotent path, no branch ref.
   if [[ ! -d /opt/jabali/signature-base/.git ]]; then
-    _log "cloning signature-base (Neo23x0/signature-base; ~600 YARA rules)"
-    git clone --depth=1 --quiet \
-      https://github.com/Neo23x0/signature-base.git \
-      /opt/jabali/signature-base 2>/dev/null || \
-      _warn "signature-base clone failed — will retry on next jabali-signature-base-update.timer"
+    _log "cloning signature-base (Neo23x0/signature-base; pinned ${SIGBASE_COMMIT:0:12})"
+    rm -rf /opt/jabali/signature-base
+    git init --quiet /opt/jabali/signature-base 2>/dev/null && \
+      git -C /opt/jabali/signature-base remote add origin \
+        https://github.com/Neo23x0/signature-base.git 2>/dev/null || true
+  fi
+  if [[ -d /opt/jabali/signature-base/.git ]] && \
+     [[ "$(git -C /opt/jabali/signature-base rev-parse HEAD 2>/dev/null)" != "$SIGBASE_COMMIT" ]]; then
+    ( cd /opt/jabali/signature-base && \
+      git fetch --depth=1 --quiet origin "$SIGBASE_COMMIT" && \
+      git checkout --quiet --detach FETCH_HEAD ) || \
+      _warn "signature-base pin fetch failed — will retry on next jabali-signature-base-update.timer"
   fi
   # Drop-in dir + symlinks. maldet 2.0.1 native YARA loads anything ending
   # in .yar / .yara from custom.yara.d/. Symlinks survive `maldet -u`
@@ -10914,25 +10934,33 @@ SIG_TIMER
   # ~600 webshell/crime YARA rules in sync. The repo is symlinked into
   # /usr/local/maldetect/sigs/custom.yara.d/signature-base, so a fast-
   # forward update is picked up by the inotify watcher's next scan.
-  cat >/etc/systemd/system/jabali-signature-base-update.service <<'SIGB_UNIT'
+  # JAB-248: the refresh unit is now SELF-HEAL ONLY — it converges the
+  # tree onto the pinned commit baked in at install/update time, never a
+  # branch. A moved upstream master cannot change rules on this host; new
+  # rules ship via a reviewed SIGBASE_COMMIT bump + jabali update (which
+  # rewrites this unit with the new SHA). Unquoted heredoc ON PURPOSE so
+  # ${SIGBASE_COMMIT} interpolates; every other $ must stay escaped.
+  cat >/etc/systemd/system/jabali-signature-base-update.service <<SIGB_UNIT
 [Unit]
-Description=Jabali signature-base YARA rule pack refresh (M33)
+Description=Jabali signature-base YARA rule pack refresh (M33, pinned — JAB-248)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/jabali/net-retry signature-base -- /usr/bin/bash -c '\
-  set -e; \
-  if [[ ! -d /opt/jabali/signature-base/.git ]]; then \
-    rm -rf /opt/jabali/signature-base; \
-    git clone --depth=1 --quiet \
-      https://github.com/Neo23x0/signature-base.git \
-      /opt/jabali/signature-base; \
-  else \
-    cd /opt/jabali/signature-base && \
-    git fetch --depth=1 --quiet origin master && \
-    git reset --hard --quiet origin/master; \
+ExecStart=/usr/local/libexec/jabali/net-retry signature-base -- /usr/bin/bash -c '\\
+  set -e; \\
+  if [[ ! -d /opt/jabali/signature-base/.git ]]; then \\
+    rm -rf /opt/jabali/signature-base; \\
+    git init --quiet /opt/jabali/signature-base; \\
+    git -C /opt/jabali/signature-base remote add origin \\
+      https://github.com/Neo23x0/signature-base.git; \\
+  fi; \\
+  cd /opt/jabali/signature-base; \\
+  if [[ "\$\$(git rev-parse HEAD 2>/dev/null)" != "${SIGBASE_COMMIT}" ]]; then \\
+    git fetch --depth=1 --quiet origin ${SIGBASE_COMMIT}; \\
+    git checkout --quiet --detach FETCH_HEAD; \\
+    chmod -R a+rX /opt/jabali/signature-base; \\
   fi'
 # See the maldet unit above: guards against a hung git fetch wedging every
 # future run, without being tight enough to kill a slow clone.
