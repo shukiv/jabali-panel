@@ -345,12 +345,12 @@ var benignCurlFlags = map[string]bool{
 // exec. Returns (rewritten, true, "") on success, or ("", false, reason)
 // when any rule fails (caller imports the original DISABLED). All rules
 // in the spec must hold:
-//   1. shlex-parse; first token curl/wget (already checked by caller).
-//   2. exactly one http(s):// URL; scheme http/https only.
-//   3. URL host is one of the account's own domains (same-origin / SSRF gate).
-//   4. no query string (php-CLI ignores $_GET — silent behaviour change).
-//   5. path resolves under the docroot, ends .php, no traversal, exists.
-//   6. only benign flags; -o/-O permitted only with /dev/null.
+//  1. shlex-parse; first token curl/wget (already checked by caller).
+//  2. exactly one http(s):// URL; scheme http/https only.
+//  3. URL host is one of the account's own domains (same-origin / SSRF gate).
+//  4. no query string (php-CLI ignores $_GET — silent behaviour change).
+//  5. path resolves under the docroot, ends .php, no traversal, exists.
+//  6. only benign flags; -o/-O permitted only with /dev/null.
 func rewriteSelfCurlCron(command string, docroots map[string]string) (string, bool, string) {
 	argv, err := shlex.Split(command)
 	if err != nil || len(argv) == 0 {

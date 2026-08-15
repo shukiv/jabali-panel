@@ -49,11 +49,11 @@ func TestImportCron_CurlRewriteEndToEnd(t *testing.T) {
 
 	cronFile := filepath.Join(home, "crontab")
 	crontab := strings.Join([]string{
-		`MAILTO=""`,                                                              // env → ignored
-		`*/5 * * * * curl https://own.example.com/cron-pong.php >/dev/null 2>&1`, // rewrite
-		`0 * * * * wget -q -O /dev/null https://own.example.com/wp-cron.php`,     // rewrite
-		`0 0 * * * curl https://own.example.com/cron-pong.php?tok=1`,             // disabled (query)
-		`0 0 * * * curl https://evil.com/x.php`,                                  // disabled (foreign)
+		`MAILTO=""`, // env → ignored
+		`*/5 * * * * curl https://own.example.com/cron-pong.php >/dev/null 2>&1`,      // rewrite
+		`0 * * * * wget -q -O /dev/null https://own.example.com/wp-cron.php`,          // rewrite
+		`0 0 * * * curl https://own.example.com/cron-pong.php?tok=1`,                  // disabled (query)
+		`0 0 * * * curl https://evil.com/x.php`,                                       // disabled (foreign)
 		`0 0 * * * php ` + filepath.Join(docroot, "wp-cron.php") + ` >/dev/null 2>&1`, // valid php, redirect stripped
 	}, "\n") + "\n"
 	if err := os.WriteFile(cronFile, []byte(crontab), 0o644); err != nil {

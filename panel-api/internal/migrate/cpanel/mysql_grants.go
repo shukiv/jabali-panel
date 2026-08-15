@@ -18,10 +18,10 @@ import (
 // `mysqli_connect('newpuzzl_wp', '<original-pw>', …)` got Access
 // denied because the original user never existed on the destination).
 type CompatUser struct {
-	Name  string             // 'newpuzzl_wp'
-	Host  string             // we only collect 'localhost' (jabali single-host)
-	Hash  string             // *XXXX… 41-char mysql_native_password hash
-	Grant []CompatGrant      // ON `<source-db>`.* GRANT <privs>
+	Name  string        // 'newpuzzl_wp'
+	Host  string        // we only collect 'localhost' (jabali single-host)
+	Hash  string        // *XXXX… 41-char mysql_native_password hash
+	Grant []CompatGrant // ON `<source-db>`.* GRANT <privs>
 }
 
 type CompatGrant struct {

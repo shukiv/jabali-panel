@@ -51,7 +51,7 @@ func (s *Session) ExportDatabase(ctx context.Context, root, jobID, dstSQL string
 	if err := os.MkdirAll(filepath.Dir(dstSQL), 0o750); err != nil {
 		return fmt.Errorf("mkdir staging: %w", err)
 	}
-	if _, err := migrate.PullFileViaSSH(ctx, s.client, remoteSQL, dstSQL); err != nil {
+	if _, err := migrate.PullFileViaSSHBudget(ctx, s.client, remoteSQL, dstSQL, s.budget); err != nil {
 		return fmt.Errorf("wordpressssh.ExportDatabase: pull dump: %w", err)
 	}
 	return nil
@@ -89,7 +89,10 @@ func (s *Session) streamToFile(ctx context.Context, timeout time.Duration, cmd, 
 		return fmt.Errorf("open local %s: %w", localPath, err)
 	}
 	defer f.Close()
-	sess.Stdout = f
+	// JAB-240: the remote command controls this stream's length — bound it
+	// by the job budget and the host reserve floor. An overrun write-errors,
+	// which kills sess.Run with a broken pipe.
+	sess.Stdout = s.budget.Writer(f, filepath.Dir(localPath))
 	done := make(chan error, 1)
 	go func() { done <- sess.Run(cmd) }()
 	select {

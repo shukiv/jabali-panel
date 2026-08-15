@@ -89,11 +89,11 @@ type Session interface {
 // AccountSummary is the row shown in the admin UI's account-picker.
 // Cheap to compute (no per-account UAPI calls beyond list-mode).
 type AccountSummary struct {
-	ID         string `json:"id"`         // source-side account ID
-	Login      string `json:"login"`      // source-side username
+	ID         string `json:"id"`    // source-side account ID
+	Login      string `json:"login"` // source-side username
 	Email      string `json:"email,omitempty"`
-	Domain     string `json:"domain,omitempty"`     // primary domain
-	BytesTotal int64  `json:"bytes_total"`          // best-effort summary
+	Domain     string `json:"domain,omitempty"` // primary domain
+	BytesTotal int64  `json:"bytes_total"`      // best-effort summary
 	Suspended  bool   `json:"suspended,omitempty"`
 }
 

@@ -33,12 +33,12 @@ import (
 // operator.
 type uapiEnvelope struct {
 	Result struct {
-		Data     json.RawMessage   `json:"data"`
-		Errors   []string          `json:"errors"`
-		Messages []string          `json:"messages"`
-		Metadata map[string]any    `json:"metadata"`
-		Status   int               `json:"status"`
-		Warnings []string          `json:"warnings"`
+		Data     json.RawMessage `json:"data"`
+		Errors   []string        `json:"errors"`
+		Messages []string        `json:"messages"`
+		Metadata map[string]any  `json:"metadata"`
+		Status   int             `json:"status"`
+		Warnings []string        `json:"warnings"`
 	} `json:"result"`
 }
 
@@ -108,10 +108,10 @@ func decodeWHMAPI1(stdout []byte, out any) error {
 // the connected user's home + email + bandwidth_usage. Empty home
 // or status != 1 means our principal isn't actually a cPanel user.
 type userInformation struct {
-	User string `json:"user"`
-	Home string `json:"home"`
-	Email string `json:"email"`
-	BandwidthUsed int64 `json:"bandwidth_usage"`
+	User          string `json:"user"`
+	Home          string `json:"home"`
+	Email         string `json:"email"`
+	BandwidthUsed int64  `json:"bandwidth_usage"`
 }
 
 // listAccts is one row of `whmapi1 listaccts` data.acct[]. We
@@ -122,8 +122,8 @@ type listAccts struct {
 		User      string `json:"user"`
 		Email     string `json:"email"`
 		Domain    string `json:"domain"`
-		DiskUsed  string `json:"diskused"`   // "1234M" — string, not int
+		DiskUsed  string `json:"diskused"` // "1234M" — string, not int
 		DiskLimit string `json:"disklimit"`
-		Suspended int    `json:"suspended"`  // 0 | 1
+		Suspended int    `json:"suspended"` // 0 | 1
 	} `json:"acct"`
 }

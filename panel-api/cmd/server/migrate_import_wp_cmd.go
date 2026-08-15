@@ -167,6 +167,11 @@ func importWordPressSSH(ctx context.Context, out io.Writer,
 
 	// --- 2. extract the file tarball to staging (containment-safe) ---
 	pf("  → extracting files ...\n")
+	// JAB-241: same disk preflight every other extract call site runs —
+	// this path was the one entry point that skipped it.
+	if err := migrate.CheckExtractDiskSpace(filesTar, filesDir); err != nil {
+		return err
+	}
 	if err := migrate.ExtractTarGz(filesTar, filesDir); err != nil {
 		return fail(fmt.Errorf("extract: %w", err))
 	}

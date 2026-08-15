@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -425,6 +426,8 @@ func pullWordPressSSH(ctx context.Context, sshUser string, job *models.Migration
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
+	// JAB-240: one cumulative byte budget for everything this job stages.
+	sess.SetBudget(hostreserve.NewBudget(hostreserve.TenantMigrationBudgetBytes))
 	defer sess.Close()
 
 	hint := ""
@@ -589,6 +592,8 @@ func pullWordPressPlugin(ctx context.Context, job *models.MigrationJob, secret m
 		siteURL = "https://" + siteURL
 	}
 	cli := wordpressplugin.New(siteURL, token, allowPrivate)
+	// JAB-240: one cumulative byte budget for everything this job stages.
+	cli.SetBudget(hostreserve.NewBudget(hostreserve.TenantMigrationBudgetBytes))
 	if err := cli.Ping(ctx); err != nil {
 		return fmt.Errorf("plugin ping (check URL + token): %w", err)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 type recordingAgent struct {
-	calls []string
+	calls  []string
 	failOn string
 }
 

@@ -93,9 +93,9 @@ func TestPeekUserNameFromStaging(t *testing.T) {
 func TestParseHestiaContactEmail(t *testing.T) {
 	cases := map[string]string{
 		"NAME='ITFlow Support'\nCONTACT='support@itflow.org'\nPACKAGE='default'\n": "support@itflow.org",
-		"CONTACT=\"user@example.com\"\n":                                          "user@example.com",
-		"CONTACT=bare@nodots.co\n":                                                "bare@nodots.co",
-		"NAME='x'\nPACKAGE='default'\n":                                           "", // no CONTACT
+		"CONTACT=\"user@example.com\"\n":                                           "user@example.com",
+		"CONTACT=bare@nodots.co\n":                                                 "bare@nodots.co",
+		"NAME='x'\nPACKAGE='default'\n":                                            "", // no CONTACT
 	}
 	for body, want := range cases {
 		if got := parseHestiaContactEmail([]byte(body)); got != want {

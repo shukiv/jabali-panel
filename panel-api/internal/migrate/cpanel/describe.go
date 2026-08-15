@@ -49,10 +49,10 @@ func joinArgs(parts []string) string {
 // addon_domains[], parked_domains[], sub_domains[]. We collapse
 // them into DomainSpec rows; primary flag set on main_domain only.
 type domainsPayload struct {
-	MainDomain     string   `json:"main_domain"`
-	AddonDomains   []string `json:"addon_domains"`
-	ParkedDomains  []string `json:"parked_domains"`
-	SubDomains     []string `json:"sub_domains"`
+	MainDomain    string   `json:"main_domain"`
+	AddonDomains  []string `json:"addon_domains"`
+	ParkedDomains []string `json:"parked_domains"`
+	SubDomains    []string `json:"sub_domains"`
 }
 
 func (d *Discoverer) describeDomains(ctx context.Context, s *session, account string) ([]migrate.DomainSpec, error) {
@@ -134,7 +134,7 @@ func (d *Discoverer) describeMailboxes(ctx context.Context, s *session, account 
 // PostgreSQL via a separate Postgresql module; we record those as
 // warnings in the manifest (postgres skipped per ADR-0094).
 type dbRow struct {
-	Database string `json:"database"`
+	Database  string `json:"database"`
 	DiskUsage string `json:"disk_usage"`
 }
 

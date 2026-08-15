@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,31 @@ import (
 // degenerate tar entry). The manifest capacity gate is the real limit.
 const maxExtractFileBytes = 100 << 30 // 100 GiB
 
+// JAB-241 extraction budgets. Per-file alone lets a bomb of many
+// individually-legal entries fill the disk or exhaust inodes.
+var (
+	// maxExtractEntries bounds the entry count (inode exhaustion).
+	// Real cpmove/WP trees run tens-to-hundreds of thousands of files;
+	// two million is far past any legitimate account. var (not const)
+	// only so tests can lower it; production never mutates it.
+	maxExtractEntries = 2 << 20
+	// maxExtractTotalBytes is the absolute backstop when the archive
+	// could not be measured (corrupt index). var only for tests.
+	maxExtractTotalBytes = uint64(1) << 40 // 1 TiB
+)
+
+const (
+	// lyingHeader ratio: when the archive was measured, cumulative writes
+	// may exceed the measurement by 50% + the standard margin before we
+	// call the index a lie and abort. Headers are only trusted as an
+	// upper-bound hint — enforcement counts written bytes.
+	lyingHeaderNum, lyingHeaderDen = uint64(3), uint64(2)
+	// extractReserveEvery: re-check the host reserve floor after this
+	// many written bytes, so concurrent disk pressure stops an extract
+	// that started with room (live check, not a one-shot preflight).
+	extractReserveEvery = 256 << 20
+)
+
 // ExtractTarGz extracts a (optionally gzip'd) tarball into dest with path
 // containment: header names with `../`, `/../`, or absolute paths are skipped,
 // the joined output path is re-verified to stay under dest (belt-and-suspenders),
@@ -22,6 +48,13 @@ const maxExtractFileBytes = 100 << 30 // 100 GiB
 // from the migrate CLI so the wordpress_ssh/plugin imports (GH #647/#648) reuse
 // one proven containment-safe extractor for the UNTRUSTED source tarball.
 func ExtractTarGz(tarPath, dest string) error {
+	return extractTarGzWithCap(tarPath, dest, extractTotalCap(tarPath))
+}
+
+// extractTarGzWithCap is ExtractTarGz with the cumulative write ceiling
+// injected — split out so the enforcement loop is testable without a
+// terabyte fixture (JAB-241).
+func extractTarGzWithCap(tarPath, dest string, totalCap uint64) error {
 	f, err := os.Open(tarPath)
 	if err != nil {
 		return err
@@ -47,6 +80,8 @@ func ExtractTarGz(tarPath, dest string) error {
 
 	cleanDest := filepath.Clean(dest)
 	tr := tar.NewReader(src)
+	var written, sinceReserve uint64
+	var entries int
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -54,6 +89,10 @@ func ExtractTarGz(tarPath, dest string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("tar read: %w", err)
+		}
+		entries++
+		if entries > maxExtractEntries {
+			return fmt.Errorf("archive exceeds %d entries — refusing (inode-exhaustion guard, JAB-241)", maxExtractEntries)
 		}
 		clean := filepath.Clean(hdr.Name)
 		if strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") || filepath.IsAbs(clean) {
@@ -77,12 +116,27 @@ func ExtractTarGz(tarPath, dest string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(w, io.LimitReader(tr, maxExtractFileBytes)); err != nil {
+			n, err := io.Copy(w, io.LimitReader(tr, maxExtractFileBytes))
+			if err != nil {
 				_ = w.Close()
 				return err
 			}
 			if err := w.Close(); err != nil {
 				return err
+			}
+			written += uint64(n)
+			if written > totalCap {
+				return fmt.Errorf("archive wrote %d MiB, past the %d MiB budget — refusing (decompression-bomb guard, JAB-241)", written>>20, totalCap>>20)
+			}
+			sinceReserve += uint64(n)
+			if sinceReserve >= extractReserveEvery {
+				sinceReserve = 0
+				// Live low-water check (JAB-241): whatever the preflight
+				// said, the disk state NOW wins — concurrent writers may
+				// have eaten the room this extract started with.
+				if err := hostreserve.CheckReserve(cleanDest, 0); err != nil {
+					return fmt.Errorf("extraction stopped: %w", err)
+				}
 			}
 			// TypeSymlink / TypeLink and everything else: skipped (no write-through).
 		}
@@ -218,6 +272,19 @@ func CheckExtractDiskSpace(tarballPath, dest string) error {
 	return fmt.Errorf(
 		"insufficient disk space to extract %s: uncompressed contents measure %d MiB, need %d MiB including margin, only %d MiB free on %s (free up space or move staging)",
 		filepath.Base(tarballPath), measured>>20, needed>>20, free>>20, dest)
+}
+
+// extractTotalCap is the cumulative write ceiling for one extraction
+// (JAB-241). Measure when possible (same pass the JAB-41 preflight
+// uses); the measured total ×1.5 + margin becomes the ceiling, so lying
+// headers cannot stream past the measurement. Unmeasurable archives get
+// the absolute backstop instead. Enforcement counts WRITTEN bytes in
+// the extract loop — headers are only ever an upper-bound hint.
+func extractTotalCap(tarPath string) uint64 {
+	if measured, merr := MeasureUncompressedSize(tarPath); merr == nil {
+		return measured*lyingHeaderNum/lyingHeaderDen + extractMargin(measured)
+	}
+	return maxExtractTotalBytes
 }
 
 // extractMargin is the working headroom for a measured tree.

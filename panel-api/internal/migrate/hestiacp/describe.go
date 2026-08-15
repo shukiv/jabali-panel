@@ -26,9 +26,10 @@ import (
 //   v-list-mail-accounts <user> <domain> json → per-domain mailboxes
 
 // hestiaDomain mirrors the v-list-web-domains JSON shape:
-//   { "<domain>": { "DOCUMENT_ROOT": "...", "ALIAS": "...",
-//                   "TPL": "default", "IP": "...", "U_DISK": "...",
-//                   "PHP_VER": "8.2", "SUSPENDED": "no", ... } }
+//
+//	{ "<domain>": { "DOCUMENT_ROOT": "...", "ALIAS": "...",
+//	                "TPL": "default", "IP": "...", "U_DISK": "...",
+//	                "PHP_VER": "8.2", "SUSPENDED": "no", ... } }
 type hestiaDomainAttrs struct {
 	DocumentRoot string `json:"DOCUMENT_ROOT"`
 	Alias        string `json:"ALIAS"`
@@ -93,13 +94,14 @@ func (d *Discoverer) describeDomains(ctx context.Context, s *session, account st
 }
 
 // hestiaDB mirrors v-list-databases JSON:
-//   { "<dbname>": { "DATABASE": "...", "DBUSER": "...", "TYPE": "mysql",
-//                   "U_DISK": "10", "SUSPENDED": "no" } }
+//
+//	{ "<dbname>": { "DATABASE": "...", "DBUSER": "...", "TYPE": "mysql",
+//	                "U_DISK": "10", "SUSPENDED": "no" } }
 type hestiaDBAttrs struct {
-	Database string `json:"DATABASE"`
-	DBUser   string `json:"DBUSER"`
-	Type     string `json:"TYPE"`
-	UDisk    string `json:"U_DISK"`
+	Database  string `json:"DATABASE"`
+	DBUser    string `json:"DBUSER"`
+	Type      string `json:"TYPE"`
+	UDisk     string `json:"U_DISK"`
 	Suspended string `json:"SUSPENDED"`
 }
 
@@ -144,9 +146,10 @@ func (d *Discoverer) describeDatabases(ctx context.Context, s *session, account 
 }
 
 // hestiaMailDomain — v-list-mail-domains JSON:
-//   { "<domain>": { "ANTIVIRUS": "yes"|"no", "ANTISPAM": "...",
-//                   "ACCOUNTS": "5", "U_DISK": "...",
-//                   "SUSPENDED": "no" } }
+//
+//	{ "<domain>": { "ANTIVIRUS": "yes"|"no", "ANTISPAM": "...",
+//	                "ACCOUNTS": "5", "U_DISK": "...",
+//	                "SUSPENDED": "no" } }
 type hestiaMailDomainAttrs struct {
 	Antivirus string `json:"ANTIVIRUS"`
 	Antispam  string `json:"ANTISPAM"`
@@ -156,8 +159,9 @@ type hestiaMailDomainAttrs struct {
 }
 
 // hestiaMailbox — v-list-mail-accounts JSON:
-//   { "<local>": { "U_DISK": "1.5", "QUOTA": "1024",
-//                  "SUSPENDED": "no" } }
+//
+//	{ "<local>": { "U_DISK": "1.5", "QUOTA": "1024",
+//	               "SUSPENDED": "no" } }
 type hestiaMailboxAttrs struct {
 	UDisk     string `json:"U_DISK"`
 	Quota     string `json:"QUOTA"`
@@ -217,7 +221,7 @@ func (d *Discoverer) describeMailboxes(ctx context.Context, s *session, account 
 	return rows, warnings, nil
 }
 
-// parseHestiaQuota: '1024' MB → bytes; '0' / '' / 'unlimited' → 0.
+// parseHestiaQuota: '1024' MB → bytes; '0' / ” / 'unlimited' → 0.
 func parseHestiaQuota(s string) int64 {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "0" || strings.EqualFold(s, "unlimited") {

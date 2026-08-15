@@ -5,8 +5,8 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
-	"io"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,12 +16,12 @@ import (
 // `system_backup_user` tar. Shape parallels cpanel.ParsedTarball
 // but the per-area paths reflect DA's tar layout:
 //
-//   <user>/backup.conf
-//   <user>/domains/<dom>/public_html/...
-//   <user>/databases/<dbname>.sql            (DA exports each DB
-//                                             as a flat .sql file)
-//   <user>/email/<dom>/<localpart>/Maildir/...
-//   <user>/.ssh/authorized_keys
+//	<user>/backup.conf
+//	<user>/domains/<dom>/public_html/...
+//	<user>/databases/<dbname>.sql            (DA exports each DB
+//	                                          as a flat .sql file)
+//	<user>/email/<dom>/<localpart>/Maildir/...
+//	<user>/.ssh/authorized_keys
 //
 // **STATUS:** Coded against documented DA backup tar shapes
 // (DA admin docs + community wiki). NOT validated against a live
@@ -41,8 +41,8 @@ type DAParsedTarball struct {
 	// by scanning the directory; consumed by ToCpanelParsed to seed
 	// ParsedTarball.DomainNames + DocRoots so the cpanel
 	// ImportDomains writer can create panel rows without a BIND zone.
-	DomainDirs    map[string]string
-	Skipped       []string
+	DomainDirs map[string]string
+	Skipped    []string
 }
 
 // ParseDATarball streams a DA system-backup-user tar (.tar or
@@ -166,11 +166,12 @@ func ParseDATarball(tarballPath, extractDir string) (*DAParsedTarball, error) {
 
 // classifyDA slots an extracted file into the right area slice.
 // DA layout:
-//   <user>/databases/<dbname>.sql
-//   <user>/.ssh/authorized_keys
-//   <user>/cron OR <user>/cron.<user>
-//   <user>/email/<dom>/<local>/Maildir/...   (left for Maildir walk)
-//   <user>/domains/<dom>/...                 (homedir contents; rsync target)
+//
+//	<user>/databases/<dbname>.sql
+//	<user>/.ssh/authorized_keys
+//	<user>/cron OR <user>/cron.<user>
+//	<user>/email/<dom>/<local>/Maildir/...   (left for Maildir walk)
+//	<user>/domains/<dom>/...                 (homedir contents; rsync target)
 func classifyDA(p *DAParsedTarball, path, abs string) {
 	parts := strings.Split(path, string(filepath.Separator))
 	if len(parts) < 2 {

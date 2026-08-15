@@ -50,8 +50,8 @@ type HomeSplitResult struct {
 
 // domainSrc is one row of the parsed userdata table.
 type domainSrc struct {
-	Name        string // panel domain name (servername)
-	SourceRel   string // relative to source homedir, e.g. "public_html" or "public_html/sub.example.com"
+	Name      string // panel domain name (servername)
+	SourceRel string // relative to source homedir, e.g. "public_html" or "public_html/sub.example.com"
 }
 
 func ImportHomeSplit(

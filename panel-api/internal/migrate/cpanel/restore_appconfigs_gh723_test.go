@@ -106,11 +106,15 @@ func (gh723DBRepo) ExistsByUserAndName(context.Context, string, string) (bool, e
 }
 func (gh723DBRepo) Create(context.Context, *models.Database) error { return nil }
 
-type gh723DBUserRepo struct{ repository.DatabaseUserRepository }
+type gh723DBUserRepo struct {
+	repository.DatabaseUserRepository
+}
 
 func (gh723DBUserRepo) Create(context.Context, *models.DatabaseUser) error { return nil }
 
-type gh723GrantRepo struct{ repository.DatabaseUserGrantRepository }
+type gh723GrantRepo struct {
+	repository.DatabaseUserGrantRepository
+}
 
 func (gh723GrantRepo) Create(context.Context, *models.DatabaseUserGrant) error { return nil }
 

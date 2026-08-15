@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"os"
 	"strconv"
 	"strings"
@@ -42,7 +43,14 @@ type WordPressFacts struct {
 }
 
 // Session wraps an authenticated SSH client. Caller owns Close.
-type Session struct{ client *ssh.Client }
+type Session struct {
+	client *ssh.Client
+	budget *hostreserve.Budget // nil = unbudgeted (JAB-240)
+}
+
+// SetBudget attaches the job's cumulative byte budget (JAB-240); every
+// stream this session stages locally draws from it.
+func (s *Session) SetBudget(b *hostreserve.Budget) { s.budget = b }
 
 func (s *Session) Close() error {
 	if s == nil || s.client == nil {

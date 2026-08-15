@@ -15,10 +15,10 @@ func TestNormalizeSourceMailHash(t *testing.T) {
 		"$2a$10$abcdefghijklmnopqrstuv":            "$2a$10$abcdefghijklmnopqrstuv",
 		"$2b$12$abcdefghijklmnopqrstuv":            "$2b$12$abcdefghijklmnopqrstuv",
 		// JAB-149: Stalwart verifies these natively — preserve, don't drop.
-		"{SHA512-CRYPT}$6$rounds=5000$salt$hash": "$6$rounds=5000$salt$hash",
-		"{SHA256-CRYPT}$5$rounds=5000$salt$hash": "$5$rounds=5000$salt$hash",
+		"{SHA512-CRYPT}$6$rounds=5000$salt$hash":       "$6$rounds=5000$salt$hash",
+		"{SHA256-CRYPT}$5$rounds=5000$salt$hash":       "$5$rounds=5000$salt$hash",
 		"$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA": "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
-		"{MD5-CRYPT}$1$salt$hash":                "$1$salt$hash",
+		"{MD5-CRYPT}$1$salt$hash":                      "$1$salt$hash",
 		// No Stalwart-recognised prefix → still dropped.
 		"{PLAIN}hunter2": "",
 		"plaintextnope":  "",

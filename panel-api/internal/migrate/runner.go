@@ -20,8 +20,8 @@ import (
 // whatever state it was in. Resume after a mid-run failure picks
 // up from the last 'failed' / 'pending' stage.
 type Runner struct {
-	Jobs   repository.MigrationJobRepository
-	Agent  agent.AgentInterface
+	Jobs  repository.MigrationJobRepository
+	Agent agent.AgentInterface
 	// StageCallbacks maps a stage name (analyze / fix_perms /
 	// validate / restore) to the function that runs it. Per-source
 	// importer code (cpanel, directadmin, ...) provides these.

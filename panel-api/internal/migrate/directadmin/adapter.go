@@ -11,11 +11,11 @@ import (
 // ImportSSHKeys, ImportCron) run unchanged against DA-extracted
 // content. Per-area mapping:
 //
-//   DAParsedTarball.MySQLDumps     → cpanel.ParsedTarball.MySQLDumps
-//   DAParsedTarball.SSHAuthorized  → cpanel.ParsedTarball.SSHAuthorized (wrap to list)
-//   DAParsedTarball.CronFile       → cpanel.ParsedTarball.CronFiles (wrap to list)
-//   DAParsedTarball.HomeDir        → cpanel.ParsedTarball.HomeDir
-//   DAParsedTarball.SourceUser     → cpanel.ParsedTarball.SourceUser
+//	DAParsedTarball.MySQLDumps     → cpanel.ParsedTarball.MySQLDumps
+//	DAParsedTarball.SSHAuthorized  → cpanel.ParsedTarball.SSHAuthorized (wrap to list)
+//	DAParsedTarball.CronFile       → cpanel.ParsedTarball.CronFiles (wrap to list)
+//	DAParsedTarball.HomeDir        → cpanel.ParsedTarball.HomeDir
+//	DAParsedTarball.SourceUser     → cpanel.ParsedTarball.SourceUser
 //
 // Fields cpanel writers care about that DA doesn't populate:
 //   - ZoneFiles: DA backup tar doesn't contain BIND zones; DNS

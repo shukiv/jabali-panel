@@ -239,7 +239,7 @@ func (d *Discoverer) describeMailboxes(ctx context.Context, s *session, account 
 	return rows, warnings, nil
 }
 
-// shellEscape replaces single quotes with the canonical `'\''`
+// shellEscape replaces single quotes with the canonical `'\”`
 // trick + nothing else. DA usernames + domain names already
 // validated by the SSH-side principal probe; this is the
 // belt-and-braces fallback for the remote-shell single-quote

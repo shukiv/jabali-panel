@@ -41,9 +41,9 @@ type AccountManifest struct {
 // SourceRef pins where this manifest came from. Stable across
 // resume retries.
 type SourceRef struct {
-	Kind string `json:"kind"`            // models.MigrationSource* constants
-	Host string `json:"host"`            // FQDN or IP of the source panel
-	User string `json:"user"`            // source-side username
+	Kind string `json:"kind"` // models.MigrationSource* constants
+	Host string `json:"host"` // FQDN or IP of the source panel
+	User string `json:"user"` // source-side username
 	// Tarball is set only for offline-mode importers (whm_pkgacct
 	// uploads a tarball without a live source host).
 	Tarball string `json:"tarball,omitempty"`
@@ -67,7 +67,7 @@ type DomainSpec struct {
 }
 
 type MailboxSpec struct {
-	Address     string `json:"address"`     // local@domain
+	Address     string `json:"address"` // local@domain
 	BytesUsed   int64  `json:"bytes_used"`
 	QuotaBytes  int64  `json:"quota_bytes"` // 0 = unlimited on source
 	MaildirPath string `json:"maildir_path,omitempty"`
@@ -85,9 +85,9 @@ type DatabaseSpec struct {
 }
 
 type DNSZoneSpec struct {
-	Origin   string        `json:"origin"`
-	Records  []DNSRecord   `json:"records"`
-	HasDNSEC bool          `json:"has_dnssec"`
+	Origin   string      `json:"origin"`
+	Records  []DNSRecord `json:"records"`
+	HasDNSEC bool        `json:"has_dnssec"`
 	// SourceFile is the original BIND zone file path (DA), the
 	// PowerDNS export blob (cPanel), etc.
 	SourceFile string `json:"source_file,omitempty"`
@@ -122,8 +122,8 @@ type SSHKeySpec struct {
 // recognisable layouts; we record what we found so the operator
 // can pick whether to re-run wp-cli / drush after restore.
 type AppSpec struct {
-	Kind    string `json:"kind"`    // wordpress | joomla | drupal | unknown
-	Path    string `json:"path"`    // absolute path inside source home
+	Kind    string `json:"kind"` // wordpress | joomla | drupal | unknown
+	Path    string `json:"path"` // absolute path inside source home
 	Version string `json:"version,omitempty"`
 }
 

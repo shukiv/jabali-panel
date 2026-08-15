@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"fmt"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,7 +22,16 @@ import (
 //
 // Caller owns the *ssh.Client lifetime. localPath's parent is
 // MkdirAll'd at 0750.
+// PullFileViaSSH streams with only the host-reserve guard (JAB-240):
+// operator-driven panel migrations carry no per-job budget, but the host
+// floor still holds.
 func PullFileViaSSH(ctx context.Context, client *ssh.Client, remotePath, localPath string) (int64, error) {
+	return PullFileViaSSHBudget(ctx, client, remotePath, localPath, nil)
+}
+
+// PullFileViaSSHBudget is PullFileViaSSH drawing from a job byte budget
+// (nil = reserve guard only).
+func PullFileViaSSHBudget(ctx context.Context, client *ssh.Client, remotePath, localPath string, budget *hostreserve.Budget) (int64, error) {
 	if client == nil {
 		return 0, fmt.Errorf("PullFileViaSSH: client nil")
 	}
@@ -58,7 +68,7 @@ func PullFileViaSSH(ctx context.Context, client *ssh.Client, remotePath, localPa
 	done := make(chan error, 1)
 	var copied int64
 	go func() {
-		n, err := io.Copy(w, stdout)
+		n, err := io.Copy(budget.Writer(w, filepath.Dir(localPath)), stdout)
 		copied = n
 		done <- err
 	}()

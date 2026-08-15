@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
 )
 
@@ -28,10 +29,17 @@ const restPath = "/wp-json/jabali-migrator/v1"
 
 // Client talks to one source site's jabali-migrator plugin.
 type Client struct {
-	base  string // site URL, no trailing slash
-	token string
-	hc    *http.Client
+	base   string // site URL, no trailing slash
+	token  string
+	hc     *http.Client
+	budget *hostreserve.Budget // nil = unbudgeted (JAB-240)
 }
+
+// SetBudget attaches the job's cumulative byte budget (JAB-240). Every
+// transfer — DB dump, files archive, per-file fallback — draws from the
+// same allowance, so a source that lies in one channel cannot recover
+// headroom in another.
+func (c *Client) SetBudget(b *hostreserve.Budget) { c.budget = b }
 
 // New builds a client. siteURL is the source WordPress home (https://site);
 // the plugin REST path is appended. The HTTP client is SSRF/rebind-safe.
@@ -140,7 +148,9 @@ func (c *Client) ExportDatabase(ctx context.Context, dstSQL string) error {
 		return err
 	}
 	defer out.Close()
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	// JAB-240: budgeted + reserve-guarded — the source controls this
+	// stream's length, the host floor and job budget bound it.
+	if _, err := io.Copy(c.budget.Writer(out, filepath.Dir(dstSQL)), resp.Body); err != nil {
 		return fmt.Errorf("db-export copy: %w", err)
 	}
 	return nil
@@ -180,7 +190,7 @@ func (c *Client) pullFilesArchive(ctx context.Context, dstTarball string) error 
 		return err
 	}
 	defer tf.Close()
-	n, err := io.Copy(tf, resp.Body)
+	n, err := io.Copy(c.budget.Writer(tf, filepath.Dir(dstTarball)), resp.Body)
 	if err != nil {
 		return fmt.Errorf("files-archive copy: %w", err)
 	}
@@ -257,9 +267,22 @@ func (c *Client) tarOneFile(ctx context.Context, tw *tar.Writer, rel string, siz
 	}); err != nil {
 		return err
 	}
-	n, err := io.Copy(tw, io.LimitReader(resp.Body, size))
+	// JAB-240: `size` comes from the source's manifest — cap the read at
+	// the job budget too, so declared-small-streamed-huge cannot bypass it.
+	limit := size
+	if c.budget != nil {
+		if rem := c.budget.Remaining(); rem < limit {
+			limit = rem
+		}
+	}
+	n, err := io.Copy(tw, io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return fmt.Errorf("copy %s: %w", rel, err)
+	}
+	if c.budget != nil {
+		if err := c.budget.Consume(n); err != nil {
+			return fmt.Errorf("copy %s: %w", rel, err)
+		}
 	}
 	// Pad if the source returned fewer bytes than the manifest claimed, so the
 	// tar entry stays valid (tar requires exactly Size bytes).
