@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, Card, Form, Input, Space, Switch, Typography } from "antd";
+import { Alert, Card, Form, Input, InputNumber, Space, Switch, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
@@ -15,6 +15,9 @@ export const FtpServerCard = () => {
   const [enabled, setEnabled] = useState(false);
   const [allowPlaintext, setAllowPlaintext] = useState(false);
   const [pasvAddress, setPasvAddress] = useState("");
+  const [maxClients, setMaxClients] = useState<number>(50);
+  const [maxPerIP, setMaxPerIP] = useState<number>(8);
+  const [maxRateKBs, setMaxRateKBs] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -26,11 +29,17 @@ export const FtpServerCard = () => {
           ftp_enabled?: boolean;
           ftp_allow_plaintext?: boolean;
           ftp_pasv_address?: string;
+          ftp_max_clients?: number;
+          ftp_max_per_ip?: number;
+          ftp_local_max_rate_kbs?: number;
         }>("/admin/settings");
         if (!cancelled) {
           setEnabled(!!resp.data.ftp_enabled);
           setAllowPlaintext(!!resp.data.ftp_allow_plaintext);
           setPasvAddress(resp.data.ftp_pasv_address ?? "");
+          setMaxClients(resp.data.ftp_max_clients ?? 50);
+          setMaxPerIP(resp.data.ftp_max_per_ip ?? 8);
+          setMaxRateKBs(resp.data.ftp_local_max_rate_kbs ?? 0);
         }
       } catch {
         if (!cancelled) feedback.message.error(t("ftpservercard.load_failed"));
@@ -101,6 +110,65 @@ export const FtpServerCard = () => {
             {allowPlaintext && (
               <Alert type="warning" showIcon message={t("ftpservercard.plaintext_warning")} />
             )}
+            {/* Numbers commit on BLUR, not per keystroke — every PATCH
+                re-dispatches the module install, which restarts vsftpd. */}
+            <Space wrap size="middle">
+              <Form.Item
+                label={t("ftpservercard.max_clients_label")}
+                tooltip={t("ftpservercard.zero_unlimited")}
+                style={{ marginBottom: 0 }}
+              >
+                <InputNumber
+                  min={0}
+                  max={100000}
+                  value={maxClients}
+                  disabled={saving}
+                  onChange={(v) => setMaxClients(v ?? 0)}
+                  onBlur={() =>
+                    patch({ ftp_max_clients: maxClients }, () =>
+                      feedback.message.success(t("ftpservercard.saved")),
+                    )
+                  }
+                />
+              </Form.Item>
+              <Form.Item
+                label={t("ftpservercard.max_per_ip_label")}
+                tooltip={t("ftpservercard.zero_unlimited")}
+                style={{ marginBottom: 0 }}
+              >
+                <InputNumber
+                  min={0}
+                  max={10000}
+                  value={maxPerIP}
+                  disabled={saving}
+                  onChange={(v) => setMaxPerIP(v ?? 0)}
+                  onBlur={() =>
+                    patch({ ftp_max_per_ip: maxPerIP }, () =>
+                      feedback.message.success(t("ftpservercard.saved")),
+                    )
+                  }
+                />
+              </Form.Item>
+              <Form.Item
+                label={t("ftpservercard.max_rate_label")}
+                tooltip={t("ftpservercard.max_rate_tooltip")}
+                style={{ marginBottom: 0 }}
+              >
+                <InputNumber
+                  min={0}
+                  max={10000000}
+                  value={maxRateKBs}
+                  disabled={saving}
+                  addonAfter="KB/s"
+                  onChange={(v) => setMaxRateKBs(v ?? 0)}
+                  onBlur={() =>
+                    patch({ ftp_local_max_rate_kbs: maxRateKBs }, () =>
+                      feedback.message.success(t("ftpservercard.saved")),
+                    )
+                  }
+                />
+              </Form.Item>
+            </Space>
             <Form.Item
               label={t("ftpservercard.pasv_label")}
               tooltip={t("ftpservercard.pasv_tooltip")}

@@ -156,6 +156,11 @@ type updateServerSettingsRequest struct {
 	FTPEnabled                 *bool   `json:"ftp_enabled,omitempty"`
 	FTPAllowPlaintext          *bool   `json:"ftp_allow_plaintext,omitempty"`
 	FTPPasvAddress             *string `json:"ftp_pasv_address,omitempty"`
+	// vsftpd tuning; 0 = unlimited. Bounded at the API so a typo can't
+	// render a nonsensical config.
+	FTPMaxClients      *uint32 `json:"ftp_max_clients,omitempty"`
+	FTPMaxPerIP        *uint32 `json:"ftp_max_per_ip,omitempty"`
+	FTPLocalMaxRateKBs *uint32 `json:"ftp_local_max_rate_kbs,omitempty"`
 	TenantDomainOptionsEnabled *bool   `json:"tenant_domain_options_enabled,omitempty"`
 	TenantDocrootEditable      *bool   `json:"tenant_docroot_editable,omitempty"`
 	// GH #860: opt-in branded page on the default catch-all for unknown
@@ -304,6 +309,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	prevFTPEnabled := current.FTPEnabled
 	prevFTPAllowPlaintext := current.FTPAllowPlaintext
 	prevFTPPasvAddress := current.FTPPasvAddress
+	prevFTPMaxClients := current.FTPMaxClients
+	prevFTPMaxPerIP := current.FTPMaxPerIP
+	prevFTPLocalMaxRateKBs := current.FTPLocalMaxRateKBs
 	prevPanelBrandText := current.PanelBrandText
 	prevDockerEnabled := current.DockerMarketplaceEnabled
 	prevDockerForUsers := current.DockerAppsForUsersEnabled
@@ -549,6 +557,27 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			return
 		}
 		current.FTPPasvAddress = addr
+	}
+	if req.FTPMaxClients != nil {
+		if *req.FTPMaxClients > 100000 {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": "ftp_max_clients must be 0-100000"})
+			return
+		}
+		current.FTPMaxClients = *req.FTPMaxClients
+	}
+	if req.FTPMaxPerIP != nil {
+		if *req.FTPMaxPerIP > 10000 {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": "ftp_max_per_ip must be 0-10000"})
+			return
+		}
+		current.FTPMaxPerIP = *req.FTPMaxPerIP
+	}
+	if req.FTPLocalMaxRateKBs != nil {
+		if *req.FTPLocalMaxRateKBs > 10000000 {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": "ftp_local_max_rate_kbs must be 0-10000000"})
+			return
+		}
+		current.FTPLocalMaxRateKBs = *req.FTPLocalMaxRateKBs
 	}
 	if req.TenantDomainOptionsEnabled != nil {
 		current.TenantDomainOptionsEnabled = *req.TenantDomainOptionsEnabled
@@ -817,7 +846,11 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		// the module stays enabled, re-dispatch the (idempotent) install so
 		// the config re-renders and vsftpd restarts with the new values.
 		if current.FTPEnabled && prevFTPEnabled &&
-			(current.FTPAllowPlaintext != prevFTPAllowPlaintext || current.FTPPasvAddress != prevFTPPasvAddress) {
+			(current.FTPAllowPlaintext != prevFTPAllowPlaintext ||
+				current.FTPPasvAddress != prevFTPPasvAddress ||
+				current.FTPMaxClients != prevFTPMaxClients ||
+				current.FTPMaxPerIP != prevFTPMaxPerIP ||
+				current.FTPLocalMaxRateKBs != prevFTPLocalMaxRateKBs) {
 			h.dispatchModuleInstall("ftp")
 		}
 	}

@@ -457,6 +457,12 @@ type ServerSettings struct {
 	// TLS is still REQUIRED unless the operator explicitly allows legacy
 	// cleartext logins. Never relax this silently.
 	FTPAllowPlaintext bool `gorm:"column:ftp_allow_plaintext;type:tinyint(1);not null;default:0" json:"ftp_allow_plaintext"`
+	// FTP server tuning (GH #1053 follow-up). All 0 = unlimited; rendered
+	// into /etc/vsftpd.conf by install_vsftpd_config on every module
+	// (re-)install.
+	FTPMaxClients      uint32 `gorm:"column:ftp_max_clients;type:int unsigned;not null;default:50" json:"ftp_max_clients"`
+	FTPMaxPerIP        uint32 `gorm:"column:ftp_max_per_ip;type:int unsigned;not null;default:8" json:"ftp_max_per_ip"`
+	FTPLocalMaxRateKBs uint32 `gorm:"column:ftp_local_max_rate_kbs;type:int unsigned;not null;default:0" json:"ftp_local_max_rate_kbs"`
 	// FTPPasvAddress is the external address vsftpd advertises for passive
 	// connections when the host is behind NAT. Empty = advertise the local
 	// address.

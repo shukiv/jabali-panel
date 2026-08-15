@@ -104,6 +104,21 @@ modfn=$(awk '/^install_module_ftp\(\)/,/^}/' install.sh)
 grep -q 'systemctl is-active --quiet vsftpd' <<<"$modfn" \
   || { echo "FAIL: install_module_ftp must verify vsftpd is ACTIVE after start"; fail=1; }
 
+# --- 4c. tuning knobs rendered from DB (GH #1053 follow-up) ---
+# max_clients / max_per_ip / local_max_rate must come from server_settings
+# (with sane defaults for pre-000265 boxes). All are REAL vsftpd directives
+# — same invented-name hazard class as 4b.
+for want in 'max_clients=\$\{max_clients\}' 'max_per_ip=\$\{max_per_ip\}'; do
+  if ! grep -qE "^${want}" <<<"$cfgfn"; then
+    echo "FAIL: vsftpd config missing DB-driven directive ${want}"
+    fail=1
+  fi
+done
+grep -q 'local_max_rate' <<<"$cfgfn" \
+  || { echo "FAIL: local_max_rate not rendered"; fail=1; }
+grep -q 'max_rate_kbs \* 1024' <<<"$cfgfn" \
+  || { echo "FAIL: local_max_rate must convert the panel's KB/s to bytes/s"; fail=1; }
+
 # --- 5. passive range consistency (vsftpd conf vs UFW rule) ---
 pasv_min=$(grep -oE '^pasv_min_port=[0-9]+' <<<"$cfgfn" | cut -d= -f2 || true)
 pasv_max=$(grep -oE '^pasv_max_port=[0-9]+' <<<"$cfgfn" | cut -d= -f2 || true)

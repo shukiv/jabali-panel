@@ -810,12 +810,24 @@ install_module_ftp() {
 # to the safe value when the row/columns are unreadable (fresh install
 # ordering — same tolerance as converge_pdns_masking).
 install_vsftpd_config() {
-  local allow_plaintext="0" pasv_address=""
+  local allow_plaintext="0" pasv_address="" max_clients="50" max_per_ip="8" max_rate_kbs="0"
   if command -v mariadb >/dev/null 2>&1; then
     allow_plaintext="$(mariadb jabali_panel -N -B -e \
       "SELECT ftp_allow_plaintext FROM server_settings WHERE id=1;" 2>/dev/null || true)"
     pasv_address="$(mariadb jabali_panel -N -B -e \
       "SELECT ftp_pasv_address FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+    # Tuning knobs (GH #1053 follow-up); empty (pre-000265 box) keeps the
+    # shipped defaults above. 0 = unlimited for all three.
+    local _v
+    _v="$(mariadb jabali_panel -N -B -e \
+      "SELECT ftp_max_clients FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+    [[ "$_v" =~ ^[0-9]+$ ]] && max_clients="$_v"
+    _v="$(mariadb jabali_panel -N -B -e \
+      "SELECT ftp_max_per_ip FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+    [[ "$_v" =~ ^[0-9]+$ ]] && max_per_ip="$_v"
+    _v="$(mariadb jabali_panel -N -B -e \
+      "SELECT ftp_local_max_rate_kbs FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+    [[ "$_v" =~ ^[0-9]+$ ]] && max_rate_kbs="$_v"
   fi
   local force_ssl="YES"
   [[ "$allow_plaintext" == "1" ]] && force_ssl="NO"
@@ -866,10 +878,15 @@ hide_ids=YES
 pasv_enable=YES
 pasv_min_port=40000
 pasv_max_port=40100
+# Operator tuning (Server Settings -> SSH & FTP); 0 = unlimited.
+max_clients=${max_clients}
+max_per_ip=${max_per_ip}
 VSFTPDEOF
   # Appended via printf, not the heredoc: a line-leading `write_enable`
   # token trips lint-install-sh's phantom-function scan (write_ prefix).
   printf 'write_enable=YES\n' >> /etc/vsftpd.conf
+  # local_max_rate is bytes/sec; the panel stores KB/s.
+  printf 'local_max_rate=%s\n' "$(( max_rate_kbs * 1024 ))" >> /etc/vsftpd.conf
   if [[ -n "$pasv_address" ]]; then
     printf 'pasv_address=%s\n' "$pasv_address" >> /etc/vsftpd.conf
   fi
@@ -895,7 +912,7 @@ VSFTPDEOF
     printf 'ssl_enable=NO\n' >> /etc/vsftpd.conf
   fi
   chmod 0644 /etc/vsftpd.conf
-  _ok "vsftpd.conf rendered (force_ssl=${force_ssl}, pasv_address='${pasv_address:-auto}')"
+  _ok "vsftpd.conf rendered (force_ssl=${force_ssl}, pasv_address='${pasv_address:-auto}', max_clients=${max_clients}, max_per_ip=${max_per_ip}, rate=${max_rate_kbs}KB/s)"
 }
 
 # install_vsftpd_pam — own PAM service so the stock /etc/pam.d/vsftpd
