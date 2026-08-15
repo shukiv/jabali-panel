@@ -69,20 +69,25 @@ func validateFtpSSHDAccount(a ftpSSHDSyncAccount) *agentwire.AgentError {
 			Message: fmt.Sprintf("invalid subaccount username %q for sshd render", a.Username),
 		}
 	}
+	// sshdConfigUnsafe rejects anything that could split or terminate a
+	// rendered directive: whitespace breaks `internal-sftp -d <path>` into
+	// extra argv, newlines inject new directives, quotes/backslashes
+	// change sshd's tokenization. Docroot paths never need any of them.
+	sshdConfigUnsafe := " \t\r\n\"'\\"
 	if !strings.HasPrefix(a.ChrootDir, "/home/") ||
 		filepath.Clean(a.ChrootDir) != a.ChrootDir ||
-		strings.Contains(a.ChrootDir, "\n") {
+		strings.ContainsAny(a.ChrootDir, sshdConfigUnsafe) {
 		return &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("invalid chroot_dir %q: must be a clean absolute path under /home", a.ChrootDir),
+			Message: fmt.Sprintf("invalid chroot_dir %q: must be a clean absolute path under /home without whitespace or quotes", a.ChrootDir),
 		}
 	}
 	if !strings.HasPrefix(a.StartDir, "/") ||
 		filepath.Clean(a.StartDir) != a.StartDir ||
-		strings.Contains(a.StartDir, "\n") {
+		strings.ContainsAny(a.StartDir, sshdConfigUnsafe) {
 		return &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("invalid start_dir %q: must be a clean chroot-relative path starting with /", a.StartDir),
+			Message: fmt.Sprintf("invalid start_dir %q: must be a clean chroot-relative path starting with / without whitespace or quotes", a.StartDir),
 		}
 	}
 	return nil
@@ -114,9 +119,14 @@ func renderXferDropin(accounts []ftpSSHDSyncAccount) string {
 		b.WriteString("    PermitTunnel no\n")
 		b.WriteString("    AllowAgentForwarding no\n")
 		// Subaccounts are password credentials by design (revocable,
-		// per-protocol). Key auth stays off: nothing manages their
-		// authorized_keys, and an unmanaged surface is drift.
+		// per-protocol). PubkeyAuthentication MUST be explicitly off, not
+		// left to the global default: sshd reads ~/.ssh/authorized_keys
+		// from the alias's REAL home — home_path, typically a docroot —
+		// BEFORE chroot. A tenant (or a compromised WordPress) writing
+		// docroot/.ssh/authorized_keys would otherwise mint key-based
+		// alias access that survives every password rotation.
 		b.WriteString("    PasswordAuthentication yes\n")
+		b.WriteString("    PubkeyAuthentication no\n")
 		b.WriteString("    KbdInteractiveAuthentication no\n")
 		b.WriteString("    PermitEmptyPasswords no\n")
 	}

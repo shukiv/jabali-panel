@@ -113,6 +113,9 @@ func TestFtpAccountCreate_HomePathValidation(t *testing.T) {
 		{"outside tenant home", "/etc/ssh", agentwire.CodePermissionDenied},
 		{"other home", "/home/someoneelse-xyz/site", agentwire.CodePermissionDenied},
 		{"trailing slash", u.HomeDir + "/site/", agentwire.CodeInvalidArgument},
+		{"space splits sshd -d argv", u.HomeDir + "/my site", agentwire.CodeInvalidArgument},
+		{"colon corrupts passwd row", u.HomeDir + "/a:b", agentwire.CodeInvalidArgument},
+		{"quote breaks sshd tokenization", u.HomeDir + "/a\"b", agentwire.CodeInvalidArgument},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

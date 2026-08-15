@@ -130,6 +130,16 @@ func resolveFtpHomePath(homePath string, tenant *ftpTenant) (string, *agentwire.
 			Message: fmt.Sprintf("home_path %q must be absolute and clean (no ., .., trailing slash)", homePath),
 		}
 	}
+	// The path lands in a rendered sshd directive (`internal-sftp -d`)
+	// and in the passwd home field: whitespace splits the argv, quotes
+	// and backslashes change tokenization, colons corrupt passwd rows.
+	// Docroot paths never legitimately contain any of these.
+	if strings.ContainsAny(homePath, " \t\r\n\"'\\:") {
+		return "", &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("home_path %q must not contain whitespace, quotes, backslashes, or colons", homePath),
+		}
+	}
 	// Resolve through the nearest existing ancestor so a not-yet-created
 	// leaf directory doesn't fail validation while symlinked ancestors
 	// still get caught.
@@ -285,9 +295,14 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	// Same-uid alias. --no-create-home: the directory is the tenant's
 	// (created on demand below if missing); a subaccount must never own
-	// tenant tree nodes. /bin/bash because sshd runs ForceCommand through
-	// the login shell — nologin would break internal-sftp; shell sessions
-	// are impossible anyway (Match User forces SFTP; no console access).
+	// tenant tree nodes. Shell is nologin ON PURPOSE: sshd's ForceCommand
+	// internal-sftp runs IN-PROCESS (no shell exec — M12's chroots contain
+	// no /bin and work), so SFTP is unaffected, while every path that
+	// WOULD exec a shell dead-ends. With bash, an alias that has no Match
+	// block yet (ftp-only account, or the create→first-sshd_sync gap)
+	// would get an interactive shell whenever the operator's global
+	// PasswordAuthentication toggle is on. vsftpd side: the step-4 PAM
+	// file must omit pam_shells.so, which would reject nologin.
 	// No --user-group and NO www-data (#430); jabali-ftp only via
 	// ftp_access below.
 	args := []string{
@@ -297,7 +312,7 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 		"--home-dir", homePath,
 		"--no-create-home",
 		"--no-user-group",
-		"--shell", "/bin/bash",
+		"--shell", "/usr/sbin/nologin",
 		p.Username,
 	}
 	if out, err := exec.CommandContext(ctx, "useradd", args...).CombinedOutput(); err != nil {

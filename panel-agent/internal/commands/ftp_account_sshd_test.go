@@ -41,6 +41,12 @@ func TestRenderXferDropin_DeterministicAndComplete(t *testing.T) {
 		"ChrootDirectory /home/zeta",
 		"AllowTcpForwarding no",
 		"PasswordAuthentication yes",
+		// Load-bearing: without an explicit no, sshd falls back to the
+		// global default (yes) and reads authorized_keys from the alias's
+		// REAL home — a tenant-writable docroot — before chroot. That is
+		// a password-rotation-proof backdoor.
+		"PubkeyAuthentication no",
+		"KbdInteractiveAuthentication no",
 		"PermitEmptyPasswords no",
 	} {
 		if !strings.Contains(out, want) {
@@ -105,6 +111,9 @@ func TestFtpSSHDSync_Validation(t *testing.T) {
 		{"unclean chroot", ftpSSHDSyncAccount{Username: "shop_dev", ChrootDir: "/home/shop/../other", StartDir: "/"}},
 		{"relative start dir", ftpSSHDSyncAccount{Username: "shop_dev", ChrootDir: "/home/shop", StartDir: "site"}},
 		{"start dir traversal", ftpSSHDSyncAccount{Username: "shop_dev", ChrootDir: "/home/shop", StartDir: "/../../etc"}},
+		{"space splits -d argv", ftpSSHDSyncAccount{Username: "shop_dev", ChrootDir: "/home/shop", StartDir: "/my site"}},
+		{"quote in start dir", ftpSSHDSyncAccount{Username: "shop_dev", ChrootDir: "/home/shop", StartDir: "/a\"b"}},
+		{"space in chroot", ftpSSHDSyncAccount{Username: "shop_dev", ChrootDir: "/home/my shop", StartDir: "/"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
