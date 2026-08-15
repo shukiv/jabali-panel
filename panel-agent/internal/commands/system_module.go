@@ -38,6 +38,7 @@ var moduleInstallKeys = map[string]bool{
 	"mail":     true,
 	"security": true,
 	"quota":    true,
+	"ftp":      true, // GH #1053: vsftpd, opt-in via server_settings.ftp_enabled
 }
 
 // moduleProbe describes how to detect a module's install + active state.
@@ -64,6 +65,7 @@ var moduleDisableUnits = map[string][]string{
 	"security": {"crowdsec", "crowdsec-firewall-bouncer"},
 	"dns":      {"pdns"}, // NEVER pdns-recursor
 	"quota":    {},       // filesystem feature — no service to stop
+	"ftp":      {"vsftpd"},
 }
 
 var moduleProbes = map[string]moduleProbe{
@@ -71,6 +73,7 @@ var moduleProbes = map[string]moduleProbe{
 	"mail":     {bins: []string{"stalwart"}, binGlob: []string{"/usr/local/bin/stalwart"}, service: "jabali-stalwart"}, // symlink + LookPath; filepath.Glob has no **
 	"security": {bins: []string{"cscli", "crowdsec"}, service: "crowdsec"},
 	"quota":    {bins: []string{"quota"}, binGlob: []string{"/usr/sbin/quota"}, service: ""}, // tooling, no service
+	"ftp":      {bins: []string{"vsftpd"}, binGlob: []string{"/usr/sbin/vsftpd"}, service: "vsftpd"},
 }
 
 type moduleStatusRequest struct {

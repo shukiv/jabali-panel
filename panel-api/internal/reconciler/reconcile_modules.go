@@ -37,6 +37,10 @@ var convergedModules = []struct {
 	{key: "mail", dependsOn: "dns", enabled: func(f moduleFlags) bool { return f.mail }},
 	{key: "quota", enabled: func(f moduleFlags) bool { return f.quota }},
 	{key: "security", enabled: func(f moduleFlags) bool { return f.security }},
+	// GH #1053: ftp (vsftpd) is opt-in via server_settings.ftp_enabled
+	// (default OFF) — this converger is also the install-on-enable path
+	// for the admin toggle.
+	{key: "ftp", enabled: func(f moduleFlags) bool { return f.ftp }},
 }
 
 type moduleFlags struct {
@@ -44,6 +48,7 @@ type moduleFlags struct {
 	mail     bool
 	quota    bool
 	security bool
+	ftp      bool
 }
 
 func (r *Reconciler) reconcileModuleInstalls(ctx context.Context) {
@@ -54,7 +59,7 @@ func (r *Reconciler) reconcileModuleInstalls(ctx context.Context) {
 	if err != nil || srv == nil {
 		return
 	}
-	flags := moduleFlags{dns: srv.DNSEnabled, mail: srv.MailEnabled, quota: srv.QuotaEnabled, security: srv.SecurityEnabled}
+	flags := moduleFlags{dns: srv.DNSEnabled, mail: srv.MailEnabled, quota: srv.QuotaEnabled, security: srv.SecurityEnabled, ftp: srv.FTPEnabled}
 	for _, m := range convergedModules {
 		if !m.enabled(flags) {
 			continue

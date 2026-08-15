@@ -208,8 +208,8 @@ UNINSTALL FLAGS
                        would install vs skip for JABALI_MODULES) and exit
                        without changing anything.
   --uninstall          Remove Jabali (see above). Confirms unless --yes.
-  --install-module KEY Install one optional module (quota today; dns|mail|security
-                       pending) onto an already-installed host, then exit.
+  --install-module KEY Install one optional module (quota|dns|mail|security|ftp)
+                       onto an already-installed host, then exit.
   --purge-packages     With --uninstall: also apt-purge the OS packages
                        Jabali pulled in (nginx, mariadb, crowdsec, php...).
   -y, --yes            Skip the uninstall confirmation prompt.
@@ -473,7 +473,8 @@ install_module() {
     dns)      install_module_dns ;;
     mail)     install_module_mail ;;
     security) install_module_security ;;
-    *)        _die "install.sh --install-module: unknown module '$key' (want: quota|dns|mail|security)" ;;
+    ftp)      install_module_ftp ;;
+    *)        _die "install.sh --install-module: unknown module '$key' (want: quota|dns|mail|security|ftp)" ;;
   esac
   _ok "module '$key' install complete"
 }
@@ -749,6 +750,215 @@ install_module_security() {
   install_ufw
   install_apparmor
   install_aide
+}
+
+# install_module_ftp — runtime install of the FTP module (vsftpd), GH #1053.
+# STRICTLY opt-in: server_settings.ftp_enabled defaults 0 and nothing here
+# runs until the admin flips it (panel PATCH dispatches --install-module ftp;
+# the module reconciler converges hosts where the flag is on but vsftpd
+# isn't). SFTP subaccounts work without this module.
+#
+# Auth model: PAM service vsftpd-jabali (pam_service_name below) gates
+# logins on jabali-ftp group membership. The file deliberately OMITS
+# pam_shells.so — subaccounts ship shell=/usr/sbin/nologin (step-3 review:
+# blocks the no-Match-block ssh shell path) and pam_shells would reject
+# them. Do NOT "fix" that by adding nologin to /etc/shells: that widens
+# every other pam_shells consumer on the host.
+install_module_ftp() {
+  # jabali-ftp is the PAM allowlist group; the agent also creates it on
+  # demand (first ftp_access grant can precede the module install).
+  if ! getent group jabali-ftp >/dev/null; then
+    groupadd --system jabali-ftp
+    _ok "jabali-ftp system group created"
+  fi
+
+  if ! dpkg -s vsftpd >/dev/null 2>&1; then
+    _log "installing vsftpd (ftp module runtime install)"
+    _policy_rc_install "--install-module ftp"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq || _warn "apt update failed; proceeding with cached package lists"
+    local _rc=0
+    apt-get install -y -qq --no-install-recommends vsftpd || _rc=$?
+    _policy_rc_restore
+    [[ $_rc -eq 0 ]] || _die "apt install of vsftpd failed (exit $_rc)"
+  fi
+
+  install_vsftpd_config
+  install_vsftpd_pam
+  install_ftp_firewall_rules
+  install_ftp_crowdsec
+
+  systemctl unmask vsftpd >/dev/null 2>&1 || true
+  systemctl enable vsftpd >/dev/null 2>&1 || true
+  if systemctl is-active --quiet vsftpd; then
+    systemctl restart vsftpd || _die "vsftpd restart failed — check 'journalctl -u vsftpd'"
+  else
+    systemctl start vsftpd || _die "vsftpd start failed — check 'journalctl -u vsftpd'"
+  fi
+  _ok "ftp module installed (vsftpd active, FTPS required unless ftp_allow_plaintext)"
+}
+
+# install_vsftpd_config — render /etc/vsftpd.conf from DB truth. Reads
+# ftp_allow_plaintext + ftp_pasv_address from server_settings; both default
+# to the safe value when the row/columns are unreadable (fresh install
+# ordering — same tolerance as converge_pdns_masking).
+install_vsftpd_config() {
+  local allow_plaintext="0" pasv_address=""
+  if command -v mariadb >/dev/null 2>&1; then
+    allow_plaintext="$(mariadb jabali_panel -N -B -e \
+      "SELECT ftp_allow_plaintext FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+    pasv_address="$(mariadb jabali_panel -N -B -e \
+      "SELECT ftp_pasv_address FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+  fi
+  local force_ssl="YES"
+  [[ "$allow_plaintext" == "1" ]] && force_ssl="NO"
+
+  # TLS: the panel-hostname cert (LE when routable, else self-signed —
+  # M32). FTPS has no workable SNI story across clients; docs point
+  # tenants at the panel hostname, not their own domain.
+  local tls_cert="/etc/jabali/tls/panel.crt"
+  local tls_key="/etc/jabali/tls/panel.key"
+  local ssl_enable="YES"
+  if [[ ! -s "$tls_cert" || ! -s "$tls_key" ]]; then
+    # No cert at all (pre-cert install ordering): keep the daemon usable
+    # but only if the operator explicitly allowed plaintext; otherwise
+    # fail loudly — silently serving passwordful cleartext FTP because a
+    # cert file was missing is exactly the downgrade we never ship.
+    if [[ "$force_ssl" == "YES" ]]; then
+      _die "ftp module: TLS is required but $tls_cert is missing — run the panel-cert step first or (explicitly) allow plaintext"
+    fi
+    ssl_enable="NO"
+    _warn "ftp module: no panel cert — FTPS disabled, plaintext explicitly allowed by operator"
+  fi
+
+  cat > /etc/vsftpd.conf <<VSFTPDEOF
+# Managed by jabali-panel install.sh (ftp module, GH #1053). Do not edit —
+# rewritten on every module install/update from server_settings.
+listen=YES
+listen_ipv6=NO
+anonymous_enable=NO
+local_enable=YES
+local_umask=022
+dirmessage_enable=NO
+use_localtime=YES
+xferlog_enable=YES
+xferlog_std_format=NO
+log_ftp_protocol=NO
+vsftpd_log_file=/var/log/vsftpd.log
+connect_from_port_20=YES
+idle_session_timeout=300
+data_connection_timeout=120
+pam_service_name=vsftpd-jabali
+# Every login chroots to the passwd home (the subaccount home_path). The
+# home is tenant-writable by design, hence allow_writeable_chroot — the
+# accounts are file-transfer-only aliases, not shell users.
+chroot_local_user=YES
+allow_writeable_chroot=YES
+hide_ids=YES
+# Passive range must match install_ftp_firewall_rules + the runbook.
+pasv_enable=YES
+pasv_min_port=40000
+pasv_max_port=40100
+VSFTPDEOF
+  # Appended via printf, not the heredoc: a line-leading `write_enable`
+  # token trips lint-install-sh's phantom-function scan (write_ prefix).
+  printf 'write_enable=YES\n' >> /etc/vsftpd.conf
+  if [[ -n "$pasv_address" ]]; then
+    printf 'pasv_address=%s\n' "$pasv_address" >> /etc/vsftpd.conf
+  fi
+  if [[ "$ssl_enable" == "YES" ]]; then
+    cat >> /etc/vsftpd.conf <<VSFTPDEOF
+ssl_enable=YES
+rsa_cert_file=${tls_cert}
+rsa_private_key_file=${tls_key}
+force_local_logins_ssl=${force_ssl}
+force_local_data_ssl=${force_ssl}
+ssl_tlsv1_2=YES
+ssl_tlsv1_3=YES
+ssl_sslv2=NO
+ssl_sslv3=NO
+require_ssl_reuse=NO
+ssl_ciphers=HIGH
+VSFTPDEOF
+  else
+    printf 'ssl_enable=NO\n' >> /etc/vsftpd.conf
+  fi
+  chmod 0644 /etc/vsftpd.conf
+  _ok "vsftpd.conf rendered (force_ssl=${force_ssl}, pasv_address='${pasv_address:-auto}')"
+}
+
+# install_vsftpd_pam — own PAM service so the stock /etc/pam.d/vsftpd
+# conffile stays untouched (no dpkg conffile prompts on upgrade). Gates on
+# jabali-ftp membership; NO pam_shells (see install_module_ftp header).
+install_vsftpd_pam() {
+  cat > /etc/pam.d/vsftpd-jabali <<'PAMEOF'
+# Managed by jabali-panel install.sh (ftp module, GH #1053).
+# Only members of jabali-ftp may authenticate; membership is the
+# ftp_access toggle. No pam_shells: subaccounts use /usr/sbin/nologin.
+auth    required pam_succeed_if.so user ingroup jabali-ftp quiet
+auth    required pam_unix.so
+account required pam_succeed_if.so user ingroup jabali-ftp quiet
+account required pam_unix.so
+session required pam_permit.so
+PAMEOF
+  chmod 0644 /etc/pam.d/vsftpd-jabali
+  _ok "vsftpd PAM service installed (jabali-ftp members only)"
+}
+
+# install_ftp_firewall_rules — open 21 + the passive range. Only ever
+# called from the ftp module path (i.e. ftp_enabled); converge_ftp_masking
+# removes the rules when the module is toggled off.
+install_ftp_firewall_rules() {
+  command -v ufw >/dev/null 2>&1 || { _warn "ufw not present — skipping ftp firewall rules"; return 0; }
+  ufw allow 21/tcp >/dev/null 2>&1 || true
+  ufw allow 40000:40100/tcp >/dev/null 2>&1 || true
+  _ok "ufw: 21/tcp + 40000:40100/tcp (ftp passive range) allowed"
+}
+
+# install_ftp_crowdsec — brute-force coverage from day one. Best-effort:
+# the security module may be off, and an optional component never aborts
+# the panel.
+install_ftp_crowdsec() {
+  command -v cscli >/dev/null 2>&1 || { _log "crowdsec not present — skipping vsftpd collection"; return 0; }
+  cscli collections install crowdsecurity/vsftpd >/dev/null 2>&1 \
+    || _warn "cscli collections install crowdsecurity/vsftpd failed (non-fatal)"
+  cat > /etc/crowdsec/acquis.d/jabali-vsftpd.yaml <<'ACQEOF'
+# Managed by jabali-panel install.sh (ftp module, GH #1053).
+filenames:
+  - /var/log/vsftpd.log
+labels:
+  type: vsftpd
+ACQEOF
+  systemctl reload crowdsec >/dev/null 2>&1 || true
+  _ok "crowdsec vsftpd collection + acquisition installed"
+}
+
+# converge_ftp_masking — DB-truth enforcement of the ftp opt-in on every
+# `jabali update` (GH #1053; same pattern as converge_pdns_masking /
+# GH #447). Off (or unknown/fresh): vsftpd masked, ports closed — the
+# module reconciler installs+unmasks when the admin opts in.
+converge_ftp_masking() {
+  command -v systemctl >/dev/null 2>&1 || return 0
+  local ftp_on=0 db_val=""
+  if command -v mariadb >/dev/null 2>&1; then
+    db_val="$(mariadb jabali_panel -N -B -e \
+      "SELECT ftp_enabled FROM server_settings WHERE id=1;" 2>/dev/null || true)"
+  fi
+  [[ "$db_val" == "1" ]] && ftp_on=1
+  if [[ "$ftp_on" -eq 1 ]]; then
+    systemctl unmask vsftpd >/dev/null 2>&1 || true
+    # Heal rules on boxes where the module installed before a ufw reset.
+    dpkg -s vsftpd >/dev/null 2>&1 && install_ftp_firewall_rules
+  else
+    if dpkg -s vsftpd >/dev/null 2>&1 || systemctl list-unit-files vsftpd.service >/dev/null 2>&1; then
+      systemctl stop vsftpd >/dev/null 2>&1 || true
+      systemctl mask vsftpd >/dev/null 2>&1 || true
+    fi
+    if command -v ufw >/dev/null 2>&1; then
+      ufw delete allow 21/tcp >/dev/null 2>&1 || true
+      ufw delete allow 40000:40100/tcp >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 # seed_module_flags — M353 (GH #353). Write the per-module server_settings flags
@@ -14442,6 +14652,10 @@ provision_new_software() {
   # every update, so a host that has the DNS module off stops reporting the
   # unconfigured pdns unit as "failed" on the dashboard + Server Status.
   converge_pdns_masking
+  # GH #1053: enforce the ftp opt-in on every update — vsftpd masked and
+  # ports closed while server_settings.ftp_enabled=0; unmasked + rules
+  # healed when on.
+  converge_ftp_masking
   # GH #896 + PowerDNS/pdns#11416: carry zone-cache-refresh-interval=0 to
   # boxes that only ever update — install_powerdns (whose template now
   # ships it) does not run
