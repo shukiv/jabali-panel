@@ -113,6 +113,8 @@ type Reconciler struct {
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
 	sshKeys repository.SSHKeyRepository
+	// ftpAccounts holds the FTP/SFTP subaccount repository (GH #1053).
+	ftpAccounts repository.FtpAccountRepository
 	// cronJobs holds reference to the cron jobs repository
 	cronJobs repository.CronJobRepository
 	// pythonApps holds the python_apps repository (ADR-0131).
@@ -239,6 +241,12 @@ type Reconciler struct {
 	// sshKeysDispatchState. sync.Map = lock-free for the common
 	// "many readers, one writer per key" pattern.
 	sshKeysDispatchCache sync.Map
+
+	// ftpDispatchCache: single-key ("all") hash of the desired FTP
+	// subaccount state — same shape and rationale as sshKeysDispatchCache
+	// (GH #1053; steady state must not re-list passwd + re-render sshd
+	// config every tick).
+	ftpDispatchCache sync.Map
 
 	// dnsZoneDispatchCache: per-zone hash of the last-pushed record set +
 	// timestamp, same shape and rationale as sshKeysDispatchCache. Without
@@ -521,6 +529,13 @@ func (r *Reconciler) WithSSHKeys(sshKeys repository.SSHKeyRepository) *Reconcile
 	return r
 }
 
+// WithFtpAccounts adds the FTP/SFTP subaccount repository (GH #1053).
+// Without it reconcileFtpAccounts is a no-op.
+func (r *Reconciler) WithFtpAccounts(ftpAccounts repository.FtpAccountRepository) *Reconciler {
+	r.ftpAccounts = ftpAccounts
+	return r
+}
+
 // WithCronJobs adds cron jobs repository support to the reconciler.
 // Call this before using cron jobs reconciliation.
 func (r *Reconciler) WithCronJobs(cronJobs repository.CronJobRepository) *Reconciler {
@@ -752,6 +767,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// M34: per-user PHP-FPM egress firewall. Cheap noop when the repo
 	// isn't wired (test fixtures) or when there are zero policies.
 	r.reconcileUserEgress(ctx)
+	// GH #1053: converge FTP/SFTP subaccounts (passwd aliases, group
+	// membership, lock state, sshd jabali-xfer drop-in). Hash-gated no-op
+	// in steady state.
+	r.reconcileFtpAccounts(ctx)
 	// JAB-195: keep this host's own public IPs allowlisted so AppSec never
 	// scores WordPress loopback traffic (WooCommerce Action Scheduler et al).
 	r.reconcileSelfAllowlist(ctx)

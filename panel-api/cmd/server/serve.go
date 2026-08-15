@@ -282,6 +282,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DBAdmin = dbAdminRepo
 		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
 		deps.SSHKeys = sshKeyRepo
+		ftpAccountRepo := repository.NewFtpAccountRepository(sharedDB)
 
 		// M14 notification repos. Populated whenever sharedDB is up;
 		// the admin API (later) and dispatcher goroutine both read them
@@ -346,6 +347,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithConfig(cfg)
 		rec.WithSSO(ssoService)
 		rec.WithSSHKeys(sshKeyRepo)
+		rec.WithFtpAccounts(ftpAccountRepo)
 		rec.WithCronJobs(cronJobsRepo)
 		rec.WithDockerApps(dockerAppRepo)
 		rec.WithPythonApps(pythonAppRepo)
