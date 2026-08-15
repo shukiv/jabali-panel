@@ -4790,6 +4790,49 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "204": { description: OK } }
 
+  # --- Ftp Accounts (GH #1053) ---
+
+  /me/ftp-accounts:
+    get:
+      tags: [Ftp Accounts]
+      summary: List the caller's FTP/SFTP subaccounts
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Ftp Accounts]
+      summary: Create an FTP/SFTP subaccount (package cap-checked)
+      security: [ { KratosSession: [] } ]
+      responses: { "201": { description: Created } }
+
+  /me/ftp-accounts/{id}:
+    patch:
+      tags: [Ftp Accounts]
+      summary: Toggle ftp/sftp/enabled on a subaccount
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [Ftp Accounts]
+      summary: Delete a subaccount (host alias first, row second)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /me/ftp-accounts/{id}/password:
+    post:
+      tags: [Ftp Accounts]
+      summary: Reset a subaccount password
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/ftp-accounts:
+    get:
+      tags: [Ftp Accounts]
+      summary: Admin list of every FTP/SFTP subaccount
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Ssl (auto) ---
 

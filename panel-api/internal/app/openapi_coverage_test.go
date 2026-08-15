@@ -76,6 +76,7 @@ func fullDeps() Deps {
 		DockerApps: repository.NewDockerAppRepository(db),
 		PythonApps: repository.NewPythonAppRepository(db),
 		SSHKeys: repository.NewSSHKeyRepository(db),
+		FtpAccounts: repository.NewFtpAccountRepository(db),
 		LimitOverrides: repository.NewUserLimitOverrideRepository(db),
 		Autoresponders: repository.NewEmailAutoresponderRepository(db),
 		Forwarders: repository.NewEmailForwarderRepository(db),

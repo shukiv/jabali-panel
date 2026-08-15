@@ -145,13 +145,19 @@ type updateServerSettingsRequest struct {
 	WebmailEnabled            *bool                       `json:"webmail_enabled,omitempty"`
 	// M353 Phase 1 (GH #353): per-module enable flags (admin toggles them from
 	// Server Settings -> Modules; the SPA gates nav + routes on them).
-	DNSEnabled                 *bool `json:"dns_enabled,omitempty"`
-	MailEnabled                *bool `json:"mail_enabled,omitempty"`
-	SecurityEnabled            *bool `json:"security_enabled,omitempty"`
-	QuotaEnabled               *bool `json:"quota_enabled,omitempty"`
-	APIEnabled                 *bool `json:"api_enabled,omitempty"`
-	TenantDomainOptionsEnabled *bool `json:"tenant_domain_options_enabled,omitempty"`
-	TenantDocrootEditable      *bool `json:"tenant_docroot_editable,omitempty"`
+	DNSEnabled      *bool `json:"dns_enabled,omitempty"`
+	MailEnabled     *bool `json:"mail_enabled,omitempty"`
+	SecurityEnabled *bool `json:"security_enabled,omitempty"`
+	QuotaEnabled    *bool `json:"quota_enabled,omitempty"`
+	APIEnabled      *bool `json:"api_enabled,omitempty"`
+	// GH #1053: FTP module opt-in (default OFF). ftp_allow_plaintext is a
+	// second explicit gate — TLS stays required without it. ftp_pasv_address
+	// is the NAT passive-mode address vsftpd advertises.
+	FTPEnabled                 *bool   `json:"ftp_enabled,omitempty"`
+	FTPAllowPlaintext          *bool   `json:"ftp_allow_plaintext,omitempty"`
+	FTPPasvAddress             *string `json:"ftp_pasv_address,omitempty"`
+	TenantDomainOptionsEnabled *bool   `json:"tenant_domain_options_enabled,omitempty"`
+	TenantDocrootEditable      *bool   `json:"tenant_docroot_editable,omitempty"`
 	// GH #860: opt-in branded page on the default catch-all for unknown
 	// hosts (default off = keep the 444 drop).
 	UnconfiguredPageEnabled *bool `json:"unconfigured_page_enabled,omitempty"`
@@ -295,6 +301,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	prevMailEnabled := current.MailEnabled
 	prevQuotaEnabled := current.QuotaEnabled
 	prevSecurityEnabled := current.SecurityEnabled
+	prevFTPEnabled := current.FTPEnabled
+	prevFTPAllowPlaintext := current.FTPAllowPlaintext
+	prevFTPPasvAddress := current.FTPPasvAddress
 	prevPanelBrandText := current.PanelBrandText
 	prevDockerEnabled := current.DockerMarketplaceEnabled
 	prevDockerForUsers := current.DockerAppsForUsersEnabled
@@ -525,6 +534,21 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.APIEnabled != nil {
 		current.APIEnabled = *req.APIEnabled
+	}
+	if req.FTPEnabled != nil {
+		current.FTPEnabled = *req.FTPEnabled
+	}
+	if req.FTPAllowPlaintext != nil {
+		current.FTPAllowPlaintext = *req.FTPAllowPlaintext
+	}
+	if req.FTPPasvAddress != nil {
+		addr := strings.TrimSpace(*req.FTPPasvAddress)
+		// Lands in a root-rendered config file: hostname/IP charset only.
+		if addr != "" && !hostnameRE.MatchString(addr) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": "ftp_pasv_address must be a hostname or IP address"})
+			return
+		}
+		current.FTPPasvAddress = addr
 	}
 	if req.TenantDomainOptionsEnabled != nil {
 		current.TenantDomainOptionsEnabled = *req.TenantDomainOptionsEnabled
@@ -779,6 +803,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			{"mail", prevMailEnabled, current.MailEnabled},
 			{"quota", prevQuotaEnabled, current.QuotaEnabled},
 			{"security", prevSecurityEnabled, current.SecurityEnabled},
+			{"ftp", prevFTPEnabled, current.FTPEnabled},
 		} {
 			switch {
 			case m.current && !m.prev:
@@ -786,6 +811,14 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			case !m.current && m.prev:
 				h.dispatchModuleDisable(m.key)
 			}
+		}
+		// GH #1053: vsftpd.conf is rendered from ftp_allow_plaintext +
+		// ftp_pasv_address at module-install time. When either changes while
+		// the module stays enabled, re-dispatch the (idempotent) install so
+		// the config re-renders and vsftpd restarts with the new values.
+		if current.FTPEnabled && prevFTPEnabled &&
+			(current.FTPAllowPlaintext != prevFTPAllowPlaintext || current.FTPPasvAddress != prevFTPPasvAddress) {
+			h.dispatchModuleInstall("ftp")
 		}
 	}
 

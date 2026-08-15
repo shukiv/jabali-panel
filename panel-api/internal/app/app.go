@@ -113,6 +113,8 @@ type Deps struct {
 	DockerCatalog  *dockerapp.Catalog
 	PyFrameworks   *pyframeworks.Catalog
 	SSHKeys        repository.SSHKeyRepository
+	// FtpAccounts backs the tenant FTP/SFTP subaccount routes (GH #1053).
+	FtpAccounts    repository.FtpAccountRepository
 	LimitOverrides repository.UserLimitOverrideRepository
 	// M6.5 email feature repositories. Autoresponders/Forwarders/MailboxShares
 	// reconcile jabali intent → Stalwart via the phase registry (ADR-0051).
@@ -1342,6 +1344,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SSHKeys:    deps.SSHKeys,
 				Reconciler: deps.Reconciler,
 				Logger:     deps.Log,
+			})
+		}
+
+		// FTP/SFTP subaccount routes (GH #1053). Agent optional at wire
+		// time: handlers fail closed per-request when it is nil.
+		if deps.FtpAccounts != nil && deps.Users != nil && deps.Packages != nil {
+			api.RegisterFtpAccountRoutes(v1, api.FtpAccountsHandlerConfig{
+				Repo:            deps.FtpAccounts,
+				Users:           deps.Users,
+				Packages:        deps.Packages,
+				Agent:           deps.Agent,
+				Log:             deps.Log,
+				StrictRateLimit: rl.Strict(),
 			})
 		}
 

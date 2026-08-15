@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -60,7 +61,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": ""})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -71,17 +72,26 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	// Docker Apps (GH #283 — hide if not in package). A user with NO package
 	// is unrestricted (GH #282), so the server flag alone decides.
 	dockerUser := settings.DockerMarketplaceEnabled && settings.DockerAppsForUsersEnabled && tenantDockerHostReady()
-	if dockerUser && h.cfg.Users != nil && h.cfg.Packages != nil {
+	// GH #1053: FTP/SFTP subaccounts are package-gated like tenant Docker —
+	// max_ftp_accounts=0 (or no package) hides the whole surface. Resolved in
+	// the same user/package lookup below.
+	ftpAccounts := false
+	if h.cfg.Users != nil && h.cfg.Packages != nil {
 		if claims := ginctx.Claims(c); claims != nil {
 			if u, uerr := h.cfg.Users.FindByID(ctx, claims.UserID); uerr == nil && u != nil {
+				var pkg *models.HostingPackage
+				if u.PackageID != nil {
+					if p, perr := h.cfg.Packages.FindByID(ctx, *u.PackageID); perr == nil {
+						pkg = p
+					}
+				}
 				// Tenant Docker requires a package that includes it (Gitea #511):
 				// a package-less tenant is denied at install, so don't advertise
 				// the capability either (keeps the nav honest).
-				if u.PackageID == nil {
-					dockerUser = false
-				} else if pkg, perr := h.cfg.Packages.FindByID(ctx, *u.PackageID); perr != nil || pkg == nil || pkg.MaxDockerApps == 0 {
+				if pkg == nil || pkg.MaxDockerApps == 0 {
 					dockerUser = false
 				}
+				ftpAccounts = pkg != nil && pkg.MaxFTPAccounts > 0 && u.Username != nil && *u.Username != ""
 			}
 		}
 	}
@@ -112,6 +122,12 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		// mutations (middleware.StandbyReadOnly), so the banner explains why.
 		"is_standby":    settings.IsStandby(),
 		"dr_peer_label": settings.DRPeerLabel,
+		// GH #1053: ftp_accounts_enabled gates the tenant FTP Accounts page
+		// (package max_ftp_accounts > 0 + a Linux account). ftp_server_enabled
+		// mirrors the server-level opt-in so the UI can say "SFTP only"
+		// versus "FTPS + SFTP" in connection info.
+		"ftp_accounts_enabled": ftpAccounts,
+		"ftp_server_enabled":   settings.FTPEnabled,
 	})
 }
 
