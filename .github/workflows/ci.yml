@@ -22,6 +22,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# JAB-247 follow-up: PR CI executes fork code — the token must be read-only.
+permissions:
+  contents: read
+
 # Per-ref concurrency: PR pushes auto-supersede stale in-flight runs; main runs
 # always run to completion (each commit is an authoritative green/red record).
 concurrency:

@@ -9,6 +9,11 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch:
 
+# JAB-247 follow-up: nightly only builds/tests and uploads artifacts —
+# read-only token is sufficient.
+permissions:
+  contents: read
+
 env:
   GO_VERSION: "1.25"
   NODE_VERSION: "20"
