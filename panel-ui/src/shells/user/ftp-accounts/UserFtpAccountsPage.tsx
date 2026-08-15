@@ -26,6 +26,7 @@ import {
   CloudServerOutlined,
 } from "@icons";
 import { RowActionButton } from "../../../components/RowActionButton";
+import { PasswordInput } from "../../../components/PasswordInput";
 import { StandardDrawerFooter } from "../../../components/StandardActionFooter";
 import {
   listFtpAccounts,
@@ -319,7 +320,7 @@ export const UserFtpAccountsPage = () => {
             name="password"
             rules={[{ required: true, min: 12, max: 128 }]}
           >
-            <Input.Password autoComplete="new-password" />
+            <PasswordInput autoComplete="new-password" generatorLength={20} />
           </Form.Item>
           <Form.Item
             label={t("ftpaccounts.ftp_access_label")}
@@ -356,7 +357,7 @@ export const UserFtpAccountsPage = () => {
             name="password"
             rules={[{ required: true, min: 12, max: 128 }]}
           >
-            <Input.Password autoComplete="new-password" />
+            <PasswordInput autoComplete="new-password" generatorLength={20} />
           </Form.Item>
         </Form>
       </Modal>
