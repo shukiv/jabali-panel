@@ -516,13 +516,15 @@ func applyAccountRestore(
 					fmt.Sprintf("db %s: create database: %v: %s", db, cErr, strings.TrimSpace(string(cOut))))
 				continue
 			}
-			cmd := exec.CommandContext(ctx, "mariadb", db)
-			cmd.Stdin = f
-			loadOut, lerr := cmd.CombinedOutput()
+			// JAB-239: the dump is tenant-controlled content (it came
+			// from the tenant's own snapshot), so it loads through the
+			// db-scoped shadow account as an unprivileged OS user —
+			// never as root. See db_load_scoped.go.
+			lerr := loadMariaDBDumpScoped(ctx, db, f)
 			_ = f.Close()
 			if lerr != nil {
 				warnings = append(warnings,
-					fmt.Sprintf("db %s: mariadb load: %v: %s", db, lerr, strings.TrimSpace(string(loadOut))))
+					fmt.Sprintf("db %s: mariadb load: %v", db, lerr))
 				continue
 			}
 			applied = append(applied, fmt.Sprintf("db → %s", db))

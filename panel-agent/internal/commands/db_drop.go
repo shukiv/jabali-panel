@@ -78,6 +78,12 @@ func dbDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 
+	// JAB-239: drop the db-scoped restore shadow account alongside the
+	// database so it can't accumulate across create/restore/drop cycles.
+	// Best-effort — a leftover account is db-scoped (now to a dropped
+	// database) with an unknown random password.
+	_ = mariadbRoot(ctx, fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost';", scopedShadowUser(p.DBName)))
+
 	return dbDropResponse{OK: true}, nil
 }
 

@@ -110,11 +110,10 @@ func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		}
 	}
 
-	// Run mysql with stdin from the file, database name as positional argument.
-	cmd := exec.CommandContext(ctx, "mysql", p.DBName)
-	cmd.Stdin = f
-
-	if err := cmd.Run(); err != nil {
+	// Run the dump load through the db-scoped shadow account as an
+	// unprivileged OS user (JAB-239) — never as root. See
+	// db_load_scoped.go for the trust model.
+	if err := loadMariaDBDumpScoped(ctx, p.DBName, f); err != nil {
 		// Always delete the file, whether restore succeeds or fails — but
 		// through the SCOPE, not os.Remove. The scope's RESOLVE_BENEATH
 		// applies to the open above; a raw os.Remove(p.Path) re-walks the
