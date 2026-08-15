@@ -104,6 +104,21 @@ var tenantRelevantEventKinds = map[string]bool{
 	"snuffleupagus.incident.detected":     true,
 	"notifications.channel.auto_disabled": true,
 	"panel.welcome":                       true,
+	// GH #979: the rest of the tenant-facing kinds publishers already fire for a
+	// tenant's own resources (domains, mail reputation, Docker apps). Admin/server
+	// kinds (aide.tamper, malware, egress, db.admin.*, automation.*, update.*)
+	// stay out of the tenant catalog on purpose.
+	"domain.ghost_detected.mismatch":  true,
+	"domain.ghost_detected.nxdomain":  true,
+	"domain.ghost_detected.partial":   true,
+	"mail.rbl.listed":                 true,
+	"mail.rbl.cleared":                true,
+	"mail.dmarc.report_received":      true,
+	"mail.tls.report_received":        true,
+	"mail.feedback.received":          true,
+	"docker_app.entitlement_stopped":  true,
+	"docker_app.disk_quota_stopped":   true,
+	"docker_app.removed_from_package": true,
 }
 
 // Per-user anti-abuse limits (JAB-171 phase 4c). Consts, not admin-configurable

@@ -257,6 +257,221 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "info",
 		DefaultOn:   false,
 	},
+	// GH #979: expose the remaining kinds that publishers already fire but that
+	// were never listed here, so the admin Notifications → Events tab can toggle
+	// them (an unlisted kind falls back to always-on and cannot be silenced).
+	// Policy: actionable/security events default ON, purely informational
+	// confirmations default OFF (matches the info=off convention above).
+	// `notifications.broadcast` and `notifications.channel.test` are deliberately
+	// NOT here — a broadcast must always deliver and a channel test only fires on
+	// an explicit click, so both stay always-on.
+	{
+		Kind:        "update.completed",
+		Label:       "Panel update applied",
+		Description: "The panel finished updating to a new release. Informational; noisy on the development channel.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "aide.tamper.detected",
+		Label:       "File integrity tamper",
+		Description: "AIDE detected an unexpected change to a monitored system file. Security-relevant — investigate.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "nginx.config.invalid",
+		Label:       "nginx config invalid",
+		Description: "A rendered nginx configuration failed validation and was not applied. Action required.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "malware.realtime.critical",
+		Label:       "Malware — critical detection",
+		Description: "The real-time scanner flagged a high-confidence malicious file. Security-relevant — investigate.",
+		Severity:    "critical",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "malware.quarantine.added",
+		Label:       "Malware quarantined",
+		Description: "A file was quarantined by the malware scanner. Security-relevant.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "egress.drop.burst",
+		Label:       "Outbound traffic blocked (burst)",
+		Description: "A burst of outbound connections was dropped by the egress firewall. Possible compromise or misconfiguration.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "exec.audit.burst",
+		Label:       "Suspicious process burst",
+		Description: "The exec-audit source saw a burst of flagged process executions. Security-relevant.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "domain.ghost_detected.mismatch",
+		Label:       "Ghosted domain — IP mismatch",
+		Description: "The domain resolves to a different IP than this server. Expected behind a proxy/CDN such as Cloudflare — disable if you front domains that way.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "domain.ghost_detected.nxdomain",
+		Label:       "Ghosted domain — does not resolve",
+		Description: "The domain does not resolve in public DNS. It may be newly added or its DNS is not yet live.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "domain.ghost_detected.partial",
+		Label:       "Ghosted domain — partial DNS",
+		Description: "Only some of the domain's expected records point here. DNS may be mid-propagation or misconfigured.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "mail.rbl.listed",
+		Label:       "Mail IP blocklisted (RBL)",
+		Description: "The server's sending IP was found on a DNS blocklist. Outbound mail may be rejected — action required.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "mail.rbl.cleared",
+		Label:       "Mail IP delisted (RBL)",
+		Description: "The server's sending IP is no longer on a previously-seen blocklist. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "mail.dmarc.report_received",
+		Label:       "DMARC aggregate report received",
+		Description: "An aggregate DMARC (RUA) report arrived for one of your domains. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "mail.tls.report_received",
+		Label:       "SMTP TLS report received",
+		Description: "An SMTP TLS-RPT report arrived for one of your domains. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "mail.feedback.received",
+		Label:       "Mail feedback-loop report",
+		Description: "A feedback-loop / abuse report was received about outbound mail. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "docker_app.entitlement_stopped",
+		Label:       "Docker app stopped — entitlement",
+		Description: "A tenant Docker app was stopped because its plan no longer entitles it. Action may be required.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "docker_app.disk_quota_stopped",
+		Label:       "Docker app stopped — disk quota",
+		Description: "A tenant Docker app was stopped after exceeding its disk quota. Action may be required.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "docker_app.removed_from_package",
+		Label:       "Docker app removed from package",
+		Description: "A Docker app was removed because it is no longer part of the tenant's package.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "db.admin.config_apply_failed_unrecoverable",
+		Label:       "Database config rejected",
+		Description: "A database configuration change failed to apply and could not be recovered. Action required.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "db.admin.config_applied",
+		Label:       "Database settings updated",
+		Description: "A database configuration change was applied successfully. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "db.admin.maintenance_finished",
+		Label:       "Database maintenance finished",
+		Description: "A scheduled database maintenance run completed. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "db.admin.root_password_rotated",
+		Label:       "Database root password rotated",
+		Description: "The managed database root/admin password was rotated. Informational confirmation.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	// GH #979: Automation API write events. Headless provisioning fires one of
+	// these per user/domain mutation, so they get noisy at scale — expose them
+	// as toggles. Confirmations default OFF; the destructive ones (delete,
+	// suspend) default ON. Severities match what notifyWrite stamps.
+	{
+		Kind:        "automation.user.created",
+		Label:       "Automation — user created",
+		Description: "The Automation API created a user. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "automation.user.deleted",
+		Label:       "Automation — user deleted",
+		Description: "The Automation API deleted a user. Significant — on by default.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "automation.user.disabled",
+		Label:       "Automation — user disabled",
+		Description: "The Automation API disabled (suspended) a user.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "automation.user.enabled",
+		Label:       "Automation — user enabled",
+		Description: "The Automation API re-enabled a user. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "automation.domain.created",
+		Label:       "Automation — domain created",
+		Description: "The Automation API created a domain. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
+		Kind:        "automation.domain.suspended",
+		Label:       "Automation — domain suspended",
+		Description: "The Automation API suspended a domain. Significant — on by default.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "automation.domain.unsuspended",
+		Label:       "Automation — domain unsuspended",
+		Description: "The Automation API unsuspended a domain. Informational.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
 }
 
 // LookupNotificationEventKind returns the metadata for a known kind
