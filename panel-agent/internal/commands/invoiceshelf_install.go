@@ -150,6 +150,27 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	if err := os.Chmod(zipPath, 0o644); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod zip: %v", err)}
 	}
+	// Idempotent reinstall (GH #1042): a prior FAILED install — or an
+	// incomplete delete from before the delete list was completed — can leave
+	// app artifacts at installPath, and the move-up / flatten `mv` steps then
+	// die "cannot overwrite '…': Directory not empty" (johnnyq hit this on
+	// `favicons`, then would hit it again on `app/` at the move-up). The panel
+	// refuses installing over an ACTIVE install (409 install_exists), and a
+	// reinstall always follows a delete, so any leftover here is dead garbage
+	// from a failed/half-deleted attempt — never live data. Clear the known
+	// app entries (plus a stale staging dir) first so the extract + move +
+	// flatten always land on a clean slate. Same top-level set the delete
+	// handler enumerates; rm -rf on a missing path is a harmless no-op.
+	cleanTargets := make([]string, 0, len(invoiceshelfTopLevel)+1)
+	cleanTargets = append(cleanTargets, shellQuote(filepath.Join(installPath, "InvoiceShelf")))
+	for _, e := range invoiceshelfTopLevel {
+		cleanTargets = append(cleanTargets, shellQuote(filepath.Join(installPath, e)))
+	}
+	preClean := "rm -rf " + strings.Join(cleanTargets, " ")
+	if out, err := runBoundedOutput(buildSystemdRunShell(ctx, req.OSUser, preClean), 0); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pre-clean stale install: %v (%s)", err, truncateStr(string(out), 512))}
+	}
+
 	// unzip has no --strip-components; extract then move InvoiceShelf/* up.
 	if out, err := runBoundedOutput(buildSystemdRunCmd(ctx, req.OSUser, "unzip", "-q", "-o", zipPath, "-d", installPath), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("unzip: %v (%s)", err, truncateStr(string(out), 512))}
@@ -159,8 +180,17 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	if out, err := runBoundedOutput(buildSystemdRunShell(ctx, req.OSUser, moveUp), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("relocate app root: %v (%s)", err, truncateStr(string(out), 512))}
 	}
-	// Flatten public/ into the webroot (no-public-dir shape).
-	flatten := "shopt -s dotglob nullglob; mv " + shellQuote(filepath.Join(installPath, "public")) + "/* " + shellQuote(installPath) + "/ && rmdir " + shellQuote(filepath.Join(installPath, "public"))
+	// Flatten public/ into the webroot (no-public-dir shape). Use a
+	// merge-copy, not `mv public/*`: on a reinstall after a partial failure a
+	// stale asset dir (e.g. favicons/) can already sit at the webroot, and
+	// `mv` refuses to overwrite a non-empty directory — so the retry died at
+	// "flatten public/: mv: cannot overwrite '.../favicons': Directory not
+	// empty" (GH #1042). `cp -a public/.` merges the fresh assets over any
+	// leftover (overwriting files, recursing into existing dirs) and then drops
+	// public/, so the flatten is idempotent without needing a manual delete
+	// first. Deliberately does NOT wipe the webroot — a real reinstall keeps
+	// the tenant's storage/ (uploaded invoices) intact.
+	flatten := "cp -a " + shellQuote(filepath.Join(installPath, "public")) + "/. " + shellQuote(installPath) + "/ && rm -rf " + shellQuote(filepath.Join(installPath, "public"))
 	if out, err := runBoundedOutput(buildSystemdRunShell(ctx, req.OSUser, flatten), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("flatten public/: %v (%s)", err, truncateStr(string(out), 512))}
 	}
