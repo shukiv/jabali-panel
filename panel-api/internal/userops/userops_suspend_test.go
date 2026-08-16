@@ -58,8 +58,9 @@ func TestSuspend_FullCascade(t *testing.T) {
 		t.Errorf("domains: disabled=%d lastEnabled=%v, want 3 + false", res.DomainsDisabled, doms.lastEn)
 	}
 	// OS cascade fired for the linux user.
-	if len(ag.calls) != 1 || ag.calls[0].method != "user.suspend" {
-		t.Errorf("agent calls = %+v, want one user.suspend", ag.calls)
+	// JAB-254: suspension now also locks the tenant's FTP/SFTP aliases.
+	if len(ag.calls) != 2 || ag.calls[0].method != "user.suspend" || ag.calls[1].method != "ftpaccount.lock_tenant" {
+		t.Errorf("agent calls = %+v, want user.suspend then ftpaccount.lock_tenant", ag.calls)
 	}
 }
 

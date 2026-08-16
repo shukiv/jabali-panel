@@ -4855,6 +4855,33 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/ftp-accounts/{id}:
+    patch:
+      tags: [Ftp Accounts]
+      summary: Admin override — disable/enable/toggle any FTP account (JAB-258)
+      description: >
+        Ownership-safe operator override to disable or re-enable a stranded
+        FTP/SFTP account (owner suspended, or package downgraded to zero FTP)
+        regardless of the owner's current package cap.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ftp_access: { type: boolean }
+                sftp_access: { type: boolean }
+                is_enabled: { type: boolean }
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [Ftp Accounts]
+      summary: Admin override — delete any FTP account (JAB-258)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Ssl (auto) ---
 

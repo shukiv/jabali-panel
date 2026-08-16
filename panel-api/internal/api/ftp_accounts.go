@@ -66,6 +66,97 @@ func RegisterFtpAccountRoutes(g *gin.RouterGroup, cfg FtpAccountsHandlerConfig) 
 
 	admin := g.Group("/admin/ftp-accounts", middleware.RequireAdmin())
 	admin.GET("", h.adminList)
+	// JAB-258: ownership-safe override so an operator can revoke stranded
+	// aliases (owner suspended, or package downgraded to zero FTP) that
+	// the tenant's own routes may no longer create but must still be able
+	// to remove.
+	admin.PATCH("/:id", h.adminUpdate)
+	admin.DELETE("/:id", h.adminDelete)
+}
+
+// adminResolveAccount loads an account by id (any owner) plus the owner's
+// Linux username, for the admin override routes.
+func (h *ftpAccountsHandler) adminResolveAccount(c *gin.Context) (*models.FtpAccount, string, bool) {
+	ctx := c.Request.Context()
+	acct, err := h.cfg.Repo.FindByID(ctx, c.Param("id"))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return nil, "", false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return nil, "", false
+	}
+	owner, uerr := h.cfg.Users.FindByID(ctx, acct.UserID)
+	if uerr != nil || owner == nil || owner.Username == nil || *owner.Username == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "owner_unresolved", "detail": "account owner has no Linux username"})
+		return nil, "", false
+	}
+	return acct, *owner.Username, true
+}
+
+// adminUpdate lets an operator flip is_enabled / ftp_access / sftp_access
+// on any account regardless of the owner's package cap (JAB-258).
+func (h *ftpAccountsHandler) adminUpdate(c *gin.Context) {
+	var req ftpAccountUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		return
+	}
+	acct, ownerName, ok := h.adminResolveAccount(c)
+	if !ok {
+		return
+	}
+	if req.FTPAccess != nil {
+		acct.FTPAccess = *req.FTPAccess
+	}
+	if req.SFTPAccess != nil {
+		acct.SFTPAccess = *req.SFTPAccess
+	}
+	if req.IsEnabled != nil {
+		acct.IsEnabled = *req.IsEnabled
+	}
+	ctx := c.Request.Context()
+	if err := h.agentCall(ctx, "ftpaccount.set_access", map[string]any{
+		"tenant_username": ownerName,
+		"username":        acct.Username,
+		"ftp_access":      acct.FTPAccess,
+		"enabled":         acct.IsEnabled,
+	}); err != nil {
+		status, payload := mapFtpAgentError(err, "update_failed")
+		c.JSON(status, payload)
+		return
+	}
+	acct.UpdatedAt = time.Now().UTC()
+	if err := h.cfg.Repo.Update(ctx, acct); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	h.syncHostAccess(ctx, ownerName)
+	c.JSON(http.StatusOK, acct)
+}
+
+// adminDelete removes any account (host alias + row), owner-safe.
+func (h *ftpAccountsHandler) adminDelete(c *gin.Context) {
+	acct, ownerName, ok := h.adminResolveAccount(c)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	if err := h.agentCall(ctx, "ftpaccount.delete", map[string]any{
+		"tenant_username": ownerName,
+		"username":        acct.Username,
+	}); err != nil {
+		status, payload := mapFtpAgentError(err, "delete_failed")
+		c.JSON(status, payload)
+		return
+	}
+	if err := h.cfg.Repo.Delete(ctx, acct.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	h.syncHostAccess(ctx, ownerName)
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
 type ftpAccountsHandler struct{ cfg FtpAccountsHandlerConfig }
@@ -103,6 +194,27 @@ type ftpAccountPasswordRequest struct {
 // resolveTenant loads the calling user and enforces the package gate.
 // Returns (user, package, ok). Writes the error response when !ok.
 func (h *ftpAccountsHandler) resolveTenant(c *gin.Context) (*models.User, *models.HostingPackage, bool) {
+	u, pkg, ok := h.resolveTenantForManagement(c)
+	if !ok {
+		return nil, nil, false
+	}
+	// JAB-258: the zero-cap gate applies to CREATION ONLY. Revocation
+	// (list/disable/delete/password) must remain reachable after a
+	// downgrade so a tenant can remove credentials the package no longer
+	// entitles — resolveTenantForManagement omits this check.
+	if pkg.MaxFTPAccounts == 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "ftp_accounts_not_in_package", "detail": "your hosting package does not include FTP/SFTP accounts"})
+		return nil, nil, false
+	}
+	return u, pkg, true
+}
+
+// resolveTenantForManagement loads the caller + package WITHOUT the
+// zero-cap creation gate, so list/disable/delete/password stay available
+// to revoke credentials after a package downgrade (JAB-258). It still
+// requires a real Linux user and a resolvable package (a package-less
+// tenant has no FTP surface at all).
+func (h *ftpAccountsHandler) resolveTenantForManagement(c *gin.Context) (*models.User, *models.HostingPackage, bool) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
@@ -114,8 +226,6 @@ func (h *ftpAccountsHandler) resolveTenant(c *gin.Context) (*models.User, *model
 		c.JSON(http.StatusForbidden, gin.H{"error": "no_account", "detail": "account has no Linux user"})
 		return nil, nil, false
 	}
-	// Package-gated like tenant Docker (Gitea #511): package-less tenants
-	// are denied — a same-uid alias is privileged surface.
 	if u.PackageID == nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "ftp_accounts_require_package", "detail": "FTP/SFTP accounts require a hosting package that includes them"})
 		return nil, nil, false
@@ -123,10 +233,6 @@ func (h *ftpAccountsHandler) resolveTenant(c *gin.Context) (*models.User, *model
 	pkg, perr := h.cfg.Packages.FindByID(ctx, *u.PackageID)
 	if perr != nil || pkg == nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "no_package"})
-		return nil, nil, false
-	}
-	if pkg.MaxFTPAccounts == 0 {
-		c.JSON(http.StatusForbidden, gin.H{"error": "ftp_accounts_not_in_package", "detail": "your hosting package does not include FTP/SFTP accounts"})
 		return nil, nil, false
 	}
 	return u, pkg, true
@@ -212,7 +318,7 @@ func (h *ftpAccountsHandler) syncHostAccess(ctx context.Context, tenantUsername 
 }
 
 func (h *ftpAccountsHandler) list(c *gin.Context) {
-	u, _, ok := h.resolveTenant(c)
+	u, _, ok := h.resolveTenantForManagement(c)
 	if !ok {
 		return
 	}
@@ -314,7 +420,7 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 }
 
 func (h *ftpAccountsHandler) update(c *gin.Context) {
-	u, _, ok := h.resolveTenant(c)
+	u, _, ok := h.resolveTenantForManagement(c)
 	if !ok {
 		return
 	}
@@ -362,7 +468,7 @@ func (h *ftpAccountsHandler) update(c *gin.Context) {
 }
 
 func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
-	u, _, ok := h.resolveTenant(c)
+	u, _, ok := h.resolveTenantForManagement(c)
 	if !ok {
 		return
 	}
@@ -398,7 +504,7 @@ func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
 }
 
 func (h *ftpAccountsHandler) delete(c *gin.Context) {
-	u, _, ok := h.resolveTenant(c)
+	u, _, ok := h.resolveTenantForManagement(c)
 	if !ok {
 		return
 	}

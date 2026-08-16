@@ -47,11 +47,25 @@ func ftpTestReconciler(t *testing.T, agent *fakeAgent, rows []models.FtpAccount,
 	byID := map[string]*models.User{}
 	for userID, uname := range tenants {
 		name := uname
-		byID[userID] = &models.User{ID: userID, Username: &name}
+		pid := "pkg-ftp"
+		// Eligible by default (JAB-254/258): not suspended + a package
+		// with a generous FTP cap, so existing per-row expectations hold.
+		byID[userID] = &models.User{ID: userID, Username: &name, PackageID: &pid}
 	}
 	r := New(nil, &ftpUsersRepo{byID: byID}, agent, slog.Default(), Config{})
 	r.WithFtpAccounts(&fakeFtpAccountRepo{rows: rows})
+	r.WithPackages(&ftpPkgRepo{pkg: &models.HostingPackage{ID: "pkg-ftp", MaxFTPAccounts: 100}})
 	return r
+}
+
+// ftpPkgRepo returns a single package for every id (test helper).
+type ftpPkgRepo struct {
+	repository.PackageRepository
+	pkg *models.HostingPackage
+}
+
+func (f *ftpPkgRepo) FindByID(context.Context, string) (*models.HostingPackage, error) {
+	return f.pkg, nil
 }
 
 func ftpCallsByMethod(a *fakeAgent) map[string][]fakeCall {

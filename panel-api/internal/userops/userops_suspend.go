@@ -109,6 +109,16 @@ func Suspend(ctx context.Context, d Deps, user *models.User, reason string) (Sus
 		if _, err := d.Agent.Call(ctx, "user.suspend", map[string]any{"username": *user.Username}); err != nil {
 			res.OSWarning = "user_os_suspend_failed: " + err.Error()
 		}
+		// JAB-254: lock every FTP/SFTP subaccount alias immediately so a
+		// suspended owner's delegated credentials stop working at once,
+		// not on the next reconcile tick. The reconciler's owner-
+		// eligibility gate is the durable backstop and also handles
+		// restore-to-desired on unsuspension, so this is best-effort.
+		if _, err := d.Agent.Call(ctx, "ftpaccount.lock_tenant", map[string]any{"tenant_username": *user.Username}); err != nil {
+			if res.OSWarning == "" {
+				res.OSWarning = "ftp_alias_lock_failed: " + err.Error()
+			}
+		}
 	}
 
 	return res, nil

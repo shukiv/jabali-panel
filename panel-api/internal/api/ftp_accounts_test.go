@@ -323,3 +323,34 @@ func TestFtpAPIPassword_OwnershipAndLength(t *testing.T) {
 		t.Fatalf("expected 422, got %d", rec.Code)
 	}
 }
+
+// JAB-258: after a downgrade to zero FTP cap, CREATE is blocked (403) but
+// management routes — list, disable (update), delete — MUST still work so
+// the tenant can revoke credentials the package no longer entitles.
+func TestFtpAPI_ZeroCap_ManagementStillWorks(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["a1"] = &models.FtpAccount{ID: "a1", UserID: "u1", Username: "shop_deploy", SFTPAccess: true, IsEnabled: true}
+	mock := ftpMockAgent()
+	r := ftpTestRouter(t, repo, mock, ftpPkg(0)) // downgraded: zero FTP
+
+	// create blocked
+	if rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"x","home_path":"/home/shop/x","password":"password1234"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("create at zero cap: got %d, want 403", rec.Code)
+	}
+	// list works
+	if rec := doReq(t, r, http.MethodGet, "/me/ftp-accounts", ""); rec.Code != http.StatusOK {
+		t.Fatalf("list at zero cap: got %d, want 200", rec.Code)
+	}
+	// disable works
+	if rec := doReq(t, r, http.MethodPatch, "/me/ftp-accounts/a1", `{"is_enabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("disable at zero cap: got %d, want 200", rec.Code)
+	}
+	// delete works
+	if rec := doReq(t, r, http.MethodDelete, "/me/ftp-accounts/a1", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete at zero cap: got %d, want 200", rec.Code)
+	}
+	if len(repo.rows) != 0 {
+		t.Fatal("row not deleted at zero cap")
+	}
+}

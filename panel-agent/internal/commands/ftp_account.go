@@ -553,6 +553,64 @@ func ftpAccountListHandler(ctx context.Context, params json.RawMessage) (any, er
 	return map[string]any{"accounts": entries}, nil
 }
 
+// ftpTenantAliasNames returns the tenant's panel-owned FTP alias
+// usernames (namespaced + same-uid + GECOS-marked), read from /etc/passwd.
+func ftpTenantAliasNames(tenant *ftpTenant) ([]string, *agentwire.AgentError) {
+	passwd, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read passwd: %v", err)}
+	}
+	prefix := tenant.Username + "_"
+	var names []string
+	for _, line := range strings.Split(string(passwd), "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) < 6 || !strings.HasPrefix(parts[0], prefix) {
+			continue
+		}
+		if uid, _ := strconv.Atoi(parts[2]); uid != tenant.UID {
+			continue
+		}
+		if gecosName(parts[4]) != ftpAliasGecos {
+			continue
+		}
+		names = append(names, parts[0])
+	}
+	return names, nil
+}
+
+// ftpAccountLockTenantHandler locks EVERY panel-owned FTP/SFTP alias of a
+// tenant immediately: usermod -L (blocks password auth for both SFTP and
+// FTPS) + drop from jabali-ftp (closes the vsftpd PAM gate). Called
+// synchronously from the tenant-suspension cascade (JAB-254) so a
+// suspended owner's delegated credentials stop working at once, not on
+// the next reconcile tick. Idempotent; unsuspension is handled by the
+// reconciler restoring each alias to its row's desired state.
+func ftpAccountLockTenantHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p struct {
+		TenantUsername string `json:"tenant_username"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
+	}
+	tenant, aerr := resolveFtpTenant(p.TenantUsername)
+	if aerr != nil {
+		return nil, aerr
+	}
+	names, aerr := ftpTenantAliasNames(tenant)
+	if aerr != nil {
+		return nil, aerr
+	}
+	locked := 0
+	for _, name := range names {
+		_ = setFtpGroupMembership(ctx, name, false)
+		if out, err := exec.CommandContext(ctx, "usermod", "-L", name).CombinedOutput(); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("usermod -L %q: %v: %s", name, err, strings.TrimSpace(string(out)))}
+		}
+		locked++
+	}
+	return map[string]any{"locked": locked}, nil
+}
+
 // ---- ftpaccount.list_all ----
 
 type ftpAccountListAllEntry struct {
@@ -656,4 +714,5 @@ func init() {
 	Default.Register("ftpaccount.delete", ftpAccountDeleteHandler)
 	Default.Register("ftpaccount.list", ftpAccountListHandler)
 	Default.Register("ftpaccount.list_all", ftpAccountListAllHandler)
+	Default.Register("ftpaccount.lock_tenant", ftpAccountLockTenantHandler)
 }
