@@ -370,6 +370,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// M13.1.1: bandwidth quota auto-suspend. Wires bw_daily repo +
 		// notifications queue so reconcileBandwidthQuotaEnforce can run.
 		rec.WithBandwidthQuotaEnforce(repository.NewBWDailyRepository(sharedDB), deps.NotificationQueue)
+		// JAB-243: DB storage quota enforcement (write-freeze at package
+		// quota, hourly sweep inside the reconciler).
+		rec.WithDBQuotaEnforce(
+			repository.NewDatabaseRepository(sharedDB),
+			repository.NewDatabaseUserRepository(sharedDB),
+			repository.NewDatabaseUserGrantRepository(sharedDB),
+		)
 		// M47 Wave 3 throttle reconcile — needs both repo + Stalwart CUD client.
 		if sc, ok := deps.StalwartAdmin.(*stalwartadmin.Client); ok {
 			rec.WithMailThrottles(mailOutboundPolicyRepo, sc)

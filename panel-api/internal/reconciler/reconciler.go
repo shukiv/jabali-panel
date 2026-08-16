@@ -233,6 +233,15 @@ type Reconciler struct {
 	bwEnforceMu      sync.Mutex
 	bwEnforceLastRun time.Time
 
+	// JAB-243 DB-quota enforcement (db_quota_enforce.go). All three
+	// repos wired via WithDBQuotaEnforce; nil disables the sweep.
+	databases             repository.DatabaseRepository
+	databaseUsers         repository.DatabaseUserRepository
+	databaseGrants        repository.DatabaseUserGrantRepository
+	dbQuotaEnforceMu      sync.Mutex
+	dbQuotaEnforceLastRun time.Time
+	dbQuotaOver           map[string]bool
+
 	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
 	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
 	// the desired state hasn't changed since the last dispatch. Self-
@@ -812,6 +821,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// with package quota > 0, sums month-to-date bytes, suspends
 	// (or restores) their domains. Cheap noop when toggle is off.
 	r.reconcileBandwidthQuotaEnforce(ctx)
+
+	// JAB-243 — DB storage quota enforcement (hourly inside).
+	r.reconcileDBQuotaEnforce(ctx)
 
 	// M18 rate-limit zone fragment MUST converge BEFORE the domain loop:
 	// domain.create on the agent writes each vhost then runs `nginx -t`.
