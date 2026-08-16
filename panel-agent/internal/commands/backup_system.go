@@ -467,6 +467,15 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	return out, nil
 }
 
+// PowerDNS DB credential contract — MUST match what install.sh writes into
+// /etc/jabali-panel/pdns.env and /etc/powerdns/pdns.d/01-jabali-mysql.conf.
+// TestPdnsResyncMatchesInstallContract pins both sides.
+const (
+	pdnsEnvFile        = "/etc/jabali-panel/pdns.env"
+	pdnsEnvPasswordVar = "PDNS_DB_PASSWORD"
+	pdnsMariaDBUser    = "jabali_pdns"
+)
+
 // resyncDBAccountPasswords re-runs ALTER USER for every known
 // jabali-plane MariaDB account using the password file the just-
 // applied panel_config landed at /etc/jabali-panel/. No-op on a host
@@ -482,14 +491,19 @@ func resyncDBAccountPasswords(ctx context.Context) ([]string, []string) {
 		{mariadbUser: "jabali_kratos", host: "localhost", passwordFile: "/etc/jabali-panel/kratos-db-password"},
 		{mariadbUser: "jabali-stalwart-ro", host: "localhost", passwordFile: "/etc/jabali-panel/stalwart-mariadb.password"},
 	}
-	// pdns password lives in pdns.env as PDNS_GMYSQL_PASSWORD; pull
-	// it out by simple grep so we don't import a new env-parser here.
-	if pdnsPW, ok := readEnvFileVar("/etc/jabali-panel/pdns.env", "PDNS_GMYSQL_PASSWORD"); ok && pdnsPW != "" {
+	// pdns password lives in pdns.env as PDNS_DB_PASSWORD for MariaDB user
+	// jabali_pdns (both set by install.sh's 01-jabali-mysql.conf block). This
+	// resync previously looked for PDNS_GMYSQL_PASSWORD / user "pdns" —
+	// names that exist in NO install — so PowerDNS came out of every
+	// cross-host restore with "Access denied for user 'jabali_pdns'" until
+	// a manual ALTER USER (GH #331 two-node drill finding: a promoted DR
+	// standby had no DNS).
+	if pdnsPW, ok := readEnvFileVar(pdnsEnvFile, pdnsEnvPasswordVar); ok && pdnsPW != "" {
 		// Persist to a tmp file so the helper signature stays uniform.
 		tmp, terr := writeTempStr(pdnsPW)
 		if terr == nil {
 			defer os.Remove(tmp)
-			accts = append(accts, acct{mariadbUser: "pdns", host: "localhost", passwordFile: tmp})
+			accts = append(accts, acct{mariadbUser: pdnsMariaDBUser, host: "localhost", passwordFile: tmp})
 		}
 	}
 
