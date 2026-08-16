@@ -2,7 +2,7 @@
 // scheduler/dispatcher. Backed by server_settings (PATCH /admin/settings).
 // Retention is per-schedule (Schedules tab) — not server-wide.
 import { useTranslation } from "react-i18next";
-import { Button, Form, Input, InputNumber, Spin } from "antd";
+import { Button, Form, Input, InputNumber, Spin, Switch } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { SaveOutlined } from "@icons";
 import { useEffect, useState } from "react";
@@ -20,6 +20,9 @@ interface BackupSettingsShape {
   // still governs legacy single-schedule plans.
   tenant_backup_window_start: string;
   tenant_backup_window_end: string;
+  // GH #1097: the window is an OPT-IN restriction, off by default. When off the
+  // tenant scheduler ignores it and runs each schedule on its chosen interval.
+  tenant_backup_window_enforce: boolean;
 }
 
 interface ServerSettingsResponse {
@@ -27,6 +30,7 @@ interface ServerSettingsResponse {
   tenant_backup_cron?: string;
   tenant_backup_window_start?: string;
   tenant_backup_window_end?: string;
+  tenant_backup_window_enforce?: boolean;
 }
 
 // HH:MM (24h) — the format the API validates (internalbackup.ValidHHMM).
@@ -37,6 +41,8 @@ export const BackupSettingsTab = () => {
   const [form] = Form.useForm<BackupSettingsShape>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // GH #1097: the window inputs only apply when enforcement is on.
+  const enforceWindow = Form.useWatch("tenant_backup_window_enforce", form);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +55,7 @@ export const BackupSettingsTab = () => {
           tenant_backup_cron: resp.data.tenant_backup_cron ?? "0 3 * * *",
           tenant_backup_window_start: resp.data.tenant_backup_window_start ?? "02:00",
           tenant_backup_window_end: resp.data.tenant_backup_window_end ?? "05:00",
+          tenant_backup_window_enforce: resp.data.tenant_backup_window_enforce ?? false,
         });
       } catch (err) {
         feedback.message.error(extractApiError(err, "Load failed"));
@@ -99,20 +106,28 @@ export const BackupSettingsTab = () => {
           <Input placeholder="0 3 * * *" style={{ fontFamily: "monospace" }} />
         </Form.Item>
         <Form.Item
+          name="tenant_backup_window_enforce"
+          valuePropName="checked"
+          label="Restrict tenant backups to a maintenance window"
+          tooltip="Off by default. When off, a tenant's Hourly / 6-hourly / 12-hourly / Daily schedule runs on its own interval. Turn on to confine all tenant scheduled backups to the UTC window below (e.g. to bound server load)."
+        >
+          <Switch />
+        </Form.Item>
+        <Form.Item
           name="tenant_backup_window_start"
           label={t("backupsettingstab.tenant_backup_window_start")}
           tooltip={t("backupsettingstab.the_maintenance_window_multischedule_tenants")}
           rules={[{ required: true, pattern: HHMM, message: "Use HH:MM (UTC)" }]}
-          extra="UTC. Applies to plans that allow more than one schedule; the scheduler fires (and spreads) tenant backups within this window."
+          extra="UTC. Only used when the restriction above is on — the scheduler fires (and spreads) tenant backups within this window."
         >
-          <Input placeholder="02:00" style={{ fontFamily: "monospace" }} />
+          <Input placeholder="02:00" style={{ fontFamily: "monospace" }} disabled={!enforceWindow} />
         </Form.Item>
         <Form.Item
           name="tenant_backup_window_end"
           label={t("backupsettingstab.tenant_backup_window_end")}
           rules={[{ required: true, pattern: HHMM, message: "Use HH:MM (UTC)" }]}
         >
-          <Input placeholder="05:00" style={{ fontFamily: "monospace" }} />
+          <Input placeholder="05:00" style={{ fontFamily: "monospace" }} disabled={!enforceWindow} />
         </Form.Item>
         <Form.Item>
           <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>

@@ -294,14 +294,23 @@ type ServerSettings struct {
 	// planning). Default 03:00 daily.
 	TenantBackupCron string `gorm:"column:tenant_backup_cron;type:varchar(64);not null;default:'0 3 * * *'" json:"tenant_backup_cron"`
 	// TenantBackupWindowStart/End (GH #454 7B) is the admin-owned UTC maintenance
-	// window ("HH:MM") that tenant window-governed schedules fire inside. The
-	// scheduler enqueues a due tenant schedule only when now is within the window
-	// and smears multiple due schedules across it. Defaults 02:00–05:00.
-	// tenant_backup_cron stays authoritative for legacy single-schedule installs;
-	// the window governs schedules created through the multi-schedule surface
-	// (backup_schedules.cadence != '').
+	// window ("HH:MM"). It restricts tenant multi-schedules ONLY when
+	// TenantBackupWindowEnforce is on (GH #1097) — off by default, in which case
+	// these values are informational and schedules run on their chosen interval.
+	// When enforcing, the scheduler enqueues a due tenant schedule only within
+	// the window and smears multiple due schedules across it. Defaults
+	// 02:00–05:00. tenant_backup_cron stays authoritative for legacy
+	// single-schedule installs; the window governs schedules created through the
+	// multi-schedule surface (backup_schedules.cadence != '').
 	TenantBackupWindowStart string `gorm:"column:tenant_backup_window_start;type:varchar(5);not null;default:'02:00'" json:"tenant_backup_window_start"`
 	TenantBackupWindowEnd   string `gorm:"column:tenant_backup_window_end;type:varchar(5);not null;default:'05:00'" json:"tenant_backup_window_end"`
+	// TenantBackupWindowEnforce (GH #1097) gates whether the window above
+	// restricts tenant schedules at all. OFF by default: the scheduler ignores
+	// the window and fires each schedule on its selected interval (Hourly = every
+	// hour). ON: firings are confined to the window as in the original 7B model.
+	// Persisted via the repo's Select("*") update, so the false zero-value is
+	// written explicitly (no GORM default-tag zero-value trap).
+	TenantBackupWindowEnforce bool `gorm:"column:tenant_backup_window_enforce;type:tinyint(1);not null;default:0" json:"tenant_backup_window_enforce"`
 
 	// DR / standby (GH #331). ServerRole is 'primary' (default — box is fully
 	// active) or 'standby' (a one-way async replica: pulls the primary's state,

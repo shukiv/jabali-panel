@@ -36,6 +36,8 @@ interface SchedulesView {
   multi_enabled: boolean;
   window_start: string;
   window_end: string;
+  // GH #1097: whether the host's window actually restricts when schedules run.
+  window_enforced?: boolean;
 }
 
 interface DestOption {
@@ -232,11 +234,19 @@ export const BackupSchedulesCard = () => {
       ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Your host runs scheduled backups between{" "}
-            <strong>
-              {view?.window_start}–{view?.window_end} UTC
-            </strong>
-            . You choose what to back up, where, and how often — your host sets the window they run in.{" "}
+            {view?.window_enforced ? (
+              <>
+                Your host runs scheduled backups between{" "}
+                <strong>
+                  {view?.window_start}–{view?.window_end} UTC
+                </strong>
+                . You choose what to back up, where, and how often — your host sets the window they run in.{" "}
+              </>
+            ) : (
+              <>
+                Scheduled backups run on the interval you choose. You pick what to back up, where, and how often.{" "}
+              </>
+            )}
             <Tag>
               {view?.schedules.length ?? 0} / {view?.max_backup_schedules ?? 1}
             </Tag>

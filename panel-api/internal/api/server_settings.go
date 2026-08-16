@@ -191,6 +191,8 @@ type updateServerSettingsRequest struct {
 	// Validated server-side via internalbackup.ParseWindow round-trip.
 	TenantBackupWindowStart *string `json:"tenant_backup_window_start,omitempty"`
 	TenantBackupWindowEnd   *string `json:"tenant_backup_window_end,omitempty"`
+	// TenantBackupWindowEnforce (GH #1097) — opt-in gate for the window above.
+	TenantBackupWindowEnforce *bool `json:"tenant_backup_window_enforce,omitempty"`
 
 	// M13 SSH shell sandbox.
 	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
@@ -634,6 +636,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			return
 		}
 		current.TenantBackupWindowEnd = v
+	}
+	if req.TenantBackupWindowEnforce != nil {
+		current.TenantBackupWindowEnforce = *req.TenantBackupWindowEnforce
 	}
 	if req.SSHSandboxMode != nil {
 		current.SSHSandboxMode = strings.TrimSpace(*req.SSHSandboxMode)

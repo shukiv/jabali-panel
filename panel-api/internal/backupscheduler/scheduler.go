@@ -254,9 +254,16 @@ func (s *Scheduler) enqueue(ctx context.Context, sched models.BackupSchedule) {
 func (s *Scheduler) enqueueTenantWindow(ctx context.Context, sched models.BackupSchedule) {
 	logger := s.deps.Log.With("schedule_id", sched.ID, "cadence", sched.Cadence, "user_id", strDeref(sched.UserID))
 	now := time.Now().UTC()
-	w := internalbackup.DefaultTenantWindow
+	// GH #1097: the maintenance window is opt-in (OFF by default). Enforcement
+	// off = a whole-day window (StartMin==EndMin), which window.go treats as
+	// ungated, so NextTenantRun fires on the pure cadence interval (Hourly =
+	// every hour). Only when the admin turns enforcement on do we narrow to the
+	// configured window. A missing/unreadable settings row also stays ungated —
+	// the safe default is "run the schedule the tenant chose", not "silently
+	// throttle to a few hours".
+	w := internalbackup.TenantWindow{} // whole-day / ungated
 	if s.deps.Settings != nil {
-		if set, err := s.deps.Settings.Get(ctx); err == nil && set != nil {
+		if set, err := s.deps.Settings.Get(ctx); err == nil && set != nil && set.TenantBackupWindowEnforce {
 			w = internalbackup.ParseWindow(set.TenantBackupWindowStart, set.TenantBackupWindowEnd)
 		}
 	}

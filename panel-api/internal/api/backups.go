@@ -2089,6 +2089,10 @@ type meSchedulesView struct {
 	MultiEnabled            bool            `json:"multi_enabled"`
 	WindowStart             string          `json:"window_start"`
 	WindowEnd               string          `json:"window_end"`
+	// WindowEnforced (GH #1097): whether the admin window actually restricts
+	// tenant schedules. When false the window_start/end are informational only
+	// and the tenant's schedules run on their chosen interval.
+	WindowEnforced bool `json:"window_enforced"`
 }
 
 // meScheduleUpsertRequest is the tenant-editable multi-schedule payload. Cadence
@@ -2136,10 +2140,15 @@ func (h *meBackupHandler) findOwnedSchedule(ctx context.Context, userID, id stri
 	return s
 }
 
+// tenantWindow returns the window used to compute a tenant schedule's next run.
+// GH #1097: the window is opt-in — off by default it returns a whole-day
+// (ungated) window so a new/edited schedule fires on its plain interval, exactly
+// as the scheduler does. Only when the admin enables enforcement does it narrow
+// to the configured window. A missing settings row also stays ungated.
 func (h *meBackupHandler) tenantWindow(ctx context.Context) internalbackup.TenantWindow {
 	settings, err := h.cfg.Settings.Get(ctx)
-	if err != nil || settings == nil {
-		return internalbackup.DefaultTenantWindow
+	if err != nil || settings == nil || !settings.TenantBackupWindowEnforce {
+		return internalbackup.TenantWindow{} // whole-day / ungated
 	}
 	return internalbackup.ParseWindow(settings.TenantBackupWindowStart, settings.TenantBackupWindowEnd)
 }
@@ -2159,6 +2168,7 @@ func (h *meBackupHandler) listSchedules(c *gin.Context) {
 		MaxBackupSchedules: 1,
 		WindowStart:        settings.TenantBackupWindowStart,
 		WindowEnd:          settings.TenantBackupWindowEnd,
+		WindowEnforced:     settings.TenantBackupWindowEnforce,
 	}
 	if pkg != nil {
 		view.ScheduledBackupsEnabled = pkg.BackupsEnabled() && pkg.ScheduledBackupsEnabled

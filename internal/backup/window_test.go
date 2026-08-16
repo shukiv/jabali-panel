@@ -125,6 +125,32 @@ func TestNextTenantRunInWindowKeepsInterval(t *testing.T) {
 	}
 }
 
+// TestNextTenantRunUngatedFiresEveryInterval pins GH #1097: with the window
+// disabled (whole-day, StartMin==EndMin — what the scheduler passes when
+// tenant_backup_window_enforce is off) every cadence fires on its plain
+// interval from now, no window gating, no smear. Hourly = every hour.
+func TestNextTenantRunUngatedFiresEveryInterval(t *testing.T) {
+	ungated := TenantWindow{} // whole-day
+	// A time deliberately OUTSIDE the old 02:00–05:00 window — with gating off it
+	// must not be deferred to a window opening.
+	now := mustTime(t, "2026-08-05T14:37:00Z")
+	cases := []struct {
+		cadence string
+		want    string
+	}{
+		{CadenceHourly, "2026-08-05T15:37:00Z"},
+		{CadenceEvery6h, "2026-08-05T20:37:00Z"},
+		{CadenceEvery12h, "2026-08-06T02:37:00Z"},
+		{CadenceDaily, "2026-08-06T14:37:00Z"},
+	}
+	for _, c := range cases {
+		got := NextTenantRun(now, c.cadence, ungated, "sched-A")
+		if !got.Equal(mustTime(t, c.want)) {
+			t.Errorf("%s ungated: want %s, got %s", c.cadence, c.want, got)
+		}
+	}
+}
+
 func TestNextTenantRunOutOfWindowJumpsToOpenPlusSmear(t *testing.T) {
 	w := TenantWindow{StartMin: 120, EndMin: 300}
 	// Fired at 04:30 → +1h = 05:30 outside → next open tomorrow 02:00 + smear.
