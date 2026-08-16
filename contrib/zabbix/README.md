@@ -33,6 +33,14 @@ API `configuration.import` with `format: yaml`.
      certificate-chain check (defaults to the host connection address)
    - `{$JABALI.UNITS.MATCHES}` — regex of units treated as Jabali stack
 
+## Self-signed panel certificates
+
+The health items verify TLS (secure default). On a panel still serving a
+self-signed certificate (fresh install before Let's Encrypt), the two HTTP
+items will fail — either get the panel a real certificate (the normal
+path), or per host open each health item and untick *SSL verify peer* /
+*SSL verify host*. Do not disable verification fleet-wide in the template.
+
 ## Not covered yet
 
 Mail queue depth, per-site status, and backup freshness need a metrics

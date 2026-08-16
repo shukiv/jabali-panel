@@ -44,8 +44,6 @@ zabbix_export:
           delay: 1m
           value_type: TEXT
           url: '{$JABALI.PANEL.SCHEME}://{HOST.CONN}:{$JABALI.PANEL.PORT}/health'
-          verify_peer: 'NO'
-          verify_host: 'NO'
           preprocessing:
             - type: JSONPATH
               parameters:
@@ -63,8 +61,6 @@ zabbix_export:
           delay: 1m
           value_type: TEXT
           url: '{$JABALI.PANEL.SCHEME}://{HOST.CONN}:{$JABALI.PANEL.PORT}/health/agent'
-          verify_peer: 'NO'
-          verify_host: 'NO'
           preprocessing:
             - type: JSONPATH
               parameters:
