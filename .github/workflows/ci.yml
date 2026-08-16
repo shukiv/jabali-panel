@@ -58,6 +58,27 @@ jobs:
           fi
           echo "all action references SHA-pinned"
 
+  sigbase-rule-gate:
+    name: signature-base rule gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Gate rule-pin bumps (JAB-248)
+        # The SIGBASE_COMMIT pin bump IS the rule-promotion step; this
+        # job is its promotion test: the pinned ruleset must compile
+        # under yara-x, and must not broad-match this repo's tree (the
+        # known-clean corpus). Skipped when the PR doesn't touch the pin.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ] && ! git diff "origin/$BASE_REF"...HEAD -- install.sh | grep -q SIGBASE_COMMIT; then
+            echo "SIGBASE_COMMIT unchanged — gate skipped"
+            exit 0
+          fi
+          scripts/check-sigbase-rules.sh install.sh .
+
   go:
     name: Go tests + vet
     runs-on: ubuntu-latest
