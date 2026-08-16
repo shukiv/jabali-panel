@@ -495,6 +495,9 @@ func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
 		"tenant_username": *u.Username,
 		"username":        acct.Username,
 		"password":        req.Password,
+		// JAB-261: chpasswd drops the shadow lock; send the desired lock
+		// state so the agent re-locks a disabled account in the same verb.
+		"enabled": acct.IsEnabled,
 	}); err != nil {
 		status, payload := mapFtpAgentError(err, "password_reset_failed")
 		c.JSON(status, payload)

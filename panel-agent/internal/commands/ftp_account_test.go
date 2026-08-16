@@ -14,6 +14,34 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
 
+// JAB-261: a password reset must never silently unlock a disabled account.
+// The shadow-lock transition itself is host-only (real chpasswd/usermod), but
+// the decision that drives the re-lock is pure and pinned here.
+func TestLockAfterPasswordReset(t *testing.T) {
+	tt := true
+	ff := false
+	cases := []struct {
+		name      string
+		enabled   *bool
+		wasLocked bool
+		want      bool
+	}{
+		{"enabled account never re-locks", &tt, false, false},
+		{"enabled overrides a stale lock", &tt, true, false},
+		{"disabled account is re-locked", &ff, false, true},
+		{"disabled stays locked", &ff, true, true},
+		{"old panel preserves an existing lock", nil, true, true},
+		{"old panel preserves an unlocked account", nil, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lockAfterPasswordReset(tc.enabled, tc.wasLocked); got != tc.want {
+				t.Fatalf("lockAfterPasswordReset(%v, %v) = %v, want %v", tc.enabled, tc.wasLocked, got, tc.want)
+			}
+		})
+	}
+}
+
 // testTenantUser returns the current OS user when it satisfies the tenant
 // preconditions (uid >= 1000, home under /home) so validation paths past
 // resolveFtpTenant can run without mutating the host. Skips otherwise

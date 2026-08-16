@@ -398,6 +398,40 @@ type ftpAccountSetPasswordParams struct {
 	TenantUsername string `json:"tenant_username"`
 	Username       string `json:"username"`
 	Password       string `json:"password"`
+	// Enabled is the panel-authoritative desired lock state (JAB-261).
+	// chpasswd rewrites the shadow hash and DROPS the '!' lock, so a
+	// disabled (usermod -L) account would silently re-enable and accept
+	// FTPS/SFTP auth until the reconciler re-locked it. Pointer, not bool:
+	// an older panel that omits the field must NOT default a disabled
+	// account to unlocked — nil falls back to preserving the pre-change
+	// lock state instead.
+	Enabled *bool `json:"enabled"`
+}
+
+// lockAfterPasswordReset decides whether the account must be re-locked after
+// chpasswd clears the shadow lock. The panel's is_enabled is authoritative
+// when present; absent (older panel), preserve whatever lock state existed
+// before the password change so a disabled account is never silently unlocked.
+func lockAfterPasswordReset(enabled *bool, wasLocked bool) bool {
+	if enabled != nil {
+		return !*enabled
+	}
+	return wasLocked
+}
+
+// ftpUserLocked reports whether username's shadow password is locked. `passwd
+// -S` prints "<user> <status> ..." where status is L (locked), P/PS (usable),
+// or NP (no password). Field 2 is the status.
+func ftpUserLocked(ctx context.Context, username string) (bool, *agentwire.AgentError) {
+	out, err := exec.CommandContext(ctx, "passwd", "-S", username).CombinedOutput()
+	if err != nil {
+		return false, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("passwd -S %q: %v: %s", username, err, strings.TrimSpace(string(out)))}
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return false, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("passwd -S %q: unexpected output %q", username, strings.TrimSpace(string(out)))}
+	}
+	return fields[1] == "L", nil
 }
 
 func ftpAccountSetPasswordHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -415,8 +449,26 @@ func ftpAccountSetPasswordHandler(ctx context.Context, params json.RawMessage) (
 	if p.Password == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "password is required"}
 	}
+	// JAB-261: capture the pre-change lock only when the panel didn't send
+	// an authoritative desired state (avoids an extra passwd -S on the hot
+	// path).
+	var wasLocked bool
+	if p.Enabled == nil {
+		locked, lerr := ftpUserLocked(ctx, p.Username)
+		if lerr != nil {
+			return nil, lerr
+		}
+		wasLocked = locked
+	}
 	if aerr := chpasswdStdin(ctx, p.Username, p.Password); aerr != nil {
 		return nil, aerr
+	}
+	// Re-apply the shadow lock in the SAME verb (no reliance on the periodic
+	// reconciler) so a disabled account cannot authenticate in the window.
+	if lockAfterPasswordReset(p.Enabled, wasLocked) {
+		if out, err := exec.CommandContext(ctx, "usermod", "-L", p.Username).CombinedOutput(); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-lock disabled account %q after password reset: %v: %s", p.Username, err, strings.TrimSpace(string(out)))}
+		}
 	}
 	return map[string]any{"username": p.Username, "updated": true}, nil
 }
