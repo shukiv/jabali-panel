@@ -6,7 +6,7 @@
 // mocked; the real AntD table + RowActions menu run so a UI break
 // surfaces here.
 import { App } from "antd";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UserDatabaseList } from "./UserDatabaseList";
@@ -90,7 +90,7 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
       filename: "shop_db-20260815-010203.sql",
     });
 
-    render(
+    const { unmount } = render(
       <App>
         <UserDatabaseList />
       </App>,
@@ -102,12 +102,21 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
     await waitFor(() => {
       expect(mockedDownload).toHaveBeenCalledWith("db1");
     });
+    // The save-as continuation (blob -> object URL -> anchor click) and the
+    // success toast keep scheduling React work after the assertion; let it
+    // settle and unmount BEFORE the test ends, or the commit lands after
+    // environment teardown and fails the whole run (CI flake, PR #1130).
+    await waitFor(() => {
+      expect(URL.createObjectURL).toHaveBeenCalled();
+    });
+    await act(async () => {});
+    unmount();
   });
 
   it("restores from an uploaded .sql after confirmation", async () => {
     mockedRestore.mockResolvedValue(undefined);
 
-    render(
+    const { unmount } = render(
       <App>
         <UserDatabaseList />
       </App>,
@@ -141,5 +150,9 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
     await waitFor(() => {
       expect(mockedRestore).toHaveBeenCalledWith("db1", file);
     });
+    // Same teardown-race guard as the download test: flush the restore
+    // continuation (toast + query invalidation), then unmount.
+    await act(async () => {});
+    unmount();
   });
 });
