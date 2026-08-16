@@ -384,3 +384,25 @@ func TestSyncOnce_ReassertFailureRecordsError(t *testing.T) {
 		t.Errorf("reassert failure must be recorded: status=%q err=%q", fs.recStatus, fs.recErr)
 	}
 }
+
+// GH #331 drill finding: a paired-but-never-fed destination (restic exit 10,
+// "repository does not exist") is the WAITING state, not an error — the
+// operator just hasn't run `jabali dr feed` (or its first backup) yet.
+func TestSyncOnce_UninitializedRepoIsWaiting(t *testing.T) {
+	fs := &fakeSettings{s: standbySettings("D1", "")}
+	fa := &fakeAgent{handlers: map[string]func(any) (json.RawMessage, error){
+		"system.restore_list_manifests": func(any) (json.RawMessage, error) {
+			return nil, errors.New(`restic snapshots: exit status 10 (stderr: Fatal: repository does not exist: unable to open config file)`)
+		},
+	}}
+	res, err := newSyncer(t, fs, &fakeDests{byID: map[string]*models.BackupDestination{"D1": enabledDest("D1")}}, fa).SyncOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if res.Status != models.DRSyncStatusWaiting {
+		t.Errorf("uninitialized repo must be waiting, got %q (detail %s)", res.Status, res.Detail)
+	}
+	if fs.recStatus != models.DRSyncStatusWaiting {
+		t.Errorf("waiting must be recorded, got %q", fs.recStatus)
+	}
+}

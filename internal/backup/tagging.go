@@ -6,7 +6,10 @@
 // See ADR-0075 + plans/m30-backup-restore.md.
 package backup
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Tag is one snapshot tag. Tags are key=value or bare strings; the
 // blanket `jabali` tag has no value.
@@ -85,6 +88,19 @@ const (
 // MakeTag formats `key=value`.
 func MakeTag(key, value string) Tag {
 	return Tag(fmt.Sprintf("%s=%s", key, value))
+}
+
+// JoinTagsAND renders tags as one comma-joined restic --tag value. restic's
+// tag matching is OR across repeated --tag flags and AND within one
+// comma-joined flag; every filter in this codebase means AND. Tag values
+// never contain commas (ULIDs, stage names, db names, hostnames), which is
+// what makes the comma join safe.
+func JoinTagsAND(tags []Tag) string {
+	parts := make([]string, 0, len(tags))
+	for _, t := range tags {
+		parts = append(parts, string(t))
+	}
+	return strings.Join(parts, ",")
 }
 
 // AccountBackupTags returns the canonical tag set for one stage of

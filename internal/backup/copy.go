@@ -114,8 +114,10 @@ func Copy(ctx context.Context, runner Runner, opts CopyOpts, extraEnv []string) 
 		"--from-repo", opts.FromRepo,
 		"--from-password-file", opts.FromPasswordFile,
 	)
-	for _, t := range opts.Tags {
-		args = append(args, "--tag", string(t))
+	// Comma-joined = AND (see Client.Snapshots): restic treats repeated
+	// --tag flags as OR groups, and a copy filter must match ALL tags.
+	if len(opts.Tags) > 0 {
+		args = append(args, "--tag", JoinTagsAND(opts.Tags))
 	}
 	args = append(args, opts.SnapshotIDs...)
 

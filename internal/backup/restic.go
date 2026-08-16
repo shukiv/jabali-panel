@@ -160,11 +160,16 @@ type Snapshot struct {
 }
 
 // Snapshots lists snapshots. Optional tags filter narrows the result
-// server-side via repeated --tag=key=value flags.
+// server-side; multiple tags are comma-joined into ONE --tag flag because
+// restic treats repeated --tag flags as OR groups and a comma-joined list as
+// AND. Every caller here filters (kind + stage [+ user]) and means AND — the
+// repeated-flag form returned every snapshot matching ANY tag, which made
+// "newest manifest" selection pick non-manifest stage snapshots (GH #331
+// two-node drill finding).
 func (c *Client) Snapshots(ctx context.Context, tags []Tag) ([]Snapshot, error) {
 	args := []string{"snapshots", "--json"}
-	for _, t := range tags {
-		args = append(args, "--tag", string(t))
+	if len(tags) > 0 {
+		args = append(args, "--tag", JoinTagsAND(tags))
 	}
 	out, _, err := c.run(ctx, args, nil)
 	if err != nil {
@@ -378,8 +383,10 @@ func (c *Client) Forget(ctx context.Context, opts ForgetOpts) ([]byte, error) {
 	if opts.KeepMonthly > 0 {
 		args = append(args, "--keep-monthly", strconv.FormatUint(uint64(opts.KeepMonthly), 10))
 	}
-	for _, t := range opts.Tags {
-		args = append(args, "--tag", string(t))
+	// Comma-joined = AND (see Snapshots): forget must select only snapshots
+	// carrying ALL the given tags, never a union.
+	if len(opts.Tags) > 0 {
+		args = append(args, "--tag", JoinTagsAND(opts.Tags))
 	}
 	if opts.Prune {
 		args = append(args, "--prune")

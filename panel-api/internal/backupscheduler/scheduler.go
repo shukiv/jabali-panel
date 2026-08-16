@@ -159,7 +159,27 @@ func (s *Scheduler) TickOnce(ctx context.Context) {
 	s.tickDispatch(ctx)
 }
 
+// standbyInert reports whether this box is a DR standby (GH #331 two-node
+// drill finding): each applied drsync restore loads the PRIMARY's panel DB,
+// which carries the primary's ENABLED backup schedules and queued job rows.
+// An ungated scheduler on a standby therefore runs the primary's schedules —
+// including the DR feed itself, which shipped the STANDBY's state into the
+// shared DR repo, where a later promote could restore it as if it were the
+// primary's. A standby enqueues nothing and dispatches nothing; promotion
+// flips the role and the next tick resumes naturally (same re-read pattern
+// as drsync).
+func (s *Scheduler) standbyInert(ctx context.Context) bool {
+	if s.deps.Settings == nil {
+		return false
+	}
+	set, err := s.deps.Settings.Get(ctx)
+	return err == nil && set != nil && set.IsStandby()
+}
+
 func (s *Scheduler) tickEnqueue(ctx context.Context) {
+	if s.standbyInert(ctx) {
+		return
+	}
 	now := time.Now().UTC()
 	due, err := s.deps.Schedules.ListDue(ctx, now, MaxDuePerTick)
 	if err != nil {
@@ -174,6 +194,9 @@ func (s *Scheduler) tickEnqueue(ctx context.Context) {
 // tickDispatch reads the current concurrency limit, counts running
 // jobs, and dispatches queued rows to fill the gap.
 func (s *Scheduler) tickDispatch(ctx context.Context) {
+	if s.standbyInert(ctx) {
+		return
+	}
 	max := uint32(DefaultMaxConcurrent)
 	if s.deps.Settings != nil {
 		set, err := s.deps.Settings.Get(ctx)

@@ -78,6 +78,11 @@ Pairing flips `server_role` to `standby`. From this point:
   manifests and, when a newer one exists than it last applied, runs
   `system.restore {apply:true, include_accounts:false}` (panel DB + config + TLS);
 - the reconciler goes dormant (no serving config, no ACME certificate issuance);
+- the backup scheduler goes dormant (the replicated DB carries the primary's
+  ENABLED schedules — including the DR feed itself — which must not run here),
+  and the daily retention sweep skips (the replicated destinations point at
+  the primary's repositories; pruning them from the standby would destroy the
+  primary's backups);
 - the API refuses tenant writes with `409 server_is_standby`;
 - every page shows the read-only DR banner.
 

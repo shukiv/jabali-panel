@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
@@ -218,6 +219,14 @@ func (s *Syncer) pullRestore(ctx context.Context, settings *models.ServerSetting
 		func(passwordFile string) error {
 			newest, lerr := s.latestManifest(ctx, dest, passwordFile)
 			if lerr != nil {
+				if isRepoNotInitialized(lerr) {
+					// A DR destination the primary has never shipped to
+					// (restic exit 10, "repository does not exist") means
+					// the same thing as an initialized-but-empty repo:
+					// nothing to pull yet. Surface it as WAITING, not error.
+					res = Result{Status: models.DRSyncStatusWaiting}
+					return nil
+				}
 				return lerr
 			}
 			if newest == "" {
@@ -243,6 +252,17 @@ func (s *Syncer) pullRestore(ctx context.Context, settings *models.ServerSetting
 		return Result{Status: models.DRSyncStatusError, Detail: err.Error()}
 	}
 	return res
+}
+
+// isRepoNotInitialized matches the restic signatures for "no repository at
+// this location yet" — the not-yet-fed DR channel. Mirrors the missing-repo
+// signatures in the agent's classifyRepoProbe. Never matches the unopenable
+// cases (wrong password, damaged config), which stay hard errors.
+func isRepoNotInitialized(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "repository does not exist") ||
+		strings.Contains(msg, "unable to open config file") ||
+		strings.Contains(msg, "is there a repository at")
 }
 
 // latestManifest asks the agent for the newest system_backup manifest snapshot

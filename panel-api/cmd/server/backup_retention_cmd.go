@@ -84,6 +84,16 @@ by install_backup_foundation in install.sh.`,
 			if err := assertResticEnvironment(); err != nil {
 				return err
 			}
+			// GH #331 two-node drill finding: a DR standby's DB is the
+			// PRIMARY's replica, so its schedules + destinations point at
+			// the primary's repos — including the shared DR channel. A
+			// retention pass here would `restic forget --prune` the
+			// primary's live backups from the standby. Hard skip.
+			if s, serr := repository.NewServerSettingsRepository(sharedDB).Get(ctx); serr == nil && s != nil && s.IsStandby() {
+				fmt.Fprintln(cmd.OutOrStdout(),
+					"retention sweep skipped: this box is a DR standby — its replicated destinations point at the primary's repositories, and pruning them from here would destroy the primary's backups")
+				return nil
+			}
 
 			// JAB-98: prune per-job backup log files under
 			// /var/lib/jabali-backups/logs older than the retention window.

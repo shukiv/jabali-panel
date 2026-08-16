@@ -140,11 +140,10 @@ func TestSnapshots_TagFilter(t *testing.T) {
 		t.Fatalf("Snapshots: %v", err)
 	}
 	args := strings.Join(r.calls[0].args, " ")
-	if !strings.Contains(args, "--tag job-id=01J5JOB") {
-		t.Fatalf("missing job-id tag in: %s", args)
-	}
-	if !strings.Contains(args, "--tag stage=home") {
-		t.Fatalf("missing stage tag in: %s", args)
+	// One comma-joined --tag = AND filter (GH #331 drill finding); repeated
+	// --tag flags are OR groups in restic.
+	if !strings.Contains(args, "--tag job-id=01J5JOB,stage=home") {
+		t.Fatalf("expected comma-joined AND tag filter in: %s", args)
 	}
 }
 
@@ -296,5 +295,45 @@ func TestBackup_ExtraExcludeFiles(t *testing.T) {
 	}
 	if strings.HasSuffix(strings.TrimSpace(args), "--exclude-file") {
 		t.Errorf("empty ExtraExcludeFiles entry leaked a bare flag:\n%s", args)
+	}
+}
+
+// GH #331 two-node drill finding: restic treats REPEATED --tag flags as OR
+// groups — `--tag kind=system_backup --tag stage=manifest` returned every
+// system_backup stage snapshot, so "newest manifest" selection picked a
+// panel_db snapshot. Multi-tag filters must comma-join into ONE --tag (AND).
+func TestSnapshots_MultiTagIsANDNotOR(t *testing.T) {
+	r := &fakeRunner{stdout: []byte("null\n")}
+	c := newClient(t, r)
+	_, err := c.Snapshots(context.Background(), []Tag{
+		MakeTag(TagKeyKind, KindSystemBackup),
+		MakeTag(TagKeyStage, StageManifest),
+	})
+	if err != nil {
+		t.Fatalf("Snapshots: %v", err)
+	}
+	joined := strings.Join(r.calls[0].args, " ")
+	if !strings.Contains(joined, "--tag kind=system_backup,stage=manifest") {
+		t.Fatalf("multi-tag filter must be one comma-joined --tag (AND), got: %s", joined)
+	}
+	if strings.Count(joined, "--tag") != 1 {
+		t.Fatalf("expected exactly one --tag flag, got: %s", joined)
+	}
+}
+
+// Forget with multiple tags must also AND them — a union here would forget
+// snapshots outside the intended selection.
+func TestForget_MultiTagIsAND(t *testing.T) {
+	r := &fakeRunner{stdout: []byte("ok")}
+	c := newClient(t, r)
+	if _, err := c.Forget(context.Background(), ForgetOpts{
+		KeepDaily: 1,
+		Tags:      []Tag{TagBlanket, MakeTag(TagKeyScheduleID, "01J5SCHED")},
+	}); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+	joined := strings.Join(r.calls[0].args, " ")
+	if !strings.Contains(joined, "--tag jabali,schedule-id=01J5SCHED") {
+		t.Fatalf("forget multi-tag must comma-join, got: %s", joined)
 	}
 }
