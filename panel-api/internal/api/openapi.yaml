@@ -1805,6 +1805,28 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "202": { description: OK } }
 
+  /admin/security/malware/quarantine-mode:
+    put:
+      tags: [Malware]
+      summary: Arm or trip the quarantine circuit breaker (JAB-248)
+      description: >
+        enabled=false flips the scanner to detect-only (files are reported,
+        never moved); enabled=true re-arms auto-quarantine after a breaker
+        trip. The breaker trips automatically on a quarantine-rate spike and
+        is only ever re-armed through this endpoint — never automatically.
+        Current state rides GET /admin/security/malware/status
+        (quarantine_enabled, breaker_tripped_at).
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses: { "200": { description: OK } }
+
 
   # --- CrowdSec ---
 

@@ -10569,7 +10569,13 @@ MALDET_DROPIN
     {
       echo ""
       echo "# JABALI-DROPIN-BEGIN — managed by install.sh"
-      cat /etc/jabali/maldet/conf.maldet.d/00-jabali.conf
+      # Lexical order, ALL drop-ins: conf.maldet is sourced shell where the
+      # last assignment wins, so 99-jabali-breaker.conf (the JAB-248
+      # quarantine circuit breaker, agent-written) keeps overriding
+      # 00-jabali.conf across every update re-merge.
+      for _dropin in /etc/jabali/maldet/conf.maldet.d/*.conf; do
+        [[ -f "$_dropin" ]] && cat "$_dropin"
+      done
       echo "# JABALI-DROPIN-END"
     } >> "$conf"
     _ok "maldet conf merged with Jabali drop-in"
