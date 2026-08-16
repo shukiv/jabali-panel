@@ -912,3 +912,51 @@ func (e *ExtractDir) Remove(relPath string) error {
 	}
 	return uerr
 }
+
+// MkdirChownInScope creates the leaf directory at pathStr and chowns it to
+// uid:gid, closing the create→chown TOCTOU that a pathname-based
+// os.MkdirAll+os.Chown leaves open in a tenant-writable tree (JAB-251).
+//
+// The parent is opened via openat2(RESOLVE_BENEATH) — any absolute or
+// upward-".." symlink component is refused atomically in the kernel. The
+// leaf is mkdirat'd against that HELD parent fd, then re-opened
+// O_NOFOLLOW|O_DIRECTORY from the SAME fd: a leaf swapped for a symlink
+// between the mkdir and the chown is refused with ELOOP rather than
+// followed. Fchown then runs on that descriptor, so no pathname is ever
+// re-resolved after the security decision. With parents=true the missing
+// intermediate components are built first via mkdirParents (O_NOFOLLOW
+// descent); only the leaf is chowned, matching os.MkdirAll+os.Chown
+// semantics. Idempotent: an existing leaf directory is chowned, not an
+// error. The caller must ensure pathStr != the docroot root itself
+// (which has no in-scope parent).
+func (s *Scope) MkdirChownInScope(pathStr string, perm os.FileMode, parents bool, uid, gid int) error {
+	parent, leaf, err := s.OpenParentInScope(pathStr)
+	if err != nil {
+		if !parents {
+			return err
+		}
+		if merr := s.mkdirParents(pathStr, perm); merr != nil {
+			return merr
+		}
+		parent, leaf, err = s.OpenParentInScope(pathStr)
+		if err != nil {
+			return err
+		}
+	}
+	defer parent.Close()
+	if err := unix.Mkdirat(int(parent.Fd()), leaf, uint32(perm.Perm())); err != nil && err != unix.EEXIST {
+		return err
+	}
+	// Re-open the leaf from the held parent fd with O_NOFOLLOW: a leaf
+	// that was raced into a symlink is refused (ELOOP), never followed.
+	lfd, err := unix.Openat(int(parent.Fd()), leaf,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(lfd)
+	if err := unix.Fchown(lfd, uid, gid); err != nil {
+		return err
+	}
+	return nil
+}

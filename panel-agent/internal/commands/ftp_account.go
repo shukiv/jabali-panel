@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // FTP/SFTP subaccounts (GH #1053, plans/gh1053-ftp-accounts.md).
@@ -129,6 +130,12 @@ func validateFtpSubaccountName(tenant, sub string) *agentwire.AgentError {
 // stays inside the tenant's home. A tenant-writable tree means a symlink
 // can point anywhere; resolving server-side is what stops a subaccount
 // home from landing in another tenant (or /etc).
+//
+// JAB-251: this EvalSymlinks pass is a fast-fail / friendly-error gate
+// ONLY — it is inherently TOCTOU (the tenant can swap a component after
+// this returns). The authoritative escape boundary is the openat2-
+// confined MkdirChownInScope in the create handler, which resolves and
+// mutates through descriptors with no post-check pathname re-resolution.
 func resolveFtpHomePath(homePath string, tenant *ftpTenant) (string, *agentwire.AgentError) {
 	if !filepath.IsAbs(homePath) || filepath.Clean(homePath) != homePath {
 		return "", &agentwire.AgentError{
@@ -346,15 +353,31 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 		// plain userdel exits 8. Never --remove: home is tenant data.
 		_ = exec.CommandContext(ctx, "userdel", "-f", p.Username).Run()
 	}
-	// Home must exist for vsftpd chroot + internal-sftp start dir. Owned
+	// Home must exist for vsftpd chroot + internal-sftp start dir, owned
 	// by the tenant uid like every other node in their tree.
-	if err := os.MkdirAll(homePath, 0o755); err != nil {
-		rollback()
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create home %q: %v", homePath, err)}
-	}
-	if err := os.Chown(homePath, tenant.UID, tenant.GID); err != nil {
-		rollback()
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chown home %q: %v", homePath, err)}
+	//
+	// JAB-251: the create + chown are descriptor-confined via openat2
+	// (RESOLVE_BENEATH) against the tenant home, NOT run by pathname. The
+	// parent home tree is tenant-writable, so a plain os.MkdirAll +
+	// os.Chown by pathname could be raced — swap a validated component
+	// for a symlink to /etc/sudoers.d after the check and the root chown
+	// follows it. MkdirChownInScope holds the resolved parent fd across
+	// mkdirat + O_NOFOLLOW re-open + Fchown, so no post-validation
+	// pathname re-resolution occurs and a swapped leaf is refused (ELOOP).
+	if filepath.Clean(homePath) == filepath.Clean(tenant.HomeDir) {
+		// Home IS the tenant home root: it already exists and is
+		// tenant-owned from provisioning — nothing to create or chown,
+		// and it has no in-scope parent to open.
+	} else {
+		scope, serr := filesafe.NewScope(tenant.Username, tenant.Username, []string{tenant.HomeDir})
+		if serr != nil {
+			rollback()
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("home scope for %q: %v", tenant.HomeDir, serr)}
+		}
+		if err := scope.MkdirChownInScope(homePath, 0o755, true, tenant.UID, tenant.GID); err != nil {
+			rollback()
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create+chown home %q (confined): %v", homePath, err)}
+		}
 	}
 	if aerr := chpasswdStdin(ctx, p.Username, p.Password); aerr != nil {
 		rollback()
