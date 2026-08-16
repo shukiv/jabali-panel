@@ -65,7 +65,7 @@ func TestBackup_NonExit3StaysFailure(t *testing.T) {
 
 // fakeRunner records every Run call and returns canned responses.
 type fakeRunner struct {
-	calls []fakeCall
+	calls  []fakeCall
 	stdout []byte
 	stderr []byte
 	err    error
@@ -108,8 +108,24 @@ func TestSnapshots_EmptyRepo(t *testing.T) {
 	if len(snaps) != 0 {
 		t.Fatalf("want empty, got %d", len(snaps))
 	}
-	if got := r.calls[0].args; got[0] != "--repo" || got[2] != "--password-file" || got[4] != "snapshots" {
+	if got := r.calls[0].args; got[0] != "--repo" || got[2] != "--password-file" ||
+		got[4] != "--retry-lock" || got[6] != "snapshots" {
 		t.Fatalf("unexpected args: %v", got)
+	}
+}
+
+// GH #1045: every invocation must carry --retry-lock so a delete that
+// races a running backup waits for the repo lock instead of dying with
+// restic exit 11 ("repository is already locked exclusively").
+func TestBaseArgs_RetryLock(t *testing.T) {
+	r := &fakeRunner{stdout: []byte("null\n")}
+	c := newClient(t, r)
+	if _, err := c.Snapshots(context.Background(), nil); err != nil {
+		t.Fatalf("Snapshots: %v", err)
+	}
+	joined := strings.Join(r.calls[0].args, " ")
+	if !strings.Contains(joined, "--retry-lock 2m") {
+		t.Fatalf("missing --retry-lock: %v", joined)
 	}
 }
 

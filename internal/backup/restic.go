@@ -107,10 +107,19 @@ func New(cfg ResticConfig) *Client {
 }
 
 // baseArgs returns the universal flags every restic invocation carries.
+//
+// --retry-lock (restic >= 0.16, which the installer's Debian pin ships):
+// concurrent operations on one repository are NORMAL here — a scheduled
+// backup holds the lock exactly when an operator deletes an old snapshot
+// (GH #1045: admin delete died with exit 11 "repository is already locked
+// exclusively by PID … 48s ago" while a backup ran). Waiting briefly for
+// the lock instead of failing turns that whole class into a pause. The
+// caller's context still bounds the total wait.
 func (c *Client) baseArgs() []string {
 	args := []string{
 		"--repo", c.cfg.Repo,
 		"--password-file", c.cfg.PasswordFile,
+		"--retry-lock", "2m",
 	}
 	for _, opt := range c.cfg.ExtraOptions {
 		if opt == "" {

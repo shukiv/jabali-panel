@@ -38,8 +38,18 @@ func bkInvalidArg(msg string) error {
 	return &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: msg}
 }
 
-// bkInternal wraps an internal-error envelope.
+// bkInternal wraps an internal-error envelope. Restic lock contention gets
+// its own typed, human-sized error: even with --retry-lock (GH #1045), a
+// long-running backup can outlast the wait, and the raw restic stderr JSON
+// is unreadable in a UI toast. FailedPrecondition tells the caller (and the
+// operator) this is "busy, retry later", not a broken repository.
 func bkInternal(msg string, err error) error {
+	if err != nil && strings.Contains(err.Error(), "repository is already locked") {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeFailedPrecondition,
+			Message: fmt.Sprintf("%s: the backup repository is busy (another backup, restore, or cleanup is running) — try again in a few minutes", msg),
+		}
+	}
 	return &agentwire.AgentError{
 		Code:    agentwire.CodeInternal,
 		Message: fmt.Sprintf("%s: %v", msg, err),
@@ -148,7 +158,7 @@ const (
 // are the verbatim messages restic 0.16 emits (captured against 0.16.4):
 //   - missing:    "unable to open config file: … no such file …" / "repository does not exist"
 //   - unopenable: "wrong password or no key found" (foreign/rotated password),
-//                 "config or key <id> is damaged: ciphertext verification failed" (corrupt/foreign)
+//     "config or key <id> is damaged: ciphertext verification failed" (corrupt/foreign)
 //
 // Order matters: the missing case also contains "config file", so check the
 // unopenable signals (which never co-occur with a missing repo) first is not
