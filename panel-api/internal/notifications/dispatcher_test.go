@@ -612,6 +612,10 @@ func TestResolveTargets_TenantGate(t *testing.T) {
 	require.True(t, ids(got)["A1"], "gate ON + kind allowed must deliver")
 }
 
+func (f *fakeSettings) ReassertDRPairing(context.Context, string, string, *time.Time) error {
+	return nil
+}
+
 // JAB-171 phase 3: the dispatcher opens a sealed secret just before the sender
 // reads it — the sender must see plaintext, never the enc:1: envelope.
 func TestSendOne_OpensSealedSecret(t *testing.T) {

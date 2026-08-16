@@ -43,6 +43,10 @@ func (f *fakeDigestSettings) RecordDRSync(context.Context, string, string, strin
 	return nil
 }
 
+func (f *fakeDigestSettings) ReassertDRPairing(context.Context, string, string, *time.Time) error {
+	return nil
+}
+
 type fakeDigestQueue struct {
 	envs []notifications.Envelope
 }

@@ -1,6 +1,7 @@
 package senders
 
 import (
+	"time"
 	"bytes"
 	"context"
 	"errors"
@@ -33,6 +34,10 @@ func (f *fakeSettingsRepo) RecordDRSync(context.Context, string, string, string)
 
 func (f *fakeSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bool, error) {
 	return false, nil
+}
+
+func (f *fakeSettingsRepo) ReassertDRPairing(context.Context, string, string, *time.Time) error {
+	return nil
 }
 
 type fakeSubs struct {

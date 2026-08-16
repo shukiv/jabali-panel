@@ -35,7 +35,19 @@ the two boxes is the one-way backup destination (least privilege).
 
 1. A shared backup destination both boxes can reach, created on the PRIMARY with
    `jabali backup destination create` (S3/B2/SFTP/etc). This is the DR channel.
-2. The standby box installed with the same Jabali version as the primary. A
+   Use an address the STANDBY can also reach — never `127.0.0.1`/`localhost`:
+   after the first sync the standby runs on the primary's replicated destination
+   row (see below), so a localhost address would poison every later pull.
+2. The same destination created on the STANDBY with the **same name** and the
+   same connection details. Each applied sync replaces the standby's
+   `backup_destinations` rows with the primary's, and the standby re-finds its
+   DR channel **by name** — a name mismatch strands the pairing on a dangling
+   destination id (`dr status` shows "destination not found").
+3. Copy the primary's `/etc/jabali-panel/restic-repo.password` onto the standby
+   (same path, root:root 0600) before pairing, unless the destination carries
+   its own per-destination password. The repo is sealed with the primary's
+   password, and that file is deliberately excluded from replication.
+4. The standby box installed with the same Jabali version as the primary. A
    standby running an older binary against a newer schema will fail to apply the
    restore — keep versions in lockstep.
 
@@ -68,6 +80,14 @@ Pairing flips `server_role` to `standby`. From this point:
 - the reconciler goes dormant (no serving config, no ACME certificate issuance);
 - the API refuses tenant writes with `409 server_is_standby`;
 - every page shows the read-only DR banner.
+
+Each applied sync loads the PRIMARY's panel DB over this box — including
+`server_settings` and `backup_destinations` — and then re-asserts the standby's
+own identity (role, destination, peer label). From the first successful sync on,
+the standby's destination row, credential env files, and `sso.key` are the
+primary's replicated copies; that is expected, and it is why the same-name
+destination prerequisite above matters. Admin logins on the standby also become
+the PRIMARY's credentials (the identity DB replicates too).
 
 Watch convergence with `jabali dr status` — `Last sync status` should reach `ok`
 (applied a snapshot) or `current` (already newest). `waiting` means the primary

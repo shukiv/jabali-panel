@@ -462,6 +462,10 @@ func (f *fakeServerSettingsRepo) RecordDRSync(context.Context, string, string, s
 	return nil
 }
 
+func (f *fakeServerSettingsRepo) ReassertDRPairing(context.Context, string, string, *time.Time) error {
+	return nil
+}
+
 func (f *fakeServerSettingsRepo) Get(ctx context.Context) (*models.ServerSettings, error) {
 	if f.settings == nil {
 		return nil, repository.ErrNotFound

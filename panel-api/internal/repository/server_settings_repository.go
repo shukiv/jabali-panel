@@ -48,6 +48,14 @@ type ServerSettingsRepository interface {
 	// applied snapshot. Targeted UPDATE so it never clobbers a concurrent
 	// settings save.
 	RecordDRSync(ctx context.Context, snapshotID, status, syncErr string) error
+
+	// ReassertDRPairing re-stamps this box's standby identity (GH #331): an
+	// applied drsync restore loads the PRIMARY's panel DB wholesale, which
+	// replaces server_settings with a row that says role=primary and carries
+	// no pairing — without re-asserting, a standby self-demotes after its
+	// first successful sync. Column-targeted UPDATE of exactly the four
+	// identity columns so everything else the restore replicated is kept.
+	ReassertDRPairing(ctx context.Context, destinationID, peerLabel string, pairedAt *time.Time) error
 }
 
 type serverSettingsRepo struct{ db *gorm.DB }
@@ -177,4 +185,19 @@ func (r *serverSettingsRepo) RecordDRSync(ctx context.Context, snapshotID, statu
 		Model(&models.ServerSettings{}).
 		Where("1 = 1").
 		Updates(updates).Error
+}
+
+// ReassertDRPairing — see the interface doc. Empty WHERE targets the single
+// settings row; a map (not struct) so the nil pairedAt and empty peerLabel
+// are written, not skipped as zero values.
+func (r *serverSettingsRepo) ReassertDRPairing(ctx context.Context, destinationID, peerLabel string, pairedAt *time.Time) error {
+	return r.db.WithContext(ctx).
+		Model(&models.ServerSettings{}).
+		Where("1 = 1").
+		Updates(map[string]any{
+			"server_role":       models.ServerRoleStandby,
+			"dr_destination_id": destinationID,
+			"dr_peer_label":     peerLabel,
+			"dr_paired_at":      pairedAt,
+		}).Error
 }

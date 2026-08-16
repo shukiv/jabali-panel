@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -49,6 +50,11 @@ type fakeSettings struct {
 	recSnapshotID string
 	recStatus     string
 	recErr        string
+
+	reassertCalls  int
+	reassertDestID string
+	reassertPeer   string
+	reassertErr    error
 }
 
 func (f *fakeSettings) Get(context.Context) (*models.ServerSettings, error) {
@@ -58,6 +64,15 @@ func (f *fakeSettings) Get(context.Context) (*models.ServerSettings, error) {
 func (f *fakeSettings) RecordDRSync(_ context.Context, snapshotID, status, syncErr string) error {
 	f.recorded = true
 	f.recSnapshotID, f.recStatus, f.recErr = snapshotID, status, syncErr
+	return nil
+}
+
+func (f *fakeSettings) ReassertDRPairing(_ context.Context, destinationID, peerLabel string, _ *time.Time) error {
+	f.reassertCalls++
+	if f.reassertErr != nil {
+		return f.reassertErr
+	}
+	f.reassertDestID, f.reassertPeer = destinationID, peerLabel
 	return nil
 }
 
@@ -71,6 +86,18 @@ func (d *fakeDests) Get(_ context.Context, id string) (*models.BackupDestination
 		return nil, d.err
 	}
 	return d.byID[id], nil // nil => not found
+}
+
+func (d *fakeDests) GetByName(_ context.Context, name string) (*models.BackupDestination, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	for _, dest := range d.byID {
+		if dest != nil && dest.Name == name {
+			return dest, nil
+		}
+	}
+	return nil, errors.New("not found")
 }
 
 func standbySettings(destID, lastSnap string) *models.ServerSettings {
@@ -266,5 +293,94 @@ func TestNew_NilWhenRequiredDepMissing(t *testing.T) {
 	}
 	if New(Deps{Settings: &fakeSettings{}, Destinations: &fakeDests{}}) != nil {
 		t.Error("nil Agent must yield nil Syncer")
+	}
+}
+
+// namedDest builds an enabled destination with an explicit name — the DR
+// channel identity the reassert step remaps by.
+func namedDest(id, name string) *models.BackupDestination {
+	d := enabledDest(id)
+	d.Name = name
+	return d
+}
+
+// GH #331 two-node drill finding: an applied restore loads the PRIMARY's
+// panel DB over this box — server_settings (role=primary, no pairing) and
+// backup_destinations (the primary's rows, different ULIDs) included. The
+// tick must re-assert the standby pairing afterwards, remapping the DR
+// destination by name, or the standby self-demotes after its first
+// successful sync.
+func TestSyncOnce_AppliedRestoreReassertsPairing(t *testing.T) {
+	pairedAt := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	fs := &fakeSettings{s: standbySettings("OLDDEST", "")}
+	fs.s.DRPeerLabel = "182.54.236.60"
+	fs.s.DRPairedAt = &pairedAt
+	fd := &fakeDests{byID: map[string]*models.BackupDestination{"OLDDEST": namedDest("OLDDEST", "dr-channel")}}
+	fa := &fakeAgent{handlers: map[string]func(any) (json.RawMessage, error){
+		"system.restore_list_manifests": manifestsJSON("SNAP_NEW"),
+		"system.restore": func(any) (json.RawMessage, error) {
+			// Simulate the overwrite the real restore performs.
+			fs.s = &models.ServerSettings{ServerRole: models.ServerRolePrimary}
+			fd.byID = map[string]*models.BackupDestination{"NEWDEST": namedDest("NEWDEST", "dr-channel")}
+			return json.RawMessage(`{}`), nil
+		},
+	}}
+	res, err := newSyncer(t, fs, fd, fa).SyncOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if res.Status != models.DRSyncStatusOK {
+		t.Fatalf("status = %q, want ok (detail: %s)", res.Status, res.Detail)
+	}
+	if fs.reassertCalls == 0 {
+		t.Fatal("applied restore must re-assert the standby pairing")
+	}
+	if fs.reassertDestID != "NEWDEST" {
+		t.Errorf("pairing must remap the DR destination by name to the primary's row, got %q", fs.reassertDestID)
+	}
+	if fs.reassertPeer != "182.54.236.60" {
+		t.Errorf("peer label must survive, got %q", fs.reassertPeer)
+	}
+}
+
+// A tick that applied nothing (already current) must not touch the pairing.
+func TestSyncOnce_CurrentTickDoesNotReassert(t *testing.T) {
+	fs := &fakeSettings{s: standbySettings("D1", "SNAP_A")}
+	fa := &fakeAgent{handlers: map[string]func(any) (json.RawMessage, error){
+		"system.restore_list_manifests": manifestsJSON("SNAP_A"),
+	}}
+	if _, err := newSyncer(t, fs, &fakeDests{byID: map[string]*models.BackupDestination{"D1": enabledDest("D1")}}, fa).SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if fs.reassertCalls != 0 {
+		t.Errorf("current tick must not re-assert pairing, got %d calls", fs.reassertCalls)
+	}
+}
+
+// A reassert failure after an applied restore is the dangerous half-state
+// (box restored but reads as a primary) — it must surface as a recorded
+// error, not silence.
+func TestSyncOnce_ReassertFailureRecordsError(t *testing.T) {
+	fs := &fakeSettings{s: standbySettings("D1", ""), reassertErr: errors.New("db gone")}
+	fa := &fakeAgent{handlers: map[string]func(any) (json.RawMessage, error){
+		"system.restore_list_manifests": manifestsJSON("SNAP_NEW"),
+		"system.restore": func(any) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	}}
+	sy := newSyncer(t, fs, &fakeDests{byID: map[string]*models.BackupDestination{"D1": enabledDest("D1")}}, fa)
+	sy.reassertRetryDelay = time.Millisecond
+	res, err := sy.SyncOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if res.Status != models.DRSyncStatusError {
+		t.Fatalf("status = %q, want error", res.Status)
+	}
+	if fs.reassertCalls != 3 {
+		t.Errorf("reassert must retry (3 attempts), got %d", fs.reassertCalls)
+	}
+	if fs.recStatus != models.DRSyncStatusError || fs.recErr == "" {
+		t.Errorf("reassert failure must be recorded: status=%q err=%q", fs.recStatus, fs.recErr)
 	}
 }

@@ -33,6 +33,10 @@ func (f *fakeWPSettingsRepo) RecordDRSync(context.Context, string, string, strin
 	return nil
 }
 
+func (f *fakeWPSettingsRepo) ReassertDRPairing(context.Context, string, string, *time.Time) error {
+	return nil
+}
+
 func (f *fakeWPSettingsRepo) EnsureVAPID(context.Context, string) (bool, error) { return false, nil }
 
 type fakeSubsRepo struct {

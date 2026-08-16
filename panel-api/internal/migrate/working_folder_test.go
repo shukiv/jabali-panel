@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"time"
 	"context"
 	"errors"
 	"testing"
@@ -20,6 +21,10 @@ func (f *fakeServerSettings) Get(_ context.Context) (*models.ServerSettings, err
 }
 func (f *fakeServerSettings) SetDigestLastSent(context.Context, string) error { return nil }
 func (f *fakeServerSettings) RecordDRSync(context.Context, string, string, string) error {
+	return nil
+}
+
+func (f *fakeServerSettings) ReassertDRPairing(context.Context, string, string, *time.Time) error {
 	return nil
 }
 func (f *fakeServerSettings) Upsert(_ context.Context, _ *models.ServerSettings) error {

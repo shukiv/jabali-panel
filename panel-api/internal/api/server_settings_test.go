@@ -1,6 +1,7 @@
 package api
 
 import (
+	"time"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -45,6 +46,10 @@ func (m *mockServerSettingsRepo) Upsert(ctx context.Context, s *models.ServerSet
 
 func (m *mockServerSettingsRepo) SetDigestLastSent(context.Context, string) error { return nil }
 func (m *mockServerSettingsRepo) RecordDRSync(context.Context, string, string, string) error {
+	return nil
+}
+
+func (m *mockServerSettingsRepo) ReassertDRPairing(context.Context, string, string, *time.Time) error {
 	return nil
 }
 

@@ -1124,6 +1124,10 @@ func (f *fakeSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bo
 	return false, nil
 }
 
+func (f *fakeSettingsRepo) ReassertDRPairing(context.Context, string, string, *time.Time) error {
+	return nil
+}
+
 func dnsRouterWithSettings(userID string, isAdmin bool, s *models.ServerSettings) (*gin.Engine, *mockDomainRepo, *mockDNSZoneRepo) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

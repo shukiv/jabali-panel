@@ -45,12 +45,15 @@ import (
 type settingsStore interface {
 	Get(ctx context.Context) (*models.ServerSettings, error)
 	RecordDRSync(ctx context.Context, snapshotID, status, syncErr string) error
+	ReassertDRPairing(ctx context.Context, destinationID, peerLabel string, pairedAt *time.Time) error
 }
 
 // destinationStore is the subset of repository.BackupDestinationRepository the
-// loop needs.
+// loop needs. GetByName remaps the DR channel after a restore replaced the
+// destinations table with the primary's rows (see reassertPairing).
 type destinationStore interface {
 	Get(ctx context.Context, id string) (*models.BackupDestination, error)
+	GetByName(ctx context.Context, name string) (*models.BackupDestination, error)
 }
 
 // Deps are the syncer's collaborators. Settings, Destinations, and Agent are
@@ -88,6 +91,10 @@ type Syncer struct {
 	deps        Deps
 	interval    time.Duration
 	tickTimeout time.Duration
+	// reassertRetryDelay spaces the ReassertDRPairing attempts after an
+	// applied restore (the DB was just reloaded, so one transient failure is
+	// plausible). Tests shrink it.
+	reassertRetryDelay time.Duration
 }
 
 // New returns a Syncer, or nil if a required dependency is missing (so the
@@ -107,7 +114,7 @@ func New(deps Deps) *Syncer {
 	if tt <= 0 {
 		tt = DefaultTickTimeout
 	}
-	return &Syncer{deps: deps, interval: interval, tickTimeout: tt}
+	return &Syncer{deps: deps, interval: interval, tickTimeout: tt, reassertRetryDelay: 2 * time.Second}
 }
 
 // Start runs the loop until ctx is cancelled. Ticks are sequential: the next
@@ -225,6 +232,10 @@ func (s *Syncer) pullRestore(ctx context.Context, settings *models.ServerSetting
 			if rerr := s.restore(ctx, dest, passwordFile, newest); rerr != nil {
 				return rerr
 			}
+			if perr := s.reassertPairing(ctx, settings, dest); perr != nil {
+				return fmt.Errorf("restore %s applied but re-asserting the standby pairing failed "+
+					"(this box may now read as a primary — re-run `jabali dr pair`): %w", newest, perr)
+			}
 			res = Result{Status: models.DRSyncStatusOK, SnapshotID: newest}
 			return nil
 		})
@@ -259,6 +270,41 @@ func (s *Syncer) latestManifest(ctx context.Context, dest *models.BackupDestinat
 	}
 	// The agent returns manifests newest-first.
 	return resp.Manifests[0].SnapshotID, nil
+}
+
+// reassertPairing restores this box's standby identity after an applied
+// restore. system.restore loads the PRIMARY's panel DB wholesale, replacing
+// server_settings (a row that says role=primary with no pairing) and
+// backup_destinations (the primary's rows) — without this step the standby
+// silently self-demotes after its first successful sync: the loop reads
+// role=primary and goes inert, the reconciler wakes, and StandbyReadOnly
+// stops refusing writes. Everything else the restore brought over is
+// deliberately kept (that IS the replication); only the four-column DR
+// identity block is re-stamped.
+//
+// The destination is remapped BY NAME: this box's own pre-restore row (and
+// its creds env file — panel_config rsyncs with --delete-after) is gone, but
+// the shared DR channel exists in the primary's replicated rows under the
+// same name. The runbook makes same-name-on-both-boxes a pairing
+// prerequisite. If the name lookup misses, the pre-restore ID is kept so the
+// next tick surfaces "destination not found" instead of a silent demotion.
+func (s *Syncer) reassertPairing(ctx context.Context, prev *models.ServerSettings, prevDest *models.BackupDestination) error {
+	destID := prevDest.ID
+	if d, err := s.deps.Destinations.GetByName(ctx, prevDest.Name); err == nil && d != nil {
+		destID = d.ID
+	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if lastErr = s.deps.Settings.ReassertDRPairing(ctx, destID, prev.DRPeerLabel, prev.DRPairedAt); lastErr == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return lastErr
+		case <-time.After(s.reassertRetryDelay):
+		}
+	}
+	return lastErr
 }
 
 // restore runs system.restore for one snapshot with apply=true and
