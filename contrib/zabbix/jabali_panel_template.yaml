@@ -1,0 +1,152 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 9f511a6b67024356a0ace2cd0344ca6b
+      name: Templates/Applications
+  templates:
+    - uuid: 5aaa3d682fac4c7fbf2d5d8c552ab71b
+      template: 'Jabali Panel'
+      name: 'Jabali Panel'
+      description: |
+        Monitors a server running the Jabali web hosting control panel (GH #1110).
+        
+        Checks: panel + agent health endpoints over HTTPS, the Jabali service set
+        via the Zabbix agent 2 systemd plugin (auto-discovered, so optional
+        modules like vsftpd or PostgreSQL only appear when installed), SMTP
+        reachability, and the panel TLS certificate.
+        
+        Requirements: Zabbix agent 2 on the monitored host for the systemd and
+        certificate items; the health checks are agentless (HTTP).
+        
+        Template from the Jabali repository: contrib/zabbix/
+      vendor:
+        name: Jabali
+        version: '1.0'
+      groups:
+        - name: Templates/Applications
+      macros:
+        - macro: '{$JABALI.PANEL.PORT}'
+          value: '8443'
+          description: 'Panel HTTPS port'
+        - macro: '{$JABALI.PANEL.SCHEME}'
+          value: 'https'
+        - macro: '{$JABALI.CERT.HOST}'
+          value: '{HOST.CONN}'
+          description: 'Hostname for TLS certificate validation (set to the panel FQDN for a proper chain check)'
+        - macro: '{$JABALI.UNITS.MATCHES}'
+          value: '^(jabali-.*|nginx|mariadb|pdns|pdns-recursor|redis-server|crowdsec|vsftpd|postgresql.*)\.service$'
+          description: 'systemd units considered part of the Jabali stack'
+      items:
+        - uuid: 1a2cdf2a933f486f9b7e7eab42d67dca
+          name: 'Jabali: Panel health'
+          type: HTTP_AGENT
+          key: jabali.panel.health
+          delay: 1m
+          value_type: TEXT
+          url: '{$JABALI.PANEL.SCHEME}://{HOST.CONN}:{$JABALI.PANEL.PORT}/health'
+          verify_peer: 'NO'
+          verify_host: 'NO'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.status
+          triggers:
+            - uuid: 47c20c5a92af4923b7f33eefd68f48e7
+              expression: 'last(/Jabali Panel/jabali.panel.health)<>"ok" or nodata(/Jabali Panel/jabali.panel.health,5m)=1'
+              name: 'Jabali: panel is not healthy'
+              priority: HIGH
+              description: 'GET /health did not return status "ok" (or no data for 5m). The panel UI/API is likely down.'
+        - uuid: 9fa6cfce8abd4b3d91887d4809c17186
+          name: 'Jabali: Agent health'
+          type: HTTP_AGENT
+          key: jabali.agent.health
+          delay: 1m
+          value_type: TEXT
+          url: '{$JABALI.PANEL.SCHEME}://{HOST.CONN}:{$JABALI.PANEL.PORT}/health/agent'
+          verify_peer: 'NO'
+          verify_host: 'NO'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.status
+          triggers:
+            - uuid: 6715266935fd4001b789adec9f6ce026
+              expression: 'last(/Jabali Panel/jabali.agent.health)<>"ok" or nodata(/Jabali Panel/jabali.agent.health,5m)=1'
+              name: 'Jabali: root agent is not healthy'
+              priority: HIGH
+              description: 'GET /health/agent failed — the privileged jabali-agent daemon is unreachable; provisioning and host operations will fail.'
+        - uuid: b6fb0513aa9e4d26b9de5144a8f340a5
+          name: 'Jabali: SMTP reachable'
+          type: SIMPLE
+          key: 'net.tcp.service[smtp]'
+          delay: 2m
+          value_type: FLOAT
+          triggers:
+            - uuid: 7dc25e21c3e142f596e4b781d0594ca9
+              expression: 'max(/Jabali Panel/net.tcp.service[smtp],5m)=0'
+              name: 'Jabali: SMTP port not answering'
+              priority: AVERAGE
+              description: 'Port 25 has not accepted a connection for 5 minutes. Ignore if the mail module is disabled on this host.'
+        - uuid: 3627e9153edc4b82887f7ef1488ffde4
+          name: 'Jabali: Panel TLS certificate'
+          type: ZABBIX_ACTIVE
+          key: 'web.certificate.get[{$JABALI.CERT.HOST},{$JABALI.PANEL.PORT}]'
+          delay: 1h
+          value_type: TEXT
+          description: 'Requires Zabbix agent 2.'
+        - uuid: 59a5932234a24b4e84bc33b2f3e240b2
+          name: 'Jabali: Panel TLS certificate validity'
+          type: DEPENDENT
+          key: jabali.cert.validation
+          value_type: TEXT
+          master_item:
+            key: 'web.certificate.get[{$JABALI.CERT.HOST},{$JABALI.PANEL.PORT}]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.result.value
+        - uuid: 011607d14e384cd2a93522a8c4ab6602
+          name: 'Jabali: Panel TLS certificate days left'
+          type: DEPENDENT
+          key: jabali.cert.days_left
+          value_type: FLOAT
+          units: days
+          master_item:
+            key: 'web.certificate.get[{$JABALI.CERT.HOST},{$JABALI.PANEL.PORT}]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.x509.not_after.timestamp
+            - type: JAVASCRIPT
+              parameters:
+                - 'return ((parseInt(value) - Math.floor(Date.now()/1000)) / 86400).toFixed(1);'
+          triggers:
+            - uuid: ff655119591c4be1b9982ddc547bbdb9
+              expression: 'last(/Jabali Panel/jabali.cert.days_left)<14'
+              name: 'Jabali: panel TLS certificate expires in {ITEM.LASTVALUE1} days'
+              priority: WARNING
+      discovery_rules:
+        - uuid: a36dfa065c0d457ebe9fa6f6e94f1026
+          name: 'Jabali systemd services'
+          type: ZABBIX_ACTIVE
+          key: 'systemd.unit.discovery'
+          delay: 30m
+          description: 'Requires Zabbix agent 2 (systemd plugin). Only loaded units are discovered, so optional modules (vsftpd, PostgreSQL) appear automatically when installed and disappear when masked.'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#UNIT.NAME}'
+                value: '{$JABALI.UNITS.MATCHES}'
+                formulaid: A
+          item_prototypes:
+            - uuid: f1c449f4051f42c5a87825ebc5c1ccaf
+              name: 'Jabali service {#UNIT.NAME}: active state'
+              type: ZABBIX_ACTIVE
+              key: 'systemd.unit.info["{#UNIT.NAME}",ActiveState]'
+              delay: 1m
+              value_type: TEXT
+              trigger_prototypes:
+                - uuid: 4521a563533a4d789d3f769fdef4ff61
+                  expression: 'last(/Jabali Panel/systemd.unit.info["{#UNIT.NAME}",ActiveState])<>"active"'
+                  name: 'Jabali service {#UNIT.NAME} is not active'
+                  priority: HIGH
