@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -350,6 +351,16 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		// the named stages. Empty = apply all auto-recoverable stages
 		// (panel_db, panel_config, tls).
 		ApplyStages []string `json:"apply_stages,omitempty"`
+		// DRPairing, when set (drsync standby ticks), re-asserts this box's
+		// standby identity IN THE AGENT immediately after the panel_db load.
+		// The load replaces server_settings with the primary's row
+		// (role=primary, no pairing); the panel-side reassert that follows is
+		// a separate process an entire agent round-trip later, and a
+		// scheduler tick landing inside that window read role=primary and
+		// enqueued the primary's schedules on the standby (GH #331 two-node
+		// drill, observed live). Doing it here shrinks the window to
+		// microseconds inside one handler.
+		DRPairing *drPairingReassert `json:"dr_pairing,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, bkInvalidArg("malformed JSON body")
@@ -425,6 +436,18 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		out.Applied = applied
 		out.ApplyWarnings = warnings
 
+		// Re-assert DR standby identity IMMEDIATELY after the panel_db load
+		// replaced server_settings — before anything else can read the
+		// primary's role=primary row. See the DRPairing field doc.
+		if req.DRPairing != nil {
+			if err := reassertDRPairingSQL(ctx, req.DRPairing); err != nil {
+				out.ApplyWarnings = append(out.ApplyWarnings,
+					fmt.Sprintf("dr_pairing reassert: %v (box may read as a primary — re-run `jabali dr pair`)", err))
+			} else {
+				out.Applied = append(out.Applied, "dr_pairing re-asserted (role=standby)")
+			}
+		}
+
 		// Post-apply MariaDB account password sync. mariadb-dump
 		// --single-transaction does NOT emit CREATE USER / GRANT, so
 		// after a cross-host restore the local MariaDB users still
@@ -475,6 +498,51 @@ const (
 	pdnsEnvPasswordVar = "PDNS_DB_PASSWORD"
 	pdnsMariaDBUser    = "jabali_pdns"
 )
+
+// drPairingReassert carries the standby identity to re-stamp after a
+// panel_db load (GH #331). DestinationName re-resolves the DR channel among
+// the primary's replicated destination rows; DestinationID is the fallback
+// when no row carries that name.
+type drPairingReassert struct {
+	DestinationID   string `json:"destination_id"`
+	DestinationName string `json:"destination_name"`
+	PeerLabel       string `json:"peer_label"`
+	PairedAt        string `json:"paired_at,omitempty"` // RFC3339
+}
+
+// drPairingIDRE constrains the fallback destination id to a ULID shape so it
+// can be embedded in SQL without becoming an injection vector.
+var drPairingIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+
+// reassertDRPairingSQL re-stamps the four-column DR identity block on the
+// single server_settings row via the mariadb socket, remapping the
+// destination by name against the just-loaded (primary's) rows. All string
+// values are quote-escaped; the fallback id must be a ULID.
+func reassertDRPairingSQL(ctx context.Context, p *drPairingReassert) error {
+	if !drPairingIDRE.MatchString(p.DestinationID) {
+		return fmt.Errorf("destination_id %q is not a ULID", p.DestinationID)
+	}
+	pairedAt := "NULL"
+	if p.PairedAt != "" {
+		t, err := time.Parse(time.RFC3339, p.PairedAt)
+		if err != nil {
+			return fmt.Errorf("paired_at: %w", err)
+		}
+		pairedAt = fmt.Sprintf("'%s'", t.UTC().Format("2006-01-02 15:04:05.000000"))
+	}
+	stmt := fmt.Sprintf(
+		"UPDATE jabali_panel.server_settings SET server_role='standby', "+
+			"dr_destination_id=COALESCE((SELECT id FROM jabali_panel.backup_destinations WHERE name='%s' LIMIT 1),'%s'), "+
+			"dr_peer_label='%s', dr_paired_at=%s WHERE 1=1;",
+		sqlEscape(p.DestinationName), p.DestinationID, sqlEscape(p.PeerLabel), pairedAt)
+	cmd := exec.CommandContext(ctx, "mariadb",
+		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock", "-e", stmt)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mariadb: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 // resyncDBAccountPasswords re-runs ALTER USER for every known
 // jabali-plane MariaDB account using the password file the just-

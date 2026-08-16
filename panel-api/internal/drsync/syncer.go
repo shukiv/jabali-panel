@@ -238,7 +238,7 @@ func (s *Syncer) pullRestore(ctx context.Context, settings *models.ServerSetting
 				res = Result{Status: models.DRSyncStatusCurrent, SnapshotID: newest}
 				return nil
 			}
-			if rerr := s.restore(ctx, dest, passwordFile, newest); rerr != nil {
+			if rerr := s.restore(ctx, settings, dest, passwordFile, newest); rerr != nil {
 				return rerr
 			}
 			if perr := s.reassertPairing(ctx, settings, dest); perr != nil {
@@ -329,13 +329,27 @@ func (s *Syncer) reassertPairing(ctx context.Context, prev *models.ServerSetting
 
 // restore runs system.restore for one snapshot with apply=true and
 // include_accounts=false (panel_db + panel_config + tls only; account data
-// converges at promote time).
-func (s *Syncer) restore(ctx context.Context, dest *models.BackupDestination, passwordFile, snapshotID string) error {
+// converges at promote time). The dr_pairing block makes the AGENT re-stamp
+// the standby identity in the same handler that loads the primary's panel DB
+// — a scheduler tick observed the role=primary window between the load and
+// the panel-side reassert and enqueued the primary's schedules (GH #331
+// drill); the panel-side reassert below remains as belt-and-suspenders.
+func (s *Syncer) restore(ctx context.Context, settings *models.ServerSettings, dest *models.BackupDestination, passwordFile, snapshotID string) error {
 	params := destWireParams(dest)
 	params["job_id"] = ids.NewULID()
 	params["manifest_snapshot_id"] = snapshotID
 	params["include_accounts"] = false
 	params["apply"] = true
+	pairedAt := ""
+	if settings.DRPairedAt != nil {
+		pairedAt = settings.DRPairedAt.UTC().Format(time.RFC3339)
+	}
+	params["dr_pairing"] = map[string]any{
+		"destination_id":   dest.ID,
+		"destination_name": dest.Name,
+		"peer_label":       settings.DRPeerLabel,
+		"paired_at":        pairedAt,
+	}
 	if passwordFile != "" {
 		params["password_file"] = passwordFile
 	}

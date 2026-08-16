@@ -406,3 +406,36 @@ func TestSyncOnce_UninitializedRepoIsWaiting(t *testing.T) {
 		t.Errorf("waiting must be recorded, got %q", fs.recStatus)
 	}
 }
+
+// GH #331 drill: the restore call must carry the dr_pairing block so the
+// AGENT re-stamps the standby identity inside the same handler that loads
+// the primary's panel DB — the cross-process window between load and the
+// panel-side reassert let a scheduler tick see role=primary.
+func TestSyncOnce_RestoreCarriesDRPairing(t *testing.T) {
+	pairedAt := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	fs := &fakeSettings{s: standbySettings("D1", "")}
+	fs.s.DRPeerLabel = "182.54.236.60"
+	fs.s.DRPairedAt = &pairedAt
+	var restoreParams map[string]any
+	fa := &fakeAgent{handlers: map[string]func(any) (json.RawMessage, error){
+		"system.restore_list_manifests": manifestsJSON("SNAP_NEW"),
+		"system.restore": func(p any) (json.RawMessage, error) {
+			restoreParams, _ = p.(map[string]any)
+			return json.RawMessage(`{}`), nil
+		},
+	}}
+	fd := &fakeDests{byID: map[string]*models.BackupDestination{"D1": namedDest("D1", "dr-channel")}}
+	if _, err := newSyncer(t, fs, fd, fa).SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	dp, ok := restoreParams["dr_pairing"].(map[string]any)
+	if !ok {
+		t.Fatalf("restore params missing dr_pairing: %v", restoreParams)
+	}
+	if dp["destination_id"] != "D1" || dp["destination_name"] != "dr-channel" || dp["peer_label"] != "182.54.236.60" {
+		t.Errorf("dr_pairing wrong: %v", dp)
+	}
+	if dp["paired_at"] != "2026-08-16T12:00:00Z" {
+		t.Errorf("paired_at wrong: %v", dp["paired_at"])
+	}
+}

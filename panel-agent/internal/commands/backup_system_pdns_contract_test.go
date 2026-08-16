@@ -35,3 +35,19 @@ func TestPdnsResyncMatchesInstallContract(t *testing.T) {
 		t.Errorf("install.sh does not reference %s", pdnsEnvFile)
 	}
 }
+
+// GH #331 drill: reassertDRPairingSQL builds SQL from wire strings — pin the
+// injection guards (ULID-shape id, quote-escaped name/label) and the shape.
+func TestReassertDRPairingSQLValidation(t *testing.T) {
+	if err := reassertDRPairingSQL(t.Context(), &drPairingReassert{
+		DestinationID: "not-a-ulid", DestinationName: "x", PeerLabel: "y",
+	}); err == nil || !strings.Contains(err.Error(), "not a ULID") {
+		t.Errorf("non-ULID destination_id must be rejected, got %v", err)
+	}
+	if err := reassertDRPairingSQL(t.Context(), &drPairingReassert{
+		DestinationID: "01M05Q5V53GQ54Q4PHGHH7F73P", DestinationName: "x", PeerLabel: "y",
+		PairedAt: "yesterday",
+	}); err == nil || !strings.Contains(err.Error(), "paired_at") {
+		t.Errorf("bad paired_at must be rejected, got %v", err)
+	}
+}
