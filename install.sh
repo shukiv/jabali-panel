@@ -905,7 +905,14 @@ force_local_data_ssl=${force_ssl}
 ssl_tlsv1=YES
 ssl_sslv2=NO
 ssl_sslv3=NO
-require_ssl_reuse=NO
+# JAB-257: require the TLS data connection to prove it knows the control
+# channel's master secret (vsftpd's secure default). require_ssl_reuse=NO
+# let an attacker sharing the victim's NAT race an unrelated TLS session
+# onto the small passive range (40000-40100) and hijack the transfer.
+# YES is correct for FTPS clients that reuse the control session's TLS
+# (lftp, FileZilla, WinSCP, modern curl); a client that cannot is a
+# deliberate operator downgrade, not the shipped default.
+require_ssl_reuse=YES
 ssl_ciphers=HIGH
 VSFTPDEOF
   else

@@ -135,6 +135,18 @@ if ! grep -q "ufw delete allow ${pasv_min}:${pasv_max}/tcp" <<<"$masking"; then
   fail=1
 fi
 
+# --- 6. FTPS data channel must reuse the control TLS secret (JAB-257). ---
+# require_ssl_reuse=NO let an attacker on the victim's NAT hijack a passive
+# data connection; YES is vsftpd's secure default and must not drift back.
+if grep -qE '^require_ssl_reuse=NO' <<<"$cfgfn"; then
+  echo "FAIL: require_ssl_reuse=NO — FTPS data channel can be hijacked (JAB-257)"
+  fail=1
+fi
+if ! grep -qE '^require_ssl_reuse=YES' <<<"$cfgfn"; then
+  echo "FAIL: require_ssl_reuse=YES missing from the FTPS config (JAB-257)"
+  fail=1
+fi
+
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: ftp module opt-in guards hold"
 else
