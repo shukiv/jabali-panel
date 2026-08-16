@@ -452,7 +452,7 @@ func (s *Scheduler) atOrOverCap(ctx context.Context, userID string, maxBackups i
 	// COUNT only. This used to call ListForUser(userID, 1, 0), which runs a
 	// COUNT(*) *and* a LIMIT 1 SELECT just to read the total — paid once per
 	// (user, destination) pair inside the 60s enqueue tick.
-	total, err := s.deps.Jobs.CountForUser(ctx, userID)
+	total, err := s.deps.Jobs.CountRetainedForUser(ctx, userID)
 	if err != nil {
 		return false
 	}

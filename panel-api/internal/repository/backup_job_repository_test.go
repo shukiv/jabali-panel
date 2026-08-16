@@ -135,3 +135,43 @@ func TestBackupJobRepository_ListByStatusSince_ZeroLimitDefaults(t *testing.T) {
 // silence unused-imports warnings on the time package if other tests
 // later drop their reference.
 var _ = errors.New
+
+// GH #1045 (mrlp57): the retention-cap count must see only RETAINED account
+// backups. The old CountForUser counted every job row ever — failed attempts,
+// cancelled runs, restores — so early failures permanently consumed the cap
+// and every scheduled backup silently rejected ("scheduled backups never
+// fire, only manual"). Pin the WHERE shape.
+func TestBackupJob_CountRetainedForUser_FiltersKindAndStatus(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupJobRepository(db)
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM .backup_jobs. WHERE user_id = \? AND kind = \? AND status IN \(\?,\?,\?,\?\)`).
+		WithArgs("userA", models.BackupJobKindAccountBackup,
+			models.BackupJobStatusQueued, models.BackupJobStatusRunning,
+			models.BackupJobStatusSucceeded, models.BackupJobStatusPartial).
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(2))
+
+	n, err := repo.CountRetainedForUser(context.Background(), "userA")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, n)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// Prune must target the oldest RETAINED backup — forgetting a failed row
+// frees no cap headroom and would loop the prune path.
+func TestBackupJob_OldestAccountBackup_RetainedOnly(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupJobRepository(db)
+
+	mock.ExpectQuery(`SELECT \* FROM .backup_jobs. WHERE user_id = \? AND kind = \? AND status IN \(\?,\?\)`).
+		WithArgs("userA", models.BackupJobKindAccountBackup,
+			models.BackupJobStatusSucceeded, models.BackupJobStatusPartial, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id"}).AddRow("j1", "userA"))
+
+	j, err := repo.OldestAccountBackupForUser(context.Background(), "userA")
+	require.NoError(t, err)
+	require.Equal(t, "j1", j.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

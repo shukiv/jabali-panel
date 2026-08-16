@@ -42,7 +42,9 @@ func (f *fakeBackupJobs) CountByStatus(context.Context, string) (int64, error) {
 func (f *fakeBackupJobs) ListRunning(context.Context, int) ([]models.BackupJob, error) {
 	return nil, nil
 }
-func (f *fakeBackupJobs) CountForUser(context.Context, string) (int64, error) { return 0, nil }
+func (f *fakeBackupJobs) CountRetainedForUser(context.Context, string) (int64, error) {
+	return 0, nil
+}
 func (f *fakeBackupJobs) ListQueuedOldest(context.Context, int) ([]models.BackupJob, error) {
 	return nil, nil
 }

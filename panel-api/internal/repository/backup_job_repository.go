@@ -50,9 +50,16 @@ type BackupJobRepository interface {
 	// loses the oldest-created running jobs of a big fan-out, which then
 	// wedge the queue permanently. See the method comment.
 	ListRunning(ctx context.Context, limit int) ([]models.BackupJob, error)
-	// CountForUser counts a user's jobs for the retention cap without
+	// CountRetainedForUser counts the user's RETAINED account backups for
+	// the retention cap: kind=account_backup in a live status (queued,
+	// running, succeeded, partial). Failed and cancelled attempts and
+	// restores of ANY status do NOT consume the cap — counting every row
+	// ever (the original behaviour) permanently ate the allowance: a tenant
+	// whose early attempts failed crossed the cap without owning a single
+	// snapshot, and every scheduled backup silently rejected forever
+	// (GH #1045, mrlp57's "scheduled backups never fire").
 	// materialising rows.
-	CountForUser(ctx context.Context, userID string) (int64, error)
+	CountRetainedForUser(ctx context.Context, userID string) (int64, error)
 
 	// Run grouping — admin UI rolls scheduler-fired jobs under one
 	// header per run_id. ListRuns aggregates jobs that share a run_id;
@@ -157,7 +164,10 @@ func (r *backupJobRepo) ListForUser(ctx context.Context, userID string, limit, o
 func (r *backupJobRepo) OldestAccountBackupForUser(ctx context.Context, userID string) (*models.BackupJob, error) {
 	var out models.BackupJob
 	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND kind = ?", userID, models.BackupJobKindAccountBackup).
+		// Status filter matches CountRetainedForUser: pruning a FAILED row
+		// would free no cap headroom and loop the prune path.
+		Where("user_id = ? AND kind = ? AND status IN ?", userID, models.BackupJobKindAccountBackup,
+			[]string{models.BackupJobStatusSucceeded, models.BackupJobStatusPartial}).
 		Order("created_at ASC").
 		First(&out).Error
 	if err != nil {
@@ -333,15 +343,19 @@ func (r *backupJobRepo) ListRunning(ctx context.Context, limit int) ([]models.Ba
 	return out, nil
 }
 
-// CountForUser counts a user's jobs without materialising any rows. The
+// CountRetainedForUser counts retained account backups without
+// materialising rows. The
 // retention cap check used ListForUser(userID, 1, 0), which runs a COUNT(*)
 // AND a LIMIT 1 SELECT purely to read the total — once per (user,
 // destination) pair inside the enqueue tick.
-func (r *backupJobRepo) CountForUser(ctx context.Context, userID string) (int64, error) {
+func (r *backupJobRepo) CountRetainedForUser(ctx context.Context, userID string) (int64, error) {
 	var n int64
 	err := r.db.WithContext(ctx).
 		Model(&models.BackupJob{}).
-		Where("user_id = ?", userID).
+		Where("user_id = ? AND kind = ? AND status IN ?", userID,
+			models.BackupJobKindAccountBackup,
+			[]string{models.BackupJobStatusQueued, models.BackupJobStatusRunning,
+				models.BackupJobStatusSucceeded, models.BackupJobStatusPartial}).
 		Count(&n).Error
 	if err != nil {
 		return 0, translate(err)

@@ -1707,8 +1707,11 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			return
 		}
 		// Retention cap. On a count error, fail closed (deny) rather than risk
-		// letting a tenant exceed max_backups.
-		_, total, terr := h.cfg.Jobs.ListForUser(c.Request.Context(), user.ID, 1, 0)
+		// letting a tenant exceed max_backups. RETAINED backups only —
+		// failed/cancelled attempts and restores never consume the cap
+		// (GH #1045: counting every row ever locked tenants out of both
+		// manual and scheduled backups once early failures piled up).
+		total, terr := h.cfg.Jobs.CountRetainedForUser(c.Request.Context(), user.ID)
 		if terr != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable", "detail": "backup count cannot be resolved right now"})
 			return
