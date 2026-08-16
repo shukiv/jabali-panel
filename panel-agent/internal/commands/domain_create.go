@@ -176,76 +176,7 @@ var domainRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9](
 // shape renders the invalid `listen :80;` when X is empty, so we keep
 // the bracketed [::] / bare 80 fallbacks separately. See plans/m24-ip-manager.md
 // review F-H-3.
-const vhostTemplate = `server {
-{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:80;
-{{ else }}    listen 80;
-{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
-{{ else }}    listen [::]:80;
-{{ end }}    server_name {{.Domain}} www.{{.Domain}};
-{{ if .IsEnabled }}
-    # ACME HTTP-01 webroot. Must be a location block — a server-level
-    # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
-    # so a server-scoped redirect short-circuits every request
-    # including /.well-known/acme-challenge/, and Let's Encrypt's
-    # challenge fetch bounces to https where LE refuses to follow.
-    # Scoping the redirect to a location block instead pushes it into
-    # the per-location REWRITE phase, after FIND_CONFIG has had a
-    # chance to pick the ^~ ACME match. Webroot mirrors
-    # panel-api/internal/reconciler.IssueDomainCert (-w domain.DocRoot).
-    # Incident 2026-04-26: jabali.site stuck in pending_acme_retry on
-    # first VPS install — first under the no-ACME-location vhost, then
-    # again after we added the location but kept the server-scoped
-    # redirect that won the rewrite race.
-    location ^~ /.well-known/acme-challenge/ {
-        default_type "text/plain";
-        root {{.DocRoot}};
-        try_files $uri =404;
-        # M50: if Directory Privacy with path "/" applied auth_basic at
-        # server scope, override here so the ACME validator can reach
-        # the challenge token without a 401.
-        auth_basic off;
-    }
-{{ end }}
-{{ if .RedirectHTTPS }}
-    # Redirect HTTP to HTTPS once a TRUSTED cert is serving. Gated on
-    # RedirectHTTPS (not merely "a cert exists") so a fresh LE-mode domain
-    # still on its self-signed bootstrap placeholder serves the docroot over
-    # plain HTTP instead of 301'ing browsers into a cert-authority warning
-    # (GH #896/#887). Decoupled from the :443 block itself (JAB-237): a
-    # CDN-fronted domain serves :443 WITHOUT this redirect — Cloudflare
-    # owns the client-side https redirect, and an origin 301 loops CF
-    # Flexible zones. Scoped to the default location so the ^~ ACME
-    # location above wins for challenge paths.
-    location / {
-        return 301 https://$host$request_uri;
-    }
-{{ end }}{{ if .ServeHTTPS }}
-}
-
-server {
-{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:443 ssl{{.HTTP2Param}};
-{{ else }}    listen 443 ssl{{.HTTP2Param}};
-{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:443 ssl{{.HTTP2Param}};
-{{ else }}    listen [::]:443 ssl{{.HTTP2Param}};
-{{ end }}{{ if .HTTP2Directive }}    {{.HTTP2Directive}}
-{{ end }}    # HTTP/2 is version-aware (GH #292): the listen ... http2
-    # parameter on nginx <1.25.1 (where the standalone directive is an
-    # unknown-directive error), the http2 on directive on >=1.25.1
-    # (where the listen parameter is deprecated and warns every reload).
-    server_name {{.Domain}} www.{{.Domain}};
-    ssl_certificate {{.SSLCertPath}};
-    ssl_certificate_key {{.SSLKeyPath}};
-    # JAB-69: modern TLS + Mozilla-intermediate ciphers (no 3DES/RC4/CBC-weak).
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    # JAB-70: baseline security headers (location / inherits these; cache-status
-    # locations that set their own add_header re-declare them below).
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-{{ end }}
-{{ if .IsEnabled }}
+const vhostTemplate = `{{define "servebody"}}{{ if .IsEnabled }}
     root {{.DocRoot}};
     # JAB-183: refuse to follow a symlink whose owner differs from the owner of
     # the thing it points at. Docroots are 2750 <user>:www-data and homes are
@@ -589,8 +520,85 @@ server {
     access_log /var/log/nginx/{{.Domain}}-access.log;
     error_log /var/log/nginx/{{.Domain}}-error.log;
     location / { try_files /index.html =503; }
+{{ end }}{{end}}server {
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:80;
+{{ else }}    listen 80;
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
+{{ else }}    listen [::]:80;
+{{ end }}    server_name {{.Domain}} www.{{.Domain}};
+{{ if .IsEnabled }}
+    # ACME HTTP-01 webroot. Must be a location block — a server-level
+    # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
+    # so a server-scoped redirect short-circuits every request
+    # including /.well-known/acme-challenge/, and Let's Encrypt's
+    # challenge fetch bounces to https where LE refuses to follow.
+    # Scoping the redirect to a location block instead pushes it into
+    # the per-location REWRITE phase, after FIND_CONFIG has had a
+    # chance to pick the ^~ ACME match. Webroot mirrors
+    # panel-api/internal/reconciler.IssueDomainCert (-w domain.DocRoot).
+    # Incident 2026-04-26: jabali.site stuck in pending_acme_retry on
+    # first VPS install — first under the no-ACME-location vhost, then
+    # again after we added the location but kept the server-scoped
+    # redirect that won the rewrite race.
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        root {{.DocRoot}};
+        try_files $uri =404;
+        # M50: if Directory Privacy with path "/" applied auth_basic at
+        # server scope, override here so the ACME validator can reach
+        # the challenge token without a 401.
+        auth_basic off;
+    }
+{{ end }}
+{{ if .RedirectHTTPS }}
+    # Redirect HTTP to HTTPS once a TRUSTED cert is serving. Gated on
+    # RedirectHTTPS (not merely "a cert exists") so a fresh LE-mode domain
+    # still on its self-signed bootstrap placeholder does NOT 301 browsers
+    # into a cert-authority warning (GH #896/#887); it falls to the else
+    # branch below and serves the docroot over plain HTTP. Decoupled from the
+    # :443 block itself (JAB-237): a CDN-fronted domain serves :443 WITHOUT
+    # this redirect — Cloudflare owns the client-side https redirect, and an
+    # origin 301 loops CF Flexible zones. Scoped to the default location so
+    # the ^~ ACME location above wins for challenge paths.
+    location / {
+        return 301 https://$host$request_uri;
+    }
+{{ else }}
+    # JAB-271: no force-redirect on :80 -> serve the real docroot over plain
+    # HTTP (what the CF-Flexible / grey-cloud / pre-redirect visitor hits),
+    # the SAME site config as :443. Without this the :80 block had neither a
+    # redirect nor a docroot and fell through to nginx's compiled-in
+    # /usr/share/nginx/html ("Welcome to nginx").
+{{ template "servebody" . }}
 {{ end }}
 }
+{{ if .ServeHTTPS }}
+
+server {
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:443 ssl{{.HTTP2Param}};
+{{ else }}    listen 443 ssl{{.HTTP2Param}};
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:443 ssl{{.HTTP2Param}};
+{{ else }}    listen [::]:443 ssl{{.HTTP2Param}};
+{{ end }}{{ if .HTTP2Directive }}    {{.HTTP2Directive}}
+{{ end }}    # HTTP/2 is version-aware (GH #292): the listen ... http2
+    # parameter on nginx <1.25.1 (where the standalone directive is an
+    # unknown-directive error), the http2 on directive on >=1.25.1
+    # (where the listen parameter is deprecated and warns every reload).
+    server_name {{.Domain}} www.{{.Domain}};
+    ssl_certificate {{.SSLCertPath}};
+    ssl_certificate_key {{.SSLKeyPath}};
+    # JAB-69: modern TLS + Mozilla-intermediate ciphers (no 3DES/RC4/CBC-weak).
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    # JAB-70: baseline security headers (location / inherits these; cache-status
+    # locations that set their own add_header re-declare them below).
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+{{ template "servebody" . }}
+}
+{{ end }}
 {{- if .PreviewHost }}
 
 # Preview URL — reverse-proxies this domain's OWN vhost with the real

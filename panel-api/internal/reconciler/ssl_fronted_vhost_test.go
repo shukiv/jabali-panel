@@ -126,6 +126,40 @@ func TestDirectVhost_IssuedRedirectsAndServes(t *testing.T) {
 	}
 }
 
+// JAB-271 defect #2: the reporter hypothesised the vhost "was never
+// re-rendered after the cert went self-signed→LE". It is: createDomainOnAgent
+// re-derives redirect_https/serve_https from the LIVE cert row on EVERY tick
+// (the reconciler dispatches domain.create unconditionally each pass, SSL
+// converging first, and the agent's writeVhost gate compares full rendered
+// bytes). Drive one direct domain through the transition and assert the params
+// flip on the second dispatch — a guard against a future reconciler-level
+// dispatch hash that omits cert state (which WOULD strand the :80 shape).
+func TestDirectVhost_SelfSignedToLETransitionReRenders(t *testing.T) {
+	r, ag, dom, sc := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, []string{frontedTestOwnIP}, true)
+
+	// Tick 1: still on the self-signed bootstrap placeholder.
+	r.createDomainOnAgent(context.Background(), dom)
+	if redirect, serve := vhostHTTPSParams(t, ag); redirect || serve {
+		t.Fatalf("pre-transition: (redirect=%v, serve=%v), want (false, false)", redirect, serve)
+	}
+
+	// LE lands: the cert row's path moves to the letsencrypt live dir.
+	leCert, leKey := letsEncryptCertPath, letsEncryptKeyPath
+	sc.byDomain[dom.ID].Status = models.SSLStatusIssued
+	sc.byDomain[dom.ID].CertPath = &leCert
+	sc.byDomain[dom.ID].KeyPath = &leKey
+
+	ag.mu.Lock()
+	ag.calls = nil
+	ag.mu.Unlock()
+
+	// Tick 2: the very next dispatch must reflect the trusted cert.
+	r.createDomainOnAgent(context.Background(), dom)
+	if redirect, serve := vhostHTTPSParams(t, ag); !redirect || !serve {
+		t.Fatalf("post-transition: (redirect=%v, serve=%v), want (true, true) — the :80 shape must update the tick a real cert lands", redirect, serve)
+	}
+}
+
 func TestFrontedVhost_InconclusiveLookupKeepsCachedValue(t *testing.T) {
 	r, ag, dom, _ := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, cfEdgeAddrs, true)
 

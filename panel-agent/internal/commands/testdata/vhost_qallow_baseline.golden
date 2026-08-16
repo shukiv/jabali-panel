@@ -27,6 +27,11 @@ server {
     }
 
 
+    # JAB-271: no force-redirect on :80 -> serve the real docroot over plain
+    # HTTP (what the CF-Flexible / grey-cloud / pre-redirect visitor hits),
+    # the SAME site config as :443. Without this the :80 block had neither a
+    # redirect nor a docroot and fell through to nginx's compiled-in
+    # /usr/share/nginx/html ("Welcome to nginx").
 
     root /home/u/public_html/example.com;
     # JAB-183: refuse to follow a symlink whose owner differs from the owner of
@@ -270,5 +275,6 @@ server {
     
     
     
+
 
 }
