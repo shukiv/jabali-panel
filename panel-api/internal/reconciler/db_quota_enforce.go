@@ -72,9 +72,6 @@ func (r *Reconciler) reconcileDBQuotaEnforce(ctx context.Context) {
 		return
 	}
 	r.dbQuotaEnforceLastRun = time.Now()
-	if r.dbQuotaOver == nil {
-		r.dbQuotaOver = make(map[string]bool)
-	}
 	r.dbQuotaEnforceMu.Unlock()
 
 	// One agent call for every schema size on the host.
@@ -159,18 +156,16 @@ func (r *Reconciler) reconcileDBQuotaEnforce(ctx context.Context) {
 // grantee stays read-only). Idempotent: the agent no-ops a second freeze
 // and a restore with no snapshot.
 func (r *Reconciler) applyDBQuotaState(ctx context.Context, userID string, dbs []models.Database, writable bool, total, quotaBytes int64) {
-	r.dbQuotaEnforceMu.Lock()
-	wasOver := r.dbQuotaOver[userID]
-	r.dbQuotaEnforceMu.Unlock()
-	// Only act on the edge OR when re-asserting the frozen state (a
-	// restart lost the map; over-quota users get one redundant apply).
-	if writable && !wasOver {
-		return // steady healthy state — nothing to converge
-	}
-
-	applied := 0
+	// The agent's per-database freeze snapshot is the persistent source of
+	// truth, so this drives entirely off the agent's `changed` reply — no
+	// in-memory edge state to lose across a panel restart. Freeze and
+	// restore are both idempotent agent-side (a second freeze re-asserts
+	// without re-snapshotting; a restore with no snapshot is a no-op), so
+	// calling every sweep is safe; `changed=true` marks the real
+	// transition and is the only thing that notifies.
+	anyChanged := false
 	for _, d := range dbs {
-		_, aerr := r.agent.Call(ctx, "db.writes.set", map[string]any{
+		raw, aerr := r.agent.Call(ctx, "db.writes.set", map[string]any{
 			"db_name": d.Name,
 			"freeze":  !writable,
 		})
@@ -178,29 +173,26 @@ func (r *Reconciler) applyDBQuotaState(ctx context.Context, userID string, dbs [
 			r.log.Warn("db_quota_enforce: writes.set failed", "db", d.Name, "freeze", !writable, "err", aerr)
 			continue
 		}
-		applied++
-	}
-
-	r.dbQuotaEnforceMu.Lock()
-	r.dbQuotaOver[userID] = !writable
-	if writable {
-		delete(r.dbQuotaOver, userID)
-	}
-	r.dbQuotaEnforceMu.Unlock()
-
-	// Notify once per edge only.
-	if writable == wasOver && applied > 0 {
-		if writable {
-			r.log.Info("db_quota_enforce: writes restored", "user_id", userID, "grants", applied, "bytes", total)
-			r.publishDBQuotaTransition(ctx, userID, total, quotaBytes,
-				"db.quota.restored", "info", "Database writes restored",
-				"Database usage dropped below 90% of the package disk quota; write privileges were restored.")
-		} else {
-			r.log.Warn("db_quota_enforce: writes frozen at quota", "user_id", userID, "grants", applied, "bytes", total, "quota", quotaBytes)
-			r.publishDBQuotaTransition(ctx, userID, total, quotaBytes,
-				"db.quota.frozen", "critical", "Database writes frozen at disk quota",
-				"Database usage reached the package disk quota. INSERT/UPDATE/CREATE/ALTER/INDEX were revoked; SELECT and DELETE still work — free space (or upgrade the package) to restore writes.")
+		var resp struct {
+			Changed bool `json:"changed"`
 		}
+		if json.Unmarshal(raw, &resp) == nil && resp.Changed {
+			anyChanged = true
+		}
+	}
+	if !anyChanged {
+		return // already in the desired state — no transition, no notification
+	}
+	if writable {
+		r.log.Info("db_quota_enforce: writes restored", "user_id", userID, "bytes", total)
+		r.publishDBQuotaTransition(ctx, userID, total, quotaBytes,
+			"db.quota.restored", "info", "Database writes restored",
+			"Database usage dropped below 90% of the package disk quota; write privileges were restored.")
+	} else {
+		r.log.Warn("db_quota_enforce: writes frozen at quota", "user_id", userID, "bytes", total, "quota", quotaBytes)
+		r.publishDBQuotaTransition(ctx, userID, total, quotaBytes,
+			"db.quota.frozen", "critical", "Database writes frozen at disk quota",
+			"Database usage reached the package disk quota. INSERT/UPDATE/CREATE/ALTER/INDEX were revoked; SELECT and DELETE still work — free space (or upgrade the package) to restore writes.")
 	}
 }
 

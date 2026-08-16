@@ -94,26 +94,34 @@ func TestDBQuota_OverQuotaFreezesWrites(t *testing.T) {
 	}
 }
 
-// JAB-243: under 90% after a freeze → the grant row's own level is
-// restored; healthy steady state never re-grants.
-func TestDBQuota_RestoreOnlyAfterFreeze(t *testing.T) {
+// JAB-243: under 90% → a restore (unfreeze) call fires. Because state
+// lives in the agent snapshot (not panel memory), restore does not
+// depend on this process having observed the freeze — the restart bug
+// the live smoke caught.
+func TestDBQuota_RestoreFiresIndependentOfPanelMemory(t *testing.T) {
+	ag := &fakeAgent{}
+	// Fresh reconciler (empty memory, as after a restart) sees an
+	// under-quota tenant: it must still call restore. The agent reports
+	// changed=true only when a snapshot was actually cleared.
+	r := dbqReconciler(t, ag, 10)
+	ag.resultByMethod["db.usage.by_schema"] = json.RawMessage(`{"schemas":[{"schema":"tenant_db","bytes":10}]}`)
+	ag.resultByMethod["db.writes.set"] = json.RawMessage(`{"db_name":"tenant_db","frozen":false,"changed":true}`)
+	r.reconcileDBQuotaEnforce(context.Background())
+	if n := dbFreezeCalls(ag, false); n != 1 {
+		t.Fatalf("restore call after restart = %d, want 1 (must not depend on panel memory)", n)
+	}
+}
+
+// JAB-243: when the agent reports changed=false (already in the desired
+// state), no notification and no spurious transition.
+func TestDBQuota_NoChangeNoNotify(t *testing.T) {
 	ag := &fakeAgent{}
 	r := dbqReconciler(t, ag, 150<<20)
+	ag.resultByMethod["db.writes.set"] = json.RawMessage(`{"db_name":"tenant_db","frozen":true,"changed":false}`)
 	r.reconcileDBQuotaEnforce(context.Background())
-
-	// Drop usage under 90% and force the interval gate open.
-	ag.resultByMethod["db.usage.by_schema"] = json.RawMessage(`{"schemas":[{"schema":"tenant_db","bytes":10}]}`)
-	r.dbQuotaEnforceLastRun = r.dbQuotaEnforceLastRun.Add(-2 * dbQuotaEnforceInterval)
-	r.reconcileDBQuotaEnforce(context.Background())
-
-	if n := dbFreezeCalls(ag, false); n != 1 {
-		t.Fatalf("restore (unfreeze) calls after recovery = %d, want 1", n)
-	}
-	// Healthy tenant on the next sweep: no further writes.set traffic.
-	r.dbQuotaEnforceLastRun = r.dbQuotaEnforceLastRun.Add(-2 * dbQuotaEnforceInterval)
-	r.reconcileDBQuotaEnforce(context.Background())
-	if n := dbFreezeCalls(ag, false); n != 1 {
-		t.Fatalf("steady-state restore detected (calls=%d)", n)
+	// A freeze call was made (over quota) but changed=false → no repeat.
+	if n := dbFreezeCalls(ag, true); n != 1 {
+		t.Fatalf("freeze call = %d, want 1", n)
 	}
 }
 

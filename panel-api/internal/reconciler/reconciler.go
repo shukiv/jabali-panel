@@ -239,7 +239,6 @@ type Reconciler struct {
 	databases             repository.DatabaseRepository
 	dbQuotaEnforceMu      sync.Mutex
 	dbQuotaEnforceLastRun time.Time
-	dbQuotaOver           map[string]bool
 
 	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
 	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
