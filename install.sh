@@ -9469,7 +9469,16 @@ install_crowdsec_appsec() {
   #    parse failures when the default acquis.yaml glob matched both
   #    *.access.log and *.error.log.
   local nginx_acquis_file="$acquis_dir/jabali-nginx-logs.yaml"
-  local desired_nginx_acquis=$'# Managed by jabali install.sh.\n# Per-domain nginx access logs in COMBINED format.\n# *.error.log intentionally excluded — different format.\nfilenames:\n  - /var/log/nginx/*.access.log\nlabels:\n  type: nginx\n'
+  # JAB-250: per-domain tenant logs are written as <domain>-access.log
+  # (hyphen) by the panel vhost template; the old dot-only glob
+  # (*.access.log) matched ONLY the infra logs and NONE of the customer
+  # sites, so every log-based scenario (WordPress brute-force, http-dos,
+  # http-cve, base-http) was starved. Both spellings are globbed now:
+  # *-access.log catches tenant + preview vhosts, *.access.log keeps the
+  # infra logs. Do NOT collapse back to one pattern. jcache-*.log and
+  # *error.log stay excluded — different (non-COMBINED) formats that only
+  # produce unparsed lines.
+  local desired_nginx_acquis=$'# Managed by jabali install.sh.\n# Per-domain nginx access logs in COMBINED format (JAB-250).\n# Tenant/preview vhosts write <domain>-access.log (hyphen); infra logs\n# write <name>.access.log (dot). Both are globbed. *error.log and\n# jcache-*.log are excluded — different formats.\nfilenames:\n  - /var/log/nginx/*-access.log\n  - /var/log/nginx/*.access.log\nlabels:\n  type: nginx\n'
   if [[ ! -f "$nginx_acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_nginx_acquis") "$nginx_acquis_file"; then
     _log "writing $nginx_acquis_file"
     local tmp2
@@ -9508,12 +9517,71 @@ install_crowdsec_appsec() {
     rm -f "$_setup_f"
   done
 
+  # JAB-250: self-IP whitelist. Now that tenant nginx logs are actually
+  # parsed, the host's OWN public IP appears in those logs (wp-cron and
+  # other server-to-server self-calls hit the site over its public
+  # address), so without this the host can ban ITSELF the moment a
+  # volumetric scenario fires. crowdsecurity/whitelists already covers
+  # localhost + RFC1918; this adds only the public IPs, which it does not.
+  # Operators add monitoring/uptime probes to the local override file
+  # noted below. Union of DB-confirmed (server_settings) and live-detected
+  # addresses so a NAT'd box whose iface IP differs from its public IP is
+  # still covered.
+  local wl_parser_dir="/etc/crowdsec/parsers/s02-enrich"
+  local wl_file="$wl_parser_dir/jabali-self-whitelist.yaml"
+  local -a wl_ips=()
+  local _ip
+  for _ip in "${JABALI_SRV_IPV4:-}" "${JABALI_SRV_IPV6:-}" \
+             "$(_detect_public_ipv4 2>/dev/null || true)" \
+             "$(_detect_public_ipv6 2>/dev/null || true)"; do
+    _ip="${_ip%%/*}"                       # strip any /prefix
+    [[ -z "$_ip" || "$_ip" == "null" ]] && continue
+    # dedupe
+    local _seen=0 _e
+    for _e in "${wl_ips[@]}"; do [[ "$_e" == "$_ip" ]] && _seen=1 && break; done
+    [[ "$_seen" == 0 ]] && wl_ips+=("$_ip")
+  done
+  if (( ${#wl_ips[@]} > 0 )); then
+    install -d -m 0755 "$wl_parser_dir"
+    local wl_body _line
+    wl_body=$'# Managed by jabali install.sh (JAB-250). Do NOT hand-edit.\n'
+    wl_body+=$'# Whitelists this host\'s own public IPs: server-to-server\n'
+    wl_body+=$'# self-calls (wp-cron etc.) appear with the public IP in\n'
+    wl_body+=$'# tenant nginx logs, and would otherwise trip a scenario and\n'
+    wl_body+=$'# ban the host. localhost + RFC1918 are covered by\n'
+    wl_body+=$'# crowdsecurity/whitelists. Add monitoring/uptime-probe IPs to\n'
+    wl_body+=$'# /etc/crowdsec/parsers/s02-enrich/jabali-local-whitelist.yaml\n'
+    wl_body+=$'# (never overwritten by jabali update).\n'
+    wl_body+=$'name: jabali/self-whitelist\n'
+    wl_body+=$'description: "Whitelist the host\'s own public IPs (JAB-250)"\n'
+    wl_body+=$'whitelist:\n'
+    wl_body+=$'  reason: "jabali host self-calls (public IP in tenant logs)"\n'
+    wl_body+=$'  ip:\n'
+    for _line in "${wl_ips[@]}"; do
+      wl_body+="    - \"${_line}\""$'\n'
+    done
+    if [[ ! -f "$wl_file" ]] || ! cmp -s <(printf '%s' "$wl_body") "$wl_file"; then
+      _log "writing $wl_file (${#wl_ips[@]} self IPs)"
+      local wl_tmp
+      wl_tmp="$(mktemp --tmpdir jabali-cs-wl.XXXXXX)"
+      printf '%s' "$wl_body" >"$wl_tmp"
+      install -m 0644 -o root -g root "$wl_tmp" "$wl_file"
+      rm -f "$wl_tmp"
+    fi
+  else
+    _warn "JAB-250: could not determine host public IP — self-whitelist skipped (add IPs to jabali-local-whitelist.yaml by hand)"
+  fi
+
   # Narrow default CrowdSec acquis.yaml nginx glob if it still matches *.log
   # (access + error together). Error log format breaks the nginx parser.
+  # JAB-250: narrow to *-access.log AND *.access.log (both spellings) so
+  # tenant logs (<domain>-access.log) are covered here too if this dormant
+  # default glob ever fires — narrowing to the dot-only pattern re-broke
+  # exactly the coverage this ticket restores.
   local default_acquis="/etc/crowdsec/acquis.yaml"
   if [[ -f "$default_acquis" ]] && grep -q '/var/log/nginx/\*\.log' "$default_acquis"; then
-    _log "narrowing nginx glob in $default_acquis to *.access.log"
-    sed -i 's|/var/log/nginx/\*\.log|/var/log/nginx/*.access.log|g' "$default_acquis"
+    _log "narrowing nginx glob in $default_acquis to *-access.log + *.access.log"
+    sed -i 's|/var/log/nginx/\*\.log|/var/log/nginx/*-access.log\n  - /var/log/nginx/*.access.log|g' "$default_acquis"
   fi
 
   # Remove legacy appsec.sock ExecStartPost lines if the previous
@@ -9524,6 +9592,15 @@ install_crowdsec_appsec() {
     _log "purging legacy appsec.sock ExecStartPost from $dropin"
     sed -i '/appsec\.sock/d' "$dropin"
     systemctl daemon-reload
+  fi
+
+  # Validate the config (parsers + acquisition) BEFORE reloading, so a
+  # malformed whitelist/acquis drop-in can't take log parsing down — a
+  # broken s02-enrich parser is worse than the coverage bug (JAB-250).
+  if command -v crowdsec >/dev/null 2>&1 && ! crowdsec -t >/dev/null 2>&1; then
+    _err "CrowdSec config test (crowdsec -t) failed — NOT reloading. Errors:"
+    crowdsec -t 2>&1 | tail -20 >&2 || true
+    return 1
   fi
 
   # Reload or restart to pick up acquis + config changes.
