@@ -43,27 +43,6 @@ func (f *dbqDBRepo) ListByUserID(_ context.Context, userID string, _ repository.
 	return out, int64(len(out)), nil
 }
 
-type dbqDBUserRepo struct {
-	repository.DatabaseUserRepository
-	byID map[string]*models.DatabaseUser
-}
-
-func (f *dbqDBUserRepo) FindByID(_ context.Context, id string) (*models.DatabaseUser, error) {
-	if u, ok := f.byID[id]; ok {
-		return u, nil
-	}
-	return nil, repository.ErrNotFound
-}
-
-type dbqGrantRepo struct {
-	repository.DatabaseUserGrantRepository
-	byDB map[string][]models.DatabaseUserGrant
-}
-
-func (f *dbqGrantRepo) ListByDatabaseID(_ context.Context, dbID string) ([]models.DatabaseUserGrant, error) {
-	return f.byDB[dbID], nil
-}
-
 // dbqReconciler builds the sweep harness: one tenant (u1, package quota
 // 100 MiB) with one mariadb database db1 owned by db-user alice (rw).
 func dbqReconciler(t *testing.T, ag *fakeAgent, usedBytes int64) *Reconciler {
@@ -72,16 +51,11 @@ func dbqReconciler(t *testing.T, ag *fakeAgent, usedBytes int64) *Reconciler {
 	ag.resultByMethod = map[string]json.RawMessage{
 		"db.usage.by_schema": json.RawMessage(
 			`{"schemas":[{"schema":"tenant_db","bytes":` + jsonInt(usedBytes) + `}]}`),
-		"db_user.revoke": json.RawMessage(`{}`),
-		"db_user.grant":  json.RawMessage(`{}`),
+		"db.writes.set": json.RawMessage(`{"db_name":"tenant_db","frozen":true,"changed":true}`),
 	}
 	r := New(nil, &dbqUsersRepo{rows: []models.User{{ID: "u1", PackageID: &pid}}}, ag, slog.Default(), Config{})
 	r.WithPackages(&dbqPkgRepo{pkg: &models.HostingPackage{ID: "p1", DiskQuotaMB: 100}})
-	r.WithDBQuotaEnforce(
-		&dbqDBRepo{rows: []models.Database{{ID: "d1", UserID: "u1", Name: "tenant_db", Engine: "mariadb"}}},
-		&dbqDBUserRepo{byID: map[string]*models.DatabaseUser{"dbu1": {ID: "dbu1", UserID: "u1", Username: "alice", Engine: "mariadb"}}},
-		&dbqGrantRepo{byDB: map[string][]models.DatabaseUserGrant{"d1": {{ID: "g1", DatabaseID: "d1", DatabaseUserID: "dbu1", GrantLevel: "rw", Privileges: "ALL"}}}},
-	)
+	r.WithDBQuotaEnforce(&dbqDBRepo{rows: []models.Database{{ID: "d1", UserID: "u1", Name: "tenant_db", Engine: "mariadb"}}})
 	return r
 }
 
@@ -105,23 +79,18 @@ func TestDBQuota_OverQuotaFreezesWrites(t *testing.T) {
 	ag := &fakeAgent{}
 	r := dbqReconciler(t, ag, 150<<20) // 150 MiB used, 100 MiB quota
 	r.reconcileDBQuotaEnforce(context.Background())
-	if n := dbqCalls(ag, "db_user.revoke"); n != 1 {
-		t.Fatalf("revoke calls = %d, want 1", n)
-	}
-	if n := dbqCalls(ag, "db_user.grant"); n != 0 {
-		t.Fatalf("grant calls = %d, want 0 on freeze", n)
-	}
+	freezes := 0
 	for _, c := range ag.calls {
-		if c.method != "db_user.revoke" {
+		if c.method != "db.writes.set" {
 			continue
 		}
 		p := c.params.(map[string]any)
-		privs := p["privileges"].([]string)
-		for _, pr := range privs {
-			if pr == "SELECT" || pr == "DELETE" || pr == "DROP" {
-				t.Fatalf("freeze revoked %s — tenant must keep read + free-space privileges", pr)
-			}
+		if p["freeze"] == true {
+			freezes++
 		}
+	}
+	if freezes != 1 {
+		t.Fatalf("freeze calls = %d, want 1", freezes)
 	}
 }
 
@@ -137,15 +106,29 @@ func TestDBQuota_RestoreOnlyAfterFreeze(t *testing.T) {
 	r.dbQuotaEnforceLastRun = r.dbQuotaEnforceLastRun.Add(-2 * dbQuotaEnforceInterval)
 	r.reconcileDBQuotaEnforce(context.Background())
 
-	if n := dbqCalls(ag, "db_user.grant"); n != 1 {
-		t.Fatalf("grant calls after recovery = %d, want 1", n)
+	if n := dbFreezeCalls(ag, false); n != 1 {
+		t.Fatalf("restore (unfreeze) calls after recovery = %d, want 1", n)
 	}
-	// Healthy tenant on the next sweep: no further grant traffic.
+	// Healthy tenant on the next sweep: no further writes.set traffic.
 	r.dbQuotaEnforceLastRun = r.dbQuotaEnforceLastRun.Add(-2 * dbQuotaEnforceInterval)
 	r.reconcileDBQuotaEnforce(context.Background())
-	if n := dbqCalls(ag, "db_user.grant"); n != 1 {
-		t.Fatalf("steady-state re-grant detected (calls=%d)", n)
+	if n := dbFreezeCalls(ag, false); n != 1 {
+		t.Fatalf("steady-state restore detected (calls=%d)", n)
 	}
+}
+
+// dbFreezeCalls counts db.writes.set calls with the given freeze value.
+func dbFreezeCalls(a *fakeAgent, freeze bool) int {
+	n := 0
+	for _, c := range a.calls {
+		if c.method != "db.writes.set" {
+			continue
+		}
+		if c.params.(map[string]any)["freeze"] == freeze {
+			n++
+		}
+	}
+	return n
 }
 
 // JAB-243 hysteresis: between 90% and 100% nothing changes in either
@@ -165,8 +148,8 @@ func TestDBQuota_HysteresisHoldsState(t *testing.T) {
 		`{"schemas":[{"schema":"tenant_db","bytes":` + jsonInt(95<<20) + `}]}`)
 	r2.dbQuotaEnforceLastRun = r2.dbQuotaEnforceLastRun.Add(-2 * dbQuotaEnforceInterval)
 	r2.reconcileDBQuotaEnforce(context.Background())
-	if n := dbqCalls(ag2, "db_user.grant"); n != 0 {
-		t.Fatalf("95%% restored a frozen tenant — hysteresis broken (grants=%d)", n)
+	if n := dbFreezeCalls(ag2, false); n != 0 {
+		t.Fatalf("95%% restored a frozen tenant — hysteresis broken (restores=%d)", n)
 	}
 }
 
@@ -180,11 +163,7 @@ func TestDBQuota_PostgresExcluded(t *testing.T) {
 	}
 	r := New(nil, &dbqUsersRepo{rows: []models.User{{ID: "u1", PackageID: &pid}}}, ag, slog.Default(), Config{})
 	r.WithPackages(&dbqPkgRepo{pkg: &models.HostingPackage{ID: "p1", DiskQuotaMB: 100}})
-	r.WithDBQuotaEnforce(
-		&dbqDBRepo{rows: []models.Database{{ID: "d1", UserID: "u1", Name: "pg_db", Engine: "postgres"}}},
-		&dbqDBUserRepo{byID: map[string]*models.DatabaseUser{}},
-		&dbqGrantRepo{byDB: map[string][]models.DatabaseUserGrant{}},
-	)
+	r.WithDBQuotaEnforce(&dbqDBRepo{rows: []models.Database{{ID: "d1", UserID: "u1", Name: "pg_db", Engine: "postgres"}}})
 	r.reconcileDBQuotaEnforce(context.Background())
 	if len(ag.calls) != 1 {
 		t.Fatalf("pg-only tenant caused grant traffic: %v", ag.calls)

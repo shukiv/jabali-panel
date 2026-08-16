@@ -34,7 +34,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -52,19 +51,19 @@ const (
 // read their data and free space to get back under.
 var dbQuotaWriteRevoke = []string{"INSERT", "UPDATE", "CREATE", "ALTER", "INDEX"}
 
-// WithDBQuotaEnforce wires the JAB-243 DB-quota sweep. All three repos
-// required; nil on any disables the loop.
-func (r *Reconciler) WithDBQuotaEnforce(dbs repository.DatabaseRepository, dbUsers repository.DatabaseUserRepository, grants repository.DatabaseUserGrantRepository) *Reconciler {
+// WithDBQuotaEnforce wires the JAB-243 DB-quota sweep. Databases repo
+// required; nil disables the loop. The freeze/restore mechanism lives
+// agent-side (db.writes.set, snapshot-and-replay) so the reconciler
+// needs only the tenant's database list — not grant/db-user rows, which
+// CLI- and migration-created grants never populate.
+func (r *Reconciler) WithDBQuotaEnforce(dbs repository.DatabaseRepository) *Reconciler {
 	r.databases = dbs
-	r.databaseUsers = dbUsers
-	r.databaseGrants = grants
 	return r
 }
 
 // reconcileDBQuotaEnforce is the hourly sweep. Cheap noop when disabled.
 func (r *Reconciler) reconcileDBQuotaEnforce(ctx context.Context) {
-	if r.databases == nil || r.databaseUsers == nil || r.databaseGrants == nil ||
-		r.users == nil || r.packages == nil || r.agent == nil {
+	if r.databases == nil || r.users == nil || r.packages == nil || r.agent == nil {
 		return
 	}
 	r.dbQuotaEnforceMu.Lock()
@@ -153,11 +152,12 @@ func (r *Reconciler) reconcileDBQuotaEnforce(ctx context.Context) {
 	}
 }
 
-// applyDBQuotaState converges every grant on the user's mariadb
-// databases to the quota-permitted level. writable=false revokes the
-// write set; writable=true re-applies the grant row's OWN stored level
-// (owner intent — a ro grant stays ro). Idempotent by construction:
-// GRANT/REVOKE re-apply cleanly, so no per-grant state is tracked.
+// applyDBQuotaState freezes or restores writes on every mariadb database
+// the tenant owns via the agent's db.writes.set (snapshot-and-replay).
+// writable=false freezes (revoke the write set, snapshot prior grants);
+// writable=true restores (replay the snapshot verbatim — a read-only
+// grantee stays read-only). Idempotent: the agent no-ops a second freeze
+// and a restore with no snapshot.
 func (r *Reconciler) applyDBQuotaState(ctx context.Context, userID string, dbs []models.Database, writable bool, total, quotaBytes int64) {
 	r.dbQuotaEnforceMu.Lock()
 	wasOver := r.dbQuotaOver[userID]
@@ -170,40 +170,15 @@ func (r *Reconciler) applyDBQuotaState(ctx context.Context, userID string, dbs [
 
 	applied := 0
 	for _, d := range dbs {
-		grants, gerr := r.databaseGrants.ListByDatabaseID(ctx, d.ID)
-		if gerr != nil {
+		_, aerr := r.agent.Call(ctx, "db.writes.set", map[string]any{
+			"db_name": d.Name,
+			"freeze":  !writable,
+		})
+		if aerr != nil {
+			r.log.Warn("db_quota_enforce: writes.set failed", "db", d.Name, "freeze", !writable, "err", aerr)
 			continue
 		}
-		for _, g := range grants {
-			du, uerr := r.databaseUsers.FindByID(ctx, g.DatabaseUserID)
-			if uerr != nil || du == nil || du.Engine != "mariadb" {
-				continue
-			}
-			if writable {
-				privs := []string{"ALL"}
-				if p := strings.TrimSpace(g.Privileges); p != "" && !strings.EqualFold(p, "ALL") {
-					privs = strings.Split(p, ",")
-				}
-				_, aerr := r.agent.Call(ctx, "db_user.grant", map[string]any{
-					"db_name": d.Name, "db_user_name": du.Username,
-					"grant_level": g.GrantLevel, "privileges": privs,
-				})
-				if aerr != nil {
-					r.log.Warn("db_quota_enforce: restore grant failed", "db", d.Name, "db_user", du.Username, "err", aerr)
-					continue
-				}
-			} else {
-				_, aerr := r.agent.Call(ctx, "db_user.revoke", map[string]any{
-					"db_name": d.Name, "db_user_name": du.Username,
-					"privileges": dbQuotaWriteRevoke,
-				})
-				if aerr != nil {
-					r.log.Warn("db_quota_enforce: write revoke failed", "db", d.Name, "db_user", du.Username, "err", aerr)
-					continue
-				}
-			}
-			applied++
-		}
+		applied++
 	}
 
 	r.dbQuotaEnforceMu.Lock()

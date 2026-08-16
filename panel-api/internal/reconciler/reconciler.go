@@ -233,11 +233,10 @@ type Reconciler struct {
 	bwEnforceMu      sync.Mutex
 	bwEnforceLastRun time.Time
 
-	// JAB-243 DB-quota enforcement (db_quota_enforce.go). All three
-	// repos wired via WithDBQuotaEnforce; nil disables the sweep.
+	// JAB-243 DB-quota enforcement (db_quota_enforce.go). Databases repo
+	// wired via WithDBQuotaEnforce; nil disables the sweep. Freeze state
+	// lives agent-side, so no grant/db-user repos are needed here.
 	databases             repository.DatabaseRepository
-	databaseUsers         repository.DatabaseUserRepository
-	databaseGrants        repository.DatabaseUserGrantRepository
 	dbQuotaEnforceMu      sync.Mutex
 	dbQuotaEnforceLastRun time.Time
 	dbQuotaOver           map[string]bool
