@@ -1019,6 +1019,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Destinations: deps.BackupDestinations,
 		Agent:        deps.Agent,
 		SSOKey:       deps.SSOKey,
+		Settings:     deps.ServerSettings,
 		Log:          log,
 	}); fin != nil {
 		go fin.Start(ctx)

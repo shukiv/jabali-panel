@@ -114,3 +114,40 @@ func TestCheckOne_NoManifest_NoOp(t *testing.T) {
 		t.Error("MarkFinished should not be called while the manifest is absent")
 	}
 }
+
+// GH #331: a standby's job rows are the primary's replica — the finalizer
+// must not touch them. panicJobs embeds the interface so ANY repository
+// call panics; a gated tick must return before touching jobs.
+type standbySettingsRepo struct {
+	repository.ServerSettingsRepository
+}
+
+func (standbySettingsRepo) Get(context.Context) (*models.ServerSettings, error) {
+	return &models.ServerSettings{ServerRole: models.ServerRoleStandby}, nil
+}
+
+type panicJobs struct {
+	repository.BackupJobRepository
+}
+
+type panicDests struct {
+	repository.BackupDestinationRepository
+}
+
+func TestTickOnce_StandbyIsInert(t *testing.T) {
+	f := New(Deps{
+		Jobs: &panicJobs{}, Destinations: &panicDests{},
+		Agent:    &fakeStatusAgent{reply: `{}`},
+		Settings: standbySettingsRepo{},
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if f == nil {
+		t.Fatal("New returned nil")
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("standby finalizer touched job state: %v", r)
+		}
+	}()
+	f.tickOnce(context.Background())
+}

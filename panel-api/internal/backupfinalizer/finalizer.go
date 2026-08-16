@@ -49,6 +49,11 @@ type Deps struct {
 	Jobs         repository.BackupJobRepository
 	Schedules    repository.BackupScheduleRepository
 	Destinations repository.BackupDestinationRepository
+	// Settings gates the loop on a DR standby (GH #331): the replicated
+	// primary DB carries the primary's running/queued job rows, and an
+	// ungated finalizer churned the standby (and the shared DR repo) probing
+	// jobs that belong to another box. Optional; nil = never gated.
+	Settings repository.ServerSettingsRepository
 	Agent        agent.AgentInterface
 	// SSOKey unseals a destination's per-row restic password (M30.2.x).
 	// Without it backup.status cannot open a rotated destination's repo,
@@ -120,6 +125,14 @@ type agentStatus struct {
 }
 
 func (f *Finalizer) tickOnce(ctx context.Context) {
+	// A DR standby's job rows are the PRIMARY's replica — probing or
+	// stall-failing them here is work on another box's jobs (GH #331 two-
+	// node drill). Same re-read pattern as drsync/backupscheduler.
+	if f.deps.Settings != nil {
+		if set, err := f.deps.Settings.Get(ctx); err == nil && set != nil && set.IsStandby() {
+			return
+		}
+	}
 	// Query running jobs directly. Paging the newest MaxJobsPerTick rows of
 	// ANY status and filtering here used to drop the oldest-created running
 	// jobs of a large fan-out — the dispatcher admits work oldest-first, so
