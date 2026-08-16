@@ -126,3 +126,12 @@ func TestPackage_Update_PersistsBackupLimits(t *testing.T) {
 	updatePersistsColumn(t, "allowed_backup_destination_kinds")
 	updatePersistsColumn(t, "backup_retention_policy")
 }
+
+// GH #1053 (johnnyq's live report): max_ftp_accounts was added to the model,
+// the package editor, AND the API update handler — but missed from this
+// Update Select allowlist, so setting the FTP account cap showed success and
+// reverted to 0 on reload. Third occurrence of this exact class (#170/#402,
+// #454); the guard keeps it from being a fourth.
+func TestPackage_Update_PersistsMaxFTPAccounts(t *testing.T) {
+	updatePersistsColumn(t, "max_ftp_accounts")
+}

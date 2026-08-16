@@ -82,6 +82,7 @@ type createPackageRequest struct {
 	MaxDatabases     uint32 `json:"max_databases"`
 	MaxDockerApps    uint32 `json:"max_docker_apps"`
 	MaxPythonApps    uint32 `json:"max_python_apps"`
+	MaxFTPAccounts   uint32 `json:"max_ftp_accounts"`
 	// Tenant backup limits (GH #454). 0 = backups not included on this plan.
 	MaxBackups                    uint32 `json:"max_backups"`
 	MaxBackupSchedules            uint32 `json:"max_backup_schedules"`
@@ -115,6 +116,7 @@ type updatePackageRequest struct {
 	MaxDatabases     *uint32 `json:"max_databases"`
 	MaxDockerApps    *uint32 `json:"max_docker_apps"`
 	MaxPythonApps    *uint32 `json:"max_python_apps"`
+	MaxFTPAccounts   *uint32 `json:"max_ftp_accounts"`
 	// Tenant backup limits (GH #454).
 	MaxBackups                    *uint32 `json:"max_backups"`
 	MaxBackupSchedules            *uint32 `json:"max_backup_schedules"`
@@ -205,6 +207,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		MaxDatabases:     req.MaxDatabases,
 		MaxDockerApps:    req.MaxDockerApps,
 		MaxPythonApps:    req.MaxPythonApps,
+		MaxFTPAccounts:   req.MaxFTPAccounts,
 
 		MaxBackups:                    req.MaxBackups,
 		MaxBackupSchedules:            req.MaxBackupSchedules,
@@ -341,6 +344,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.MaxPythonApps != nil {
 		pkg.MaxPythonApps = *req.MaxPythonApps
+	}
+	if req.MaxFTPAccounts != nil {
+		pkg.MaxFTPAccounts = *req.MaxFTPAccounts
 	}
 	if req.MaxBackups != nil {
 		pkg.MaxBackups = *req.MaxBackups

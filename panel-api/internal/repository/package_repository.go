@@ -64,7 +64,7 @@ func (r *packageRepo) FindByName(ctx context.Context, name string) (*models.Host
 // packageListCols — packages only have a meaningful name field for
 // search. Sort allows name/created_at. Historical default was name ASC.
 var packageListCols = ListCols{
-	Search:      []string{"name"},
+	Search: []string{"name"},
 	Sort: []string{
 		"name", "disk_quota_mb", "bandwidth_quota_mb", "max_domains",
 		"max_email_accounts", "max_databases", "ssh_enabled", "php_exec_enabled",
@@ -106,7 +106,7 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		"name", "disk_quota_mb", "bandwidth_quota_mb", "max_domains",
 		"max_email_accounts", "max_databases",
 		"cpu_quota_percent", "memory_limit_mb", "io_read_mbps", "io_write_mbps",
-		"max_tasks", "max_docker_apps", "max_python_apps", "docker_app_slugs",
+		"max_tasks", "max_docker_apps", "max_python_apps", "max_ftp_accounts", "docker_app_slugs",
 		"ssh_enabled", "cgi_enabled", "php_exec_enabled",
 		// GH #339: FPM performance-policy columns were missing from the Select
 		// allowlist, so GORM silently dropped them on update and the policy never
