@@ -398,6 +398,26 @@ func (r *Reconciler) reconcileFtpTenant(ctx context.Context, tenant string, acct
 			}
 		}
 	}
+	// GH #1145: isolated jails are plain bind mounts — NOT reboot-persistent.
+	// Re-assert each enabled isolated account's mount every pass (idempotent:
+	// ensure_jail no-ops when already mounted). The in-memory dispatch cache
+	// clears on panel restart, so the first tick after a reboot runs this and
+	// self-heals the mounts before the tenant notices an empty jail.
+	for _, a := range accts {
+		if !a.Isolated || a.JailPath == "" || !eff[a.Username] {
+			continue
+		}
+		if _, err := r.agent.Call(ctx, "ftpaccount.ensure_jail", map[string]any{
+			"tenant_username": tenant,
+			"username":        a.Username,
+			"home_path":       a.HomePath,
+			"jail_path":       a.JailPath,
+		}); err != nil {
+			r.log.Warn("ftp: ensure_jail failed (mount may be stale until next pass)", "account", a.Username, "err", err)
+			ok = false
+		}
+	}
+
 	// Stray-alias removal deliberately does NOT live here: the per-tenant
 	// diff can only see tenants that still have rows. sweepStrayFtpAliases
 	// (one ftpaccount.list_all per pass) owns stray removal host-wide.

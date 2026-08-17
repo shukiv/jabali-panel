@@ -374,6 +374,10 @@ func TestReconcileFtpAccounts_IsolatedSSHDPayload(t *testing.T) {
 	if a.ChrootDir != "/var/lib/jabali-ftp-jails/shop/shop_printer" || a.StartDir != "/data" {
 		t.Fatalf("isolated payload wrong: %+v", a)
 	}
+	// The reconciler re-asserts the jail mount every pass (reboot self-heal).
+	if len(calls["ftpaccount.ensure_jail"]) != 1 {
+		t.Fatalf("expected one ensure_jail for the isolated row, got %d", len(calls["ftpaccount.ensure_jail"]))
+	}
 }
 
 // GH #1145: recreating a missing ISOLATED alias (DR restore) must send the

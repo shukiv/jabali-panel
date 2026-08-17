@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -223,6 +224,103 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	}
 
 	return rollback, nil
+}
+
+// isPathMounted reports whether path is currently a mount target, by scanning
+// /proc/self/mountinfo (field 5 = mount point). Reliable on same-filesystem
+// bind mounts where st_dev does not change at the mountpoint — the stat-based
+// probe that the teardown bug taught us not to trust.
+func isPathMounted(path string) (bool, error) {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 5 {
+			continue
+		}
+		// Field 5 (index 4) is the mount point; mountinfo octal-escapes
+		// space/tab/newline/backslash. Jail paths are validated to contain
+		// none, but unescape for correctness against other mounts.
+		if unescapeMountinfo(f[4]) == path {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func unescapeMountinfo(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	r := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	return r.Replace(s)
+}
+
+// ftpEnsureJailHandler (ftpaccount.ensure_jail) idempotently re-establishes an
+// isolated account's bind mount when the jail exists but is unmounted — the
+// post-reboot state (bind mounts are not persistent) and after a manual umount.
+// The panel reconciler calls it every tick for isolated rows, so a reboot
+// self-heals within one tick without a boot-time DB reader. It NEVER creates
+// the account or the uid; those must already exist (a genuinely missing alias
+// is the reconciler's recreate path, not this one).
+func ftpEnsureJailHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p struct {
+		TenantUsername string `json:"tenant_username"`
+		Username       string `json:"username"`
+		HomePath       string `json:"home_path"`
+		JailPath       string `json:"jail_path"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
+	}
+	tenant, aerr := resolveFtpTenant(p.TenantUsername)
+	if aerr != nil {
+		return nil, aerr
+	}
+	// Must be an existing isolated subaccount of this tenant.
+	u, aerr := requireFtpSubaccount(tenant, p.Username)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if uid, _ := strconv.Atoi(u.Uid); uid < ftpSubaccountUIDMin {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("account %q is not isolated (uid below reserved range)", p.Username)}
+	}
+	if p.JailPath != ftpJailPathFor(tenant, p.Username) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("jail_path %q is not the canonical jail", p.JailPath)}
+	}
+	mountpoint := filepath.Join(p.JailPath, ftpJailMountpoint)
+	mounted, err := isPathMounted(mountpoint)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("check mount %q: %v", mountpoint, err)}
+	}
+	if mounted {
+		return map[string]any{"mounted": true, "changed": false}, nil
+	}
+	// Jail dir persists on disk across reboots; ensure the skeleton then rebind
+	// the confined source (openat2 RESOLVE_BENEATH -> /proc/self/fd), same as
+	// the create path.
+	if err := os.MkdirAll(mountpoint, 0o755); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("ensure jail %q: %v", mountpoint, err)}
+	}
+	_ = os.Chown(p.JailPath, 0, 0)
+	_ = os.Chmod(p.JailPath, 0o755)
+	_ = os.Chown(mountpoint, 0, 0)
+	scope, serr := filesafe.NewScope(tenant.Username, tenant.Username, []string{tenant.HomeDir})
+	if serr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("home scope: %v", serr)}
+	}
+	srcFd, oerr := scope.OpenDirInScope(p.HomePath)
+	if oerr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("confined open of selected dir %q: %v", p.HomePath, oerr)}
+	}
+	err = syscall.Mount(fmt.Sprintf("/proc/self/fd/%d", srcFd.Fd()), mountpoint, "", syscall.MS_BIND, "")
+	srcFd.Close()
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-bind jail %q: %v", mountpoint, err)}
+	}
+	return map[string]any{"mounted": true, "changed": true}, nil
 }
 
 // teardownIsolatedJail unmounts and removes a subaccount jail. Used by the
