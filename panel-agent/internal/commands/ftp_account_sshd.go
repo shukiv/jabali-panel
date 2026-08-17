@@ -74,12 +74,18 @@ func validateFtpSSHDAccount(a ftpSSHDSyncAccount) *agentwire.AgentError {
 	// extra argv, newlines inject new directives, quotes/backslashes
 	// change sshd's tokenization. Docroot paths never need any of them.
 	sshdConfigUnsafe := " \t\r\n\"'\\"
-	if !strings.HasPrefix(a.ChrootDir, "/home/") ||
+	// Legacy same-uid accounts chroot to the tenant home (/home/<tenant>);
+	// GH #1145 isolated accounts chroot to their root-owned jail under
+	// ftpJailRoot(). Both are root-owned chroot roots that satisfy sshd's
+	// ownership-chain rule; anything else is rejected.
+	chrootOK := strings.HasPrefix(a.ChrootDir, "/home/") ||
+		strings.HasPrefix(a.ChrootDir, ftpJailRoot()+"/")
+	if !chrootOK ||
 		filepath.Clean(a.ChrootDir) != a.ChrootDir ||
 		strings.ContainsAny(a.ChrootDir, sshdConfigUnsafe) {
 		return &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("invalid chroot_dir %q: must be a clean absolute path under /home without whitespace or quotes", a.ChrootDir),
+			Message: fmt.Sprintf("invalid chroot_dir %q: must be a clean absolute path under /home or the FTP jail root, without whitespace or quotes", a.ChrootDir),
 		}
 	}
 	if !strings.HasPrefix(a.StartDir, "/") ||

@@ -283,12 +283,39 @@ type ftpAccountCreateParams struct {
 	HomePath       string `json:"home_path"`
 	Password       string `json:"password"`
 	FTPAccess      bool   `json:"ftp_access"`
+	// Isolated selects the separate-uid jailed model (GH #1145). When false
+	// the legacy same-uid alias path runs. The fields below are required only
+	// when Isolated is true; the panel allocates the uid + computes the split.
+	Isolated   bool   `json:"isolated"`
+	UID        uint32 `json:"uid"`
+	QuotaMB    uint32 `json:"quota_mb"`
+	QuotaMount string `json:"quota_mount"`
+	JailPath   string `json:"jail_path"`
 }
 
 type ftpAccountCreateResponse struct {
 	Username string `json:"username"`
 	UID      int    `json:"uid"`
 	HomePath string `json:"home_path"`
+}
+
+// ensureTenantOwnedDir makes homePath exist and be tenant-owned, created
+// through the openat2-confined scope (JAB-251) so a tenant symlink swap under
+// the tenant-writable home cannot redirect the root chown. No-op when homePath
+// IS the tenant home root (already provisioned, no in-scope parent to open).
+// Used by both the legacy and the isolated create paths.
+func ensureTenantOwnedDir(tenant *ftpTenant, homePath string) *agentwire.AgentError {
+	if filepath.Clean(homePath) == filepath.Clean(tenant.HomeDir) {
+		return nil
+	}
+	scope, serr := filesafe.NewScope(tenant.Username, tenant.Username, []string{tenant.HomeDir})
+	if serr != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("home scope for %q: %v", tenant.HomeDir, serr)}
+	}
+	if err := scope.MkdirChownInScope(homePath, 0o755, true, tenant.UID, tenant.GID); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create+chown home %q (confined): %v", homePath, err)}
+	}
+	return nil
 }
 
 func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -312,6 +339,30 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 	}
 	if _, err := user.Lookup(p.Username); err == nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeAlreadyExists, Message: fmt.Sprintf("user %q already exists", p.Username)}
+	}
+
+	// GH #1145 isolated (separate-uid) path: create the selected dir confined,
+	// then build the root-owned jail + own-uid user + ACL + per-uid quota. The
+	// legacy same-uid alias path below is skipped entirely for isolated rows.
+	if p.Isolated {
+		if aerr := ensureTenantOwnedDir(tenant, homePath); aerr != nil {
+			return nil, aerr
+		}
+		rollback, aerr := provisionIsolatedJail(ctx, tenant, p)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if aerr := chpasswdStdin(ctx, p.Username, p.Password); aerr != nil {
+			rollback()
+			return nil, aerr
+		}
+		if p.FTPAccess {
+			if aerr := setFtpGroupMembership(ctx, p.Username, true); aerr != nil {
+				rollback()
+				return nil, aerr
+			}
+		}
+		return ftpAccountCreateResponse{Username: p.Username, UID: int(p.UID), HomePath: homePath}, nil
 	}
 
 	// Same-uid alias. --no-create-home: the directory is the tenant's
@@ -364,20 +415,9 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 	// follows it. MkdirChownInScope holds the resolved parent fd across
 	// mkdirat + O_NOFOLLOW re-open + Fchown, so no post-validation
 	// pathname re-resolution occurs and a swapped leaf is refused (ELOOP).
-	if filepath.Clean(homePath) == filepath.Clean(tenant.HomeDir) {
-		// Home IS the tenant home root: it already exists and is
-		// tenant-owned from provisioning — nothing to create or chown,
-		// and it has no in-scope parent to open.
-	} else {
-		scope, serr := filesafe.NewScope(tenant.Username, tenant.Username, []string{tenant.HomeDir})
-		if serr != nil {
-			rollback()
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("home scope for %q: %v", tenant.HomeDir, serr)}
-		}
-		if err := scope.MkdirChownInScope(homePath, 0o755, true, tenant.UID, tenant.GID); err != nil {
-			rollback()
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create+chown home %q (confined): %v", homePath, err)}
-		}
+	if aerr := ensureTenantOwnedDir(tenant, homePath); aerr != nil {
+		rollback()
+		return nil, aerr
 	}
 	if aerr := chpasswdStdin(ctx, p.Username, p.Password); aerr != nil {
 		rollback()
