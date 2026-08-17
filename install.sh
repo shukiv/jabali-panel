@@ -905,6 +905,12 @@ force_local_data_ssl=${force_ssl}
 ssl_tlsv1=YES
 ssl_sslv2=NO
 ssl_sslv3=NO
+# JAB-270: require the TLS close_notify before treating an upload as complete.
+# vsftpd's default (strict_ssl_read_eof=NO) accepts a data stream terminated by
+# a forged/plain TCP FIN, so an on-path attacker can truncate an uploaded file
+# (application code, config, deploy artifact) and the server publishes the
+# partial as a successful upload. YES fails the transfer closed instead.
+strict_ssl_read_eof=YES
 # JAB-257: require the TLS data connection to prove it knows the control
 # channel's master secret (vsftpd's secure default). require_ssl_reuse=NO
 # let an attacker sharing the victim's NAT race an unrelated TLS session
