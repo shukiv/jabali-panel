@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/user"
@@ -611,24 +612,29 @@ func ftpTenantAliasNames(tenant *ftpTenant) ([]string, *agentwire.AgentError) {
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read passwd: %v", err)}
 	}
+	return ftpOwnedAliasNames(string(passwd), tenant), nil
+}
+
+// ftpOwnedAliasNames is the pure filter behind ftpTenantAliasNames (and thus
+// the JAB-254 suspension lock path). Owner-aware: includes isolated
+// (separate-uid) aliases — which no longer share the tenant uid — while staying
+// collision-proof for prefix-colliding tenants, so tenant suspension covers
+// every owned alias regardless of isolation mode.
+func ftpOwnedAliasNames(passwd string, tenant *ftpTenant) []string {
 	prefix := tenant.Username + "_"
 	var names []string
-	for _, line := range strings.Split(string(passwd), "\n") {
+	for _, line := range strings.Split(passwd, "\n") {
 		parts := strings.Split(line, ":")
 		if len(parts) < 6 || !strings.HasPrefix(parts[0], prefix) {
 			continue
 		}
-		// Owner-aware: includes isolated (separate-uid) aliases, which no
-		// longer share the tenant uid, while staying collision-proof for
-		// prefix-colliding tenants. Keeps JAB-254 suspension covering every
-		// owned alias regardless of isolation mode.
 		uid, _ := strconv.Atoi(parts[2])
 		if !ftpAliasOwnedBy(parts[4], uid, tenant) {
 			continue
 		}
 		names = append(names, parts[0])
 	}
-	return names, nil
+	return names
 }
 
 // ftpAccountLockTenantHandler locks EVERY panel-owned FTP/SFTP alias of a
@@ -728,6 +734,14 @@ func classifyFtpAliases(passwd string) (owned []ftpAccountListAllEntry, skippedU
 					Username:       name,
 					HomePath:       byName[name].home,
 				})
+			} else {
+				// Owner-encoded marker whose username is NOT namespaced under
+				// the encoded owner. Not attacker-reachable (only root writes
+				// passwd), but a PANEL stamping bug here would hide a live alias
+				// from the reaper — the one thing the reaper must never do — so
+				// surface it loudly instead of silently dropping the credential.
+				slog.Warn("ftp reaper: owner-encoded alias with mismatched username prefix — possible stamping bug",
+					"username", name, "encoded_owner", owner)
 			}
 			continue
 		}

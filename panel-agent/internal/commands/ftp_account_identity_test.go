@@ -93,3 +93,47 @@ func TestClassifyFtpAliasesIsolated(t *testing.T) {
 		t.Errorf("expected 0 skipped-unmarked, got %d", skipped)
 	}
 }
+
+// TestFtpOwnedAliasNamesLockPath pins the JAB-254 suspension lock path: an
+// isolated (separate-uid) alias must be enumerated for locking, a prefix-
+// colliding OTHER tenant's isolated alias must NOT, and a legacy same-uid alias
+// still is.
+func TestFtpOwnedAliasNamesLockPath(t *testing.T) {
+	passwd := "" +
+		"shop:x:1002:1002::/home/shop:/bin/bash\n" +
+		"shop_legacy:x:1002:1002:jabali-ftp-account:/home/shop/a:/usr/sbin/nologin\n" +
+		"shop_printer:x:500002:500002:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/shop_printer:/usr/sbin/nologin\n" +
+		// prefix "shop_" collides but this is shop_other's isolated alias:
+		"shop_other_deploy:x:500003:500003:jabali-ftp-account=shop_other:/var/lib/jabali-ftp-jails/shop_other/shop_other_deploy:/usr/sbin/nologin\n"
+
+	names := ftpOwnedAliasNames(passwd, &ftpTenant{Username: "shop", UID: 1002})
+	got := map[string]bool{}
+	for _, n := range names {
+		got[n] = true
+	}
+	if !got["shop_legacy"] || !got["shop_printer"] {
+		t.Fatalf("shop's own aliases (legacy + isolated) must be locked; got %v", names)
+	}
+	if got["shop_other_deploy"] {
+		t.Fatalf("shop_other's isolated alias must NOT be in shop's lock set (cross-tenant lock); got %v", names)
+	}
+	if len(names) != 2 {
+		t.Fatalf("expected exactly shop_legacy + shop_printer, got %v", names)
+	}
+}
+
+// TestClassifyFtpAliasesForgedPrefix: an owner-encoded marker whose username is
+// not namespaced under the encoded owner is dropped (not attributed), guarding
+// against a stamping bug / forgery attributing an alias to the wrong tenant.
+func TestClassifyFtpAliasesForgedPrefix(t *testing.T) {
+	passwd := "" +
+		"shop:x:1002:1002::/home/shop:/bin/bash\n" +
+		// username "evil_deploy" but GECOS claims owner "shop" — prefix mismatch
+		"evil_deploy:x:500009:500009:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/evil:/usr/sbin/nologin\n"
+	owned, _ := classifyFtpAliases(passwd)
+	for _, o := range owned {
+		if o.Username == "evil_deploy" {
+			t.Fatalf("mis-prefixed owner-encoded alias must NOT be attributed; got owner %q", o.TenantUsername)
+		}
+	}
+}
