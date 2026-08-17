@@ -40,6 +40,10 @@ func newSessionListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List active login sessions (optionally filtered by --user email)",
+		// requireConfig: cliKratos() needs sharedCfg for the Kratos admin URL.
+		// Nothing loads config globally (no root PersistentPreRun), so without
+		// this the command fails with "config not loaded" (JAB-272 sibling).
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
 			defer cancel()
@@ -97,6 +101,9 @@ func newSessionRevokeCmd() *cobra.Command {
 		Use:   "revoke <session-id>",
 		Short: "Revoke a single login session",
 		Args:  cobra.ExactArgs(1),
+		// requireConfig: only Kratos is touched (no DB), but sharedCfg must be
+		// loaded first or cliKratos() returns "config not loaded" (JAB-272).
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
 			defer cancel()
@@ -118,6 +125,10 @@ func newSessionRevokeUserCmd() *cobra.Command {
 		Use:   "revoke-user <email-or-id>",
 		Short: "Revoke ALL login sessions for a user (sign out everywhere)",
 		Args:  cobra.ExactArgs(1),
+		// requireDB: resolveUser() hits userRepo() on the shared DB — without it
+		// the command SIGSEGVs on a nil *gorm.DB (the same JAB-272 trap as
+		// `user suspend`). requireDB also loads config, so cliKratos() works.
+		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
 			defer cancel()

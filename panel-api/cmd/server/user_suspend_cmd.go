@@ -52,6 +52,14 @@ func newUserSuspendCmd() *cobra.Command {
 		Use:   "suspend <id>",
 		Short: "Suspend a user (same cascade as the admin GUI/API)",
 		Args:  cobra.ExactArgs(1),
+		// requireDBAndAgent, not just requireDB: without it userRepo() runs on a
+		// nil *gorm.DB and the command SIGSEGVs (JAB-272). requireDB alone would
+		// stop the panic but leave sharedAgent nil, and cliSuspendDeps() drops
+		// d.Agent when the shared client is nil — so the suspend would report
+		// success while silently skipping the OS-user lock and the
+		// ftpaccount.lock_tenant call. Initialising the agent keeps the CLI
+		// cascade identical to the panel API path.
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
 			defer cancel()
@@ -87,6 +95,10 @@ func newUserUnsuspendCmd() *cobra.Command {
 		Use:   "unsuspend <id>",
 		Short: "Unsuspend a user (reverse the cascade)",
 		Args:  cobra.ExactArgs(1),
+		// Same nil-DB / nil-agent trap as suspend (JAB-272): the unsuspend
+		// cascade re-enables domains and unlocks the OS user + FTP subaccounts
+		// via the agent, so both DB and agent must be initialised.
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
 			defer cancel()
