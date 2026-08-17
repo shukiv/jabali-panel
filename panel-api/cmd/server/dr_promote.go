@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	backup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"net"
 	"os"
 	"strings"
@@ -155,9 +157,21 @@ func promoteRestoreAccounts(ctx context.Context, s *models.ServerSettings) error
 				"manifest_snapshot_id": "latest",
 				"apply":                true,
 				"include_accounts":     true,
-				"repo_url":             dest.URL,
-				"destination_kind":     dest.Kind,
-				"sftp":                 backupwrapperhelpers.SFTPWireParams(dest),
+				// os_users MUST be materialized before the account stages
+				// land (GH #331 two-node drill): a promoted standby is a box
+				// where the tenant Linux users never existed — nothing else
+				// creates them (account creation is imperative, not
+				// reconciled), so without this the home/DB restore rsyncs
+				// into nothing and the reconciler's domain-create loops on
+				// "unknown user". The explicit list keeps the whitelist
+				// semantics: every auto stage is named.
+				"apply_stages": []string{
+					backup.StagePanelDB, backup.StagePanelConfig,
+					backup.StageTLS, backup.StageOSUsers,
+				},
+				"repo_url":         dest.URL,
+				"destination_kind": dest.Kind,
+				"sftp":             backupwrapperhelpers.SFTPWireParams(dest),
 			}
 			if dest.CredentialsRef != nil {
 				params["credentials_ref"] = *dest.CredentialsRef
@@ -165,8 +179,26 @@ func promoteRestoreAccounts(ctx context.Context, s *models.ServerSettings) error
 			if passwordFile != "" {
 				params["password_file"] = passwordFile
 			}
-			_, err := sharedAgent.Call(ctx, "system.restore", params)
-			return err
+			raw, err := sharedAgent.Call(ctx, "system.restore", params)
+			if err != nil {
+				return err
+			}
+			// Surface what the restore actually did — the drill's first
+			// promote "succeeded" while every account stage silently
+			// failed, because these warnings were swallowed.
+			var out struct {
+				Applied       []string `json:"applied"`
+				ApplyWarnings []string `json:"apply_warnings"`
+			}
+			if jerr := json.Unmarshal(raw, &out); jerr == nil {
+				for _, a := range out.Applied {
+					fmt.Println("  applied:", a)
+				}
+				for _, w := range out.ApplyWarnings {
+					fmt.Println("  WARNING:", w)
+				}
+			}
+			return nil
 		})
 }
 

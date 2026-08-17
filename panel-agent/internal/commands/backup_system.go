@@ -751,9 +751,26 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 				warnings = append(warnings, fmt.Sprintf("security crowdsec: %v", err))
 			}
 			applied = append(applied, "security → /etc/ufw + /etc/crowdsec")
-		case backup.StageOSUsers, backup.StageDataState:
+		case backup.StageOSUsers:
+			// ADD-MISSING-ONLY merge (GH #331 two-node drill): a promoted DR
+			// standby is a box where the tenant Linux users never existed,
+			// and nothing else creates them. Existing users are never
+			// modified, uid/gid conflicts are skipped with a warning — the
+			// "cross-host /etc/passwd merge" hazard the old blanket warning
+			// pointed at is the MODIFY case, which this never does. Still
+			// whitelist-gated: only an explicit apply_stages request (the
+			// promote path) runs it.
+			if !whitelist[st.Name] {
+				warnings = append(warnings,
+					fmt.Sprintf("os_users staged at %s — pass --apply-stage=os_users to merge missing tenant users (add-only)", stageDir))
+				continue
+			}
+			a, w := applyOSUsersMerge(ctx, stageDir)
+			applied = append(applied, a...)
+			warnings = append(warnings, w...)
+		case backup.StageDataState:
 			warnings = append(warnings,
-				fmt.Sprintf("stage %q staged at %s — apply manually (auto-apply unsafe: cross-host /etc/passwd merge / per-user account_full restore)",
+				fmt.Sprintf("stage %q staged at %s — apply manually (auto-apply unsafe: per-user account_full restore)",
 					st.Name, stageDir))
 		}
 	}
