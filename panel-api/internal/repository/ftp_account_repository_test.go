@@ -97,6 +97,51 @@ func TestFtpAccountCreate_ExplicitFalseSFTPAccess(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// JAB-262: ReserveWithinCap locks the tenant's users row FOR UPDATE, counts,
+// and inserts — all in one transaction — so concurrent creates serialize and
+// cannot exceed the cap. These pin the query STRUCTURE (the lock + count +
+// insert order); the 20-way concurrency proof is a real-DB integration check.
+func TestFtpAccountReserveWithinCap_UnderCapInserts(t *testing.T) {
+	db, mock, raw := newMockFtpDB(t)
+	defer raw.Close()
+	repo := NewFtpAccountRepository(db)
+	acct := testFtpAccount(time.Now())
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM users WHERE id = ? FOR UPDATE")).
+		WithArgs(acct.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(acct.UserID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM `ftp_accounts` WHERE user_id = ?")).
+		WithArgs(acct.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectExec("INSERT INTO `ftp_accounts`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.ReserveWithinCap(context.Background(), acct, 3, 0))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFtpAccountReserveWithinCap_AtCapRejectsNoInsert(t *testing.T) {
+	db, mock, raw := newMockFtpDB(t)
+	defer raw.Close()
+	repo := NewFtpAccountRepository(db)
+	acct := testFtpAccount(time.Now())
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM users WHERE id = ? FOR UPDATE")).
+		WithArgs(acct.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(acct.UserID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM `ftp_accounts` WHERE user_id = ?")).
+		WithArgs(acct.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectRollback()
+
+	err := repo.ReserveWithinCap(context.Background(), acct, 3, 0)
+	require.ErrorIs(t, err, ErrFtpCapExceeded)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestFtpAccountCreate_DuplicateUsername(t *testing.T) {
 	db, mock, raw := newMockFtpDB(t)
 	defer raw.Close()

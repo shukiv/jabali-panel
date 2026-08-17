@@ -17,6 +17,11 @@ import (
 // this layer never cascades.
 type FtpAccountRepository interface {
 	Create(ctx context.Context, acct *models.FtpAccount) error
+	// ReserveWithinCap atomically enforces the per-tenant account cap and the
+	// isolated quota-split, then INSERTs acct — all under a per-tenant row lock
+	// so concurrent creates can never exceed the cap (JAB-262). Returns
+	// ErrFtpCapExceeded / ErrFtpQuotaSplitExceeded / ErrConflict.
+	ReserveWithinCap(ctx context.Context, acct *models.FtpAccount, maxAccounts int, pkgDiskQuotaMB uint32) error
 	FindByID(ctx context.Context, id string) (*models.FtpAccount, error)
 	FindByIDAndUserID(ctx context.Context, id, userID string) (*models.FtpAccount, error)
 	FindByUsername(ctx context.Context, username string) (*models.FtpAccount, error)
@@ -49,6 +54,46 @@ func (r *ftpAccountRepo) Create(ctx context.Context, acct *models.FtpAccount) er
 		return translateFtpAccount(err)
 	}
 	return nil
+}
+
+// ReserveWithinCap — see the interface doc. The whole check-and-insert runs in
+// one transaction gated by a FOR UPDATE lock on the tenant's users row: a
+// stable per-tenant serialization point that exists even at zero FTP rows (a
+// COUNT ... FOR UPDATE would lock nothing there and let two first-creates both
+// pass). The row lock releases on commit/rollback — no GET_LOCK connection-pool
+// leak — and the section holds no external call, so it is brief. JAB-262.
+func (r *ftpAccountRepo) ReserveWithinCap(ctx context.Context, acct *models.FtpAccount, maxAccounts int, pkgDiskQuotaMB uint32) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedID string
+		if err := tx.Raw("SELECT id FROM users WHERE id = ? FOR UPDATE", acct.UserID).Scan(&lockedID).Error; err != nil {
+			return err
+		}
+		if lockedID == "" {
+			return ErrNotFound
+		}
+		var count int64
+		if err := tx.Model(&models.FtpAccount{}).Where("user_id = ?", acct.UserID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= int64(maxAccounts) {
+			return ErrFtpCapExceeded
+		}
+		if acct.Isolated && pkgDiskQuotaMB > 0 {
+			var used uint64
+			if err := tx.Model(&models.FtpAccount{}).
+				Where("user_id = ? AND isolated = ?", acct.UserID, true).
+				Select("COALESCE(SUM(quota_mb), 0)").Scan(&used).Error; err != nil {
+				return err
+			}
+			if used+uint64(acct.QuotaMB) > uint64(pkgDiskQuotaMB) {
+				return ErrFtpQuotaSplitExceeded
+			}
+		}
+		if err := tx.Create(acct).Error; err != nil {
+			return translateFtpAccount(err)
+		}
+		return nil
+	})
 }
 
 func (r *ftpAccountRepo) FindByID(ctx context.Context, id string) (*models.FtpAccount, error) {

@@ -414,15 +414,10 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_home_path", "detail": err.Error()})
 		return
 	}
-	count, err := h.cfg.Repo.CountByUserID(ctx, u.ID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "quota_check_failed"})
-		return
-	}
-	if count >= int64(pkg.MaxFTPAccounts) {
-		c.JSON(http.StatusConflict, gin.H{"error": "ftp_account_quota_exceeded", "detail": "you have reached your FTP/SFTP account limit"})
-		return
-	}
+	// JAB-262: the cap (and the isolated quota-split below) is enforced
+	// atomically in ReserveWithinCap, under a per-tenant row lock — an unlocked
+	// count-then-create let concurrent requests all pass a zero count and each
+	// create a real alias, blowing past max_ftp_accounts.
 
 	sftpAccess := true
 	if req.SFTPAccess != nil {
@@ -450,20 +445,10 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "quota_required", "detail": "an isolated account requires a disk quota (quota_mb, in MB)"})
 			return
 		}
-		// Split allocation: Σ existing isolated sub quotas + this one must fit
-		// the package quota (when the package is capped; 0 = unlimited package,
-		// but the per-account cap still bounds the sub).
-		if pkg.DiskQuotaMB > 0 {
-			used, serr := h.cfg.Repo.SumIsolatedQuotaByUserID(ctx, u.ID)
-			if serr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "quota_check_failed"})
-				return
-			}
-			if used+uint64(req.QuotaMB) > uint64(pkg.DiskQuotaMB) {
-				c.JSON(http.StatusConflict, gin.H{"error": "quota_split_exceeded", "detail": fmt.Sprintf("isolated accounts would total %d MB, over the package quota of %d MB", used+uint64(req.QuotaMB), pkg.DiskQuotaMB)})
-				return
-			}
-		}
+		// Split allocation (Σ existing isolated sub quotas + this one ≤ package
+		// quota) is enforced inside ReserveWithinCap under the same per-tenant
+		// lock as the account cap (JAB-262) — an unlocked sum-then-create let
+		// concurrent isolated creates over-allocate the package disk quota.
 		var aerr error
 		allocUID, aerr = h.cfg.Repo.AllocateUID(ctx)
 		if aerr != nil {
@@ -476,14 +461,6 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		createParams["quota_mb"] = req.QuotaMB
 		createParams["quota_mount"] = h.cfg.QuotaMount
 		createParams["jail_path"] = jailPath
-	}
-
-	// Host first, row second: a row without a host user is a broken
-	// credential; a host user without a row is swept by the reconciler.
-	if err := h.agentCall(ctx, "ftpaccount.create", createParams); err != nil {
-		status, payload := h.mapAgentErr(err, "create_failed")
-		c.JSON(status, payload)
-		return
 	}
 
 	now := time.Now().UTC()
@@ -504,17 +481,34 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		acct.UID = &allocUID
 		acct.JailPath = jailPath
 	}
-	if err := h.cfg.Repo.Create(ctx, acct); err != nil {
-		// Compensate: remove the host alias so no unaccounted access
-		// survives a DB failure.
-		_ = h.agentCall(ctx, "ftpaccount.delete", map[string]any{
-			"tenant_username": tenant, "username": username,
-		})
-		if errors.Is(err, repository.ErrConflict) {
+
+	// JAB-262: RESERVE the row first — ReserveWithinCap atomically enforces the
+	// account cap + isolated quota-split under a per-tenant lock, so concurrent
+	// creates can never exceed the cap. Reserving before the host alias also
+	// closes the JAB-255 rowless-alias window: the row always exists before any
+	// alias does.
+	if err := h.cfg.Repo.ReserveWithinCap(ctx, acct, int(pkg.MaxFTPAccounts), pkg.DiskQuotaMB); err != nil {
+		switch {
+		case errors.Is(err, repository.ErrFtpCapExceeded):
+			c.JSON(http.StatusConflict, gin.H{"error": "ftp_account_quota_exceeded", "detail": "you have reached your FTP/SFTP account limit"})
+		case errors.Is(err, repository.ErrFtpQuotaSplitExceeded):
+			c.JSON(http.StatusConflict, gin.H{"error": "quota_split_exceeded", "detail": "isolated accounts would exceed the package disk quota"})
+		case errors.Is(err, repository.ErrConflict):
 			c.JSON(http.StatusConflict, gin.H{"error": "account_exists"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	if err := h.agentCall(ctx, "ftpaccount.create", createParams); err != nil {
+		// Compensate the reservation so a rejected host-create doesn't leave a
+		// slot-consuming row. If this delete itself fails, the surviving row is
+		// a valid desired-state account the reconciler provisions on its next
+		// pass (password-reset-required) — never a phantom cap consumer.
+		_ = h.cfg.Repo.Delete(ctx, acct.ID)
+		status, payload := h.mapAgentErr(err, "create_failed")
+		c.JSON(status, payload)
 		return
 	}
 	h.syncHostAccess(ctx, tenant)

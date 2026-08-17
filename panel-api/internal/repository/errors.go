@@ -25,6 +25,17 @@ var ErrLocked = errors.New("repository: locked")
 // This prevents single-use enforcement from being bypassed.
 var ErrAlreadyUsed = errors.New("repository: already used")
 
+// ErrFtpCapExceeded is returned by ReserveWithinCap when the tenant already
+// holds max_ftp_accounts subaccounts. Enforced under a per-tenant lock so
+// concurrent creates get a deterministic 409 instead of racing past the cap
+// (JAB-262).
+var ErrFtpCapExceeded = errors.New("repository: ftp account cap exceeded")
+
+// ErrFtpQuotaSplitExceeded is returned by ReserveWithinCap when adding an
+// isolated subaccount's quota_mb would push the sum of the tenant's isolated
+// quotas over the package disk quota (JAB-262).
+var ErrFtpQuotaSplitExceeded = errors.New("repository: ftp isolated quota split exceeded")
+
 // ErrPanelPrimaryNotFound is returned by DomainRepository.FindPanelPrimary
 // when no row has is_panel_primary=1. Distinct from ErrNotFound so the
 // Settings → Email endpoint can differentiate "row missing, return 202

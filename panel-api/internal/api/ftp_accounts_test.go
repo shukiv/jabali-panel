@@ -56,6 +56,27 @@ func (f *fakeFtpRepo) Create(_ context.Context, a *models.FtpAccount) error {
 	return nil
 }
 
+// ReserveWithinCap mirrors the real repo's atomic cap + quota-split + insert
+// (JAB-262). The fake is single-goroutine, so it just models the decision.
+func (f *fakeFtpRepo) ReserveWithinCap(ctx context.Context, a *models.FtpAccount, maxAccounts int, pkgDiskQuotaMB uint32) error {
+	var count int
+	for _, r := range f.rows {
+		if r.UserID == a.UserID {
+			count++
+		}
+	}
+	if count >= maxAccounts {
+		return repository.ErrFtpCapExceeded
+	}
+	if a.Isolated && pkgDiskQuotaMB > 0 {
+		used, _ := f.SumIsolatedQuotaByUserID(ctx, a.UserID)
+		if used+uint64(a.QuotaMB) > uint64(pkgDiskQuotaMB) {
+			return repository.ErrFtpQuotaSplitExceeded
+		}
+	}
+	return f.Create(ctx, a)
+}
+
 func (f *fakeFtpRepo) FindByIDAndUserID(_ context.Context, id, userID string) (*models.FtpAccount, error) {
 	if r, ok := f.rows[id]; ok && r.UserID == userID {
 		cp := *r
@@ -308,9 +329,12 @@ func TestMapFtpAgentError_FailedPreconditionIsActionable(t *testing.T) {
 	}
 }
 
-func TestFtpAPICreate_RowFailureCompensatesHost(t *testing.T) {
+// JAB-262: with reserve-then-create, the row is inserted BEFORE any host alias.
+// A reservation-insert failure therefore happens before the agent is touched —
+// there is no host alias to compensate, and neither create nor delete fires.
+func TestFtpAPICreate_ReserveFailureNoHostTouch(t *testing.T) {
 	repo := newFakeFtpRepo()
-	repo.createErr = repository.ErrConflict
+	repo.createErr = repository.ErrConflict // reservation insert fails (dup)
 	mock := ftpMockAgent()
 	r := ftpTestRouter(t, repo, mock, ftpPkg(3))
 
@@ -319,9 +343,11 @@ func TestFtpAPICreate_RowFailureCompensatesHost(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d", rec.Code)
 	}
-	// The host alias must be torn back down when the row write fails.
-	if mockCalled(mock, "ftpaccount.delete") != 1 {
-		t.Fatal("expected compensating ftpaccount.delete")
+	if mockCalled(mock, "ftpaccount.create") != 0 {
+		t.Fatal("no host alias may be created when the reservation fails")
+	}
+	if mockCalled(mock, "ftpaccount.delete") != 0 {
+		t.Fatal("nothing to compensate — no delete should be dispatched")
 	}
 }
 
