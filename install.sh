@@ -857,7 +857,11 @@ listen=YES
 listen_ipv6=NO
 anonymous_enable=NO
 local_enable=YES
-local_umask=022
+# JAB-264: 0007 strips OTHER read/traverse bits from uploads (files 0660, dirs
+# 0770), matching the cross-tenant privacy model (ADR-0030). The group bit is
+# preserved so nginx (www-data on a setgid docroot) still reads served content;
+# OTHER local accounts get nothing.
+local_umask=0007
 dirmessage_enable=NO
 use_localtime=YES
 xferlog_enable=YES

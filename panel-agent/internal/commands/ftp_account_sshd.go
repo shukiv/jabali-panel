@@ -115,10 +115,12 @@ func renderXferDropin(accounts []ftpSSHDSyncAccount) string {
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Username < sorted[j].Username })
 	for _, a := range sorted {
 		b.WriteString("\nMatch User " + a.Username + "\n")
-		// -d: start the session in the account's directory. Not a
-		// security boundary (the alias shares the tenant uid); the
-		// boundary is the tenant-home chroot.
-		b.WriteString("    ForceCommand internal-sftp -d " + a.StartDir + "\n")
+		// -u 0007 (JAB-264): strip OTHER read/traverse bits from uploaded
+		// files/dirs, matching vsftpd's local_umask and the ADR-0030 privacy
+		// model (files 0660, dirs 0770; group kept for nginx). -d: start the
+		// session in the account's directory (not a boundary — that is the
+		// chroot).
+		b.WriteString("    ForceCommand internal-sftp -u 0007 -d " + a.StartDir + "\n")
 		b.WriteString("    ChrootDirectory " + a.ChrootDir + "\n")
 		b.WriteString("    AllowTcpForwarding no\n")
 		b.WriteString("    X11Forwarding no\n")

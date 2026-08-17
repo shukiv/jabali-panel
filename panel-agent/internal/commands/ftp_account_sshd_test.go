@@ -34,10 +34,11 @@ func TestRenderXferDropin_DeterministicAndComplete(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Match User alpha_dev",
-		"ForceCommand internal-sftp -d /",
+		// JAB-264: -u 0007 strips OTHER bits from uploads.
+		"ForceCommand internal-sftp -u 0007 -d /",
 		"ChrootDirectory /home/alpha",
 		"Match User zeta_dev",
-		"ForceCommand internal-sftp -d /site",
+		"ForceCommand internal-sftp -u 0007 -d /site",
 		"ChrootDirectory /home/zeta",
 		"AllowTcpForwarding no",
 		"PasswordAuthentication yes",
