@@ -54,7 +54,12 @@ func ftpAliasOwnedBy(gecos string, aliasUID int, tenant *ftpTenant) bool {
 		return false
 	}
 	if owner != "" {
-		return owner == tenant.Username
+		// Owner match is authoritative, but never claim a SYSTEM uid: a
+		// (root-created, mistaken) owner marker on uid 0 / a service account
+		// must not be lockable/listable as a subaccount. An owned subaccount is
+		// either the tenant uid (owner-encoded legacy mode) or an isolated uid
+		// in the reserved range.
+		return owner == tenant.Username && (aliasUID == tenant.UID || aliasUID >= ftpSubaccountUIDMin)
 	}
 	// Legacy bare marker: the alias must share the tenant uid (the historical
 	// disambiguator that still distinguishes "shop" from "shop_other").

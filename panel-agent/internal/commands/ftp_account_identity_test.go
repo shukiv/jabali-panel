@@ -137,3 +137,22 @@ func TestClassifyFtpAliasesForgedPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestFtpAliasOwnedBySystemUID: an owner-encoded marker on a SYSTEM uid must
+// never be claimed as a subaccount (root-created mistake / forgery guard).
+func TestFtpAliasOwnedBySystemUID(t *testing.T) {
+	shop := &ftpTenant{Username: "shop", UID: 1002}
+	if ftpAliasOwnedBy("jabali-ftp-account=shop", 0, shop) {
+		t.Fatal("owner marker on uid 0 must NOT be owned")
+	}
+	if ftpAliasOwnedBy("jabali-ftp-account=shop", 1, shop) {
+		t.Fatal("owner marker on a system uid must NOT be owned")
+	}
+	// valid: tenant uid + isolated uid
+	if !ftpAliasOwnedBy("jabali-ftp-account=shop", 1002, shop) {
+		t.Fatal("owner marker on the tenant uid must be owned")
+	}
+	if !ftpAliasOwnedBy("jabali-ftp-account=shop", 500002, shop) {
+		t.Fatal("owner marker on an isolated uid must be owned")
+	}
+}

@@ -224,6 +224,15 @@ func requireFtpSubaccount(tenant *ftpTenant, sub string) (*user.User, *agentwire
 				Message: fmt.Sprintf("passwd entry %q is owned by tenant %q, not %q — refusing", sub, owner, tenant.Username),
 			}
 		}
+		// Owner match is authoritative, but never touch a system uid: an owned
+		// subaccount is the tenant uid (owner-encoded legacy) or an isolated uid
+		// in the reserved range. Blocks a mistaken owner marker on uid 0.
+		if uid != tenant.UID && uid < ftpSubaccountUIDMin {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodePermissionDenied,
+				Message: fmt.Sprintf("passwd entry %q has out-of-range uid %d for an owned subaccount — refusing", sub, uid),
+			}
+		}
 	} else if uid != tenant.UID {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodePermissionDenied,
@@ -531,7 +540,15 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	u, aerr := requireFtpSubaccount(tenant, p.Username)
 	if aerr != nil {
 		// Idempotent delete: a passwd entry that is already gone is success.
+		// But a PRIOR delete may have failed AFTER userdel and BEFORE jail
+		// teardown, leaving an orphaned jail + live bind mount of tenant data
+		// that nothing else sweeps (the reaper keys on passwd, the reconciler
+		// on DB rows — both gone). Tear the jail down here too; idempotent and
+		// ENOENT-safe, so it no-ops for a legacy account that never had one.
 		if aerr.Code == agentwire.CodeNotFound {
+			if terr := teardownIsolatedJail(ctx, ftpJailPathFor(tenant, p.Username)); terr != nil {
+				return nil, terr
+			}
 			return map[string]any{"username": p.Username, "deleted": false, "absent": true}, nil
 		}
 		return nil, aerr
@@ -739,9 +756,14 @@ func classifyFtpAliases(passwd string) (owned []ftpAccountListAllEntry, skippedU
 			// Owner-encoded: ownership is explicit — no uid/shape inference
 			// (isolated aliases do NOT share the tenant uid). Report it even if
 			// the owner tenant is gone; a rowless alias is exactly what the
-			// reaper must surface. Require the namespaced-username prefix to
-			// match the encoded owner: a mismatch is a corrupted/forged marker
-			// (only root writes passwd), never attributed to a tenant.
+			// reaper must surface. A SYSTEM uid with an owner marker is never
+			// ours (mirrors the legacy walk's minTenantUID guard) — ignore it.
+			// Otherwise require the namespaced-username prefix to match the
+			// encoded owner: a mismatch is a corrupted/forged marker (only root
+			// writes passwd), never attributed to a tenant.
+			if byName[name].uid < minTenantUID {
+				continue
+			}
 			if strings.HasPrefix(name, owner+"_") {
 				owned = append(owned, ftpAccountListAllEntry{
 					TenantUsername: owner,
