@@ -44,11 +44,18 @@ ALTER TABLE ftp_accounts
 -- then read (or SELECT ... FOR UPDATE) inside the create txn. NEVER
 -- decremented on delete, so a freed uid is never reassigned while any file it
 -- owns may still survive under the tenant home — a new account must never
--- silently inherit a dead account's files. Base 500000 sits far above tenant
--- uids and above the systemd DynamicUser range (61184-65519) and nobody
--- (65534), and well within the 32-bit uid space.
+-- silently inherit a dead account's files.
+--
+-- Base 1000000000 (1e9) sits ABOVE the rootless-container subuid delegation
+-- ceiling. /etc/subuid hands each tenant a 65536-uid block from SUB_UID_MIN
+-- (100000) upward, capped at SUB_UID_MAX (600100000 on Debian/Ubuntu). A uid
+-- inside that span would collide with a tenant's user-namespace mapping — a
+-- rootless container writing as that host uid would share identity + quota
+-- with the FTP subaccount (found live on a box: a tenant's block was
+-- 493216-558751, straddling a naive 500000 base). 1e9 is above the ceiling,
+-- below the systemd invalid-uid line (2^31), with ~1.1e9 uids of headroom.
 CREATE TABLE ftp_subaccount_uid_seq (
   id       TINYINT UNSIGNED NOT NULL PRIMARY KEY,
   next_uid INT UNSIGNED     NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-INSERT INTO ftp_subaccount_uid_seq (id, next_uid) VALUES (1, 500000);
+INSERT INTO ftp_subaccount_uid_seq (id, next_uid) VALUES (1, 1000000000);

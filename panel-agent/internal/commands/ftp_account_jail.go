@@ -55,11 +55,12 @@ const ftpJailRootDefault = "/var/lib/jabali-ftp-jails"
 const ftpJailMountpoint = "data"
 
 // ftpSubaccountUIDMin is the floor of the reserved, never-reused uid range for
-// isolated subaccounts (must match migration 000267's allocator base). Well
-// above tenant uids and the systemd DynamicUser range (61184-65519) and
-// nobody (65534). The agent re-checks this floor — it never trusts the panel's
-// allocated uid blindly.
-const ftpSubaccountUIDMin = 500000
+// isolated subaccounts (must match migration 000267's allocator base). 1e9 is
+// ABOVE the rootless-container subuid delegation ceiling (SUB_UID_MAX, 6.001e8
+// on Debian/Ubuntu) — a uid inside the subuid span (100000..SUB_UID_MAX) would
+// share host identity + quota with a tenant's user-namespace mapping. The agent
+// re-checks this floor — it never trusts the panel's allocated uid blindly.
+const ftpSubaccountUIDMin = 1000000000
 
 func ftpJailRoot() string {
 	if p := os.Getenv("JABALI_FTP_JAIL_ROOT"); p != "" {

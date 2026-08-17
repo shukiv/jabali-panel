@@ -346,7 +346,7 @@ func TestReconcileFtpAccounts_IsolatedSSHDPayload(t *testing.T) {
 		"ftpaccount.list":     hostListResult(t, []agentFtpListEntry{{Username: "shop_printer"}}),
 		"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{{Username: "shop_printer"}}),
 	}}
-	uid := uint32(500001)
+	uid := uint32(1000000001)
 	rows := []models.FtpAccount{{
 		ID: "a1", UserID: "u1", Username: "shop_printer",
 		HomePath: "/home/shop/ftp/printer", SFTPAccess: true, IsEnabled: true,
@@ -387,7 +387,7 @@ func TestReconcileFtpAccounts_RecreatesIsolatedWithParams(t *testing.T) {
 		"ftpaccount.list":     hostListResult(t, nil), // host has nothing
 		"ftpaccount.list_all": hostListAllResult(t, nil),
 	}}
-	uid := uint32(500001)
+	uid := uint32(1000000001)
 	rows := []models.FtpAccount{{
 		ID: "a1", UserID: "u1", Username: "shop_printer",
 		HomePath: "/home/shop/ftp/printer", SFTPAccess: true, IsEnabled: true,
@@ -405,7 +405,7 @@ func TestReconcileFtpAccounts_RecreatesIsolatedWithParams(t *testing.T) {
 	if p["isolated"] != true || p["jail_path"] != "/var/lib/jabali-ftp-jails/shop/shop_printer" || p["quota_mount"] != "/" {
 		t.Fatalf("recreate missing isolated params: %v", p)
 	}
-	if fmt.Sprint(p["uid"]) != "500001" {
-		t.Fatalf("recreate must reuse the stored uid 500001, got %v", p["uid"])
+	if fmt.Sprint(p["uid"]) != "1000000001" {
+		t.Fatalf("recreate must reuse the stored uid 1000000001, got %v", p["uid"])
 	}
 }

@@ -37,11 +37,11 @@ func TestFtpAliasOwnedBy(t *testing.T) {
 		want     bool
 	}{
 		// Owner-encoded: matched by owner, independent of uid.
-		{"isolated of shop", "jabali-ftp-account=shop", 500002, shop, true},
-		{"isolated of shop not owned by shop_other", "jabali-ftp-account=shop", 500002, shopOther, false},
+		{"isolated of shop", "jabali-ftp-account=shop", 1000000002, shop, true},
+		{"isolated of shop not owned by shop_other", "jabali-ftp-account=shop", 1000000002, shopOther, false},
 		// Prefix collision: shop_other_deploy is owned by shop_other, NEVER shop.
-		{"collision: owned by shop_other", "jabali-ftp-account=shop_other", 500003, shopOther, true},
-		{"collision: NOT owned by shop", "jabali-ftp-account=shop_other", 500003, shop, false},
+		{"collision: owned by shop_other", "jabali-ftp-account=shop_other", 1000000003, shopOther, true},
+		{"collision: NOT owned by shop", "jabali-ftp-account=shop_other", 1000000003, shop, false},
 		// Bare legacy marker: matched only by shared uid.
 		{"legacy same-uid of shop", "jabali-ftp-account", 1002, shop, true},
 		{"legacy wrong uid", "jabali-ftp-account", 1004, shop, false},
@@ -65,10 +65,10 @@ func TestClassifyFtpAliasesIsolated(t *testing.T) {
 		"shop:x:1002:1002::/home/shop:/bin/bash\n" +
 		"shop_other:x:1004:1004::/home/shop_other:/bin/bash\n" +
 		// isolated alias of shop: own uid, owner-encoded GECOS, jail home
-		"shop_printer:x:500002:500002:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/shop_printer:/usr/sbin/nologin\n" +
+		"shop_printer:x:1000000002:1000000002:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/shop_printer:/usr/sbin/nologin\n" +
 		// isolated alias of shop_other: prefix "shop_" collides with tenant shop,
 		// but the owner marker attributes it to shop_other, NOT shop.
-		"shop_other_deploy:x:500003:500003:jabali-ftp-account=shop_other:/var/lib/jabali-ftp-jails/shop_other/shop_other_deploy:/usr/sbin/nologin\n" +
+		"shop_other_deploy:x:1000000003:1000000003:jabali-ftp-account=shop_other:/var/lib/jabali-ftp-jails/shop_other/shop_other_deploy:/usr/sbin/nologin\n" +
 		// a legacy bare-marker same-uid alias still works alongside isolated ones
 		"shop_legacy:x:1002:1002:jabali-ftp-account:/home/shop/legacy:/usr/sbin/nologin\n"
 
@@ -102,9 +102,9 @@ func TestFtpOwnedAliasNamesLockPath(t *testing.T) {
 	passwd := "" +
 		"shop:x:1002:1002::/home/shop:/bin/bash\n" +
 		"shop_legacy:x:1002:1002:jabali-ftp-account:/home/shop/a:/usr/sbin/nologin\n" +
-		"shop_printer:x:500002:500002:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/shop_printer:/usr/sbin/nologin\n" +
+		"shop_printer:x:1000000002:1000000002:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/shop_printer:/usr/sbin/nologin\n" +
 		// prefix "shop_" collides but this is shop_other's isolated alias:
-		"shop_other_deploy:x:500003:500003:jabali-ftp-account=shop_other:/var/lib/jabali-ftp-jails/shop_other/shop_other_deploy:/usr/sbin/nologin\n"
+		"shop_other_deploy:x:1000000003:1000000003:jabali-ftp-account=shop_other:/var/lib/jabali-ftp-jails/shop_other/shop_other_deploy:/usr/sbin/nologin\n"
 
 	names := ftpOwnedAliasNames(passwd, &ftpTenant{Username: "shop", UID: 1002})
 	got := map[string]bool{}
@@ -129,7 +129,7 @@ func TestClassifyFtpAliasesForgedPrefix(t *testing.T) {
 	passwd := "" +
 		"shop:x:1002:1002::/home/shop:/bin/bash\n" +
 		// username "evil_deploy" but GECOS claims owner "shop" — prefix mismatch
-		"evil_deploy:x:500009:500009:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/evil:/usr/sbin/nologin\n"
+		"evil_deploy:x:1000000009:1000000009:jabali-ftp-account=shop:/var/lib/jabali-ftp-jails/shop/evil:/usr/sbin/nologin\n"
 	owned, _ := classifyFtpAliases(passwd)
 	for _, o := range owned {
 		if o.Username == "evil_deploy" {
@@ -152,7 +152,7 @@ func TestFtpAliasOwnedBySystemUID(t *testing.T) {
 	if !ftpAliasOwnedBy("jabali-ftp-account=shop", 1002, shop) {
 		t.Fatal("owner marker on the tenant uid must be owned")
 	}
-	if !ftpAliasOwnedBy("jabali-ftp-account=shop", 500002, shop) {
+	if !ftpAliasOwnedBy("jabali-ftp-account=shop", 1000000002, shop) {
 		t.Fatal("owner marker on an isolated uid must be owned")
 	}
 }

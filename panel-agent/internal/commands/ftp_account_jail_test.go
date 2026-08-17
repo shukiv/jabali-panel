@@ -33,7 +33,7 @@ func TestValidateIsolatedCreate(t *testing.T) {
 			HomePath:       "/home/bob/ftp/printer",
 			Password:       "x",
 			Isolated:       true,
-			UID:            500001,
+			UID:            1000000001,
 			QuotaMB:        100,
 			QuotaMount:     "/home",
 			JailPath:       goodJail,
