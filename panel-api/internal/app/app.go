@@ -106,13 +106,13 @@ type Deps struct {
 	// builds a default-populated registry when this is nil so the
 	// existing test wiring (`Deps{}`) keeps working without each
 	// caller knowing about the registry.
-	Apps           *apps.Registry
-	CronJobs       repository.CronJobRepository
-	DockerApps     repository.DockerAppRepository
-	PythonApps     repository.PythonAppRepository
-	DockerCatalog  *dockerapp.Catalog
-	PyFrameworks   *pyframeworks.Catalog
-	SSHKeys        repository.SSHKeyRepository
+	Apps          *apps.Registry
+	CronJobs      repository.CronJobRepository
+	DockerApps    repository.DockerAppRepository
+	PythonApps    repository.PythonAppRepository
+	DockerCatalog *dockerapp.Catalog
+	PyFrameworks  *pyframeworks.Catalog
+	SSHKeys       repository.SSHKeyRepository
 	// FtpAccounts backs the tenant FTP/SFTP subaccount routes (GH #1053).
 	FtpAccounts    repository.FtpAccountRepository
 	LimitOverrides repository.UserLimitOverrideRepository
@@ -1357,6 +1357,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:           deps.Agent,
 				Log:             deps.Log,
 				StrictRateLimit: rl.Strict(),
+				QuotaMount:      deps.QuotaMount, // GH #1145 isolated per-uid setquota
 			})
 		}
 

@@ -28,6 +28,14 @@ type FtpAccountRepository interface {
 	Update(ctx context.Context, acct *models.FtpAccount) error
 	Delete(ctx context.Context, id string) error
 	CountByUserID(ctx context.Context, userID string) (int64, error)
+	// AllocateUID hands out the next isolated-subaccount uid from the monotonic
+	// never-reuse allocator (GH #1145). The value only ever increases, so a
+	// freed uid is never reassigned while any file it owns may survive.
+	AllocateUID(ctx context.Context) (uint32, error)
+	// SumIsolatedQuotaByUserID totals quota_mb across a tenant's ISOLATED
+	// subaccounts, for the split-allocation check (Σ subaccounts + tenant ≤
+	// package quota).
+	SumIsolatedQuotaByUserID(ctx context.Context, userID string) (uint64, error)
 }
 
 type ftpAccountRepo struct{ db *gorm.DB }
@@ -119,6 +127,37 @@ func (r *ftpAccountRepo) CountByUserID(ctx context.Context, userID string) (int6
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *ftpAccountRepo) AllocateUID(ctx context.Context) (uint32, error) {
+	var uid uint32
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// FOR UPDATE serializes concurrent creates so two subaccounts never get
+		// the same uid. Read the current high-water mark, then bump it.
+		if err := tx.Raw("SELECT next_uid FROM ftp_subaccount_uid_seq WHERE id = 1 FOR UPDATE").Scan(&uid).Error; err != nil {
+			return err
+		}
+		if uid == 0 {
+			return errors.New("ftp_subaccount_uid_seq is not seeded")
+		}
+		return tx.Exec("UPDATE ftp_subaccount_uid_seq SET next_uid = next_uid + 1 WHERE id = 1").Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return uid, nil
+}
+
+func (r *ftpAccountRepo) SumIsolatedQuotaByUserID(ctx context.Context, userID string) (uint64, error) {
+	var sum uint64
+	row := r.db.WithContext(ctx).
+		Model(&models.FtpAccount{}).
+		Where("user_id = ? AND isolated = 1", userID).
+		Select("COALESCE(SUM(quota_mb), 0)").Row()
+	if err := row.Scan(&sum); err != nil {
+		return 0, err
+	}
+	return sum, nil
 }
 
 // translateFtpAccount maps GORM/driver errors to repository conventions.

@@ -59,9 +59,10 @@ func TestFtpAccountCreate_Success(t *testing.T) {
 	acct := testFtpAccount(time.Now())
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`is_enabled`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?)")).
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`is_enabled`,`uid`,`isolated`,`quota_mb`,`jail_path`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")).
 		WithArgs(acct.ID, acct.UserID, acct.Username, acct.HomePath,
 			acct.FTPAccess, acct.SFTPAccess, acct.IsEnabled,
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -84,9 +85,10 @@ func TestFtpAccountCreate_ExplicitFalseSFTPAccess(t *testing.T) {
 	acct.FTPAccess = true
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`is_enabled`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?)")).
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`is_enabled`,`uid`,`isolated`,`quota_mb`,`jail_path`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")).
 		WithArgs(acct.ID, acct.UserID, acct.Username, acct.HomePath,
 			true, false, acct.IsEnabled,
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -18,6 +19,22 @@ type fakeFtpRepo struct {
 	repository.FtpAccountRepository
 	rows      map[string]*models.FtpAccount
 	createErr error
+	uidSeq    uint32
+}
+
+func (f *fakeFtpRepo) AllocateUID(_ context.Context) (uint32, error) {
+	f.uidSeq++
+	return ftpSubaccountUIDMin + f.uidSeq, nil
+}
+
+func (f *fakeFtpRepo) SumIsolatedQuotaByUserID(_ context.Context, userID string) (uint64, error) {
+	var sum uint64
+	for _, r := range f.rows {
+		if r.UserID == userID && r.Isolated {
+			sum += uint64(r.QuotaMB)
+		}
+	}
+	return sum, nil
 }
 
 func newFakeFtpRepo() *fakeFtpRepo {
@@ -107,10 +124,11 @@ func ftpTestRouter(t *testing.T, repo *fakeFtpRepo, mock *agent.MockClient, pkg 
 		"u1": {ID: "u1", Username: &uname, PackageID: &pkgID},
 	}}
 	h := &ftpAccountsHandler{cfg: FtpAccountsHandlerConfig{
-		Repo:     repo,
-		Users:    users,
-		Packages: &fakePkgRepo{pkg: pkg},
-		Agent:    mock,
+		Repo:       repo,
+		Users:      users,
+		Packages:   &fakePkgRepo{pkg: pkg},
+		Agent:      mock,
+		QuotaMount: "/", // GH #1145: enables isolated create in tests
 	}}
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -352,5 +370,65 @@ func TestFtpAPI_ZeroCap_ManagementStillWorks(t *testing.T) {
 	}
 	if len(repo.rows) != 0 {
 		t.Fatal("row not deleted at zero cap")
+	}
+}
+
+func TestFtpAPICreate_Isolated(t *testing.T) {
+	repo := newFakeFtpRepo()
+	mock := ftpMockAgent()
+	pkg := ftpPkg(3)
+	pkg.DiskQuotaMB = 1000
+	r := ftpTestRouter(t, repo, mock, pkg)
+
+	rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"printer","home_path":"/home/shop/ftp/printer","password":"longenough-pass1","isolated":true,"quota_mb":200}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var row *models.FtpAccount
+	for _, x := range repo.rows {
+		row = x
+	}
+	if row == nil || !row.Isolated || row.UID == nil || *row.UID < ftpSubaccountUIDMin ||
+		row.QuotaMB != 200 || row.JailPath != "/var/lib/jabali-ftp-jails/shop/shop_printer" {
+		t.Fatalf("isolated row wrong: %+v", row)
+	}
+	// The agent create carried the isolated fields the agent re-validates.
+	var params map[string]any
+	for _, c := range mock.Calls() {
+		if c.Command == "ftpaccount.create" {
+			_ = json.Unmarshal(c.Params, &params)
+		}
+	}
+	if params["isolated"] != true ||
+		params["jail_path"] != "/var/lib/jabali-ftp-jails/shop/shop_printer" ||
+		params["quota_mount"] != "/" {
+		t.Fatalf("agent create params missing isolated fields: %v", params)
+	}
+}
+
+func TestFtpAPICreate_IsolatedRequiresQuota(t *testing.T) {
+	repo := newFakeFtpRepo()
+	r := ftpTestRouter(t, repo, ftpMockAgent(), ftpPkg(3))
+	rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"printer","home_path":"/home/shop/ftp/printer","password":"longenough-pass1","isolated":true}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 (quota required), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(repo.rows) != 0 {
+		t.Fatal("no row should be created when quota is missing")
+	}
+}
+
+func TestFtpAPICreate_IsolatedQuotaSplitExceeded(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["x"] = &models.FtpAccount{ID: "x", UserID: "u1", Username: "shop_a", Isolated: true, QuotaMB: 900}
+	pkg := ftpPkg(3)
+	pkg.DiskQuotaMB = 1000
+	r := ftpTestRouter(t, repo, ftpMockAgent(), pkg)
+	rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"printer","home_path":"/home/shop/ftp/printer","password":"longenough-pass1","isolated":true,"quota_mb":200}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 (split exceeded 900+200>1000), got %d: %s", rec.Code, rec.Body.String())
 	}
 }

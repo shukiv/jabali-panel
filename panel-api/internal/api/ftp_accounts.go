@@ -39,7 +39,21 @@ type FtpAccountsHandlerConfig struct {
 	Agent           agent.AgentInterface
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc // optional — wire from rl.Strict()
+	// QuotaMount is the filesystem mount path /home lives on (the same value
+	// the M18 user-limits reconciler uses, internal/limits.QuotaMountFor).
+	// Required for GH #1145 isolated accounts (per-uid setquota); empty
+	// disables isolation (the create refuses an isolated request).
+	QuotaMount string
 }
+
+// GH #1145 isolated-subaccount constants. These MUST match the panel-agent
+// (ftp_account_jail.go) and migration 000267 — the panel computes the jail
+// path + validates the uid range the agent re-checks.
+const (
+	ftpJailRoot         = "/var/lib/jabali-ftp-jails"
+	ftpJailMountpoint   = "data"
+	ftpSubaccountUIDMin = 500000
+)
 
 // RegisterFtpAccountRoutes mounts:
 //   - GET    /me/ftp-accounts               list caller's accounts
@@ -179,6 +193,13 @@ type ftpAccountCreateRequest struct {
 	Password   string `json:"password" binding:"required"`
 	FTPAccess  bool   `json:"ftp_access"`
 	SFTPAccess *bool  `json:"sftp_access"` // default true
+	// Isolated selects the GH #1145 separate-uid jailed model. Nil/false =
+	// legacy same-uid alias (back-compat). The UI defaults this on; a direct
+	// API caller that omits it stays legacy.
+	Isolated *bool `json:"isolated"`
+	// QuotaMB is the per-account disk cap (MB), REQUIRED when Isolated — an
+	// isolated separate uid escapes the tenant's package quota without it.
+	QuotaMB uint32 `json:"quota_mb"`
 }
 
 type ftpAccountUpdateRequest struct {
@@ -305,10 +326,18 @@ func (h *ftpAccountsHandler) syncHostAccess(ctx context.Context, tenantUsername 
 		if uname == "" {
 			continue
 		}
-		chroot := "/home/" + uname
-		start := "/"
-		if rel, rerr := filepath.Rel(chroot, a.HomePath); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-			start = "/" + rel
+		var chroot, start string
+		if a.Isolated && a.JailPath != "" {
+			// GH #1145: isolated accounts chroot to their root-owned jail; the
+			// selected sub-tree is bind-mounted at /<mountpoint> inside it.
+			chroot = a.JailPath
+			start = "/" + ftpJailMountpoint
+		} else {
+			chroot = "/home/" + uname
+			start = "/"
+			if rel, rerr := filepath.Rel(chroot, a.HomePath); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+				start = "/" + rel
+			}
 		}
 		desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
 	}
@@ -376,15 +405,58 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		sftpAccess = *req.SFTPAccess
 	}
 
-	// Host first, row second: a row without a host user is a broken
-	// credential; a host user without a row is swept by the reconciler.
-	if err := h.agentCall(ctx, "ftpaccount.create", map[string]any{
+	isolated := req.Isolated != nil && *req.Isolated
+	createParams := map[string]any{
 		"tenant_username": tenant,
 		"username":        username,
 		"home_path":       req.HomePath,
 		"password":        req.Password,
 		"ftp_access":      req.FTPAccess,
-	}); err != nil {
+	}
+	var allocUID uint32
+	var jailPath string
+	if isolated {
+		if h.cfg.QuotaMount == "" {
+			// setquota can't run without a mount → an isolated uid would be
+			// unquota'd (disk-fill). Refuse rather than ship an unenforced one.
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "isolation_unavailable", "detail": "per-account disk quota is not configured on this host"})
+			return
+		}
+		if req.QuotaMB == 0 {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "quota_required", "detail": "an isolated account requires a disk quota (quota_mb, in MB)"})
+			return
+		}
+		// Split allocation: Σ existing isolated sub quotas + this one must fit
+		// the package quota (when the package is capped; 0 = unlimited package,
+		// but the per-account cap still bounds the sub).
+		if pkg.DiskQuotaMB > 0 {
+			used, serr := h.cfg.Repo.SumIsolatedQuotaByUserID(ctx, u.ID)
+			if serr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "quota_check_failed"})
+				return
+			}
+			if used+uint64(req.QuotaMB) > uint64(pkg.DiskQuotaMB) {
+				c.JSON(http.StatusConflict, gin.H{"error": "quota_split_exceeded", "detail": fmt.Sprintf("isolated accounts would total %d MB, over the package quota of %d MB", used+uint64(req.QuotaMB), pkg.DiskQuotaMB)})
+				return
+			}
+		}
+		var aerr error
+		allocUID, aerr = h.cfg.Repo.AllocateUID(ctx)
+		if aerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "uid_alloc_failed"})
+			return
+		}
+		jailPath = ftpJailRoot + "/" + tenant + "/" + username
+		createParams["isolated"] = true
+		createParams["uid"] = allocUID
+		createParams["quota_mb"] = req.QuotaMB
+		createParams["quota_mount"] = h.cfg.QuotaMount
+		createParams["jail_path"] = jailPath
+	}
+
+	// Host first, row second: a row without a host user is a broken
+	// credential; a host user without a row is swept by the reconciler.
+	if err := h.agentCall(ctx, "ftpaccount.create", createParams); err != nil {
 		status, payload := mapFtpAgentError(err, "create_failed")
 		c.JSON(status, payload)
 		return
@@ -399,8 +471,14 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		FTPAccess:  req.FTPAccess,
 		SFTPAccess: sftpAccess,
 		IsEnabled:  true,
+		Isolated:   isolated,
+		QuotaMB:    req.QuotaMB,
 		CreatedAt:  now,
 		UpdatedAt:  now,
+	}
+	if isolated {
+		acct.UID = &allocUID
+		acct.JailPath = jailPath
 	}
 	if err := h.cfg.Repo.Create(ctx, acct); err != nil {
 		// Compensate: remove the host alias so no unaccounted access
