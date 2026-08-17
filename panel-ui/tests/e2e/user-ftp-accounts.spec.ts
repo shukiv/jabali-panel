@@ -159,6 +159,10 @@ test("create drawer submits the tenant-prefixed body and never echoes the passwo
   const dirInput = page.getByLabel("Directory");
   await dirInput.fill("example.com/public_html");
   await page.getByLabel("Password", { exact: true }).fill("a-long-enough-password");
+  // GH #1145: the "Isolated account" toggle defaults ON, which requires a
+  // disk quota — fill it so the form submits (and to exercise the default,
+  // secure isolated create path).
+  await page.getByLabel("Disk quota").fill("500");
   await page.getByRole("button", { name: /Add account/ }).last().click();
 
   await expect
@@ -168,6 +172,8 @@ test("create drawer submits the tenant-prefixed body and never echoes the passwo
     label: "deploy",
     home_path: "/home/shop/example.com/public_html",
     password: "a-long-enough-password",
+    isolated: true,
+    quota_mb: 500,
   });
   await expect(page.getByText("shop_deploy")).toBeVisible();
 });
