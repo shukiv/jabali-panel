@@ -202,18 +202,31 @@ func requireFtpSubaccount(tenant *ftpTenant, sub string) (*user.User, *agentwire
 		}
 	}
 	uid, _ := strconv.Atoi(u.Uid)
-	if uid != tenant.UID {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodePermissionDenied,
-			Message: fmt.Sprintf("passwd entry %q has uid %d, expected tenant uid %d — refusing to touch a non-subaccount user", sub, uid, tenant.UID),
-		}
-	}
-	// Ownership marker: name+uid alone can match an operator's hand-made
-	// alias — those are never ours to re-password, lock, or delete.
-	if u.Name != ftpAliasGecos {
+	// Ownership: the GECOS marker (bare or owner-encoded) is authoritative.
+	// Owner-encoded aliases match by owner regardless of uid (isolated accounts
+	// have their OWN uid); bare-marker legacy aliases must still share the
+	// tenant uid. os/user parses User.Name as the pre-comma GECOS segment, which
+	// is exactly what ftpMarkerOwner expects. Both the marker AND the tenant
+	// binding must hold, so a caller can never lock/re-password/delete an
+	// operator's alias or another tenant's subaccount.
+	owner, marked := ftpMarkerOwner(u.Name)
+	if !marked {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodePermissionDenied,
 			Message: fmt.Sprintf("passwd entry %q lacks the %q ownership marker — operator-managed account, refusing", sub, ftpAliasGecos),
+		}
+	}
+	if owner != "" {
+		if owner != tenant.Username {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodePermissionDenied,
+				Message: fmt.Sprintf("passwd entry %q is owned by tenant %q, not %q — refusing", sub, owner, tenant.Username),
+			}
+		}
+	} else if uid != tenant.UID {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodePermissionDenied,
+			Message: fmt.Sprintf("passwd entry %q has uid %d, expected tenant uid %d — refusing to touch a non-subaccount user", sub, uid, tenant.UID),
 		}
 	}
 	return u, nil
@@ -392,7 +405,7 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 		"--no-create-home",
 		"--no-user-group",
 		"--shell", "/usr/sbin/nologin",
-		"--comment", ftpAliasGecos,
+		"--comment", ftpAliasGecosFor(tenant.Username),
 		p.Username,
 	}
 	if out, err := exec.CommandContext(ctx, "useradd", args...).CombinedOutput(); err != nil {
@@ -570,11 +583,9 @@ func ftpAccountListHandler(ctx context.Context, params json.RawMessage) (any, er
 		if len(parts) < 6 || !strings.HasPrefix(parts[0], prefix) {
 			continue
 		}
-		if uid, _ := strconv.Atoi(parts[2]); uid != tenant.UID {
-			continue // same prefix but not our alias — not ours to report
-		}
-		if gecosName(parts[4]) != ftpAliasGecos {
-			continue // operator-made alias — invisible to the panel
+		uid, _ := strconv.Atoi(parts[2])
+		if !ftpAliasOwnedBy(parts[4], uid, tenant) {
+			continue // same prefix but not our alias (or an operator's) — skip
 		}
 		name := parts[0]
 		isFtp, _ := isUserInGroup(ctx, name, ftpGroupName)
@@ -607,10 +618,12 @@ func ftpTenantAliasNames(tenant *ftpTenant) ([]string, *agentwire.AgentError) {
 		if len(parts) < 6 || !strings.HasPrefix(parts[0], prefix) {
 			continue
 		}
-		if uid, _ := strconv.Atoi(parts[2]); uid != tenant.UID {
-			continue
-		}
-		if gecosName(parts[4]) != ftpAliasGecos {
+		// Owner-aware: includes isolated (separate-uid) aliases, which no
+		// longer share the tenant uid, while staying collision-proof for
+		// prefix-colliding tenants. Keeps JAB-254 suspension covering every
+		// owned alias regardless of isolation mode.
+		uid, _ := strconv.Atoi(parts[2])
+		if !ftpAliasOwnedBy(parts[4], uid, tenant) {
 			continue
 		}
 		names = append(names, parts[0])
@@ -701,19 +714,38 @@ func classifyFtpAliases(passwd string) (owned []ftpAccountListAllEntry, skippedU
 	}
 	owned = []ftpAccountListAllEntry{}
 	for _, name := range order {
+		owner, marked := ftpMarkerOwner(byName[name].gecos)
+		if marked && owner != "" {
+			// Owner-encoded: ownership is explicit — no uid/shape inference
+			// (isolated aliases do NOT share the tenant uid). Report it even if
+			// the owner tenant is gone; a rowless alias is exactly what the
+			// reaper must surface. Require the namespaced-username prefix to
+			// match the encoded owner: a mismatch is a corrupted/forged marker
+			// (only root writes passwd), never attributed to a tenant.
+			if strings.HasPrefix(name, owner+"_") {
+				owned = append(owned, ftpAccountListAllEntry{
+					TenantUsername: owner,
+					Username:       name,
+					HomePath:       byName[name].home,
+				})
+			}
+			continue
+		}
+		// Legacy path (bare marker or no marker): needs the <tenant>_<label>
+		// shape + a same-uid tenant entry to identify the owner. Walk every "_"
+		// split point — tenant names may themselves contain underscores
+		// (user_01k…), so "a_b_c" must try tenants "a_b" and "a".
 		i := strings.LastIndex(name, "_")
 		if i <= 0 {
 			continue
 		}
-		// Walk every "_" split point: tenant names may themselves contain
-		// underscores (user_01k…), so "a_b_c" must try tenants "a_b" and "a".
 		for j := i; j > 0; j = strings.LastIndex(name[:j], "_") {
 			tenant := name[:j]
 			te, ok := byName[tenant]
 			if !ok || te.uid < minTenantUID || te.uid != byName[name].uid || tenant == name {
 				continue
 			}
-			if gecosName(byName[name].gecos) != ftpAliasGecos {
+			if !marked {
 				// Same shape, no marker: an operator's hand-made alias.
 				skippedUnmarked++
 				break

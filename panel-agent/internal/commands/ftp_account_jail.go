@@ -192,7 +192,7 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 		"--home-dir", jail,
 		"--no-create-home",
 		"--shell", "/usr/sbin/nologin",
-		"--comment", ftpAliasGecos,
+		"--comment", ftpAliasGecosFor(tenant.Username),
 		p.Username,
 	}
 	if out, err := exec.CommandContext(ctx, "useradd", useraddArgs...).CombinedOutput(); err != nil {
