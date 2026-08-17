@@ -8,6 +8,7 @@ import (
 	backup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -91,6 +92,22 @@ func newDRPromoteCmd() *cobra.Command {
 					return nil
 				}
 			}
+
+			// FENCE the panel service around the restore + role flip (GH #331
+			// two-node drill): the panel hosts the drsync loop, and a tick's
+			// system.restore that is IN FLIGHT when the role flips completes
+			// afterwards and re-stamps role=standby via its dr_pairing block —
+			// the promoted box silently re-demoted itself and resumed syncing
+			// over the promoted state. Stopping jabali-panel kills the loop
+			// (the agent, which serves the restore dispatch, stays up); it is
+			// restarted after the flip. Same fence `jabali system restore`
+			// uses.
+			fmt.Println("Stopping jabali-panel.service for the promotion window…")
+			_ = exec.CommandContext(ctx, "systemctl", "stop", "jabali-panel.service").Run()
+			defer func() {
+				fmt.Println("Starting jabali-panel.service…")
+				_ = exec.CommandContext(context.Background(), "systemctl", "start", "jabali-panel.service").Run()
+			}()
 
 			// Final account-inclusive restore so home dirs, mail, and per-user DBs
 			// land (drsync only applied panel_db+config+tls during replication).
