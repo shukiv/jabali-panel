@@ -5311,6 +5311,14 @@ ensure_user_and_dirs() {
   # api anyway, but keep it world-readable for future direct serving).
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel/branding
+  # GH #1145 — parent of every per-subaccount SFTP/FTPS isolation jail. Must be
+  # root:root and NOT group/other-writable so it satisfies sshd's root-owned-
+  # chroot-chain rule and vsftpd's secure-chroot rule; the agent creates the
+  # per-account jail (<tenant>/<alias>/) beneath it on isolated-account create.
+  # Declared here (not gated on the ftp/vsftpd module) because SFTP isolation
+  # works without vsftpd. sshd/vsftpd are unconfined by AppArmor, so no profile
+  # rule is needed for the jail path.
+  install -d -m 0755 -o root -g root /var/lib/jabali-ftp-jails
   # M35 — migration importers. Legacy path /var/lib/jabali-migrations
   # is kept as a symlink to the new working_folder/migrations subdir so
   # existing callsites that hardcode the old path keep working. Real
