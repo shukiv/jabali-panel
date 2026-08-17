@@ -1547,6 +1547,13 @@
     "ftp_access_label": "Allow FTPS",
     "ftp_access_tooltip": "Also allow this account to connect over FTPS (port 21).",
     "ftp_disabled_tooltip": "FTP is not enabled on this server — ask your administrator.",
+    "isolated_label": "Isolated account",
+    "isolated_tooltip": "Give this account its own identity confined to the chosen folder — it cannot reach the rest of your files. Recommended. Turn off only for a legacy shared-access account.",
+    "isolated_tag": "Isolated",
+    "shared_tag": "Shared access",
+    "quota_label": "Disk quota",
+    "quota_tooltip": "Maximum disk space (MB) this isolated account may use. Counts against your plan's quota.",
+    "quota_rule": "Enter a disk quota of at least 1 MB",
     "reset_password_for": "Reset password for {{name}}",
     "new_password": "New password"
   },

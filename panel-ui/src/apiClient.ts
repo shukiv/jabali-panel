@@ -318,6 +318,10 @@ export interface FtpAccount {
   ftp_access: boolean;
   sftp_access: boolean;
   is_enabled: boolean;
+  // GH #1145: true = separate-uid jailed (kernel-isolated); false/absent =
+  // legacy shared-access alias.
+  isolated?: boolean;
+  quota_mb?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -338,6 +342,8 @@ export async function createFtpAccount(body: {
   password: string;
   ftp_access: boolean;
   sftp_access?: boolean;
+  isolated?: boolean;
+  quota_mb?: number;
 }): Promise<FtpAccount> {
   const resp = await apiClient.post<FtpAccount>("/me/ftp-accounts", body);
   return resp.data;

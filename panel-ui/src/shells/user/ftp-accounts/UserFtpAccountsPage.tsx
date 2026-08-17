@@ -9,6 +9,7 @@ import {
   Form,
   Grid,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Space,
@@ -82,17 +83,22 @@ export const UserFtpAccountsPage = () => {
     home_rel?: string;
     password: string;
     ftp_access?: boolean;
+    isolated?: boolean;
+    quota_mb?: number;
   }) => {
     setSaving(true);
     try {
       // The /home/<user> prefix is a fixed addon — users type only the
       // part inside their home. Empty = the home directory itself.
       const rel = (values.home_rel ?? "").replace(/^\/+|\/+$/g, "");
+      const isolated = values.isolated !== false; // default on
       await createFtpAccount({
         label: values.label,
         home_path: rel ? `${homePrefix}/${rel}` : homePrefix,
         password: values.password,
         ftp_access: !!values.ftp_access,
+        isolated,
+        quota_mb: isolated ? values.quota_mb : undefined,
       });
       feedback.message.success(t("ftpaccounts.created"));
       setDrawerOpen(false);
@@ -197,7 +203,14 @@ export const UserFtpAccountsPage = () => {
           <Table.Column<FtpAccount>
             dataIndex="username"
             title={t("ftpaccounts.username")}
-            render={(v: string) => <Typography.Text code copyable>{v}</Typography.Text>}
+            render={(v: string, row) => (
+              <Space size={4} wrap>
+                <Typography.Text code copyable>{v}</Typography.Text>
+                <Tag color={row.isolated ? "green" : "default"}>
+                  {row.isolated ? t("ftpaccounts.isolated_tag") : t("ftpaccounts.shared_tag")}
+                </Tag>
+              </Space>
+            )}
           />
           <Table.Column<FtpAccount>
             dataIndex="home_path"
@@ -281,7 +294,7 @@ export const UserFtpAccountsPage = () => {
           form={form}
           layout="vertical"
           onFinish={handleCreate}
-          initialValues={{ ftp_access: false }}
+          initialValues={{ ftp_access: false, isolated: true }}
         >
           <Form.Item
             label={t("ftpaccounts.label")}
@@ -321,6 +334,43 @@ export const UserFtpAccountsPage = () => {
             rules={[{ required: true, min: 12, max: 128 }]}
           >
             <PasswordInput autoComplete="new-password" generatorLength={20} />
+          </Form.Item>
+          <Form.Item
+            label={t("ftpaccounts.isolated_label")}
+            name="isolated"
+            valuePropName="checked"
+            tooltip={t("ftpaccounts.isolated_tooltip")}
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, cur) => prev.isolated !== cur.isolated}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue("isolated") !== false ? (
+                <Form.Item
+                  label={t("ftpaccounts.quota_label")}
+                  name="quota_mb"
+                  tooltip={t("ftpaccounts.quota_tooltip")}
+                  rules={[
+                    {
+                      required: true,
+                      type: "number",
+                      min: 1,
+                      message: t("ftpaccounts.quota_rule"),
+                    },
+                  ]}
+                >
+                  <InputNumber
+                    min={1}
+                    style={{ width: "100%" }}
+                    addonAfter="MB"
+                    placeholder="500"
+                  />
+                </Form.Item>
+              ) : null
+            }
           </Form.Item>
           <Form.Item
             label={t("ftpaccounts.ftp_access_label")}
