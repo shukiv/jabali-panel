@@ -37,9 +37,11 @@ type UserHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Databases       repository.DatabaseRepository
 	DatabaseUsers   repository.DatabaseUserRepository
-	DockerApps      repository.DockerAppRepository
-	Mailboxes       repository.MailboxRepository
-	Packages        repository.PackageRepository
+	// FtpAccounts is reaped on user delete (JAB-265).
+	FtpAccounts repository.FtpAccountRepository
+	DockerApps  repository.DockerAppRepository
+	Mailboxes   repository.MailboxRepository
+	Packages    repository.PackageRepository
 	// DomainTeardowns persists the JAB-236 tombstones that make the
 	// cascade's domain teardown durable across panel restarts.
 	DomainTeardowns repository.DomainTeardownRepository
@@ -536,6 +538,7 @@ func (h *userHandler) delete(c *gin.Context) {
 	err = userops.DeleteCascade(c.Request.Context(), h.userOpsDeps(), userops.DeleteDeps{
 		Databases:     h.cfg.Databases,
 		DatabaseUsers: h.cfg.DatabaseUsers,
+		FtpAccounts:   h.cfg.FtpAccounts,
 		RevokeCacheACLs: func(ctx context.Context, osUser string) error {
 			return revokeAllUserCacheACLs(ctx, h.cfg.Redis, osUser)
 		},

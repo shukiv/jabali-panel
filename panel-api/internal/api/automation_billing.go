@@ -82,6 +82,7 @@ func billingDeleteDeps(cfg AutomationConfig) userops.DeleteDeps {
 	dd := userops.DeleteDeps{
 		Databases:     cfg.Databases,
 		DatabaseUsers: cfg.DatabaseUsers,
+		FtpAccounts:   cfg.FtpAccounts,
 	}
 	if cfg.Redis != nil {
 		rdb := cfg.Redis

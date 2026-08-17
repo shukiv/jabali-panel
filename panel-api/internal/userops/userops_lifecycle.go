@@ -175,10 +175,49 @@ func SetPackage(ctx context.Context, d Deps, user *models.User, packageID *strin
 type DeleteDeps struct {
 	Databases     repository.DatabaseRepository
 	DatabaseUsers repository.DatabaseUserRepository
+	// FtpAccounts reaps the tenant's FTP/SFTP subaccounts on delete (JAB-265):
+	// user_id is index-only with NO FK, and nothing else in the cascade touched
+	// them, so a deleted tenant left live Unix credentials + jails + DB rows
+	// orphaned (and the stray-alias reaper never swept them — it keys on a
+	// MISSING row, but the rows survived). Optional: nil skips FTP reap.
+	FtpAccounts repository.FtpAccountRepository
 	// RevokeCacheACLs revokes the tenant's wp_<osuser> Redis cache ACLs
 	// (GH #408 / ADR-0148). Passed as a callback so userops stays free of
 	// the redis client dependency.
 	RevokeCacheACLs func(ctx context.Context, osUser string) error
+}
+
+// reapTenantFtpAccounts tears down every FTP/SFTP subaccount a tenant owns as
+// part of DeleteCascade (JAB-265). The agent verb does the Unix teardown
+// (userdel + isolated-jail unmount+remove); the DB row is deleted REGARDLESS of
+// the agent result, so a failed teardown degrades to a rowless alias the
+// stray-alias reaper sweeps on its next pass — never a silent live-credential
+// orphan (the pre-fix behaviour, where the surviving row hid the alias from the
+// reaper too). Best-effort throughout: a failure is logged, never fails the
+// user delete.
+func reapTenantFtpAccounts(ctx context.Context, d Deps, dd DeleteDeps, userID, username string) {
+	if dd.FtpAccounts == nil || d.Agent == nil || username == "" {
+		return
+	}
+	accts, err := dd.FtpAccounts.ListByUserID(ctx, userID)
+	if err != nil {
+		logWarn(d, "cascade delete: list user ftp accounts failed", "user_id", userID, "err", err)
+		return
+	}
+	for i := range accts {
+		a := &accts[i]
+		if _, err := d.Agent.Call(ctx, "ftpaccount.delete", map[string]any{
+			"tenant_username": username,
+			"username":        a.Username,
+		}); err != nil {
+			logWarn(d, "cascade delete: ftp account agent teardown failed (row still removed; reaper backstops the alias)",
+				"user_id", userID, "ftp_account", a.Username, "err", err)
+		}
+		if err := dd.FtpAccounts.Delete(ctx, a.ID); err != nil {
+			logWarn(d, "cascade delete: ftp account DB delete failed",
+				"user_id", userID, "ftp_account", a.Username, "err", err)
+		}
+	}
 }
 
 // DeleteCascade removes EVERYTHING a user owns, then the user row, then
@@ -235,6 +274,11 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 	if target.Username != nil {
 		username = *target.Username
 	}
+
+	// JAB-265: reap the tenant's FTP/SFTP subaccounts BEFORE the OS user is
+	// deleted (ftpaccount.delete resolves the tenant by name, which must still
+	// exist).
+	reapTenantFtpAccounts(ctx, d, dd, id, username)
 
 	// dbUserDropCmd / dbUserDropParams mirror the canonical dispatch pair in
 	// api/database_users.go (dbUserCmd / dbUserDropParams), which is

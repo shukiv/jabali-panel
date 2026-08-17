@@ -77,6 +77,8 @@ type AutomationConfig struct {
 	Packages      repository.PackageRepository
 	Databases     repository.DatabaseRepository
 	DatabaseUsers repository.DatabaseUserRepository
+	// FtpAccounts is reaped on the automation delete-cascade (JAB-265).
+	FtpAccounts   repository.FtpAccountRepository
 	DockerApps    repository.DockerAppRepository
 	KratosClient  *kratosclient.Client
 	BcryptCost    int
