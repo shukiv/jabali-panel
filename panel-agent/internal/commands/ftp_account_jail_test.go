@@ -1,8 +1,10 @@
 package commands
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -65,17 +67,6 @@ func TestValidateIsolatedCreate(t *testing.T) {
 	}
 }
 
-func TestIsMountpointFalseOnPlainDir(t *testing.T) {
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "child")
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if isMountpoint(sub) {
-		t.Fatalf("plain dir %q reported as mountpoint", sub)
-	}
-}
-
 // TestValidateFtpSSHDAccountJailChroot proves the sshd validator accepts a
 // root-owned jail chroot (GH #1145) as well as the legacy /home chroot, and
 // still rejects an arbitrary path.
@@ -103,5 +94,56 @@ func TestValidateFtpSSHDAccountJailChroot(t *testing.T) {
 				t.Fatalf("validateFtpSSHDAccount(%q) err=%v, wantErr=%v", tc.chrootDir, aerr, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestTeardownIsolatedJailPreservesSourceOnSameFs is the regression guard for
+// the same-device data-loss bug: on the fleet /home is not a separate mount, so
+// a bind mount does NOT change st_dev at the mountpoint. A stat-based "is it
+// mounted?" probe returns false, so a naive teardown would skip the unmount and
+// RemoveAll straight through the LIVE bind mount into the tenant's real files.
+// teardownIsolatedJail must unmount blind (until EINVAL) BEFORE removing, so the
+// jail goes and the source subtree survives. Root-gated (bind mount needs
+// CAP_SYS_ADMIN) + GH #994 host-mutation gate.
+func TestTeardownIsolatedJailPreservesSourceOnSameFs(t *testing.T) {
+	requireHostMutationAllowed(t)
+	if os.Geteuid() != 0 {
+		t.Skip("bind mount needs root")
+	}
+	root := t.TempDir() // source + jail both under TMPDIR = same filesystem
+	t.Setenv("JABALI_FTP_JAIL_ROOT", filepath.Join(root, "jails"))
+
+	src := filepath.Join(root, "home", "sub")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(src, "keep.txt")
+	if err := os.WriteFile(marker, []byte("tenant-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	jail := filepath.Join(ftpJailRoot(), "bob", "bob_printer")
+	mp := filepath.Join(jail, ftpJailMountpoint)
+	if err := os.MkdirAll(mp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mount(src, mp, "", syscall.MS_BIND, ""); err != nil {
+		t.Fatalf("bind mount: %v", err)
+	}
+	// Guarantee cleanup even if an assertion below fails before teardown runs.
+	defer func() { _ = syscall.Unmount(mp, syscall.MNT_DETACH) }()
+
+	if _, err := os.Stat(filepath.Join(mp, "keep.txt")); err != nil {
+		t.Fatalf("marker not visible through the mount (setup broken): %v", err)
+	}
+
+	if aerr := teardownIsolatedJail(context.Background(), jail); aerr != nil {
+		t.Fatalf("teardown returned error: %v", aerr)
+	}
+	if _, err := os.Stat(jail); !os.IsNotExist(err) {
+		t.Fatalf("jail not removed after teardown: stat err=%v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("SOURCE DATA DELETED by teardown — marker gone: %v", err)
 	}
 }

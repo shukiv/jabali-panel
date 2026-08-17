@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // GH #1145 / JAB-252 + JAB-253 — TRUE (separate-uid) isolation for an FTP/SFTP
@@ -113,37 +115,6 @@ func validateIsolatedCreate(p ftpAccountCreateParams, tenant *ftpTenant) *agentw
 	return nil
 }
 
-// resolveIsolatedTarget returns the real, symlink-resolved path of the selected
-// sub-tree beneath the tenant home. Unlike the legacy path (which passes the
-// unresolved home_path to useradd), the jail bind-mounts the RESOLVED inode, so
-// a later symlink retarget of home_path cannot move the live mount (JAB-253).
-// The directory must already exist — the panel creates it via the confined
-// scope before provisioning the jail.
-func resolveIsolatedTarget(homePath string, tenant *ftpTenant) (string, *agentwire.AgentError) {
-	resolved, err := filepath.EvalSymlinks(homePath)
-	if err != nil {
-		return "", &agentwire.AgentError{
-			Code:    agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("resolve selected dir %q: %v", homePath, err),
-		}
-	}
-	rel, rerr := filepath.Rel(tenant.HomeDir, resolved)
-	if rerr != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-		return "", &agentwire.AgentError{
-			Code:    agentwire.CodePermissionDenied,
-			Message: fmt.Sprintf("selected dir %q resolves outside the tenant home %q", homePath, tenant.HomeDir),
-		}
-	}
-	info, err := os.Stat(resolved)
-	if err != nil || !info.IsDir() {
-		return "", &agentwire.AgentError{
-			Code:    agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("selected dir %q is not an existing directory", homePath),
-		}
-	}
-	return resolved, nil
-}
-
 // provisionIsolatedJail builds the full isolated account: jail skeleton, bind
 // mount, own-uid user, ACL grant, and per-uid quota. It returns a rollback that
 // undoes every step performed so far; the caller runs it on any later failure.
@@ -152,17 +123,12 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	if aerr := validateIsolatedCreate(p, tenant); aerr != nil {
 		return nil, aerr
 	}
-	target, aerr := resolveIsolatedTarget(p.HomePath, tenant)
-	if aerr != nil {
-		return nil, aerr
-	}
 
 	jail := p.JailPath
 	mountpoint := filepath.Join(jail, ftpJailMountpoint)
 
 	var undo []func()
 	rollback = func() {
-		// Reverse order.
 		for i := len(undo) - 1; i >= 0; i-- {
 			undo[i]()
 		}
@@ -177,28 +143,44 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	if err := os.MkdirAll(mountpoint, 0o755); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create jail %q: %v", mountpoint, err)})
 	}
-	// MkdirAll may have created several ancestors; remove the per-account jail
-	// dir on rollback (the /<tenant> parent is shared, left in place).
-	undo = append(undo, func() { _ = os.RemoveAll(jail) })
+	// Single undo for the whole jail+mount: teardownIsolatedJail unmounts
+	// safely (blind unmount-until-EINVAL) BEFORE removing the tree, so
+	// rollback can never RemoveAll through a live bind mount into tenant data.
+	undo = append(undo, func() { _ = teardownIsolatedJail(ctx, jail) })
 	if err := os.Chown(jail, 0, 0); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chown jail %q root: %v", jail, err)})
 	}
 	if err := os.Chmod(jail, 0o755); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod jail %q: %v", jail, err)})
 	}
-	// The mountpoint must be root-owned too: sshd/vsftpd chroot to the jail
-	// root, and the mountpoint is a child of it, but keeping it root:root 0755
-	// means a failed/absent mount exposes an EMPTY root-owned dir, never
-	// tenant data by accident.
+	// Mountpoint must be root-owned too: a failed/absent mount then exposes an
+	// EMPTY root-owned dir, never tenant data by accident (fail-closed).
 	if err := os.Chown(mountpoint, 0, 0); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chown mountpoint %q root: %v", mountpoint, err)})
 	}
 
-	// 2. Bind-mount the resolved sub-tree into the jail (host namespace).
-	if err := syscall.Mount(target, mountpoint, "", syscall.MS_BIND, ""); err != nil {
-		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("bind-mount %q -> %q: %v", target, mountpoint, err)})
+	// 2. Bind-mount the selected sub-tree into the jail (host namespace).
+	// CRITICAL (JAB-251-class): the tenant home is tenant-writable, so the
+	// selected pathname must NOT be re-resolved at mount time — a swapped
+	// symlink component would bind an arbitrary directory (e.g. /etc) into the
+	// jail. Open the dir escape-proof via openat2(RESOLVE_BENEATH) and pin it
+	// by fd, then bind the fd's inode through /proc/self/fd. The kernel
+	// resolves the magic symlink to the pinned inode with no pathname walk.
+	scope, serr := filesafe.NewScope(tenant.Username, tenant.Username, []string{tenant.HomeDir})
+	if serr != nil {
+		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("home scope for %q: %v", tenant.HomeDir, serr)})
 	}
-	undo = append(undo, func() { _ = syscall.Unmount(mountpoint, 0) })
+	srcFd, oerr := scope.OpenDirInScope(p.HomePath)
+	if oerr != nil {
+		return fail(&agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("confined open of selected dir %q: %v", p.HomePath, oerr)})
+	}
+	srcMagic := fmt.Sprintf("/proc/self/fd/%d", srcFd.Fd())
+	if err := syscall.Mount(srcMagic, mountpoint, "", syscall.MS_BIND, ""); err != nil {
+		srcFd.Close()
+		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("bind-mount selected dir -> %q: %v", mountpoint, err)})
+	}
+	// The mount holds its own ref to the inode; the fd is no longer needed.
+	srcFd.Close()
 
 	// 3. Own-uid user (NO --non-unique), own primary group, nologin, GECOS
 	// marker, passwd home = jail (so vsftpd chroots to the jail, not a
@@ -218,21 +200,21 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	}
 	undo = append(undo, func() { _ = exec.CommandContext(ctx, "userdel", "-f", p.Username).Run() })
 
-	// 4. ACLs on the EXPOSED sub-tree: the sub-uid must read/write it, and the
-	// tenant-uid must keep managing files the sub writes under its own uid.
-	// Default ACLs (-d) make new files inherit both grants. Applied to the
-	// resolved target (which the bind mount reflects). Uppercase X = execute
-	// only where already applicable (dirs / already-exec files).
+	// 4. ACLs on the JAIL-SIDE mountpoint (never the tenant pathname). The jail
+	// chain is root-owned so the argument cannot be swapped, and the mount has
+	// pinned the inode, so `setfacl -R <jail>/data` recurses over exactly the
+	// intended tree. Grant the sub-uid rwX and keep the tenant-uid rwX (the sub
+	// writes as its own uid; the tenant must still manage those files). Default
+	// ACLs (-d) make new files inherit both. Uppercase X = execute only where
+	// already applicable (dirs / already-exec files). GNU setfacl -R skips
+	// symlinks encountered during recursion by default.
 	spec := fmt.Sprintf("u:%d:rwX,u:%d:rwX", p.UID, tenant.UID)
-	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", spec, target).CombinedOutput(); err != nil {
-		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("setfacl -R %q: %v: %s", target, err, strings.TrimSpace(string(out)))})
+	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", spec, mountpoint).CombinedOutput(); err != nil {
+		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("setfacl -R %q: %v: %s", mountpoint, err, strings.TrimSpace(string(out)))})
 	}
-	if out, err := exec.CommandContext(ctx, "setfacl", "-dR", "-m", spec, target).CombinedOutput(); err != nil {
-		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("setfacl -dR %q: %v: %s", target, err, strings.TrimSpace(string(out)))})
+	if out, err := exec.CommandContext(ctx, "setfacl", "-dR", "-m", spec, mountpoint).CombinedOutput(); err != nil {
+		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("setfacl -dR %q: %v: %s", mountpoint, err, strings.TrimSpace(string(out)))})
 	}
-	// No ACL rollback: the grants are additive and harmless if the account is
-	// torn down (the uid is retired and never reused); the reaper's later
-	// setquota-0/userdel path handles cleanup.
 
 	// 5. Per-uid quota (the split cap). setquota block counts are 1KB units.
 	blocks := strconv.FormatUint(uint64(p.QuotaMB)*1024, 10)
@@ -244,36 +226,38 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 }
 
 // teardownIsolatedJail unmounts and removes a subaccount jail. Used by the
-// delete verb and the reconciler's fail-closed path. Idempotent: a missing
-// mount or dir is not an error. It NEVER touches the bind-mount SOURCE (tenant
-// data) — only the jail overlay.
+// create rollback, the delete verb, and the reconciler's fail-closed path.
+// Idempotent. It NEVER touches the bind-mount SOURCE (tenant data) — only the
+// jail overlay.
+//
+// CRITICAL data-safety invariant: on the fleet, /home is not a separate mount,
+// so a bind mount is SAME-DEVICE — st_dev does not change at the mountpoint and
+// there is no reliable stat-based "is it mounted" probe. We therefore unmount
+// BLIND, looping until the kernel returns EINVAL ("not mounted"), and only
+// RemoveAll once the mount is provably gone. If unmount fails for any other
+// reason we abort WITHOUT removing — a stranded empty jail is recoverable by
+// the reconciler; a RemoveAll that recurses through a live bind mount would
+// delete the tenant's real files.
 func teardownIsolatedJail(ctx context.Context, jailPath string) *agentwire.AgentError {
 	if jailPath == "" {
 		return nil
 	}
 	mountpoint := filepath.Join(jailPath, ftpJailMountpoint)
-	// Unmount if mounted; MNT_DETACH so a busy mount (live session) still
-	// releases and the kernel finalizes when the last ref drops.
-	if isMountpoint(mountpoint) {
-		if err := syscall.Unmount(mountpoint, syscall.MNT_DETACH); err != nil {
-			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("unmount jail %q: %v", mountpoint, err)}
+	// MNT_DETACH: lazy unmount removes the mount from the tree immediately
+	// (new lookups see the underlying empty dir) even if a session holds it,
+	// so the subsequent RemoveAll cannot descend into the source.
+	for {
+		err := syscall.Unmount(mountpoint, syscall.MNT_DETACH)
+		if err == nil {
+			continue // detached one layer; loop for any stacked binds
 		}
+		if errors.Is(err, syscall.EINVAL) {
+			break // not a mountpoint (anymore) — safe to remove
+		}
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("unmount jail %q: %v", mountpoint, err)}
 	}
 	if err := os.RemoveAll(jailPath); err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("remove jail %q: %v", jailPath, err)}
 	}
 	return nil
-}
-
-// isMountpoint reports whether path is a mount point by comparing its device
-// number to its parent's (a bind mount changes st_dev at the mountpoint).
-func isMountpoint(path string) bool {
-	var st, parent syscall.Stat_t
-	if err := syscall.Lstat(path, &st); err != nil {
-		return false
-	}
-	if err := syscall.Lstat(filepath.Dir(path), &parent); err != nil {
-		return false
-	}
-	return st.Dev != parent.Dev
 }
