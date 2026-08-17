@@ -506,7 +506,8 @@ func ftpAccountSetPasswordHandler(ctx context.Context, params json.RawMessage) (
 	if aerr != nil {
 		return nil, aerr
 	}
-	if _, aerr := requireFtpSubaccount(tenant, p.Username); aerr != nil {
+	au, aerr := requireFtpSubaccount(tenant, p.Username)
+	if aerr != nil {
 		return nil, aerr
 	}
 	if p.Password == "" {
@@ -532,6 +533,10 @@ func ftpAccountSetPasswordHandler(ctx context.Context, params json.RawMessage) (
 		if out, err := exec.CommandContext(ctx, "usermod", "-L", p.Username).CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-lock disabled account %q after password reset: %v: %s", p.Username, err, strings.TrimSpace(string(out)))}
 		}
+		// JAB-256: a reset on a disabled account must not leave a live session
+		// authenticated under the old password — kill any open sessions too.
+		uid, _ := strconv.Atoi(au.Uid)
+		terminateFtpSessions(ctx, p.Username, uid)
 	}
 	return map[string]any{"username": p.Username, "updated": true}, nil
 }
@@ -557,7 +562,8 @@ func ftpAccountSetAccessHandler(ctx context.Context, params json.RawMessage) (an
 	if aerr != nil {
 		return nil, aerr
 	}
-	if _, aerr := requireFtpSubaccount(tenant, p.Username); aerr != nil {
+	au, aerr := requireFtpSubaccount(tenant, p.Username)
+	if aerr != nil {
 		return nil, aerr
 	}
 	if aerr := setFtpGroupMembership(ctx, p.Username, p.FTPAccess); aerr != nil {
@@ -569,6 +575,12 @@ func ftpAccountSetAccessHandler(ctx context.Context, params json.RawMessage) (an
 	}
 	if out, err := exec.CommandContext(ctx, "usermod", lockFlag, p.Username).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("usermod %s %q: %v: %s", lockFlag, p.Username, err, strings.TrimSpace(string(out)))}
+	}
+	// JAB-256: the lock blocks re-auth but not an already-open session — kill
+	// live sessions so a disable takes effect at once.
+	if !p.Enabled {
+		uid, _ := strconv.Atoi(au.Uid)
+		terminateFtpSessions(ctx, p.Username, uid)
 	}
 	return map[string]any{"username": p.Username, "ftp_access": p.FTPAccess, "enabled": p.Enabled}, nil
 }
@@ -611,6 +623,9 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	delUID, _ := strconv.Atoi(u.Uid)
 	isolated := delUID >= ftpSubaccountUIDMin
 	_ = setFtpGroupMembership(ctx, p.Username, false)
+	// JAB-256: kill live sessions BEFORE userdel so the credential's open
+	// connections drop with the account, not linger past it.
+	terminateFtpSessions(ctx, p.Username, delUID)
 	// -f is REQUIRED, not defensive: the alias shares the tenant's uid, so
 	// the tenant's always-running processes (per-user FPM master, cron)
 	// make plain userdel fail with "user is currently used by process"
@@ -747,6 +762,12 @@ func ftpAccountLockTenantHandler(ctx context.Context, params json.RawMessage) (a
 		_ = setFtpGroupMembership(ctx, name, false)
 		if out, err := exec.CommandContext(ctx, "usermod", "-L", name).CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("usermod -L %q: %v: %s", name, err, strings.TrimSpace(string(out)))}
+		}
+		// JAB-256: a suspended owner's delegated sessions must drop at once,
+		// not linger until the connection closes.
+		if u, lerr := user.Lookup(name); lerr == nil {
+			uid, _ := strconv.Atoi(u.Uid)
+			terminateFtpSessions(ctx, name, uid)
 		}
 		locked++
 	}
