@@ -43,6 +43,34 @@ type domainEmailEnableResp struct {
 	DKIMPublicKey string `json:"dkim_public_key"`
 }
 
+// zoneHasWWWRecord reports whether the source BIND zone publishes a
+// www.<domain> address record (A/AAAA/CNAME) — the signal that the source
+// account actually serves www. cPanel (and Plesk/Hestia/CloudPanel) alias www
+// by default, so most migrated domains match; one that genuinely lacks www
+// stays apex-only. A zone that can't be opened or parsed returns false
+// (conservative: no unwanted www SAN). JAB-249.
+func zoneHasWWWRecord(zonePath, domainName string) bool {
+	f, err := os.Open(zonePath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	zone, _, ok := ParseBINDZone(f, domainName)
+	if !ok {
+		return false
+	}
+	want := "www." + strings.ToLower(domainName)
+	for _, rec := range zone.Records {
+		switch rec.Type {
+		case "A", "AAAA", "CNAME":
+			if strings.EqualFold(rec.Name, want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ImportDomains creates panel domain rows + nginx vhosts for every
 // zone file found in the parsed tarball. If a domain's mail directory
 // exists under the tarball's MailRoot, email is enabled on the spot so
@@ -81,6 +109,12 @@ func ImportDomains(
 	type domainEntry struct {
 		name    string
 		docRoot string
+		// createWWW mirrors whether the SOURCE zone publishes a www.<domain>
+		// address record (JAB-249). The panel gates the www cert SAN behind
+		// CreateWWW (#915); migration never set it, so a migrated domain that
+		// actually serves www was issued an apex-only cert →
+		// ERR_CERT_COMMON_NAME_INVALID on https://www.<domain>.
+		createWWW bool
 	}
 	var entries []domainEntry
 	if len(parsed.ZoneFiles) > 0 {
@@ -91,8 +125,9 @@ func ImportDomains(
 				continue
 			}
 			entries = append(entries, domainEntry{
-				name:    domainName,
-				docRoot: docRootFor(domainName),
+				name:      domainName,
+				docRoot:   docRootFor(domainName),
+				createWWW: zoneHasWWWRecord(zonePath, domainName),
 			})
 		}
 	} else {
@@ -135,8 +170,13 @@ func ImportDomains(
 			IsEnabled:     true,
 			IndexPriority: "html_first",
 			GhostState:    "unchecked",
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			// JAB-249: carry the source's www presence so the issued LE cert
+			// covers www.<domain> (the #1069 SAN-drift reconciler adds the SAN
+			// on its next reachable-gated pass). Domains whose source has no
+			// www record stay apex-only (unchanged default).
+			CreateWWW: e.createWWW,
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
 		// #327: a source domain with NO mail must not inherit jabali's
 		// mail-by-default. MailProvider "none" makes the reconciler's
