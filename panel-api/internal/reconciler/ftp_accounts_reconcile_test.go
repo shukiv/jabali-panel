@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -335,5 +336,72 @@ func TestReconcileFtpAccounts_SweepsStrayForRowlessTenant(t *testing.T) {
 	p := calls["ftpaccount.delete"][0].params.(map[string]any)
 	if p["username"] != "ghost_leftover" || p["tenant_username"] != "ghost" {
 		t.Fatalf("wrong stray deleted: %v", p)
+	}
+}
+
+// GH #1145: an isolated row must render the sshd chroot to its jail (/data
+// start dir), not the tenant home.
+func TestReconcileFtpAccounts_IsolatedSSHDPayload(t *testing.T) {
+	agent := &fakeAgent{resultByMethod: map[string]json.RawMessage{
+		"ftpaccount.list":     hostListResult(t, []agentFtpListEntry{{Username: "shop_printer"}}),
+		"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{{Username: "shop_printer"}}),
+	}}
+	uid := uint32(500001)
+	rows := []models.FtpAccount{{
+		ID: "a1", UserID: "u1", Username: "shop_printer",
+		HomePath: "/home/shop/ftp/printer", SFTPAccess: true, IsEnabled: true,
+		Isolated: true, UID: &uid, QuotaMB: 200,
+		JailPath: "/var/lib/jabali-ftp-jails/shop/shop_printer",
+	}}
+	r := ftpTestReconciler(t, agent, rows, map[string]string{"u1": "shop"})
+	r.reconcileFtpAccounts(context.Background())
+
+	calls := ftpCallsByMethod(agent)
+	payload := calls["ftpaccount.sshd_sync"][0].params.(map[string]any)
+	raw, _ := json.Marshal(payload["accounts"])
+	var accounts []struct {
+		Username  string `json:"username"`
+		ChrootDir string `json:"chroot_dir"`
+		StartDir  string `json:"start_dir"`
+	}
+	if err := json.Unmarshal(raw, &accounts); err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 rendered account, got %d", len(accounts))
+	}
+	a := accounts[0]
+	if a.ChrootDir != "/var/lib/jabali-ftp-jails/shop/shop_printer" || a.StartDir != "/data" {
+		t.Fatalf("isolated payload wrong: %+v", a)
+	}
+}
+
+// GH #1145: recreating a missing ISOLATED alias (DR restore) must send the
+// isolated params reusing the stored uid — never fall back to a legacy alias.
+func TestReconcileFtpAccounts_RecreatesIsolatedWithParams(t *testing.T) {
+	agent := &fakeAgent{resultByMethod: map[string]json.RawMessage{
+		"ftpaccount.list":     hostListResult(t, nil), // host has nothing
+		"ftpaccount.list_all": hostListAllResult(t, nil),
+	}}
+	uid := uint32(500001)
+	rows := []models.FtpAccount{{
+		ID: "a1", UserID: "u1", Username: "shop_printer",
+		HomePath: "/home/shop/ftp/printer", SFTPAccess: true, IsEnabled: true,
+		Isolated: true, UID: &uid, QuotaMB: 200,
+		JailPath: "/var/lib/jabali-ftp-jails/shop/shop_printer",
+	}}
+	r := ftpTestReconciler(t, agent, rows, map[string]string{"u1": "shop"}).WithQuotaMount("/")
+	r.reconcileFtpAccounts(context.Background())
+
+	calls := ftpCallsByMethod(agent)
+	if len(calls["ftpaccount.create"]) != 1 {
+		t.Fatalf("expected one recreate, got %d", len(calls["ftpaccount.create"]))
+	}
+	p := calls["ftpaccount.create"][0].params.(map[string]any)
+	if p["isolated"] != true || p["jail_path"] != "/var/lib/jabali-ftp-jails/shop/shop_printer" || p["quota_mount"] != "/" {
+		t.Fatalf("recreate missing isolated params: %v", p)
+	}
+	if fmt.Sprint(p["uid"]) != "500001" {
+		t.Fatalf("recreate must reuse the stored uid 500001, got %v", p["uid"])
 	}
 }
