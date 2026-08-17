@@ -11,7 +11,6 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -39,7 +38,7 @@ func dbUsageBySchemaHandler(ctx context.Context, _ json.RawMessage) (any, error)
 	// data_length+index_length lags a little behind reality (InnoDB
 	// persistent stats), which is fine for quota enforcement — the
 	// consumer applies hysteresis anyway.
-	out, err := exec.CommandContext(ctx, "mysql", "-N", "-e",
+	out, err := execCommandContext(ctx, "mysql", "-N", "-e",
 		"SELECT table_schema, COALESCE(SUM(data_length+index_length),0) FROM information_schema.tables GROUP BY table_schema",
 	).Output()
 	if err != nil {

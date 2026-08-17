@@ -226,7 +226,7 @@ func ufwSetWebadminPort(ctx context.Context, port int, open bool) {
 	if open {
 		args = []string{"allow", rule}
 	}
-	_ = exec.CommandContext(ctx, "ufw", args...).Run()
+	_ = execCommandContext(ctx, "ufw", args...).Run()
 }
 
 // stalwartAdminUFWPort is used by the close path when no port is supplied.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -93,7 +92,7 @@ func AllowedServices() []string {
 var systemctlRunner = realSystemctl
 
 func realSystemctl(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "systemctl", args...)
+	cmd := execCommandContext(ctx, "systemctl", args...)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }

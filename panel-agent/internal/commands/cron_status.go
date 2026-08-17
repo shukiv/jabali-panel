@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"os/user"
 	"strconv"
 	"strings"
@@ -61,7 +60,7 @@ func cronStatusHandler(ctx context.Context, params json.RawMessage) (any, error)
 	runtimeDir := fmt.Sprintf("/run/user/%s", u.Uid)
 	unit := fmt.Sprintf("jabali-cron-%s.service", p.JobID)
 
-	cmd := exec.CommandContext(ctx, "sudo", "-u", p.Username,
+	cmd := execCommandContext(ctx, "sudo", "-u", p.Username,
 		"env",
 		"XDG_RUNTIME_DIR="+runtimeDir,
 		"DBUS_SESSION_BUS_ADDRESS=unix:path="+runtimeDir+"/bus",

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -267,7 +266,7 @@ func readNTPSynced() bool {
 
 // timedatectlRunner is a var so tests can substitute.
 var timedatectlRunner = func(args ...string) (string, error) {
-	cmd := exec.Command("timedatectl", args...)
+	cmd := execCommand("timedatectl", args...)
 	out, err := cmd.Output()
 	return string(out), err
 }

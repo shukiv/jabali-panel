@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"os"
-	"os/exec"
 	"os/user"
 	"regexp"
 	"strconv"
@@ -194,7 +193,7 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	defer f.Close()
 
 	// Run mysqldump with the database name as a positional argument (no interpolation).
-	cmd := exec.CommandContext(
+	cmd := execCommandContext(
 		ctx,
 		"mysqldump",
 		"--single-transaction",

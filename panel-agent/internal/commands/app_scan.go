@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -217,7 +216,7 @@ func detectWPAdmin(docroot string) string {
 		"SELECT u.user_login FROM `%s`.`%susers` u JOIN `%s`.`%susermeta` m ON u.ID = m.user_id WHERE m.meta_key = '%scapabilities' AND m.meta_value LIKE '%%\"administrator\"%%' ORDER BY u.ID ASC LIMIT 1",
 		dbName, prefix, dbName, prefix, prefix,
 	)
-	out, err := exec.Command("mysql", "-BN", "-e", q).Output()
+	out, err := execCommand("mysql", "-BN", "-e", q).Output()
 	if err != nil {
 		return ""
 	}

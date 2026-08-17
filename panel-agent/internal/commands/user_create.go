@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,7 +57,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	// Check if user already exists.
-	checkCmd := exec.CommandContext(ctx, "id", p.Username)
+	checkCmd := execCommandContext(ctx, "id", p.Username)
 	if err := checkCmd.Run(); err == nil {
 		// User exists.
 		return nil, &agentwire.AgentError{
@@ -72,7 +71,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// let one tenant read another's group-www-data docroot files. nginx reaches
 	// docroots via the setgid-www-data docroot group + the per-user FPM socket via
 	// a root ACL (fpm-post-start), neither of which needs tenant membership.
-	createCmd := exec.CommandContext(ctx, "useradd",
+	createCmd := execCommandContext(ctx, "useradd",
 		"--create-home",
 		"--home-dir", p.HomeDir,
 		"--shell", p.Shell,
@@ -87,7 +86,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 
 	// Set password if provided.
 	if p.Password != "" {
-		chpasswdCmd := exec.CommandContext(ctx, "chpasswd")
+		chpasswdCmd := execCommandContext(ctx, "chpasswd")
 		chpasswdCmd.Stdin = strings.NewReader(p.Username + ":" + p.Password + "\n")
 		if err := chpasswdCmd.Run(); err != nil {
 			return nil, &agentwire.AgentError{
@@ -100,7 +99,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Chown home to <user>:www-data so nginx (running as www-data) can
 	// read the docroot via group perms. Tenants stay isolated: other
 	// regular users can't read /home/<user>.
-	chownCmd := exec.CommandContext(ctx, "chown", p.Username+":www-data", p.HomeDir)
+	chownCmd := execCommandContext(ctx, "chown", p.Username+":www-data", p.HomeDir)
 	if err := chownCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -109,7 +108,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	// 0750: owner (user) rwx, group (www-data) rx, others nothing.
-	chmodCmd := exec.CommandContext(ctx, "chmod", "0750", p.HomeDir)
+	chmodCmd := execCommandContext(ctx, "chmod", "0750", p.HomeDir)
 	if err := chmodCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -118,7 +117,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	// Get UID.
-	idCmd := exec.CommandContext(ctx, "id", "-u", p.Username)
+	idCmd := execCommandContext(ctx, "id", "-u", p.Username)
 	uidOutput, err := idCmd.Output()
 	if err != nil {
 		return nil, &agentwire.AgentError{
@@ -140,7 +139,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	_, sliceErr := userSliceEnsureHandler(ctx, sliceParams)
 	if sliceErr != nil {
 		// Rollback the user creation to avoid leaving a user without isolation.
-		rollbackCmd := exec.CommandContext(ctx, "userdel", "--remove", p.Username)
+		rollbackCmd := execCommandContext(ctx, "userdel", "--remove", p.Username)
 		if err := rollbackCmd.Run(); err != nil {
 			slog.ErrorContext(ctx, "failed to rollback useradd after slice-ensure failure",
 				"username", p.Username, "rollback_err", err)

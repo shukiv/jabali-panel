@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -73,7 +72,7 @@ func dbUserRotatePasswordHandler(ctx context.Context, params json.RawMessage) (a
 		escapedPassword,
 	)
 
-	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	cmd := execCommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

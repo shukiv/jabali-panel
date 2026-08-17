@@ -29,7 +29,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -151,7 +150,7 @@ func migrationSecretsWriteHandler(_ context.Context, raw json.RawMessage) (any, 
 	// Best-effort group ownership so the panel-api can read the
 	// file (root:jabali 0640). Failure is non-fatal — rotate path
 	// fires the same chown on jabali update.
-	_ = exec.Command("chown", "root:jabali", target).Run()
+	_ = execCommand("chown", "root:jabali", target).Run()
 	return map[string]string{"path": target}, nil
 }
 
@@ -184,8 +183,8 @@ func migrationPullSourceRunHandler(ctx context.Context, raw json.RawMessage) (an
 	// Stop any still-running prior attempt + reset failed-state so the
 	// transient unit name is free. Both best-effort; systemd-run below
 	// is the gate that actually errors if the unit can't be created.
-	_ = exec.CommandContext(ctx, "systemctl", "stop", "--quiet", unit).Run()
-	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "stop", "--quiet", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "reset-failed", unit).Run()
 	startedAt := time.Now().UTC()
 	pullArgs := []string{
 		"--unit=" + unit,
@@ -198,7 +197,7 @@ func migrationPullSourceRunHandler(ctx context.Context, raw json.RawMessage) (an
 		"--job-id="+p.JobID,
 		"--ssh-user="+sshUser,
 	)
-	cmd := exec.CommandContext(ctx, "systemd-run", pullArgs...)
+	cmd := execCommandContext(ctx, "systemd-run", pullArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("systemd-run: %v: %s", err, string(out))}
@@ -233,10 +232,10 @@ func migrationImportWPRunHandler(ctx context.Context, raw json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "dest_domain invalid"}
 	}
 	unit := fmt.Sprintf("jabali-migrate-importwp-%s.service", p.JobID)
-	_ = exec.CommandContext(ctx, "systemctl", "stop", "--quiet", unit).Run()
-	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "stop", "--quiet", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "reset-failed", unit).Run()
 	startedAt := time.Now().UTC()
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--unit="+unit, "--no-block", "--collect",
 		"/usr/local/bin/jabali", "migrate", "import-wp",
 		"--job-id="+p.JobID, "--dest-user="+p.DestUser, "--dest-domain="+p.DestDomain,
@@ -333,9 +332,9 @@ func migrationImportRunHandler(ctx context.Context, raw json.RawMessage) (any, e
 	}
 	args := importSystemdRunArgs(p.JobID, p.TargetUser, runProps, cmdOpts)
 	unit := fmt.Sprintf("jabali-migrate-import-%s.service", p.JobID)
-	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "reset-failed", unit).Run()
 	startedAt := time.Now().UTC()
-	cmd := exec.CommandContext(ctx, "systemd-run", args...)
+	cmd := execCommandContext(ctx, "systemd-run", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("systemd-run: %v: %s", err, string(out))}

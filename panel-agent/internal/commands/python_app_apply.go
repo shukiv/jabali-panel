@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -271,22 +270,22 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	// button drives a separate app.python.control call.
 	unit := pythonAppUnitName(p.AppID)
 	if unitChanged {
-		_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+		_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 	}
-	_ = exec.CommandContext(ctx, "systemctl", "enable", "--quiet", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "enable", "--quiet", unit).Run()
 	if needsRestart {
-		if out, err := exec.CommandContext(ctx, "systemctl", "restart", unit).CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "systemctl", "restart", unit).CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))}
 		}
 	}
 
-	active := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run() == nil
+	active := execCommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run() == nil
 	res := pythonAppApplyResult{Active: active, Unit: unit}
 	if !active {
 		// Capture WHY it isn't active so the panel shows the real startup error
 		// instead of only "not active — check journalctl" (GH #357).
 		// --output=cat drops syslog metadata; last 15 lines keep it bounded.
-		if out, jerr := exec.CommandContext(ctx, "journalctl", "-u", unit, "-n", "20", "--no-pager", "--output=cat").CombinedOutput(); jerr == nil {
+		if out, jerr := execCommandContext(ctx, "journalctl", "-u", unit, "-n", "20", "--no-pager", "--output=cat").CombinedOutput(); jerr == nil {
 			res.Detail = lastLines(strings.TrimSpace(string(out)), 15)
 		}
 	}
@@ -367,7 +366,7 @@ func runAsUser(ctx context.Context, username string, args ...string) (string, er
 // inherited cwd. dir must be a tenant-owned path the user can chdir into.
 func runAsUserInDir(ctx context.Context, username, dir string, args ...string) (string, error) {
 	full := append([]string{"-u", username, "-H"}, args...)
-	cmd := exec.CommandContext(ctx, "sudo", full...)
+	cmd := execCommandContext(ctx, "sudo", full...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "PIP_DISABLE_PIP_VERSION_CHECK=1")
 	var out bytes.Buffer
@@ -498,11 +497,11 @@ func init() {
 // (same pattern as install_python_apps_runtime). Idempotent.
 func ensurePythonVenvPackage(ctx context.Context, ver string) error {
 	pyBin := "python" + ver
-	if err := exec.CommandContext(ctx, pyBin, "-c", "import ensurepip").Run(); err == nil {
+	if err := execCommandContext(ctx, pyBin, "-c", "import ensurepip").Run(); err == nil {
 		return nil // venv already works for this interpreter.
 	}
 	pkg := "python" + ver + "-venv"
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit=jabali-python-venv-install",
 		"--service-type=oneshot", "--",
@@ -510,7 +509,7 @@ func ensurePythonVenvPackage(ctx context.Context, ver string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("install %s: %v: %s", pkg, err, strings.TrimSpace(string(out)))
 	}
-	if err := exec.CommandContext(ctx, pyBin, "-c", "import ensurepip").Run(); err != nil {
+	if err := execCommandContext(ctx, pyBin, "-c", "import ensurepip").Run(); err != nil {
 		return fmt.Errorf("%s still cannot create virtualenvs after installing %s (ensurepip unavailable)", pyBin, pkg)
 	}
 	return nil

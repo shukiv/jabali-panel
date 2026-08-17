@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -77,10 +76,10 @@ func dockerAppCheckUpdateHandler(ctx context.Context, params json.RawMessage) (a
 }
 
 func dockerManifestDigest(ctx context.Context, image string) (string, error) {
-	out, err := exec.CommandContext(ctx, "docker", "manifest", "inspect", "--verbose", image).Output()
+	out, err := execCommandContext(ctx, "docker", "manifest", "inspect", "--verbose", image).Output()
 	if err != nil {
 		// Try without --verbose for older docker.
-		out, err = exec.CommandContext(ctx, "docker", "manifest", "inspect", image).Output()
+		out, err = execCommandContext(ctx, "docker", "manifest", "inspect", image).Output()
 		if err != nil {
 			return "", err
 		}
@@ -109,7 +108,7 @@ func dockerManifestDigest(ctx context.Context, image string) (string, error) {
 
 func dockerContainerImageDigest(ctx context.Context, container string) string {
 	// 1. Resolve the image ID the container is running.
-	img, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Image}}", container).Output()
+	img, err := execCommandContext(ctx, "docker", "inspect", "--format", "{{.Image}}", container).Output()
 	if err != nil {
 		return ""
 	}
@@ -119,7 +118,7 @@ func dockerContainerImageDigest(ctx context.Context, container string) string {
 	}
 	// 2. Read RepoDigests off that image. The first one is the
 	// authoritative remote digest.
-	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", imageID).Output()
+	out, err := execCommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", imageID).Output()
 	if err != nil {
 		return ""
 	}

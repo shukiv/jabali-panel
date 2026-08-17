@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -33,10 +32,10 @@ func systemUpdateRunHandler(ctx context.Context, _ json.RawMessage) (any, error)
 	// `journalctl --since=<now>` output. systemd keeps failed-unit state
 	// indefinitely; without `reset-failed`, a second run that hits a
 	// transient name collision is rejected with ALREADY_EXISTS.
-	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", updateUnitName).Run()
+	_ = execCommandContext(ctx, "systemctl", "reset-failed", updateUnitName).Run()
 
 	startedAt := time.Now().UTC()
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--unit="+updateUnitName,
 		// Tell the CLI this run came from the panel so it does NOT also
 		// write an update_history row — the API already logged it (GH #300).

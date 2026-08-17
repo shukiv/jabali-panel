@@ -33,6 +33,7 @@ func fakeWPInstall(t *testing.T) string {
 }
 
 func TestCreateWordPressSSOFile_HappyPath(t *testing.T) {
+	withRealExec(t) // GH #994: needs the real read-only command (stub returns empty output)
 	dir := fakeWPInstall(t)
 	me, err := user.Current()
 	if err != nil {

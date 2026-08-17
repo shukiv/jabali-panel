@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -119,7 +118,7 @@ func wordpressCacheProbeHandler(ctx context.Context, params json.RawMessage) (an
 			if writeOut != "" {
 				args = append(args, "-w", writeOut)
 			}
-			out, _ := exec.CommandContext(cctx, "curl", append(args, "https://"+host+path)...).Output()
+			out, _ := execCommandContext(cctx, "curl", append(args, "https://"+host+path)...).Output()
 			return strings.TrimSpace(string(out))
 		}
 		// Homepage TTFB (GH #620).
@@ -131,7 +130,7 @@ func wordpressCacheProbeHandler(ctx context.Context, params json.RawMessage) (an
 		cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		// GET, not HEAD (-I): the nginx cache key embeds $request_method, so a
 		// HEAD can never HIT the GET-primed entry and this probe always read MISS.
-		hdr, _ := exec.CommandContext(cctx, "curl", "-ks", "-o", "/dev/null", "-D", "-", "--max-time", "8",
+		hdr, _ := execCommandContext(cctx, "curl", "-ks", "-o", "/dev/null", "-D", "-", "--max-time", "8",
 			"--resolve", host+":443:127.0.0.1", "https://"+host+"/").Output()
 		cancel()
 		hitVerified = strings.Contains(strings.ToUpper(string(hdr)), "X-JABALI-CACHE: HIT")

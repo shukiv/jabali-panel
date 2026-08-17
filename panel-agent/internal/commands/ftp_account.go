@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -249,7 +248,7 @@ func ensureFtpGroup(ctx context.Context) *agentwire.AgentError {
 	if _, err := user.LookupGroup(ftpGroupName); err == nil {
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, "groupadd", "--system", ftpGroupName).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "groupadd", "--system", ftpGroupName).CombinedOutput(); err != nil {
 		return &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("groupadd %s: %v: %s", ftpGroupName, err, strings.TrimSpace(string(out))),
@@ -263,7 +262,7 @@ func setFtpGroupMembership(ctx context.Context, username string, member bool) *a
 		if aerr := ensureFtpGroup(ctx); aerr != nil {
 			return aerr
 		}
-		if out, err := exec.CommandContext(ctx, "usermod", "-aG", ftpGroupName, username).CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "usermod", "-aG", ftpGroupName, username).CombinedOutput(); err != nil {
 			return &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("usermod -aG %s %s: %v: %s", ftpGroupName, username, err, strings.TrimSpace(string(out))),
@@ -275,7 +274,7 @@ func setFtpGroupMembership(ctx context.Context, username string, member bool) *a
 	if err != nil || !isMember {
 		return nil // absent group or non-member: removal is a no-op
 	}
-	if out, gerr := exec.CommandContext(ctx, "gpasswd", "-d", username, ftpGroupName).CombinedOutput(); gerr != nil {
+	if out, gerr := execCommandContext(ctx, "gpasswd", "-d", username, ftpGroupName).CombinedOutput(); gerr != nil {
 		return &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("gpasswd -d %s %s: %v: %s", username, ftpGroupName, gerr, strings.TrimSpace(string(out))),
@@ -287,7 +286,7 @@ func setFtpGroupMembership(ctx context.Context, username string, member bool) *a
 // chpasswdStdin sets a password via chpasswd's stdin — the password must
 // never appear in argv (visible in /proc) or logs.
 func chpasswdStdin(ctx context.Context, username, password string) *agentwire.AgentError {
-	cmd := exec.CommandContext(ctx, "chpasswd")
+	cmd := execCommandContext(ctx, "chpasswd")
 	cmd.Stdin = strings.NewReader(username + ":" + password + "\n")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return &agentwire.AgentError{
@@ -418,14 +417,14 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 		"--comment", ftpAliasGecosFor(tenant.Username),
 		p.Username,
 	}
-	if out, err := exec.CommandContext(ctx, "useradd", args...).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "useradd", args...).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("useradd %q: %v: %s", p.Username, err, strings.TrimSpace(string(out)))}
 	}
 	rollback := func() {
 		// -f: the alias shares the tenant's uid, so the tenant's own
 		// processes (FPM pool, cron) always count as "user in use" and a
 		// plain userdel exits 8. Never --remove: home is tenant data.
-		_ = exec.CommandContext(ctx, "userdel", "-f", p.Username).Run()
+		_ = execCommandContext(ctx, "userdel", "-f", p.Username).Run()
 	}
 	// Home must exist for vsftpd chroot + internal-sftp start dir, owned
 	// by the tenant uid like every other node in their tree.
@@ -486,7 +485,7 @@ func lockAfterPasswordReset(enabled *bool, wasLocked bool) bool {
 // -S` prints "<user> <status> ..." where status is L (locked), P/PS (usable),
 // or NP (no password). Field 2 is the status.
 func ftpUserLocked(ctx context.Context, username string) (bool, *agentwire.AgentError) {
-	out, err := exec.CommandContext(ctx, "passwd", "-S", username).CombinedOutput()
+	out, err := execCommandContext(ctx, "passwd", "-S", username).CombinedOutput()
 	if err != nil {
 		return false, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("passwd -S %q: %v: %s", username, err, strings.TrimSpace(string(out)))}
 	}
@@ -530,7 +529,7 @@ func ftpAccountSetPasswordHandler(ctx context.Context, params json.RawMessage) (
 	// Re-apply the shadow lock in the SAME verb (no reliance on the periodic
 	// reconciler) so a disabled account cannot authenticate in the window.
 	if lockAfterPasswordReset(p.Enabled, wasLocked) {
-		if out, err := exec.CommandContext(ctx, "usermod", "-L", p.Username).CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "usermod", "-L", p.Username).CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-lock disabled account %q after password reset: %v: %s", p.Username, err, strings.TrimSpace(string(out)))}
 		}
 		// JAB-256: a reset on a disabled account must not leave a live session
@@ -573,7 +572,7 @@ func ftpAccountSetAccessHandler(ctx context.Context, params json.RawMessage) (an
 	if !p.Enabled {
 		lockFlag = "-L"
 	}
-	if out, err := exec.CommandContext(ctx, "usermod", lockFlag, p.Username).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "usermod", lockFlag, p.Username).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("usermod %s %q: %v: %s", lockFlag, p.Username, err, strings.TrimSpace(string(out)))}
 	}
 	// JAB-256: the lock blocks re-auth but not an already-open session — kill
@@ -632,7 +631,7 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	// (exit 8) — proven live on jabalitests. -f overrides only the in-use
 	// check; home removal stays off (NEVER --remove: the home dir is a
 	// live tenant directory, usually a docroot).
-	if out, err := exec.CommandContext(ctx, "userdel", "-f", p.Username).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "userdel", "-f", p.Username).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("userdel %q: %v: %s", p.Username, err, strings.TrimSpace(string(out)))}
 	}
 	// Isolated account: unmount + remove its jail AFTER the user is gone. The
@@ -689,7 +688,7 @@ func ftpAccountListHandler(ctx context.Context, params json.RawMessage) (any, er
 		name := parts[0]
 		isFtp, _ := isUserInGroup(ctx, name, ftpGroupName)
 		locked := false
-		if out, perr := exec.CommandContext(ctx, "passwd", "-S", name).Output(); perr == nil {
+		if out, perr := execCommandContext(ctx, "passwd", "-S", name).Output(); perr == nil {
 			fields := strings.Fields(string(out))
 			locked = len(fields) >= 2 && fields[1] == "L"
 		}
@@ -760,7 +759,7 @@ func ftpAccountLockTenantHandler(ctx context.Context, params json.RawMessage) (a
 	locked := 0
 	for _, name := range names {
 		_ = setFtpGroupMembership(ctx, name, false)
-		if out, err := exec.CommandContext(ctx, "usermod", "-L", name).CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "usermod", "-L", name).CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("usermod -L %q: %v: %s", name, err, strings.TrimSpace(string(out)))}
 		}
 		// JAB-256: a suspended owner's delegated sessions must drop at once,
@@ -892,7 +891,7 @@ func ftpAccountListAllHandler(ctx context.Context, params json.RawMessage) (any,
 	entries, skipped := classifyFtpAliases(string(passwd))
 	for i := range entries {
 		locked := false
-		if out, perr := exec.CommandContext(ctx, "passwd", "-S", entries[i].Username).Output(); perr == nil {
+		if out, perr := execCommandContext(ctx, "passwd", "-S", entries[i].Username).Output(); perr == nil {
 			fields := strings.Fields(string(out))
 			locked = len(fields) >= 2 && fields[1] == "L"
 		}

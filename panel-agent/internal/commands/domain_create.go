@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -1181,7 +1180,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	}
 
 	// Test nginx configuration.
-	testCmd := exec.CommandContext(ctx, "nginx", "-t")
+	testCmd := execCommandContext(ctx, "nginx", "-t")
 	var testOutput bytes.Buffer
 	testCmd.Stdout = &testOutput
 	testCmd.Stderr = &testOutput
@@ -1193,7 +1192,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	}
 
 	// Reload nginx.
-	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOutput bytes.Buffer
 	reloadCmd.Stdout = &reloadOutput
 	reloadCmd.Stderr = &reloadOutput
@@ -1534,7 +1533,7 @@ func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot, cus
 
 	// Chown to <user>:www-data so it matches the docroot's ownership.
 	// Using exec.Command since os.Chown needs numeric IDs we don't have.
-	if err := exec.CommandContext(ctx, "chown", username+":www-data", tmpName).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", username+":www-data", tmpName).Run(); err != nil {
 		return fmt.Errorf("chown: %w", err)
 	}
 

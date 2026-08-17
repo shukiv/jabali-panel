@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -30,7 +29,7 @@ func systemUnitStopHandler(ctx context.Context, raw json.RawMessage) (any, error
 	if !allowedStopUnits[p.Unit] {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "unit not allowlisted"}
 	}
-	out, err := exec.CommandContext(ctx, "systemctl", "stop", p.Unit).CombinedOutput()
+	out, err := execCommandContext(ctx, "systemctl", "stop", p.Unit).CombinedOutput()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("systemctl stop: %v: %s", err, strings.TrimSpace(string(out)))}
 	}

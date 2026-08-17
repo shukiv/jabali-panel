@@ -21,7 +21,6 @@ import (
 	"fmt"
 	mathRand "math/rand"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -250,10 +249,10 @@ func restoreAccounts(ctx context.Context, c *backup.Client, jobID, stagingRoot s
 // the panel reconciler's job — runs after the panel comes back up
 // and reads jabali_panel.users.
 func ensureLinuxUser(ctx context.Context, username string) error {
-	if err := exec.CommandContext(ctx, "id", username).Run(); err == nil {
+	if err := execCommandContext(ctx, "id", username).Run(); err == nil {
 		return nil
 	}
-	out, err := exec.CommandContext(ctx, "useradd", "-m", "-s", "/bin/bash", username).CombinedOutput()
+	out, err := execCommandContext(ctx, "useradd", "-m", "-s", "/bin/bash", username).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("useradd %s: %w (output: %s)",
 			username, err, strings.TrimSpace(string(out)))
@@ -268,7 +267,7 @@ func rsyncOnto(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dst, err)
 	}
-	out, err := exec.CommandContext(ctx, "rsync", "-a", "--delete-after", src, dst).CombinedOutput()
+	out, err := execCommandContext(ctx, "rsync", "-a", "--delete-after", src, dst).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("rsync %s -> %s: %w (output: %s)",
 			src, dst, err, strings.TrimSpace(string(out)))
@@ -281,7 +280,7 @@ func rsyncOnto(ctx context.Context, src, dst string) error {
 func loadAccountDB(ctx context.Context, db, sqlPath string) error {
 	create := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` "+
 		"DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", db)
-	if out, err := exec.CommandContext(ctx, "mariadb",
+	if out, err := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 		"-e", create,
 	).CombinedOutput(); err != nil {
@@ -293,7 +292,7 @@ func loadAccountDB(ctx context.Context, db, sqlPath string) error {
 		return fmt.Errorf("open %s: %w", sqlPath, err)
 	}
 	defer f.Close()
-	cmd := exec.CommandContext(ctx, "mariadb",
+	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 		db,
 	)
@@ -332,7 +331,7 @@ func readMetaBundle(userStaging string) *backup.AccountMetadata {
 // and returns the combined stdout+stderr when it fails. Used by every
 // reconstruction INSERT below.
 func runMariaDBStmt(ctx context.Context, stmt string) error {
-	cmd := exec.CommandContext(ctx, "mariadb",
+	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 		"-e", stmt,
 	)
@@ -564,7 +563,7 @@ func ensureKratosLookup(ctx context.Context) (string, string) {
 	if reusableKratosNID != "" {
 		return reusableKratosNID, reusableKratosSchema
 	}
-	out, err := exec.CommandContext(ctx, "mariadb",
+	out, err := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 		"-N", "-B",
 		"-e", "SELECT nid, schema_id FROM jabali_kratos.identities WHERE state='active' LIMIT 1",
@@ -588,7 +587,7 @@ func lookupKratosIdentityByEmail(ctx context.Context, email string) string {
 	stmt := fmt.Sprintf(
 		"SELECT id FROM jabali_kratos.identities WHERE JSON_EXTRACT(traits,'$.email')='\"%s\"' LIMIT 1",
 		sqlEscape(email))
-	out, err := exec.CommandContext(ctx, "mariadb",
+	out, err := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 		"-N", "-B",
 		"-e", stmt,

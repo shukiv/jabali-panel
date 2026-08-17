@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -167,7 +166,7 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 // on a non-zero exit (could be permission-denied; treat as scan failure
 // rather than silently passing).
 func duBytes(ctx context.Context, path string) (uint64, error) {
-	out, err := exec.CommandContext(ctx, "du", "-sb", path).Output()
+	out, err := execCommandContext(ctx, "du", "-sb", path).Output()
 	if err != nil {
 		return 0, fmt.Errorf("du -sb %s: %w", path, err)
 	}

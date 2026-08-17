@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -52,8 +51,8 @@ func reapFPMPoolArtifacts(ctx context.Context, slug string) {
 	// Stop + disable the FPM master.
 	if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
 		svc := fmt.Sprintf("jabali-fpm@%s.service", slug)
-		_ = exec.CommandContext(ctx, "systemctl", "stop", svc).Run()
-		_ = exec.CommandContext(ctx, "systemctl", "disable", "--quiet", svc).Run()
+		_ = execCommandContext(ctx, "systemctl", "stop", svc).Run()
+		_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", svc).Run()
 	}
 
 	// pool.d confs across all installed PHP versions.
@@ -78,7 +77,7 @@ func reapFPMPoolArtifacts(ctx context.Context, slug string) {
 	if isVersioned {
 		_ = os.RemoveAll(filepath.Join(systemdRoot(), fmt.Sprintf("jabali-fpm@%s.service.d", slug)))
 		if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
-			_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+			_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 		}
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -47,7 +46,7 @@ func sshUserLeaveSFTPGroupHandler(ctx context.Context, params json.RawMessage) (
 	// without disturbing the user's other memberships. usermod -G would
 	// require listing every other group the user must keep — fragile and
 	// racy on multi-group accounts.
-	cmd := exec.CommandContext(ctx, "gpasswd", "-d", p.Username, sftpGroupName)
+	cmd := execCommandContext(ctx, "gpasswd", "-d", p.Username, sftpGroupName)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

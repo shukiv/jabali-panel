@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -47,7 +46,7 @@ func sshUserJoinSandboxGroupHandler(ctx context.Context, params json.RawMessage)
 	if isMember {
 		return &sshUserSandboxGroupResponse{Username: p.Username, AlreadyMember: true}, nil
 	}
-	cmd := exec.CommandContext(ctx, "usermod", "-aG", sandboxGroupName, p.Username)
+	cmd := execCommandContext(ctx, "usermod", "-aG", sandboxGroupName, p.Username)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -74,7 +73,7 @@ func sshUserLeaveSandboxGroupHandler(ctx context.Context, params json.RawMessage
 	if !isMember {
 		return &sshUserSandboxGroupResponse{Username: p.Username, NotMember: true}, nil
 	}
-	cmd := exec.CommandContext(ctx, "gpasswd", "-d", p.Username, sandboxGroupName)
+	cmd := execCommandContext(ctx, "gpasswd", "-d", p.Username, sandboxGroupName)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

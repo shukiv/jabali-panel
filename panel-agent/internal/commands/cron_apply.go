@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -393,7 +392,7 @@ func ensureSystemBus(ctx context.Context) error {
 	if _, err := os.Stat(sock); err == nil {
 		return nil
 	}
-	_ = exec.CommandContext(ctx, "systemctl", "start", "dbus.socket", "dbus.service").Run()
+	_ = execCommandContext(ctx, "systemctl", "start", "dbus.socket", "dbus.service").Run()
 	for i := 0; i < 5; i++ {
 		if _, err := os.Stat(sock); err == nil {
 			return nil
@@ -410,13 +409,13 @@ func ensureUserManager(ctx context.Context, username string, uid int, runtimeDir
 		return err
 	}
 	if err := checkUserLinger(ctx, username); err != nil {
-		if out, lErr := exec.CommandContext(ctx, "loginctl", "enable-linger", username).CombinedOutput(); lErr != nil {
+		if out, lErr := execCommandContext(ctx, "loginctl", "enable-linger", username).CombinedOutput(); lErr != nil {
 			return fmt.Errorf("enable-linger: %v: %s", lErr, strings.TrimSpace(string(out)))
 		}
 	}
 	// Start (idempotent) the user manager so the bus socket is present.
 	if _, err := os.Stat(filepath.Join(runtimeDir, "bus")); err != nil {
-		if out, sErr := exec.CommandContext(ctx, "systemctl", "start",
+		if out, sErr := execCommandContext(ctx, "systemctl", "start",
 			fmt.Sprintf("user@%d.service", uid)).CombinedOutput(); sErr != nil {
 			return fmt.Errorf("start user@%d.service: %v: %s", uid, sErr, strings.TrimSpace(string(out)))
 		}
@@ -447,7 +446,7 @@ func systemctlUserExec(ctx context.Context, username string, runtimeDir string, 
 		"systemctl", "--user",
 	}
 	full = append(full, args...)
-	cmd := exec.CommandContext(ctx, "sudo", full...)
+	cmd := execCommandContext(ctx, "sudo", full...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -499,10 +498,10 @@ func applyRootCron(ctx context.Context, p cronApplyParams) (any, error) {
 	}
 
 	// system-level daemon-reload + enable.
-	if out, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("daemon-reload: %v: %s", err, out)}
 	}
-	if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", fmt.Sprintf("jabali-cron-%s.timer", p.JobID)).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "enable", "--now", fmt.Sprintf("jabali-cron-%s.timer", p.JobID)).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("enable timer: %v: %s", err, out)}
 	}
 	return &cronApplyResponse{ServicePath: servicePath, TimerPath: timerPath}, nil

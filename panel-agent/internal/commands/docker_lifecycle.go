@@ -36,11 +36,11 @@ func dockerStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	if _, err := exec.LookPath("docker"); err == nil {
 		resp.Installed = true
 	}
-	if out, err := exec.CommandContext(ctx, "systemctl", "is-active", "docker").Output(); err == nil {
+	if out, err := execCommandContext(ctx, "systemctl", "is-active", "docker").Output(); err == nil {
 		resp.Active = strings.TrimSpace(string(out)) == "active"
 	}
 	if resp.Installed {
-		if out, err := exec.CommandContext(ctx, "docker", "--version").Output(); err == nil {
+		if out, err := execCommandContext(ctx, "docker", "--version").Output(); err == nil {
 			resp.Version = strings.TrimSpace(string(out))
 		}
 	}
@@ -62,7 +62,7 @@ func dockerInstallHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 			Message: fmt.Sprintf("install.sh missing at %s", installShPath),
 		}
 	}
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit=jabali-docker-install",
 		"--service-type=oneshot",
@@ -92,7 +92,7 @@ func dockerDisableHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	} {
 		// Fail-soft: a unit that was never installed returns exit 1
 		// from systemctl; treat that as success.
-		_ = exec.CommandContext(ctx, args[0], args[1:]...).Run()
+		_ = execCommandContext(ctx, args[0], args[1:]...).Run()
 	}
 	return dockerStatusHandler(ctx, nil)
 }
@@ -119,7 +119,7 @@ func dockerDiskUsageHandler(ctx context.Context, _ json.RawMessage) (any, error)
 	// `docker system df --format` JSON only landed in 24.x; for
 	// portability parse the plain text. Columns are stable across
 	// docker versions we care about.
-	out, err := exec.CommandContext(ctx, "docker", "system", "df").Output()
+	out, err := execCommandContext(ctx, "docker", "system", "df").Output()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("docker system df: %v", err)}
 	}
@@ -182,7 +182,7 @@ func dockerPruneHandler(ctx context.Context, params json.RawMessage) (any, error
 	if p.Volumes {
 		args = append(args, "--volumes")
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	out, err := execCommandContext(ctx, "docker", args...).CombinedOutput()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("docker system prune: %v: %s", err, strings.TrimSpace(string(out)))}
 	}

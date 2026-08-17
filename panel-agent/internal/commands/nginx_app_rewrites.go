@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -157,7 +156,7 @@ func removeAppRewrite(ctx context.Context, appType, domain, subdir string) error
 // offending include so the domain vhost doesn't enter a broken state,
 // then surfaces the nginx error. On success, reloads nginx.
 func reloadNginxAfterSnippet(ctx context.Context, snippet string) error {
-	test := exec.CommandContext(ctx, "nginx", "-t")
+	test := execCommandContext(ctx, "nginx", "-t")
 	if out, err := test.CombinedOutput(); err != nil {
 		// Pull the snippet we just wrote so nginx doesn't stay broken
 		// across the next manual reload.
@@ -165,7 +164,7 @@ func reloadNginxAfterSnippet(ctx context.Context, snippet string) error {
 		logNginxTestFailure("nginx.app_rewrite (snippet removed)", string(out))
 		return fmt.Errorf("nginx configuration test failed for app rewrite (snippet removed)")
 	}
-	reload := exec.CommandContext(ctx, "systemctl", "reload", "nginx.service")
+	reload := execCommandContext(ctx, "systemctl", "reload", "nginx.service")
 	if out, err := reload.CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl reload nginx: %w: %s", err, out)
 	}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -113,7 +112,7 @@ func cloneITFlow(ctx context.Context, osUser, installPath, branch, pin string) e
 	defer os.RemoveAll(stagingDir)
 	src := filepath.Join(stagingDir, "itflow")
 	// chown staging to the user so the as-user clone can write there.
-	if err := exec.CommandContext(ctx, "chown", "-R", osUser+":"+osUser, stagingDir).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", osUser+":"+osUser, stagingDir).Run(); err != nil {
 		return fmt.Errorf("chown staging: %w", err)
 	}
 	// Full clone (no --depth) so the reviewed pinned commit is reachable even

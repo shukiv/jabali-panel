@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -64,7 +63,7 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 	removeSendmailCredForDomain(p.Domain)
 
 	// Reload nginx
-	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOutput bytes.Buffer
 	reloadCmd.Stdout = &reloadOutput
 	reloadCmd.Stderr = &reloadOutput

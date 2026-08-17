@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -390,7 +389,7 @@ func flarumInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 
 	if err := runFlarumCLIInstaller(ctx, req.OSUser, installPath, configPath); err != nil {
 		// Best-effort cleanup of a partial config.php so re-install works.
-		_ = exec.CommandContext(ctx, "rm", "-f", filepath.Join(installPath, "config.php")).Run()
+		_ = execCommandContext(ctx, "rm", "-f", filepath.Join(installPath, "config.php")).Run()
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -135,7 +134,7 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 // output paths are remapped back onto `canonical` for the caller's lookups.
 func duSubdirSizes(ctx context.Context, dirFd *os.File, canonical string) (map[string]int64, bool) {
 	dirSizes := map[string]int64{}
-	duCmd := exec.CommandContext(ctx, "du", "-b", "-D", "--max-depth=1", "/proc/self/fd/3")
+	duCmd := execCommandContext(ctx, "du", "-b", "-D", "--max-depth=1", "/proc/self/fd/3")
 	duCmd.ExtraFiles = []*os.File{dirFd}
 	out, _ := duCmd.Output()
 	const procPfx = "/proc/self/fd/3"

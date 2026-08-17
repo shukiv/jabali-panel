@@ -24,7 +24,7 @@ func pythonInstallRuntimeHandler(ctx context.Context, _ json.RawMessage) (any, e
 			Message: fmt.Sprintf("install.sh missing at %s", installShPath),
 		}
 	}
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit=jabali-python-runtime-install",
 		"--service-type=oneshot",
@@ -43,7 +43,7 @@ func pythonInstallRuntimeHandler(ctx context.Context, _ json.RawMessage) (any, e
 // present, so the Apps-tab card can drop its installing spinner.
 func pythonRuntimeStatusHandler(_ context.Context, _ json.RawMessage) (any, error) {
 	venvOK := false
-	if out, err := exec.Command("python3", "-c", "import venv").CombinedOutput(); err == nil {
+	if out, err := execCommand("python3", "-c", "import venv").CombinedOutput(); err == nil {
 		_ = out
 		venvOK = true
 	}

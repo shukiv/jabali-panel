@@ -32,7 +32,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -203,8 +202,8 @@ func sensitivityApplyHandler(ctx context.Context, params json.RawMessage) (any, 
 	// Reload crowdsec so the new scenario / drop-in profile take effect.
 	// SIGHUP via systemctl reload — falls back to restart if reload
 	// not wired (older packaging).
-	if _, err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
-		if _, err2 := exec.CommandContext(ctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
+	if _, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+		if _, err2 := execCommandContext(ctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
 			return nil, csInternal("reload/restart crowdsec", fmt.Errorf("reload: %v; restart: %v", err, err2))
 		}
 	}

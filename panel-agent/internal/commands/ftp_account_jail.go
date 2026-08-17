@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -197,10 +196,10 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 		"--comment", ftpAliasGecosFor(tenant.Username),
 		p.Username,
 	}
-	if out, err := exec.CommandContext(ctx, "useradd", useraddArgs...).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "useradd", useraddArgs...).CombinedOutput(); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("useradd (isolated) %q: %v: %s", p.Username, err, strings.TrimSpace(string(out)))})
 	}
-	undo = append(undo, func() { _ = exec.CommandContext(ctx, "userdel", "-f", p.Username).Run() })
+	undo = append(undo, func() { _ = execCommandContext(ctx, "userdel", "-f", p.Username).Run() })
 
 	// 4. ACLs on the JAIL-SIDE mountpoint (never the tenant pathname). The jail
 	// chain is root-owned so the argument cannot be swapped, and the mount has
@@ -211,16 +210,16 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	// already applicable (dirs / already-exec files). GNU setfacl -R skips
 	// symlinks encountered during recursion by default.
 	spec := fmt.Sprintf("u:%d:rwX,u:%d:rwX", p.UID, tenant.UID)
-	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", spec, mountpoint).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "setfacl", "-R", "-m", spec, mountpoint).CombinedOutput(); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("setfacl -R %q: %v: %s", mountpoint, err, strings.TrimSpace(string(out)))})
 	}
-	if out, err := exec.CommandContext(ctx, "setfacl", "-dR", "-m", spec, mountpoint).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "setfacl", "-dR", "-m", spec, mountpoint).CombinedOutput(); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("setfacl -dR %q: %v: %s", mountpoint, err, strings.TrimSpace(string(out)))})
 	}
 
 	// 5. Per-uid quota (the split cap). setquota block counts are 1KB units.
 	blocks := strconv.FormatUint(uint64(p.QuotaMB)*1024, 10)
-	if out, err := exec.CommandContext(ctx, "setquota", "-u", p.Username, blocks, blocks, "0", "0", p.QuotaMount).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "setquota", "-u", p.Username, blocks, blocks, "0", "0", p.QuotaMount).CombinedOutput(); err != nil {
 		return fail(&agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("setquota (isolated) %q: %v: %s", p.Username, err, strings.TrimSpace(string(out)))})
 	}
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -21,10 +20,10 @@ type systemAptRunResponse struct {
 const aptUnitName = "jabali-apt-oneshot.service"
 
 func systemAptRunHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", aptUnitName).Run()
+	_ = execCommandContext(ctx, "systemctl", "reset-failed", aptUnitName).Run()
 
 	startedAt := time.Now().UTC()
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--unit="+aptUnitName,
 		"--no-block",
 		// No --collect: failed unit lingers (reconciler reads it as failed),

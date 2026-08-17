@@ -15,7 +15,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -58,7 +57,7 @@ func userSuspendHandler(ctx context.Context, params json.RawMessage) (any, error
 		resp.Note = fmt.Sprintf("group lookup failed: %v", gErr)
 	}
 	if inSFTP {
-		cmd := exec.CommandContext(ctx, "gpasswd", "-d", p.Username, sftpGroupName)
+		cmd := execCommandContext(ctx, "gpasswd", "-d", p.Username, sftpGroupName)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
@@ -73,7 +72,7 @@ func userSuspendHandler(ctx context.Context, params json.RawMessage) (any, error
 	// 2. usermod -L locks the password (prefixes shadow hash with !).
 	// Reversible via -U on unsuspend. Idempotent: locking a locked
 	// account is a no-op.
-	cmd := exec.CommandContext(ctx, "usermod", "-L", p.Username)
+	cmd := execCommandContext(ctx, "usermod", "-L", p.Username)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -102,7 +101,7 @@ func userUnsuspendHandler(ctx context.Context, params json.RawMessage) (any, err
 	resp := &userSuspendResponse{Username: p.Username}
 
 	// 1. Add back to jabali-sftp. usermod -aG is idempotent.
-	cmd := exec.CommandContext(ctx, "usermod", "-aG", sftpGroupName, p.Username)
+	cmd := execCommandContext(ctx, "usermod", "-aG", sftpGroupName, p.Username)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -114,7 +113,7 @@ func userUnsuspendHandler(ctx context.Context, params json.RawMessage) (any, err
 	resp.SFTPGroupAdded = true
 
 	// 2. usermod -U unlocks (strips the leading !).
-	cmd = exec.CommandContext(ctx, "usermod", "-U", p.Username)
+	cmd = execCommandContext(ctx, "usermod", "-U", p.Username)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

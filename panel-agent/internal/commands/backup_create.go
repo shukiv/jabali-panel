@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -732,7 +731,7 @@ func backupCancelHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 
 // hostname returns the box's hostname for manifest source recording.
 func hostname() string {
-	out, err := exec.Command("hostname", "-f").Output()
+	out, err := execCommand("hostname", "-f").Output()
 	if err != nil {
 		return "unknown"
 	}
@@ -743,7 +742,7 @@ func hostname() string {
 // /etc/jabali-panel/panel.sha when it builds; missing file is fine
 // (older installs).
 func panelSHA() string {
-	out, err := exec.Command("cat", "/etc/jabali-panel/panel.sha").Output()
+	out, err := execCommand("cat", "/etc/jabali-panel/panel.sha").Output()
 	if err != nil {
 		return ""
 	}

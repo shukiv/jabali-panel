@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -470,7 +469,7 @@ func dockerAppStatusHandler(ctx context.Context, params json.RawMessage) (any, e
 // du(1). One exec, no per-file fork; bounded by the tree walk. Returns
 // an error the caller can ignore (size is advisory, never load-bearing).
 func dirSizeBytes(ctx context.Context, dir string) (int64, error) {
-	out, err := exec.CommandContext(ctx, "du", "-sb", dir).Output()
+	out, err := execCommandContext(ctx, "du", "-sb", dir).Output()
 	if err != nil {
 		return 0, err
 	}
@@ -491,7 +490,7 @@ func dirSizeBytes(ctx context.Context, dir string) (int64, error) {
 // the combined stdout+stderr, plus any exec error.
 func runDockerCompose(ctx context.Context, dir string, args ...string) (string, error) {
 	full := append([]string{"compose"}, args...)
-	cmd := exec.CommandContext(ctx, "docker", full...)
+	cmd := execCommandContext(ctx, "docker", full...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return string(out), err

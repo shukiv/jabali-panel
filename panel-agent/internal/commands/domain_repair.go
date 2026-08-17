@@ -44,7 +44,7 @@ func domainRepairFixPermsHandler(ctx context.Context, params json.RawMessage) (a
 	if !domainRepairUserRe.MatchString(p.Username) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid username"}
 	}
-	cmd := exec.CommandContext(ctx, repairBinary, "domain", "fix-perms", p.Username)
+	cmd := execCommandContext(ctx, repairBinary, "domain", "fix-perms", p.Username)
 	out, err := cmd.CombinedOutput()
 	exitCode := 0
 	if err != nil {
@@ -82,7 +82,7 @@ func domainRepairOrphansHandler(ctx context.Context, params json.RawMessage) (an
 		args = append(args, "--apply")
 	}
 	args = append(args, "--json")
-	cmd := exec.CommandContext(ctx, repairBinary, args...)
+	cmd := execCommandContext(ctx, repairBinary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		var ee *exec.ExitError

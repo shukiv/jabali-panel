@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -123,7 +122,7 @@ func nginxTunablesApplyHandler(ctx context.Context, params json.RawMessage) (any
 		}
 	}
 
-	testCmd := exec.CommandContext(ctx, "nginx", "-t")
+	testCmd := execCommandContext(ctx, "nginx", "-t")
 	var testOut bytes.Buffer
 	testCmd.Stdout = &testOut
 	testCmd.Stderr = &testOut
@@ -132,7 +131,7 @@ func nginxTunablesApplyHandler(ctx context.Context, params json.RawMessage) (any
 		return nil, nginxTestFailure("nginx.tunables (rolled back)", testOut.String())
 	}
 
-	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOut bytes.Buffer
 	reloadCmd.Stdout = &reloadOut
 	reloadCmd.Stderr = &reloadOut

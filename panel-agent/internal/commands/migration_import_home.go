@@ -31,7 +31,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -271,7 +270,7 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 	srcWithSlash := strings.TrimRight(srcAbs, "/") + "/"
 	args = append(args, srcWithSlash, dest)
 
-	cmd := exec.CommandContext(subctx, "rsync", args...)
+	cmd := execCommandContext(subctx, "rsync", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, &agentwire.AgentError{
@@ -315,8 +314,8 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 	// (in the www-data group) can traverse + read. Same trick the
 	// install.sh user-create script + reconciler use on fresh
 	// /home/<user>/ trees.
-	_ = exec.CommandContext(subctx, "find", chownTarget, "-type", "d", "-exec", "chmod", "g+rx", "{}", "+").Run()
-	_ = exec.CommandContext(subctx, "find", chownTarget, "-type", "f", "-exec", "chmod", "g+r", "{}", "+").Run()
+	_ = execCommandContext(subctx, "find", chownTarget, "-type", "d", "-exec", "chmod", "g+rx", "{}", "+").Run()
+	_ = execCommandContext(subctx, "find", chownTarget, "-type", "f", "-exec", "chmod", "g+r", "{}", "+").Run()
 
 	return migrationImportHomeResult{
 		BytesCopied: bytesCopied,

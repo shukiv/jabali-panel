@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -105,7 +104,7 @@ func dbCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		escapedCollation,
 	)
 
-	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	cmd := execCommandContext(ctx, "mysql", "-e", sql)
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return nil, &agentwire.AgentError{

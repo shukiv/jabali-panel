@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 
@@ -73,13 +72,13 @@ func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, er
 	// just the traversal bit (g+x) without exposing repo contents
 	// (the repo dir itself stays 0700). chgrp gives the directory the
 	// jabali group so o-x stays closed.
-	if err := exec.Command("chgrp", "jabali", filepath.Dir(downloadRoot)).Run(); err != nil {
+	if err := execCommand("chgrp", "jabali", filepath.Dir(downloadRoot)).Run(); err != nil {
 		return nil, fmt.Errorf("chgrp /var/lib/jabali-backups: %w", err)
 	}
 	if err := os.Chmod(filepath.Dir(downloadRoot), 0o750); err != nil {
 		return nil, fmt.Errorf("chmod /var/lib/jabali-backups: %w", err)
 	}
-	if err := exec.Command("chgrp", "jabali", downloadRoot).Run(); err != nil {
+	if err := execCommand("chgrp", "jabali", downloadRoot).Run(); err != nil {
 		return nil, fmt.Errorf("chgrp downloadRoot: %w", err)
 	}
 	if err := os.Chmod(downloadRoot, 0o750); err != nil {
@@ -138,10 +137,10 @@ func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, er
 	// `jabali` exists since M9 (per-user-slices baseline). chmod -R
 	// keeps directories traversable + files readable. exec'ing chown
 	// is cheaper than walking the tree in Go for typical home dirs.
-	if err := exec.Command("chgrp", "-R", "jabali", target).Run(); err != nil {
+	if err := execCommand("chgrp", "-R", "jabali", target).Run(); err != nil {
 		return nil, fmt.Errorf("chgrp jabali: %w", err)
 	}
-	if err := exec.Command("chmod", "-R", "g+rX", target).Run(); err != nil {
+	if err := execCommand("chmod", "-R", "g+rX", target).Run(); err != nil {
 		return nil, fmt.Errorf("chmod g+rX: %w", err)
 	}
 	if err := os.Chmod(target, 0o750); err != nil {

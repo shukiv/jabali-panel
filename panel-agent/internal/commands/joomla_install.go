@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -290,7 +289,7 @@ func joomlaInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		// Best-effort cleanup so re-install isn't blocked. Don't remove
 		// installation/ here — the user may want to retry the web
 		// installer manually for diagnostics.
-		_ = exec.CommandContext(ctx, "rm", "-f", filepath.Join(installPath, "configuration.php")).Run()
+		_ = execCommandContext(ctx, "rm", "-f", filepath.Join(installPath, "configuration.php")).Run()
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 

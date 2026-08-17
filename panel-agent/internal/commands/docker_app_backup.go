@@ -62,7 +62,7 @@ func dockerAppBackupHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: eerr.Error()}
 	}
 
-	cmd := exec.CommandContext(ctx, "restic", "backup", dir,
+	cmd := execCommandContext(ctx, "restic", "backup", dir,
 		"--tag", "docker-app",
 		"--tag", "panel-managed",
 		"--tag", "slug:"+p.Slug,
@@ -126,7 +126,7 @@ func dockerAppListBackupsHandler(ctx context.Context, params json.RawMessage) (a
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: eerr.Error()}
 	}
 
-	cmd := exec.CommandContext(ctx, "restic", "snapshots",
+	cmd := execCommandContext(ctx, "restic", "snapshots",
 		"--tag", "docker-app",
 		"--tag", "slug:"+p.Slug,
 		"--json")
@@ -224,7 +224,7 @@ func dockerAppRestoreHandler(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("docker compose down: %v", err)}
 	}
 
-	rc := exec.CommandContext(ctx, "restic", "restore", p.SnapshotID,
+	rc := execCommandContext(ctx, "restic", "restore", p.SnapshotID,
 		"--target", "/",
 		"--include", dir,
 		"--json")

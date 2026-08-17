@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -95,13 +94,13 @@ func hostnameFreeApplyHandler(ctx context.Context, params json.RawMessage) (any,
 
 	// Enable the heartbeat timer (best-effort; skipped in test env).
 	if os.Getenv("JABALI_HOSTNAME_SKIP_SYSTEMD") == "" {
-		_ = exec.CommandContext(ctx, "systemctl", "enable", "--now", "jabali-hostname-heartbeat.timer").Run()
+		_ = execCommandContext(ctx, "systemctl", "enable", "--now", "jabali-hostname-heartbeat.timer").Run()
 		// Background wildcard-cert issuance. Detached so the settings PATCH
 		// returns promptly; the panel-cert reconciler is the backstop for
 		// <label> if this run is slow or fails.
 		certScript := "/usr/local/libexec/jabali/jabali-hostname-cert.sh"
 		if _, err := os.Stat(certScript); err == nil {
-			cmd := exec.Command(certScript)
+			cmd := execCommand(certScript)
 			cmd.Env = os.Environ()
 			_ = cmd.Start()
 		}

@@ -34,7 +34,7 @@ var dockerTenantExec = func(ctx context.Context) error {
 	} else if _, serr := os.Stat("/usr/local/bin/jabali"); serr == nil {
 		bin = "/usr/local/bin/jabali"
 	}
-	out, err := exec.CommandContext(ctx, bin, "docker", "enable-tenant", "--yes").CombinedOutput()
+	out, err := execCommandContext(ctx, bin, "docker", "enable-tenant", "--yes").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("jabali docker enable-tenant: %v: %s", err, strings.TrimSpace(string(out)))
 	}

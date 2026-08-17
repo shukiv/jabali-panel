@@ -225,6 +225,7 @@ func TestSystemSetSSHConfig_AtomicWrite(t *testing.T) {
 // rejects the new config, BOTH drop-ins must be restored to their previous
 // contents so we don't leave the box with one updated and one stale file.
 func TestSystemSetSSHConfig_RestoresBothOnValidationFailure(t *testing.T) {
+	withRealExec(t) // GH #994: needs the real read-only command (stub returns empty output)
 	globalPath, sftpPath := setupSSHTestPaths(t)
 	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "") // re-enable the exec
 	t.Setenv("PATH", t.TempDir())                  // sshd not on PATH → exec fails

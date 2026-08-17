@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -106,7 +105,7 @@ func systemAutoupdateApplyHandler(ctx context.Context, raw json.RawMessage) (any
 	}
 
 	if changed {
-		if out, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("daemon-reload: %v: %s", err, out)}
 		}
 	}
@@ -141,15 +140,15 @@ func writeIfChanged(path, content string) (bool, error) {
 // setTimerEnabled enables --now or disables --now a timer, but only when its
 // current is-enabled state differs from desired. Returns whether it flipped.
 func setTimerEnabled(ctx context.Context, timer string, want bool) bool {
-	out, _ := exec.CommandContext(ctx, "systemctl", "is-enabled", timer).Output()
+	out, _ := execCommandContext(ctx, "systemctl", "is-enabled", timer).Output()
 	enabled := strings.TrimSpace(string(out)) == "enabled"
 	if enabled == want {
 		return false
 	}
 	if want {
-		_ = exec.CommandContext(ctx, "systemctl", "enable", "--now", timer).Run()
+		_ = execCommandContext(ctx, "systemctl", "enable", "--now", timer).Run()
 	} else {
-		_ = exec.CommandContext(ctx, "systemctl", "disable", "--now", timer).Run()
+		_ = execCommandContext(ctx, "systemctl", "disable", "--now", timer).Run()
 	}
 	return true
 }

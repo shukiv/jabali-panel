@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"text/template"
 
@@ -463,14 +462,14 @@ var nginxTestAndReload = defaultNginxTestAndReload
 
 func defaultNginxTestAndReload(ctx context.Context) error {
 	var out bytes.Buffer
-	test := exec.CommandContext(ctx, "nginx", "-t")
+	test := execCommandContext(ctx, "nginx", "-t")
 	test.Stdout = &out
 	test.Stderr = &out
 	if err := test.Run(); err != nil {
 		return nginxTestFailure("webmail.vhost", out.String())
 	}
 	out.Reset()
-	reload := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	reload := execCommandContext(ctx, "systemctl", "reload", "nginx")
 	reload.Stdout = &out
 	reload.Stderr = &out
 	if err := reload.Run(); err != nil {

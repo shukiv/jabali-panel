@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -51,7 +50,7 @@ func systemSetHostnameHandler(ctx context.Context, params json.RawMessage) (any,
 
 	// hostnamectl handles both systemd-hostnamed and the /etc/hostname
 	// write. Fall through with a clear error on distros that lack it.
-	cmd := exec.CommandContext(ctx, "hostnamectl", "set-hostname", p.Hostname)
+	cmd := execCommandContext(ctx, "hostnamectl", "set-hostname", p.Hostname)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("hostnamectl failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}

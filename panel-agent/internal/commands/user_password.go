@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -61,7 +60,7 @@ func userPasswordHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 
 	// Check if user exists.
-	checkCmd := exec.CommandContext(ctx, "id", p.Username)
+	checkCmd := execCommandContext(ctx, "id", p.Username)
 	if err := checkCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeNotFound,
@@ -84,7 +83,7 @@ func userPasswordHandler(ctx context.Context, params json.RawMessage) (any, erro
 		args = nil
 		input = p.Username + ":" + p.Password + "\n"
 	}
-	chpasswdCmd := exec.CommandContext(ctx, "chpasswd", args...)
+	chpasswdCmd := execCommandContext(ctx, "chpasswd", args...)
 	chpasswdCmd.Stdin = strings.NewReader(input)
 	if err := chpasswdCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{

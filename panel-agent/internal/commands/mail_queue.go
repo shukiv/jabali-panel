@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -106,7 +105,7 @@ func runStalwartCLI(ctx context.Context, args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, csInternal("stalwart-admin token unreadable", err)
 	}
-	cmd := exec.CommandContext(ctx, "stalwart-cli", args...)
+	cmd := execCommandContext(ctx, "stalwart-cli", args...)
 	cmd.Env = append(os.Environ(),
 		"STALWART_URL="+stalwartAdminURLFunc(),
 		"STALWART_USER="+jmapAdminUser,

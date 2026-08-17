@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,7 +35,7 @@ func sessionsSSHListHandler(ctx context.Context, _ json.RawMessage) (any, error)
 	// inbound session (sshd never dials out; outbound ssh is the `ssh` client),
 	// so the sshd-process match below scopes it correctly on any port, and SFTP
 	// (same sshd transport) is captured too.
-	out, err := exec.CommandContext(ctx, "ss", "-tnHp", "state", "established").Output()
+	out, err := execCommandContext(ctx, "ss", "-tnHp", "state", "established").Output()
 	if err != nil {
 		// No ss / no sessions — return empty, not an error.
 		return map[string]any{"sessions": []sshSession{}}, nil
@@ -149,10 +148,10 @@ func parseSSHDLabel(cmdline string) (user, channel string) {
 
 // procUserAndStart returns the process owner + its start time (best-effort).
 func procUserAndStart(ctx context.Context, pid int) (user, since string) {
-	if out, err := exec.CommandContext(ctx, "ps", "-o", "user=", "-p", strconv.Itoa(pid)).Output(); err == nil {
+	if out, err := execCommandContext(ctx, "ps", "-o", "user=", "-p", strconv.Itoa(pid)).Output(); err == nil {
 		user = strings.TrimSpace(string(out))
 	}
-	if out, err := exec.CommandContext(ctx, "ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output(); err == nil {
+	if out, err := execCommandContext(ctx, "ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output(); err == nil {
 		since = strings.TrimSpace(string(out))
 	}
 	return user, since

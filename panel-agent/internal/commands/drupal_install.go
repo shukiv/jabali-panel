@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -176,7 +175,7 @@ func installDrushViaComposer(ctx context.Context, osUser, installPath string) er
 	if err := os.MkdirAll(composerHome, 0o755); err != nil {
 		return fmt.Errorf("mkdir composer home: %w", err)
 	}
-	if err := exec.CommandContext(ctx, "chown", "-R", osUser+":"+osUser, composerHome).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", osUser+":"+osUser, composerHome).Run(); err != nil {
 		return fmt.Errorf("chown composer home: %w", err)
 	}
 
@@ -192,7 +191,7 @@ func installDrushViaComposer(ctx context.Context, osUser, installPath string) er
 		if err := os.WriteFile(p, data, 0o644); err != nil {
 			return fmt.Errorf("write pinned %s: %w", name, err)
 		}
-		if err := exec.CommandContext(ctx, "chown", osUser+":"+osUser, p).Run(); err != nil {
+		if err := execCommandContext(ctx, "chown", osUser+":"+osUser, p).Run(); err != nil {
 			return fmt.Errorf("chown pinned %s: %w", name, err)
 		}
 	}
@@ -404,7 +403,7 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		// Best-effort cleanup of half-written settings.php so a
 		// re-install attempt isn't blocked.
 		settingsPath := filepath.Join(installPath, "sites", "default", "settings.php")
-		_ = exec.CommandContext(ctx, "rm", "-f", settingsPath).Run()
+		_ = execCommandContext(ctx, "rm", "-f", settingsPath).Run()
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 

@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -61,7 +60,7 @@ func cell(r []string, i int) string {
 func dbProcessListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	const q = "SELECT Id,User,Host,IFNULL(db,''),Command,Time,IFNULL(State,'')," +
 		"IFNULL(LEFT(Info,200),'') FROM information_schema.PROCESSLIST ORDER BY Time DESC"
-	out, err := exec.CommandContext(ctx, "mysql", "-N", "-B", "-e", q).CombinedOutput()
+	out, err := execCommandContext(ctx, "mysql", "-N", "-B", "-e", q).CombinedOutput()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "processlist query failed"}
 	}
@@ -85,7 +84,7 @@ func dbKillHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "id must be a positive integer"}
 	}
-	if err := exec.CommandContext(ctx, "mysql", "-e", fmt.Sprintf("KILL %d", n)).Run(); err != nil {
+	if err := execCommandContext(ctx, "mysql", "-e", fmt.Sprintf("KILL %d", n)).Run(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "kill failed"}
 	}
 	return dbKillResponse{OK: true}, nil
@@ -97,7 +96,7 @@ func dbPostgresActivityHandler(ctx context.Context, _ json.RawMessage) (any, err
 	const q = "SELECT pid, usename, COALESCE(client_addr::text,'local'), COALESCE(datname,''), " +
 		"state, COALESCE(left(query,200),'') FROM pg_stat_activity " +
 		"WHERE pid <> pg_backend_pid() ORDER BY state"
-	cmd := exec.CommandContext(ctx, "sudo", "-u", "postgres", "psql",
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
 		"-v", "ON_ERROR_STOP=1", "-XAtq", "-F", "\t", "-c", q)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

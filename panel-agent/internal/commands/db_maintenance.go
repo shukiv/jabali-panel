@@ -51,7 +51,7 @@ func dbMaintenanceHandler(ctx context.Context, params json.RawMessage) (any, err
 	// --optimize then --analyze sequentially.
 	var sb strings.Builder
 	for _, op := range []string{"--optimize", "--analyze"} {
-		o, e := exec.CommandContext(ctx, "mariadb-check", append([]string{op}, scopeArgs...)...).CombinedOutput()
+		o, e := execCommandContext(ctx, "mariadb-check", append([]string{op}, scopeArgs...)...).CombinedOutput()
 		sb.WriteString(op + ":\n" + strings.TrimSpace(string(o)) + "\n")
 		if e != nil {
 			return nil, &agentwire.AgentError{
@@ -79,11 +79,11 @@ func dbPostgresMaintenanceHandler(ctx context.Context, params json.RawMessage) (
 	}
 	var vac, rei *exec.Cmd
 	if p.Scope == "all" {
-		vac = exec.CommandContext(ctx, "sudo", "-u", "postgres", "vacuumdb", "--all", "--analyze")
-		rei = exec.CommandContext(ctx, "sudo", "-u", "postgres", "reindexdb", "--all")
+		vac = execCommandContext(ctx, "sudo", "-u", "postgres", "vacuumdb", "--all", "--analyze")
+		rei = execCommandContext(ctx, "sudo", "-u", "postgres", "reindexdb", "--all")
 	} else {
-		vac = exec.CommandContext(ctx, "sudo", "-u", "postgres", "vacuumdb", "-d", p.Scope, "--analyze")
-		rei = exec.CommandContext(ctx, "sudo", "-u", "postgres", "reindexdb", "-d", p.Scope)
+		vac = execCommandContext(ctx, "sudo", "-u", "postgres", "vacuumdb", "-d", p.Scope, "--analyze")
+		rei = execCommandContext(ctx, "sudo", "-u", "postgres", "reindexdb", "-d", p.Scope)
 	}
 	vOut, vErr := vac.CombinedOutput()
 	rOut, rErr := rei.CombinedOutput()

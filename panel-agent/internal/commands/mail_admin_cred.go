@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -45,7 +44,7 @@ const stalwartRecoveryAdminKey = "STALWART_RECOVERY_ADMIN="
 // restartServiceFunc / scheduleRestartFunc are vars so tests don't shell out.
 var (
 	restartServiceFunc = func(ctx context.Context, unit string) error {
-		out, err := exec.CommandContext(ctx, "systemctl", "restart", unit).CombinedOutput()
+		out, err := execCommandContext(ctx, "systemctl", "restart", unit).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("systemctl restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))
 		}
@@ -54,7 +53,7 @@ var (
 	// scheduleRestartFunc bounces a unit a few seconds in the future via a
 	// transient systemd unit, so the caller's response is delivered first.
 	scheduleRestartFunc = func(ctx context.Context, unit string) error {
-		out, err := exec.CommandContext(ctx, "systemd-run", "--quiet", "--collect",
+		out, err := execCommandContext(ctx, "systemd-run", "--quiet", "--collect",
 			"--on-active=3s", "systemctl", "restart", unit).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("systemd-run restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))

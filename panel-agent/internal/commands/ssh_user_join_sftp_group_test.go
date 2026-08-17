@@ -11,6 +11,7 @@ import (
 )
 
 func TestSSHUserJoinSFTPGroup_InvalidUser(t *testing.T) {
+	withRealExec(t) // GH #994: needs the real read-only command (stub returns empty output)
 	ctx := context.Background()
 
 	params, _ := json.Marshal(sshUserJoinSFTPGroupParams{

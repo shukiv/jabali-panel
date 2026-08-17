@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -164,7 +163,7 @@ func systemSetSSHConfigHandler(ctx context.Context, params json.RawMessage) (any
 
 	// Validate the combined config (sshd -t reads main config + all drop-ins).
 	if os.Getenv("JABALI_SSHD_TEST_SKIP_VALIDATE") == "" {
-		cmd := exec.CommandContext(ctx, "sshd", "-t")
+		cmd := execCommandContext(ctx, "sshd", "-t")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			restoreFile(globalPath, prevGlobal)
 			restoreFile(sftpPath, prevSftp)
@@ -182,7 +181,7 @@ func systemSetSSHConfigHandler(ctx context.Context, params json.RawMessage) (any
 		if unit == "" {
 			return nil, fmt.Errorf("no ssh/sshd systemd unit found")
 		}
-		cmd := exec.CommandContext(ctx, "systemctl", "reload", unit)
+		cmd := execCommandContext(ctx, "systemctl", "reload", unit)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("systemctl reload %s: %s: %w", unit, strings.TrimSpace(string(out)), err)
 		}
@@ -200,7 +199,7 @@ func systemSetSSHConfigHandler(ctx context.Context, params json.RawMessage) (any
 // "" if neither is present (caller decides whether to fail or skip).
 func pickSSHUnit(ctx context.Context) string {
 	for _, name := range []string{"ssh", "sshd"} {
-		cmd := exec.CommandContext(ctx, "systemctl", "list-unit-files", name+".service")
+		cmd := execCommandContext(ctx, "systemctl", "list-unit-files", name+".service")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			continue

@@ -450,7 +450,7 @@ func mwAideCheckHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	cmd := osexec.CommandContext(ctx, "/usr/bin/aide", "--config", "/etc/aide/aide.conf", "--check")
+	cmd := execCommandContext(ctx, "/usr/bin/aide", "--config", "/etc/aide/aide.conf", "--check")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, mwInternal("aide stdout pipe", err)
@@ -494,7 +494,7 @@ func mwAideRebuildHandler(ctx context.Context, payload json.RawMessage) (any, er
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	out, err := osexec.CommandContext(ctx, "/usr/sbin/aideinit", "-y", "-f").CombinedOutput()
+	out, err := execCommandContext(ctx, "/usr/sbin/aideinit", "-y", "-f").CombinedOutput()
 	if err != nil {
 		tail := string(out)
 		if len(tail) > 500 {

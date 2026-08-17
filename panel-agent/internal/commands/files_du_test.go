@@ -13,6 +13,7 @@ import (
 // The regression it catches — running du without -D — returned the symlink
 // node's own size (~tens of bytes) and no children, so every folder read 0.
 func TestDuSubdirSizes_Recursive(t *testing.T) {
+	withRealExec(t) // GH #994: needs the real read-only command (stub returns empty output)
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "alpha"), 0o755); err != nil {
 		t.Fatal(err)

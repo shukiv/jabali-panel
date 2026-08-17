@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/certbot"
@@ -63,7 +62,7 @@ var runDeployHookFn = func(ctx context.Context, hostname, kind string) error {
 	if kind == "" {
 		kind = "hostname"
 	}
-	cmd := exec.CommandContext(ctx, panelDeployHook)
+	cmd := execCommandContext(ctx, panelDeployHook)
 	// certbot sets RENEWED_LINEAGE on real renewals; for first-issue
 	// we replicate the contract + pass the kind so the hook routes
 	// to the right deploy target (ADR-0105).

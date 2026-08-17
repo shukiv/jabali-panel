@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -160,9 +159,9 @@ func removeRootCron(ctx context.Context, p cronRemoveParams) (any, error) {
 	if !fileExists(servicePath) && !fileExists(timerPath) {
 		return &cronRemoveResponse{NoChange: true}, nil
 	}
-	_ = exec.CommandContext(ctx, "systemctl", "disable", "--now", fmt.Sprintf("jabali-cron-%s.timer", p.JobID)).Run()
+	_ = execCommandContext(ctx, "systemctl", "disable", "--now", fmt.Sprintf("jabali-cron-%s.timer", p.JobID)).Run()
 	_ = os.Remove(servicePath)
 	_ = os.Remove(timerPath)
-	_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+	_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 	return &cronRemoveResponse{}, nil
 }

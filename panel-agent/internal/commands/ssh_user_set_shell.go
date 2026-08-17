@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"os/user"
 	"strings"
 
@@ -94,7 +93,7 @@ func sshUserSetShellHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "chsh", "-s", p.Shell, p.Username)
+	cmd := execCommandContext(ctx, "chsh", "-s", p.Shell, p.Username)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -114,7 +113,7 @@ func sshUserSetShellHandler(ctx context.Context, params json.RawMessage) (any, e
 
 // getentShell returns the seventh field of the user's passwd row.
 func getentShell(ctx context.Context, username string) (string, *agentwire.AgentError) {
-	cmd := exec.CommandContext(ctx, "getent", "passwd", username)
+	cmd := execCommandContext(ctx, "getent", "passwd", username)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

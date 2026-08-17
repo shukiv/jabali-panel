@@ -107,7 +107,7 @@ func mwApparmorStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 		Denials:  []apparmorDenial{},
 	}
 
-	out, err := osexec.CommandContext(ctx, "aa-status", "--json").Output()
+	out, err := execCommandContext(ctx, "aa-status", "--json").Output()
 	if err != nil {
 		// aa-status returns non-zero on disabled / not-installed —
 		// surface as Enabled=false, not as an internal error.
@@ -242,7 +242,7 @@ func readApparmorEventsJournal(ctx context.Context, status string, since time.Ti
 	}
 	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	cmd := osexec.CommandContext(cctx,
+	cmd := execCommandContext(cctx,
 		"journalctl",
 		"-k",
 		"--since", "24 hours ago",
@@ -360,7 +360,7 @@ func mwApparmorSetModeHandler(ctx context.Context, raw json.RawMessage) (any, er
 	if profilePath == "" {
 		return nil, mwInvalidArg("profile has no file path mapping")
 	}
-	out, err := osexec.CommandContext(ctx, tool, profilePath).CombinedOutput()
+	out, err := execCommandContext(ctx, tool, profilePath).CombinedOutput()
 	if err != nil {
 		return nil, mwInternal(fmt.Sprintf("%s %s: %s", tool, req.Profile, string(out)), err)
 	}

@@ -150,7 +150,7 @@ func stalwartActive(ctx context.Context) bool {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return true
 	}
-	out, _ := exec.CommandContext(ctx, "systemctl", "is-active", "jabali-stalwart.service").Output()
+	out, _ := execCommandContext(ctx, "systemctl", "is-active", "jabali-stalwart.service").Output()
 	return strings.TrimSpace(string(out)) == "active"
 }
 

@@ -30,7 +30,6 @@ import (
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -215,7 +214,7 @@ func handleTerminalConn(raw net.Conn, recordDir string, gid int, log *slog.Logge
 
 	// Spawn the root shell. Agent is uid 0 so no privilege juggling;
 	// new session + controlling TTY via creack/pty.
-	cmd := exec.Command("/bin/bash", "-l")
+	cmd := execCommand("/bin/bash", "-l")
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		"JABALI_ROOT_TERMINAL=1",

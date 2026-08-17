@@ -116,7 +116,7 @@ func runAuditLog(ctx context.Context, uidFilter, since string, limit int) ([]aud
 	ctx, cancel := context.WithTimeout(ctx, auditCallTimeout)
 	defer cancel()
 
-	cmd := osexec.CommandContext(ctx, "grep", "-hE",
+	cmd := execCommandContext(ctx, "grep", "-hE",
 		`key="jabali_(susp|web)_exec|jabali_bin_tamper"`, auditLogPath)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

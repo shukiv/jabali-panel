@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,7 +35,7 @@ var dbSizeNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 // dbSizeExec runs a size-query command and returns its stdout. Package var so
 // tests can fake DB access (GH #994); production shells out for real.
 var dbSizeExec = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output()
+	return execCommandContext(ctx, name, args...).Output()
 }
 
 func dbSizeHandler(ctx context.Context, params json.RawMessage) (any, error) {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -59,7 +58,7 @@ func domainEnableHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 
 	// Test nginx configuration
-	testCmd := exec.CommandContext(ctx, "nginx", "-t")
+	testCmd := execCommandContext(ctx, "nginx", "-t")
 	var testOutput bytes.Buffer
 	testCmd.Stdout = &testOutput
 	testCmd.Stderr = &testOutput
@@ -70,7 +69,7 @@ func domainEnableHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 
 	// Reload nginx
-	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOutput bytes.Buffer
 	reloadCmd.Stdout = &reloadOutput
 	reloadCmd.Stderr = &reloadOutput
@@ -113,7 +112,7 @@ func domainDisableHandler(ctx context.Context, params json.RawMessage) (any, err
 	os.Remove(enabledPath)
 
 	// Reload nginx
-	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOutput bytes.Buffer
 	reloadCmd.Stdout = &reloadOutput
 	reloadCmd.Stderr = &reloadOutput

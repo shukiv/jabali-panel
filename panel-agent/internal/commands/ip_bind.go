@@ -130,7 +130,7 @@ func ipBindHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	}
 
 	cidr := fmt.Sprintf("%s/%d", req.Address, prefix)
-	cmd := exec.CommandContext(ctx, "ip", "addr", "add", cidr, "dev", iface)
+	cmd := execCommandContext(ctx, "ip", "addr", "add", cidr, "dev", iface)
 	stderr, err := runCaptureStderr(cmd)
 	if err != nil {
 		return nil, &agentwire.AgentError{
@@ -192,7 +192,7 @@ func defaultRouteInterface(ctx context.Context, isV4 bool) (string, error) {
 	if !isV4 {
 		args = []string{"-j", "-6", "route", "show", "default"}
 	}
-	out, err := exec.CommandContext(ctx, "ip", args...).Output()
+	out, err := execCommandContext(ctx, "ip", args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("ip %v: %w", args, err)
 	}

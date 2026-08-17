@@ -100,8 +100,8 @@ func sslInstallCustomHandler(ctx context.Context, params json.RawMessage) (any, 
 	// (nginx -t pre-check below catches that), and the existing daemon
 	// keeps serving with the previous cert. Operator can rerun the
 	// install after fixing the cert.
-	if testCmd := exec.CommandContext(ctx, "nginx", "-t"); testCmd.Run() == nil {
-		_ = exec.CommandContext(ctx, "nginx", "-s", "reload").Run()
+	if testCmd := execCommandContext(ctx, "nginx", "-t"); testCmd.Run() == nil {
+		_ = execCommandContext(ctx, "nginx", "-s", "reload").Run()
 	}
 
 	return sslInstallCustomResponse{CertPath: certPath, KeyPath: keyPath}, nil
@@ -121,7 +121,7 @@ func cleanupCertbotLineage(ctx context.Context, root, domain string) {
 		return // no certbot-managed lineage for this name — nothing to clean
 	}
 	if certbot, err := exec.LookPath("certbot"); err == nil {
-		cmd := exec.CommandContext(ctx, certbot, "delete",
+		cmd := execCommandContext(ctx, certbot, "delete",
 			"--cert-name", domain, "--config-dir", root, "--non-interactive")
 		if cmd.Run() == nil {
 			return

@@ -535,7 +535,7 @@ func reassertDRPairingSQL(ctx context.Context, p *drPairingReassert) error {
 			"dr_destination_id=COALESCE((SELECT id FROM jabali_panel.backup_destinations WHERE name='%s' LIMIT 1),'%s'), "+
 			"dr_peer_label='%s', dr_paired_at=%s WHERE 1=1;",
 		sqlEscape(p.DestinationName), p.DestinationID, sqlEscape(p.PeerLabel), pairedAt)
-	cmd := exec.CommandContext(ctx, "mariadb",
+	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock", "-e", stmt)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -597,7 +597,7 @@ func resyncDBAccountPasswords(ctx context.Context) ([]string, []string) {
 		// auth which is more setup).
 		stmt := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;",
 			a.mariadbUser, a.host, sqlEscape(pw))
-		cmd := exec.CommandContext(ctx, "mariadb",
+		cmd := execCommandContext(ctx, "mariadb",
 			"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 			"-e", stmt,
 		)
@@ -734,8 +734,8 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 			if err := rsyncStageOnto(ctx, stageDir, "/etc/php", nil); err != nil {
 				warnings = append(warnings, fmt.Sprintf("service_config php: %v", err))
 			}
-			_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
-			_ = exec.CommandContext(ctx, "systemctl", "reload", "nginx").Run()
+			_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
+			_ = execCommandContext(ctx, "systemctl", "reload", "nginx").Run()
 			applied = append(applied, "service_config → /etc/nginx + /etc/php")
 		case backup.StageSecurity:
 			if !whitelist[st.Name] {
@@ -778,9 +778,9 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 }
 
 func applyMailState(ctx context.Context, stageDir string) error {
-	_ = exec.CommandContext(ctx, "systemctl", "stop", "jabali-stalwart.service").Run()
+	_ = execCommandContext(ctx, "systemctl", "stop", "jabali-stalwart.service").Run()
 	defer func() {
-		_ = exec.CommandContext(context.Background(), "systemctl", "start", "jabali-stalwart.service").Run()
+		_ = execCommandContext(context.Background(), "systemctl", "start", "jabali-stalwart.service").Run()
 	}()
 	return rsyncStageOnto(ctx, stageDir, "/var/lib/stalwart", nil)
 }
@@ -813,7 +813,7 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 		return fmt.Errorf("open %s: %w", src, err)
 	}
 	defer f.Close()
-	cmd := exec.CommandContext(ctx, "mariadb",
+	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket",
 		"--socket=/run/mysqld/mysqld.sock",
 		db,
@@ -849,7 +849,7 @@ func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []str
 		args = append(args, "--exclude="+e)
 	}
 	args = append(args, src, target+"/")
-	cmd := exec.CommandContext(ctx, "rsync", args...)
+	cmd := execCommandContext(ctx, "rsync", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("rsync %s -> %s: %w (output: %s)", src, target, err,
@@ -1006,7 +1006,7 @@ func runSystemPanelDBStage(ctx context.Context, c *backup.Client, jobID, hostnam
 // be there. A lookup failure returns true so we still attempt the dump
 // (fail loud rather than silently skip a real DB). Overridable for tests.
 var systemDBExists = func(ctx context.Context, db string) bool {
-	out, err := exec.CommandContext(ctx, "mariadb", "-N", "-B", "-e",
+	out, err := execCommandContext(ctx, "mariadb", "-N", "-B", "-e",
 		fmt.Sprintf("SELECT SCHEMA_NAME FROM information_schema.schemata WHERE SCHEMA_NAME = '%s'", db)).Output()
 	if err != nil {
 		return true
@@ -1029,7 +1029,7 @@ func dumpOneSystemDB(ctx context.Context, c *backup.Client, jobID, hostname, sch
 		st.Warnings = []string{fmt.Sprintf("database %s not present — skipped (component not installed)", db)}
 		return st
 	}
-	cmd := exec.CommandContext(ctx, "mariadb-dump",
+	cmd := execCommandContext(ctx, "mariadb-dump",
 		"--single-transaction", "--skip-lock-tables",
 		"--routines", "--triggers", "--events",
 		"--hex-blob",

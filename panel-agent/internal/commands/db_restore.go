@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -114,7 +113,7 @@ func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			"DROP DATABASE IF EXISTS `%s`; CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
 			p.DBName, p.DBName,
 		)
-		reset := exec.CommandContext(ctx, "mysql", "-e", resetSQL)
+		reset := execCommandContext(ctx, "mysql", "-e", resetSQL)
 		if out, err := reset.CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,

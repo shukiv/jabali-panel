@@ -37,7 +37,7 @@ type systemRepairDiagnoseResponse struct {
 }
 
 func systemRepairDiagnoseHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	cmd := exec.CommandContext(ctx, repairBinary, "repair", "--diagnose")
+	cmd := execCommandContext(ctx, repairBinary, "repair", "--diagnose")
 	out, err := cmd.CombinedOutput()
 	exitCode := 0
 	if err != nil {
@@ -65,10 +65,10 @@ func systemRepairRunHandler(ctx context.Context, _ json.RawMessage) (any, error)
 	// Clear any prior run's lingering unit state (mirrors update_run) so a
 	// transient-name collision doesn't reject the new run and journalctl
 	// --since scoping stays clean.
-	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", repairUnitName).Run()
+	_ = execCommandContext(ctx, "systemctl", "reset-failed", repairUnitName).Run()
 
 	startedAt := time.Now().UTC()
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--unit="+repairUnitName,
 		"--no-block",
 		repairBinary, "repair", "--auto",

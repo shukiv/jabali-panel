@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -334,7 +333,7 @@ func applySelectiveHome(ctx context.Context, stagingRoot, username string, st *b
 	}
 	// -aH not -aHAX: skip untrusted ACL/xattr restore from the repo;
 	// owner/mode are re-normalized below (Gitea #462).
-	if err := exec.CommandContext(ctx, "rsync", "-aH", src, dst).Run(); err != nil {
+	if err := execCommandContext(ctx, "rsync", "-aH", src, dst).Run(); err != nil {
 		return "home: rsync: " + err.Error()
 	}
 	if err := chownTreeRecursive(dst, uid, gid); err != nil {

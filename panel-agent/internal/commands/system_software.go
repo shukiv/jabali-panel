@@ -117,7 +117,7 @@ func probeSoftware(ctx context.Context, p softwareProbe) string {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out, _ := exec.CommandContext(probeCtx, p.bin, p.args...).CombinedOutput()
+	out, _ := execCommandContext(probeCtx, p.bin, p.args...).CombinedOutput()
 	return parseVersion(string(out))
 }
 

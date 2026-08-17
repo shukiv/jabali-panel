@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -75,7 +74,7 @@ func userSliceStatusHandler(ctx context.Context, params json.RawMessage) (any, e
 
 // systemctlUnitActive returns true when `systemctl is-active <unit>` exits 0.
 func systemctlUnitActive(ctx context.Context, unit string) bool {
-	cmd := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit)
+	cmd := execCommandContext(ctx, "systemctl", "is-active", "--quiet", unit)
 	return cmd.Run() == nil
 }
 
@@ -86,7 +85,7 @@ func systemctlShow(ctx context.Context, unit string, props ...string) (map[strin
 	for _, p := range props {
 		args = append(args, "-p", p)
 	}
-	cmd := exec.CommandContext(ctx, "systemctl", args...)
+	cmd := execCommandContext(ctx, "systemctl", args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

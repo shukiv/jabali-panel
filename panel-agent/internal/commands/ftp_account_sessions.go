@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"os/exec"
 	"strconv"
 )
 
@@ -42,9 +41,9 @@ func ftpSshdSessionPattern(alias string) string {
 func terminateFtpSessions(ctx context.Context, aliasName string, aliasUID int) {
 	if aliasUID >= ftpSubaccountUIDMin {
 		uid := strconv.Itoa(aliasUID)
-		_ = exec.CommandContext(ctx, "loginctl", "terminate-user", uid).Run()
-		_ = exec.CommandContext(ctx, "pkill", "-KILL", "-u", uid).Run()
+		_ = execCommandContext(ctx, "loginctl", "terminate-user", uid).Run()
+		_ = execCommandContext(ctx, "pkill", "-KILL", "-u", uid).Run()
 		return
 	}
-	_ = exec.CommandContext(ctx, "pkill", "-KILL", "-f", ftpSshdSessionPattern(aliasName)).Run()
+	_ = execCommandContext(ctx, "pkill", "-KILL", "-f", ftpSshdSessionPattern(aliasName)).Run()
 }

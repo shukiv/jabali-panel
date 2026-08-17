@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -72,7 +71,7 @@ func systemSetTimezoneHandler(ctx context.Context, params json.RawMessage) (any,
 	}
 
 	// Apply via timedatectl.
-	cmd := exec.CommandContext(ctx, "timedatectl", "set-timezone", p.Timezone)
+	cmd := execCommandContext(ctx, "timedatectl", "set-timezone", p.Timezone)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("timedatectl failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}

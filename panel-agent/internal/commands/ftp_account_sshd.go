@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -170,7 +169,7 @@ func ftpSSHDSyncHandler(ctx context.Context, params json.RawMessage) (any, error
 	// sshd -t validates main config + every drop-in. On failure restore
 	// the previous content — a broken sshd config is a host lockout.
 	if os.Getenv("JABALI_SSHD_TEST_SKIP_VALIDATE") == "" {
-		if out, err := exec.CommandContext(ctx, "sshd", "-t").CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "sshd", "-t").CombinedOutput(); err != nil {
 			restoreFile(path, prev)
 			return nil, fmt.Errorf("sshd -t validation failed: %s: %w", strings.TrimSpace(string(out)), err)
 		}
@@ -180,7 +179,7 @@ func ftpSSHDSyncHandler(ctx context.Context, params json.RawMessage) (any, error
 		if unit == "" {
 			return nil, fmt.Errorf("no ssh/sshd systemd unit found")
 		}
-		if out, err := exec.CommandContext(ctx, "systemctl", "reload", unit).CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "systemctl", "reload", unit).CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("systemctl reload %s: %s: %w", unit, strings.TrimSpace(string(out)), err)
 		}
 	}

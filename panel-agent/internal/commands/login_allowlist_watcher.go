@@ -173,11 +173,11 @@ func loginTailCmd(ctx context.Context) *exec.Cmd {
 	if _, err := exec.LookPath("journalctl"); err == nil {
 		// --since now avoids re-scanning historical log on every restart (a busy
 		// host would otherwise re-allowlist churn on each boot).
-		return exec.CommandContext(ctx, "journalctl",
+		return execCommandContext(ctx, "journalctl",
 			"-u", "ssh.service", "-u", "sshd.service",
 			"-f", "-n", "0", "--since", "now", "-o", "cat")
 	}
-	return exec.CommandContext(ctx, "tail", "-F", "/var/log/auth.log")
+	return execCommandContext(ctx, "tail", "-F", "/var/log/auth.log")
 }
 
 // handleSSHLogLine parses one log line and, on a successful-login match for a

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -152,7 +151,7 @@ func extractPhpbbTarball(ctx context.Context, osUser, tarballPath, installPath s
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir staging: %w", err)
 	}
-	if err := exec.CommandContext(ctx, "chown", "-R", osUser+":"+osUser, stagingDir).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", osUser+":"+osUser, stagingDir).Run(); err != nil {
 		return fmt.Errorf("chown staging: %w", err)
 	}
 	tarCmd := buildSystemdRunCmd(ctx, osUser,
@@ -430,7 +429,7 @@ func phpbbInstallHandler(ctx context.Context, params json.RawMessage) (any, erro
 
 	if err := runPhpbbCLIInstaller(ctx, req.OSUser, installPath, configPath); err != nil {
 		// Best-effort cleanup of partial config.php so re-install works.
-		_ = exec.CommandContext(ctx, "rm", "-f", filepath.Join(installPath, "config.php")).Run()
+		_ = execCommandContext(ctx, "rm", "-f", filepath.Join(installPath, "config.php")).Run()
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 

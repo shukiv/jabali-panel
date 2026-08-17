@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -123,7 +122,7 @@ func applyOSUsersMerge(ctx context.Context, stageDir string) ([]string, []string
 				fmt.Sprintf("os_users: gid %d already belongs to group %q — cannot create %q, skipped", gid, g.Name, name))
 			continue
 		}
-		if out, cerr := exec.CommandContext(ctx, "groupadd", "-g", strconv.Itoa(gid), name).CombinedOutput(); cerr != nil {
+		if out, cerr := execCommandContext(ctx, "groupadd", "-g", strconv.Itoa(gid), name).CombinedOutput(); cerr != nil {
 			warnings = append(warnings, fmt.Sprintf("os_users: groupadd %s: %v (%s)", name, cerr, strings.TrimSpace(string(out))))
 			continue
 		}
@@ -164,7 +163,7 @@ func applyOSUsersMerge(ctx context.Context, stageDir string) ([]string, []string
 				fmt.Sprintf("os_users: user %q source gid %d absent — using a fresh usergroup", e.Name, e.GID))
 		}
 		args = append(args, e.Name)
-		if out, cerr := exec.CommandContext(ctx, "useradd", args...).CombinedOutput(); cerr != nil {
+		if out, cerr := execCommandContext(ctx, "useradd", args...).CombinedOutput(); cerr != nil {
 			warnings = append(warnings, fmt.Sprintf("os_users: useradd %s: %v (%s)", e.Name, cerr, strings.TrimSpace(string(out))))
 			continue
 		}
@@ -174,7 +173,7 @@ func applyOSUsersMerge(ctx context.Context, stageDir string) ([]string, []string
 			warnings = append(warnings, fmt.Sprintf("os_users: mkdir %s: %v", e.Home, merr))
 		}
 		if h := hashes[e.Name]; h != "" && h != "*" && h != "!" {
-			cmd := exec.CommandContext(ctx, "chpasswd", "-e")
+			cmd := execCommandContext(ctx, "chpasswd", "-e")
 			cmd.Stdin = strings.NewReader(e.Name + ":" + h + "\n")
 			if out, cerr := cmd.CombinedOutput(); cerr != nil {
 				warnings = append(warnings, fmt.Sprintf("os_users: chpasswd %s: %v (%s)", e.Name, cerr, strings.TrimSpace(string(out))))
@@ -192,7 +191,7 @@ func applyOSUsersMerge(ctx context.Context, stageDir string) ([]string, []string
 			if _, gerr := user.LookupGroup(g.name); gerr != nil {
 				continue
 			}
-			if out, cerr := exec.CommandContext(ctx, "usermod", "-aG", g.name, m).CombinedOutput(); cerr != nil {
+			if out, cerr := execCommandContext(ctx, "usermod", "-aG", g.name, m).CombinedOutput(); cerr != nil {
 				warnings = append(warnings, fmt.Sprintf("os_users: usermod -aG %s %s: %v (%s)", g.name, m, cerr, strings.TrimSpace(string(out))))
 			}
 		}

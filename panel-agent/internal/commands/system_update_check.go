@@ -92,7 +92,7 @@ const (
 // on a repo owned by a different uid.
 func runAsServiceUser(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{"-u", systemServiceUser, "-H"}, args...)
-	c := exec.CommandContext(ctx, "sudo", full...)
+	c := execCommandContext(ctx, "sudo", full...)
 	out, err := c.Output()
 	if err != nil {
 		stderr := ""

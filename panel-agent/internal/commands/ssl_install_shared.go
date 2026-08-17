@@ -13,7 +13,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -77,8 +76,8 @@ func sslInstallSharedHandler(ctx context.Context, params json.RawMessage) (any, 
 	// Reload nginx so already-attached domains pick up the (re)uploaded pair —
 	// the "one action renews N domains" payoff. Best-effort; the vhost paths
 	// are unchanged so nginx -t stays green.
-	if testCmd := exec.CommandContext(ctx, "nginx", "-t"); testCmd.Run() == nil {
-		_ = exec.CommandContext(ctx, "nginx", "-s", "reload").Run()
+	if testCmd := execCommandContext(ctx, "nginx", "-t"); testCmd.Run() == nil {
+		_ = execCommandContext(ctx, "nginx", "-s", "reload").Run()
 	}
 
 	return sslInstallSharedResponse{

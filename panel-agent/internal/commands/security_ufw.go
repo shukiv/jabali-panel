@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,11 +55,11 @@ func ufwStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	// line that `ufw status verbose` (without numbered) prints. We need
 	// the rule numbers (for delete-by-num) AND the default policies, so
 	// query both.
-	numbered, err := exec.CommandContext(ctx, "ufw", "status", "numbered", "verbose").Output()
+	numbered, err := execCommandContext(ctx, "ufw", "status", "numbered", "verbose").Output()
 	if err != nil {
 		return nil, ufwInternal("ufw status numbered", err)
 	}
-	verbose, err := exec.CommandContext(ctx, "ufw", "status", "verbose").Output()
+	verbose, err := execCommandContext(ctx, "ufw", "status", "verbose").Output()
 	if err != nil {
 		return nil, ufwInternal("ufw status verbose", err)
 	}
@@ -171,7 +170,7 @@ func ufwRuleAddHandler(ctx context.Context, params json.RawMessage) (any, error)
 	} else {
 		args = append(args, p.Port+"/"+p.Proto)
 	}
-	if _, err := exec.CommandContext(ctx, "ufw", args...).CombinedOutput(); err != nil {
+	if _, err := execCommandContext(ctx, "ufw", args...).CombinedOutput(); err != nil {
 		return nil, ufwInternal("ufw "+p.Action+" failed", err)
 	}
 	num := ufwLookupRuleNum(ctx, p)
@@ -179,7 +178,7 @@ func ufwRuleAddHandler(ctx context.Context, params json.RawMessage) (any, error)
 }
 
 func ufwLookupRuleNum(ctx context.Context, p ufwRuleAddParams) int {
-	out, err := exec.CommandContext(ctx, "ufw", "status", "numbered").Output()
+	out, err := execCommandContext(ctx, "ufw", "status", "numbered").Output()
 	if err != nil {
 		return 0
 	}
@@ -210,7 +209,7 @@ func ufwRuleDeleteHandler(ctx context.Context, params json.RawMessage) (any, err
 	if p.Num < 1 || p.Num > 1000 {
 		return nil, ufwInvalidArg("num out of range 1..1000")
 	}
-	cmd := exec.CommandContext(ctx, "ufw", "--force", "delete", strconv.Itoa(p.Num))
+	cmd := execCommandContext(ctx, "ufw", "--force", "delete", strconv.Itoa(p.Num))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -241,7 +240,7 @@ func ufwDefaultSetHandler(ctx context.Context, params json.RawMessage) (any, err
 	if !validUfwActions[p.Policy] {
 		return nil, ufwInvalidArg("policy must be allow|deny|reject")
 	}
-	if _, err := exec.CommandContext(ctx, "ufw", "default", p.Policy, p.Chain).CombinedOutput(); err != nil {
+	if _, err := execCommandContext(ctx, "ufw", "default", p.Policy, p.Chain).CombinedOutput(); err != nil {
 		return nil, ufwInternal("ufw default failed", err)
 	}
 	return map[string]bool{"applied": true}, nil
@@ -259,7 +258,7 @@ func ufwEnableHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	if p.Confirm != "YES" {
 		return nil, ufwInvalidArg(`confirm must be "YES" — refusing to enable firewall without explicit confirmation`)
 	}
-	if _, err := exec.CommandContext(ctx, "ufw", "--force", "enable").CombinedOutput(); err != nil {
+	if _, err := execCommandContext(ctx, "ufw", "--force", "enable").CombinedOutput(); err != nil {
 		return nil, ufwInternal("ufw enable failed", err)
 	}
 	return map[string]bool{"active": true}, nil
@@ -271,7 +270,7 @@ func ufwDisableHandler(ctx context.Context, params json.RawMessage) (any, error)
 	if p.Confirm != "YES" {
 		return nil, ufwInvalidArg(`confirm must be "YES" — refusing to disable firewall without explicit confirmation`)
 	}
-	if _, err := exec.CommandContext(ctx, "ufw", "--force", "disable").CombinedOutput(); err != nil {
+	if _, err := execCommandContext(ctx, "ufw", "--force", "disable").CombinedOutput(); err != nil {
 		return nil, ufwInternal("ufw disable failed", err)
 	}
 	return map[string]bool{"active": false}, nil

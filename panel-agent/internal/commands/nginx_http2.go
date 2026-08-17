@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"os/exec"
 	"regexp"
 	"strconv"
 )
@@ -30,7 +29,7 @@ type nginxHTTP2Form struct {
 // restart. When nginx is absent the result is the safe portable param form.
 func nginxHTTP2() nginxHTTP2Form {
 	// `nginx -v` prints "nginx version: nginx/1.26.0" to stderr.
-	out, _ := exec.Command("nginx", "-v").CombinedOutput()
+	out, _ := execCommand("nginx", "-v").CombinedOutput()
 	return computeNginxHTTP2Form(string(out))
 }
 

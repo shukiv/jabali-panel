@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -43,7 +42,7 @@ func csInternal(msg string, err error) error {
 func runCscliJSON(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{}, args...)
 	full = append(full, "-o", "json")
-	cmd := exec.CommandContext(ctx, "cscli", full...)
+	cmd := execCommandContext(ctx, "cscli", full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -85,18 +84,18 @@ type csStatusResponse struct {
 
 func csStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := csStatusResponse{}
-	if err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "crowdsec").Run(); err == nil {
+	if err := execCommandContext(ctx, "systemctl", "is-active", "--quiet", "crowdsec").Run(); err == nil {
 		resp.Running = true
 	}
 	// `cscli lapi status` prints success line on stdout when reachable.
-	if out, err := exec.CommandContext(ctx, "cscli", "lapi", "status").CombinedOutput(); err == nil {
+	if out, err := execCommandContext(ctx, "cscli", "lapi", "status").CombinedOutput(); err == nil {
 		resp.LapiReachable = strings.Contains(string(out), "successfully interact with Local API")
 	}
 	// CAPI status check — separate verb, may fail when offline. Best-effort.
-	if err := exec.CommandContext(ctx, "cscli", "capi", "status").Run(); err == nil {
+	if err := execCommandContext(ctx, "cscli", "capi", "status").Run(); err == nil {
 		resp.CAPIReachable = true
 	}
-	if out, err := exec.CommandContext(ctx, "cscli", "version").Output(); err == nil {
+	if out, err := execCommandContext(ctx, "cscli", "version").Output(); err == nil {
 		// First non-empty line typically holds "version: vX.Y.Z" or similar.
 		for _, line := range strings.Split(string(out), "\n") {
 			line = strings.TrimSpace(line)
@@ -121,7 +120,7 @@ func csStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 		}
 	}
 	// crowdsec.service ActiveEnterTimestamp → daemon start time
-	if out, err := exec.CommandContext(ctx, "systemctl", "show",
+	if out, err := execCommandContext(ctx, "systemctl", "show",
 		"crowdsec.service", "--property=ActiveEnterTimestamp",
 		"--value").Output(); err == nil {
 		if s := strings.TrimSpace(string(out)); s != "" {
@@ -132,7 +131,7 @@ func csStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 		}
 	}
 	// GH #716: config validation via `crowdsec -t` (dry parse of the full config).
-	if out, err := exec.CommandContext(ctx, "crowdsec", "-t").CombinedOutput(); err == nil {
+	if out, err := execCommandContext(ctx, "crowdsec", "-t").CombinedOutput(); err == nil {
 		resp.ConfigValid = true
 	} else {
 		resp.ConfigValid = false
@@ -142,7 +141,7 @@ func csStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 		}
 	}
 	// GH #716: active bouncer count (cscli bouncers list -o json → array length).
-	if out, err := exec.CommandContext(ctx, "cscli", "bouncers", "list", "-o", "json").Output(); err == nil {
+	if out, err := execCommandContext(ctx, "cscli", "bouncers", "list", "-o", "json").Output(); err == nil {
 		var arr []map[string]any
 		if json.Unmarshal(out, &arr) == nil {
 			resp.BouncerCount = len(arr)
@@ -357,7 +356,7 @@ func csDecisionsAddHandler(ctx context.Context, params json.RawMessage) (any, er
 	if l := len(p.Reason); l < 3 || l > 200 {
 		return nil, csInvalidArg("reason length must be 3..200")
 	}
-	cmd := exec.CommandContext(ctx, "cscli", "decisions", "add",
+	cmd := execCommandContext(ctx, "cscli", "decisions", "add",
 		"--scope", canonical, "--value", value,
 		"--duration", durArg, "--reason", p.Reason)
 	if _, err := cmd.CombinedOutput(); err != nil {
@@ -416,7 +415,7 @@ func csDecisionsDeleteHandler(ctx context.Context, params json.RawMessage) (any,
 	default:
 		return nil, csInvalidArg("either id or ip required")
 	}
-	out, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+	out, err := execCommandContext(ctx, "cscli", args...).CombinedOutput()
 	if err != nil {
 		return nil, csInternal("cscli decisions delete", err)
 	}
@@ -814,13 +813,13 @@ func csHubInstallHandler(ctx context.Context, params json.RawMessage) (any, erro
 	if p.Force {
 		args = append(args, "--force")
 	}
-	cmd := exec.CommandContext(ctx, "cscli", args...)
+	cmd := execCommandContext(ctx, "cscli", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, csInternal(fmt.Sprintf("cscli %s install: %s", p.Type, strings.TrimSpace(string(out))), err)
 	}
 	// GH #711: a failed reload means the newly-installed item is NOT live yet —
 	// don't report success, or the UI claims protection that isn't loaded.
-	if out, err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
 		return nil, csInternal(fmt.Sprintf("installed %s %s but crowdsec reload failed (item not live): %s", p.Type, p.Name, strings.TrimSpace(string(out))), err)
 	}
 	return map[string]any{"type": p.Type, "name": p.Name, "installed": true}, nil
@@ -837,12 +836,12 @@ func csHubRemoveHandler(ctx context.Context, params json.RawMessage) (any, error
 	if !hubItemNameRE.MatchString(p.Name) {
 		return nil, csInvalidArg("name must match <author>/<item>")
 	}
-	cmd := exec.CommandContext(ctx, "cscli", p.Type, "remove", p.Name)
+	cmd := execCommandContext(ctx, "cscli", p.Type, "remove", p.Name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, csInternal(fmt.Sprintf("cscli %s remove: %s", p.Type, strings.TrimSpace(string(out))), err)
 	}
 	// GH #711: a failed reload means the removed item may STILL be loaded.
-	if out, err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
 		return nil, csInternal(fmt.Sprintf("removed %s %s but crowdsec reload failed (item may still be live): %s", p.Type, p.Name, strings.TrimSpace(string(out))), err)
 	}
 	return map[string]any{"type": p.Type, "name": p.Name, "installed": false}, nil
@@ -956,8 +955,8 @@ func csAppSecGeoblockSetHandler(ctx context.Context, params json.RawMessage) (an
 // when ExecReload is set (crowdsec.service ships that). If reload is not
 // wired (older packaging) fall back to restart.
 func reloadCrowdsec(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
-		if out2, err2 := exec.CommandContext(ctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+		if out2, err2 := execCommandContext(ctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
 			return csInternal("systemctl reload/restart crowdsec",
 				fmt.Errorf("reload: %v %s; restart: %v %s", err, out, err2, out2))
 		}
@@ -1094,11 +1093,11 @@ type csAllowlistAddParams struct {
 // we treat it as success. We don't rely on the exit code alone because
 // cscli versions differ.
 func ensureAllowlist(ctx context.Context, name, description string) error {
-	check := exec.CommandContext(ctx, "cscli", "allowlists", "inspect", name)
+	check := execCommandContext(ctx, "cscli", "allowlists", "inspect", name)
 	if err := check.Run(); err == nil {
 		return nil
 	}
-	create := exec.CommandContext(ctx, "cscli", "allowlists", "create",
+	create := execCommandContext(ctx, "cscli", "allowlists", "create",
 		name, "-d", description)
 	out, err := create.CombinedOutput()
 	if err != nil {
@@ -1165,10 +1164,10 @@ func addToAllowlist(ctx context.Context, name, value, reason, expiration string)
 		// cscli `add` of an existing value is a no-op and does NOT refresh the
 		// expiration. For the time-boxed login path we want each re-login to
 		// slide the TTL forward, so best-effort remove first, then re-add.
-		_ = exec.CommandContext(ctx, "cscli", "allowlists", "remove", name, value).Run()
+		_ = execCommandContext(ctx, "cscli", "allowlists", "remove", name, value).Run()
 		args = append(args, "-e", expiration)
 	}
-	out, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+	out, err := execCommandContext(ctx, "cscli", args...).CombinedOutput()
 	if err != nil && expiration != "" {
 		// The remove above already happened: a failed re-add would leave a
 		// previously-allowlisted value DROPPED (an admin IP falling out of the
@@ -1176,10 +1175,10 @@ func addToAllowlist(ctx context.Context, name, value, reason, expiration string)
 		// without the TTL flag — preserving the pre-call allowlisted state is
 		// strictly safer than silently losing it; the entry stays visible in
 		// the panel either way.
-		out, err = exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+		out, err = execCommandContext(ctx, "cscli", args...).CombinedOutput()
 		if err != nil {
 			base := args[:len(args)-2] // strip "-e", expiration
-			if rout, rerr := exec.CommandContext(ctx, "cscli", base...).CombinedOutput(); rerr == nil {
+			if rout, rerr := execCommandContext(ctx, "cscli", base...).CombinedOutput(); rerr == nil {
 				return fmt.Errorf("cscli allowlists add with -e %s failed (%s); entry restored WITHOUT expiration", expiration, strings.TrimSpace(string(out)))
 			} else {
 				out = append(out, rout...)
@@ -1220,7 +1219,7 @@ func csAllowlistsRemoveHandler(ctx context.Context, params json.RawMessage) (any
 	if value == "" {
 		return nil, csInvalidArg("value is required")
 	}
-	cmd := exec.CommandContext(ctx, "cscli", "allowlists", "remove",
+	cmd := execCommandContext(ctx, "cscli", "allowlists", "remove",
 		jabaliAllowlistName, value)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		msg := strings.ToLower(string(out))
@@ -1357,7 +1356,7 @@ func csCountryAllowlistSyncHandler(ctx context.Context, params json.RawMessage) 
 	}
 	removed := 0
 	for _, r := range p.Removes {
-		cmd := exec.CommandContext(ctx, "cscli", "allowlists", "remove",
+		cmd := execCommandContext(ctx, "cscli", "allowlists", "remove",
 			jabaliCountryAllowlistName, strings.TrimSpace(r))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			msg := strings.ToLower(string(out))
@@ -1381,7 +1380,7 @@ func csCountryAllowlistSyncHandler(ctx context.Context, params json.RawMessage) 
 		values := byComment[comment]
 		args := append([]string{"allowlists", "add", jabaliCountryAllowlistName}, values...)
 		args = append(args, "-d", comment)
-		out, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+		out, err := execCommandContext(ctx, "cscli", args...).CombinedOutput()
 		if err != nil {
 			// panel-api computes adds as exact deltas, so "already exists"
 			// means a race with a concurrent sync, not a logic error.
@@ -1857,14 +1856,14 @@ func csProfilesSetHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 
 	// Pre-flight: `crowdsec -t` (exists in v1.7.x per probe).
-	if out, terr := exec.CommandContext(ctx, "crowdsec", "-t").CombinedOutput(); terr != nil {
+	if out, terr := execCommandContext(ctx, "crowdsec", "-t").CombinedOutput(); terr != nil {
 		// Restore backup + surface error.
 		_ = os.WriteFile(profilesPath, raw, 0o644)
 		return nil, csInternal(fmt.Sprintf("crowdsec -t: %s", strings.TrimSpace(string(out))), terr)
 	}
-	if err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run(); err != nil {
+	if err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").Run(); err != nil {
 		_ = os.WriteFile(profilesPath, raw, 0o644)
-		_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+		_ = execCommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
 		return nil, csInternal("systemctl reload crowdsec after write", err)
 	}
 	return map[string]any{"overrides": p.Overrides}, nil
@@ -1982,14 +1981,14 @@ func csCaptchaApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	if err := rewriteBouncerConfKeys(bouncerConfPath, updates); err != nil {
 		return nil, csInternal("rewrite bouncer conf", err)
 	}
-	if err := exec.CommandContext(ctx, "nginx", "-t").Run(); err != nil {
+	if err := execCommandContext(ctx, "nginx", "-t").Run(); err != nil {
 		// Restore from bak + surface the error to the operator.
 		if bak, rerr := os.ReadFile(bakPath); rerr == nil {
 			_ = os.WriteFile(bouncerConfPath, bak, 0o600)
 		}
 		return nil, csInternal("nginx -t failed after bouncer conf rewrite", err)
 	}
-	if err := exec.CommandContext(ctx, "systemctl", "reload", "nginx").Run(); err != nil {
+	if err := execCommandContext(ctx, "systemctl", "reload", "nginx").Run(); err != nil {
 		return nil, csInternal("systemctl reload nginx", err)
 	}
 	return map[string]any{"enabled": p.Enabled}, nil

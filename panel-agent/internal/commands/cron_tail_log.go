@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"regexp"
 	"strconv"
@@ -70,7 +69,7 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 	runtimeDir := fmt.Sprintf("/run/user/%d", uid)
 
 	// Query journalctl for the service logs
-	cmd := exec.CommandContext(ctx, "sudo", "-u", p.Username)
+	cmd := execCommandContext(ctx, "sudo", "-u", p.Username)
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("XDG_RUNTIME_DIR=%s", runtimeDir),
 	)

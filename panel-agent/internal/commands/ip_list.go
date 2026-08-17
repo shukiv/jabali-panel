@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -43,7 +42,7 @@ type ipAddrShowJSON struct {
 }
 
 func ipListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	out, err := exec.CommandContext(ctx, "ip", "-j", "addr", "show").Output()
+	out, err := execCommandContext(ctx, "ip", "-j", "addr", "show").Output()
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

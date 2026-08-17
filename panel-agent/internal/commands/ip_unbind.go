@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -73,7 +72,7 @@ func ipUnbindHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	}
 
 	cidr := fmt.Sprintf("%s/%d", req.Address, prefix)
-	stderr, err := runCaptureStderr(exec.CommandContext(ctx, "ip", "addr", "del", cidr, "dev", iface))
+	stderr, err := runCaptureStderr(execCommandContext(ctx, "ip", "addr", "del", cidr, "dev", iface))
 	if err != nil {
 		if isAddressMissing(stderr) {
 			// Operator-supplied interface didn't actually hold the
@@ -86,7 +85,7 @@ func ipUnbindHandler(ctx context.Context, params json.RawMessage) (any, error) {
 					if e.Address == req.Address && e.Interface != iface {
 						iface = e.Interface
 						cidr = fmt.Sprintf("%s/%d", req.Address, prefix)
-						stderr, err = runCaptureStderr(exec.CommandContext(ctx, "ip", "addr", "del", cidr, "dev", iface))
+						stderr, err = runCaptureStderr(execCommandContext(ctx, "ip", "addr", "del", cidr, "dev", iface))
 						break
 					}
 				}

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -297,7 +296,7 @@ open(path,"w").write(s)
 // `--` guards a path beginning with '-'; app_root is always absolute so this is
 // belt-and-suspenders. No shell is involved.
 func writeAsUser(ctx context.Context, username, path, content string) error {
-	cmd := exec.CommandContext(ctx, "sudo", "-u", username, "-H", "tee", "--", path)
+	cmd := execCommandContext(ctx, "sudo", "-u", username, "-H", "tee", "--", path)
 	cmd.Stdin = strings.NewReader(content)
 	cmd.Stdout = io.Discard // tee echoes stdin to stdout; we don't need it
 	var errb bytes.Buffer

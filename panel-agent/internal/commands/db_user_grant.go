@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -179,7 +178,7 @@ func dbUserGrantHandler(ctx context.Context, params json.RawMessage) (any, error
 	// Issue the GRANT and FLUSH PRIVILEGES in one command.
 	sql := grantSql + "; FLUSH PRIVILEGES"
 
-	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	cmd := execCommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

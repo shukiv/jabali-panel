@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -48,7 +47,7 @@ var listInstalledPHPVersionsFunc = listInstalledPHPVersions
 // only yields validated allowlist entries. No user-controlled strings reach argv.
 func defaultRunAptGet(ctx context.Context, action string, pkgs ...string) ([]byte, error) {
 	args := append([]string{"-y", action}, pkgs...)
-	cmd := exec.CommandContext(ctx, "apt-get", args...) //nolint:gosec // validated upstream
+	cmd := execCommandContext(ctx, "apt-get", args...) //nolint:gosec // validated upstream
 	cmd.Env = minimalEnv
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -66,7 +65,7 @@ func defaultRunAptGet(ctx context.Context, action string, pkgs ...string) ([]byt
 // gosec G204: version is validated via phpext.ValidVersion; module is the
 // EnableName field from phpext.Lookup, which is a hardcoded allowlist entry.
 func defaultRunPhpenmod(ctx context.Context, version, module string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "phpenmod", "-v", version, module) //nolint:gosec // validated upstream
+	cmd := execCommandContext(ctx, "phpenmod", "-v", version, module) //nolint:gosec // validated upstream
 	cmd.Env = minimalEnv
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -79,7 +78,7 @@ func defaultRunPhpenmod(ctx context.Context, version, module string) ([]byte, er
 // Mirrors defaultRunPhpenmod — see its comment for rationale.
 // gosec G204: same justification as defaultRunPhpenmod.
 func defaultRunPhpdismod(ctx context.Context, version, module string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "phpdismod", "-v", version, module) //nolint:gosec // validated upstream
+	cmd := execCommandContext(ctx, "phpdismod", "-v", version, module) //nolint:gosec // validated upstream
 	cmd.Env = minimalEnv
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -93,7 +92,7 @@ func defaultRunPhpdismod(ctx context.Context, version, module string) ([]byte, e
 // was validated via phpext.ValidVersion + unit names derived from systemctl's
 // own output. No user-controlled data in argv.
 func defaultRunSystemctl(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "systemctl", args...) //nolint:gosec // validated upstream
+	cmd := execCommandContext(ctx, "systemctl", args...) //nolint:gosec // validated upstream
 	cmd.Env = minimalEnv
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -106,7 +105,7 @@ func defaultRunSystemctl(ctx context.Context, args ...string) ([]byte, error) {
 // and returns the raw text. Callers parse it themselves.
 // gosec G204: pattern is always `php<v>-*` where v was validated via phpext.ValidVersion.
 func defaultRunDpkgQuery(ctx context.Context, pattern string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}\t${Status}\n", pattern) //nolint:gosec // validated upstream
+	cmd := execCommandContext(ctx, "dpkg-query", "-W", "-f=${Package}\t${Status}\n", pattern) //nolint:gosec // validated upstream
 	cmd.Env = minimalEnv
 	var out bytes.Buffer
 	var stderr bytes.Buffer

@@ -32,7 +32,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -66,7 +65,7 @@ type dbFreezeSnapshot struct {
 // mysqlExec runs mysql with the given SQL; var so tests stub it (GH #994
 // — no test touches the real database).
 var mysqlExec = func(ctx context.Context, sql string) (string, error) {
-	out, err := exec.CommandContext(ctx, "mysql", "-N", "-e", sql).CombinedOutput()
+	out, err := execCommandContext(ctx, "mysql", "-N", "-e", sql).CombinedOutput()
 	return string(out), err
 }
 

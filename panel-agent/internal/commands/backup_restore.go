@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -287,7 +286,7 @@ func applyAccountRestore(
 			args = append(args, "--uid", strconv.FormatUint(uint64(manifestUser.UIDAtSource), 10))
 		}
 		args = append(args, username)
-		cmd := exec.CommandContext(ctx, "useradd", args...)
+		cmd := execCommandContext(ctx, "useradd", args...)
 		if out, addErr := cmd.CombinedOutput(); addErr != nil {
 			warnings = append(warnings,
 				fmt.Sprintf("apply skipped: useradd %q failed: %v: %s", username, addErr, strings.TrimSpace(string(out))))
@@ -308,7 +307,7 @@ func applyAccountRestore(
 		// the timer never lands. Doing it here makes the DR path
 		// self-sufficient. Idempotent — loginctl returns success on
 		// already-enabled users.
-		lingerCmd := exec.CommandContext(ctx, "loginctl", "enable-linger", username)
+		lingerCmd := execCommandContext(ctx, "loginctl", "enable-linger", username)
 		if lOut, lErr := lingerCmd.CombinedOutput(); lErr != nil {
 			warnings = append(warnings,
 				fmt.Sprintf("loginctl enable-linger %q failed: %v: %s — cron timer apply may fail until reconciler retries", username, lErr, strings.TrimSpace(string(lOut))))
@@ -344,7 +343,7 @@ func applyAccountRestore(
 			// attacker-controlled ACL/xattr/capability metadata that root would
 			// otherwise apply into a live tenant home); owner/mode are
 			// re-normalized below regardless (Gitea #462).
-			if err := exec.CommandContext(ctx, "rsync", "-aH", "--delete", src, dst).Run(); err != nil {
+			if err := execCommandContext(ctx, "rsync", "-aH", "--delete", src, dst).Run(); err != nil {
 				warnings = append(warnings, fmt.Sprintf("home: rsync: %v", err))
 				continue
 			}
@@ -406,7 +405,7 @@ func applyAccountRestore(
 			}
 			// -aH, not -aHAX: same reasoning as the home stage — never apply
 			// ACLs/xattrs/capabilities carried by an untrusted snapshot.
-			if err := exec.CommandContext(ctx, "rsync", "-aH", "--delete", src, dst+"/").Run(); err != nil {
+			if err := execCommandContext(ctx, "rsync", "-aH", "--delete", src, dst+"/").Run(); err != nil {
 				warnings = append(warnings, fmt.Sprintf("docker %s: rsync: %v", slug, err))
 				continue
 			}
@@ -436,11 +435,11 @@ func applyAccountRestore(
 				// IF NOT EXISTS for CREATE DATABASE pre-9.x but
 				// we accept an "already exists" error as success.
 				createSQL := fmt.Sprintf("SELECT 1 FROM pg_database WHERE datname = '%s'", db)
-				probeCmd := exec.CommandContext(ctx, "sudo", "-u", "postgres",
+				probeCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 					"psql", "-XAtq", "-c", createSQL)
 				probeOut, _ := probeCmd.Output()
 				if strings.TrimSpace(string(probeOut)) == "" {
-					mkCmd := exec.CommandContext(ctx, "sudo", "-u", "postgres",
+					mkCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 						"createdb", "--encoding=UTF8", db)
 					if cOut, cErr := mkCmd.CombinedOutput(); cErr != nil {
 						warnings = append(warnings,
@@ -466,7 +465,7 @@ func applyAccountRestore(
 						fmt.Sprintf("db %s (postgres): open dump: %v", db, oErr))
 					continue
 				}
-				restoreCmd := exec.CommandContext(ctx, "sudo", "-u", "postgres",
+				restoreCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 					"pg_restore", "--clean", "--if-exists", "--no-owner",
 					"--no-privileges", "-d", db)
 				restoreCmd.Stdin = pgFile
@@ -508,7 +507,7 @@ func applyAccountRestore(
 			// db.create defaults to. Idempotent — present DBs are
 			// untouched. Backticks around name guard against names
 			// with reserved-word collisions (M24 'dual' incident).
-			createCmd := exec.CommandContext(ctx, "mariadb", "-e",
+			createCmd := execCommandContext(ctx, "mariadb", "-e",
 				fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", db))
 			if cOut, cErr := createCmd.CombinedOutput(); cErr != nil {
 				_ = f.Close()

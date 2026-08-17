@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -196,11 +195,11 @@ func restartOrReloadUserFPM(ctx context.Context, username string, oldVersion, ne
 
 	// Try reload if versions match and oldVersion is not empty.
 	if oldVersion == newVersion && oldVersion != "" {
-		reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", serviceName)
+		reloadCmd := execCommandContext(ctx, "systemctl", "reload", serviceName)
 		if err := reloadCmd.Run(); err != nil {
 			// Reload failed; check if unit is not loaded or inactive, then restart.
 			// Otherwise return the error.
-			isActiveCmd := exec.CommandContext(ctx, "systemctl", "is-active", serviceName)
+			isActiveCmd := execCommandContext(ctx, "systemctl", "is-active", serviceName)
 			if err := isActiveCmd.Run(); err != nil {
 				// Unit not loaded or inactive; fall through to restart.
 			} else {
@@ -209,19 +208,19 @@ func restartOrReloadUserFPM(ctx context.Context, username string, oldVersion, ne
 			}
 		} else {
 			// Reload succeeded; enable and return.
-			_ = exec.CommandContext(ctx, "systemctl", "enable", "--quiet", serviceName).Run()
+			_ = execCommandContext(ctx, "systemctl", "enable", "--quiet", serviceName).Run()
 			return nil
 		}
 	}
 
 	// Restart (version changed or first-time apply).
-	restartCmd := exec.CommandContext(ctx, "systemctl", "restart", serviceName)
+	restartCmd := execCommandContext(ctx, "systemctl", "restart", serviceName)
 	if err := restartCmd.Run(); err != nil {
 		return fmt.Errorf("failed to restart %s: %w", serviceName, err)
 	}
 
 	// Enable the service for auto-start on boot.
-	enableCmd := exec.CommandContext(ctx, "systemctl", "enable", "--quiet", serviceName)
+	enableCmd := execCommandContext(ctx, "systemctl", "enable", "--quiet", serviceName)
 	if err := enableCmd.Run(); err != nil {
 		return fmt.Errorf("failed to enable %s: %w", serviceName, err)
 	}
@@ -312,7 +311,7 @@ func ensureVersionedFPMDropin(ctx context.Context, slug, username string) error 
 	// A new instance drop-in requires a daemon-reload before the instance is
 	// started so systemd picks up Slice=/User=/Group=.
 	if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
-		_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+		_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 	}
 	return nil
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -32,7 +31,7 @@ func purgePackages(pkgs []string) error {
 	if len(pkgs) == 0 {
 		return nil
 	}
-	cmd := exec.Command("apt-get", append(
+	cmd := execCommand("apt-get", append(
 		[]string{"purge", "-y", "--auto-remove"},
 		pkgs...,
 	)...)
@@ -97,7 +96,7 @@ func phpVersionUninstallHandler(_ context.Context, params json.RawMessage) (any,
 	// Stop the FPM service before purging so apt-get doesn't bail on
 	// "service running" stop hooks. Best-effort — purge handles the
 	// systemd-stop dance itself.
-	_ = exec.Command("systemctl", "stop", fmt.Sprintf("php%s-fpm", p.Version)).Run()
+	_ = execCommand("systemctl", "stop", fmt.Sprintf("php%s-fpm", p.Version)).Run()
 
 	// php<v>-* covers the FPM, CLI, common, and every extension package
 	// the install handler may have pulled in. apt expands the glob.

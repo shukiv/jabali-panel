@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -36,7 +35,7 @@ func dockerTenantHealthHandler(ctx context.Context, _ json.RawMessage) (any, err
 	if !flagPresent {
 		return dockerTenantHealthResp{}, nil
 	}
-	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{json .SecurityOptions}}").Output()
+	out, err := execCommandContext(ctx, "docker", "info", "--format", "{{json .SecurityOptions}}").Output()
 	if err != nil {
 		// Daemon unreachable / restarting — report present, touch nothing.
 		return dockerTenantHealthResp{FlagPresent: true}, nil

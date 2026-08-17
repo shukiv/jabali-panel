@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -43,7 +42,7 @@ func pgValidIdent(s string) bool {
 // prepared-statement here because role / database names are
 // identifiers, not values, and PG doesn't support parameterised DDL.
 func pgRunSQL(ctx context.Context, sql string) error {
-	cmd := exec.CommandContext(ctx, "sudo", "-u", "postgres", "psql",
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
 		"-v", "ON_ERROR_STOP=1",
 		"-XAtq",
 		"-c", sql)
@@ -210,7 +209,7 @@ type dbPgListResponse struct {
 }
 
 func dbPgListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	cmd := exec.CommandContext(ctx, "sudo", "-u", "postgres", "psql",
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
 		"-XAtq",
 		"-c", `SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY 1`)
 	out, err := cmd.Output()
@@ -261,7 +260,7 @@ func dbPgDumpHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	if err := hostreserve.CheckReserve(filepath.Dir(p.OutPath), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "backup staging is under the host disk reserve: " + err.Error()}
 	}
-	cmd := exec.CommandContext(ctx, "sudo", "-u", "postgres", "pg_dump",
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "pg_dump",
 		"-Fc", "--no-owner", "--no-privileges",
 		"-f", p.OutPath, p.DBName)
 	if out, err := cmd.CombinedOutput(); err != nil {

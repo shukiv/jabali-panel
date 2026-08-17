@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -55,7 +54,7 @@ var warmupFetch = func(ctx context.Context, host, path string) int {
 	}
 	fctx, cancel := context.WithTimeout(ctx, cacheWarmupPerURL)
 	defer cancel()
-	out, _ := exec.CommandContext(fctx, "curl", args...).Output()
+	out, _ := execCommandContext(fctx, "curl", args...).Output()
 	code := 0
 	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &code)
 	return code
@@ -72,7 +71,7 @@ var warmupFetchBody = func(ctx context.Context, host, path string) string {
 	}
 	fctx, cancel := context.WithTimeout(ctx, cacheWarmupPerURL)
 	defer cancel()
-	out, _ := exec.CommandContext(fctx, "curl", args...).Output()
+	out, _ := execCommandContext(fctx, "curl", args...).Output()
 	return string(out)
 }
 

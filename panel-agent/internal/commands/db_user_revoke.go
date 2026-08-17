@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -116,7 +115,7 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// Issue the REVOKE and FLUSH PRIVILEGES in one command.
 	sql := revokeSql + "; FLUSH PRIVILEGES"
 
-	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	cmd := execCommandContext(ctx, "mysql", "-e", sql)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

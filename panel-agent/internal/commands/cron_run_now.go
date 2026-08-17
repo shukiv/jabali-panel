@@ -98,7 +98,7 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 		home = "/home/" + p.Username
 	}
 	args := append([]string{"-u", p.Username, "--"}, validated.Argv...)
-	cmd := exec.CommandContext(ctx, "runuser", args...)
+	cmd := execCommandContext(ctx, "runuser", args...)
 	cmd.Dir = home
 	cmd.Env = []string{
 		"HOME=" + home,

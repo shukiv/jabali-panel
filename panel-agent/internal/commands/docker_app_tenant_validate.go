@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -256,7 +255,7 @@ func isLoopbackHostIP(ip string) bool {
 // `docker compose config --format json` and runs validateTenantCompose.
 // Called by the install handler before `up` when the install is tenant-owned.
 func runTenantComposeValidation(ctx context.Context, dir string, allowedCaps []string, expectedCgroup string) error {
-	cmd := exec.CommandContext(ctx, "docker", "compose", "config", "--format", "json")
+	cmd := execCommandContext(ctx, "docker", "compose", "config", "--format", "json")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

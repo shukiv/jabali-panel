@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -346,7 +345,7 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir staging: %v", err)}
 	}
-	if err := exec.CommandContext(ctx, "chown", "-R", req.OSUser+":"+req.OSUser, stagingDir).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", req.OSUser+":"+req.OSUser, stagingDir).Run(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chown staging: %v", err)}
 	}
 
@@ -362,7 +361,7 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	if err := runOpenCartCLIInstaller(ctx, req, installPath); err != nil {
 		// Best-effort cleanup so re-install works.
-		_ = exec.CommandContext(ctx, "rm", "-f",
+		_ = execCommandContext(ctx, "rm", "-f",
 			filepath.Join(installPath, "config.php"),
 			filepath.Join(installPath, "admin", "config.php"),
 		).Run()

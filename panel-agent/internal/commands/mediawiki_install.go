@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -332,7 +331,7 @@ func mediawikiInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		// Best-effort cleanup so a re-install attempt isn't blocked by
 		// the half-extracted tree. Caller already marks the install
 		// row "failed"; this just clears the disk side.
-		cleanCmd := exec.CommandContext(ctx, "rm", "-rf", filepath.Join(installPath, "LocalSettings.php"))
+		cleanCmd := execCommandContext(ctx, "rm", "-rf", filepath.Join(installPath, "LocalSettings.php"))
 		_ = cleanCmd.Run()
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}

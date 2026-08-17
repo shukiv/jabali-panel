@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,7 +63,7 @@ func backupLogsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		lines = 5000
 	}
 
-	statusOut, _ := exec.CommandContext(ctx, "systemctl", "is-active", unit).Output()
+	statusOut, _ := execCommandContext(ctx, "systemctl", "is-active", unit).Output()
 	status := strings.TrimSpace(string(statusOut))
 
 	// Primary log source: orchestrator-written file at
@@ -81,7 +80,7 @@ func backupLogsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		// Better than (no log output) when the orchestrator died
 		// before opening the file.
 		journalArgs := []string{"-u", unit, "--no-pager", "-o", "cat", "-n", strconv.Itoa(lines)}
-		out, _ := exec.CommandContext(ctx, "journalctl", journalArgs...).Output()
+		out, _ := execCommandContext(ctx, "journalctl", journalArgs...).Output()
 		logText = string(out)
 	}
 
@@ -99,7 +98,7 @@ func backupLogsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		FetchedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if status == "inactive" || status == "failed" {
-		showOut, err := exec.CommandContext(ctx, "systemctl", "show", unit,
+		showOut, err := execCommandContext(ctx, "systemctl", "show", unit,
 			"--property=ExecMainStatus", "--value").Output()
 		if err == nil {
 			if v, perr := strconv.Atoi(strings.TrimSpace(string(showOut))); perr == nil {

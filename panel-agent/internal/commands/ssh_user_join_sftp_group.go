@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -59,7 +58,7 @@ func sshUserJoinSFTPGroupHandler(ctx context.Context, params json.RawMessage) (a
 	}
 
 	// Add user to the group via usermod -aG jabali-sftp <username>
-	usermodCmd := exec.CommandContext(ctx, "usermod", "-aG", sftpGroupName, p.Username)
+	usermodCmd := execCommandContext(ctx, "usermod", "-aG", sftpGroupName, p.Username)
 	var usermodOut, usermodErr bytes.Buffer
 	usermodCmd.Stdout = &usermodOut
 	usermodCmd.Stderr = &usermodErr
@@ -80,7 +79,7 @@ func sshUserJoinSFTPGroupHandler(ctx context.Context, params json.RawMessage) (a
 // isUserInGroup checks if a user is a member of a group.
 // Uses `id -nG <username>` to get the list of group names.
 func isUserInGroup(ctx context.Context, username, groupName string) (bool, *agentwire.AgentError) {
-	idCmd := exec.CommandContext(ctx, "id", "-nG", username)
+	idCmd := execCommandContext(ctx, "id", "-nG", username)
 	var idOut, idErr bytes.Buffer
 	idCmd.Stdout = &idOut
 	idCmd.Stderr = &idErr
@@ -112,7 +111,7 @@ func refuseRootSFTP(ctx context.Context, username string) *agentwire.AgentError 
 	if username == "root" {
 		return &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "refusing to add root to " + sftpGroupName + " (would brick host SSH)"}
 	}
-	out, err := exec.CommandContext(ctx, "id", "-u", username).Output()
+	out, err := execCommandContext(ctx, "id", "-u", username).Output()
 	if err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to resolve uid for %q: %v", username, err)}
 	}

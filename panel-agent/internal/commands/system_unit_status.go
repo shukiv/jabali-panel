@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -51,11 +50,11 @@ func systemUnitStatusFor(unit string) func(context.Context, json.RawMessage) (an
 		if since == "" {
 			since = time.Now().Add(-15 * time.Minute).UTC().Format(time.RFC3339)
 		}
-		statusOut, _ := exec.CommandContext(ctx, "systemctl", "is-active", unit).Output()
+		statusOut, _ := execCommandContext(ctx, "systemctl", "is-active", unit).Output()
 		status := strings.TrimSpace(string(statusOut))
 
 		journalArgs := []string{"-u", unit, "--since=" + since, "--no-pager", "-o", "cat"}
-		journalOut, _ := exec.CommandContext(ctx, "journalctl", journalArgs...).Output()
+		journalOut, _ := execCommandContext(ctx, "journalctl", journalArgs...).Output()
 
 		resp := systemUnitStatusResponse{
 			Unit:      unit,
@@ -66,7 +65,7 @@ func systemUnitStatusFor(unit string) func(context.Context, json.RawMessage) (an
 
 		// Read exit code from `systemctl show` once the unit terminates.
 		if status == "inactive" || status == "failed" {
-			showOut, err := exec.CommandContext(ctx, "systemctl", "show", unit,
+			showOut, err := execCommandContext(ctx, "systemctl", "show", unit,
 				"--property=ExecMainStatus", "--value").Output()
 			if err == nil {
 				if v, perr := strconv.Atoi(strings.TrimSpace(string(showOut))); perr == nil {

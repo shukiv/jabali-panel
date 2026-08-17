@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -68,7 +67,7 @@ func dbDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	// Build the DROP DATABASE IF EXISTS command.
 	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s", escapedDBName)
 
-	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	cmd := execCommandContext(ctx, "mysql", "-e", sql)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

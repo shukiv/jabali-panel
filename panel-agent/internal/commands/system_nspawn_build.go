@@ -63,7 +63,7 @@ func systemNspawnBuildHandler(ctx context.Context, raw json.RawMessage) (any, er
 
 	// Clear any prior run's lingering unit state so a name collision doesn't
 	// reject the new run and journalctl --since scoping stays clean.
-	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", nspawnBuildUnit).Run()
+	_ = execCommandContext(ctx, "systemctl", "reset-failed", nspawnBuildUnit).Run()
 
 	args := []string{"--unit=" + nspawnBuildUnit, "--no-block", repairBinary, "nspawn", "build",
 		"--codename", p.Codename, "--version", p.Version, "--snapshot", p.Snapshot}
@@ -74,7 +74,7 @@ func systemNspawnBuildHandler(ctx context.Context, raw json.RawMessage) (any, er
 		args = append(args, "--includes", p.Includes)
 	}
 	startedAt := time.Now().UTC()
-	if out, err := exec.CommandContext(ctx, "systemd-run", args...).CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemd-run", args...).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("systemd-run: %v: %s", err, string(out))}
 	}
 	return nspawnBuildResponse{Unit: nspawnBuildUnit, StartedAt: startedAt.Format(time.RFC3339Nano)}, nil
@@ -103,7 +103,7 @@ func systemNspawnPruneHandler(ctx context.Context, raw json.RawMessage) (any, er
 	if p.Apply {
 		args = append(args, "--yes")
 	}
-	out, err := exec.CommandContext(ctx, repairBinary, args...).CombinedOutput()
+	out, err := execCommandContext(ctx, repairBinary, args...).CombinedOutput()
 	exitCode := 0
 	if err != nil {
 		var ee *exec.ExitError

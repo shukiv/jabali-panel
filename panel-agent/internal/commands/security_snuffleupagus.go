@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -130,7 +129,7 @@ type snuffleupagusPoolReloadResult struct {
 func snuffleupagusReloadHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := snuffleupagusReloadResponse{Pools: []snuffleupagusPoolReloadResult{}}
 
-	listCmd := osexec.CommandContext(ctx,
+	listCmd := execCommandContext(ctx,
 		"systemctl", "list-units", "jabali-fpm@*.service",
 		"--no-legend", "--no-pager", "--state=loaded",
 	)
@@ -157,7 +156,7 @@ func snuffleupagusReloadHandler(ctx context.Context, _ json.RawMessage) (any, er
 
 	var failed []string
 	for _, unit := range units {
-		cmd := osexec.CommandContext(ctx, "systemctl", "reload-or-restart", unit)
+		cmd := execCommandContext(ctx, "systemctl", "reload-or-restart", unit)
 		rOut, err := cmd.CombinedOutput()
 		if err != nil {
 			resp.Pools = append(resp.Pools, snuffleupagusPoolReloadResult{

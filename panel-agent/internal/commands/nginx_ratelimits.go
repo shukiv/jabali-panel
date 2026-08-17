@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -136,7 +135,7 @@ func nginxRateLimitsApplyHandler(ctx context.Context, params json.RawMessage) (a
 	}
 
 	// nginx -t validates; if it fails we've still got .bak to roll back.
-	testCmd := exec.CommandContext(ctx, "nginx", "-t")
+	testCmd := execCommandContext(ctx, "nginx", "-t")
 	var testOut bytes.Buffer
 	testCmd.Stdout = &testOut
 	testCmd.Stderr = &testOut

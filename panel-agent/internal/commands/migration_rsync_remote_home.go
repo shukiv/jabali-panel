@@ -263,10 +263,10 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 	if sshPass != "" {
 		// sshpass-prefixed invocation. -e reads SSHPASS from env so the
 		// password never lands in ps argv.
-		cmd = exec.CommandContext(subctx, "sshpass", append([]string{"-e", "rsync"}, rsyncArgs...)...)
+		cmd = execCommandContext(subctx, "sshpass", append([]string{"-e", "rsync"}, rsyncArgs...)...)
 		cmd.Env = append(os.Environ(), "SSHPASS="+sshPass)
 	} else {
-		cmd = exec.CommandContext(subctx, "rsync", rsyncArgs...)
+		cmd = execCommandContext(subctx, "rsync", rsyncArgs...)
 	}
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
@@ -287,14 +287,14 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition,
 			Message: fmt.Sprintf("dest_user %q not found: %v", p.DestUser, ulkErr)}
 	}
-	chown := exec.CommandContext(subctx, "chown", "-R",
+	chown := execCommandContext(subctx, "chown", "-R",
 		fmt.Sprintf("%d:%d", uid, gid), p.DestPath)
 	if cout, cerr := chown.CombinedOutput(); cerr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal,
 			Message: fmt.Sprintf("chown: %v: %s", cerr, truncate(string(cout), 1024))}
 	}
-	_ = exec.CommandContext(subctx, "find", p.DestPath, "-type", "d", "-exec", "chmod", "g+rx", "{}", "+").Run()
-	_ = exec.CommandContext(subctx, "find", p.DestPath, "-type", "f", "-exec", "chmod", "g+r", "{}", "+").Run()
+	_ = execCommandContext(subctx, "find", p.DestPath, "-type", "d", "-exec", "chmod", "g+rx", "{}", "+").Run()
+	_ = execCommandContext(subctx, "find", p.DestPath, "-type", "f", "-exec", "chmod", "g+r", "{}", "+").Run()
 
 	return migrationRsyncRemoteHomeResult{
 		BytesCopied: bytesCopied,
@@ -307,7 +307,7 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 const dontknowGID = -1
 
 func lookupGroup(name string) (int, error) {
-	out, err := exec.Command("getent", "group", name).Output()
+	out, err := execCommand("getent", "group", name).Output()
 	if err != nil {
 		return 0, fmt.Errorf("getent group %s: %w", name, err)
 	}
@@ -323,7 +323,7 @@ func lookupGroup(name string) (int, error) {
 }
 
 func lookupUserUID(name string) (int, error) {
-	out, err := exec.Command("getent", "passwd", name).Output()
+	out, err := execCommand("getent", "passwd", name).Output()
 	if err != nil {
 		return 0, fmt.Errorf("getent passwd %s: %w", name, err)
 	}

@@ -8,6 +8,7 @@ import (
 )
 
 func TestDirSizeBytes_SumsTree(t *testing.T) {
+	withRealExec(t) // GH #994: needs the real read-only command (stub returns empty output)
 	dir := t.TempDir()
 	// 3 KiB across two files in a subdir — du counts file data, so assert
 	// a lower bound rather than an exact figure (block rounding + dir
@@ -32,6 +33,7 @@ func TestDirSizeBytes_SumsTree(t *testing.T) {
 }
 
 func TestDirSizeBytes_InstallDirIsPositive(t *testing.T) {
+	withRealExec(t) // GH #994: needs the real read-only command (stub returns empty output)
 	// du -sb reports apparent bytes: a truly-empty dir is 0. A real
 	// install dir is never empty though — it always holds compose.yml
 	// (+ .env), so its du is > 0. The reconciler's >0 guard relies on

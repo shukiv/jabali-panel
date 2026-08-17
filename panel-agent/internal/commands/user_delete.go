@@ -58,7 +58,7 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	// Check if user exists.
-	checkCmd := exec.CommandContext(ctx, "id", p.Username)
+	checkCmd := execCommandContext(ctx, "id", p.Username)
 	if err := checkCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeNotFound,
@@ -94,7 +94,7 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// trips on the /var/lib/systemd/linger/<user> flag and exits 12
 	// ("can't remove home directory") even after slice removal (mx scar
 	// 2026-04-30).
-	if err := exec.CommandContext(ctx, "loginctl", "disable-linger", p.Username).Run(); err != nil {
+	if err := execCommandContext(ctx, "loginctl", "disable-linger", p.Username).Run(); err != nil {
 		// Best-effort. Linger may already be off.
 		slog.InfoContext(ctx, "loginctl disable-linger failed (best-effort)",
 			"username", p.Username, "err", err.Error())
@@ -103,9 +103,9 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Delete user. Capture stderr for diagnostics.
 	var deleteCmd *exec.Cmd
 	if p.RemoveHome {
-		deleteCmd = exec.CommandContext(ctx, "userdel", "--remove", p.Username)
+		deleteCmd = execCommandContext(ctx, "userdel", "--remove", p.Username)
 	} else {
-		deleteCmd = exec.CommandContext(ctx, "userdel", p.Username)
+		deleteCmd = execCommandContext(ctx, "userdel", p.Username)
 	}
 	var stderr bytes.Buffer
 	deleteCmd.Stderr = &stderr

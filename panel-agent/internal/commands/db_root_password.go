@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -110,23 +109,23 @@ func dbRootSetPasswordHandler(ctx context.Context, params json.RawMessage) (any,
 	// winning; mysql_native_password as the break-glass backup.
 	// Omitting unix_socket here would silently delete it.
 	alter := mariadbRootAlterPrefix + escapedPw + ")"
-	if err := exec.CommandContext(ctx, "mysql", "-e", alter).Run(); err != nil {
+	if err := execCommandContext(ctx, "mysql", "-e", alter).Run(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "failed to set root password"}
 	}
 
 	// Guard (a): SHOW CREATE USER must still list unix_socket.
-	out, err := exec.CommandContext(ctx, "mysql", "-N", "-B", "-e",
+	out, err := execCommandContext(ctx, "mysql", "-N", "-B", "-e",
 		"SHOW CREATE USER 'root'@'localhost'").CombinedOutput()
 	socketPreserved := err == nil && strings.Contains(string(out), "unix_socket")
 
 	// Guard (b): root must still authenticate over the socket.
-	socketReachable := exec.CommandContext(ctx, "mysql", "--protocol=socket",
+	socketReachable := execCommandContext(ctx, "mysql", "--protocol=socket",
 		"-e", "SELECT 1").Run() == nil
 
 	if !socketPreserved || !socketReachable {
 		// Restore socket-only auth — the safe state the panel + every
 		// root-over-socket consumer (install.sh:1660) depends on.
-		_ = exec.CommandContext(ctx, "mysql", "-e",
+		_ = execCommandContext(ctx, "mysql", "-e",
 			"ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket").Run()
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeFailedPrecondition,

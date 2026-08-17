@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/user"
 	"regexp"
 	"strconv"
@@ -107,7 +106,7 @@ func (s *definerRewritingReader) Read(p []byte) (int, error) {
 // for the static, operator-side provisioning statements — dump content
 // never passes through here.
 func mariadbRoot(ctx context.Context, stmt string) error {
-	cmd := exec.CommandContext(ctx, "mariadb",
+	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 		"-e", stmt)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -158,7 +157,7 @@ func loadMariaDBDumpScoped(ctx context.Context, dbName string, dump io.Reader) e
 		return fmt.Errorf("parse %s gid: %w", scopedRestoreOSUser, err)
 	}
 
-	cmd := exec.CommandContext(ctx, "mariadb",
+	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
 		"--user="+shadow,
 		"--database="+dbName)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 )
@@ -63,12 +62,12 @@ func nginxCacheCapacityApplyHandler(ctx context.Context, raw json.RawMessage) (a
 		return nil, csInternal("write cache conf", err)
 	}
 	// Validate; restore the prior conf on failure so nginx stays reloadable.
-	if out, terr := exec.CommandContext(ctx, "nginx", "-t").CombinedOutput(); terr != nil {
+	if out, terr := execCommandContext(ctx, "nginx", "-t").CombinedOutput(); terr != nil {
 		_ = os.WriteFile(jabaliFcgiConfPath, orig, 0o644)
 		logNginxTestFailure("nginx.cache_capacity (reverted)", string(out))
 		return nil, csInvalidArg("nginx rejected the new cache capacity (reverted)")
 	}
-	if out, rerr := exec.CommandContext(ctx, "systemctl", "reload", "nginx").CombinedOutput(); rerr != nil {
+	if out, rerr := execCommandContext(ctx, "systemctl", "reload", "nginx").CombinedOutput(); rerr != nil {
 		return nil, csInternal("nginx reload", fmt.Errorf("%v: %s", rerr, string(out)))
 	}
 	return map[string]any{"ok": true, "changed": true,

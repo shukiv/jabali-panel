@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -42,7 +41,7 @@ type nginxReloadResponse struct {
 
 func nginxTestHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	// Run nginx -t to test configuration
-	testCmd := exec.CommandContext(ctx, "nginx", "-t")
+	testCmd := execCommandContext(ctx, "nginx", "-t")
 	var combinedOutput bytes.Buffer
 	testCmd.Stdout = &combinedOutput
 	testCmd.Stderr = &combinedOutput
@@ -62,7 +61,7 @@ func nginxReloadHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 
 	// Run systemctl reload nginx
-	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
 	var combinedOutput bytes.Buffer
 	reloadCmd.Stdout = &combinedOutput
 	reloadCmd.Stderr = &combinedOutput

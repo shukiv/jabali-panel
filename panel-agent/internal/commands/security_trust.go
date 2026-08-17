@@ -72,7 +72,7 @@ func trustCrowdSecVerdict(ctx context.Context, ip string) trustVerdict {
 	if _, err := exec.LookPath("cscli"); err != nil {
 		return trustVerdict{Layer: "crowdsec", Outcome: "unknown", Detail: "cscli not installed"}
 	}
-	out, err := runCmdWithStderr(exec.CommandContext(ctx, "cscli", "decisions", "list", "-i", ip, "-o", "json"))
+	out, err := runCmdWithStderr(execCommandContext(ctx, "cscli", "decisions", "list", "-i", ip, "-o", "json"))
 	if err != nil {
 		return trustVerdict{Layer: "crowdsec", Outcome: "unknown", Detail: "cscli error: " + err.Error()}
 	}
@@ -98,7 +98,7 @@ func trustUfwVerdict(ctx context.Context, ip string) trustVerdict {
 	if _, err := exec.LookPath("ufw"); err != nil {
 		return trustVerdict{Layer: "ufw", Outcome: "unknown", Detail: "ufw not installed"}
 	}
-	out, err := runCmdWithStderr(exec.CommandContext(ctx, "ufw", "status", "numbered"))
+	out, err := runCmdWithStderr(execCommandContext(ctx, "ufw", "status", "numbered"))
 	if err != nil {
 		return trustVerdict{Layer: "ufw", Outcome: "unknown", Detail: "ufw error: " + err.Error()}
 	}

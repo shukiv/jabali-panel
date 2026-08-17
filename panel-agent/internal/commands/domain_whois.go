@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -55,7 +54,7 @@ func domainWhoisHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 
 	var out, errb bytes.Buffer
-	cmd := exec.CommandContext(ctx, "whois", "--", domain)
+	cmd := execCommandContext(ctx, "whois", "--", domain)
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	runErr := cmd.Run()

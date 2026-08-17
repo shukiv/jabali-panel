@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -56,7 +55,7 @@ func dbPmaAdminEnsureHandler(ctx context.Context, _ json.RawMessage) (any, error
 			"FLUSH PRIVILEGES;",
 		escUser, escPw,
 	)
-	if err := exec.CommandContext(ctx, "mysql", "-e", sql).Run(); err != nil {
+	if err := execCommandContext(ctx, "mysql", "-e", sql).Run(); err != nil {
 		// Do not echo mysql stderr — may contain the password.
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "failed to ensure pma admin shadow"}
 	}

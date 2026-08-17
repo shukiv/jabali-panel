@@ -43,7 +43,7 @@ func isVersionSupported(version string) bool {
 
 // isFPMAlreadyInstalledFunc is a function variable for testing.
 var isFPMAlreadyInstalledFunc = func(version string) bool {
-	// `command` is a shell BUILTIN, not a binary — exec.Command("command",…)
+	// `command` is a shell BUILTIN, not a binary — execCommand("command",…)
 	// always errored, so this used to report "not installed" for every
 	// version. That made install never short-circuit on an already-installed
 	// version and re-run the whole apt+pool+mask flow each time (GH #293).
@@ -80,7 +80,7 @@ var phpOptionalExts = []string{"bcmath", "opcache", "redis", "igbinary", "sqlite
 // configured. Used to backfill only the missing required extensions instead of
 // shelling out to apt when a version is already complete.
 func isPkgInstalled(pkg string) bool {
-	out, err := exec.Command("dpkg-query", "-W", "-f=${Status}", pkg).Output()
+	out, err := execCommand("dpkg-query", "-W", "-f=${Status}", pkg).Output()
 	if err != nil {
 		return false
 	}
@@ -173,7 +173,7 @@ var ensureRequiredPHPExtsFunc = ensureRequiredPHPExts
 
 // probePackage checks if an apt package exists via apt-cache show.
 func probePackage(pkg string) bool {
-	cmd := exec.Command("apt-cache", "show", pkg)
+	cmd := execCommand("apt-cache", "show", pkg)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -182,7 +182,7 @@ func probePackage(pkg string) bool {
 
 // runAptUpdate runs apt-get update to refresh the package index.
 func runAptUpdate() error {
-	cmd := exec.Command("apt-get", "update", "-qq")
+	cmd := execCommand("apt-get", "update", "-qq")
 	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -199,7 +199,7 @@ func installPackages(pkgs []string) error {
 		return nil
 	}
 
-	cmd := exec.Command("apt-get", append(
+	cmd := execCommand("apt-get", append(
 		[]string{"install", "-y", "--no-install-recommends"},
 		pkgs...,
 	)...)
@@ -277,7 +277,7 @@ func preMaskFPMService(version string) error {
 	}
 	// daemon-reload so systemd picks up the new mask before apt's
 	// postinst invokes systemctl.
-	cmd := exec.Command("systemctl", "daemon-reload")
+	cmd := execCommand("systemctl", "daemon-reload")
 	_ = cmd.Run()
 	return nil
 }
@@ -288,9 +288,9 @@ func preMaskFPMService(version string) error {
 // failed for any reason, this catches it.
 func finalizeFPMMask(version string) {
 	serviceName := fmt.Sprintf("php%s-fpm.service", version)
-	_ = exec.Command("systemctl", "reset-failed", serviceName).Run()
-	_ = exec.Command("systemctl", "disable", "--quiet", serviceName).Run()
-	_ = exec.Command("systemctl", "mask", "--quiet", serviceName).Run()
+	_ = execCommand("systemctl", "reset-failed", serviceName).Run()
+	_ = execCommand("systemctl", "disable", "--quiet", serviceName).Run()
+	_ = execCommand("systemctl", "mask", "--quiet", serviceName).Run()
 }
 
 func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -477,7 +477,7 @@ func runSnuffleupagusBuild(version string) {
 	// cli/conf.d needs the sendmail_path dropin or cron mail() on that
 	// version regresses to "sendmail not found". Both functions loop every
 	// on-disk minor and are idempotent.
-	cmd := exec.Command("bash", "-c",
+	cmd := execCommand("bash", "-c",
 		"source "+installSh+" && install_snuffleupagus && install_php_cli_sendmail_path")
 	cmd.Env = append(os.Environ(), "JABALI_PHP_DEFENSE_TRIGGER_VERSION="+version)
 	// Detached: don't wait. Output goes to journalctl via stdout

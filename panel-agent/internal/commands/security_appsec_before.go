@@ -13,7 +13,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -44,8 +43,8 @@ func ApplyAppSecBeforePlugin(ctx context.Context, log *slog.Logger) {
 	log.Info("appsec before-plugin re-rendered on boot — reloading crowdsec", "path", path)
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if out, err := exec.CommandContext(rctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
-		if out2, err2 := exec.CommandContext(rctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
+	if out, err := execCommandContext(rctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+		if out2, err2 := execCommandContext(rctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
 			log.Warn("appsec before-plugin: crowdsec reload+restart failed",
 				"reload_err", err, "reload_out", string(out),
 				"restart_err", err2, "restart_out", string(out2))

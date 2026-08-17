@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	osexec "os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -91,7 +90,7 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 
 	// `journalctl --identifier snuffleupagus --since <ts> --output json`.
 	// Snuffleupagus log_media defaults to syslog identifier "snuffleupagus".
-	cmd := osexec.CommandContext(ctx,
+	cmd := execCommandContext(ctx,
 		"journalctl",
 		"--identifier", "snuffleupagus",
 		"--since", since,

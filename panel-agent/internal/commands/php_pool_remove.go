@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -113,8 +112,8 @@ func phpPoolRemoveHandler(ctx context.Context, params json.RawMessage) (any, err
 	// Stop + disable the slug's FPM service (if loaded).
 	if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
 		serviceName := fmt.Sprintf("jabali-fpm@%s.service", slug)
-		_ = exec.CommandContext(ctx, "systemctl", "stop", serviceName).Run()
-		_ = exec.CommandContext(ctx, "systemctl", "disable", "--quiet", serviceName).Run()
+		_ = execCommandContext(ctx, "systemctl", "stop", serviceName).Run()
+		_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", serviceName).Run()
 	}
 
 	// A versioned slug owns its own systemd drop-in dir; remove it so a reaped
@@ -124,7 +123,7 @@ func phpPoolRemoveHandler(ctx context.Context, params json.RawMessage) (any, err
 		dropinDir := filepath.Join(systemdRoot(), fmt.Sprintf("jabali-fpm@%s.service.d", slug))
 		_ = os.RemoveAll(dropinDir)
 		if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
-			_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+			_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 		}
 	}
 

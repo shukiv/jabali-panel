@@ -145,7 +145,7 @@ func migrationImapsyncHandler(ctx context.Context, raw json.RawMessage) (any, er
 	subctx, cancel := context.WithTimeout(ctx, migrationImapsyncTimeout)
 	defer cancel()
 	start := time.Now()
-	cmd := exec.CommandContext(subctx, migrationImapsyncBinary, args...)
+	cmd := execCommandContext(subctx, migrationImapsyncBinary, args...)
 	out, err := cmd.CombinedOutput()
 	dur := int64(time.Since(start).Seconds())
 	if err != nil {

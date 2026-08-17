@@ -210,7 +210,7 @@ func resticSnapshotIfConfigured(ctx context.Context, dir, slug string) (string, 
 	if os.Getenv("JABALI_RESTIC_REPO") == "" {
 		return "", fmt.Errorf("JABALI_RESTIC_REPO not set")
 	}
-	cmd := exec.CommandContext(ctx, "restic", "backup", dir,
+	cmd := execCommandContext(ctx, "restic", "backup", dir,
 		"--tag", "docker-app",
 		"--tag", "slug:"+slug,
 		"--tag", "reason:pre-update",

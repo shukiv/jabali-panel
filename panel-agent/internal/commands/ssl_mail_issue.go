@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -342,7 +341,7 @@ func runPanelCertDeployHook(ctx context.Context, kind, certPath, domainID string
 		return fmt.Errorf("deploy-hook missing at %s: %w", hook, err)
 	}
 	lineage := lineageDirFromCertPath(certPath)
-	cmd := exec.CommandContext(ctx, hook)
+	cmd := execCommandContext(ctx, hook)
 	env := append(os.Environ(),
 		"JABALI_PANEL_CERT_KIND="+kind,
 		"RENEWED_LINEAGE="+lineage,

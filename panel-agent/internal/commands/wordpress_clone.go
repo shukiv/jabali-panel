@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -168,13 +167,13 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 	// For now, we'll assume the agent has access and use the host/port from the environment
 	// or defaults to localhost (unix socket).
 
-	dumpCmd := exec.CommandContext(ctx,
+	dumpCmd := execCommandContext(ctx,
 		"mysqldump",
 		"--single-transaction",
 		req.SrcDBName,
 	)
 
-	restoreCmd := exec.CommandContext(ctx,
+	restoreCmd := execCommandContext(ctx,
 		"mysql",
 		"-h", req.DstDBHost,
 		req.DstDBName,
@@ -379,13 +378,13 @@ func writeFileAsUser(ctx context.Context, osUser, filePath, content string, perm
 	}
 
 	// Chown to the user (required because tee inherits umask)
-	chownCmd := exec.CommandContext(ctx, "chown", osUser+":"+osUser, filePath)
+	chownCmd := execCommandContext(ctx, "chown", osUser+":"+osUser, filePath)
 	if err := chownCmd.Run(); err != nil {
 		return err
 	}
 
 	// Set permissions
-	chmodCmd := exec.CommandContext(ctx, "chmod", fmt.Sprintf("%o", perm), filePath)
+	chmodCmd := execCommandContext(ctx, "chmod", fmt.Sprintf("%o", perm), filePath)
 	if err := chmodCmd.Run(); err != nil {
 		return err
 	}

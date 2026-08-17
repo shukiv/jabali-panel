@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"fmt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -50,12 +49,12 @@ func dnsDNSSECEnableHandler(ctx context.Context, params json.RawMessage) (any, e
 	// zone reads fresh-DNSSEC-signed records from the backend. Without
 	// this, queries continue to return un-signed answers from cache
 	// until cache-ttl evicts (same class of bug as PRs #86/#87).
-	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.DomainName+"$").Run()
+	_ = execCommandContext(ctx, "pdns_control", "purge", p.DomainName+"$").Run()
 	// Also wipe pdns-recursor cache — its forward-cached answer
 	// will outlast the Auth purge otherwise (incident 2026-05-21:
 	// dig still returned old CNAME after panel-edit even after pdns
 	// Auth purge; recursor held the cached forward response).
-	_ = exec.CommandContext(ctx, "rec_control", "wipe-cache", p.DomainName+"$").Run()
+	_ = execCommandContext(ctx, "rec_control", "wipe-cache", p.DomainName+"$").Run()
 	out := make([]dnsDNSSECKeyOut, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, dnsDNSSECKeyOut{

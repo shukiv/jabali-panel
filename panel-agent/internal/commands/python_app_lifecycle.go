@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -44,7 +43,7 @@ func pythonAppControlHandler(ctx context.Context, params json.RawMessage) (any, 
 				Message: "app is not provisioned — its build has not completed or failed (check the app logs / requirements). It rebuilds automatically once the problem is fixed.",
 			}
 		}
-		if out, err := exec.CommandContext(ctx, "systemctl", p.Action, unit).CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "systemctl", p.Action, unit).CombinedOutput(); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("systemctl %s %s: %v: %s", p.Action, unit, err, strings.TrimSpace(string(out)))}
 		}
 	case "status":
@@ -52,7 +51,7 @@ func pythonAppControlHandler(ctx context.Context, params json.RawMessage) (any, 
 	default:
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "action must be start|stop|restart|status"}
 	}
-	state, _ := exec.CommandContext(ctx, "systemctl", "is-active", unit).Output()
+	state, _ := execCommandContext(ctx, "systemctl", "is-active", unit).Output()
 	st := strings.TrimSpace(string(state))
 	return pythonAppControlResult{Active: st == "active", State: st}, nil
 }
@@ -74,11 +73,11 @@ func pythonAppRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid app_id"}
 	}
 	unit := pythonAppUnitName(p.AppID)
-	_ = exec.CommandContext(ctx, "systemctl", "stop", unit).Run()
-	_ = exec.CommandContext(ctx, "systemctl", "disable", "--quiet", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "stop", unit).Run()
+	_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", unit).Run()
 	_ = os.Remove(filepath.Join(pythonAppUnitDir, unit))
 	_ = os.Remove(filepath.Join(pythonAppEnvDir, p.AppID+".env"))
-	_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+	_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 	return map[string]any{"removed": true}, nil
 }
 
@@ -100,7 +99,7 @@ func pythonAppLogsHandler(ctx context.Context, params json.RawMessage) (any, err
 	if n <= 0 || n > 1000 {
 		n = 200
 	}
-	out, _ := exec.CommandContext(ctx, "journalctl", "-u", pythonAppUnitName(p.AppID),
+	out, _ := execCommandContext(ctx, "journalctl", "-u", pythonAppUnitName(p.AppID),
 		"-n", fmt.Sprintf("%d", n), "--no-pager", "-o", "short-iso").CombinedOutput()
 	return map[string]any{"logs": string(out)}, nil
 }

@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -59,7 +58,7 @@ func systemSSHKeysListHandler(ctx context.Context, raw json.RawMessage) (any, er
 }
 
 func sshKeyHasPassphrase(privPath string) bool {
-	cmd := exec.Command("ssh-keygen", "-y", "-P", "", "-f", privPath) //nolint:gosec
+	cmd := execCommand("ssh-keygen", "-y", "-P", "", "-f", privPath) //nolint:gosec
 	if err := cmd.Run(); err != nil {
 		return true
 	}
@@ -105,7 +104,7 @@ func systemSSHKeysGenerateHandler(ctx context.Context, raw json.RawMessage) (any
 	if keyType == "rsa" {
 		args = append(args, "-b", "4096")
 	}
-	cmd := exec.CommandContext(ctx, "ssh-keygen", args...) //nolint:gosec
+	cmd := execCommandContext(ctx, "ssh-keygen", args...) //nolint:gosec
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("ssh-keygen failed: %v: %s", err, strings.TrimSpace(string(out)))
 	}

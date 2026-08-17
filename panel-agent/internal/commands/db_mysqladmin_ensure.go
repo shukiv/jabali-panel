@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -127,7 +126,7 @@ func dbMysqladminEnsureHandler(ctx context.Context, params json.RawMessage) (any
 		escapedUser, escapedPassword, dbPattern,
 	)
 
-	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	cmd := execCommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		// Do not echo mysql's stderr — it may contain the password.
 		return nil, &agentwire.AgentError{

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -77,7 +76,7 @@ func migrationRefreshBackupHandler(ctx context.Context, raw json.RawMessage) (an
 	if _, sErr := os.Stat(snapshot); sErr == nil {
 		return nil, csInvalidArg("snapshot already exists: " + snapshot)
 	}
-	if out, cErr := exec.CommandContext(ctx, "cp", "-al", docroot, snapshot).CombinedOutput(); cErr != nil {
+	if out, cErr := execCommandContext(ctx, "cp", "-al", docroot, snapshot).CombinedOutput(); cErr != nil {
 		return nil, csInternal("docroot snapshot", fmt.Errorf("%v: %s", cErr, string(out)))
 	}
 	dumpPath := filepath.Join(filepath.Dir(docroot), "pre-refresh-"+p.Stamp+".sql")
@@ -86,7 +85,7 @@ func migrationRefreshBackupHandler(ctx context.Context, raw json.RawMessage) (an
 		return nil, csInternal("create dump", fErr)
 	}
 	defer f.Close()
-	dump := exec.CommandContext(ctx, "mysqldump", "--single-transaction", "--quick", "--lock-tables=0", "--", p.DBName)
+	dump := execCommandContext(ctx, "mysqldump", "--single-transaction", "--quick", "--lock-tables=0", "--", p.DBName)
 	dump.Stdout = f
 	if dErr := dump.Run(); dErr != nil {
 		_ = os.Remove(dumpPath)
@@ -129,10 +128,10 @@ func migrationRefreshFilesHandler(ctx context.Context, raw json.RawMessage) (any
 		args = append(args, "--exclude="+ex)
 	}
 	args = append(args, src+"/", docroot+"/")
-	if out, rErr := exec.CommandContext(ctx, "rsync", args...).CombinedOutput(); rErr != nil {
+	if out, rErr := execCommandContext(ctx, "rsync", args...).CombinedOutput(); rErr != nil {
 		return nil, csInternal("rsync mirror", fmt.Errorf("%v: %s", rErr, string(out)))
 	}
-	if out, cErr := exec.CommandContext(ctx, "chown", "-R", p.OSUser+":www-data", docroot).CombinedOutput(); cErr != nil {
+	if out, cErr := execCommandContext(ctx, "chown", "-R", p.OSUser+":www-data", docroot).CombinedOutput(); cErr != nil {
 		return nil, csInternal("chown docroot", fmt.Errorf("%v: %s", cErr, string(out)))
 	}
 	return map[string]any{"ok": true}, nil
@@ -161,7 +160,7 @@ func migrationRefreshDBHandler(ctx context.Context, raw json.RawMessage) (any, e
 	if fi, sErr := os.Stat(sql); sErr != nil || fi.IsDir() {
 		return nil, csInvalidArg("sql dump not found")
 	}
-	tblOut, tErr := exec.CommandContext(ctx, "mysql", "-N", "-e", "SHOW TABLES", "--", p.DBName).Output()
+	tblOut, tErr := execCommandContext(ctx, "mysql", "-N", "-e", "SHOW TABLES", "--", p.DBName).Output()
 	if tErr != nil {
 		return nil, csInternal("list dest tables", tErr)
 	}
@@ -173,7 +172,7 @@ func migrationRefreshDBHandler(ctx context.Context, raw json.RawMessage) (any, e
 		}
 	}
 	drop.WriteString("SET FOREIGN_KEY_CHECKS=1;\n")
-	dropCmd := exec.CommandContext(ctx, "mysql", "--", p.DBName)
+	dropCmd := execCommandContext(ctx, "mysql", "--", p.DBName)
 	dropCmd.Stdin = strings.NewReader(drop.String())
 	if out, dErr := dropCmd.CombinedOutput(); dErr != nil {
 		return nil, csInternal("drop dest tables", fmt.Errorf("%v: %s", dErr, string(out)))
@@ -183,7 +182,7 @@ func migrationRefreshDBHandler(ctx context.Context, raw json.RawMessage) (any, e
 		return nil, csInternal("open dump", fErr)
 	}
 	defer f.Close()
-	imp := exec.CommandContext(ctx, "mysql", "--", p.DBName)
+	imp := execCommandContext(ctx, "mysql", "--", p.DBName)
 	imp.Stdin = f
 	if out, iErr := imp.CombinedOutput(); iErr != nil {
 		return nil, csInternal("reimport dump", fmt.Errorf("%v: %s", iErr, string(out)))
@@ -238,7 +237,7 @@ func migrationRefreshReconcileHandler(ctx context.Context, raw json.RawMessage) 
 	// 2. Flush WP object cache.
 	_ = runWPAsTenant(ctx, p.OSUser, p.InstallPath, "cache", "flush")
 	// 3. Reload the per-user FPM master (drop stale opcache).
-	_ = exec.CommandContext(ctx, "systemctl", "reload", "jabali-fpm@"+p.OSUser+".service").Run()
+	_ = execCommandContext(ctx, "systemctl", "reload", "jabali-fpm@"+p.OSUser+".service").Run()
 	// 4. Purge the nginx page cache for the domain (best-effort; targeted unlink).
 	if refreshDomainRE.MatchString(strings.ToLower(p.Domain)) {
 		cacheDir := "/var/cache/nginx/jabali"

@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -55,7 +54,7 @@ func egressDropsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		Events: []egressDropEvent{},
 	}
 	// Grep the kernel log for this user's drop prefix. Bounded lines + no shell.
-	out, err := exec.CommandContext(ctx, "journalctl", "-k", "--no-pager",
+	out, err := execCommandContext(ctx, "journalctl", "-k", "--no-pager",
 		"--output=short-iso", "-n", "2000",
 		"-g", "jabali-egress-drop-"+p.Username+" ").Output()
 	if err != nil {

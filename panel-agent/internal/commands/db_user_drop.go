@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -54,7 +53,7 @@ func dbUserDropHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Form: DROP USER IF EXISTS '<name>'@'localhost';
 	sql := fmt.Sprintf("DROP USER IF EXISTS %s@'localhost'", escapedUsername)
 
-	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	cmd := execCommandContext(ctx, "mysql", "-e", sql)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

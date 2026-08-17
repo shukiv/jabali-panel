@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -79,7 +78,7 @@ var fpmWorkerStatus = func(version string) (running, total int) {
 
 // fpmInstanceActive reports whether jabali-fpm@<user>.service is active.
 var fpmInstanceActive = func(user string) bool {
-	cmd := exec.Command("systemctl", "is-active", "--quiet", "jabali-fpm@"+user+".service")
+	cmd := execCommand("systemctl", "is-active", "--quiet", "jabali-fpm@"+user+".service")
 	return cmd.Run() == nil
 }
 

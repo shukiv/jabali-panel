@@ -108,7 +108,7 @@ func probeModule(ctx context.Context, key string) moduleStatusResponse {
 		resp.Active = resp.Installed
 		return resp
 	}
-	if out, err := exec.CommandContext(ctx, "systemctl", "is-active", p.service).Output(); err == nil {
+	if out, err := execCommandContext(ctx, "systemctl", "is-active", p.service).Output(); err == nil {
 		resp.Active = strings.TrimSpace(string(out)) == "active"
 	}
 	return resp
@@ -162,7 +162,7 @@ func systemModuleInstallHandler(ctx context.Context, raw json.RawMessage) (any, 
 	// A per-key transient unit name keeps concurrent (post-lock, sequential)
 	// installs of different modules from colliding on the unit name.
 	unit := "jabali-module-install-" + req.Key
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit="+unit,
 		"--service-type=oneshot",
@@ -201,7 +201,7 @@ func systemModuleDisableHandler(ctx context.Context, raw json.RawMessage) (any, 
 		if !unitExists(ctx, unit) {
 			continue
 		}
-		if out, err := exec.CommandContext(ctx, "systemctl", "disable", "--now", unit).CombinedOutput(); err != nil {
+		if out, err := execCommandContext(ctx, "systemctl", "disable", "--now", unit).CombinedOutput(); err != nil {
 			// Fail-soft: log-worthy but don't abort the rest. Return a generic
 			// error only if EVERY unit failed would be over-engineering — a
 			// single stubborn unit shouldn't strand the others already stopped.
@@ -214,7 +214,7 @@ func systemModuleDisableHandler(ctx context.Context, raw json.RawMessage) (any, 
 
 // unitExists reports whether systemd knows the unit (LoadState != not-found).
 func unitExists(ctx context.Context, unit string) bool {
-	out, err := exec.CommandContext(ctx, "systemctl", "show", "-p", "LoadState", "--value", unit).Output()
+	out, err := execCommandContext(ctx, "systemctl", "show", "-p", "LoadState", "--value", unit).Output()
 	if err != nil {
 		return false
 	}

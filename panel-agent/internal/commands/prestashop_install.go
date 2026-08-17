@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -143,10 +142,10 @@ func extractPrestaShopZip(ctx context.Context, osUser, outerZip, installPath, st
 	}
 
 	innerStage := filepath.Join(stagingDir, "inner")
-	if err := exec.CommandContext(ctx, "mkdir", "-p", innerStage).Run(); err != nil {
+	if err := execCommandContext(ctx, "mkdir", "-p", innerStage).Run(); err != nil {
 		return fmt.Errorf("mkdir inner stage: %w", err)
 	}
-	if err := exec.CommandContext(ctx, "chown", osUser+":"+osUser, innerStage).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", osUser+":"+osUser, innerStage).Run(); err != nil {
 		return fmt.Errorf("chown inner stage: %w", err)
 	}
 
@@ -324,7 +323,7 @@ func prestashopInstallHandler(ctx context.Context, params json.RawMessage) (any,
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir staging: %v", err)}
 	}
-	if err := exec.CommandContext(ctx, "chown", "-R", req.OSUser+":"+req.OSUser, stagingDir).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", req.OSUser+":"+req.OSUser, stagingDir).Run(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chown staging: %v", err)}
 	}
 
@@ -337,7 +336,7 @@ func prestashopInstallHandler(ctx context.Context, params json.RawMessage) (any,
 	installCtx, installCancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer installCancel()
 	if err := runPrestaShopCLIInstaller(installCtx, req, installPath); err != nil {
-		_ = exec.CommandContext(ctx, "rm", "-rf", filepath.Join(installPath, "app", "config", "parameters.php")).Run()
+		_ = execCommandContext(ctx, "rm", "-rf", filepath.Join(installPath, "app", "config", "parameters.php")).Run()
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 

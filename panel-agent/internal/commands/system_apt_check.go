@@ -185,7 +185,7 @@ func exitCodeOf(err error) int {
 // countInstalledPackages returns the number of installed dpkg packages, for
 // the "X of N packages" stat. Best-effort: 0 on error (the UI just omits it).
 func countInstalledPackages(ctx context.Context) int {
-	out, err := exec.CommandContext(ctx, "dpkg-query", "-f", "${db:Status-Abbrev}\n", "-W").Output()
+	out, err := execCommandContext(ctx, "dpkg-query", "-f", "${db:Status-Abbrev}\n", "-W").Output()
 	if err != nil {
 		return 0
 	}
@@ -202,7 +202,7 @@ func countInstalledPackages(ctx context.Context) int {
 // returns stdout, a combined output summary source, the exit code, and err.
 func runAptCapture(ctx context.Context, args ...string) (stdout []byte, stderr string, exitCode int, err error) {
 	full := append([]string{"-o", "DPkg::Lock::Timeout=60"}, args...)
-	cmd := exec.CommandContext(ctx, "apt-get", full...)
+	cmd := execCommandContext(ctx, "apt-get", full...)
 	cmd.Env = append(cmd.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive")
 	// apt-get writes most diagnostics to stderr but some to stdout; combine
 	// so classification sees everything regardless of stream.
@@ -216,7 +216,7 @@ func runAptCapture(ctx context.Context, args ...string) (stdout []byte, stderr s
 // aptListCapture runs `apt list --upgradable`, capturing stderr separately so
 // a failure (rare — lock/perm) is classifiable.
 func aptListCapture(ctx context.Context) (stdout []byte, stderr string, exitCode int, err error) {
-	cmd := exec.CommandContext(ctx, "apt", "list", "--upgradable")
+	cmd := execCommandContext(ctx, "apt", "list", "--upgradable")
 	cmd.Env = append(cmd.Environ(), "LC_ALL=C")
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf

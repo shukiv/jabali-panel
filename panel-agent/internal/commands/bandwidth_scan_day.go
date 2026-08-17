@@ -138,7 +138,7 @@ func scanLogFile(ctx context.Context, path string) (uint64, uint64, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(scanCtx, "goaccess", goaccessScanArgs(path)...)
+	cmd := execCommandContext(scanCtx, "goaccess", goaccessScanArgs(path)...)
 	out, err := cmd.Output()
 	if err != nil {
 		// goaccess exits non-zero on parse errors; emit the file basename

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/csv"
 	"io"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -19,7 +18,7 @@ import (
 func runCscliRaw(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{}, args...)
 	full = append(full, "-o", "raw")
-	cmd := exec.CommandContext(ctx, "cscli", full...)
+	cmd := execCommandContext(ctx, "cscli", full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

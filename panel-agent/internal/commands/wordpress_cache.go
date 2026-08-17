@@ -16,7 +16,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -106,7 +105,7 @@ func wordpressCacheSetHandler(ctx context.Context, raw json.RawMessage) (any, er
 	}
 	// Normalize ownership regardless of source: nginx (www-data) must be able to
 	// read the plugin files the per-user PHP-FPM pool serves.
-	if err := exec.CommandContext(ctx, "chown", "-R", p.OSUser+":www-data", dest).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", p.OSUser+":www-data", dest).Run(); err != nil {
 		return nil, bkInternal("chown plugin", err)
 	}
 
@@ -140,8 +139,8 @@ func wordpressCacheSetHandler(ctx context.Context, raw json.RawMessage) (any, er
 	// jabali-redis-clients, NOT jabali-sockets — tenants must never reach the
 	// root agent socket; ADR-0148). Group membership is fixed at the fpm master
 	// start, so the per-user master is RESTARTED (not reloaded) to pick it up.
-	_ = exec.CommandContext(ctx, "groupadd", "-f", redisClientsGroup).Run()
-	if err := exec.CommandContext(ctx, "usermod", "-aG", redisClientsGroup, p.OSUser).Run(); err != nil {
+	_ = execCommandContext(ctx, "groupadd", "-f", redisClientsGroup).Run()
+	if err := execCommandContext(ctx, "usermod", "-aG", redisClientsGroup, p.OSUser).Run(); err != nil {
 		return nil, bkInternal("add tenant to "+redisClientsGroup, err)
 	}
 	// Grant the group access to the Redis socket — both PERSISTENTLY (a redis
@@ -151,7 +150,7 @@ func wordpressCacheSetHandler(ctx context.Context, raw json.RawMessage) (any, er
 	// no longer depends on a full installer run. Idempotent + best-effort.
 	ensureRedisSocketGroupAccess(ctx, socket)
 	// Best-effort: a missing/!active fpm master (e.g. CLI-only install) isn't fatal.
-	_ = exec.CommandContext(ctx, "systemctl", "restart", "jabali-fpm@"+p.OSUser+".service").Run()
+	_ = execCommandContext(ctx, "systemctl", "restart", "jabali-fpm@"+p.OSUser+".service").Run()
 
 	// 4. Activate + enable (drop-ins + WP_CACHE), as the tenant.
 	if out, err := runWPAsTenantOut(ctx, p.OSUser, p.InstallPath, "plugin", "activate", "jabali-cache"); err != nil {
@@ -312,14 +311,14 @@ func ensureRedisSocketGroupAccess(ctx context.Context, socket string) {
 	if cur, err := os.ReadFile(unitPath); err != nil || string(cur) != redisSocketAccessDropIn {
 		if mkErr := os.MkdirAll("/etc/systemd/system/redis-server.service.d", 0o755); mkErr == nil {
 			if wErr := os.WriteFile(unitPath, []byte(redisSocketAccessDropIn), 0o644); wErr == nil {
-				_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+				_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 			}
 		}
 	}
 	// Immediate: apply to the live runtime dir + socket (the drop-in only fires on
 	// the next redis (re)start).
-	_ = exec.CommandContext(ctx, "setfacl", "-m", "g:"+redisClientsGroup+":rx", "/run/redis").Run()
-	_ = exec.CommandContext(ctx, "setfacl", "-m", "g:"+redisClientsGroup+":rw", socket).Run()
+	_ = execCommandContext(ctx, "setfacl", "-m", "g:"+redisClientsGroup+":rx", "/run/redis").Run()
+	_ = execCommandContext(ctx, "setfacl", "-m", "g:"+redisClientsGroup+":rw", socket).Run()
 }
 
 func runWPAsTenant(ctx context.Context, osUser, installPath string, args ...string) error {
@@ -404,13 +403,13 @@ func stageBundledCachePlugin(ctx context.Context, dest, osUser string) error {
 		return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition,
 			Message: fmt.Sprintf("bundled jabali-cache missing at %s \u2014 re-run install.sh", bundledWPCachePluginDir)}
 	}
-	if err := exec.CommandContext(ctx, "rm", "-rf", dest).Run(); err != nil {
+	if err := execCommandContext(ctx, "rm", "-rf", dest).Run(); err != nil {
 		return bkInternal("clear old plugin", err)
 	}
-	if err := exec.CommandContext(ctx, "cp", "-a", bundledWPCachePluginDir, dest).Run(); err != nil {
+	if err := execCommandContext(ctx, "cp", "-a", bundledWPCachePluginDir, dest).Run(); err != nil {
 		return bkInternal("stage plugin (bundled)", err)
 	}
-	if err := exec.CommandContext(ctx, "chown", "-R", osUser+":www-data", dest).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", osUser+":www-data", dest).Run(); err != nil {
 		return bkInternal("chown plugin", err)
 	}
 	return nil

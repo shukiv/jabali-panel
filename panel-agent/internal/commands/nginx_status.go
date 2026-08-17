@@ -25,7 +25,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -67,7 +66,7 @@ func nginxStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 // command prints the state on stdout AND exits non-zero for any
 // state other than "active", so we read stdout regardless of exit code.
 func readNginxSystemdState(ctx context.Context) string {
-	cmd := exec.CommandContext(ctx, "systemctl", "is-active", "nginx")
+	cmd := execCommandContext(ctx, "systemctl", "is-active", "nginx")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	_ = cmd.Run()
@@ -78,7 +77,7 @@ func readNginxSystemdState(ctx context.Context) string {
 // when the service is inactive or the lookup fails — callers should
 // treat 0 as "no live worker", not as an error.
 func readNginxMainPID(ctx context.Context) int {
-	cmd := exec.CommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", "nginx")
+	cmd := execCommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", "nginx")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {

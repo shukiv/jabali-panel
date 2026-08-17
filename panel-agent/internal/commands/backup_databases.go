@@ -118,7 +118,7 @@ func backupDatabasesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 // `sudo -u postgres pg_dump -Fc` (custom-format binary dump).
 // Same restic --stdin pipe pattern, same tagging.
 func dumpOnePostgresDatabase(ctx context.Context, c *backup.Client, jobID, userID, scheduleID, db string) (*backupDBStageSnapshot, error) {
-	cmd := exec.CommandContext(ctx, "sudo", "-u", "postgres", "pg_dump",
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "pg_dump",
 		"-Fc",
 		"--no-owner", "--no-privileges",
 		db,
@@ -169,7 +169,7 @@ func dumpOnePostgresDatabase(ctx context.Context, c *backup.Client, jobID, userI
 // dumpOneDatabase pipes mariadb-dump → restic backup --stdin. We avoid
 // shelling out twice (no intermediate file) so the dump stays in tmpfs.
 func dumpOneDatabase(ctx context.Context, c *backup.Client, jobID, userID, scheduleID, db string) (*backupDBStageSnapshot, error) {
-	cmd := exec.CommandContext(ctx, "mariadb-dump",
+	cmd := execCommandContext(ctx, "mariadb-dump",
 		"--single-transaction", "--skip-lock-tables",
 		"--routines", "--triggers", "--events",
 		"--hex-blob",

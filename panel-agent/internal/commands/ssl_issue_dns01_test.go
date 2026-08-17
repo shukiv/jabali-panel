@@ -59,6 +59,7 @@ func TestSSLIssueDNS01_RejectsBadEmail(t *testing.T) {
 }
 
 func TestSSLIssueDNS01_AcceptsSingleWildcardSAN(t *testing.T) {
+	requireHostMutationAllowed(t) // GH #994: reaches internal/certbot\'s own exec (real `certbot certonly` / ACME) — outside the commands exec seam
 	// Passes validation and reaches certbot — which is absent in CI, so a
 	// CodeInternal (not CodeInvalidArgument) proves validation let it through.
 	_, err := callDNS01(t, `{"cert_name":"wildcard.example.com","sans":["example.com","*.example.com"],"email":"a@b.co"}`)

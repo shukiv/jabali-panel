@@ -29,7 +29,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -132,13 +131,13 @@ func bouncerModeApplyHandler(ctx context.Context, params json.RawMessage) (any, 
 	// Caught 2026-06-04 on puzzle.linux-hosting.net: agent wrote
 	// MODE=live to disk + reloaded nginx + DB persisted live + UI
 	// said "applied" — but bouncer kept running in stream mode.
-	if out, err := exec.CommandContext(ctx, "nginx", "-t").CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "nginx", "-t").CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: "nginx -t failed after writing " + bouncerConfPath + ": " + strings.TrimSpace(string(out)),
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "systemctl", "restart", "nginx").CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "restart", "nginx").CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: "systemctl restart nginx failed: " + strings.TrimSpace(string(out)),

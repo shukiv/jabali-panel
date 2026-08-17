@@ -133,7 +133,7 @@ func buildSystemdRunCmd(ctx context.Context, osUser string, args ...string) *exe
 		}
 	}
 	cmdArgs = append(cmdArgs, args...)
-	return exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	return execCommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 }
 
 // removePlaceholderIndex deletes index.html at the install root if present.
@@ -175,7 +175,7 @@ func removePlaceholderIndex(ctx context.Context, installPath string) {
 	if err := assertSafeInstallRoot(installPath); err != nil {
 		return // never rm through a planted symlink (#457)
 	}
-	_ = exec.CommandContext(ctx, "rm", "-f", filepath.Join(installPath, "index.html")).Run()
+	_ = execCommandContext(ctx, "rm", "-f", filepath.Join(installPath, "index.html")).Run()
 }
 
 // normalizePermsToWwwData makes the WP tree match the project's ownership
@@ -192,13 +192,13 @@ func normalizePermsToWwwData(ctx context.Context, installPath, osUser string) er
 	if err := assertSafeInstallRoot(installPath); err != nil {
 		return err
 	}
-	if err := exec.CommandContext(ctx, "chown", "-R", osUser+":www-data", installPath).Run(); err != nil {
+	if err := execCommandContext(ctx, "chown", "-R", osUser+":www-data", installPath).Run(); err != nil {
 		return fmt.Errorf("chown -R %s:www-data %s: %w", osUser, installPath, err)
 	}
-	if err := exec.CommandContext(ctx, "find", installPath, "-type", "d", "-exec", "chmod", "2750", "{}", "+").Run(); err != nil {
+	if err := execCommandContext(ctx, "find", installPath, "-type", "d", "-exec", "chmod", "2750", "{}", "+").Run(); err != nil {
 		return fmt.Errorf("chmod dirs 2750 under %s: %w", installPath, err)
 	}
-	if err := exec.CommandContext(ctx, "find", installPath, "-type", "f", "-exec", "chmod", "0640", "{}", "+").Run(); err != nil {
+	if err := execCommandContext(ctx, "find", installPath, "-type", "f", "-exec", "chmod", "0640", "{}", "+").Run(); err != nil {
 		return fmt.Errorf("chmod files 0640 under %s: %w", installPath, err)
 	}
 	// #430 interim: wp-config.php / .env hold DB + cache creds; keep them
@@ -227,7 +227,7 @@ func cleanupWordPressFiles(ctx context.Context, docroot string) error {
 	for _, file := range files {
 		path := filepath.Join(docroot, file)
 		// Use rm via exec to match the documented behavior
-		cmd := exec.CommandContext(ctx, "rm", "-rf", path)
+		cmd := execCommandContext(ctx, "rm", "-rf", path)
 		// Ignore errors; best-effort cleanup
 		_ = cmd.Run()
 	}
@@ -403,7 +403,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// confusing "not a WordPress installation" error on the next step.
 	if _, statErr := os.Stat(filepath.Join(installPath, "wp-load.php")); os.IsNotExist(statErr) {
 		var lsOut bytes.Buffer
-		lsCmd := exec.CommandContext(ctx, "ls", "-la", installPath)
+		lsCmd := execCommandContext(ctx, "ls", "-la", installPath)
 		lsCmd.Stdout = &lsOut
 		_ = lsCmd.Run()
 		return nil, &agentwire.AgentError{
@@ -509,7 +509,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// of the docroot once normalizePermsToWwwData runs at the end.
 	// Group=www-data lets nginx (in www-data) read the file via group bits;
 	// FPM (running as <user>) reads via owner bits.
-	chownCmd := exec.CommandContext(ctx, "chown", req.OSUser+":www-data", configPath)
+	chownCmd := execCommandContext(ctx, "chown", req.OSUser+":www-data", configPath)
 	if err := chownCmd.Run(); err != nil {
 		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{

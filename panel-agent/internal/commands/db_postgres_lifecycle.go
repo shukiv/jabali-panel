@@ -43,11 +43,11 @@ func dbPostgresStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 	} else if matches, _ := filepath.Glob("/usr/lib/postgresql/*/bin/psql"); len(matches) > 0 {
 		resp.Installed = true
 	}
-	if out, err := exec.CommandContext(ctx, "systemctl", "is-active", "postgresql").Output(); err == nil {
+	if out, err := execCommandContext(ctx, "systemctl", "is-active", "postgresql").Output(); err == nil {
 		resp.Active = strings.TrimSpace(string(out)) == "active"
 	}
 	if resp.Installed {
-		if out, err := exec.CommandContext(ctx, "psql", "--version").Output(); err == nil {
+		if out, err := execCommandContext(ctx, "psql", "--version").Output(); err == nil {
 			resp.Version = strings.TrimSpace(string(out))
 		}
 	}
@@ -79,7 +79,7 @@ func dbPostgresInstallHandler(ctx context.Context, _ json.RawMessage) (any, erro
 	// we're trying to escape). --pipe forwards stdout/stderr back
 	// to us and waits for completion. --wait makes the call
 	// synchronous; --collect garbage-collects the unit on exit.
-	cmd := exec.CommandContext(ctx, "systemd-run",
+	cmd := execCommandContext(ctx, "systemd-run",
 		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit=jabali-pg-install",
 		"--service-type=oneshot",
@@ -106,7 +106,7 @@ func dbPostgresEnableHandler(ctx context.Context, _ json.RawMessage) (any, error
 			Message: "postgres not installed; call db.postgres.install first",
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", "postgresql").CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "enable", "--now", "postgresql").CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInternal,
 			Message: fmt.Sprintf("systemctl enable --now postgresql: %v: %s",
@@ -118,7 +118,7 @@ func dbPostgresEnableHandler(ctx context.Context, _ json.RawMessage) (any, error
 
 // dbPostgresDisableHandler stops + disables (data PRESERVED).
 func dbPostgresDisableHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	if out, err := exec.CommandContext(ctx, "systemctl", "disable", "--now", "postgresql").CombinedOutput(); err != nil {
+	if out, err := execCommandContext(ctx, "systemctl", "disable", "--now", "postgresql").CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInternal,
 			Message: fmt.Sprintf("systemctl disable --now postgresql: %v: %s",
@@ -150,7 +150,7 @@ func dbPostgresUninstallHandler(ctx context.Context, _ json.RawMessage) (any, er
 			"/etc/jabali-panel/postgres.password"},
 	}
 	for _, args := range steps {
-		c := exec.CommandContext(ctx, args[0], args[1:]...)
+		c := execCommandContext(ctx, args[0], args[1:]...)
 		c.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		if out, err := c.CombinedOutput(); err != nil {
 			// Fail-soft on disable when service already absent; hard

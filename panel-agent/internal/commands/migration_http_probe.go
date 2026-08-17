@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -53,7 +52,7 @@ var probeDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}\.)+[a-z]{2,63}
 // vhosts bind a managed IP (M24), not 127.0.0.1, so resolving to loopback
 // gets connection-refused. Computed once.
 var probeTargetIP = func() string {
-	out, err := exec.Command("ip", "-4", "route", "get", "1.1.1.1").Output()
+	out, err := execCommand("ip", "-4", "route", "get", "1.1.1.1").Output()
 	if err == nil {
 		// "1.1.1.1 via X dev Y src <IP> ..." — take the token after "src".
 		fields := strings.Fields(string(out))
@@ -67,7 +66,7 @@ var probeTargetIP = func() string {
 	// VM) previously fell through to 127.0.0.1, which every managed-IP vhost
 	// (M24 `listen <IP>:443`) refuses → false connection-refused. Fall back to
 	// the first non-loopback global IPv4 instead.
-	if hi, herr := exec.Command("hostname", "-I").Output(); herr == nil {
+	if hi, herr := execCommand("hostname", "-I").Output(); herr == nil {
 		for _, tok := range strings.Fields(string(hi)) {
 			if strings.Contains(tok, ".") && !strings.HasPrefix(tok, "127.") {
 				return tok
@@ -107,7 +106,7 @@ var runProbeCurl = func(ctx context.Context, domain, ip string) int {
 		"--resolve", domain + ":80:" + ip,
 		"https://" + domain + "/",
 	}
-	out, _ := exec.CommandContext(ctx, "curl", args...).Output()
+	out, _ := execCommandContext(ctx, "curl", args...).Output()
 	code, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 	return code // 0 on connection failure / timeout
 }

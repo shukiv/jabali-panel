@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -79,7 +78,7 @@ END$$;`,
 		pgIdent(roleName), pgStr(password),
 	)
 
-	cmd := exec.CommandContext(ctx, "sudo", "-u", "postgres", "psql",
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
 		"-v", "ON_ERROR_STOP=1", "-XAtq", "-c", sql)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		// Do not echo psql's stderr — it may contain the password.
@@ -107,7 +106,7 @@ END$$;`,
 		pgStr(p.PanelUsername+`\_%`),
 		pgStr(roleName),
 	)
-	cmdGrant := exec.CommandContext(ctx, "sudo", "-u", "postgres", "psql",
+	cmdGrant := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
 		"-v", "ON_ERROR_STOP=1", "-XAtq", "-c", grantSQL)
 	if _, err := cmdGrant.CombinedOutput(); err != nil {
 		// Grants failing isn't fatal — first-time provision before any DB
