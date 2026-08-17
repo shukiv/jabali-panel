@@ -19,6 +19,7 @@ import (
 // in unit tests). Catches the failure mode where wordpress_install.go
 // is moved/renamed and forgets to call RegisterAppInstaller.
 func TestAppInstall_RoutesToWordPressHandler(t *testing.T) {
+	requireHostMutationAllowed(t) // GH #994: routes into the real WP install (systemd-run + rm -rf under the tenant home)
 	body := json.RawMessage(`{
 		"app_type": "wordpress",
 		"os_user": "alice",

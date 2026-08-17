@@ -11,6 +11,7 @@ import (
 )
 
 func TestSystemSetTimezone_Valid(t *testing.T) {
+	requireHostMutationAllowed(t) // GH #994: reaches `timedatectl set-timezone` (changes the host clock)
 	// This test validates against real /usr/share/zoneinfo if it exists.
 	// On systems without it, the test is skipped.
 	// Note: The actual timedatectl call requires root/auth, so we only test
@@ -135,6 +136,7 @@ func TestSystemSetTimezone_Registration(t *testing.T) {
 }
 
 func TestSystemSetTimezone_WhitespaceHandling(t *testing.T) {
+	requireHostMutationAllowed(t) // GH #994: reaches `timedatectl set-timezone` (changes the host clock)
 	// Test that leading/trailing whitespace is trimmed
 	ctx := context.Background()
 	params := json.RawMessage(`{"timezone":" UTC "}`)

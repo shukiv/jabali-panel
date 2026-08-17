@@ -11,6 +11,7 @@ import (
 )
 
 func TestPHPPoolRemoveHandler(t *testing.T) {
+	requireHostMutationAllowed(t) // GH #994: reaches `systemctl stop/disable jabali-fpm@<user>`
 	tests := []struct {
 		name      string
 		input     phpPoolRemoveParams
