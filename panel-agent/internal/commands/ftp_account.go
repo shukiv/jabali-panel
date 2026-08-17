@@ -528,13 +528,19 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	if aerr != nil {
 		return nil, aerr
 	}
-	if _, aerr := requireFtpSubaccount(tenant, p.Username); aerr != nil {
+	u, aerr := requireFtpSubaccount(tenant, p.Username)
+	if aerr != nil {
 		// Idempotent delete: a passwd entry that is already gone is success.
 		if aerr.Code == agentwire.CodeNotFound {
 			return map[string]any{"username": p.Username, "deleted": false, "absent": true}, nil
 		}
 		return nil, aerr
 	}
+	// Isolated accounts own a uid in the reserved range and a root-owned jail;
+	// remember whether to tear it down after userdel. Legacy same-uid aliases
+	// share the tenant uid and have no jail.
+	delUID, _ := strconv.Atoi(u.Uid)
+	isolated := delUID >= ftpSubaccountUIDMin
 	_ = setFtpGroupMembership(ctx, p.Username, false)
 	// -f is REQUIRED, not defensive: the alias shares the tenant's uid, so
 	// the tenant's always-running processes (per-user FPM master, cron)
@@ -544,6 +550,14 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	// live tenant directory, usually a docroot).
 	if out, err := exec.CommandContext(ctx, "userdel", "-f", p.Username).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("userdel %q: %v: %s", p.Username, err, strings.TrimSpace(string(out)))}
+	}
+	// Isolated account: unmount + remove its jail AFTER the user is gone. The
+	// teardown never touches the bind-mount source (tenant data); it is
+	// idempotent and safe on a legacy path that has no jail.
+	if isolated {
+		if terr := teardownIsolatedJail(ctx, ftpJailPathFor(tenant, p.Username)); terr != nil {
+			return nil, terr
+		}
 	}
 	return map[string]any{"username": p.Username, "deleted": true}, nil
 }

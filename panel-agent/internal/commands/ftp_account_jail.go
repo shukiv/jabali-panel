@@ -251,8 +251,11 @@ func teardownIsolatedJail(ctx context.Context, jailPath string) *agentwire.Agent
 		if err == nil {
 			continue // detached one layer; loop for any stacked binds
 		}
-		if errors.Is(err, syscall.EINVAL) {
-			break // not a mountpoint (anymore) — safe to remove
+		// EINVAL = not a mountpoint (anymore); ENOENT = the mountpoint/jail
+		// doesn't exist at all (e.g. teardown of a legacy account, or a
+		// double teardown). Both mean "nothing mounted here" — safe to remove.
+		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
+			break
 		}
 		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("unmount jail %q: %v", mountpoint, err)}
 	}
