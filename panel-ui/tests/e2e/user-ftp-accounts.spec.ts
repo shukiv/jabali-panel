@@ -52,6 +52,10 @@ async function setupFtpMocks(
         api_enabled: true,
         ftp_accounts_enabled: opts.accountsEnabled,
         ftp_server_enabled: opts.serverEnabled,
+        // GH #1171: the Isolated toggle now defaults on only where filesystem
+        // quota is available; this suite exercises the isolated create path, so
+        // advertise it as available.
+        ftp_isolation_available: true,
       }),
     }),
   );
@@ -159,9 +163,9 @@ test("create drawer submits the tenant-prefixed body and never echoes the passwo
   const dirInput = page.getByLabel("Directory");
   await dirInput.fill("example.com/public_html");
   await page.getByLabel("Password", { exact: true }).fill("a-long-enough-password");
-  // GH #1145: the "Isolated account" toggle defaults ON, which requires a
-  // disk quota — fill it so the form submits (and to exercise the default,
-  // secure isolated create path).
+  // GH #1145/#1171: with filesystem quota available (mocked above), the
+  // "Isolated account" toggle defaults ON and requires a disk quota — fill it
+  // so the form submits (and to exercise the default, secure isolated path).
   await page.getByLabel("Disk quota").fill("500");
   await page.getByRole("button", { name: /Add account/ }).last().click();
 
