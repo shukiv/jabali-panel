@@ -252,6 +252,27 @@ func quotaEnabledOn(ctx context.Context, mount string) bool {
 	return strings.Contains(string(out), "is on")
 }
 
+// ftpIsolationStatusHandler reports whether isolated FTP accounts can be
+// provisioned on this host — i.e. filesystem disk quota is enabled on the
+// panel's quota mount (GH #1171). The panel caches this to default the UI's
+// "Isolated" toggle OFF where quota can't enforce the per-account cap, instead
+// of defaulting on and failing at create time.
+func ftpIsolationStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) {
+	var p struct {
+		QuotaMount string `json:"quota_mount"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("invalid params: %v", err),
+		}
+	}
+	return map[string]any{
+		"available":   p.QuotaMount != "" && quotaEnabledOn(ctx, p.QuotaMount),
+		"quota_mount": p.QuotaMount,
+	}, nil
+}
+
 // isPathMounted reports whether path is currently a mount target, by scanning
 // /proc/self/mountinfo (field 5 = mount point). Reliable on same-filesystem
 // bind mounts where st_dev does not change at the mountpoint — the stat-based

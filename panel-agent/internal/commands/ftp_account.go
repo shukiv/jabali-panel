@@ -919,4 +919,5 @@ func init() {
 	Default.Register("ftpaccount.list_all", ftpAccountListAllHandler)
 	Default.Register("ftpaccount.lock_tenant", ftpAccountLockTenantHandler)
 	Default.Register("ftpaccount.ensure_jail", ftpEnsureJailHandler)
+	Default.Register("ftpaccount.isolation_status", ftpIsolationStatusHandler)
 }

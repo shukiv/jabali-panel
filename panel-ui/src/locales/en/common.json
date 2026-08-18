@@ -1549,6 +1549,7 @@
     "ftp_disabled_tooltip": "FTP is not enabled on this server — ask your administrator.",
     "isolated_label": "Isolated account",
     "isolated_tooltip": "Give this account its own identity confined to the chosen folder — it cannot reach the rest of your files. Recommended. Turn off only for a legacy shared-access account.",
+    "isolated_unavailable": "Isolated accounts need filesystem disk quota, which isn't enabled on this server, so new accounts are created shared. Ask your administrator to enable the disk-quota module to use isolation.",
     "isolated_tag": "Isolated",
     "shared_tag": "Shared access",
     "quota_label": "Disk quota",

@@ -56,6 +56,10 @@ export const UserFtpAccountsPage = () => {
   const isDesktop = screens.lg ?? true;
 
   const { data: caps } = useServerCapabilities();
+  // GH #1171: isolated accounts need filesystem disk quota. Where it isn't
+  // enabled, default the toggle off (and disable it) instead of defaulting on
+  // and failing at create; keep the #1145 isolated default where it works.
+  const isoAvailable = caps?.ftp_isolation_available ?? false;
   const { data: me } = useQuery({ queryKey: ["identity"], queryFn: getIdentity });
   const username = me?.username ?? "";
 
@@ -91,7 +95,7 @@ export const UserFtpAccountsPage = () => {
       // The /home/<user> prefix is a fixed addon — users type only the
       // part inside their home. Empty = the home directory itself.
       const rel = (values.home_rel ?? "").replace(/^\/+|\/+$/g, "");
-      const isolated = values.isolated !== false; // default on
+      const isolated = isoAvailable && values.isolated !== false;
       await createFtpAccount({
         label: values.label,
         home_path: rel ? `${homePrefix}/${rel}` : homePrefix,
@@ -294,7 +298,7 @@ export const UserFtpAccountsPage = () => {
           form={form}
           layout="vertical"
           onFinish={handleCreate}
-          initialValues={{ ftp_access: false, isolated: true }}
+          initialValues={{ ftp_access: false, isolated: isoAvailable }}
         >
           <Form.Item
             label={t("ftpaccounts.label")}
@@ -340,8 +344,13 @@ export const UserFtpAccountsPage = () => {
             name="isolated"
             valuePropName="checked"
             tooltip={t("ftpaccounts.isolated_tooltip")}
+            extra={
+              !isoAvailable
+                ? t("ftpaccounts.isolated_unavailable")
+                : undefined
+            }
           >
-            <Switch />
+            <Switch disabled={!isoAvailable} />
           </Form.Item>
           <Form.Item
             noStyle

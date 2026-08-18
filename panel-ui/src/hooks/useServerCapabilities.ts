@@ -33,6 +33,9 @@ export interface ServerCapabilities {
   ftp_accounts_enabled: boolean;
   /** GH #1053: server-level FTP opt-in — drives "SFTP only" vs "FTPS + SFTP" copy. */
   ftp_server_enabled: boolean;
+  /** GH #1171: isolated (separate-uid, quota-capped) FTP accounts can be provisioned
+   * here (filesystem disk quota is enabled). Drives the create form's Isolated default. */
+  ftp_isolation_available: boolean;
 }
 
 export function useServerCapabilities() {
@@ -59,6 +62,7 @@ export function useServerCapabilities() {
         dr_peer_label: data.dr_peer_label ?? "",
         ftp_accounts_enabled: !!data.ftp_accounts_enabled,
         ftp_server_enabled: !!data.ftp_server_enabled,
+        ftp_isolation_available: !!data.ftp_isolation_available,
       };
     },
     staleTime: 60_000,

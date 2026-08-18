@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -23,6 +24,12 @@ type MeHandlerConfig struct {
 	Packages       repository.PackageRepository
 	ServerSettings repository.ServerSettingsRepository
 	UIPrefs        repository.UserUIPrefRepository
+	// Agent + QuotaMount (GH #1171): probe whether isolated FTP is provisionable
+	// (filesystem disk quota enabled on the mount) so server-capabilities can
+	// tell the UI to default the "Isolated" toggle off where it can't work.
+	// Optional — nil Agent / empty QuotaMount ⇒ ftp_isolation_available=false.
+	Agent      agent.AgentInterface
+	QuotaMount string
 	// DemoEnabled mirrors cfg.Demo.Enabled. When set, server-capabilities
 	// masks the real public IPs with RFC 5737/3849 documentation-range
 	// placeholders so the public demo dashboard never exposes real infra
@@ -61,7 +68,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false, "ftp_isolation_available": false})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -128,6 +135,11 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		// versus "FTPS + SFTP" in connection info.
 		"ftp_accounts_enabled": ftpAccounts,
 		"ftp_server_enabled":   settings.FTPEnabled,
+		// GH #1171: whether isolated (separate-uid, quota-capped) FTP accounts
+		// can actually be provisioned here (filesystem disk quota enabled). The
+		// UI defaults the "Isolated" toggle off when false. Only probed for
+		// FTP-eligible tenants so a probe never runs for users without the page.
+		"ftp_isolation_available": ftpAccounts && h.ftpIsolationAvailable(ctx),
 	})
 }
 
