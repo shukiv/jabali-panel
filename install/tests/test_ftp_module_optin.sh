@@ -147,6 +147,24 @@ if ! grep -qE '^require_ssl_reuse=YES' <<<"$cfgfn"; then
   fail=1
 fi
 
+# --- 7. fail-closed disable verb (JAB-259) must match install.sh's ufw rules ---
+# The Go ftp.disable verb removes the SAME rules install.sh opens/closes. A
+# drift between its hardcoded range and the vsftpd pasv range would leave a rule
+# un-removed on disable (residual exposure). Cross-language coupling, so pin it
+# here rather than trust the "MUST match install.sh" comment.
+verbfile="panel-agent/internal/commands/ftp_module_disable.go"
+if [[ ! -f "$verbfile" ]]; then
+  echo "FAIL: $verbfile missing (JAB-259 fail-closed disable verb)"
+  fail=1
+elif [[ -n "$pasv_min" && -n "$pasv_max" ]]; then
+  grep -q 'Default.Register("ftp.disable"' "$verbfile" \
+    || { echo "FAIL: ftp.disable verb not registered"; fail=1; }
+  grep -q "${pasv_min}:${pasv_max}/tcp" "$verbfile" \
+    || { echo "FAIL: ftp.disable passive range must match vsftpd ${pasv_min}:${pasv_max}"; fail=1; }
+  grep -q '"21/tcp"' "$verbfile" \
+    || { echo "FAIL: ftp.disable must remove the 21/tcp control-port rule"; fail=1; }
+fi
+
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: ftp module opt-in guards hold"
 else

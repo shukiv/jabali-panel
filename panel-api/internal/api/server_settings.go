@@ -153,14 +153,14 @@ type updateServerSettingsRequest struct {
 	// GH #1053: FTP module opt-in (default OFF). ftp_allow_plaintext is a
 	// second explicit gate — TLS stays required without it. ftp_pasv_address
 	// is the NAT passive-mode address vsftpd advertises.
-	FTPEnabled                 *bool   `json:"ftp_enabled,omitempty"`
-	FTPAllowPlaintext          *bool   `json:"ftp_allow_plaintext,omitempty"`
-	FTPPasvAddress             *string `json:"ftp_pasv_address,omitempty"`
+	FTPEnabled        *bool   `json:"ftp_enabled,omitempty"`
+	FTPAllowPlaintext *bool   `json:"ftp_allow_plaintext,omitempty"`
+	FTPPasvAddress    *string `json:"ftp_pasv_address,omitempty"`
 	// vsftpd tuning; 0 = unlimited. Bounded at the API so a typo can't
 	// render a nonsensical config.
-	FTPMaxClients      *uint32 `json:"ftp_max_clients,omitempty"`
-	FTPMaxPerIP        *uint32 `json:"ftp_max_per_ip,omitempty"`
-	FTPLocalMaxRateKBs *uint32 `json:"ftp_local_max_rate_kbs,omitempty"`
+	FTPMaxClients              *uint32 `json:"ftp_max_clients,omitempty"`
+	FTPMaxPerIP                *uint32 `json:"ftp_max_per_ip,omitempty"`
+	FTPLocalMaxRateKBs         *uint32 `json:"ftp_local_max_rate_kbs,omitempty"`
 	TenantDomainOptionsEnabled *bool   `json:"tenant_domain_options_enabled,omitempty"`
 	TenantDocrootEditable      *bool   `json:"tenant_docroot_editable,omitempty"`
 	// GH #860: opt-in branded page on the default catch-all for unknown
@@ -830,10 +830,15 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// doesn't block on apt. Wired only for modules install.sh supports at runtime
 	// today. On flip false→true install the module; on flip true→false stop +
 	// disable its services (system.module.disable — data preserved, guardrails
-	// like ufw/pdns-recursor left running). Transition-dispatch only: there is
-	// deliberately NO auto disable-convergence (stopping a "disabled" service
-	// every tick would fight an operator troubleshooting a manual start, and is
-	// destructive when a status read is wrong — unlike install-convergence).
+	// like ufw/pdns-recursor left running). Transition-dispatch only, with ONE
+	// exception: for most modules there is deliberately NO auto
+	// disable-convergence (stopping a "disabled" service every tick would fight
+	// an operator troubleshooting a manual start, and is destructive when a
+	// status read is wrong — unlike install-convergence). FTP is the exception
+	// (JAB-259): it is a security shutoff, so it takes the fail-closed ftp.disable
+	// verb here AND is reconciled toward inactive+masked+ports-closed every tick
+	// (convergeFtpDisabled) — a disabled FTP that stays reachable is a security
+	// hole, not a troubleshooting convenience.
 	if h.cfg.Agent != nil {
 		for _, m := range []struct {
 			key           string
@@ -849,7 +854,13 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			case m.current && !m.prev:
 				h.dispatchModuleInstall(m.key)
 			case !m.current && m.prev:
-				h.dispatchModuleDisable(m.key)
+				if m.key == "ftp" {
+					// JAB-259: fail-closed shutoff (stop+mask+close ports+verify),
+					// not the generic fail-soft disable.
+					h.dispatchFtpDisable()
+				} else {
+					h.dispatchModuleDisable(m.key)
+				}
 			}
 		}
 		// GH #1053: vsftpd.conf is rendered from ftp_allow_plaintext +
@@ -1429,6 +1440,21 @@ func (h *serverSettingsHandler) dispatchModuleDisable(key string) {
 		defer cancel()
 		if _, err := h.cfg.Agent.Call(bgCtx, "system.module.disable", map[string]any{"key": key}); err != nil {
 			h.cfg.Log.Error("agent module disable failed", "key", key, "err", err)
+		}
+	}()
+}
+
+// dispatchFtpDisable runs the FAIL-CLOSED FTP shutoff (JAB-259) instead of the
+// generic fail-soft system.module.disable: stop + mask vsftpd, remove its UFW
+// rules, and verify inactive+masked. Async like the other module dispatches —
+// the reconciler's convergeFtpDisabled retries until the daemon is confirmed
+// down and the ports are closed, so a failure here is logged, never lost.
+func (h *serverSettingsHandler) dispatchFtpDisable() {
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if _, err := h.cfg.Agent.Call(bgCtx, "ftp.disable", map[string]any{}); err != nil {
+			h.cfg.Log.Error("ftp fail-closed disable failed (reconciler will retry)", "err", err)
 		}
 	}()
 }

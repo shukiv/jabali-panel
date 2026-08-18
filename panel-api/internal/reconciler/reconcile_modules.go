@@ -61,11 +61,49 @@ func (r *Reconciler) reconcileModuleInstalls(ctx context.Context) {
 	}
 	flags := moduleFlags{dns: srv.DNSEnabled, mail: srv.MailEnabled, quota: srv.QuotaEnabled, security: srv.SecurityEnabled, ftp: srv.FTPEnabled}
 	for _, m := range convergedModules {
-		if !m.enabled(flags) {
+		if m.enabled(flags) {
+			r.convergeModule(ctx, m.key, m.dependsOn)
 			continue
 		}
-		r.convergeModule(ctx, m.key, m.dependsOn)
+		// A DISABLED module is normally left alone. FTP is the exception
+		// (JAB-259): it is a security shutoff, so an incomplete disable —
+		// vsftpd still active or unmasked, ports still open — must be converged
+		// FAIL-CLOSED here rather than skipped and left exposed until the next
+		// full `jabali update`. Every other disabled module stays a no-op.
+		if m.key == "ftp" {
+			r.convergeFtpDisabled(ctx)
+		}
 	}
+}
+
+// convergeFtpDisabled drives FTP toward fail-closed (vsftpd inactive + masked,
+// UFW rules removed) when ftp_enabled=false (JAB-259). The dedicated ftp.disable
+// verb returns a typed failure while any residual exposure remains; a failure is
+// retried on the next eligible tick under the same backoff as install
+// convergence (a distinct "ftp-disable" key), so a stubborn systemctl/ufw
+// failure keeps converging without hot-looping every tick.
+func (r *Reconciler) convergeFtpDisabled(ctx context.Context) {
+	if !r.moduleInstallDue("ftp-disable") {
+		return
+	}
+	go func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer dcancel()
+		// Re-read the flag inside the goroutine: an operator may have re-enabled
+		// FTP after this pass was scheduled. Masking a just-re-enabled vsftpd
+		// would fight install-convergence and ping-pong under toggle churn, so a
+		// stale disable must stand down. (nil serverSettings only in unit tests.)
+		if r.serverSettings != nil {
+			if srv, err := r.serverSettings.Get(dctx); err == nil && srv != nil && srv.FTPEnabled {
+				return
+			}
+		}
+		if _, err := r.agent.Call(dctx, "ftp.disable", map[string]any{}); err != nil {
+			r.log.Error("ftp fail-closed disable did not fully converge (will retry)", "err", err)
+			return
+		}
+		r.log.Info("ftp disabled: vsftpd inactive+masked, ports closed")
+	}()
 }
 
 // convergeModule probes one module's status and, if it isn't fully up, kicks a

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // moduleStubAgent returns a canned system.module.status per key and records
@@ -16,9 +18,15 @@ import (
 type moduleStubAgent struct {
 	status       map[string]map[string]any
 	installCalls int
+
+	mu      sync.Mutex
+	methods []string // every method seen (guarded; detached dispatch races the test)
 }
 
 func (m *moduleStubAgent) Call(_ context.Context, method string, params any) (json.RawMessage, error) {
+	m.mu.Lock()
+	m.methods = append(m.methods, method)
+	m.mu.Unlock()
 	key := ""
 	if mp, ok := params.(map[string]any); ok {
 		key, _ = mp["key"].(string)
@@ -36,6 +44,18 @@ func (m *moduleStubAgent) Call(_ context.Context, method string, params any) (js
 	default:
 		return nil, nil
 	}
+}
+
+func (m *moduleStubAgent) methodCount(name string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, x := range m.methods {
+		if x == name {
+			n++
+		}
+	}
+	return n
 }
 
 var _ agent.AgentInterface = (*moduleStubAgent)(nil)
@@ -107,6 +127,59 @@ func TestConvergeModuleDependency(t *testing.T) {
 	r2.moduleInstallMu.Unlock()
 	if !dispatched {
 		t.Error("mail with satisfied dns dependency (mail down) must dispatch")
+	}
+}
+
+// JAB-259: a DISABLED ftp module must be converged fail-closed — convergeFtpDisabled
+// dispatches ftp.disable and records its own "ftp-disable" backoff so a stubborn
+// failure retries without hot-looping every tick.
+func TestConvergeFtpDisabled_DispatchesFtpDisableWithBackoff(t *testing.T) {
+	ag := &moduleStubAgent{status: map[string]map[string]any{}}
+	r := discardReconciler(ag)
+
+	r.convergeFtpDisabled(context.Background())
+
+	// Synchronous decision record (house pattern — avoids the detached goroutine).
+	r.moduleInstallMu.Lock()
+	_, recorded := r.moduleInstallAttempt["ftp-disable"]
+	r.moduleInstallMu.Unlock()
+	if !recorded {
+		t.Fatal("convergeFtpDisabled must record an ftp-disable backoff attempt")
+	}
+	// A second immediate pass is gated by that backoff.
+	if r.moduleInstallDue("ftp-disable") {
+		t.Fatal("second immediate convergeFtpDisabled must be gated by backoff")
+	}
+
+	// The dispatched verb is ftp.disable (the fail-closed shutoff), not the
+	// generic system.module.disable. Poll — the dispatch is detached.
+	deadline := time.Now().Add(2 * time.Second)
+	for ag.methodCount("ftp.disable") == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if ag.methodCount("ftp.disable") != 1 {
+		t.Fatalf("want exactly one ftp.disable dispatch, got %d", ag.methodCount("ftp.disable"))
+	}
+	if ag.methodCount("system.module.disable") != 0 {
+		t.Fatal("must NOT use the generic fail-soft system.module.disable for ftp")
+	}
+}
+
+// JAB-259: a stale disable must stand down if FTP was re-enabled after the pass
+// was scheduled. convergeFtpDisabled re-reads ftp_enabled inside the goroutine
+// and must NOT dispatch ftp.disable when it now reads enabled — masking a
+// just-re-enabled vsftpd would ping-pong against install-convergence.
+func TestConvergeFtpDisabled_SkipsWhenReEnabled(t *testing.T) {
+	ag := &moduleStubAgent{status: map[string]map[string]any{}}
+	r := discardReconciler(ag)
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{FTPEnabled: true}}
+
+	r.convergeFtpDisabled(context.Background())
+
+	// Let the detached goroutine run its re-read + decision; it must not dispatch.
+	time.Sleep(200 * time.Millisecond)
+	if ag.methodCount("ftp.disable") != 0 {
+		t.Fatal("ftp.disable dispatched despite FTP being re-enabled (stale-disable ping-pong)")
 	}
 }
 
