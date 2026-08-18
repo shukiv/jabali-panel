@@ -144,6 +144,22 @@ case "$kind" in
     # re-dispatch. jabali-bulwark is not the caller — synchronous.
     systemctl restart --no-block jabali-panel || echo "jabali-panel-cert.sh: jabali-panel restart failed (continuing)" >&2
     systemctl restart jabali-bulwark || echo "jabali-panel-cert.sh: jabali-bulwark restart failed (continuing)" >&2
+    # FTPS (vsftpd, opt-in) reads the SAME panel.crt/panel.key but has no
+    # deploy hook of its own, so after renewal it keeps presenting the old
+    # in-memory certificate until the daemon next restarts — once the old cert
+    # expires, strict FTPS clients start failing (JAB-268). Reload it here.
+    #
+    # Guarded on is-active on purpose: FTP is the panel's one deliberately-OFF
+    # service (server_settings.ftp_enabled=0 → vsftpd masked). is-active is
+    # false for the masked/disabled opt-out state, so this never starts FTP an
+    # operator chose to keep off — it only refreshes a daemon already serving.
+    # vsftpd has no reload verb; try-reload-or-restart falls back to a restart,
+    # which re-reads the cert from disk. A failure is surfaced (not silently
+    # swallowed) naming vsftpd as the consumer left on the stale certificate.
+    if systemctl is-active --quiet vsftpd; then
+      systemctl try-reload-or-restart vsftpd \
+        || echo "jabali-panel-cert.sh: vsftpd reload FAILED — FTPS is serving the STALE certificate until vsftpd restarts" >&2
+    fi
     ;;
 esac
 

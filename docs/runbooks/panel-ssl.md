@@ -8,7 +8,7 @@ The panel hostname's TLS cert sits at `/etc/jabali/tls/panel.{crt,key}`. By defa
 |---|---|
 | `self_signed` | The starting state and the silent fallback. The cert is the openssl-generated SAN cert `provision_tls_cert` produced. The "Use Let's Encrypt" toggle is OFF, OR the routability gate failed. |
 | `pending_acme` | The reconciler (or the admin via "Retry now") just dispatched `ssl.panel.issue`. Will flip to `issued` or `pending_acme_retry` within a minute. |
-| `issued` | Certbot returned a fresh lineage; the deploy-hook copied `fullchain.pem` + `privkey.pem` to `/etc/jabali/tls/panel.{crt,key}` and reloaded nginx + jabali-panel + jabali-bulwark. `expires_at` is the LE notAfter. |
+| `issued` | Certbot returned a fresh lineage; the deploy-hook copied `fullchain.pem` + `privkey.pem` to `/etc/jabali/tls/panel.{crt,key}` and reloaded nginx + jabali-panel + jabali-bulwark (and vsftpd when FTP is active). `expires_at` is the LE notAfter. |
 | `pending_acme_retry` | Last attempt failed; `last_error` carries the reason. Reconciler will retry every 3 hours until either issued or the admin disables `use_le`. |
 | `failed` | Terminal — non-retryable error (e.g. LE rate-limit exhausted). M32.1 will surface a Reset button; today: edit the row directly via `mariadb` to clear the state. |
 
@@ -79,6 +79,7 @@ sudo /usr/local/bin/jabali update -f   # provision_tls_cert re-runs
     3. `systemctl reload nginx` (graceful, keeps existing :443 sessions up).
     4. `systemctl restart jabali-panel` (Go server doesn't SIGHUP-reread; ~100ms TLS gap).
     5. `systemctl restart jabali-bulwark` (Next custom server reads cert at boot; ~3-5s webmail gap).
+    6. `systemctl try-reload-or-restart vsftpd` **only if vsftpd is already active** (JAB-268). FTPS reads the same `panel.{crt,key}` but has no hook of its own, so without this it presents the stale in-memory cert until the daemon next restarts. The `is-active` guard means a masked/opt-out FTP module (the default) is never started by a renewal. A failure is logged naming FTPS as the stale consumer.
 
 The panel cert is intentionally separate from the per-domain SSL certs the reconciler manages for hosted domains. M32 only governs the panel hostname; everything else still flows through `ssl_certificates` + the M14 SSL renewal pipeline.
 
