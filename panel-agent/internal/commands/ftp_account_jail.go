@@ -124,6 +124,19 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	if aerr := validateIsolatedCreate(p, tenant); aerr != nil {
 		return nil, aerr
 	}
+	// Preflight the host precondition BEFORE any mutation: an isolated account
+	// gets a per-uid setquota cap, which fails on a mount that has no filesystem
+	// quota (the disk-quota module was never installed — GH #1053, altomarketing).
+	// Discovering that at the setquota step (5) would leave a half-built jail to
+	// tear down and surface as an opaque "internal"; failing fast here returns an
+	// actionable code the panel maps to "enable disk quota, or create a shared
+	// account".
+	if !quotaEnabledOn(ctx, p.QuotaMount) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeFailedPrecondition,
+			Message: fmt.Sprintf("filesystem disk quota is not enabled on %s — isolated FTP accounts need it for their per-account disk cap. Enable the disk-quota module, or create a shared account instead.", p.QuotaMount),
+		}
+	}
 
 	jail := p.JailPath
 	mountpoint := filepath.Join(jail, ftpJailMountpoint)
@@ -224,6 +237,19 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	}
 
 	return rollback, nil
+}
+
+// quotaEnabledOn reports whether user disk quota is active on mount. `quotaon
+// -pu` prints the current state without changing anything; a line containing
+// "is on" means user quota is active. A missing quota binary, an unsupported
+// filesystem, or "is off" all mean a per-uid setquota would fail — so isolated
+// FTP (which needs the per-account cap) cannot run there.
+func quotaEnabledOn(ctx context.Context, mount string) bool {
+	out, err := execCommandContext(ctx, "quotaon", "-pu", mount).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "is on")
 }
 
 // isPathMounted reports whether path is currently a mount target, by scanning

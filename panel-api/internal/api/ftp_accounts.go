@@ -151,7 +151,7 @@ func (h *ftpAccountsHandler) adminUpdate(c *gin.Context) {
 		"ftp_access":      acct.FTPAccess,
 		"enabled":         acct.IsEnabled,
 	}); err != nil {
-		status, payload := mapFtpAgentError(err, "update_failed")
+		status, payload := h.mapAgentErr(err, "update_failed")
 		c.JSON(status, payload)
 		return
 	}
@@ -175,7 +175,7 @@ func (h *ftpAccountsHandler) adminDelete(c *gin.Context) {
 		"tenant_username": ownerName,
 		"username":        acct.Username,
 	}); err != nil {
-		status, payload := mapFtpAgentError(err, "delete_failed")
+		status, payload := h.mapAgentErr(err, "delete_failed")
 		c.JSON(status, payload)
 		return
 	}
@@ -481,7 +481,7 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 	// Host first, row second: a row without a host user is a broken
 	// credential; a host user without a row is swept by the reconciler.
 	if err := h.agentCall(ctx, "ftpaccount.create", createParams); err != nil {
-		status, payload := mapFtpAgentError(err, "create_failed")
+		status, payload := h.mapAgentErr(err, "create_failed")
 		c.JSON(status, payload)
 		return
 	}
@@ -556,7 +556,7 @@ func (h *ftpAccountsHandler) update(c *gin.Context) {
 		"ftp_access":      acct.FTPAccess,
 		"enabled":         acct.IsEnabled,
 	}); err != nil {
-		status, payload := mapFtpAgentError(err, "update_failed")
+		status, payload := h.mapAgentErr(err, "update_failed")
 		c.JSON(status, payload)
 		return
 	}
@@ -601,7 +601,7 @@ func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
 		// state so the agent re-locks a disabled account in the same verb.
 		"enabled": acct.IsEnabled,
 	}); err != nil {
-		status, payload := mapFtpAgentError(err, "password_reset_failed")
+		status, payload := h.mapAgentErr(err, "password_reset_failed")
 		c.JSON(status, payload)
 		return
 	}
@@ -630,7 +630,7 @@ func (h *ftpAccountsHandler) delete(c *gin.Context) {
 		"tenant_username": *u.Username,
 		"username":        acct.Username,
 	}); err != nil {
-		status, payload := mapFtpAgentError(err, "delete_failed")
+		status, payload := h.mapAgentErr(err, "delete_failed")
 		c.JSON(status, payload)
 		return
 	}
@@ -665,7 +665,30 @@ func mapFtpAgentError(err error, fallback string) (int, gin.H) {
 			return http.StatusNotFound, gin.H{"error": "not_found", "detail": ae.Message}
 		case "permission_denied":
 			return http.StatusForbidden, gin.H{"error": "forbidden", "detail": ae.Message}
+		case "failed_precondition":
+			// A host-state precondition isn't met — e.g. an isolated account
+			// needs filesystem disk quota that isn't enabled on this host
+			// (GH #1053). The agent's message is operator-actionable and safe
+			// to surface; mirror the QuotaMount=="" guard's 503
+			// isolation_unavailable so the UI treats both the same.
+			return http.StatusServiceUnavailable, gin.H{"error": "isolation_unavailable", "detail": ae.Message}
 		}
 	}
 	return http.StatusBadGateway, gin.H{"error": fallback, "detail": "host operation failed — try again or contact the administrator"}
+}
+
+// mapAgentErr logs the raw agent failure (op + code + detail) server-side so a
+// 648-class error is diagnosable from the panel log — mapFtpAgentError
+// deliberately hides host internals from the API response, which previously
+// dropped the cause entirely (GH #1053). It then maps to the client response.
+func (h *ftpAccountsHandler) mapAgentErr(err error, fallback string) (int, gin.H) {
+	if h.cfg.Log != nil {
+		var ae *agent.AgentError
+		if errors.As(err, &ae) {
+			h.cfg.Log.Warn("ftp: agent op failed", "op", fallback, "code", ae.Code, "detail", ae.Message)
+		} else {
+			h.cfg.Log.Warn("ftp: agent op failed", "op", fallback, "err", err)
+		}
+	}
+	return mapFtpAgentError(err, fallback)
 }

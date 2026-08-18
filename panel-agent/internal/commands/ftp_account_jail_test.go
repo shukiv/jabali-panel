@@ -3,10 +3,43 @@ package commands
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
 )
+
+// TestQuotaEnabledOn covers the GH #1053 isolated-create preflight: quota is
+// "on" only when `quotaon -pu` reports it; a missing binary / unsupported fs
+// (command error) or an "is off" line both mean setquota would fail.
+func TestQuotaEnabledOn(t *testing.T) {
+	orig := execCommandContext
+	t.Cleanup(func() { execCommandContext = orig })
+
+	cases := []struct {
+		name string
+		out  string
+		fail bool
+		want bool
+	}{
+		{"user quota on", "user quota on / (/dev/root) is on", false, true},
+		{"user quota off", "user quota on / is off", false, false},
+		{"command error", "", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+				if tc.fail {
+					return exec.CommandContext(ctx, "false")
+				}
+				return exec.CommandContext(ctx, "echo", tc.out)
+			}
+			if got := quotaEnabledOn(context.Background(), "/"); got != tc.want {
+				t.Fatalf("quotaEnabledOn=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func testTenant() *ftpTenant {
 	return &ftpTenant{Username: "bob", UID: 1001, GID: 1001, HomeDir: "/home/bob"}

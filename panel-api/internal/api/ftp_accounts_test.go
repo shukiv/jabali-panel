@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -284,6 +285,26 @@ func TestFtpAPICreate_AgentFailureNoRow(t *testing.T) {
 	}
 	if len(repo.rows) != 0 {
 		t.Fatal("no row may exist after a failed host create")
+	}
+}
+
+// GH #1053: the agent preflights filesystem quota for isolated accounts and
+// returns failed_precondition when it isn't enabled. The API must surface that
+// as an actionable 503 isolation_unavailable carrying the agent's message —
+// NOT the opaque 502 "host operation failed" that hid the cause (altomarketing).
+func TestMapFtpAgentError_FailedPreconditionIsActionable(t *testing.T) {
+	status, payload := mapFtpAgentError(
+		&agent.AgentError{Code: "failed_precondition", Message: "filesystem disk quota is not enabled on /home — ..."},
+		"create_failed",
+	)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d", status)
+	}
+	if payload["error"] != "isolation_unavailable" {
+		t.Fatalf("want isolation_unavailable, got %v", payload["error"])
+	}
+	if got, _ := payload["detail"].(string); !strings.Contains(got, "quota is not enabled") {
+		t.Fatalf("agent's actionable detail must reach the client, got %q", got)
 	}
 }
 
