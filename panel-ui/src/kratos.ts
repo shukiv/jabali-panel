@@ -396,17 +396,23 @@ export async function redeemRecoveryCode(
   if (!flow || !code) {
     return { kind: "error", message: "This login link is missing its token." };
   }
+  // JAB-274: trust the SESSION, not the redemption's HTTP status. A single
+  // login link is routinely submitted more than once for the same browser —
+  // React StrictMode double-invokes the effect, and prefetch / link-preview
+  // agents can fire an extra request. The first submit sets the session (Kratos
+  // answers 422 browser_location_change_required); a second submit of the
+  // now-redeemed code, with a live session, comes back as a 303 that axios
+  // follows transparently into a 2xx. That 2xx used to be reported as
+  // "invalid or already used" even though the user was signed in. So on any
+  // non-blcr outcome we ask Kratos whether a session exists before failing.
   try {
     await kratosClient.post(
       `/self-service/recovery?flow=${encodeURIComponent(flow)}`,
       { method: "code", code },
     );
-    // A 2xx carries a re-rendered flow body, not a session — i.e. the code was
-    // rejected. Success is exclusively the 422 location-change path below.
-    return {
-      kind: "error",
-      message: "This login link is invalid or has already been used.",
-    };
+    // 2xx is ambiguous: a re-rendered flow (code rejected) OR a
+    // transparently-followed success redirect from a duplicate submit.
+    return okIfSignedIn("This login link is invalid or has already been used.");
   } catch (err) {
     const ax = err as AxiosError<{
       error?: { id?: string };
@@ -424,13 +430,26 @@ export async function redeemRecoveryCode(
       };
     }
     if (status === 400 || status === 422) {
-      return {
-        kind: "error",
-        message: "This login link is invalid or has already been used.",
-      };
+      return okIfSignedIn("This login link is invalid or has already been used.");
     }
-    return { kind: "error", message: humanizeKratosError(ax) };
+    // Network / 5xx — a prior submit may still have signed us in.
+    return okIfSignedIn(humanizeKratosError(ax));
   }
+}
+
+// okIfSignedIn resolves to success when a Kratos session already exists (a
+// prior submit of the same link established it), otherwise the supplied error.
+// JAB-274.
+async function okIfSignedIn(
+  errorMessage: string,
+): Promise<RecoveryRedeemResult> {
+  try {
+    if (await whoami()) return { kind: "ok" };
+  } catch {
+    // whoami itself failed (Kratos blip) — surface the error below rather than
+    // masking a genuine failure as success.
+  }
+  return { kind: "error", message: errorMessage };
 }
 
 // ---------------------------------------------------------------------------
