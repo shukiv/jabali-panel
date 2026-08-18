@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -39,6 +40,10 @@ type FtpAccountsHandlerConfig struct {
 	Agent           agent.AgentInterface
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc // optional — wire from rl.Strict()
+	// PatchRateLimit is an optional per-actor (user-keyed) strict limiter for
+	// the sshd-reload-triggering PATCH route (JAB-266). Wire from
+	// rl.StrictPerActor(); nil disables it.
+	PatchRateLimit gin.HandlerFunc
 	// QuotaMount is the filesystem mount path /home lives on (the same value
 	// the M18 user-limits reconciler uses, internal/limits.QuotaMountFor).
 	// Required for GH #1145 isolated accounts (per-uid setquota); empty
@@ -73,10 +78,17 @@ func RegisterFtpAccountRoutes(g *gin.RouterGroup, cfg FtpAccountsHandlerConfig) 
 	if strict == nil {
 		strict = func(c *gin.Context) { c.Next() }
 	}
+	// JAB-266: PATCH toggling sftp_access rewrites and reloads global sshd on
+	// every request. The strict tier alone is per-IP, which an actor multiplies
+	// across addresses, so PATCH additionally takes a per-user strict budget.
+	patchLimit := cfg.PatchRateLimit
+	if patchLimit == nil {
+		patchLimit = func(c *gin.Context) { c.Next() }
+	}
 	me := g.Group("/me/ftp-accounts")
 	me.GET("", h.list)
 	me.POST("", strict, h.create)
-	me.PATCH("/:id", h.update)
+	me.PATCH("/:id", patchLimit, h.update)
 	me.POST("/:id/password", strict, h.setPassword)
 	me.DELETE("/:id", h.delete)
 
@@ -300,6 +312,13 @@ func (h *ftpAccountsHandler) syncHostAccess(ctx context.Context, tenantUsername 
 	}); err != nil && h.cfg.Log != nil {
 		h.cfg.Log.Warn("ftp: home chroot flip failed (reconciler will retry)", "tenant", tenantUsername, "err", err)
 	}
+	// Stamp the generation BEFORE reading the snapshot. The agent's stale-drop
+	// gate is only sound if stamp order precedes read order: a sync that can
+	// override a revocation carries a higher generation, so it was stamped after
+	// the revocation's stamp, so — stamping before reading — it read after the
+	// revocation committed and its own snapshot already reflects the revocation.
+	// Stamping at dispatch (after the read) reopens the JAB-267 inversion.
+	gen := ftpsync.NextGeneration()
 	rows, err := h.cfg.Repo.List(ctx)
 	if err != nil {
 		return
@@ -343,7 +362,10 @@ func (h *ftpAccountsHandler) syncHostAccess(ctx context.Context, tenantUsername 
 		}
 		desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
 	}
-	if err := h.agentCall(ctx, "ftpaccount.sshd_sync", map[string]any{"accounts": desired}); err != nil && h.cfg.Log != nil {
+	if err := h.agentCall(ctx, "ftpaccount.sshd_sync", map[string]any{
+		"accounts":   desired,
+		"generation": gen,
+	}); err != nil && h.cfg.Log != nil {
 		h.cfg.Log.Warn("ftp: sshd_sync failed (reconciler will retry)", "err", err)
 	}
 }

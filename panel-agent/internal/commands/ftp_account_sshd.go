@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,12 +50,30 @@ type ftpSSHDSyncAccount struct {
 
 type ftpSSHDSyncParams struct {
 	Accounts []ftpSSHDSyncAccount `json:"accounts"`
+	// Generation is a monotonic sequence the panel assigns when it reads the
+	// desired snapshot (JAB-267). The agent applies syncs in generation order
+	// and DROPS any whose generation is older than the last one it applied, so
+	// a delayed stale snapshot can never overwrite a newer one and resurrect a
+	// revoked Match block (which — because disabling sftp_access does not lock
+	// the password — would silently restore working password SFTP access).
+	// 0 = unversioned (older panel): apply ungated, preserving prior behavior.
+	Generation int64 `json:"generation"`
 }
 
 type ftpSSHDSyncResponse struct {
 	Accounts int  `json:"accounts"`
 	Changed  bool `json:"changed"`
+	// Stale is true when the sync was dropped because its generation was older
+	// than the last applied — a correct no-op, not an error.
+	Stale bool `json:"stale,omitempty"`
 }
+
+// lastXferSyncGen is the highest generation applied to the xfer drop-in.
+// Guarded by sshOpMu — read and written only inside the locked critical
+// section below. In-memory on purpose: an agent restart drops every in-flight
+// UDS call, so no stale sync outlives the reset, and the reconciler re-syncs
+// current DB truth on its next pass regardless.
+var lastXferSyncGen int64
 
 // ftpXferUsernameRegex is deliberately stricter than usernameRegex: a
 // rendered name lands inside sshd config, so beyond POSIX validity it must
@@ -156,10 +175,30 @@ func ftpSSHDSyncHandler(ctx context.Context, params json.RawMessage) (any, error
 		seen[a.Username] = struct{}{}
 	}
 
+	// The whole write→sshd -t→reload sequence, plus the generation high-water
+	// read/advance, runs under sshOpMu. The lock is shared with
+	// system.set_ssh_config because `sshd -t` validates the COMBINED config —
+	// a concurrent writer to another drop-in would otherwise invalidate a test
+	// this handler already passed. Serialization alone cannot reject an
+	// already-stale snapshot, so the generation gate below does that (JAB-267).
+	sshOpMu.Lock()
+	defer sshOpMu.Unlock()
+
+	if p.Generation > 0 && p.Generation < lastXferSyncGen {
+		slog.WarnContext(ctx, "ftp sshd_sync: dropping stale snapshot",
+			"generation", p.Generation, "last_applied", lastXferSyncGen, "accounts", len(p.Accounts))
+		return ftpSSHDSyncResponse{Accounts: len(p.Accounts), Changed: false, Stale: true}, nil
+	}
+
 	path := getSSHXferDropinPath()
 	desired := renderXferDropin(p.Accounts)
 	prev, readErr := os.ReadFile(path)
 	if readErr == nil && string(prev) == desired {
+		// Already at the desired content: this generation is applied (no-op).
+		// Advance the high-water so a later stale snapshot can't win.
+		if p.Generation > lastXferSyncGen {
+			lastXferSyncGen = p.Generation
+		}
 		return ftpSSHDSyncResponse{Accounts: len(p.Accounts), Changed: false}, nil
 	}
 
@@ -173,6 +212,14 @@ func ftpSSHDSyncHandler(ctx context.Context, params json.RawMessage) (any, error
 			restoreFile(path, prev)
 			return nil, fmt.Errorf("sshd -t validation failed: %s: %w", strings.TrimSpace(string(out)), err)
 		}
+	}
+	// The desired content is now validated and durably on disk. Advance the
+	// high-water HERE, before the reload — a reload failure must not leave newer
+	// on-disk content unprotected against an older in-flight sync overwriting
+	// it. The reconciler re-issues the reload on its next pass with a fresh,
+	// higher generation.
+	if p.Generation > lastXferSyncGen {
+		lastXferSyncGen = p.Generation
 	}
 	if os.Getenv("JABALI_SSHD_TEST_SKIP_RELOAD") == "" {
 		unit := pickSSHUnit(ctx)

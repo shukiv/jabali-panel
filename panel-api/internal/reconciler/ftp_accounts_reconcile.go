@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -167,6 +168,13 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 	if r.ftpAccounts == nil || r.users == nil || r.agent == nil {
 		return
 	}
+	// Stamp the sshd_sync generation BEFORE reading the rows. The agent's
+	// stale-drop gate is only sound if stamp order precedes read order (see the
+	// same hoist in the API's syncHostAccess): a sync that could override a
+	// concurrent revocation carries a higher generation, so it stamped — and
+	// therefore read — after that revocation committed, so its own snapshot
+	// already reflects the revocation. Both dispatch sites share one counter.
+	gen := ftpsync.NextGeneration()
 	rows, err := r.ftpAccounts.List(ctx)
 	if err != nil {
 		r.log.Error("ftp: list accounts failed", "err", err)
@@ -252,7 +260,10 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 			desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
 		}
 	}
-	if _, err := r.agent.Call(ctx, "ftpaccount.sshd_sync", map[string]any{"accounts": desired}); err != nil {
+	if _, err := r.agent.Call(ctx, "ftpaccount.sshd_sync", map[string]any{
+		"accounts":   desired,
+		"generation": gen,
+	}); err != nil {
 		r.log.Warn("ftp: sshd_sync failed (will retry next pass)", "err", err)
 		converged = false
 	}

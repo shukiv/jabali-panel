@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -97,16 +98,36 @@ func renderGlobalDropin(port uint16, passwordAuth bool) string {
 	return fmt.Sprintf("Port %d\nPasswordAuthentication %s\n", port, pwLine)
 }
 
-// atomicWrite writes content to path via a sibling .new file + rename.
-// Best-effort cleanup of the .new file on rename failure.
+// atomicWrite writes content to path via a UNIQUE temp file in the same
+// directory + rename. A per-call temp name (os.CreateTemp) means two writers
+// targeting the same path never share one scratch file and clobber each other's
+// in-progress write — the fixed sibling ".new" they used before could collide
+// (JAB-267). The temp lives in the target directory so the rename is atomic
+// (same filesystem). Mode is pinned to 0600, matching the prior behavior for
+// every caller.
 func atomicWrite(path, content string) error {
-	newPath := path + ".new"
-	if err := os.WriteFile(newPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("write %s: %w", newPath, err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
 	}
-	if err := os.Rename(newPath, path); err != nil {
-		_ = os.Remove(newPath)
-		return fmt.Errorf("rename %s -> %s: %w", newPath, path, err)
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("chmod %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close %s: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("rename %s -> %s: %w", tmpName, path, err)
 	}
 	return nil
 }
@@ -144,6 +165,15 @@ func systemSetSSHConfigHandler(ctx context.Context, params json.RawMessage) (any
 
 	globalPath := getSSHConfigPath()
 	sftpPath := getSSHSftpDropinPath()
+
+	// Hold sshOpMu across snapshot→write→sshd -t→reload. Shared with
+	// ftpaccount.sshd_sync: `sshd -t` validates the COMBINED config, so a
+	// concurrent xfer-dropin write must not slip between our test and reload,
+	// and our rollback must not race another handler's successful write
+	// (JAB-267). Taking the lock before the prev-content snapshot keeps the
+	// rollback baseline consistent with what we then overwrite.
+	sshOpMu.Lock()
+	defer sshOpMu.Unlock()
 
 	// Snapshot prev contents BEFORE any write so rollback is exact.
 	prevGlobal, _ := os.ReadFile(globalPath)

@@ -232,6 +232,12 @@ func TestReconcileFtpAccounts_SSHDSyncPayloadShape(t *testing.T) {
 		t.Fatal("expected one sshd_sync")
 	}
 	payload := calls["ftpaccount.sshd_sync"][0].params.(map[string]any)
+	// JAB-267: the reconciler must stamp a positive generation too (the API and
+	// reconciler share one counter; a missing stamp on either site reopens the
+	// stale-restore race).
+	if gen, _ := payload["generation"].(int64); gen <= 0 {
+		t.Fatalf("reconciler sshd_sync must carry a positive generation, got %v", payload["generation"])
+	}
 	raw, _ := json.Marshal(payload["accounts"])
 	var accounts []struct {
 		Username  string `json:"username"`

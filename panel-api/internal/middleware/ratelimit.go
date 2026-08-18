@@ -11,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 )
 
 // RateLimiterConfig describes two token-bucket tiers. Default applies to
@@ -74,6 +76,24 @@ func (l *RateLimiter) Default() gin.HandlerFunc { return l.handler(tierDefault) 
 // rate limiting; /.ory/* is not fronted by this middleware.
 func (l *RateLimiter) Strict() gin.HandlerFunc { return l.handler(tierStrict) }
 
+// StrictPerActor enforces the strict tier keyed by the AUTHENTICATED user
+// rather than the client IP. Some strict-tier routes trigger expensive host
+// side effects (JAB-266: an FTP-account PATCH rewrites and reloads global
+// sshd), and a per-IP budget multiplies under one session — an actor with N
+// addresses gets N×the budget. Keying on the user id bounds the actor
+// regardless of source IP. Falls back to the client IP when the request is
+// unauthenticated (no claims), so the middleware is still safe if mounted
+// before auth.
+func (l *RateLimiter) StrictPerActor() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := clientIP(c)
+		if claims := ginctx.Claims(c); claims != nil && claims.UserID != "" {
+			key = "user:" + claims.UserID
+		}
+		l.enforce(c, key, tierStrict)
+	}
+}
+
 // KratosFlows rate-limits the unauthenticated credential POSTs proxied at
 // /.ory (self-service login + recovery) per client IP, BEFORE they reach Kratos.
 // Only POST submissions to those two flows are gated — flow-init GETs, CSRF
@@ -117,28 +137,36 @@ func (l *RateLimiter) KratosFlows(log *slog.Logger) gin.HandlerFunc {
 
 func (l *RateLimiter) handler(t tier) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		lim := l.limiterFor(clientIP(c), t)
-		res := lim.Reserve()
-		if !res.OK() {
-			// Can only happen with a misconfigured limit (rate=0 and burst=0);
-			// still refuse deterministically.
-			c.Header("Retry-After", "60")
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
-			return
-		}
-		if d := res.Delay(); d > 0 {
-			// We don't sleep — we reject, advising the client when to retry.
-			res.Cancel() // refund the reservation we didn't use
-			retry := int(math.Ceil(d.Seconds()))
-			if retry < 1 {
-				retry = 1
-			}
-			c.Header("Retry-After", strconv.Itoa(retry))
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
-			return
-		}
-		c.Next()
+		l.enforce(c, clientIP(c), t)
 	}
+}
+
+// enforce consumes one token from the (key, tier) bucket and either passes the
+// request through or aborts it 429 with a Retry-After hint. key is the bucket
+// identity — the client IP for the per-IP tiers, or a user-scoped string for
+// StrictPerActor.
+func (l *RateLimiter) enforce(c *gin.Context, key string, t tier) {
+	lim := l.limiterFor(key, t)
+	res := lim.Reserve()
+	if !res.OK() {
+		// Can only happen with a misconfigured limit (rate=0 and burst=0);
+		// still refuse deterministically.
+		c.Header("Retry-After", "60")
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
+		return
+	}
+	if d := res.Delay(); d > 0 {
+		// We don't sleep — we reject, advising the client when to retry.
+		res.Cancel() // refund the reservation we didn't use
+		retry := int(math.Ceil(d.Seconds()))
+		if retry < 1 {
+			retry = 1
+		}
+		c.Header("Retry-After", strconv.Itoa(retry))
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
+		return
+	}
+	c.Next()
 }
 
 func (l *RateLimiter) limiterFor(ip string, t tier) *rate.Limiter {

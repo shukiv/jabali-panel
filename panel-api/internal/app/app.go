@@ -1359,7 +1359,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:           deps.Agent,
 				Log:             deps.Log,
 				StrictRateLimit: rl.Strict(),
-				QuotaMount:      deps.QuotaMount, // GH #1145 isolated per-uid setquota
+				PatchRateLimit:  rl.StrictPerActor(), // JAB-266: per-user bound on sshd-reload PATCH
+				QuotaMount:      deps.QuotaMount,     // GH #1145 isolated per-uid setquota
 			})
 		}
 

@@ -157,6 +157,39 @@ func mockCalled(mock *agent.MockClient, command string) int {
 	return n
 }
 
+// JAB-267: every sshd_sync dispatch must carry a positive generation so the
+// agent can reject stale snapshots. A create triggers syncHostAccess.
+func TestFtpAPI_SSHDSyncCarriesGeneration(t *testing.T) {
+	repo := newFakeFtpRepo()
+	mock := ftpMockAgent()
+	r := ftpTestRouter(t, repo, mock, ftpPkg(3))
+
+	rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"deploy","home_path":"/home/shop/site","password":"longenough-pass1","ftp_access":true}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var found bool
+	for _, call := range mock.Calls() {
+		if call.Command != "ftpaccount.sshd_sync" {
+			continue
+		}
+		found = true
+		var p struct {
+			Generation int64 `json:"generation"`
+		}
+		if err := json.Unmarshal(call.Params, &p); err != nil {
+			t.Fatalf("unmarshal sshd_sync params: %v", err)
+		}
+		if p.Generation <= 0 {
+			t.Fatalf("sshd_sync must carry a positive generation, got %d", p.Generation)
+		}
+	}
+	if !found {
+		t.Fatal("no ftpaccount.sshd_sync call recorded")
+	}
+}
+
 func TestFtpAPICreate_HappyPath(t *testing.T) {
 	repo := newFakeFtpRepo()
 	mock := ftpMockAgent()

@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 )
 
@@ -70,6 +72,64 @@ func TestRateLimit_SeparateBucketsPerIP(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, hit("10.0.0.1"))
 	// Different IP gets its own bucket — still has budget.
 	assert.Equal(t, http.StatusOK, hit("10.0.0.2"))
+}
+
+// JAB-266: StrictPerActor keys the strict bucket on the authenticated user,
+// not the client IP, so an actor cannot multiply its budget across addresses.
+func TestStrictPerActor_KeyedByUserNotIP(t *testing.T) {
+	t.Parallel()
+
+	rl := middleware.NewRateLimiter(middleware.RateLimiterConfig{
+		DefaultRate:  rate.Limit(100),
+		DefaultBurst: 100,
+		StrictRate:   rate.Limit(1),
+		StrictBurst:  1,
+	})
+	r := gin.New()
+	withUser := func(uid string) gin.HandlerFunc {
+		return func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: uid}); c.Next() }
+	}
+	r.POST("/u1", withUser("u1"), rl.StrictPerActor(), func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	r.POST("/u2", withUser("u2"), rl.StrictPerActor(), func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	hit := func(path, ip string) int {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.RemoteAddr = ip + ":1000"
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Same user from a NEW IP each time still shares one bucket.
+	assert.Equal(t, http.StatusOK, hit("/u1", "10.0.0.1"))
+	assert.Equal(t, http.StatusTooManyRequests, hit("/u1", "10.0.0.2"))
+	assert.Equal(t, http.StatusTooManyRequests, hit("/u1", "10.0.0.3"))
+	// A different user has an independent bucket.
+	assert.Equal(t, http.StatusOK, hit("/u2", "10.0.0.1"))
+}
+
+// Unauthenticated requests (no claims) fall back to per-IP keying so the
+// middleware is still safe if mounted before auth.
+func TestStrictPerActor_FallsBackToIPWhenAnonymous(t *testing.T) {
+	t.Parallel()
+
+	rl := middleware.NewRateLimiter(middleware.RateLimiterConfig{
+		StrictRate:  rate.Limit(1),
+		StrictBurst: 1,
+	})
+	r := gin.New()
+	r.POST("/x", rl.StrictPerActor(), func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	hit := func(ip string) int {
+		req := httptest.NewRequest(http.MethodPost, "/x", nil)
+		req.RemoteAddr = ip + ":1000"
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	assert.Equal(t, http.StatusOK, hit("10.0.0.1"))
+	assert.Equal(t, http.StatusTooManyRequests, hit("10.0.0.1"))
+	assert.Equal(t, http.StatusOK, hit("10.0.0.2")) // distinct IP → own bucket
 }
 
 func TestRateLimit_StrictBucketIsIndependent(t *testing.T) {
