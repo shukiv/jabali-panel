@@ -7439,6 +7439,14 @@ server {
     location = /webmail  { return 301 https://mail.${JABALI_SRV_HOSTNAME}/; }
     location = /webmail/ { return 301 https://mail.${JABALI_SRV_HOSTNAME}/; }
 
+    # GH #1161: opt-in Automation API on :443. Empty by default (the API is
+    # :8443-only); the agent (nginx.automation_public_set, driven by
+    # server_settings.automation_api_public_enabled) fills this with the
+    # /api/v1/automation/ proxy when an admin opts in. Seeded empty below so
+    # nginx -t never fails on a missing include. Only the HMAC-gated
+    # automation tree is ever proxied here; internal endpoints stay :8443-only.
+    include /etc/nginx/snippets/jabali-automation-443.conf;
+
     location / {
         try_files \$uri \$uri/ =404;
     }
@@ -7459,6 +7467,21 @@ server {
 VHOSTEOF
 
   _ok "default vhost config written"
+
+  # GH #1161: seed the opt-in Automation-API-on-443 include EMPTY. The API
+  # stays :8443-only until an admin enables it in Server Settings, at which
+  # point the reconciler has the agent (nginx.automation_public_set) rewrite
+  # this file with the /api/v1/automation/ proxy location. Created only when
+  # absent so a reinstall never clobbers an agent-written ON block (which
+  # would silently disable the feature). Its own include line above (and the
+  # repair self-heal) guarantee nginx -t has a target.
+  local automation443_conf="/etc/nginx/snippets/jabali-automation-443.conf"
+  mkdir -p /etc/nginx/snippets
+  if [[ ! -f "$automation443_conf" ]]; then
+    _log "seeding empty ${automation443_conf} (automation API opt-in, default off)"
+    printf '# Managed by jabali-agent (nginx.automation_public_set). Empty = API on :8443 only.\n' > "$automation443_conf"
+    chmod 0644 "$automation443_conf"
+  fi
 
   # GH#135: docroot for the panel-hostname landing page served by the
   # dedicated vhost above. Created idempotently; the default index.html is

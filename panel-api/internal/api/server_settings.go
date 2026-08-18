@@ -166,6 +166,9 @@ type updateServerSettingsRequest struct {
 	// GH #860: opt-in branded page on the default catch-all for unknown
 	// hosts (default off = keep the 444 drop).
 	UnconfiguredPageEnabled *bool `json:"unconfigured_page_enabled,omitempty"`
+	// GH #1161: opt-in — also serve /api/v1/automation/ on :443 (default off,
+	// :8443 only). For billing hosts whose outbound firewall blocks 8443.
+	AutomationApiPublicEnabled *bool `json:"automation_api_public_enabled,omitempty"`
 	// GH #879: server-wide default for the branded application-error page;
 	// domains override via nginx_safe_options.intercept_errors.
 	InterceptAppErrorsDefault *bool `json:"intercept_app_errors_default,omitempty"`
@@ -589,6 +592,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.UnconfiguredPageEnabled != nil {
 		current.UnconfiguredPageEnabled = *req.UnconfiguredPageEnabled
+	}
+	if req.AutomationApiPublicEnabled != nil {
+		current.AutomationApiPublicEnabled = *req.AutomationApiPublicEnabled
 	}
 	if req.InterceptAppErrorsDefault != nil {
 		current.InterceptAppErrorsDefault = *req.InterceptAppErrorsDefault

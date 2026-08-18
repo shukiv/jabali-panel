@@ -190,6 +190,10 @@ type Reconciler struct {
 	// /var/www/jabali-errors so the per-tick reconcile only calls the
 	// agent when an admin actually edits an error template.
 	errorPagesHash string
+	// automation443Applied caches the last automation-on-443 toggle synced
+	// to the agent (GH #1161) so the per-tick reconcile only calls it when
+	// the admin flips the opt-in. A nil pointer means "never synced yet".
+	automation443Applied *bool
 	// M32 — singleton panel-cert row. When nil the panel-cert hook
 	// short-circuits (lab installs, tests). When wired with a routability
 	// service it drives ssl.panel.issue from ReconcileAll.
@@ -754,6 +758,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// editable page_template rows into /var/www/jabali-errors. Hash-gated:
 	// a noop on every tick until an admin edits a template.
 	r.reconcileErrorPages(ctx)
+
+	// GH #1161: converge the opt-in Automation-API-on-443 include to the
+	// server_settings toggle. Applied-state-gated — noop steady state.
+	r.reconcileAutomation443(ctx)
 
 	// GH #648: converge DKIM2 signing across mail domains to the
 	// server_settings toggle. Applied-state-gated — noop steady state.

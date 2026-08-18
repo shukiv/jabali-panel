@@ -375,6 +375,12 @@ func repairSteps() []repairStep {
 			fix:    fixNginxMissingIncludes,
 		},
 		{
+			id:     "automation-443-include",
+			label:  "panel-hostname :443 vhost missing the GH #1161 automation-API include (admin can't opt into API-on-443 for firewalled billing hosts)",
+			detect: detectAutomation443Include,
+			fix:    fixAutomation443Include,
+		},
+		{
 			id:          "docroot-www-data-group",
 			label:       "web docroot files not group www-data / dirs not setgid (nginx 403 on newly uploaded media)",
 			destructive: true,

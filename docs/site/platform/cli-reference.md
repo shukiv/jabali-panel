@@ -4611,6 +4611,7 @@ jabali repair [flags]
 - `--apparmor-profiles-disabled` — Fix only: jabali AppArmor profiles exist but are disabled
 - `--apparmor-profiles-missing` — Fix only: jabali AppArmor profiles absent from /etc/apparmor.d/
 - `--auto` — Fix every non-destructive (safe) issue
+- `--automation-443-include` — Fix only: panel-hostname :443 vhost missing the GH #1161 automation-API include (admin can't opt into API-on-443 for firewalled billing hosts)
 - `--bulwark-jwt-secret` — Fix only: Bulwark webmail-SSO secret poisoned / out of sync with bulwark.env (mail impersonation 'Invalid signature')
 - `--crowdsec-bouncer-key` — Fix only: crowdsec-firewall-bouncer crash-loops with stale LAPI key
 - `--daemon-reload` — Fix only: systemd has unloaded unit-file changes on disk

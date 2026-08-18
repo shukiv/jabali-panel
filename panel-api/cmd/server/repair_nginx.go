@@ -238,3 +238,99 @@ func fixNginxMissingIncludes(_ repairCtx) error {
 	}
 	return nil
 }
+
+// ---------- automation-443-include ----------
+//
+// GH #1161: the opt-in "Automation API on :443" feature needs the panel-hostname
+// :443 vhost (jabali-default.conf's GH#135 server block) to `include` a snippet
+// the agent toggles between empty (off) and the /api/v1/automation/ proxy (on).
+// The include line ships in install.sh, but `jabali update` never re-renders
+// jabali-default.conf (see the http2 scar above), so existing/fleet boxes lack
+// it and the Server-Settings toggle would silently do nothing. This detector
+// self-heals: it seeds the empty snippet (so nginx -t has a target) and injects
+// the include line into the hostname block. It never enables the feature — the
+// snippet stays empty until the admin opts in. ADR-0077.
+
+const jabaliDefaultVhost = "/etc/nginx/sites-available/jabali-default.conf"
+const automation443SnippetPath = "/etc/nginx/snippets/jabali-automation-443.conf"
+const automation443IncludeMarker = "include /etc/nginx/snippets/jabali-automation-443.conf;"
+
+// auto443IncludeLine is inserted with the 4-space indentation the hostname
+// vhost uses; auto443Anchor is that vhost's landing `location /`, whose
+// try_files body is unique to it (the default_server + :80 blocks use the
+// catch-all include instead), so the injection lands in the right server block.
+const auto443IncludeLine = "    " + automation443IncludeMarker
+const auto443Anchor = "    location / {\n        try_files $uri $uri/ =404;\n    }"
+
+// ensureAutomation443Include injects the automation-443 include line before the
+// panel-hostname vhost's landing location, idempotently. Pure (string in/out)
+// so it is unit-testable without touching /etc/nginx. Returns changed=false
+// when the include is already present or the hostname block is unrecognizable
+// (hand-edited / very old box) — never guesses an insertion point.
+func ensureAutomation443Include(conf string) (string, bool) {
+	if strings.Contains(conf, automation443IncludeMarker) {
+		return conf, false
+	}
+	idx := strings.Index(conf, auto443Anchor)
+	if idx < 0 {
+		return conf, false
+	}
+	return conf[:idx] + auto443IncludeLine + "\n\n" + conf[idx:], true
+}
+
+func detectAutomation443Include(_ repairCtx) (bool, string, error) {
+	if _, err := exec.LookPath("nginx"); err != nil {
+		return false, "", nil
+	}
+	b, err := os.ReadFile(jabaliDefaultVhost)
+	if err != nil {
+		return false, "", nil // no default vhost — not applicable
+	}
+	conf := string(b)
+	includePresent := strings.Contains(conf, automation443IncludeMarker)
+	anchorPresent := strings.Contains(conf, auto443Anchor)
+	needInject := !includePresent && anchorPresent
+	_, snippetErr := os.Stat(automation443SnippetPath)
+	needSnippet := (includePresent || needInject) && snippetErr != nil
+	if !needInject && !needSnippet {
+		return false, "", nil
+	}
+	return true, "panel-hostname :443 vhost is missing the GH #1161 automation-API include (admin can't opt into API-on-443 for billing hosts that block outbound 8443)", nil
+}
+
+func fixAutomation443Include(_ repairCtx) error {
+	// 1. Seed the empty snippet first so the include line always has a target.
+	if _, err := os.Stat(automation443SnippetPath); err != nil {
+		if err := os.MkdirAll(filepath.Dir(automation443SnippetPath), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(automation443SnippetPath), err)
+		}
+		body := "# Managed by jabali-agent (nginx.automation_public_set). Empty = API on :8443 only.\n"
+		if err := os.WriteFile(automation443SnippetPath, []byte(body), 0o644); err != nil {
+			return fmt.Errorf("seed %s: %w", automation443SnippetPath, err)
+		}
+	}
+	// 2. Inject the include line into the hostname vhost if missing.
+	b, err := os.ReadFile(jabaliDefaultVhost)
+	if err != nil {
+		return nil
+	}
+	out, changed := ensureAutomation443Include(string(b))
+	if changed {
+		fi, err := os.Stat(jabaliDefaultVhost)
+		mode := os.FileMode(0o644)
+		if err == nil {
+			mode = fi.Mode().Perm()
+		}
+		if err := os.WriteFile(jabaliDefaultVhost, []byte(out), mode); err != nil {
+			return fmt.Errorf("rewrite %s: %w", jabaliDefaultVhost, err)
+		}
+	}
+	// 3. Validate + reload (both the snippet seed and the include edit want it).
+	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+		return fmt.Errorf("nginx -t failing after automation-443 include heal (not reloading):\n%s", string(out))
+	}
+	if out, err := exec.Command("systemctl", "reload", "nginx").CombinedOutput(); err != nil {
+		return fmt.Errorf("nginx -t passed but reload failed: %v\n%s", err, string(out))
+	}
+	return nil
+}

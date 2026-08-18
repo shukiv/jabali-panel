@@ -1866,6 +1866,21 @@ fi
 			}
 			return nil
 		}},
+		{"self-heal nginx automation-API-on-443 include (GH #1161)", func() error {
+			// Same reason as the http2 fold above: jabali update does NOT
+			// re-render jabali-default.conf, so the panel-hostname :443 vhost on
+			// existing/fleet boxes lacks the GH #1161 automation-API include and
+			// its (empty) snippet — the Server-Settings opt-in would silently do
+			// nothing. Seed the empty snippet + inject the include line here so
+			// the toggle works after the fleet's 04:30 auto-update. Idempotent +
+			// detect-gated: no-op + no reload once present; never enables the
+			// feature (the snippet stays empty until the admin opts in).
+			if needed, detail, derr := detectAutomation443Include(repairCtx{}); derr == nil && needed {
+				fmt.Printf("  automation-443-include: %s -- healing\n", detail)
+				return fixAutomation443Include(repairCtx{})
+			}
+			return nil
+		}},
 		{"self-heal crowdsec BOUNCING_ON_TYPE (GH #212 log spam)", func() error {
 			// The nginx Lua bouncer rejects the firewall-bouncer comma-list
 			// `ban,captcha` and falls back to `ban`, spamming the nginx error

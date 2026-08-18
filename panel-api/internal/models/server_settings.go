@@ -138,6 +138,16 @@ type ServerSettings struct {
 	// deliberate trade of that stealth for a branded operator page.
 	UnconfiguredPageEnabled bool `gorm:"column:unconfigured_page_enabled;type:tinyint(1);not null;default:0" json:"unconfigured_page_enabled"`
 
+	// AutomationApiPublicEnabled (GH #1161) also serves the HMAC-gated
+	// /api/v1/automation/ tree on the standard :443 port, not just :8443.
+	// Default off: exposing the API on the public port is opt-in. Billing
+	// hosts with a locked-down outbound firewall (CSF TCP_OUT omits 8443)
+	// can't reach :8443; enabling this makes the agent write the nginx
+	// include that adds the automation proxy to the panel-hostname :443
+	// vhost. Only /api/v1/automation/ (all RequireAutomationHMAC) is
+	// exposed — the internal/unauthenticated endpoints stay :8443-only.
+	AutomationApiPublicEnabled bool `gorm:"column:automation_api_public_enabled;type:tinyint(1);not null;default:0" json:"automation_api_public_enabled"`
+
 	// InterceptAppErrorsDefault (GH #879) — server-wide default for the
 	// branded application-error page: nginx serves the themed 500 when a
 	// PHP app returns a 5xx (a fatal is a 500 with an empty body). Domains

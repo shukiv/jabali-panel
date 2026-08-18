@@ -127,6 +127,31 @@ export const AdminAutomationTokensPage = () => {
     },
   });
 
+  // GH #1161: opt-in — also serve the automation API on :443 (default :8443 only),
+  // for billing hosts whose outbound firewall blocks 8443.
+  const settings = useQuery<{ automation_api_public_enabled?: boolean }>({
+    queryKey: ["admin/settings", "automation_api_public_enabled"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ automation_api_public_enabled?: boolean }>("/admin/settings");
+      return data;
+    },
+  });
+  const setPublicPort = useMutation<unknown, unknown, boolean>({
+    mutationFn: async (next) => {
+      await apiClient.patch("/admin/settings", { automation_api_public_enabled: next });
+    },
+    onSuccess: async (_data, next) => {
+      await qc.invalidateQueries({ queryKey: ["admin/settings", "automation_api_public_enabled"] });
+      feedback.message.success(
+        next
+          ? "Automation API now also served on port 443 (nginx reloads on the next reconcile)."
+          : "Automation API restricted to port 8443 only.",
+      );
+    },
+    onError: () => feedback.message.error("Failed to update the port-443 setting"),
+  });
+  const publicPortOn = settings.data?.automation_api_public_enabled === true;
+
   const handleMint = async (values: { name: string; scopes: string[]; writes_enabled?: boolean }) => {
     try {
       await mint.mutateAsync(values);
@@ -158,6 +183,30 @@ export const AdminAutomationTokensPage = () => {
         with the per-token secret. Tokens are scoped — issue the narrowest scope set the caller
         needs.
       </Typography.Paragraph>
+
+      <Card style={{ marginBottom: 16 }} loading={settings.isLoading}>
+        <Space align="start" style={{ justifyContent: "space-between", width: "100%" }}>
+          <div style={{ maxWidth: 720 }}>
+            <Typography.Text strong>Also serve the API on port 443</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+              By default the Automation API answers only on <code>:8443</code>. Billing
+              systems on hosts whose outbound firewall blocks 8443 (for example CSF&apos;s
+              default <code>TCP_OUT</code>) can&apos;t reach it, and the failure looks like
+              the panel being down. Turning this on also serves the HMAC-signed{" "}
+              <code>/api/v1/automation/</code> routes on the standard <code>:443</code>{" "}
+              port of the panel hostname. Nothing else is exposed — the internal endpoints
+              stay on 8443 only, and authentication is unchanged.
+            </Typography.Paragraph>
+          </div>
+          <Switch
+            checked={publicPortOn}
+            loading={setPublicPort.isPending}
+            onChange={(next) => setPublicPort.mutate(next)}
+            checkedChildren="443 + 8443"
+            unCheckedChildren="8443 only"
+          />
+        </Space>
+      </Card>
 
       <Card
         extra={
