@@ -1146,25 +1146,7 @@ fi
 			//      and retry once — empirically the second attempt
 			//      lands clean. Two failures in a row points at a real
 			//      package-lock issue and we surface that.
-			err := asUser(repoDir+"/panel-ui", "bash", "-c", `set -e
-trash="node_modules.stale.$$"
-if [ -d node_modules ]; then
-  mv node_modules "$trash"
-  ( rm -rf "$trash" 2>/dev/null & )
-fi
-attempt() { npm ci --no-audit --no-fund; }
-if ! attempt; then
-  echo "[jabali] npm ci failed, wiping node_modules and retrying once..." >&2
-  rm -rf node_modules
-  sleep 2
-  attempt
-fi
-test -x node_modules/.bin/tsc || {
-  echo "[jabali] npm ci reported success but node_modules/.bin/tsc is missing — partial install" >&2
-  exit 1
-}
-`)
-			if err != nil {
+			if err := npmCIResilient(repoDir); err != nil {
 				return err
 			}
 			writeArtifactSHA("npm", want)
@@ -2093,6 +2075,57 @@ func run(dir string, name string, args ...string) error {
 		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+// asServiceUser runs a command as the jabali service user (repo owner), with the
+// same HOME/PATH/GOCACHE + low-RAM Go env `jabali update` uses. Package-level so
+// both the update path and the repair suite (GH #1173) share one impl and never
+// drift on how privilege-drop + env are set up.
+func asServiceUser(repoDir, dir, name string, args ...string) error {
+	serviceUser := os.Getenv("JABALI_SERVICE_USER")
+	if serviceUser == "" {
+		serviceUser = "jabali"
+	}
+	goRoot := os.Getenv("JABALI_GO_ROOT")
+	if goRoot == "" {
+		goRoot = defaultGoRoot
+	}
+	allArgs := []string{"-u", serviceUser, "-H", "env",
+		"HOME=" + repoDir,
+		"PATH=" + goRoot + "/bin:/usr/bin:/bin",
+		"GOCACHE=" + repoDir + "/.cache/go-build",
+		"GOMODCACHE=" + repoDir + "/.cache/go-mod",
+	}
+	allArgs = append(allArgs, lowRAMGoBuildEnv()...)
+	allArgs = append(allArgs, name)
+	allArgs = append(allArgs, args...)
+	return run(dir, "sudo", allArgs...)
+}
+
+// npmCIResilient wipes panel-ui/node_modules and runs `npm ci` as the service
+// user with the mv-stale + retry-once dance, then verifies node_modules/.bin/tsc
+// actually landed. Shared by `jabali update`'s npm-ci step and the node-modules
+// repair — a bare `rm -rf` (the old repair) left .bin/tsc missing so the detector
+// re-reported BROKEN immediately (GH #1173); this actually reinstalls.
+func npmCIResilient(repoDir string) error {
+	return asServiceUser(repoDir, repoDir+"/panel-ui", "bash", "-c", `set -e
+trash="node_modules.stale.$$"
+if [ -d node_modules ]; then
+  mv node_modules "$trash"
+  ( rm -rf "$trash" 2>/dev/null & )
+fi
+attempt() { npm ci --no-audit --no-fund; }
+if ! attempt; then
+  echo "[jabali] npm ci failed, wiping node_modules and retrying once..." >&2
+  rm -rf node_modules
+  sleep 2
+  attempt
+fi
+test -x node_modules/.bin/tsc || {
+  echo "[jabali] npm ci reported success but node_modules/.bin/tsc is missing — partial install" >&2
+  exit 1
+}
+`)
 }
 
 func appendGoPath(env []string) []string {

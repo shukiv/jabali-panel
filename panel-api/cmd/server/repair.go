@@ -643,9 +643,9 @@ func fixOndrejPPA(_ repairCtx) error {
 // ---------- node-modules ----------
 //
 // Symptom: `panel-ui/node_modules/.bin/tsc` is missing — npm ci reported
-// success but produced a partial install (or got interrupted). Re-running
-// `jabali update` would surface the same scar; the repair wipes node_modules
-// so the next update / build starts from a known-clean state.
+// success but produced a partial install (or got interrupted). The repair
+// reinstalls node_modules (wipe → npm ci → verify .bin/tsc) so the issue is
+// actually cleared, not just wiped (GH #1173).
 
 func detectNodeModules(ctx repairCtx) (bool, string, error) {
 	tsc := filepath.Join(ctx.repoDir, "panel-ui", "node_modules", ".bin", "tsc")
@@ -662,8 +662,11 @@ func detectNodeModules(ctx repairCtx) (bool, string, error) {
 }
 
 func fixNodeModules(ctx repairCtx) error {
-	nm := filepath.Join(ctx.repoDir, "panel-ui", "node_modules")
-	return run("", "rm", "-rf", nm)
+	// GH #1173: a bare `rm -rf node_modules` left .bin/tsc missing, so the
+	// detector re-reported BROKEN the moment repair finished. Actually reinstall
+	// via the shared resilient npm ci (wipe → npm ci → retry once → verify
+	// .bin/tsc), the same path `jabali update` uses, run as the repo owner.
+	return npmCIResilient(ctx.repoDir)
 }
 
 // ---------- daemon-reload ----------
