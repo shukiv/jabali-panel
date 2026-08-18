@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -20,6 +22,8 @@ type fakeFtpRepo struct {
 	repository.FtpAccountRepository
 	rows      map[string]*models.FtpAccount
 	createErr error
+	updateErr error
+	onUpdate  func() // test hook fired at the start of Update (e.g. cancel the request ctx)
 	uidSeq    uint32
 }
 
@@ -104,6 +108,12 @@ func (f *fakeFtpRepo) List(_ context.Context) ([]models.FtpAccount, error) {
 }
 
 func (f *fakeFtpRepo) Update(_ context.Context, a *models.FtpAccount) error {
+	if f.onUpdate != nil {
+		f.onUpdate()
+	}
+	if f.updateErr != nil {
+		return f.updateErr
+	}
 	if r, ok := f.rows[a.ID]; ok {
 		r.FTPAccess, r.SFTPAccess, r.IsEnabled, r.HomePath = a.FTPAccess, a.SFTPAccess, a.IsEnabled, a.HomePath
 		return nil
@@ -135,6 +145,109 @@ func ftpMockAgent() *agent.MockClient {
 		On("ftpaccount.set_password", map[string]any{"updated": true}).
 		On("ftpaccount.sshd_sync", map[string]any{"changed": true}).
 		On("ssh.user.home_chown", map[string]any{})
+}
+
+// ctxAwareAgent is an AgentInterface that RESPECTS context cancellation (the
+// MockClient ignores ctx), so a test can prove the update host-apply survives
+// request cancellation. It records the commands it accepted.
+type ctxAwareAgent struct{ calls []string }
+
+func (a *ctxAwareAgent) Call(ctx context.Context, command string, _ any) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	a.calls = append(a.calls, command)
+	return json.RawMessage(`{}`), nil
+}
+
+func (a *ctxAwareAgent) called(cmd string) int {
+	n := 0
+	for _, c := range a.calls {
+		if c == cmd {
+			n++
+		}
+	}
+	return n
+}
+
+// JAB-269: the update handler persists the DB FIRST. A failed persist must not
+// have touched the host at all — otherwise a live host change outlives a DB
+// that never recorded it.
+func TestFtpAPIUpdate_DBErrorMakesNoHostCall(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["acc1"] = &models.FtpAccount{ID: "acc1", UserID: "u1", Username: "shop_dev", IsEnabled: false, SFTPAccess: true}
+	repo.updateErr = errors.New("db down")
+	mock := ftpMockAgent()
+	r := ftpTestRouter(t, repo, mock, ftpPkg(3))
+
+	rec := doReq(t, r, http.MethodPatch, "/me/ftp-accounts/acc1", `{"is_enabled":true}`)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on DB failure, got %d", rec.Code)
+	}
+	for _, cmd := range []string{"ftpaccount.set_access", "ftpaccount.sshd_sync", "ssh.user.home_chown"} {
+		if mockCalled(mock, cmd) != 0 {
+			t.Fatalf("host command %s ran despite the DB write failing — not DB-first", cmd)
+		}
+	}
+}
+
+// JAB-269: when the unix-lock (set_access) fails AFTER the DB commit, the row
+// must keep its new value (a recorded revocation must never be silently
+// reverted), AND sshd_sync must still run — it renders from the now-committed
+// DB, so SFTP is revoked even when the unix-lock failed (defense in depth).
+func TestFtpAPIUpdate_HostFailureKeepsRowAndSyncs(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["acc1"] = &models.FtpAccount{ID: "acc1", UserID: "u1", Username: "shop_dev", IsEnabled: true, SFTPAccess: true}
+	mock := ftpMockAgent()
+	mock.OnError("ftpaccount.set_access", errors.New("agent boom"))
+	r := ftpTestRouter(t, repo, mock, ftpPkg(3))
+
+	rec := doReq(t, r, http.MethodPatch, "/me/ftp-accounts/acc1", `{"is_enabled":false}`)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("a host-apply failure must surface an error, got 200")
+	}
+	if repo.rows["acc1"].IsEnabled {
+		t.Fatal("row was reverted on host failure — the recorded revocation must survive (JAB-269)")
+	}
+	if mockCalled(mock, "ftpaccount.sshd_sync") != 1 {
+		t.Fatal("sshd_sync must run even when set_access fails (SFTP revocation is defense-in-depth)")
+	}
+}
+
+// JAB-269: the host apply runs on a context detached from request cancellation.
+// Simulate a client disconnect landing exactly at the DB commit; set_access must
+// still fire and the request must succeed. (With the old host-first code on the
+// request ctx, the cancelled ctx would abort the agent call.)
+func TestFtpAPIUpdate_HostApplyDetachedFromCancel(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["acc1"] = &models.FtpAccount{ID: "acc1", UserID: "u1", Username: "shop_dev", IsEnabled: false, SFTPAccess: true}
+	ag := &ctxAwareAgent{}
+
+	uname := "shop"
+	pkgID := "pkg1"
+	users := &usersMap{m: map[string]*models.User{"u1": {ID: "u1", Username: &uname, PackageID: &pkgID}}}
+	h := &ftpAccountsHandler{cfg: FtpAccountsHandlerConfig{
+		Repo: repo, Users: users, Packages: &fakePkgRepo{pkg: ftpPkg(3)}, Agent: ag, QuotaMount: "/",
+	}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: "u1"}); c.Next() })
+	r.PATCH("/me/ftp-accounts/:id", h.update)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	repo.onUpdate = cancel // fire the "client disconnect" the instant the DB commits
+
+	req := httptest.NewRequest(http.MethodPatch, "/me/ftp-accounts/acc1", strings.NewReader(`{"is_enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("host apply must survive request cancellation, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ag.called("ftpaccount.set_access") != 1 {
+		t.Fatal("set_access must fire on the detached ctx despite the request being cancelled")
+	}
 }
 
 func ftpTestRouter(t *testing.T, repo *fakeFtpRepo, mock *agent.MockClient, pkg *models.HostingPackage) *gin.Engine {

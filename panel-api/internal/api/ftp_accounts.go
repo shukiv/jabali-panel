@@ -503,10 +503,13 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 
 	if err := h.agentCall(ctx, "ftpaccount.create", createParams); err != nil {
 		// Compensate the reservation so a rejected host-create doesn't leave a
-		// slot-consuming row. If this delete itself fails, the surviving row is
-		// a valid desired-state account the reconciler provisions on its next
-		// pass (password-reset-required) — never a phantom cap consumer.
-		_ = h.cfg.Repo.Delete(ctx, acct.ID)
+		// slot-consuming row. Detach from request cancellation (JAB-269 sibling):
+		// a client disconnect during the agent create must not also abort the
+		// compensating delete and strand the reserved row. If this delete itself
+		// still fails, the surviving row is a valid desired-state account the
+		// reconciler provisions on its next pass (password-reset-required) —
+		// never a phantom cap consumer.
+		_ = h.cfg.Repo.Delete(context.WithoutCancel(ctx), acct.ID)
 		status, payload := h.mapAgentErr(err, "create_failed")
 		c.JSON(status, payload)
 		return
@@ -544,22 +547,41 @@ func (h *ftpAccountsHandler) update(c *gin.Context) {
 	if req.IsEnabled != nil {
 		acct.IsEnabled = *req.IsEnabled
 	}
-	if err := h.agentCall(ctx, "ftpaccount.set_access", map[string]any{
-		"tenant_username": *u.Username,
-		"username":        acct.Username,
-		"ftp_access":      acct.FTPAccess,
-		"enabled":         acct.IsEnabled,
-	}); err != nil {
-		status, payload := h.mapAgentErr(err, "update_failed")
-		c.JSON(status, payload)
-		return
-	}
+	// JAB-269: persist the desired state BEFORE touching the host, on the
+	// REQUEST context — a pre-commit cancellation aborts here having changed
+	// nothing. The row is the truth the reconciler converges to, so committing
+	// first means the host can only ever LAG the DB (more restrictive), never
+	// run ahead of it: a cancelled PATCH can no longer leave a live credential
+	// the DB reports disabled (the old host-first order did exactly that).
 	acct.UpdatedAt = time.Now().UTC()
 	if err := h.cfg.Repo.Update(ctx, acct); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	h.syncHostAccess(ctx, *u.Username)
+	// The host apply runs on a context DETACHED from request cancellation: once
+	// the desired state is durable, a client disconnect must not abort the host
+	// mutation half-way. agentCall still bounds it with its own timeout.
+	hostCtx := context.WithoutCancel(ctx)
+	setErr := h.agentCall(hostCtx, "ftpaccount.set_access", map[string]any{
+		"tenant_username": *u.Username,
+		"username":        acct.Username,
+		"ftp_access":      acct.FTPAccess,
+		"enabled":         acct.IsEnabled,
+	})
+	// Always re-render the sshd drop-in — for a disable, the SFTP revocation IS
+	// the Match-block removal here, rendered from the now-committed DB, so it
+	// revokes even when the unix-lock above failed (defense in depth).
+	h.syncHostAccess(hostCtx, *u.Username)
+	if setErr != nil {
+		// The DB is committed (truth); this error reports only that the
+		// immediate host apply did not complete — the reconciler converges the
+		// host to the row on its next tick. The row is deliberately NOT reverted:
+		// dropping a recorded access change on a transient agent hiccup is worse
+		// than a misleading error, and a retry is idempotent.
+		status, payload := h.mapAgentErr(setErr, "update_failed")
+		c.JSON(status, payload)
+		return
+	}
 	c.JSON(http.StatusOK, acct)
 }
 
