@@ -48,6 +48,27 @@ range.
   TLS certificate is the PANEL hostname's — clients connecting to their
   own domain name will see a name mismatch; point them at the panel host.
 
+## Resource limits (what bounds FTPS load)
+
+FTPS sessions are **daemon-bounded, not per-tenant cgroup-bounded** (JAB-263,
+ADR-0167). The M18 CPU/memory/task limits on `jabali-user-<tenant>.slice` bind
+only panel services (php-fpm, python, docker); a vsftpd worker runs under
+`vsftpd.service` and is never migrated into the tenant slice — the same is true
+of SSH/SFTP interactive logins. What DOES bound FTPS, from `server_settings`
+into `/etc/vsftpd.conf`:
+
+- `max_clients` — total concurrent FTPS connections on the host (always on,
+  default 50).
+- `max_per_ip` — concurrent connections per source IP (always on, default 8).
+- `local_max_rate` — per-session transfer-rate ceiling. **Opt-in**: default 0 =
+  unlimited; set `ftp_local_max_rate_kbs` to throttle per session.
+
+There is no per-*tenant* connection cap: a tenant behind one IP is held by
+`max_per_ip`, but across many IPs only the global `max_clients` applies, and at
+the default rate each session is unthrottled. Disk is still bounded per-tenant
+(shared-uid quota). Per-tenant cgroup placement of interactive sessions is
+deferred to the session-placement epic (JAB-259/260).
+
 ## Tenant home permission flip
 
 The FIRST SFTP-enabled subaccount a tenant creates flips

@@ -22,8 +22,17 @@ import (
 // (useradd --non-unique): its own username + password + home directory, but
 // every file it writes is owned by the tenant uid, so quotas, per-user FPM,
 // AppArmor, and backups treat its writes exactly like the tenant's own.
-// Sessions also land in the tenant's user-<uid>.slice, so M18 resource
-// limits apply unchanged.
+//
+// Its cgroup RESOURCE limits do NOT carry over, though (JAB-263): the M18
+// CPU/memory/task limits live on jabali-user-<tenant>.slice, which binds only
+// panel-managed SERVICES (php-fpm pool, python app, docker) via an explicit
+// Slice=. Interactive transfer sessions — FTPS here, and SSH/SFTP alike — are
+// never placed in that slice: there is no pam_systemd in the vsftpd stack, and
+// logind's default is the standard user-<uid>.slice, not ours. FTPS resource
+// use is instead bounded at the vsftpd daemon (max_clients / max_per_ip /
+// local_max_rate, rendered from server_settings). Per-tenant cgroup placement
+// of interactive sessions is a cross-cutting gap (SSH too), deferred to the
+// session-placement epic — see docs/adr/0167 and JAB-263.
 //
 // Deliberate non-goals, both consequences of sharing the uid:
 //   - No isolation BETWEEN a tenant and its subaccounts — the kernel cannot
