@@ -4,10 +4,8 @@
 // ADR-0021). This modal surfaces it to the operator with an obvious
 // "save it now" framing, a copy-to-clipboard action, and a masked
 // fallback so the password isn't casually left on screen.
-import { useState } from "react";
-import { CopyOutlined, EyeInvisibleOutlined, EyeOutlined } from "@icons";
-import { Alert, Button, Input, Modal, Space, Typography } from "antd";
-import { feedback } from "../lib/feedback"; // GH #970: themed toasts
+import { Alert, Button, Modal, Space, Typography } from "antd";
+import { CopyableInput } from "./CopyableInput";
 
 interface DatabaseUserPasswordModalProps {
   open: boolean;
@@ -24,29 +22,13 @@ export function DatabaseUserPasswordModal({
   title = "Database user password",
   onClose,
 }: DatabaseUserPasswordModalProps) {
-  const [revealed, setRevealed] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(password);
-      feedback.message.success("Password copied to clipboard");
-    } catch {
-      feedback.message.error("Copy failed — select the field and copy manually");
-    }
-  };
-
-  const close = () => {
-    setRevealed(false);
-    onClose();
-  };
-
   return (
     <Modal
       title={title}
       open={open}
-      onCancel={close}
+      onCancel={onClose}
       footer={[
-        <Button key="done" type="primary" onClick={close}>
+        <Button key="done" type="primary" onClick={onClose}>
           I have saved the password
         </Button>,
       ]}
@@ -68,20 +50,7 @@ export function DatabaseUserPasswordModal({
 
         <div>
           <Typography.Text type="secondary">Password</Typography.Text>
-          <Input.Group compact style={{ display: "flex", marginTop: 4 }}>
-            <Input
-              value={revealed ? password : "•".repeat(Math.min(password.length, 32))}
-              readOnly
-              style={{ fontFamily: "monospace", flex: 1 }}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <Button
-              icon={revealed ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-              onClick={() => setRevealed((r) => !r)}
-              title={revealed ? "Hide" : "Reveal"}
-            />
-            <Button icon={<CopyOutlined />} onClick={copy} title="Copy to clipboard" />
-          </Input.Group>
+          <CopyableInput value={password} secret style={{ fontFamily: "monospace", marginTop: 4 }} />
         </div>
       </Space>
     </Modal>

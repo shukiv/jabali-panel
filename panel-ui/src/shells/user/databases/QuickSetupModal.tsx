@@ -13,11 +13,12 @@
 
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Modal, Form, Input, Button, Segmented, Space, Typography, Alert, Tooltip } from "antd";
+import { Modal, Form, Input, Button, Segmented, Space, Typography, Alert } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
-import { CopyOutlined, CheckCircleTwoTone } from "@icons";
+import { CheckCircleTwoTone } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
+import { CopyableInput } from "../../../components/CopyableInput";
 
 type Props = {
   open: boolean;
@@ -141,14 +142,6 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
     }
   };
 
-  const copy = async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      feedback.message.success(`${label} copied`);
-    } catch {
-      feedback.message.error(`Could not copy ${label.toLowerCase()}`);
-    }
-  };
 
   return (
     <Modal
@@ -234,52 +227,15 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
           />
           <div>
             <Typography.Text strong>Database</Typography.Text>
-            <Input
-              readOnly
-              value={result.databaseName}
-              addonAfter={
-                <Tooltip title={t("quicksetupmodal.copy")}>
-                  <Button
-                    type="text"
-                    icon={<CopyOutlined />}
-                    onClick={() => copy("Database name", result.databaseName)}
-                  />
-                </Tooltip>
-              }
-            />
+            <CopyableInput value={result.databaseName} />
           </div>
           <div>
             <Typography.Text strong>Username</Typography.Text>
-            <Input
-              readOnly
-              value={result.username}
-              addonAfter={
-                <Tooltip title={t("quicksetupmodal.copy")}>
-                  <Button
-                    type="text"
-                    icon={<CopyOutlined />}
-                    onClick={() => copy("Username", result.username)}
-                  />
-                </Tooltip>
-              }
-            />
+            <CopyableInput value={result.username} />
           </div>
           <div>
             <Typography.Text strong>Password</Typography.Text>
-            <Input.Password
-              readOnly
-              value={result.password}
-              visibilityToggle
-              addonAfter={
-                <Tooltip title={t("quicksetupmodal.copy")}>
-                  <Button
-                    type="text"
-                    icon={<CopyOutlined />}
-                    onClick={() => copy("Password", result.password)}
-                  />
-                </Tooltip>
-              }
-            />
+            <CopyableInput value={result.password} secret />
           </div>
         </Space>
       )}

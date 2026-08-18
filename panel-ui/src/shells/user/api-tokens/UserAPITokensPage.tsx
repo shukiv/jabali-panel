@@ -40,12 +40,12 @@ for (const a of AREAS) {
   SCOPE_LABELS["write:" + a.key] = a.label + " write";
 }
 import {
-  CopyOutlined,
   DeleteOutlined,
   KeyOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
 import { apiClient } from "../../../apiClient";
+import { CopyableInput } from "../../../components/CopyableInput";
 import { APIDocsPage } from "../../shared/APIDocsPage";
 import { DDNSSetupGuide } from "./DDNSSetupGuide";
 import { MCPSetupGuide } from "./MCPSetupGuide";
@@ -182,14 +182,6 @@ export function UserAPITokensPage(): JSX.Element {
     }
   };
 
-  const copy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      feedback.message.success("Copied to clipboard");
-    } catch {
-      feedback.message.error(`Copy failed: Select the secret and copy manually.`);
-    }
-  };
 
   const columns: ColumnsType<UserAPIToken> = useMemo(
     () => [
@@ -453,22 +445,7 @@ export function UserAPITokensPage(): JSX.Element {
           description={t("userapitokenspage.the_plaintext_token_is_shown_only_once_after")}
           style={{ marginBottom: 16 }}
         />
-        <Input.Group compact>
-          <Input
-            value={secret?.secret}
-            readOnly
-            onFocus={(e) => e.currentTarget.select()}
-            style={{ width: "calc(100% - 90px)" }}
-          />
-          <Button
-            type="primary"
-            icon={<CopyOutlined />}
-            onClick={() => secret && void copy(secret.secret)}
-            style={{ width: 90 }}
-          >
-            Copy
-          </Button>
-        </Input.Group>
+        <CopyableInput value={secret?.secret ?? ""} style={{ fontFamily: "monospace" }} />
       </Modal>
     </>
   );

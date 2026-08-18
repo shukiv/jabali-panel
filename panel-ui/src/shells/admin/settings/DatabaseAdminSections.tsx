@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+import { CopyableInput } from "../../../components/CopyableInput";
 import { listInstalled } from "../docker-apps/api";
 
 type Engine = "mariadb" | "postgres";
@@ -114,13 +115,7 @@ function RootPasswordSection() {
           This is shown <strong>once</strong>. It is not stored in the panel
           and cannot be retrieved later.
         </Typography.Paragraph>
-        <Typography.Paragraph
-          copyable={{ text: revealed?.password ?? "" }}
-          code
-          style={{ fontSize: 15, wordBreak: "break-all" }}
-        >
-          {revealed?.password}
-        </Typography.Paragraph>
+        <CopyableInput value={revealed?.password ?? ""} style={{ fontFamily: "monospace" }} />
       </Modal>
     </Card>
   );

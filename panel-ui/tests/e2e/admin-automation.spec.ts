@@ -60,12 +60,10 @@ if (SKIP_REASON) {
       // One-time-reveal modal appears with the plaintext secret.
       const modalTitle = page.getByText(`Token "${probeName}" minted`);
       await expect(modalTitle).toBeVisible({ timeout: 10_000 });
-      // Plaintext = 64 hex chars; assert at least one block of that
-      // shape is rendered without leaking the value into test output.
-      const codeBlock = page.locator("code", {
-        hasText: /^[0-9a-f]{64}$/i,
-      });
-      await expect(codeBlock).toBeVisible();
+      // Plaintext = 64 hex chars; the secret renders in a read-only
+      // CopyableInput, so assert on the input's display value without
+      // leaking it into test output.
+      await expect(page.getByDisplayValue(/^[0-9a-f]{64}$/i)).toBeVisible();
 
       // Acknowledge + dismiss.
       await page.getByRole("button", { name: /I've saved it/i }).click();

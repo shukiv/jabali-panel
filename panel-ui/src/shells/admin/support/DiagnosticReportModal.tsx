@@ -9,9 +9,9 @@
 // + password — the team gets it via inbox.
 import { useEffect, useState } from "react";
 import { Alert, Button, Input, Modal, Space, Spin, Tag, Typography } from "antd";
-import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
-import { CopyOutlined, ExportOutlined, MailOutlined } from "@icons";
+import { ExportOutlined, MailOutlined } from "@icons";
+import { CopyableInput } from "../../../components/CopyableInput";
 
 import { DIAGNOSTIC_EMAIL_RECIPIENT } from "../../../config/support-links";
 import { useDiagnosticReport } from "../../../hooks/useSupport";
@@ -36,14 +36,6 @@ export function DiagnosticReportModal({ open, onClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const copy = async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      feedback.message.success(`${label} copied`);
-    } catch (e: unknown) {
-      feedback.message.error(e instanceof Error ? e.message : "copy failed");
-    }
-  };
 
   const buildMailto = (): string => {
     if (!report.data) return "";
@@ -122,19 +114,10 @@ export function DiagnosticReportModal({ open, onClose }: Props) {
                     anywhere, even a public issue. The link + password below are
                     only a fallback.
                   </Typography.Paragraph>
-                  <Space.Compact style={{ display: "flex" }}>
-                    <Input
-                      value={report.data.claim_code}
-                      readOnly
-                      style={{ fontFamily: "monospace", fontWeight: 600 }}
-                    />
-                    <Button
-                      icon={<CopyOutlined />}
-                      onClick={() => copy("Claim code", report.data!.claim_code!)}
-                    >
-                      Copy
-                    </Button>
-                  </Space.Compact>
+                  <CopyableInput
+                    value={report.data.claim_code ?? ""}
+                    style={{ fontFamily: "monospace", fontWeight: 600 }}
+                  />
                 </Space>
               }
             />
@@ -143,13 +126,7 @@ export function DiagnosticReportModal({ open, onClose }: Props) {
           <div>
             <Typography.Text strong>Link</Typography.Text>
             <Space.Compact style={{ display: "flex", marginTop: 4 }}>
-              <Input value={report.data.url} readOnly />
-              <Button
-                icon={<CopyOutlined />}
-                onClick={() => copy("Link", report.data!.url)}
-              >
-                Copy
-              </Button>
+              <CopyableInput value={report.data.url} />
               <Button
                 icon={<ExportOutlined />}
                 href={report.data.url}
@@ -163,15 +140,7 @@ export function DiagnosticReportModal({ open, onClose }: Props) {
 
           <div>
             <Typography.Text strong>Password</Typography.Text>
-            <Space.Compact style={{ display: "flex", marginTop: 4 }}>
-              <Input value={report.data.password} readOnly />
-              <Button
-                icon={<CopyOutlined />}
-                onClick={() => copy("Password", report.data!.password)}
-              >
-                Copy
-              </Button>
-            </Space.Compact>
+            <CopyableInput value={report.data.password} secret style={{ marginTop: 4 }} />
           </div>
 
           <Alert

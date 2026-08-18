@@ -14,11 +14,12 @@
 
 import { useTranslation } from "react-i18next";
 import { useState, useEffect, useMemo } from "react";
-import { Drawer, Form, Grid, Input, Button, Select, Space, Typography, Alert, Tooltip, Switch } from "antd";
+import { Drawer, Form, Grid, Input, Button, Select, Space, Typography, Alert, Switch } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
-import { AppstoreOutlined, CheckCircleTwoTone, CheckOutlined, CloseOutlined, CopyOutlined } from "@icons";
+import { AppstoreOutlined, CheckCircleTwoTone, CheckOutlined, CloseOutlined } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
+import { CopyableInput } from "../../../components/CopyableInput";
 import { PasswordInput } from "../../../components/PasswordInput";
 import {
   useAppRegistry,
@@ -511,14 +512,6 @@ export const InstallApplicationModal = ({
     }
   };
 
-  const copy = async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      feedback.message.success(`${label} copied`);
-    } catch {
-      feedback.message.error(`Could not copy ${label.toLowerCase()}`);
-    }
-  };
 
   const validateSubdirectory = (_: unknown, value: string) => {
     if (!value) {
@@ -736,46 +729,21 @@ export const InstallApplicationModal = ({
           />
           <div>
             <Typography.Text strong>Domain</Typography.Text>
-            <Input readOnly value={result.domainName} />
+            <CopyableInput value={result.domainName} />
           </div>
           {!result.emailLogin && (
             <div>
               <Typography.Text strong>Admin username</Typography.Text>
-              <Input
-                readOnly
-                value={result.adminUsername}
-                addonAfter={
-                  <Tooltip title={t("installapplicationmodal.copy")}>
-                    <Button
-                      type="text"
-                      icon={<CopyOutlined />}
-                      onClick={() => copy("Username", result.adminUsername)}
-                    />
-                  </Tooltip>
-                }
-              />
+              <CopyableInput value={result.adminUsername} />
             </div>
           )}
           <div>
             <Typography.Text strong>Admin email</Typography.Text>
-            <Input readOnly value={result.adminEmail} />
+            <CopyableInput value={result.adminEmail} />
           </div>
           <div>
             <Typography.Text strong>Admin password</Typography.Text>
-            <Input.Password
-              readOnly
-              value={result.adminPassword}
-              visibilityToggle
-              addonAfter={
-                <Tooltip title={t("installapplicationmodal.copy")}>
-                  <Button
-                    type="text"
-                    icon={<CopyOutlined />}
-                    onClick={() => copy("Password", result.adminPassword)}
-                  />
-                </Tooltip>
-              }
-            />
+            <CopyableInput value={result.adminPassword} secret />
           </div>
         </Space>
       )}

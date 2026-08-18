@@ -12,11 +12,12 @@ import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { StandardDrawerFooter } from "../../../components/StandardActionFooter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { Alert, Button, Card, Checkbox, Drawer, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography, theme } from "antd";
+import { Alert, Button, Card, Checkbox, Drawer, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { KeyOutlined, PlusOutlined, DeleteOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
+import { CopyableInput } from "../../../components/CopyableInput";
 
 type Token = {
   id: string;
@@ -60,7 +61,6 @@ function fmt(iso?: string | null): string {
 
 export const AdminAutomationTokensPage = () => {
   const { t } = useTranslation();
-  const { token } = theme.useToken();
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [revealSecret, setRevealSecret] = useState<string | null>(null);
@@ -379,14 +379,10 @@ export const AdminAutomationTokensPage = () => {
         ]}
         width={600}
       >
-        <Typography.Paragraph style={{ marginBottom: 12 }}>
+        <div style={{ marginBottom: 12 }}>
           <Typography.Text type="secondary">Token ID</Typography.Text>
-          <Typography.Paragraph copyable={{ text: revealId ?? "", tooltips: ["Copy", "Copied"] }} style={{ marginBottom: 0 }}>
-            <code style={{ wordBreak: "break-all", display: "block", padding: 12, background: token.colorBgLayout, border: `1px solid ${token.colorBorder}`, borderRadius: token.borderRadius }}>
-              {revealId}
-            </code>
-          </Typography.Paragraph>
-        </Typography.Paragraph>
+          <CopyableInput value={revealId ?? ""} style={{ marginTop: 4, fontFamily: "monospace" }} />
+        </div>
         <Alert
           type="warning"
           showIcon
@@ -395,11 +391,7 @@ export const AdminAutomationTokensPage = () => {
           style={{ marginBottom: 16 }}
         />
         <Typography.Text type="secondary">Secret</Typography.Text>
-        <Typography.Paragraph copyable={{ text: revealSecret ?? "", tooltips: ["Copy", "Copied"] }}>
-          <code style={{ wordBreak: "break-all", display: "block", padding: 12, background: token.colorBgLayout, border: `1px solid ${token.colorBorder}`, borderRadius: token.borderRadius }}>
-            {revealSecret}
-          </code>
-        </Typography.Paragraph>
+        <CopyableInput value={revealSecret ?? ""} style={{ marginTop: 4, fontFamily: "monospace" }} />
       </Modal>
 
     </div>
