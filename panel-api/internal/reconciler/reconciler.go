@@ -78,6 +78,9 @@ type Reconciler struct {
 	// persistently-failing install is not re-dispatched every reconcile tick.
 	moduleInstallMu      sync.Mutex
 	moduleInstallAttempt map[string]time.Time
+	// ftpConfigChecking singleflights the per-tick JAB-260 TLS-drift check so a
+	// hung agent socket cannot stack goroutines across ticks.
+	ftpConfigChecking atomic.Bool
 	// sanDriftAttempt gates the JAB-226 SAN-drift reissue pass: cert ID -> last
 	// attempt, so a cert whose missing SAN isn't reachable yet isn't re-probed
 	// (or re-issued) more than once per sslSANDriftCooldown.

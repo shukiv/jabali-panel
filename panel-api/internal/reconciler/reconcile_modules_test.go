@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -13,11 +14,15 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
+var errStub = errors.New("stub agent error")
+
 // moduleStubAgent returns a canned system.module.status per key and records
 // install calls. status[key] = {"installed":bool,"active":bool}.
 type moduleStubAgent struct {
 	status       map[string]map[string]any
 	installCalls int
+	configStatus map[string]any // canned ftp.config_status response
+	configErr    error          // if set, ftp.config_status returns this error
 
 	mu      sync.Mutex
 	methods []string // every method seen (guarded; detached dispatch races the test)
@@ -41,6 +46,11 @@ func (m *moduleStubAgent) Call(_ context.Context, method string, params any) (js
 	case "system.module.install":
 		m.installCalls++
 		return json.Marshal(m.status[key])
+	case "ftp.config_status":
+		if m.configErr != nil {
+			return nil, m.configErr
+		}
+		return json.Marshal(m.configStatus)
 	default:
 		return nil, nil
 	}
@@ -162,6 +172,75 @@ func TestConvergeFtpDisabled_DispatchesFtpDisableWithBackoff(t *testing.T) {
 	}
 	if ag.methodCount("system.module.disable") != 0 {
 		t.Fatal("must NOT use the generic fail-soft system.module.disable for ftp")
+	}
+}
+
+// JAB-260: convergeFtpConfig re-renders (system.module.install) exactly when the
+// LIVE TLS enforcement disagrees with the desired ftp_allow_plaintext — an
+// equality check catching BOTH the tighten-drift (want TLS, config plaintext)
+// and the loosen-drift (want plaintext, config still TLS). Converged states and
+// a verb error (old agent) never re-render.
+func TestConvergeFtpConfig_ReAppliesOnlyOnDrift(t *testing.T) {
+	cases := []struct {
+		name           string
+		allowPlaintext bool // desired
+		enforced       bool // live config
+		active         bool // vsftpd active? (an inactive/masked daemon serves nothing)
+		configErr      error
+		wantReApply    bool
+	}{
+		{"want-tls,enforced,active → converged", false, true, true, nil, false},
+		{"want-tls,plaintext,active → tighten drift", false, false, true, nil, true},
+		{"want-plaintext,enforced,active → loosen drift", true, true, true, nil, true},
+		{"want-plaintext,plaintext,active → converged", true, false, true, nil, false},
+		{"want-tls,plaintext,INACTIVE → skip (masked=fail-closed already)", false, false, false, nil, false},
+		{"verb error (old agent) → skip", false, false, true, errStub, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ftpStatus := down()
+			if tc.active {
+				ftpStatus = up()
+			}
+			ag := &moduleStubAgent{
+				status:       map[string]map[string]any{"ftp": ftpStatus},
+				configStatus: map[string]any{"exists": true, "ssl_enforced": tc.enforced},
+				configErr:    tc.configErr,
+			}
+			r := discardReconciler(ag)
+			r.convergeFtpConfig(context.Background(), &models.ServerSettings{FTPAllowPlaintext: tc.allowPlaintext})
+
+			// Detached goroutine — poll for the re-apply decision, then settle.
+			deadline := time.Now().Add(1 * time.Second)
+			for tc.wantReApply && ag.methodCount("system.module.install") == 0 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if !tc.wantReApply {
+				time.Sleep(150 * time.Millisecond) // give a wrong dispatch time to appear
+			}
+			got := ag.methodCount("system.module.install")
+			if tc.wantReApply && got != 1 {
+				t.Fatalf("want re-apply, got %d install calls", got)
+			}
+			if !tc.wantReApply && got != 0 {
+				t.Fatalf("want NO re-apply, got %d install calls", got)
+			}
+		})
+	}
+}
+
+// JAB-260: an active daemon with no config file is odd but must be treated as
+// converged (convergeModule owns the install), NOT re-applied here.
+func TestConvergeFtpConfig_MissingConfIsConverged(t *testing.T) {
+	ag := &moduleStubAgent{
+		status:       map[string]map[string]any{"ftp": up()}, // active, so we reach the config check
+		configStatus: map[string]any{"exists": false, "ssl_enforced": false},
+	}
+	r := discardReconciler(ag)
+	r.convergeFtpConfig(context.Background(), &models.ServerSettings{FTPAllowPlaintext: false})
+	time.Sleep(150 * time.Millisecond)
+	if ag.methodCount("system.module.install") != 0 {
+		t.Fatal("missing conf must be treated as converged, not re-applied")
 	}
 }
 

@@ -67,6 +67,13 @@ else
   # The no-cert + TLS-required combination must abort, not downgrade.
   grep -q '_die "ftp module: TLS is required' <<<"$cfgfn" \
     || { echo "FAIL: missing cert with TLS required must _die, never downgrade"; fail=1; }
+  # JAB-260 fail-closed tighten: a currently-active vsftpd (a failed
+  # plaintext->TLS tighten with no cert yet) must be stopped + masked, not left
+  # serving cleartext — guarded by is-active so a fresh install still just dies.
+  grep -qE 'is-active --quiet vsftpd' <<<"$cfgfn" \
+    || { echo "FAIL: no-cert TLS-required branch must guard the fail-closed stop+mask on is-active (JAB-260)"; fail=1; }
+  grep -qE 'systemctl mask vsftpd' <<<"$cfgfn" \
+    || { echo "FAIL: no-cert TLS-required branch must mask vsftpd to fail closed (JAB-260)"; fail=1; }
 fi
 
 # --- 4. PAM: jabali-ftp gate, no pam_shells ---

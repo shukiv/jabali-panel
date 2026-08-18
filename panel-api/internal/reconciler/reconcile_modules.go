@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // M353 module install-on-enable — convergence pass.
@@ -63,6 +65,14 @@ func (r *Reconciler) reconcileModuleInstalls(ctx context.Context) {
 	for _, m := range convergedModules {
 		if m.enabled(flags) {
 			r.convergeModule(ctx, m.key, m.dependsOn)
+			// JAB-260: an enabled+active vsftpd can still be running the WRONG
+			// TLS posture — a failed plaintext-tighten (or loosen) leaves the old
+			// config, which convergeModule's installed+active check never
+			// catches. Compare the LIVE config to the desired ftp_allow_plaintext
+			// and re-render on drift.
+			if m.key == "ftp" {
+				r.convergeFtpConfig(ctx, srv)
+			}
 			continue
 		}
 		// A DISABLED module is normally left alone. FTP is the exception
@@ -74,6 +84,81 @@ func (r *Reconciler) reconcileModuleInstalls(ctx context.Context) {
 			r.convergeFtpDisabled(ctx)
 		}
 	}
+}
+
+// convergeFtpConfig heals FTP TLS-posture drift (JAB-260). An enabled+active
+// vsftpd can still be serving a config whose TLS enforcement disagrees with the
+// desired ftp_allow_plaintext — a failed tighten left the old (plaintext) config
+// running, or a failed loosen left TLS required. It reads the LIVE config via
+// ftp.config_status and, on drift (equality mismatch, either direction),
+// re-runs system.module.install (which re-renders + restarts). The check runs
+// every tick (a cheap read); only the re-render is gated by the "ftp-config"
+// backoff so a persistent apply failure doesn't hot-loop restarts.
+//
+// FTP now has THREE reconcile backoff keys: "ftp" (install convergence, in
+// convergeModule), "ftp-disable" (convergeFtpDisabled), "ftp-config" (here).
+//
+// Skew-safe: an old agent without the verb (unknown_command) or a missing conf
+// on an active daemon is treated as converged.
+func (r *Reconciler) convergeFtpConfig(_ context.Context, srv *models.ServerSettings) {
+	if srv == nil || r.agent == nil {
+		return
+	}
+	// Singleflight: at most one drift check in flight. The check runs every tick
+	// (fast plaintext-drift detection), so a hung agent socket could otherwise
+	// stack goroutines across ticks — this keeps it to one.
+	if !r.ftpConfigChecking.CompareAndSwap(false, true) {
+		return
+	}
+	wantSSL := !srv.FTPAllowPlaintext
+	go func() {
+		defer r.ftpConfigChecking.Store(false)
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer ccancel()
+		// Only an ACTIVE daemon can serve the wrong posture. An inactive/masked
+		// vsftpd serves nothing — the fail-closed end state — and convergeModule
+		// owns bringing an installed-but-inactive module back up. Re-rendering an
+		// inactive daemon here would fight the no-cert fail-closed mask (a
+		// tighten with no cert stops+masks vsftpd) and churn mask/die every tick.
+		// So skip unless active; the cert landing + convergeModule heal the rest.
+		if installed, active, ok := r.moduleStatus(cctx, "ftp"); !ok || !installed || !active {
+			return
+		}
+		raw, err := r.agent.Call(cctx, "ftp.config_status", map[string]any{})
+		if err != nil {
+			// Old agent without ftp.config_status → nothing to compare; converged.
+			// Debug (not error): fires every tick on every pre-upgrade box.
+			r.log.Debug("ftp.config_status unavailable — skipping TLS-drift check", "err", err)
+			return
+		}
+		var st struct {
+			Exists      bool `json:"exists"`
+			SSLEnforced bool `json:"ssl_enforced"`
+		}
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return
+		}
+		if !st.Exists {
+			// Active daemon but no config file is genuinely odd — warn, but
+			// converged-if-active is still the right call (convergeModule owns
+			// the install/restart).
+			r.log.Warn("ftp active but /etc/vsftpd.conf missing — treating config as converged")
+			return
+		}
+		if st.SSLEnforced == wantSSL {
+			return // converged
+		}
+		// Drift — gate the re-render on its own backoff to avoid hot-looping
+		// vsftpd restarts on a persistently failing apply.
+		if !r.moduleInstallDue("ftp-config") {
+			return
+		}
+		r.log.Warn("ftp TLS posture drift — re-applying config",
+			"want_ssl_enforced", wantSSL, "effective_ssl_enforced", st.SSLEnforced)
+		if _, ierr := r.agent.Call(cctx, "system.module.install", map[string]any{"key": "ftp"}); ierr != nil {
+			r.log.Error("ftp config re-apply failed (will retry)", "err", ierr)
+		}
+	}()
 }
 
 // convergeFtpDisabled drives FTP toward fail-closed (vsftpd inactive + masked,

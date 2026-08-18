@@ -844,6 +844,17 @@ install_vsftpd_config() {
     # fail loudly — silently serving passwordful cleartext FTP because a
     # cert file was missing is exactly the downgrade we never ship.
     if [[ "$force_ssl" == "YES" ]]; then
+      # Fail closed (JAB-260): if vsftpd is CURRENTLY serving, an operator just
+      # tightened plaintext->TLS but no cert exists yet — stop + mask it rather
+      # than leave the old plaintext config running and accepting cleartext
+      # credentials. Self-healing: ftp_enabled is still on, so the reconciler's
+      # convergeModule re-runs this install once the panel cert lands -> the
+      # cert check passes, vsftpd is unmasked and started with TLS. A fresh
+      # (inactive) install has nothing serving, so it just dies here as before.
+      if systemctl is-active --quiet vsftpd 2>/dev/null; then
+        systemctl stop vsftpd >/dev/null 2>&1 || true
+        systemctl mask vsftpd >/dev/null 2>&1 || true
+      fi
       _die "ftp module: TLS is required but $tls_cert is missing — run the panel-cert step first or (explicitly) allow plaintext"
     fi
     ssl_enable="NO"
