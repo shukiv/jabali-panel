@@ -315,8 +315,22 @@ func newDirPrivacyCredRemoveCmd() *cobra.Command {
 				return err
 			}
 			repo := repository.NewDomainDirectoryPrivacyRepository(sharedDB)
-			if _, err := resolvePrivacyRule(ctx, repo, dom.ID, args[1]); err != nil {
+			rule, err := resolvePrivacyRule(ctx, repo, dom.ID, args[1])
+			if err != nil {
 				return err
+			}
+			// JAB-316: verify the credential belongs to THIS rule before deleting
+			// it. Without this containment check the CLI deletes any credential ID
+			// under the guise of an unrelated rule the operator names — a
+			// cross-rule credential deletion. The HTTP adapter already enforces
+			// cred.RuleID == rule.ID; fail closed (never delete) on a mismatch or
+			// a missing credential.
+			cred, err := repo.FindCredentialByID(ctx, args[2])
+			if err != nil {
+				return fmt.Errorf("credential %s not found", args[2])
+			}
+			if cred.RuleID != rule.ID {
+				return fmt.Errorf("credential %s does not belong to rule %s", args[2], rule.ID)
 			}
 			if err := repo.DeleteCredential(ctx, args[2]); err != nil {
 				return fmt.Errorf("delete credential: %w", err)
