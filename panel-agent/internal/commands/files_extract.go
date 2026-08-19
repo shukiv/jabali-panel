@@ -42,10 +42,11 @@ const (
 )
 
 type filesExtractParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`           // archive to extract (scope-relative)
-	Dest     string `json:"dest,omitempty"` // target dir; default = archive's parent
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"`     // GH #1184 admin FM
+	Path      string `json:"path"`           // archive to extract (scope-relative)
+	Dest      string `json:"dest,omitempty"` // target dir; default = archive's parent
 }
 
 type filesExtractResult struct {
@@ -63,8 +64,7 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "username and path are required"}
 	}
 
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("failed to create scope: %v", err)}
 	}
@@ -89,7 +89,7 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "destination is not a directory"}
 	}
 
-	uid, gid := hostingIDs(p.Username)
+	uid, gid := fileOwnerIDs(p.Username, p.AdminRoot)
 
 	// SECURITY (Gitea #423 write side / #424): every extracted entry is created
 	// relative to an escape-proof destDir fd (openat/mkdirat O_NOFOLLOW per

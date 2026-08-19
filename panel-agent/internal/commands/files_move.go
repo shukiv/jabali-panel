@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // files.move — relocate a file or directory to a new path within the
@@ -20,10 +19,11 @@ import (
 // move a file out of their homedir or name a destination outside of it.
 
 type filesMoveParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	OldPath  string `json:"old_path"`
-	NewPath  string `json:"new_path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM
+	OldPath   string `json:"old_path"`
+	NewPath   string `json:"new_path"`
 }
 
 type filesMoveResponse struct {
@@ -51,8 +51,7 @@ func filesMoveHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "new_path required"}
 	}
 
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

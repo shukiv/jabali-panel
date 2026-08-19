@@ -81,13 +81,14 @@ export async function filesUpload(
   file: File,
   onProgress?: (frac: number) => void,
   opts?: UploadOpts,
+  base = "/files",
 ): Promise<void> {
   const fd = new FormData();
   fd.append("file", file);
   const q = new URLSearchParams({ path: dirPath });
   if (opts?.overwrite) q.set("overwrite", "true");
   if (opts?.name) q.set("name", opts.name);
-  await apiClient.post(`/files/upload?${q.toString()}`, fd, {
+  await apiClient.post(`${base}/upload?${q.toString()}`, fd, {
     headers: { "Content-Type": "multipart/form-data" },
     onUploadProgress: (e) => {
       if (!onProgress) return;
@@ -113,6 +114,7 @@ export async function filesUploadChunked(
   chunkSize = 10 * 1024 * 1024,
   onProgress?: (frac: number) => void,
   opts?: UploadOpts,
+  base = "/files",
 ): Promise<void> {
   const destName = opts?.name ?? file.name;
   const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
@@ -124,7 +126,7 @@ export async function filesUploadChunked(
     // gone (panel restart, cleanup job) and we start fresh.
     try {
       const r = await apiClient.get<{ written: number }>(
-        `/files/upload-chunk-status`,
+        `${base}/upload-chunk-status`,
         { params: { upload_id: uploadId } },
       );
       const written = r.data.written || 0;
@@ -159,7 +161,7 @@ export async function filesUploadChunked(
       ...(isLast ? { final: "1" } : {}),
       ...(isLast && opts?.overwrite ? { overwrite: "true" } : {}),
     });
-    await apiClient.post(`/files/upload-chunk?${params.toString()}`, blob, {
+    await apiClient.post(`${base}/upload-chunk?${params.toString()}`, blob, {
       headers: { "Content-Type": "application/octet-stream" },
     });
     if (onProgress) onProgress((i + 1) / totalChunks);
@@ -296,3 +298,47 @@ export async function filesDu(path: string): Promise<FilesDuResponse> {
   });
   return r.data;
 }
+
+// GH #1184: bundle the whole surface into one object so FileManagerPage can be
+// driven by an injected API — the tenant page passes this; the admin File
+// Manager passes an /admin/files-backed object with the same shape. Keeps the
+// two file managers byte-identical in layout/behaviour with no drift.
+export type FilesApi = {
+  home: typeof filesHome;
+  list: typeof filesList;
+  tree: typeof filesTree;
+  preview: typeof filesPreview;
+  downloadURL: typeof filesDownloadURL;
+  upload: typeof filesUpload;
+  uploadChunked: typeof filesUploadChunked;
+  write: typeof filesWrite;
+  mkdir: typeof filesMkdir;
+  extract: typeof filesExtract;
+  rename: typeof filesRename;
+  move: typeof filesMove;
+  chmod: typeof filesChmod;
+  copy: typeof filesCopy;
+  archive: typeof filesArchive;
+  delete: typeof filesDelete;
+  du: typeof filesDu;
+};
+
+export const tenantFilesApi: FilesApi = {
+  home: filesHome,
+  list: filesList,
+  tree: filesTree,
+  preview: filesPreview,
+  downloadURL: filesDownloadURL,
+  upload: filesUpload,
+  uploadChunked: filesUploadChunked,
+  write: filesWrite,
+  mkdir: filesMkdir,
+  extract: filesExtract,
+  rename: filesRename,
+  move: filesMove,
+  chmod: filesChmod,
+  copy: filesCopy,
+  archive: filesArchive,
+  delete: filesDelete,
+  du: filesDu,
+};

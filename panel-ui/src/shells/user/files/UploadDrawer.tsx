@@ -31,7 +31,7 @@ import type { UploadProps } from "antd";
 import { AxiosError } from "axios";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { getIdentity } from "../../../identity";
-import { filesUpload, filesUploadChunked } from "./filesApi";
+import { tenantFilesApi, type FilesApi } from "./filesApi";
 import type { UploadOpts } from "./filesApi";
 
 export interface UploadDrawerHandle {
@@ -55,6 +55,8 @@ interface UploadDrawerProps {
   onClose: () => void;
   onUploaded: () => void;
   onOpenRequest: () => void;
+  /** Injected file API — defaults to the tenant surface (GH #1184). */
+  api?: FilesApi;
 }
 
 const SINGLE_MULTIPART_CEILING = 100 * 1024 * 1024;
@@ -109,7 +111,7 @@ type ConflictDecision = {
 };
 
 export const UploadDrawer = forwardRef<UploadDrawerHandle, UploadDrawerProps>(function UploadDrawer(
-  { open, currentPath, onClose, onUploaded, onOpenRequest },
+  { open, currentPath, onClose, onUploaded, onOpenRequest, api = tenantFilesApi },
   ref,
 ) {
   const [items, setItems] = useState<UploadItem[]>([]);
@@ -172,8 +174,8 @@ export const UploadDrawer = forwardRef<UploadDrawerHandle, UploadDrawerProps>(fu
         const doUpload = (opts?: UploadOpts) => {
           const onp = (frac: number) => updateItem(item.id, { progress: frac });
           return item.file.size <= SINGLE_MULTIPART_CEILING
-            ? filesUpload(currentPath, item.file, onp, opts)
-            : filesUploadChunked(currentPath, item.file, CHUNK_SIZE, onp, opts);
+            ? api.upload(currentPath, item.file, onp, opts)
+            : api.uploadChunked(currentPath, item.file, CHUNK_SIZE, onp, opts);
         };
         let mode: "ask" | "overwrite" | "rename" = alwaysOverwriteRef.current
           ? "overwrite"

@@ -53,23 +53,7 @@ import {
 import { AxiosError } from "axios";
 
 import type { FileEntry } from "./filesApi";
-import {
-  filesArchive,
-  filesChmod,
-  filesCopy,
-  filesDelete,
-  filesExtract,
-  filesDownloadURL,
-  filesHome,
-  filesList,
-  filesMkdir,
-  filesMove,
-  filesPreview,
-  filesRename,
-  filesTree,
-  filesWrite,
-  filesDu,
-} from "./filesApi";
+import { tenantFilesApi, type FilesApi } from "./filesApi";
 import { isPreviewEditable, isTextEditable } from "./editability";
 import { UploadDrawer } from "./UploadDrawer";
 import type { UploadDrawerHandle } from "./UploadDrawer";
@@ -265,7 +249,15 @@ function makeTreeNode(path: string, name: string): TreeNode {
   };
 }
 
-export const FileManagerPage = () => {
+export interface FileManagerPageProps {
+  /** Injected file API surface — defaults to the tenant /files surface.
+      The admin File Manager (GH #1184) passes an /admin/files-backed api. */
+  api?: FilesApi;
+  /** Fixed root; when set, skips the home() fetch (admin uses "/"). */
+  rootPath?: string;
+}
+
+export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }: FileManagerPageProps = {}) => {
   const { t } = useTranslation();
   // Pull live theme tokens so the bulk-action bar (and any other
   // tinted surface here) tracks the global light/dark palette — we had
@@ -368,7 +360,8 @@ export const FileManagerPage = () => {
   useEffect(() => {
     (async () => {
       try {
-        const home = await filesHome();
+        // Admin FM (GH #1184) pins the root to "/" and skips the home() fetch.
+        const home = rootPathProp ? { path: rootPathProp } : await api.home();
         setRootPath(home.path);
         setTreeData([makeTreeNode(home.path, home.path)]);
         setExpandedKeys([home.path]);
@@ -405,7 +398,7 @@ export const FileManagerPage = () => {
   const reloadList = useCallback(async (path: string) => {
     setListLoading(true);
     try {
-      const resp = await filesList(path);
+      const resp = await api.list(path);
       setEntries(sortEntries(resp.entries));
     } catch (err) {
       feedback.message.error(`List failed: ${errMessage(err)}`);
@@ -431,7 +424,7 @@ export const FileManagerPage = () => {
     if (!currentPath) return;
     setSizingAll(true);
     try {
-      const resp = await filesDu(currentPath);
+      const resp = await api.du(currentPath);
       const next: Record<string, number> = {};
       for (const e of resp.entries) {
         if (e.is_dir) next[joinPath(currentPath, e.name)] = e.size;
@@ -457,7 +450,7 @@ export const FileManagerPage = () => {
       const full = joinPath(currentPath, entry.name);
       setSizingPaths((prev) => new Set(prev).add(full));
       try {
-        const resp = await filesDu(full);
+        const resp = await api.du(full);
         setFolderSizes((prev) => ({ ...prev, [full]: resp.total }));
       } catch (err) {
         feedback.message.error(`Size calculation failed: ${errMessage(err)}`);
@@ -484,7 +477,7 @@ export const FileManagerPage = () => {
   // --- tree: lazy-load children on expand ---
   const loadTreeChildren = useCallback(async (node: TreeNode): Promise<void> => {
     try {
-      const resp = await filesTree(node.path);
+      const resp = await api.tree(node.path);
       // Backend sets has_subdirs per entry; fold it into isLeaf so the
       // tree hides the chevron on leaf folders — no "expand to discover
       // it's empty" round trip.
@@ -541,7 +534,7 @@ export const FileManagerPage = () => {
     }
     setPreviewLoading(true);
     try {
-      const resp = await filesPreview(path);
+      const resp = await api.preview(path);
       setPreviewContent(resp.content);
     } catch (err) {
       feedback.message.error(`Preview failed: ${errMessage(err)}`);
@@ -556,14 +549,14 @@ export const FileManagerPage = () => {
     const path = joinPath(currentPath, entry.name);
     // Open in a new tab; the browser will save as an attachment due to
     // our server-side Content-Disposition header.
-    window.open(filesDownloadURL(path), "_blank", "noopener,noreferrer");
+    window.open(api.downloadURL(path), "_blank", "noopener,noreferrer");
   };
 
   const handleDelete = async (entry: FileEntry) => {
     if (!currentPath) return;
     const path = joinPath(currentPath, entry.name);
     try {
-      await filesDelete(path, entry.is_dir);
+      await api.delete(path, entry.is_dir);
       feedback.message.success(`Deleted ${entry.name}`);
       void reloadList(currentPath);
     } catch (err) {
@@ -604,7 +597,7 @@ export const FileManagerPage = () => {
       setEditContent("");
       setEditOriginal("");
       try {
-        const resp = await filesPreview(path);
+        const resp = await api.preview(path);
         // Refuse anything that is not editable text. See isPreviewEditable --
         // extracted so the rule is unit-tested rather than buried in a callback.
         if (!isPreviewEditable(resp)) {
@@ -635,7 +628,7 @@ export const FileManagerPage = () => {
     }
     setEditSaving(true);
     try {
-      await filesWrite(editTarget, editContent);
+      await api.write(editTarget, editContent);
       feedback.message.success("Saved");
       setEditTarget(null);
       if (currentPath) void reloadList(currentPath);
@@ -655,7 +648,7 @@ export const FileManagerPage = () => {
     }
     const path = joinPath(currentPath, chmodTarget.name);
     try {
-      await filesChmod(path, mode);
+      await api.chmod(path, mode);
       feedback.message.success(`Permissions updated`);
       setChmodTarget(null);
       void reloadList(currentPath);
@@ -674,7 +667,7 @@ export const FileManagerPage = () => {
     renameSubmitting.current = true;
     try {
       const path = joinPath(currentPath, renameTarget.name);
-      await filesRename(path, newName);
+      await api.rename(path, newName);
       feedback.message.success(`Renamed to ${newName}`);
       setRenameOpen(false);
       void reloadList(currentPath);
@@ -699,7 +692,7 @@ export const FileManagerPage = () => {
     }
     mkdirSubmitting.current = true;
     try {
-      await filesMkdir(joinPath(currentPath, name));
+      await api.mkdir(joinPath(currentPath, name));
       feedback.message.success(`Created ${name}`);
       setMkdirOpen(false);
       void reloadList(currentPath);
@@ -729,7 +722,7 @@ export const FileManagerPage = () => {
     }
     newFileSubmitting.current = true;
     try {
-      await filesWrite(joinPath(currentPath, name), "");
+      await api.write(joinPath(currentPath, name), "");
       feedback.message.success(`Created ${name}`);
       setNewFileOpen(false);
       void reloadList(currentPath);
@@ -812,7 +805,7 @@ export const FileManagerPage = () => {
           const entry = selectedEntries.find(
             (e) => joinPath(currentPath || "", e.name) === p,
           );
-          return filesDelete(p, entry?.is_dir ?? false);
+          return api.delete(p, entry?.is_dir ?? false);
         }),
     });
   }, [currentPath, runBulk, selectedEntries, selectedPaths]);
@@ -824,7 +817,7 @@ export const FileManagerPage = () => {
       return;
     }
     setBulkMoveOpen(false);
-    await runBulk("Moved", selectedPaths, (p) => filesMove(p, dest));
+    await runBulk("Moved", selectedPaths, (p) => api.move(p, dest));
     setBulkMoveDest("");
   }, [bulkMoveDest, runBulk, selectedPaths]);
 
@@ -835,7 +828,7 @@ export const FileManagerPage = () => {
       return;
     }
     setBulkChmodOpen(false);
-    await runBulk("Chmod", selectedPaths, (p) => filesChmod(p, mode));
+    await runBulk("Chmod", selectedPaths, (p) => api.chmod(p, mode));
   }, [bulkChmodMode, runBulk, selectedPaths]);
 
   // Download selection as archive.tar.gz. Single HTTP request, the
@@ -845,7 +838,7 @@ export const FileManagerPage = () => {
   const handleBulkDownloadZip = useCallback(async () => {
     if (selectedPaths.length === 0) return;
     try {
-      const blob = await filesArchive(selectedPaths);
+      const blob = await api.archive(selectedPaths);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -871,7 +864,7 @@ export const FileManagerPage = () => {
 
   const handlePaste = useCallback(async () => {
     if (!currentPath || clipboard.length === 0) return;
-    await runBulk("Pasted", clipboard, (p) => filesCopy(p, currentPath));
+    await runBulk("Pasted", clipboard, (p) => api.copy(p, currentPath));
     setClipboard([]);
   }, [clipboard, currentPath, runBulk]);
 
@@ -885,7 +878,7 @@ export const FileManagerPage = () => {
       const srcParent = lastSlash > 0 ? srcPath.slice(0, lastSlash) : "/";
       if (srcParent === destDir) return;
       try {
-        await filesMove(srcPath, destDir);
+        await api.move(srcPath, destDir);
         feedback.message.success("Moved");
         if (currentPath) void reloadList(currentPath);
       } catch (err) {
@@ -931,7 +924,7 @@ export const FileManagerPage = () => {
     if (!currentPath) return;
     const path = joinPath(currentPath, entry.name);
     try {
-      const res = await filesExtract(path);
+      const res = await api.extract(path);
       const skipped =
         res.skipped > 0 ? `, ${res.skipped} unsafe entr(y/ies) skipped` : "";
       feedback.message.success(`Extracted ${res.extracted} file(s)${skipped}`);
@@ -1365,6 +1358,7 @@ export const FileManagerPage = () => {
       )}
 
       <UploadDrawer
+        api={api}
         ref={uploadDrawerRef}
         open={uploadDrawerOpen}
         currentPath={currentPath ?? ""}
@@ -1481,7 +1475,7 @@ export const FileManagerPage = () => {
                     if (paths.length === 1) {
                       void handleMove(paths[0], treeNode.path);
                     } else if (paths.length > 1) {
-                      void runBulk("Moved", paths, (p) => filesMove(p, treeNode.path));
+                      void runBulk("Moved", paths, (p) => api.move(p, treeNode.path));
                     }
                   }}
                 >
@@ -1568,7 +1562,7 @@ export const FileManagerPage = () => {
                   if (paths.length === 1) {
                     void handleMove(paths[0], destDir);
                   } else if (paths.length > 1) {
-                    void runBulk("Moved", paths, (p) => filesMove(p, destDir));
+                    void runBulk("Moved", paths, (p) => api.move(p, destDir));
                   }
                 },
                 onDragEnd: () => setDraggedPath(null),
@@ -1663,7 +1657,7 @@ export const FileManagerPage = () => {
           {previewPath && isImagePath(previewPath) ? (
             <div style={{ textAlign: "center", maxHeight: "70vh", overflow: "auto" }}>
               <img
-                src={filesDownloadURL(previewPath)}
+                src={api.downloadURL(previewPath)}
                 alt={previewPath}
                 style={{ maxWidth: "100%", maxHeight: "65vh" }}
               />

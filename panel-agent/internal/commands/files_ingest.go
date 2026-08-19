@@ -33,6 +33,7 @@ import (
 type filesIngestParams struct {
 	UserID    string `json:"user_id"`
 	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM
 	TmpPath   string `json:"tmp_path"`
 	DestPath  string `json:"dest_path"`
 	Overwrite bool   `json:"overwrite,omitempty"`
@@ -66,8 +67,7 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -115,7 +115,7 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	uid, gid := hostingIDs(p.Username)
+	uid, gid := fileOwnerIDs(p.Username, p.AdminRoot)
 
 	// Try rename first — same filesystem, atomic. The destination parent is an
 	// openat2 fd; the source is the trusted staging file (renameat AT_FDCWD).

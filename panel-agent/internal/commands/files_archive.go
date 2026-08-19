@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"time"
 	"archive/tar"
 	"compress/gzip"
 	"context"
@@ -16,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
@@ -75,9 +75,10 @@ func ensureArchiveStagingRoot() error {
 }
 
 type filesArchiveParams struct {
-	UserID   string   `json:"user_id"`
-	Username string   `json:"username"`
-	Paths    []string `json:"paths"`
+	UserID    string   `json:"user_id"`
+	Username  string   `json:"username"`
+	AdminRoot bool     `json:"admin_root"` // GH #1184 admin FM
+	Paths     []string `json:"paths"`
 }
 
 type filesArchiveResponse struct {
@@ -203,8 +204,7 @@ func filesArchiveHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "at least one path required"}
 	}
 
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

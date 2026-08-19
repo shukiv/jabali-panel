@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // files.copy — recursively copy a scoped path to a new location, preserving
@@ -20,10 +19,11 @@ import (
 // the docroot.
 
 type filesCopyParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	SrcPath  string `json:"src_path"`
-	DstPath  string `json:"dst_path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM
+	SrcPath   string `json:"src_path"`
+	DstPath   string `json:"dst_path"`
 }
 
 type filesCopyResponse struct {
@@ -50,8 +50,7 @@ func filesCopyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "dst_path required"}
 	}
 
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

@@ -19,3 +19,13 @@ func fileScopeFor(userID, username string, adminRoot bool) (*filesafe.Scope, err
 	}
 	return filesafe.NewScope(userID, username, []string{"/home/" + username})
 }
+
+// fileOwnerIDs returns the uid/gid new files should be chowned to. The admin
+// File Manager (GH #1184, root scope) leaves root-tree files root:root (0,0);
+// tenant mode uses <user>:www-data via hostingIDs.
+func fileOwnerIDs(username string, adminRoot bool) (int, int) {
+	if adminRoot {
+		return 0, 0
+	}
+	return hostingIDs(username)
+}
