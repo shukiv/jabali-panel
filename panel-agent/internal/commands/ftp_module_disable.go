@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -27,7 +30,21 @@ const (
 	// opens in install_ftp_firewall_rules and closes in converge_ftp_masking.
 	ftpControlPortRule = "21/tcp"
 	ftpPasvRangeRule   = "40000:40100/tcp"
+	// ftpSessionLeafName is the per-tenant leaf cgroup the pam_exec hook
+	// (JAB-263 phase D) moves FTPS workers into, under jabali-user-<t>.slice.
+	// MUST match install/ftp/jabali-ftp-session-cgroup.
+	ftpSessionLeafName   = "ftp-sessions"
+	ftpCgroupRootDefault = "/sys/fs/cgroup/jabali.slice"
 )
+
+// ftpCgroupRoot is the cgroup subtree swept for ftp-sessions leaves. Overridable
+// for tests (a real /sys/fs/cgroup can't be faked).
+func ftpCgroupRoot() string {
+	if r := os.Getenv("JABALI_FTP_CGROUP_ROOT"); r != "" {
+		return r
+	}
+	return ftpCgroupRootDefault
+}
 
 type ftpDisableResponse struct {
 	Active    bool `json:"active"`
@@ -44,6 +61,11 @@ func ftpModuleDisableHandler(ctx context.Context, _ json.RawMessage) (any, error
 		_, _ = execCommandContext(ctx, "systemctl", "stop", ftpDisableUnit).CombinedOutput()
 		_, _ = execCommandContext(ctx, "systemctl", "mask", ftpDisableUnit).CombinedOutput()
 	}
+	// JAB-263 phase D: the pam_exec hook moves live FTPS workers OUT of
+	// vsftpd.service into per-tenant ftp-sessions leaf cgroups, so `stop vsftpd`
+	// above does NOT kill an in-flight transfer. Cut them too, or 259's "vsftpd
+	// cannot accept connections" silently weakens to "cannot accept NEW ones".
+	killFtpSessionLeaves()
 	// Remove the firewall rules (best-effort; ufw may be absent/inactive). The
 	// deletes are idempotent — `ufw delete` on a missing rule is a no-op.
 	_, _ = execCommandContext(ctx, "ufw", "delete", "allow", ftpControlPortRule).CombinedOutput()
@@ -96,6 +118,26 @@ func ftpControlPortOpen(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+// killFtpSessionLeaves kills every process in every per-tenant ftp-sessions leaf
+// cgroup (JAB-263 phase D) via the cgroup-v2 cgroup.kill file, then removes the
+// emptied leaf (it is recreated by the pam_exec hook on the next login).
+// Best-effort: a walk/write failure just leaves that tenant's workers, which
+// degrades to pre-phase-D behavior, never worse.
+func killFtpSessionLeaves() {
+	_ = filepath.WalkDir(ftpCgroupRoot(), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable subtree — skip, don't abort the whole walk
+		}
+		if !d.IsDir() || d.Name() != ftpSessionLeafName {
+			return nil
+		}
+		// cgroup.kill (Linux 5.14+) SIGKILLs every process in the cgroup at once.
+		_ = os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1"), 0o644)
+		_ = os.Remove(path) // rmdir the now-empty leaf
+		return filepath.SkipDir
+	})
 }
 
 func init() {

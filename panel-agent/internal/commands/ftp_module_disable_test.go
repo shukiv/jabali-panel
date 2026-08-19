@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -68,6 +71,37 @@ func TestFtpDisable_FailsClosedWhenNotMasked(t *testing.T) {
 	_, err := ftpModuleDisableHandler(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected failed_precondition while vsftpd is stopped but unmasked")
+	}
+}
+
+// JAB-263 phase D: killFtpSessionLeaves finds every per-tenant ftp-sessions leaf
+// under the cgroup root and triggers cgroup.kill on it (leaving other sub-cgroups
+// alone). The real rmdir-despite-control-files semantics are cgroup-specific and
+// verified live; here we assert the walk + kill.
+func TestKillFtpSessionLeaves_TriggersCgroupKill(t *testing.T) {
+	root := t.TempDir()
+	leaf := filepath.Join(root, "jabali-user-shop.slice", ftpSessionLeafName)
+	if err := os.MkdirAll(leaf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A sibling non-leaf dir must be ignored (no cgroup.kill written).
+	other := filepath.Join(root, "jabali-user-shop.slice", "other")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JABALI_FTP_CGROUP_ROOT", root)
+
+	killFtpSessionLeaves()
+
+	data, err := os.ReadFile(filepath.Join(leaf, "cgroup.kill"))
+	if err != nil {
+		t.Fatalf("cgroup.kill not written to the ftp-sessions leaf: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "1" {
+		t.Fatalf("want cgroup.kill=1, got %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(other, "cgroup.kill")); err == nil {
+		t.Fatal("cgroup.kill written to a non-leaf dir — the walk is too broad")
 	}
 }
 

@@ -63,6 +63,13 @@ func userSliceRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 	// Disable FPM service (ignore "not enabled" errors)
 	_, _, _ = runCmdFn(ctx, "systemctl", "disable", fmt.Sprintf("jabali-fpm@%s.service", p.Username))
 
+	// JAB-263 phase D: cut any FTPS worker the pam_exec hook placed in this
+	// tenant's ftp-sessions leaf and remove the leaf, BEFORE stopping the slice.
+	// A populated leaf keeps the slice cgroup non-empty, so the slice stop +
+	// the caller's userdel would otherwise strand live processes and leave the
+	// slice un-removable.
+	killTenantFtpSessionLeaf(ctx, runCmdFn, p.Username)
+
 	// Stop slice unit (ignore "not loaded" errors)
 	_, _, _ = runCmdFn(ctx, "systemctl", "stop", fmt.Sprintf("jabali-user-%s.slice", p.Username))
 
@@ -108,6 +115,26 @@ func userSliceRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 		Removed:       removed,
 		AlreadyAbsent: alreadyAbsent,
 	}, nil
+}
+
+// killTenantFtpSessionLeaf kills every process in ONE tenant's ftp-sessions leaf
+// cgroup (JAB-263 phase D) and removes the leaf. Best-effort: it asks systemd
+// for the slice's real cgroup path (so a dashed username still resolves), then
+// uses cgroup.kill. A failure just leaves the leaf, which the reconciler /
+// next teardown retries.
+func killTenantFtpSessionLeaf(ctx context.Context, runCmdFn func(context.Context, string, ...string) ([]byte, []byte, error), username string) {
+	out, _, err := runCmdFn(ctx, "systemctl", "show",
+		fmt.Sprintf("jabali-user-%s.slice", username), "-p", "ControlGroup", "--value")
+	if err != nil {
+		return
+	}
+	cg := strings.TrimSpace(string(out))
+	if cg == "" || cg == "/" {
+		return
+	}
+	leaf := filepath.Join("/sys/fs/cgroup", cg, ftpSessionLeafName)
+	_ = os.WriteFile(filepath.Join(leaf, "cgroup.kill"), []byte("1"), 0o644)
+	_ = os.Remove(leaf)
 }
 
 // removeFile attempts to remove a file, returning true if it existed and was removed.

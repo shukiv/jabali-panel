@@ -172,6 +172,38 @@ elif [[ -n "$pasv_min" && -n "$pasv_max" ]]; then
     || { echo "FAIL: ftp.disable must remove the 21/tcp control-port rule"; fail=1; }
 fi
 
+# --- 8. JAB-263 phase D: FTPS session cgroup placement hook ---
+# The pam_exec hook that moves the FTPS worker into the tenant slice MUST be
+# wired `session optional` (never `required`) and the helper MUST be fail-open
+# (always exit 0) — an accounting hook that can deny a login is a login outage.
+# The hook only fires if vsftpd opens a PAM session; vsftpd defaults
+# session_support=NO and SKIPS the whole session stack, so this is load-bearing.
+grep -q '^session_support=YES' <<<"$cfgfn" \
+  || { echo "FAIL: vsftpd.conf must set session_support=YES or the cgroup hook never runs (JAB-263)"; fail=1; }
+if ! grep -qE 'pam_exec\.so .*jabali-ftp-session-cgroup' <<<"$pamfn"; then
+  echo "FAIL: vsftpd PAM stack is missing the JAB-263 session-cgroup pam_exec hook"
+  fail=1
+elif grep -qE 'session +required +pam_exec\.so .*jabali-ftp-session-cgroup' <<<"$pamfn"; then
+  echo "FAIL: session-cgroup hook is 'required' — it must be 'optional' (fail open)"
+  fail=1
+fi
+grep -qE 'install .*install/ftp/jabali-ftp-session-cgroup' <<<"$pamfn" \
+  || { echo "FAIL: install_vsftpd_pam must install the session-cgroup helper"; fail=1; }
+
+helper="install/ftp/jabali-ftp-session-cgroup"
+if [[ ! -x "$helper" ]]; then
+  echo "FAIL: $helper missing or not executable"
+  fail=1
+else
+  # Fail-open: every bad-input path must still exit 0 (never block a login).
+  for u in "" "no_such_user_xyz" "../evil" "Bad Upper"; do
+    if ! env -i PAM_USER="$u" PATH="$PATH" "$helper" >/dev/null 2>&1; then
+      echo "FAIL: helper exited non-zero for PAM_USER='$u' — must fail open (exit 0)"
+      fail=1
+    fi
+  done
+fi
+
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: ftp module opt-in guards hold"
 else

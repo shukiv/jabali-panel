@@ -883,6 +883,11 @@ connect_from_port_20=YES
 idle_session_timeout=300
 data_connection_timeout=120
 pam_service_name=vsftpd-jabali
+# JAB-263 phase D: open a PAM session so the vsftpd-jabali `session` stack runs
+# — that is what fires jabali-ftp-session-cgroup to place the worker in the
+# tenant slice. vsftpd defaults session_support=NO and then SKIPS the session
+# stack entirely, so the hook never runs without this.
+session_support=YES
 # Every login chroots to the passwd home (the subaccount home_path). The
 # home is tenant-writable by design, hence allow_writeable_chroot — the
 # accounts are file-transfer-only aliases, not shell users.
@@ -947,6 +952,11 @@ VSFTPDEOF
 # conffile stays untouched (no dpkg conffile prompts on upgrade). Gates on
 # jabali-ftp membership; NO pam_shells (see install_module_ftp header).
 install_vsftpd_pam() {
+  # JAB-263 phase D: the PAM session hook that places the FTPS worker in the
+  # owning tenant's cgroup slice.
+  install -d -m 0755 /usr/local/libexec/jabali
+  install -m 0755 "$REPO_DIR/install/ftp/jabali-ftp-session-cgroup" \
+    /usr/local/libexec/jabali/jabali-ftp-session-cgroup
   cat > /etc/pam.d/vsftpd-jabali <<'PAMEOF'
 # Managed by jabali-panel install.sh (ftp module, GH #1053).
 # Only members of jabali-ftp may authenticate; membership is the
@@ -956,9 +966,14 @@ auth    required pam_unix.so
 account required pam_succeed_if.so user ingroup jabali-ftp quiet
 account required pam_unix.so
 session required pam_permit.so
+# JAB-263: move the FTPS worker into the owning tenant's jabali-user-<t>.slice
+# so per-tenant CPU/memory/task limits apply. `optional` + the helper always
+# exits 0 => this can never block a login (fail open — it is accounting, not
+# access control).
+session optional pam_exec.so quiet /usr/local/libexec/jabali/jabali-ftp-session-cgroup
 PAMEOF
   chmod 0644 /etc/pam.d/vsftpd-jabali
-  _ok "vsftpd PAM service installed (jabali-ftp members only)"
+  _ok "vsftpd PAM service installed (jabali-ftp members only, cgroup-placed)"
 }
 
 # install_ftp_firewall_rules — open 21 + the passive range. Only ever

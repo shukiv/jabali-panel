@@ -1,0 +1,64 @@
+#!/bin/sh
+# jabali-ftp-session-cgroup — vsftpd PAM session hook (JAB-263, epic phase D).
+#
+# Moves the vsftpd per-session worker into a leaf cgroup under the OWNING
+# tenant's jabali-user-<tenant>.slice, so the M18 per-tenant CPU / memory / task
+# limits enforce on FTPS transfers. Without this the worker inherits
+# vsftpd.service's cgroup and its resource use is unaccounted against the tenant
+# (JAB-263 cross-tenant DoS path).
+#
+# FAIL-OPEN by design: an accounting hook must NEVER break a login. Every step
+# is best-effort and the script ALWAYS exits 0; it is also wired
+# `session optional` in the PAM stack. A failure here degrades to the pre-phase-D
+# behavior (worker under vsftpd.service), never a denied login.
+#
+# Empirically validated on a live box (2026-08-19): a leaf sub-cgroup accepts
+# the PID, survives `systemctl daemon-reload` and tenant unit restarts, and the
+# parent slice's pids.max/memory.max enforce on it.
+set +e
+umask 022
+
+user="${PAM_USER:-}"
+[ -n "$user" ] || exit 0
+
+# Pre-comma segment of the GECOS field — the panel's ownership marker.
+gecos=$(getent passwd "$user" 2>/dev/null | cut -d: -f5 | cut -d, -f1)
+
+case "$gecos" in
+  jabali-ftp-account=*)
+    # Owner-encoded subaccount (current format, incl. isolated own-uid accounts).
+    tenant="${gecos#jabali-ftp-account=}"
+    ;;
+  jabali-ftp-account)
+    # Bare-marker legacy same-uid alias: the owner is the non-marker passwd
+    # entry sharing this uid.
+    uid=$(id -u "$user" 2>/dev/null)
+    tenant=$(getent passwd "$uid" 2>/dev/null | awk -F: '$5 !~ /jabali-ftp-account/ {print $1; exit}')
+    ;;
+  *)
+    # No marker: a plain tenant login is its own tenant.
+    tenant="$user"
+    ;;
+esac
+[ -n "$tenant" ] || exit 0
+
+# Path-traversal guard: the tenant name is interpolated into a cgroup path and a
+# systemd unit name, so pin it to the exact slice-name charset before use.
+# (GECOS is panel-written, but PAM_USER is login-time input — belt and braces.)
+printf '%s' "$tenant" | grep -qE '^[a-z][a-z0-9_-]{0,31}$' || exit 0
+
+slice="jabali-user-${tenant}.slice"
+# Realize the slice cgroup (idempotent), then ask systemd for its REAL path so a
+# dashed tenant name can't break the slice-hierarchy assumption.
+systemctl start "$slice" >/dev/null 2>&1
+cg=$(systemctl show "$slice" -p ControlGroup --value 2>/dev/null)
+[ -n "$cg" ] || exit 0
+
+leaf="/sys/fs/cgroup${cg}/ftp-sessions"
+mkdir -p "$leaf" 2>/dev/null || exit 0
+
+# $PPID is the vsftpd worker that invoked PAM for this session; moving it (and
+# its future transfer children) into the leaf subjects them to the slice limits.
+[ -n "$PPID" ] && printf '%s\n' "$PPID" > "$leaf/cgroup.procs" 2>/dev/null
+
+exit 0
