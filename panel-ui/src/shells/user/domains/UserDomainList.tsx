@@ -158,6 +158,8 @@ export type Domain = {
   is_enabled: boolean;
   temp_url_enabled?: boolean;
   temp_url?: string | null;
+  // GH #1175: >0 marks a reverse-proxy domain forwarding to this loopback port.
+  reverse_proxy_port?: number;
   nginx_custom_directives: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
@@ -261,6 +263,15 @@ export const UserDomainList = () => {
             render={(name: string, record: Domain) => (
               <>
                 {renderDomainCell(name, record.doc_root)}
+                {record.reverse_proxy_port ? (
+                  <div>
+                    <Tooltip title={`Reverse proxy — run your app on 127.0.0.1:${record.reverse_proxy_port}`}>
+                      <Tag color="cyan" style={{ fontSize: 12 }}>
+                        proxy → :{record.reverse_proxy_port}
+                      </Tag>
+                    </Tooltip>
+                  </div>
+                ) : null}
                 {record.temp_url && (
                   <div>
                     <Typography.Link

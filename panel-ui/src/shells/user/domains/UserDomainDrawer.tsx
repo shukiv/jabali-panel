@@ -1,7 +1,7 @@
 // UserDomainDrawer — tenant Add-domain Drawer (replaces the
 // /jabali-panel/domains/create page route).
 import { useTranslation } from "react-i18next";
-import { Button, Checkbox, Drawer, Form, Grid, Input, Select, Space } from "antd";
+import { Button, Checkbox, Drawer, Form, Grid, Input, Modal, Select, Space } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect } from "react";
 
@@ -15,8 +15,12 @@ type UserDomainCreateInput = {
   temp_url_enabled?: boolean;
   create_www?: boolean;
   ssl_mode?: string;
+  // GH #1175: reverse-proxy domain. When true the panel reserves a loopback
+  // port and proxies the domain to it (no docroot/PHP). The assigned port
+  // comes back on the create response.
+  reverse_proxy?: boolean;
 };
-type DomainCreated = { id: string };
+type DomainCreated = { id: string; reverse_proxy_port?: number };
 
 export interface UserDomainDrawerProps {
   open: boolean;
@@ -40,8 +44,17 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
 
   const handleFinish = async (values: UserDomainCreateInput) => {
     try {
-      await createMutation.mutateAsync(values);
+      const created = await createMutation.mutateAsync(values);
       feedback.message.success("Domain added");
+      // GH #1175: the assigned loopback port is the one piece of info the user
+      // must act on (bind their app to it), so surface it in a modal that
+      // stays until dismissed rather than a toast they might miss.
+      if (values.reverse_proxy && created?.reverse_proxy_port) {
+        Modal.success({
+          title: "Reverse proxy ready",
+          content: `Run your app on 127.0.0.1:${created.reverse_proxy_port}. The panel proxies ${values.name} to that port and keeps the vhost in sync across TLS renewals.`,
+        });
+      }
       onClose();
     } catch (err) {
       feedback.message.error(err instanceof Error ? err.message : "Failed to add domain");
@@ -144,6 +157,18 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
           tooltip="Serves the site at a preview address under this server's hostname, so you can check it before your domain's DNS points here."
         >
           <Checkbox>Enable preview URL</Checkbox>
+        </Form.Item>
+
+        {/* GH #1175: reverse-proxy option. The panel reserves a conflict-free
+            loopback port and writes the proxy_pass vhost; the assigned port is
+            shown after the domain is added. */}
+        <Form.Item
+          name="reverse_proxy"
+          valuePropName="checked"
+          initialValue={false}
+          tooltip="Turns this domain into a reverse proxy instead of a website. The panel reserves a local port and forwards the domain to it — run your own app (a Docker container, Node service, …) on that port. The assigned port is shown after you add the domain."
+        >
+          <Checkbox>Set up as a reverse proxy (run your own app on a local port)</Checkbox>
         </Form.Item>
 
         <Form.Item>
