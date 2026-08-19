@@ -38,6 +38,8 @@ type DomainHandlerConfig struct {
 	Packages        repository.PackageRepository
 	Agent           agent.AgentInterface
 	Reconciler      *reconciler.Reconciler
+	// PortAllocations (GH #1175): shared loopback-port pool for reverse-proxy domains.
+	PortAllocations repository.PortAllocationRepository
 	// DNSZones + DNSRecords feed the auto-enable-email path on create.
 	// Both optional — when unset, create proceeds without flipping email
 	// on (matches the pre-auto-enable behaviour). The explicit
@@ -101,6 +103,9 @@ type createDomainRequest struct {
 	// TempURLEnabled (migration 000243) opts the domain into a preview
 	// URL (<slug>.preview.<hostname>). Off by default.
 	TempURLEnabled bool `json:"temp_url_enabled"`
+	// ReverseProxy (GH #1175): create a reverse-proxy domain (panel allocates a
+	// loopback port; the vhost proxies / to it). No docroot/PHP.
+	ReverseProxy bool `json:"reverse_proxy"`
 	// SSLMode (GH #246) — le|self|none at create. 'custom' is rejected here:
 	// it needs a cert upload, set via PUT /domains/:id/ssl/custom after create.
 	// Empty defaults to 'le'.
@@ -678,6 +683,7 @@ func (h *domainHandler) create(c *gin.Context) {
 		SSLMode:         req.SSLMode,
 		CreateWWW:       req.CreateWWW,
 		TempURLEnabled:  req.TempURLEnabled,
+		ReverseProxy:    req.ReverseProxy,
 	})
 	if oerr != nil {
 		body := gin.H{"error": oerr.Code}
@@ -1153,6 +1159,7 @@ func (h *domainHandler) delete(c *gin.Context) {
 	_, err = userops.DeleteDomain(ctx, userops.Deps{
 		Domains:         h.cfg.Domains,
 		DomainTeardowns: h.cfg.DomainTeardowns,
+		PortAllocations: h.cfg.PortAllocations,
 		Agent:           h.cfg.Agent,
 	}, domain.ID, domain.Name, true)
 	if err != nil {

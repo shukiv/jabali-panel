@@ -28,6 +28,16 @@ import (
 // createDomainOp. Name MUST already be normalized (normalizeDomainName) and
 // HTML-stripped by the caller — the op validates it but does not re-normalize,
 // matching the create() source of truth.
+// GH #1175: reverse-proxy domains draw from a dedicated slice of the shared
+// port_allocations pool, disjoint from docker (10000-19999) + python
+// (20000-29999) during the incremental adoption.
+const (
+	reverseProxyPoolMin   = 30000
+	reverseProxyPoolMax   = 39999
+	reverseProxyBindIface = "127.0.0.1"
+	reverseProxyProto     = "tcp"
+)
+
 type createDomainInput struct {
 	OwnerID         string
 	Name            string
@@ -38,6 +48,9 @@ type createDomainInput struct {
 	SSLMode         string // "" → le
 	CreateWWW       bool
 	TempURLEnabled  bool
+	// ReverseProxy (GH #1175): make this a reverse-proxy domain — the panel
+	// allocates a loopback port and the vhost proxies `/` to it. No DocRoot/PHP.
+	ReverseProxy bool
 	// SkipInlineSSL omits the 30s inline ACME/self-signed attempt (JAB-233):
 	// the automation path lets the first reconciler tick bootstrap the cert,
 	// exactly like the `jabali domain create` CLI. GUI create leaves it false.
@@ -170,15 +183,37 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		UpdatedAt:       now,
 	}
 
+	// GH #1175: a reverse-proxy domain draws a loopback port from the shared
+	// allocator. Allocated BEFORE the insert (owner_id = the ULID above) so the
+	// row carries the port; released if the insert then fails so we don't leak.
+	if in.ReverseProxy {
+		if h.cfg.PortAllocations == nil {
+			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_unavailable", "reverse-proxy domains are not enabled on this host"}
+		}
+		port, aerr := h.cfg.PortAllocations.Allocate(ctx,
+			models.PortOwnerReverseProxy, domain.ID, reverseProxyBindIface, reverseProxyProto,
+			reverseProxyPoolMin, reverseProxyPoolMax)
+		if aerr != nil {
+			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_port_unavailable", "no free reverse-proxy port available; contact the administrator"}
+		}
+		domain.ReverseProxyPort = uint32(port)
+	}
+
 	// Preview-slug collision (dots→dashes is not injective): refuse the second
 	// enable of a colliding pair — first-wins would silently serve the wrong site.
 	if domain.TempURLEnabled {
 		if other := h.previewSlugConflict(ctx, domain.Name, ""); other != "" {
+			if in.ReverseProxy && h.cfg.PortAllocations != nil {
+				_ = h.cfg.PortAllocations.Release(ctx, models.PortOwnerReverseProxy, domain.ID)
+			}
 			return nil, &createDomainError{http.StatusConflict, "temp_url_slug_conflict", "preview URL would collide with " + other}
 		}
 	}
 
 	if err := h.cfg.Domains.Create(ctx, domain); err != nil {
+		if in.ReverseProxy && h.cfg.PortAllocations != nil {
+			_ = h.cfg.PortAllocations.Release(ctx, models.PortOwnerReverseProxy, domain.ID)
+		}
 		if isConflict(err) {
 			return nil, &createDomainError{http.StatusConflict, "domain_already_exists", ""}
 		}

@@ -45,6 +45,13 @@ type Deps struct {
 	// deletion durable. Optional: nil keeps the pre-tombstone behaviour
 	// (teardown attempted once, not retried).
 	DomainTeardowns repository.DomainTeardownRepository
+	// PortAllocations releases a domain's shared loopback-port reservation
+	// (GH #1175 reverse proxy) when the row is deleted. Optional: nil skips
+	// the release (a domain with no allocation is a no-op regardless). Wired
+	// into DeleteDomain — the single shared row-delete path — so the API,
+	// account-cascade, and billing-cancel deletes all release without any
+	// caller having to remember to.
+	PortAllocations repository.PortAllocationRepository
 	Agent           AgentCaller
 	KratosClient    *kratosclient.Client
 	BcryptCost      int

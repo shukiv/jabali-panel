@@ -459,6 +459,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				KratosClient:     deps.KratosClient,
 				LimitsReconciler: automationLimitsReconciler(deps.Reconciler),
 				DomainTeardowns:  deps.DomainTeardowns,
+				PortAllocations:  repository.NewPortAllocationRepository(deps.DB),
 				DiskSnapshots:    repository.NewDiskUsageSnapshotRepository(deps.DB),
 				BWDaily:          deps.BWDaily,
 				Log:              deps.Log,
@@ -466,18 +467,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// the DomainHandlerConfig below), so account-create with a
 				// `domain` runs createDomainOp with identical semantics.
 				DomainCreate: api.DomainHandlerConfig{
-					Domains:        deps.Domains,
-					Users:          deps.Users,
-					Packages:       deps.Packages,
-					Agent:          deps.Agent,
-					Reconciler:     deps.Reconciler,
-					SSLCerts:       deps.SSLCerts,
-					SharedCerts:    deps.SharedCerts,
-					DNSZones:       deps.DNSZones,
-					DNSRecords:     deps.DNSRecords,
-					ManagedIPs:     deps.ManagedIPs,
-					ServerSettings: deps.ServerSettings,
-					BWDaily:        deps.BWDaily,
+					Domains:         deps.Domains,
+					PortAllocations: repository.NewPortAllocationRepository(deps.DB),
+					Users:           deps.Users,
+					Packages:        deps.Packages,
+					Agent:           deps.Agent,
+					Reconciler:      deps.Reconciler,
+					SSLCerts:        deps.SSLCerts,
+					SharedCerts:     deps.SharedCerts,
+					DNSZones:        deps.DNSZones,
+					DNSRecords:      deps.DNSRecords,
+					ManagedIPs:      deps.ManagedIPs,
+					ServerSettings:  deps.ServerSettings,
+					BWDaily:         deps.BWDaily,
 				},
 			})
 		}
@@ -631,6 +633,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				FtpAccounts:     deps.FtpAccounts,
 				DockerApps:      deps.DockerApps,
 				DomainTeardowns: deps.DomainTeardowns,
+				PortAllocations: repository.NewPortAllocationRepository(deps.DB),
 				Mailboxes:       deps.Mailboxes,
 				Packages:        deps.Packages,
 				Reconciler:      deps.Reconciler,
@@ -662,7 +665,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainRoutes(v1, api.DomainHandlerConfig{
-				Domains: deps.Domains,
+				Domains:         deps.Domains,
+				PortAllocations: repository.NewPortAllocationRepository(deps.DB),
 				// JAB-236: durable delete — tombstone before the row goes.
 				DomainTeardowns: deps.DomainTeardowns,
 				Users:           deps.Users,

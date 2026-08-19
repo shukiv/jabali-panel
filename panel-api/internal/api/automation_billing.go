@@ -71,6 +71,7 @@ func billingUserOpsDeps(cfg AutomationConfig) userops.Deps {
 		Domains:         cfg.Domains,
 		DockerApps:      cfg.DockerApps,
 		DomainTeardowns: cfg.DomainTeardowns,
+		PortAllocations: cfg.PortAllocations,
 		Agent:           cfg.Agent,
 		KratosClient:    cfg.KratosClient,
 		BcryptCost:      cfg.BcryptCost,

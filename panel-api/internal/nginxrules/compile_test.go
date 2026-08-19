@@ -242,20 +242,41 @@ func TestCompile(t *testing.T) {
 			want:     `add_header X-Path "C:\\path\\to\\file";`,
 			wantBool: true,
 		},
+		{
+			// GH #1175: a reverse-proxy domain carries no persisted rule;
+			// the proxy_pass block is synthesised from the column.
+			name: "reverse_proxy_port synthesises a root proxy_pass",
+			domain: &models.Domain{
+				ReverseProxyPort: 30000,
+			},
+			want:     "proxy_pass http://127.0.0.1:30000;",
+			wantBool: true,
+		},
+		{
+			name: "reverse_proxy_port sets the forwarding headers",
+			domain: &models.Domain{
+				ReverseProxyPort: 34567,
+			},
+			want:     "proxy_set_header X-Forwarded-Proto $scheme;",
+			wantBool: true,
+		},
+		{
+			name: "no rules and no reverse proxy is empty",
+			domain: &models.Domain{
+				ReverseProxyPort: 0,
+			},
+			want: "",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Compile(tt.domain)
 			if tt.wantBool {
-				// Check if want string is contained in result
-				if tt.want != "" && len(got) > 0 {
-					// For "contains" checks, just verify it's not empty
-					if got == "" {
-						t.Errorf("Compile(%v) = %q, want non-empty string", tt.domain, got)
-					}
-				} else if tt.want == "" && got != "" {
-					t.Errorf("Compile(%v) = %q, want empty string", tt.domain, got)
+				// "contains" check: the emitted vhost fragment must carry the
+				// expected directive verbatim.
+				if !strings.Contains(got, tt.want) {
+					t.Errorf("Compile(%v) = %q, want it to contain %q", tt.domain, got, tt.want)
 				}
 			} else {
 				// Exact match
@@ -411,4 +432,38 @@ func TestCompile_StaticAlias(t *testing.T) {
 			t.Errorf("compiled output missing %q:\n%s", want, got)
 		}
 	}
+}
+
+// TestReverseProxySynthesisEdges covers GH #1175 behaviour the contains/exact
+// table can't express: suppression when the tenant already has a root
+// proxy_pass, and that synthesis never mutates the domain's backing slice.
+func TestReverseProxySynthesisEdges(t *testing.T) {
+	t.Run("explicit root proxy_pass suppresses the synthetic loopback one", func(t *testing.T) {
+		d := &models.Domain{
+			ReverseProxyPort: 30001,
+			NginxRules: []models.NginxRule{
+				{Type: "proxy_pass", Path: "/", Target: "http://example.test:8080"},
+			},
+		}
+		got := Compile(d)
+		if strings.Contains(got, "127.0.0.1:30001") {
+			t.Fatalf("synthetic loopback proxy_pass should be suppressed, got:\n%s", got)
+		}
+		if strings.Count(got, "location ^~ /") != 1 {
+			t.Fatalf("want exactly one root location, got:\n%s", got)
+		}
+	})
+
+	t.Run("synthesis does not mutate the domain NginxRules slice", func(t *testing.T) {
+		d := &models.Domain{
+			ReverseProxyPort: 30002,
+			NginxRules: []models.NginxRule{
+				{Type: "custom_header", Name: "X-A", Value: "1"},
+			},
+		}
+		_ = Compile(d)
+		if len(d.NginxRules) != 1 {
+			t.Fatalf("Compile mutated NginxRules: len=%d", len(d.NginxRules))
+		}
+	})
 }

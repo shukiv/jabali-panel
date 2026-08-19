@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // JAB-236 — durable domain deletion.
@@ -102,6 +104,15 @@ func DeleteDomain(ctx context.Context, d Deps, domainID, domainName string, asyn
 			_ = d.DomainTeardowns.Delete(ctx, domainName)
 		}
 		return false, err
+	}
+
+	// GH #1175: the row is gone — free any reverse-proxy loopback port it
+	// reserved back to the shared allocator pool. Idempotent + owner-scoped:
+	// a normal docroot domain holds no allocation so this is a no-op. Placed
+	// on this single shared delete path so no caller (API, account cascade,
+	// billing cancel, sweep-driven retry) can bypass it.
+	if d.PortAllocations != nil {
+		_ = d.PortAllocations.Release(ctx, models.PortOwnerReverseProxy, domainID)
 	}
 
 	finish := func(ctx context.Context) bool {

@@ -15,11 +15,15 @@ import (
 )
 
 func Compile(d *models.Domain) string {
-	if d == nil || len(d.NginxRules) == 0 {
+	if d == nil {
+		return ""
+	}
+	rules := reverseProxyRules(d)
+	if len(rules) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	for _, r := range d.NginxRules {
+	for _, r := range rules {
 		switch r.Type {
 		case "custom_header":
 			alwaysSuffix := ""
@@ -130,6 +134,49 @@ func Compile(d *models.Domain) string {
 		}
 	}
 	return b.String()
+}
+
+// reverseProxyRules returns the domain's persisted NginxRules with the
+// GH #1175 reverse-proxy entry synthesised in-memory when the domain
+// carries a reverse_proxy_port. The synthesised rule is NEVER persisted:
+// the NginxRules array is tenant-editable and goes through the JAB-65
+// SSRF validator on every Rule Builder edit, so a stored loopback
+// proxy_pass would either break subsequent tenant edits or become the
+// exact seam an attacker probes to keep a 127.0.0.1 target while swapping
+// the port. Re-deriving it here from the panel-owned column on every
+// compile means it survives cert renewal and reconciler ticks by
+// construction, and the tenant can neither delete nor repoint it.
+//
+// Defensive skip: if the tenant already has a root proxy_pass rule
+// (path "/"), synthesising a second would emit a duplicate `location /`
+// and fail nginx -t. The tenant's explicit rule wins; the create handler
+// rejects the combination up front so this is belt-and-suspenders.
+func reverseProxyRules(d *models.Domain) []models.NginxRule {
+	if d.ReverseProxyPort == 0 {
+		return d.NginxRules
+	}
+	for _, r := range d.NginxRules {
+		if r.Type == "proxy_pass" && rootPath(r.Path) {
+			return d.NginxRules
+		}
+	}
+	ws := true
+	synthetic := models.NginxRule{
+		Type:      "proxy_pass",
+		Path:      "/",
+		Target:    fmt.Sprintf("http://127.0.0.1:%d", d.ReverseProxyPort),
+		Websocket: &ws,
+	}
+	// Copy so append never mutates the domain's backing array.
+	out := make([]models.NginxRule, 0, len(d.NginxRules)+1)
+	out = append(out, d.NginxRules...)
+	return append(out, synthetic)
+}
+
+// rootPath reports whether an nginx location path targets the site root.
+func rootPath(p string) bool {
+	p = strings.TrimSpace(p)
+	return p == "/" || p == ""
 }
 
 func quoteNginxString(s string) string {

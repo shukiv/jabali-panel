@@ -169,6 +169,15 @@ type Domain struct {
 	// /home/<username>/public_html/<domain> at creation time.
 	DocRoot string `gorm:"type:varchar(512);not null;default:''" json:"doc_root"`
 
+	// ReverseProxyPort (GH #1175, migration 000270): when > 0 this is a tenant
+	// reverse-proxy domain — the vhost proxies `/` to http://127.0.0.1:<port>
+	// (+ standard forwarded headers) instead of serving DocRoot/PHP. The port is
+	// allocated from the shared port_allocations pool (owner_kind
+	// 'reverse_proxy', owner_id = this domain's ID) so a tenant never types a
+	// loopback target — the JAB-65 SSRF block on arbitrary loopback still applies
+	// to freeform nginx_rules. 0 = normal docroot/PHP domain.
+	ReverseProxyPort uint32 `gorm:"column:reverse_proxy_port;not null;default:0" json:"reverse_proxy_port"`
+
 	// IsEnabled controls whether the nginx vhost symlink exists in
 	// sites-enabled. Disabled domains still have their config on disk.
 	IsEnabled bool `gorm:"type:tinyint(1);not null;default:1" json:"is_enabled"`

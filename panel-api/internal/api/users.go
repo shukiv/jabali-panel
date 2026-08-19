@@ -42,6 +42,9 @@ type UserHandlerConfig struct {
 	DockerApps  repository.DockerAppRepository
 	Mailboxes   repository.MailboxRepository
 	Packages    repository.PackageRepository
+	// PortAllocations frees a domain's reverse-proxy loopback port (GH #1175)
+	// during the account-delete cascade. Optional.
+	PortAllocations repository.PortAllocationRepository
 	// DomainTeardowns persists the JAB-236 tombstones that make the
 	// cascade's domain teardown durable across panel restarts.
 	DomainTeardowns repository.DomainTeardownRepository
@@ -586,6 +589,7 @@ func (h *userHandler) userOpsDeps() userops.Deps {
 		Domains:         h.cfg.Domains,
 		DockerApps:      h.cfg.DockerApps,
 		DomainTeardowns: h.cfg.DomainTeardowns,
+		PortAllocations: h.cfg.PortAllocations,
 		Agent:           h.cfg.Agent,
 		KratosClient:    h.cfg.KratosClient,
 		BcryptCost:      h.cfg.BcryptCost,
