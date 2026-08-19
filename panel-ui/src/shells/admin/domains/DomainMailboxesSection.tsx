@@ -194,6 +194,12 @@ export const DomainMailboxesSection = ({
       );
       return;
     }
+    // JAB-330: sever the opener link BEFORE the async SSO mint so the webmail
+    // tab can never reach back into the panel window (reverse tabnabbing). Must
+    // run synchronously here — the same fix the sibling mailbox flows already
+    // apply. (noopener can't be passed to window.open: it returns null and
+    // breaks the synchronous-popup-then-set-href trick that dodges blockers.)
+    popup.opener = null;
     ssoMutation.mutate(
       { id: row.id },
       {

@@ -237,6 +237,47 @@ describe("DomainMailboxesSection — quota progress bar", () => {
   });
 });
 
+describe("DomainMailboxesSection — webmail SSO opener isolation (JAB-330)", () => {
+  it("severs popup.opener synchronously, before the async SSO mint (reverse-tabnab guard)", async () => {
+    mockInitialFetches({
+      emailEnabled: true,
+      mailboxes: [
+        {
+          id: "mb1",
+          email: "alice@example.com",
+          quota_bytes: 1 << 30,
+          last_usage_bytes: 0,
+        },
+      ],
+    });
+    // The SSO mint never resolves: the opener MUST already be null by then, so
+    // this proves the severing happens up front, not in onSuccess (where the
+    // reverse-tabnabbing window is already open).
+    mocked.post.mockReturnValue(new Promise<never>(() => {}));
+
+    const fakePopup = {
+      opener: {} as unknown,
+      location: { href: "" },
+      close: vi.fn(),
+    };
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue(fakePopup as unknown as Window);
+
+    try {
+      renderSection();
+      const btn = await screen.findByRole("button", { name: /open webmail/i });
+      fireEvent.click(btn);
+
+      // Popup opened blank (blocker-dodge) and opener severed synchronously.
+      expect(openSpy).toHaveBeenCalledWith("about:blank", "_blank");
+      expect(fakePopup.opener).toBeNull();
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+});
+
 describe("DomainMailboxesSection — in-dialog domain picker", () => {
   it("does NOT render the picker when domainOptions is omitted (single-domain contexts)", async () => {
     mockInitialFetches({ emailEnabled: true, mailboxes: [] });
