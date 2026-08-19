@@ -187,6 +187,9 @@ type cliDomainInput struct {
 	Name    string
 	UserID  string // ULID of the owning (non-admin) user
 	DocRoot string // optional — defaults to /home/<user>/domains/<name>/public_html
+	// ReverseProxy (GH #1175): allocate a loopback port and make this a
+	// reverse-proxy domain (no docroot/PHP). Mirrors the HTTP create path.
+	ReverseProxy bool
 }
 
 // createDomainDirect replicates the non-auth side of internal/api/domains.go
@@ -262,7 +265,23 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
+	// GH #1175: reverse-proxy domains draw a loopback port from the shared
+	// allocator BEFORE the insert (owner_id = the ULID above), released if the
+	// insert then fails so a crash can't leak the reservation. Same pool + code
+	// as the HTTP create path (repository.AllocateReverseProxy).
+	ports := repository.NewPortAllocationRepository(sharedDB)
+	if in.ReverseProxy {
+		port, aerr := ports.AllocateReverseProxy(ctx, d.ID)
+		if aerr != nil {
+			return nil, nil, fmt.Errorf("allocate reverse-proxy port: %w", aerr)
+		}
+		d.ReverseProxyPort = uint32(port)
+	}
+
 	if err := domains.Create(ctx, d); err != nil {
+		if in.ReverseProxy {
+			_ = ports.Release(ctx, models.PortOwnerReverseProxy, d.ID)
+		}
 		if errors.Is(err, repository.ErrConflict) {
 			return nil, nil, fmt.Errorf("domain %q already exists", in.Name)
 		}

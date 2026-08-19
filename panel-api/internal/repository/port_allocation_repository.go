@@ -16,6 +16,17 @@ import (
 // (bind_interface, protocol). GH #1175.
 var ErrPortPoolExhausted = errors.New("no free port in the allocation pool")
 
+// GH #1175 reverse-proxy port pool — a dedicated slice of port_allocations,
+// disjoint from docker (10000-19999) + python (20000-29999) during the
+// incremental adoption. Exported so both create paths (the HTTP handler and
+// the `jabali domain create` CLI) draw from the identical pool.
+const (
+	ReverseProxyPoolMin   = 30000
+	ReverseProxyPoolMax   = 39999
+	ReverseProxyBindIface = "127.0.0.1"
+	ReverseProxyProto     = "tcp"
+)
+
 // PortAllocationRepository is the shared loopback/host-port allocator every
 // local-port consumer draws from (docker, python, reverse-proxy, …). GH #1175.
 type PortAllocationRepository interface {
@@ -24,6 +35,12 @@ type PortAllocationRepository interface {
 	// owner already holds a port for that interface+protocol, its existing port
 	// is returned instead of a second reservation.
 	Allocate(ctx context.Context, ownerKind, ownerID, bindInterface, protocol string, poolMin, poolMax int) (int, error)
+	// AllocateReverseProxy reserves a loopback port for a GH #1175 reverse-proxy
+	// domain (owner_kind='reverse_proxy') from the dedicated pool on
+	// 127.0.0.1/tcp. Thin wrapper over Allocate so the pool bounds live in one
+	// place and every create path draws from the same range. Idempotent per
+	// domainID.
+	AllocateReverseProxy(ctx context.Context, domainID string) (int, error)
 	// Release frees every port held by (ownerKind, ownerID). Safe to call when
 	// the owner holds none.
 	Release(ctx context.Context, ownerKind, ownerID string) error
@@ -104,6 +121,11 @@ func (r *portAllocationRepo) Allocate(ctx context.Context, ownerKind, ownerID, b
 		return 0, err
 	}
 	return port, nil
+}
+
+func (r *portAllocationRepo) AllocateReverseProxy(ctx context.Context, domainID string) (int, error) {
+	return r.Allocate(ctx, models.PortOwnerReverseProxy, domainID,
+		ReverseProxyBindIface, ReverseProxyProto, ReverseProxyPoolMin, ReverseProxyPoolMax)
 }
 
 func (r *portAllocationRepo) Release(ctx context.Context, ownerKind, ownerID string) error {

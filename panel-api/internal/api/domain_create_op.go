@@ -28,15 +28,6 @@ import (
 // createDomainOp. Name MUST already be normalized (normalizeDomainName) and
 // HTML-stripped by the caller — the op validates it but does not re-normalize,
 // matching the create() source of truth.
-// GH #1175: reverse-proxy domains draw from a dedicated slice of the shared
-// port_allocations pool, disjoint from docker (10000-19999) + python
-// (20000-29999) during the incremental adoption.
-const (
-	reverseProxyPoolMin   = 30000
-	reverseProxyPoolMax   = 39999
-	reverseProxyBindIface = "127.0.0.1"
-	reverseProxyProto     = "tcp"
-)
 
 type createDomainInput struct {
 	OwnerID         string
@@ -190,9 +181,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		if h.cfg.PortAllocations == nil {
 			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_unavailable", "reverse-proxy domains are not enabled on this host"}
 		}
-		port, aerr := h.cfg.PortAllocations.Allocate(ctx,
-			models.PortOwnerReverseProxy, domain.ID, reverseProxyBindIface, reverseProxyProto,
-			reverseProxyPoolMin, reverseProxyPoolMax)
+		port, aerr := h.cfg.PortAllocations.AllocateReverseProxy(ctx, domain.ID)
 		if aerr != nil {
 			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_port_unavailable", "no free reverse-proxy port available; contact the administrator"}
 		}

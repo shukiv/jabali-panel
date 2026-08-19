@@ -91,6 +91,7 @@ func newDomainListCmd() *cobra.Command {
 
 func newDomainCreateCmd() *cobra.Command {
 	var name, userID, docRoot string
+	var reverseProxy bool
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -113,9 +114,10 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 			defer cancel()
 
 			d, warnings, err := createDomainDirect(ctx, cliDomainInput{
-				Name:    name,
-				UserID:  userID,
-				DocRoot: docRoot,
+				Name:         name,
+				UserID:       userID,
+				DocRoot:      docRoot,
+				ReverseProxy: reverseProxy,
 			})
 			if err != nil {
 				return err
@@ -129,6 +131,9 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 			}
 			cliAuditOK(ctx, "domain.create", "domain", d.ID, &d.UserID)
 			fmt.Printf("Domain created: %s (ID: %s)\n", d.Name, d.ID)
+			if d.ReverseProxyPort > 0 {
+				fmt.Printf("Reverse proxy: forwards to 127.0.0.1:%d — run your app on that port.\n", d.ReverseProxyPort)
+			}
 			if d.EmailEnabled {
 				selector := ""
 				if d.DkimSelector != nil {
@@ -147,6 +152,7 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 	cmd.Flags().StringVar(&name, "name", "", "Domain name (required)")
 	cmd.Flags().StringVar(&userID, "user", "", "User email, username, or ULID (required)")
 	cmd.Flags().StringVar(&docRoot, "doc-root", "", "Document root (optional, auto-generated if not provided)")
+	cmd.Flags().BoolVar(&reverseProxy, "reverse-proxy", false, "Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)")
 	return cmd
 }
 
