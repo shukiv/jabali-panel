@@ -68,7 +68,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false, "ftp_isolation_available": false})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "admin_file_manager_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false, "ftp_isolation_available": false})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -118,6 +118,9 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		// GH #515 / JAB-169: the admin Terminal nav entry stayed visible with
 		// the module off. Surface the flag so the sidebar hides it.
 		"root_terminal_enabled": settings.RootTerminalEnabled,
+		// GH #1184: admin File Manager nav is hidden unless the (default-off)
+		// setting is on — same pattern as the terminal.
+		"admin_file_manager_enabled": settings.AdminFileManagerEnabled,
 		// GH #361: surface the server's public IPv4/IPv6 so the user + admin
 		// dashboards can show them (already tracked for the panel cert + DNS;
 		// not per-user sensitive). Empty string when unset. JAB-176: on the

@@ -47,6 +47,8 @@ export function AdminLayout() {
     if (n.key === "docker-apps") return !!caps?.docker_marketplace_enabled;
     // GH #515: default-off module — hide until explicitly enabled (like docker-apps).
     if (n.key === "terminal") return !!caps?.root_terminal_enabled;
+    // GH #1184: default-off admin File Manager — hide until enabled.
+    if (n.key === "admin-files") return !!caps?.admin_file_manager_enabled;
     if (n.key === "mail") return caps?.mail_enabled !== false;
     if (n.key === "dns") return caps?.dns_enabled !== false;
     if (n.key === "security") return caps?.security_enabled !== false;

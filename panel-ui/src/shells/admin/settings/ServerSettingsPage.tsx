@@ -51,6 +51,7 @@ import { LookAndFeelCard } from "./LookAndFeelCard";
 import { DatabasesCard } from "./DatabasesCard";
 import { DockerMarketplaceCard } from "./DockerMarketplaceCard";
 import { PythonAppsCard } from "./PythonAppsCard";
+import { AdminFileManagerCard } from "./AdminFileManagerCard";
 import { PHPPerformanceModesCard } from "./PHPPerformanceModesCard";
 import { DatabaseAdminSections } from "./DatabaseAdminSections";
 import { DNSResolversCard } from "./DNSResolversCard";
@@ -1057,6 +1058,7 @@ export const ServerSettingsPage = () => {
         <Space direction="vertical" style={{ width: "100%" }} size="large">
           <DockerMarketplaceCard />
           <PythonAppsCard />
+          <AdminFileManagerCard />
           <PHPPerformanceModesCard />
         </Space>
       ),

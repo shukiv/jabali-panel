@@ -21,6 +21,8 @@ export interface ServerCapabilities {
   api_enabled: boolean;
   /** GH #515: admin web terminal (root_terminal_enabled). Gates the Terminal nav entry. */
   root_terminal_enabled: boolean;
+  /** GH #1184: admin File Manager (whole filesystem). Gates the Admin Files nav entry. */
+  admin_file_manager_enabled: boolean;
   /** GH #361: the server's public IPv4, for the dashboard. "" when unset. */
   public_ipv4: string;
   /** GH #361: the server's public IPv6, for the dashboard. "" when unset. */
@@ -56,6 +58,7 @@ export function useServerCapabilities() {
         quota_enabled: data.quota_enabled !== false,
         api_enabled: data.api_enabled !== false,
         root_terminal_enabled: !!data.root_terminal_enabled,
+        admin_file_manager_enabled: !!data.admin_file_manager_enabled,
         public_ipv4: data.public_ipv4 ?? "",
         public_ipv6: data.public_ipv6 ?? "",
         is_standby: !!data.is_standby,

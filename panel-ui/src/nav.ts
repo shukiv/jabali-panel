@@ -147,6 +147,14 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/settings",
   },
   {
+    // GH #1184: hidden unless admin_file_manager_enabled (gated in AdminLayout).
+    key: "admin-files",
+    label: "nav.admin.admin-files",
+    description: "nav.admin.admin-files_desc",
+    icon: navIcon(FolderOutlined),
+    path: "/jabali-admin/admin-files",
+  },
+  {
     key: "server-status",
     label: "nav.admin.server-status",
     description: "nav.admin.server-status_desc",

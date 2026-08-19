@@ -84,6 +84,7 @@ const AdminTerminal = lazy(() => import("./shells/admin/terminal/AdminTerminal")
 const MyProfile = lazy(() => import("./shells/user/MyProfile").then((m) => ({ default: m.MyProfile })));
 const UserDashboard = lazy(() => import("./shells/user/UserDashboard").then((m) => ({ default: m.UserDashboard })));
 const FileManagerPage = lazy(() => import("./shells/user/files/FileManagerPage").then((m) => ({ default: m.FileManagerPage })));
+const AdminFileManagerPage = lazy(() => import("./shells/admin/files/AdminFileManagerPage").then((m) => ({ default: m.AdminFileManagerPage })));
 const UserDomainList = lazy(() => import("./shells/user/domains/UserDomainList").then((m) => ({ default: m.UserDomainList })));
 const UserDatabasesPage = lazy(() => import("./shells/user/databases/UserDatabasesPage").then((m) => ({ default: m.UserDatabasesPage })));
 const DNSRecordsPage = lazy(() => import("./shells/dns/DNSRecordsPage").then((m) => ({ default: m.DNSRecordsPage })));
@@ -293,6 +294,7 @@ const ThemedApp = () => {
             />
             <Route path="ssl" element={<SSLManagerPage />} />
             <Route path="settings" element={<ServerSettingsPage />} />
+            <Route path="admin-files" element={<AdminFileManagerPage />} />
             <Route path="php-pools">
               <Route index element={<PHPVersionsPage />} />
               <Route path="edit/:id" element={<PHPPoolEdit />} />

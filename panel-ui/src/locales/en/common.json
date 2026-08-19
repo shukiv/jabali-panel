@@ -19,6 +19,8 @@
       "docker-apps_desc": "Docker app marketplace",
       "settings": "Server Settings",
       "settings_desc": "Server-wide settings and optional modules",
+      "admin-files": "File Manager",
+      "admin-files_desc": "Browse and edit files across the whole server filesystem (admin only)",
       "server-status": "Server Status",
       "server-status_desc": "Live services, resources, and health",
       "cache": "Cache",
