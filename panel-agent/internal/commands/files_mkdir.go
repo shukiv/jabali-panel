@@ -8,15 +8,16 @@ import (
 	"strconv"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
+	"os"
 )
 
 // filesMkdirParams is the input shape for files.mkdir.
 type filesMkdirParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Mode     string `json:"mode,omitempty"` // "parents" or empty (default no parents)
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM: root scope + deny-list
+	Path      string `json:"path"`
+	Mode      string `json:"mode,omitempty"` // "parents" or empty (default no parents)
 }
 
 // filesMkdirResponse is the output shape for files.mkdir.
@@ -48,9 +49,7 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	// Create filesafe scope with user's home directory
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -78,19 +77,28 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	if created {
-		// New directory: set ownership (user:www-data) and 0750 via the dir fd.
-		u, err := user.Lookup(p.Username)
-		if err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("failed to lookup user %q: %v", p.Username, err),
+		// Ownership for the new directory:
+		//   - Tenant: <user>:www-data, 0750 (nginx traverse + static read).
+		//   - Admin FM (GH #1184): root:root 0755 — a root-tree dir must never
+		//     be reassigned to a tenant.
+		uid, wwwDataGid := 0, 0
+		dirMode := os.FileMode(0750)
+		if p.AdminRoot {
+			dirMode = 0755
+		} else {
+			u, uerr := user.Lookup(p.Username)
+			if uerr != nil {
+				return nil, &agentwire.AgentError{
+					Code:    agentwire.CodeInvalidArgument,
+					Message: fmt.Sprintf("failed to lookup user %q: %v", p.Username, uerr),
+				}
 			}
-		}
-		uid, _ := strconv.Atoi(u.Uid)
-		gid, _ := strconv.Atoi(u.Gid)
-		wwwDataGid := gid
-		if g, gerr := user.LookupGroup("www-data"); gerr == nil {
-			wwwDataGid, _ = strconv.Atoi(g.Gid)
+			uid, _ = strconv.Atoi(u.Uid)
+			gid, _ := strconv.Atoi(u.Gid)
+			wwwDataGid = gid
+			if g, gerr := user.LookupGroup("www-data"); gerr == nil {
+				wwwDataGid, _ = strconv.Atoi(g.Gid)
+			}
 		}
 
 		df, derr := scope.OpenDirInScope(cleanPath)
@@ -107,8 +115,8 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 				Message: fmt.Sprintf("failed to chown directory: %v", err),
 			}
 		}
-		// 0750: owner rwx, www-data group r-x (nginx static read + traverse).
-		if err := df.Chmod(0750); err != nil {
+		// Tenant 0750 (nginx traverse) / admin 0755.
+		if err := df.Chmod(dirMode); err != nil {
 			df.Close()
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,

@@ -13,7 +13,6 @@ import (
 	"syscall"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // classifyFSWriteErr turns a low-level write/chown/rename error into an
@@ -52,11 +51,12 @@ func classifyFSWriteErr(stage string, err error) *agentwire.AgentError {
 
 // filesWriteParams is the input shape for files.write.
 type filesWriteParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Mode     string `json:"mode,omitempty"` // "append" or "overwrite" (default)
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM: root scope + deny-list
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Mode      string `json:"mode,omitempty"` // "append" or "overwrite" (default)
 }
 
 // filesWriteResponse is the output shape for files.write.
@@ -97,9 +97,7 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	// Create filesafe scope with user's home directory
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -121,25 +119,37 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 
 	// For overwrite mode (or if file doesn't exist), use temp-file-then-rename pattern
 	if p.Mode != "append" {
-		// Lookup user to get uid/gid
-		u, err := user.Lookup(p.Username)
-		if err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("failed to lookup user %q: %v", p.Username, err),
+		// Ownership + mode for the (re)written file.
+		//   - Tenant: <user>:www-data, 0640 — nginx (www-data) static-reads it,
+		//     the user's own gid would leave it unreadable AND show as
+		//     "User:User" (GH #533). www-data gid unless somehow absent.
+		//   - Admin FM (GH #1184): NEVER reassign a root-tree file to a tenant.
+		//     Preserve the existing file's owner+mode on overwrite; a brand-new
+		//     file is root:root 0644.
+		uid, gid := 0, 0
+		fileMode := sensitiveFileMode(cleanPath, 0640)
+		if p.AdminRoot {
+			fileMode = 0644
+			if fi, serr := os.Stat(cleanPath); serr == nil {
+				if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+					uid, gid = int(st.Uid), int(st.Gid)
+				}
+				fileMode = fi.Mode().Perm()
 			}
-		}
-		uid, _ := strconv.Atoi(u.Uid)
-		gid, _ := strconv.Atoi(u.Gid)
-		// New files under the docroot must be group www-data so nginx (running
-		// as www-data) can serve them via the 0640 group-read bit set below; the
-		// user's own primary group would leave them unreadable AND surface to the
-		// operator as "User:User" instead of "User:www-data" (GH #533). Mirror
-		// files.mkdir / files.extract (hostingIDs): keep the user's gid only if
-		// www-data is somehow absent.
-		if g, gerr := user.LookupGroup("www-data"); gerr == nil {
-			if wgid, werr := strconv.Atoi(g.Gid); werr == nil {
-				gid = wgid
+		} else {
+			u, uerr := user.Lookup(p.Username)
+			if uerr != nil {
+				return nil, &agentwire.AgentError{
+					Code:    agentwire.CodeInvalidArgument,
+					Message: fmt.Sprintf("failed to lookup user %q: %v", p.Username, uerr),
+				}
+			}
+			uid, _ = strconv.Atoi(u.Uid)
+			gid, _ = strconv.Atoi(u.Gid)
+			if g, gerr := user.LookupGroup("www-data"); gerr == nil {
+				if wgid, werr := strconv.Atoi(g.Gid); werr == nil {
+					gid = wgid
+				}
 			}
 		}
 
@@ -187,9 +197,8 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 			return nil, classifyFSWriteErr("chown_tempfile", err)
 		}
 
-		// Chmod to 0640 via the fd: owner rw, www-data group r (nginx static
-		// read), other none. Matches per-user FPM isolation.
-		if err := tmpFile.Chmod(sensitiveFileMode(cleanPath, 0640)); err != nil {
+		// Chmod via the fd to the computed mode (tenant 0640 / admin-preserved).
+		if err := tmpFile.Chmod(fileMode); err != nil {
 			tmpFile.Close()
 			_ = scope.RemoveInScope(tmpPath, false)
 			return nil, classifyFSWriteErr("chmod_tempfile", err)
@@ -234,7 +243,9 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Newly created via O_CREATE: normalize ownership to <user>:www-data through
 	// the open fd (no path re-resolve). Chown after the write so an over-quota
 	// target surfaces EDQUOT here, classified like the overwrite path.
-	if preExisting == nil {
+	// Admin FM (GH #1184): a newly created root-tree file stays root:root —
+	// never chown to a tenant. Only the tenant path normalizes ownership.
+	if preExisting == nil && !p.AdminRoot {
 		u, uerr := user.Lookup(p.Username)
 		if uerr != nil {
 			return nil, &agentwire.AgentError{

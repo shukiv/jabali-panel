@@ -32,7 +32,36 @@ const (
 	ErrCodeNotInScope      = "not_in_scope"     // path not within owned docroots
 	ErrCodeSymlinkLoop     = "symlink_loop"     // circular symlink chain
 	ErrCodeBadCharacters   = "bad_characters"   // invalid filename characters
+	ErrCodeDenied          = "path_denied"      // path within an explicit deny prefix (GH #1184 admin FM)
 )
+
+// DefaultAdminDeniedPrefixes is the hard deny-list for the GH #1184 admin File
+// Manager (a root-scoped Scope). These paths are blocked for ALL operations —
+// read, write, chmod, delete, rename — enforced agent-side so the panel can
+// never be talked into touching them. Rationale per path family:
+//   - credential/key stores that must never leave the box or be altered via a UI
+//   - jabali's own control-plane state + binaries + sockets (self-protection:
+//     an admin FM must not be able to corrupt the panel/agent that runs it, or
+//     re-chmod /etc/jabali, which is a known SSH-lockout footgun)
+// Deliberately full-block (not chmod-only): if a path is dangerous to re-perm
+// it is dangerous to overwrite too, so one list covers both. Admins retain root
+// SSH for anything intentionally excluded here.
+var DefaultAdminDeniedPrefixes = []string{
+	"/etc/shadow",
+	"/etc/gshadow",
+	"/etc/ssh",         // host keys + sshd_config (SSH-lockout footgun)
+	"/root/.ssh",       // root authorized_keys
+	"/etc/sudoers",     // and /etc/sudoers.d via prefix boundary below
+	"/etc/sudoers.d",
+	"/etc/jabali",      // panel/agent config + secrets + the 0755-perms lockout
+	"/etc/letsencrypt", // live/archive/keys/accounts — cert private keys
+	"/usr/local/bin/jabali-agent",
+	"/usr/local/bin/jabali-panel",
+	"/usr/local/bin/jabali",
+	"/run/jabali",   // agent + panel unix sockets
+	"/run/jabali-kratos",
+	"/var/lib/jabali-uploads", // agent↔panel handoff staging
+}
 
 // ValidationError is the error type returned by validators.
 type ValidationError struct {
@@ -50,6 +79,14 @@ type Scope struct {
 	UserID        string
 	Username      string
 	OwnedDocroots []string
+	// DeniedPrefixes are absolute path prefixes that are blocked for ALL
+	// operations even when within OwnedDocroots (GH #1184 admin FM deny-list).
+	// Empty for ordinary tenant scopes — a nil/empty list is a pure no-op, so
+	// this is backward-compatible with every existing NewScope caller. The
+	// check runs in verifyInScope, i.e. on BOTH the cleaned path and the
+	// symlink-resolved path, so a symlink from an allowed dir into a denied
+	// one is caught.
+	DeniedPrefixes []string
 	// resolveCache caches EvalSymlinks results to detect symlink loops
 	resolveCache map[string]string
 }
@@ -89,6 +126,33 @@ func NewScope(userID, username string, ownedDocroots []string) (*Scope, error) {
 		Username:      username,
 		OwnedDocroots: normalized,
 		resolveCache:  make(map[string]string),
+	}, nil
+}
+
+// NewAdminScope creates a root-scoped Scope for the GH #1184 admin File
+// Manager: OwnedDocroots is "/" (the whole filesystem) but every path in
+// deniedPrefixes is blocked for all operations. Pass
+// DefaultAdminDeniedPrefixes unless a caller has a reason to differ. This is
+// a privileged constructor — the panel gates it behind admin auth AND a
+// default-off server setting; the deny-list here is the last line of defence.
+func NewAdminScope(userID, username string, deniedPrefixes []string) (*Scope, error) {
+	if username == "" {
+		return nil, &ValidationError{Code: ErrCodeEmpty, Detail: "username cannot be empty"}
+	}
+	denied := make([]string, 0, len(deniedPrefixes))
+	for _, p := range deniedPrefixes {
+		p = filepath.Clean(p)
+		if !filepath.IsAbs(p) {
+			return nil, &ValidationError{Code: ErrCodeNotAbsolute, Detail: fmt.Sprintf("denied prefix %q must be absolute", p)}
+		}
+		denied = append(denied, p)
+	}
+	return &Scope{
+		UserID:         userID,
+		Username:       username,
+		OwnedDocroots:  []string{"/"},
+		DeniedPrefixes: denied,
+		resolveCache:   make(map[string]string),
 	}, nil
 }
 
@@ -286,25 +350,50 @@ func (s *Scope) verifyInScope(pathStr string) error {
 		}
 	}
 
-	// Check containment in owned docroots
+	// Check containment in owned docroots.
+	inScope := false
 	for _, docroot := range s.OwnedDocroots {
 		docroot = filepath.Clean(docroot)
 
+		// "/" (root scope, GH #1184 admin FM) contains every absolute path;
+		// the naive docroot+"/" prefix would become "//" and match nothing.
+		if docroot == "/" {
+			inScope = true
+			break
+		}
 		// Exact match (for root-level docroots)
 		if pathStr == docroot {
-			return nil
+			inScope = true
+			break
 		}
-
 		// Prefix match with / boundary (no /x matching /xyz)
 		if strings.HasPrefix(pathStr, docroot+"/") {
-			return nil
+			inScope = true
+			break
+		}
+	}
+	if !inScope {
+		return &ValidationError{
+			Code:   ErrCodeNotInScope,
+			Detail: fmt.Sprintf("path %q is not within owned docroots: %v", pathStr, s.OwnedDocroots),
 		}
 	}
 
-	return &ValidationError{
-		Code:   ErrCodeNotInScope,
-		Detail: fmt.Sprintf("path %q is not within owned docroots: %v", pathStr, s.OwnedDocroots),
+	// GH #1184 deny-list: block even in-scope paths that fall within a denied
+	// prefix. Runs on both the cleaned path (Clean) and the symlink-resolved
+	// path (Resolve), so a symlink from an allowed dir into a denied one is
+	// rejected. Same word-boundary rule: /etc/ssh blocks /etc/ssh/* but not
+	// /etc/sshfoo.
+	for _, denied := range s.DeniedPrefixes {
+		if pathStr == denied || strings.HasPrefix(pathStr, denied+"/") {
+			return &ValidationError{
+				Code:   ErrCodeDenied,
+				Detail: fmt.Sprintf("path %q is within denied prefix %q", pathStr, denied),
+			}
+		}
 	}
+
+	return nil
 }
 
 // resolveNearest canonicalizes cleaned by EvalSymlinks-resolving its nearest

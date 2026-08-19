@@ -7,13 +7,13 @@ import (
 	"os"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // filesDeleteParams is the input shape for files.delete.
 type filesDeleteParams struct {
 	UserID    string `json:"user_id"`
 	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM: root scope + deny-list
 	Path      string `json:"path"`
 	Recursive bool   `json:"recursive,omitempty"`
 }
@@ -48,8 +48,7 @@ func filesDeleteHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 
 	// Create filesafe scope with user's home directory
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

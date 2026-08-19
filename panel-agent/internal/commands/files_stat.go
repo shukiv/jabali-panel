@@ -6,14 +6,14 @@ import (
 	"fmt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // filesStatParams is the input shape for files.stat.
 type filesStatParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM: root scope + deny-list
+	Path      string `json:"path"`
 }
 
 // filesStatResponse is the output shape for files.stat.
@@ -50,8 +50,7 @@ func filesStatHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 
 	// Create filesafe scope with user's home directory
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

@@ -21,10 +21,11 @@ import (
 // user can tidy up legacy uploads, but higher bits are masked out.
 
 type filesChmodParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Mode     string `json:"mode"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM: root scope + deny-list
+	Path      string `json:"path"`
+	Mode      string `json:"mode"`
 }
 
 type filesChmodResponse struct {
@@ -58,8 +59,7 @@ func filesChmodHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

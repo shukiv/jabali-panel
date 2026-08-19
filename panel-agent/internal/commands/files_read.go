@@ -12,15 +12,15 @@ import (
 	"unicode/utf8"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // filesReadParams is the input shape for files.read.
 type filesReadParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Limit    int64  `json:"limit,omitempty"` // 0 = no limit, default 1MB
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root"` // GH #1184 admin FM: root scope + deny-list
+	Path      string `json:"path"`
+	Limit     int64  `json:"limit,omitempty"` // 0 = no limit, default 1MB
 }
 
 // filesReadResponse is the output shape for files.read.
@@ -96,8 +96,7 @@ func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 
 	// Create filesafe scope with user's home directory
-	homeDir := fmt.Sprintf("/home/%s", p.Username)
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
