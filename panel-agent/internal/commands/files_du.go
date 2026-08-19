@@ -121,19 +121,34 @@ func filesDuHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	return &filesDuResponse{Path: resolved, Total: dirSizes[resolved], Entries: result}, nil
 }
 
-// duSubdirSizes runs one `du -b -D --max-depth=1` against the pinned directory
+// duSubdirSizes runs one `du -B1 -D --max-depth=1` against the pinned directory
 // fd (passed as child fd 3 via ExtraFiles) and returns a map of canonical path
-// → recursive apparent size for the directory itself and each immediate child.
+// → recursive DISK-USAGE size for the directory itself and each immediate child.
 //
-// -b = apparent size in bytes; --max-depth=1 = this level only; -D = follow the
-// /proc/self/fd/3 magic symlink to the pinned inode (WITHOUT it, du measures the
-// symlink node and reports no children, so every folder came back 0 — GH #657).
-// -D dereferences only the command-line arg; in-tree symlinks are still not
-// followed, preserving the GH #653 escape-proofing. The child's fd-relative
-// output paths are remapped back onto `canonical` for the caller's lookups.
+// -B1 = disk usage in 1-byte units (actual blocks on disk), NOT apparent size.
+// GH #1184: the admin File Manager sizes "/", where apparent size (-b) counted
+// /proc/kcore's 128 TiB virtual size and reported a nonsense ~131 TB total.
+// Disk usage counts kcore (and every sparse file) as its real 0 blocks, and it
+// is the number an operator actually cares about (what fills the disk). The
+// pseudo/virtual filesystems are also excluded so du never walks them (they are
+// not real storage, and /proc alone can push a busy host past the 45s budget).
+// fd 3 is guaranteed by ExtraFiles, so the excludes anchor to /proc/self/fd/3/*
+// — no-ops for a tenant /home du, effective only when the root is "/".
+//
+// --max-depth=1 = this level only; -D = follow the /proc/self/fd/3 magic symlink
+// to the pinned inode (WITHOUT it, du measures the symlink node and reports no
+// children, so every folder came back 0 — GH #657). -D dereferences only the
+// command-line arg; in-tree symlinks are still not followed, preserving the GH
+// #653 escape-proofing. The child's fd-relative output paths are remapped back
+// onto `canonical` for the caller's lookups.
 func duSubdirSizes(ctx context.Context, dirFd *os.File, canonical string) (map[string]int64, bool) {
 	dirSizes := map[string]int64{}
-	duCmd := execCommandContext(ctx, "du", "-b", "-D", "--max-depth=1", "/proc/self/fd/3")
+	duCmd := execCommandContext(ctx, "du", "-B1", "-D", "--max-depth=1",
+		"--exclude=/proc/self/fd/3/proc",
+		"--exclude=/proc/self/fd/3/sys",
+		"--exclude=/proc/self/fd/3/dev",
+		"--exclude=/proc/self/fd/3/run",
+		"/proc/self/fd/3")
 	duCmd.ExtraFiles = []*os.File{dirFd}
 	out, _ := duCmd.Output()
 	const procPfx = "/proc/self/fd/3"
