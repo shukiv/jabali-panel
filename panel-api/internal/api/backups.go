@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
@@ -76,6 +77,12 @@ type BackupHandlerConfig struct {
 	// /etc/jabali-panel/restic-repo.password (back-compat for
 	// destinations that haven't been rotated yet).
 	SSOKey *ssokey.Key
+
+	// KratosClient lets the account-restore finalizer reinstate the
+	// restored user's login identity (JAB-312), mirroring the CLI restore.
+	// Optional: when nil the panel rows are still rebuilt; only the login
+	// credential is left for a recovery link.
+	KratosClient *kratosclient.Client
 
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
@@ -1095,6 +1102,10 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 			Status string `json:"status"`
 			Error  string `json:"error,omitempty"`
 		} `json:"stages"`
+		// Metadata is the raw metadata.json the agent pulled from the
+		// snapshot's meta stage — the bundle the finalizer applies to
+		// rebuild panel DB rows (JAB-312). Empty on old snapshots.
+		Metadata json.RawMessage `json:"metadata,omitempty"`
 	}
 	finalStatus := models.BackupJobStatusSucceeded
 	finalErr := ""
@@ -1115,7 +1126,65 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 			finalStatus = models.BackupJobStatusFailed
 		}
 	}
+
+	// JAB-312: apply the returned panel-metadata bundle so a UI/HTTP restore
+	// rebuilds the panel DB rows (domains, mailboxes, forwarders, applications,
+	// SSH keys, cron jobs, …) — not just host files + DB dumps. Before this only
+	// the CLI applied it, so UI restores left the panel with no record of the
+	// restored account. Skipped when the host restore itself failed (nothing
+	// consistent to rebuild) and for old snapshots that carry no bundle. A
+	// metadata-apply failure must not leave the job reporting a clean success.
+	if finalStatus != models.BackupJobStatusFailed {
+		if errs := h.applyRestoreMetadata(ctx, result.Metadata); len(errs) > 0 {
+			if finalStatus == models.BackupJobStatusSucceeded {
+				finalStatus = models.BackupJobStatusPartial
+			}
+			if finalErr == "" {
+				finalErr = "metadata apply: " + strings.Join(errs, "; ")
+			}
+			h.cfg.logErr("account restore metadata apply had errors", errors.New(strings.Join(errs, "; ")), "job_id", jobID)
+		}
+	}
 	seal(finalStatus, finalErr, raw)
+}
+
+// applyRestoreMetadata rebuilds the panel DB rows from the metadata bundle the
+// agent returned with a restore (JAB-312), mirroring the CLI restore
+// (account_restore_cmd.go applyPanelMetadata). Returns the apply errors (empty
+// on a clean apply). An empty bundle — old snapshots (schema_version=1) — is a
+// no-op, the documented fallback. Restored cron ROWS regain their systemd
+// timers on the next reconciler tick (internal/reconciler/cron_reconcile.go),
+// the same convergence model the rest of restored state follows.
+func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.RawMessage) []string {
+	if len(metaRaw) == 0 {
+		return nil
+	}
+	var meta internalbackup.AccountMetadata
+	if err := json.Unmarshal(metaRaw, &meta); err != nil {
+		return []string{"parse metadata bundle: " + err.Error()}
+	}
+	r := backupmetadata.Apply(ctx, &meta, backupmetadata.Deps{
+		Users:          h.cfg.Users,
+		Domains:        h.cfg.Domains,
+		Databases:      h.cfg.Databases,
+		DatabaseUsers:  h.cfg.DatabaseUsers,
+		DatabaseGrants: h.cfg.DatabaseGrants,
+		AppInstalls:    h.cfg.AppInstalls,
+		DockerApps:     h.cfg.DockerApps,
+		SSLCerts:       h.cfg.SSLCerts,
+		PHPPools:       h.cfg.PHPPools,
+		PHPPoolIni:     h.cfg.PHPPoolIni,
+		SSHKeys:        h.cfg.SSHKeys,
+		CronJobs:       h.cfg.CronJobs,
+		Mailboxes:      h.cfg.Mailboxes,
+		Forwarders:     h.cfg.Forwarders,
+		Autoresponders: h.cfg.Autoresponders,
+		MailboxShares:  h.cfg.MailboxShares,
+		DNSZones:       h.cfg.DNSZones,
+		DNSRecords:     h.cfg.DNSRecords,
+		KratosClient:   h.cfg.KratosClient,
+	})
+	return r.Errors
 }
 
 // --- helpers + sentinel below ---

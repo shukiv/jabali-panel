@@ -1108,6 +1108,23 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DockerApps:     deps.DockerApps,
 				DNSZones:       deps.DNSZones,
 				DNSRecords:     deps.DNSRecords,
+				// JAB-312: the schema-v2 metadata repos were never wired into the
+				// admin backup handler, so buildAccountMetadata skipped these
+				// sections in manual backups AND the restore finalizer had no
+				// repos to rebuild them. Wire the full set (matches the scheduler
+				// and the CLI restore Deps) so manual backup bundles are complete
+				// and UI restores can reconstruct panel state.
+				SSLCerts:       deps.SSLCerts,
+				PHPPools:       deps.PHPPools,
+				PHPPoolIni:     deps.PHPPoolIniOverrides,
+				Forwarders:     deps.Forwarders,
+				Autoresponders: deps.Autoresponders,
+				MailboxShares:  deps.MailboxShares,
+				DNSSECKeys:     deps.DNSSECKeys,
+				SSHKeys:        deps.SSHKeys,
+				CronJobs:       deps.CronJobs,
+				LimitOverrides: deps.LimitOverrides,
+				KratosClient:   deps.KratosClient,
 				Log:            deps.Log,
 				SSOKey:         deps.SSOKey,
 			})

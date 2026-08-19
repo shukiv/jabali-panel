@@ -138,6 +138,47 @@ func TestRunSelectiveRestoreJob_AgentFailureIsGenericOnTheRow(t *testing.T) {
 	}
 }
 
+// JAB-312: the finalizer applies the returned panel-metadata bundle. A bundle
+// that cannot be applied must NOT leave the job reporting a clean success — the
+// operator would think the panel was reconstructed when it wasn't.
+func TestRunAccountRestoreJob_MetadataApplyFailureDowngradesSuccess(t *testing.T) {
+	jobs := newSealCapture()
+	h := &backupHandler{cfg: BackupHandlerConfig{
+		Jobs: jobs,
+		// All stages ok, but the metadata bundle is not a valid AccountMetadata
+		// object — Apply cannot parse it, so the finalizer must downgrade.
+		Agent: restoreAgent{reply: json.RawMessage(
+			`{"job_id":"job-1","stages":[{"name":"home","status":"ok"}],"metadata":"not-an-object"}`)},
+	}}
+	h.runAccountRestoreJob("job-1", &models.BackupDestination{ID: "d1", Kind: "local"}, map[string]any{})
+	jobs.wait(t)
+	if jobs.status != models.BackupJobStatusPartial {
+		t.Errorf("status = %q, want partial — host stages ok but metadata apply failed", jobs.status)
+	}
+	if !strings.Contains(jobs.errText, "metadata apply") {
+		t.Errorf("the metadata-apply failure must surface on the row, got %q", jobs.errText)
+	}
+}
+
+// An old snapshot (schema_version=1) carries no metadata bundle. The finalizer
+// must treat that as the documented fallback — a no-op — not a failure.
+func TestRunAccountRestoreJob_NoMetadataStaysSucceeded(t *testing.T) {
+	jobs := newSealCapture()
+	h := &backupHandler{cfg: BackupHandlerConfig{
+		Jobs: jobs,
+		Agent: restoreAgent{reply: json.RawMessage(
+			`{"job_id":"job-1","stages":[{"name":"home","status":"ok"},{"name":"db","status":"ok"}]}`)},
+	}}
+	h.runAccountRestoreJob("job-1", &models.BackupDestination{ID: "d1", Kind: "local"}, map[string]any{})
+	jobs.wait(t)
+	if jobs.status != models.BackupJobStatusSucceeded {
+		t.Errorf("status = %q, want succeeded — an old snapshot with no metadata is not a failure", jobs.status)
+	}
+	if jobs.errText != "" {
+		t.Errorf("no error expected on a clean restore without a bundle, got %q", jobs.errText)
+	}
+}
+
 // recordingAgent captures the params of the last call so wire-contract
 // assertions can look inside.
 type recordingAgent struct {
