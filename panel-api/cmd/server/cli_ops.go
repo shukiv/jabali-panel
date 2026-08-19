@@ -96,6 +96,7 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 		cascadeDeps := userops.Deps{
 			Domains:         domains,
 			DomainTeardowns: repository.NewDomainTeardownRepository(sharedDB),
+			PortAllocations: repository.NewPortAllocationRepository(sharedDB),
 			Agent:           caller,
 			Log:             slog.Default(),
 		}
@@ -266,6 +267,7 @@ func deleteDomainDirect(ctx context.Context, domainID string) (d *models.Domain,
 	deps := userops.Deps{
 		Domains:         domains,
 		DomainTeardowns: repository.NewDomainTeardownRepository(sharedDB),
+		PortAllocations: repository.NewPortAllocationRepository(sharedDB),
 		Agent:           caller,
 		Log:             sharedLog,
 	}
