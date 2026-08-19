@@ -1118,6 +1118,9 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
       title: "Name",
       dataIndex: "name",
       key: "name",
+      // GH #1184: opt-in sort; the default folder-first order shows until the
+      // user clicks a header.
+      sorter: (a: FileEntry, b: FileEntry) => a.name.localeCompare(b.name),
       render: (_: string, entry: FileEntry) => {
         const clickable = entry.is_dir || isImagePath(entry.name);
         return (
@@ -1144,6 +1147,7 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
       dataIndex: "size",
       key: "size",
       width: 120,
+      sorter: (a: FileEntry, b: FileEntry) => a.size - b.size,
       render: (_: number, entry: FileEntry) => {
         if (!entry.is_dir) return formatBytes(entry.size);
         // GH #657: folders show a real size only once calculated on demand.
@@ -1179,6 +1183,7 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
       dataIndex: "mod_time",
       key: "mod_time",
       width: 180,
+      sorter: (a: FileEntry, b: FileEntry) => a.mod_time.localeCompare(b.mod_time),
       render: (v: string) => formatModTime(v),
     },
     {
