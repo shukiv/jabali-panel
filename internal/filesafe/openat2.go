@@ -66,6 +66,14 @@ func (s *Scope) baseFor(pathStr string) (base, rel string, err error) {
 		if cleaned == dr {
 			return dr, ".", nil
 		}
+		// Root scope (GH #1184 admin FM): every absolute path is beneath "/".
+		// The naive dr+"/" prefix would be "//" and match nothing, so handle "/"
+		// explicitly — rel is the path minus its leading slash. (openat2 then
+		// resolves it RESOLVE_BENEATH the "/" base fd; absolute symlinks still
+		// fail closed, which is the intended safety, not a scope bug.)
+		if dr == "/" {
+			return dr, cleaned[1:], nil
+		}
 		if strings.HasPrefix(cleaned, dr+"/") {
 			return dr, cleaned[len(dr)+1:], nil
 		}

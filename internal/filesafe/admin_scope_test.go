@@ -71,3 +71,29 @@ func TestTenantScope_DenyListEmpty_NoOp(t *testing.T) {
 		t.Error("tenant scope must reject via not_in_scope, never path_denied")
 	}
 }
+
+// TestAdminScope_baseFor_RootTraversal pins the openat2 traversal helper for the
+// root scope — the box-verify caught baseFor rejecting /etc/* with a "//" prefix
+// bug even though verifyInScope passed (GH #1184).
+func TestAdminScope_baseFor_RootTraversal(t *testing.T) {
+	s, _ := NewAdminScope("uid", "admin", DefaultAdminDeniedPrefixes)
+	cases := map[string]string{
+		"/etc/nginx/nginx.conf": "etc/nginx/nginx.conf",
+		"/tmp/x":                "tmp/x",
+		"/var/log/syslog":       "var/log/syslog",
+	}
+	for path, wantRel := range cases {
+		base, rel, err := s.baseFor(path)
+		if err != nil {
+			t.Errorf("baseFor(%q) errored: %v", path, err)
+			continue
+		}
+		if base != "/" || rel != wantRel {
+			t.Errorf("baseFor(%q) = base %q rel %q; want base \"/\" rel %q", path, base, rel, wantRel)
+		}
+	}
+	// Root itself resolves to ".".
+	if base, rel, err := s.baseFor("/"); err != nil || base != "/" || rel != "." {
+		t.Errorf(`baseFor("/") = %q,%q,%v; want "/",".",nil`, base, rel, err)
+	}
+}
