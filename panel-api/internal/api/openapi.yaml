@@ -2981,6 +2981,90 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/files/home:
+    get:
+      tags: [Files]
+      summary: Admin file manager home
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/tree:
+    get:
+      tags: [Files]
+      summary: Admin file manager tree
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/download:
+    get:
+      tags: [Files]
+      summary: Admin file manager download
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/preview:
+    get:
+      tags: [Files]
+      summary: Admin file manager preview
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/move:
+    post:
+      tags: [Files]
+      summary: Admin file manager move
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/copy:
+    post:
+      tags: [Files]
+      summary: Admin file manager copy
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/archive:
+    post:
+      tags: [Files]
+      summary: Admin file manager archive
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/extract:
+    post:
+      tags: [Files]
+      summary: Admin file manager extract
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/upload:
+    post:
+      tags: [Files]
+      summary: Admin file manager upload
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/upload-chunk:
+    post:
+      tags: [Files]
+      summary: Admin file manager upload chunk
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/upload-chunk-status:
+    get:
+      tags: [Files]
+      summary: Admin file manager upload chunk status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/du:
+    get:
+      tags: [Files]
+      summary: Admin file manager disk usage
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /files:
     delete:
       tags: [Files]

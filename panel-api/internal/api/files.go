@@ -21,10 +21,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -168,10 +172,11 @@ type filesRenameAgentParams struct {
 }
 
 type filesMoveAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	OldPath  string `json:"old_path"`
-	NewPath  string `json:"new_path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	OldPath   string `json:"old_path"`
+	NewPath   string `json:"new_path"`
 }
 
 type filesChmodAgentParams struct {
@@ -183,9 +188,10 @@ type filesChmodAgentParams struct {
 }
 
 type filesArchiveAgentParams struct {
-	UserID   string   `json:"user_id"`
-	Username string   `json:"username"`
-	Paths    []string `json:"paths"`
+	UserID    string   `json:"user_id"`
+	Username  string   `json:"username"`
+	AdminRoot bool     `json:"admin_root,omitempty"`
+	Paths     []string `json:"paths"`
 }
 
 type filesArchiveAgentResult struct {
@@ -193,32 +199,43 @@ type filesArchiveAgentResult struct {
 	Size        int64  `json:"size"`
 }
 
+type filesDuAgentParams struct {
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
+}
+
 type filesExtractAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Dest     string `json:"dest,omitempty"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
+	Dest      string `json:"dest,omitempty"`
 }
 
 type filesCopyAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	SrcPath  string `json:"src_path"`
-	DstPath  string `json:"dst_path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	SrcPath   string `json:"src_path"`
+	DstPath   string `json:"dst_path"`
 }
 
 type filesIngestAgentParams struct {
 	Overwrite bool   `json:"overwrite,omitempty"`
 	UserID    string `json:"user_id"`
 	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
 	TmpPath   string `json:"tmp_path"`
 	DestPath  string `json:"dest_path"`
 }
 
 type filesStatAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
 }
 
 // FilesHandlerConfig bundles dependencies for /api/v1/files.
@@ -228,6 +245,8 @@ type FilesHandlerConfig struct {
 	Agent          agent.AgentInterface
 	Log            *slog.Logger
 	ServerSettings repository.ServerSettingsRepository // optional; nil → fall back to defaultMaxUploadBytes
+	// Audits records admin File Manager mutations (GH #1184). Optional.
+	Audits repository.AuditEventRepository
 }
 
 const (
@@ -283,6 +302,98 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	// many bytes of the upload-staging file already exist, so a reload
 	// mid-upload doesn't restart from zero.
 	grp.GET("/upload-chunk-status", h.uploadChunkStatus)
+
+	// GH #1184 admin File Manager: the SAME handlers mounted at /admin/files
+	// behind adminGate (admin claims + the default-off admin_file_manager_enabled
+	// setting). adminGate sets the context flag → requireClaimsAndUsername
+	// returns the admin ident and every agent call carries admin_root=true, so
+	// the agent uses the root scope + deny-list. Reusing the handlers keeps the
+	// admin File Manager byte-identical to the tenant one.
+	adm := g.Group("/admin/files", h.adminGate)
+	adm.GET("", h.list)
+	adm.DELETE("", h.delete)
+	adm.GET("/home", h.home)
+	adm.GET("/tree", h.tree)
+	adm.GET("/download", h.download)
+	adm.GET("/preview", h.preview)
+	adm.POST("/upload", filesUploadSizeLimit(func(c *gin.Context) int64 {
+		return h.resolveMaxUploadBytes(c.Request.Context())
+	}), h.upload)
+	adm.POST("/mkdir", h.mkdir)
+	adm.POST("/rename", h.rename)
+	adm.POST("/move", h.move)
+	adm.POST("/chmod", h.chmod)
+	adm.POST("/archive", h.archive)
+	adm.POST("/extract", h.extract)
+	adm.POST("/copy", h.copy)
+	adm.POST("/write", filesUploadSizeLimit(func(c *gin.Context) int64 {
+		return h.resolveMaxUploadBytes(c.Request.Context())
+	}), h.write)
+	adm.POST("/upload-chunk", h.uploadChunk)
+	adm.GET("/upload-chunk-status", h.uploadChunkStatus)
+	adm.GET("/du", h.du)
+}
+
+// du dispatches files.du for the admin File Manager (GH #1184). The tenant du
+// lives on /me/disk-usage/files; this admin-only variant carries admin_root so
+// it computes sizes anywhere under the root scope. Streams the agent JSON back
+// unchanged (same shape the tenant du surface returns).
+func (h *filesHandler) du(c *gin.Context) {
+	userID, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	p, ok := requirePath(c)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 55*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(ctx, "files.du", filesDuAgentParams{
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p,
+	})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", raw)
+}
+
+// adminGate authorises the GH #1184 admin File Manager: admin claims AND the
+// default-off admin_file_manager_enabled server setting. It flags the request
+// (→ admin_root everywhere) and best-effort audits each mutation.
+func (h *filesHandler) adminGate(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || !claims.IsAdmin {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	if h.cfg.ServerSettings == nil {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "admin_file_manager_disabled"})
+		return
+	}
+	s, err := h.cfg.ServerSettings.Get(c.Request.Context())
+	if err != nil || s == nil || !s.AdminFileManagerEnabled {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "admin_file_manager_disabled"})
+		return
+	}
+	c.Set(adminFilesCtxKey, true)
+	if h.cfg.Audits != nil && c.Request.Method != http.MethodGet {
+		actor := claims.UserID
+		ip := c.ClientIP()
+		_ = h.cfg.Audits.Create(c.Request.Context(), &models.AuditEvent{
+			ID:          ids.NewULID(),
+			TS:          time.Now().UTC(),
+			ActorUserID: &actor,
+			ActorKind:   models.AuditActorAdmin,
+			Action:      "admin.files " + c.Request.Method + " " + c.FullPath(),
+			TargetType:  "file",
+			TargetID:    c.Query("path"),
+			Result:      "ok",
+			SourceIP:    &ip,
+		})
+	}
+	c.Next()
 }
 
 type filesHandler struct{ cfg FilesHandlerConfig }
@@ -370,11 +481,28 @@ type filesReadAgentResult struct {
 
 // ---- helpers ----
 
+// adminFilesCtxKey flags a request served through the GH #1184 /admin/files
+// mount (set by adminGate). Handlers pass it as admin_root so the agent uses
+// the root scope + deny-list instead of the caller's home.
+const adminFilesCtxKey = "jabali_admin_files"
+
+func (h *filesHandler) adminRoot(c *gin.Context) bool { return c.GetBool(adminFilesCtxKey) }
+
 func (h *filesHandler) requireClaimsAndUsername(c *gin.Context) (userID, username string, ok bool) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return "", "", false
+	}
+	// GH #1184 admin File Manager: the /admin/files mount (adminGate already
+	// verified admin + the default-off setting) uses the root scope, so there
+	// is no linux home to resolve — the username is a non-empty label only.
+	if h.adminRoot(c) {
+		name := claims.Email
+		if name == "" {
+			name = "admin"
+		}
+		return claims.UserID, name, true
 	}
 	name, err := h.linuxUsername(c.Request.Context(), claims.UserID)
 	if err != nil {
@@ -494,7 +622,7 @@ func (h *filesHandler) list(c *gin.Context) {
 		return
 	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.list", filesListAgentParams{
-		UserID: userID, Username: username, Path: p,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -519,7 +647,7 @@ func (h *filesHandler) tree(c *gin.Context) {
 		return
 	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.list", filesListAgentParams{
-		UserID: userID, Username: username, Path: p,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -552,7 +680,7 @@ func (h *filesHandler) download(c *gin.Context) {
 		return
 	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.read", filesReadAgentParams{
-		UserID: userID, Username: username, Path: p, Limit: h.resolveMaxUploadBytes(c.Request.Context()),
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p, Limit: h.resolveMaxUploadBytes(c.Request.Context()),
 	})
 	if err != nil {
 		// GH #756: downloading a folder used to 500 (files.read can't read a
@@ -640,7 +768,7 @@ func (h *filesHandler) preview(c *gin.Context) {
 		return
 	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.read", filesReadAgentParams{
-		UserID: userID, Username: username, Path: p, Limit: maxPreviewBytes,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p, Limit: maxPreviewBytes,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -782,7 +910,7 @@ func (h *filesHandler) upload(c *gin.Context) {
 	c.Set("audit_target", destPath+" (upload)")
 	c.Set("audit_target_type", "file")
 	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
-		UserID: userID, Username: username, TmpPath: tmpPath, DestPath: destPath,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), TmpPath: tmpPath, DestPath: destPath,
 		Overwrite: c.Query("overwrite") == "true",
 	})
 	if err != nil {
@@ -804,7 +932,7 @@ func (h *filesHandler) mkdir(c *gin.Context) {
 		return
 	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.mkdir", filesMkdirAgentParams{
-		UserID: userID, Username: username, Path: req.Path,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -829,7 +957,7 @@ func (h *filesHandler) extract(c *gin.Context) {
 	c.Set("audit_target", req.Path) // GH #658: audit the concrete file path
 	c.Set("audit_target_type", "file")
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.extract", filesExtractAgentParams{
-		UserID: userID, Username: username, Path: req.Path, Dest: req.Dest,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Dest: req.Dest,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -856,7 +984,7 @@ func (h *filesHandler) rename(c *gin.Context) {
 	}
 	newPath := filepath.Join(filepath.Dir(req.Path), req.NewName)
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.rename", filesRenameAgentParams{
-		UserID: userID, Username: username, OldPath: req.Path, NewPath: newPath,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), OldPath: req.Path, NewPath: newPath,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -890,7 +1018,7 @@ func (h *filesHandler) move(c *gin.Context) {
 	}
 	newPath := filepath.Join(req.DestDir, filepath.Base(req.Path))
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.move", filesMoveAgentParams{
-		UserID: userID, Username: username, OldPath: req.Path, NewPath: newPath,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), OldPath: req.Path, NewPath: newPath,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -917,7 +1045,7 @@ func (h *filesHandler) chmod(c *gin.Context) {
 	c.Set("audit_target", req.Path) // GH #658: audit the concrete file path
 	c.Set("audit_target_type", "file")
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.chmod", filesChmodAgentParams{
-		UserID: userID, Username: username, Path: req.Path, Mode: req.Mode,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Mode: req.Mode,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -954,7 +1082,7 @@ func (h *filesHandler) archive(c *gin.Context) {
 // download handler's folder fallback (GH #756).
 func (h *filesHandler) streamArchive(c *gin.Context, userID, username string, paths []string, downloadName string) {
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.archive", filesArchiveAgentParams{
-		UserID: userID, Username: username, Paths: paths,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Paths: paths,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -1044,7 +1172,7 @@ func (h *filesHandler) copy(c *gin.Context) {
 	}
 	dst := filepath.Join(req.DestDir, filepath.Base(req.Path))
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.copy", filesCopyAgentParams{
-		UserID: userID, Username: username, SrcPath: req.Path, DstPath: dst,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), SrcPath: req.Path, DstPath: dst,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -1068,7 +1196,7 @@ func (h *filesHandler) write(c *gin.Context) {
 	c.Set("audit_target", req.Path) // GH #658: audit the concrete file path
 	c.Set("audit_target_type", "file")
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.write", filesWriteAgentParams{
-		UserID: userID, Username: username, Path: req.Path, Content: req.Content,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Content: req.Content,
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -1218,7 +1346,7 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 	c.Set("audit_target", destPath+" (chunked upload)")
 	c.Set("audit_target_type", "file")
 	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
-		UserID: userID, Username: username, TmpPath: tmpPath, DestPath: destPath,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), TmpPath: tmpPath, DestPath: destPath,
 		Overwrite: c.Query("overwrite") == "true",
 	})
 	if err != nil {
@@ -1272,7 +1400,7 @@ func (h *filesHandler) delete(c *gin.Context) {
 	c.Set("audit_target", p) // GH #658: audit which path was deleted
 	c.Set("audit_target_type", "file")
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.delete", filesDeleteAgentParams{
-		UserID: userID, Username: username, Path: p, Recursive: recursive,
+		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p, Recursive: recursive,
 	})
 	if err != nil {
 		respondAgentError(c, err)

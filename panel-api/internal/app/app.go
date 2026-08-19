@@ -1343,13 +1343,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:          deps.Agent,
 				Log:            deps.Log,
 				ServerSettings: deps.ServerSettings,
-			})
-			// GH #1184: admin File Manager (whole filesystem, deny-listed),
-			// gated by admin-auth + the default-off admin_file_manager_enabled
-			// setting inside the handler. Reuses the same agent file commands.
-			api.RegisterAdminFilesRoutes(v1, api.AdminFilesHandlerConfig{
-				Agent:          deps.Agent,
-				ServerSettings: deps.ServerSettings,
 				Audits:         automationAudits(deps.DB),
 			})
 		}

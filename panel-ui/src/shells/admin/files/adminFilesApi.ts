@@ -1,47 +1,61 @@
-// adminFilesApi.ts — typed wrappers around /api/v1/admin/files (GH #1184).
-// The whole-filesystem admin File Manager. Every call is gated server-side by
-// admin auth + the default-off admin_file_manager_enabled setting, and the
-// agent enforces the deny-list; this client just shapes the requests.
+// adminFilesApi.ts — the tenant FilesApi surface bound to /admin/files
+// (GH #1184). The admin File Manager renders the SAME FileManagerPage as the
+// tenant one, driven by this api object rooted at "/". Every route is gated
+// server-side by admin auth + the default-off admin_file_manager_enabled
+// setting, and the agent enforces the deny-list.
 import { apiClient } from "../../../apiClient";
-import type { FileEntry, FileListResponse } from "../../user/files/filesApi";
+import {
+  filesUpload,
+  filesUploadChunked,
+  type FilesApi,
+  type FileListResponse,
+  type FilePreviewResponse,
+  type FilesExtractResult,
+  type FilesDuResponse,
+} from "../../user/files/filesApi";
 
-export type { FileEntry, FileListResponse };
+const BASE = "/admin/files";
 
-export type AdminFileReadResponse = {
-  path: string;
-  content: string;
-  is_binary: boolean;
-  size: number;
-  truncated: boolean;
-  mime_type?: string;
+export const adminFilesApi: FilesApi = {
+  home: async () => ({ path: "/" }),
+  list: async (path) =>
+    (await apiClient.get<FileListResponse>(BASE, { params: { path } })).data,
+  tree: async (path) =>
+    (await apiClient.get<FileListResponse>(`${BASE}/tree`, { params: { path } })).data,
+  preview: async (path) =>
+    (await apiClient.get<FilePreviewResponse>(`${BASE}/preview`, { params: { path } })).data,
+  downloadURL: (path) => `/api/v1${BASE}/download?path=${encodeURIComponent(path)}`,
+  upload: (dirPath, file, onProgress, opts) =>
+    filesUpload(dirPath, file, onProgress, opts, BASE),
+  uploadChunked: (dirPath, file, chunkSize, onProgress, opts) =>
+    filesUploadChunked(dirPath, file, chunkSize, onProgress, opts, BASE),
+  write: async (path, content) => {
+    await apiClient.post(`${BASE}/write`, { path, content });
+  },
+  mkdir: async (path) => {
+    await apiClient.post(`${BASE}/mkdir`, { path });
+  },
+  extract: async (path, dest) =>
+    (await apiClient.post<FilesExtractResult>(`${BASE}/extract`, { path, dest })).data,
+  rename: async (path, newName) => {
+    await apiClient.post(`${BASE}/rename`, { path, new_name: newName });
+  },
+  move: async (path, destDir) => {
+    await apiClient.post(`${BASE}/move`, { path, dest_dir: destDir });
+  },
+  chmod: async (path, mode) => {
+    await apiClient.post(`${BASE}/chmod`, { path, mode });
+  },
+  copy: async (path, destDir) => {
+    await apiClient.post(`${BASE}/copy`, { path, dest_dir: destDir });
+  },
+  archive: async (paths) =>
+    (await apiClient.post<Blob>(`${BASE}/archive`, { paths }, { responseType: "blob" })).data,
+  delete: async (path, recursive = false) => {
+    await apiClient.delete(BASE, {
+      params: { path, ...(recursive ? { recursive: "true" } : {}) },
+    });
+  },
+  du: async (path) =>
+    (await apiClient.get<FilesDuResponse>(`${BASE}/du`, { params: { path } })).data,
 };
-
-export async function adminFilesList(path: string): Promise<FileListResponse> {
-  const r = await apiClient.get<FileListResponse>("/admin/files", { params: { path } });
-  return r.data;
-}
-
-export async function adminFilesRead(path: string): Promise<AdminFileReadResponse> {
-  const r = await apiClient.get<AdminFileReadResponse>("/admin/files/read", { params: { path } });
-  return r.data;
-}
-
-export async function adminFilesWrite(path: string, content: string): Promise<void> {
-  await apiClient.post("/admin/files/write", { path, content });
-}
-
-export async function adminFilesDelete(path: string, recursive: boolean): Promise<void> {
-  await apiClient.delete("/admin/files", { params: { path, recursive: recursive ? "true" : "false" } });
-}
-
-export async function adminFilesMkdir(path: string): Promise<void> {
-  await apiClient.post("/admin/files/mkdir", { path });
-}
-
-export async function adminFilesRename(path: string, newName: string): Promise<void> {
-  await apiClient.post("/admin/files/rename", { path, new_name: newName });
-}
-
-export async function adminFilesChmod(path: string, mode: string): Promise<void> {
-  await apiClient.post("/admin/files/chmod", { path, mode });
-}
