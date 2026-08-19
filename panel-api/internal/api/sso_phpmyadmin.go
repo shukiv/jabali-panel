@@ -198,19 +198,9 @@ func (h *ssoPhpMyAdminHandler) auditLog(ctx context.Context, userID, databaseID,
 // string comparison always fails on the panel's nginx-fronted topology.
 // Hostname + scheme is the actual same-origin invariant we need.
 func (h *ssoPhpMyAdminHandler) validateSameOrigin(c *gin.Context) bool {
-	origin := c.GetHeader("Origin")
-	referer := c.GetHeader("Referer")
-
-	if origin != "" {
-		return h.urlMatchesHost(c, origin)
-	}
-	if referer != "" {
-		return h.urlMatchesHost(c, referer)
-	}
-	// No origin/referer. Conservative: reject. POST from old browsers
-	// or curl without headers is less critical than blocking
-	// cross-origin attacks.
-	return false
+	// One shared exact same-origin policy across every DB-console SSO mint
+	// (JAB-304). Behaviour is unchanged for this already-strict path.
+	return sameOriginStrict(c)
 }
 
 // urlMatchesHost parses raw and compares its hostname (port stripped)

@@ -160,23 +160,9 @@ func (h *ssoAdminerHandler) getAdminerBaseURL(c *gin.Context) string {
 }
 
 func (h *ssoAdminerHandler) validateSameOrigin(c *gin.Context) bool {
-	origin := c.GetHeader("Origin")
-	referer := c.GetHeader("Referer")
-	if origin != "" {
-		return h.urlMatchesHost(c, origin)
-	}
-	if referer != "" {
-		return h.urlMatchesHost(c, referer)
-	}
-	return false
-}
-
-func (h *ssoAdminerHandler) urlMatchesHost(c *gin.Context, raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	return hostnameOf(u.Host) == hostnameOf(c.Request.Host)
+	// One shared exact same-origin policy across every DB-console SSO mint
+	// (JAB-304). Behaviour is unchanged for this already-strict path.
+	return sameOriginStrict(c)
 }
 
 func (h *ssoAdminerHandler) audit(ctx context.Context, userID, databaseID, hashPrefix, engine, outcome string) {

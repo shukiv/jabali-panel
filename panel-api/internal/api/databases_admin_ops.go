@@ -87,20 +87,6 @@ func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHand
 	grp.POST("/processes/kill", h.killProcess)
 }
 
-// sameOriginOK is a lightweight CSRF guard (ADR-0099): the request must
-// originate from the panel itself. Mirrors the per-user SSO handler's
-// intent without importing its unexported helpers.
-func sameOriginOK(c *gin.Context) bool {
-	origin := c.GetHeader("Origin")
-	if origin == "" {
-		// Some browsers omit Origin on top-level navigations; fall back
-		// to Referer host match.
-		ref := c.GetHeader("Referer")
-		return ref == "" || strings.Contains(ref, c.Request.Host)
-	}
-	return strings.Contains(origin, c.Request.Host)
-}
-
 func panelBaseURL(c *gin.Context) string {
 	scheme := "https"
 	if p := c.GetHeader("X-Forwarded-Proto"); p == "http" {
@@ -433,7 +419,7 @@ func (h *databaseAdminOpsHandler) ssoPhpMyAdminAdmin(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	if !sameOriginOK(c) {
+	if !sameOriginStrict(c) {
 		h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "forbidden", "same_origin")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
@@ -650,7 +636,7 @@ func (h *databaseAdminOpsHandler) ssoAdminerAdmin(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	if !sameOriginOK(c) {
+	if !sameOriginStrict(c) {
 		h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "forbidden", "same_origin")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
