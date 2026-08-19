@@ -4,7 +4,7 @@
 // auto-generates doc_root when blank. Post-M21: Form.useForm +
 // useCreateMutation, no Refine wrappers.
 import { useTranslation } from "react-i18next";
-import { Button, Card, Checkbox, Form, Input, Select, Typography } from "antd";
+import { Button, Card, Checkbox, Form, Input, Modal, Select, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
@@ -22,9 +22,12 @@ export type DomainCreateInput = {
   create_www?: boolean;
   temp_url_enabled?: boolean;
   ssl_mode?: string;
+  // GH #1175: reverse-proxy domain — the panel reserves a loopback port and
+  // proxies the domain to it. The assigned port comes back on create.
+  reverse_proxy?: boolean;
 };
 
-type DomainCreated = { id: string };
+type DomainCreated = { id: string; reverse_proxy_port?: number };
 
 export const DomainCreate = () => {
   const { t } = useTranslation();
@@ -46,8 +49,16 @@ export const DomainCreate = () => {
 
   const handleFinish = async (values: DomainCreateInput) => {
     try {
-      await createMutation.mutateAsync(values);
+      const created = await createMutation.mutateAsync(values);
       feedback.message.success("Domain created");
+      // GH #1175: the assigned loopback port is the one thing the operator
+      // must act on, so surface it in a modal that stays until dismissed.
+      if (values.reverse_proxy && created?.reverse_proxy_port) {
+        Modal.success({
+          title: "Reverse proxy ready",
+          content: `Run the app on 127.0.0.1:${created.reverse_proxy_port}. The panel proxies ${values.name} to that port and keeps the vhost in sync across TLS renewals.`,
+        });
+      }
       navigate("/jabali-admin/domains");
     } catch (err: unknown) {
       const msg =
@@ -176,6 +187,18 @@ export const DomainCreate = () => {
           tooltip="Serves the site at <domain-slug>.preview.<panel-hostname> so it can be checked before DNS points here."
         >
           <Checkbox>Enable preview URL</Checkbox>
+        </Form.Item>
+
+        {/* GH #1175: reverse-proxy option. The panel reserves a conflict-free
+            loopback port and writes the proxy_pass vhost; the assigned port is
+            shown after the domain is created. */}
+        <Form.Item
+          name="reverse_proxy"
+          valuePropName="checked"
+          initialValue={false}
+          tooltip="Turns this domain into a reverse proxy instead of a website. The panel reserves a local port and forwards the domain to it — run an app (a Docker container, Node service, …) on that port. The assigned port is shown after the domain is created."
+        >
+          <Checkbox>Set up as a reverse proxy (forward to a local app port)</Checkbox>
         </Form.Item>
 
         <Form.Item>
