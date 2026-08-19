@@ -32,6 +32,7 @@ type PackageCreateInput = {
   max_databases: number;
   max_docker_apps: number;
   max_python_apps: number;
+  max_ftp_accounts: number;
   // Tenant backup limits (GH #454).
   max_backups: number;
   max_backup_schedules: number;
@@ -141,6 +142,7 @@ export const PackageCreate = () => {
           max_databases: 0,
           max_docker_apps: 0,
           max_python_apps: 0,
+          max_ftp_accounts: 0,
           max_backups: 0,
           max_backup_schedules: 1,
           scheduled_backups_enabled: false,
@@ -289,6 +291,19 @@ export const PackageCreate = () => {
               label={t("packagecreate.max_python_apps")}
               name="max_python_apps"
               tooltip="0 = Python apps not included in this package"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            {/* JAB-328: the FTP account limit must be on CREATE too — omitting it
+                submitted the backend default 0, silently disabling FTP on every
+                panel-created package. 0 stays an explicit opt-out (tenant caps
+                default off), but it is now a visible choice, not a hidden gap. */}
+            <Form.Item
+              label={t("packagecreate.max_ftp_accounts")}
+              name="max_ftp_accounts"
+              tooltip="0 = FTP/SFTP accounts not included in this package"
             >
               <InputNumber min={0} style={{ width: "100%" }} />
             </Form.Item>

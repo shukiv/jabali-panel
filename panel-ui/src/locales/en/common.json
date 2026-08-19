@@ -725,6 +725,7 @@
     "max_docker_apps": "Max Docker Apps",
     "max_domains": "Max Domains",
     "max_email_accounts": "Max Email Accounts",
+    "max_ftp_accounts": "Max FTP/SFTP Accounts",
     "max_python_apps": "Max Python Apps",
     "max_tasks": "Max Tasks",
     "memory_limit_mb": "Memory Limit (MB)",
