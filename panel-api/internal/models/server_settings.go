@@ -148,6 +148,12 @@ type ServerSettings struct {
 	// exposed — the internal/unauthenticated endpoints stay :8443-only.
 	AutomationApiPublicEnabled bool `gorm:"column:automation_api_public_enabled;type:tinyint(1);not null;default:0" json:"automation_api_public_enabled"`
 
+	// AdminFileManagerEnabled (GH #1184) gates the admin File Manager — a
+	// whole-filesystem browser/editor (hard deny-listed in the agent) on the
+	// admin side. OFF by default: it exposes root-owned paths + edits through
+	// the panel UI, so it must be an explicit, deliberate enable.
+	AdminFileManagerEnabled bool `gorm:"column:admin_file_manager_enabled;type:tinyint(1);not null;default:0" json:"admin_file_manager_enabled"`
+
 	// InterceptAppErrorsDefault (GH #879) — server-wide default for the
 	// branded application-error page: nginx serves the themed 500 when a
 	// PHP app returns a 5xx (a fatal is a 500 with an empty body). Domains

@@ -173,6 +173,7 @@ type updateServerSettingsRequest struct {
 	// GH #1161: opt-in — also serve /api/v1/automation/ on :443 (default off,
 	// :8443 only). For billing hosts whose outbound firewall blocks 8443.
 	AutomationApiPublicEnabled *bool `json:"automation_api_public_enabled,omitempty"`
+	AdminFileManagerEnabled    *bool `json:"admin_file_manager_enabled,omitempty"` // GH #1184
 	// GH #879: server-wide default for the branded application-error page;
 	// domains override via nginx_safe_options.intercept_errors.
 	InterceptAppErrorsDefault *bool `json:"intercept_app_errors_default,omitempty"`
@@ -599,6 +600,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.AutomationApiPublicEnabled != nil {
 		current.AutomationApiPublicEnabled = *req.AutomationApiPublicEnabled
+	}
+	if req.AdminFileManagerEnabled != nil {
+		current.AdminFileManagerEnabled = *req.AdminFileManagerEnabled
 	}
 	if req.InterceptAppErrorsDefault != nil {
 		current.InterceptAppErrorsDefault = *req.InterceptAppErrorsDefault

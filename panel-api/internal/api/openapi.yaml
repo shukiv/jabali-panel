@@ -2934,6 +2934,53 @@ paths:
 
   # --- Files (auto) ---
 
+  /admin/files:
+    get:
+      tags: [Files]
+      summary: Admin file manager list (GH #1184; whole filesystem, deny-listed)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    delete:
+      tags: [Files]
+      summary: Admin file manager delete
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/read:
+    get:
+      tags: [Files]
+      summary: Admin file manager read file
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/write:
+    post:
+      tags: [Files]
+      summary: Admin file manager write file
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/mkdir:
+    post:
+      tags: [Files]
+      summary: Admin file manager mkdir
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/rename:
+    post:
+      tags: [Files]
+      summary: Admin file manager rename
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/files/chmod:
+    post:
+      tags: [Files]
+      summary: Admin file manager chmod
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /files:
     delete:
       tags: [Files]

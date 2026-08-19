@@ -120,45 +120,51 @@ func singleStagingPath(userID, rnd string) string {
 // Agent param struct types. JSON tags must match panel-agent/internal/commands/files_*.go
 // exactly — see files_wire_test.go for the drift-guard test.
 type filesListAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
 }
 
 type filesReadAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Limit    int64  `json:"limit,omitempty"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
+	Limit     int64  `json:"limit,omitempty"`
 }
 
 type filesWriteAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Mode     string `json:"mode,omitempty"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Mode      string `json:"mode,omitempty"`
 }
 
 type filesDeleteAgentParams struct {
 	UserID    string `json:"user_id"`
 	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
 	Path      string `json:"path"`
 	Recursive bool   `json:"recursive,omitempty"`
 }
 
 type filesMkdirAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Mode     string `json:"mode,omitempty"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
+	Mode      string `json:"mode,omitempty"`
 }
 
 type filesRenameAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	OldPath  string `json:"old_path"`
-	NewPath  string `json:"new_path"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	OldPath   string `json:"old_path"`
+	NewPath   string `json:"new_path"`
 }
 
 type filesMoveAgentParams struct {
@@ -169,10 +175,11 @@ type filesMoveAgentParams struct {
 }
 
 type filesChmodAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Mode     string `json:"mode"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	AdminRoot bool   `json:"admin_root,omitempty"`
+	Path      string `json:"path"`
+	Mode      string `json:"mode"`
 }
 
 type filesArchiveAgentParams struct {
