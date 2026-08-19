@@ -77,6 +77,11 @@ func RegisterUserLimitsRoutes(g *gin.RouterGroup, cfg UserLimitsHandlerConfig) {
 	h := &userLimitsHandler{cfg: cfg}
 	// Usage is a read-only view so owner or admin is fine.
 	g.GET("/users/:id/usage", middleware.RequireOwner("id"), h.usage)
+	// Measure runs an on-demand `du` walk on the agent (ionice'd, cached
+	// 60s agent-side) for hosts without filesystem quotas. Owner-or-admin
+	// like the read: it only recomputes the caller's own number. This
+	// replaced the automatic du fallback that IO-starved a box at peak.
+	g.POST("/users/:id/usage/measure-disk", middleware.RequireOwner("id"), h.measureDisk)
 	// Override writes are admin-only — changing a user's resource limits
 	// outside their package is operator territory, not self-service.
 	g.PUT("/users/:id/limit-overrides", middleware.RequireAdmin(), h.upsertOverride)
@@ -165,6 +170,44 @@ func (h *userLimitsHandler) usage(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// measureDisk asks the agent for a usage report WITH the on-demand disk
+// walk (measure_disk) and refreshes the cache with the result, so the next
+// GET /usage renders the measured number immediately. Longer timeout than
+// the read path: an ionice'd walk of a large home takes real seconds.
+func (h *userLimitsHandler) measureDisk(c *gin.Context) {
+	userID := c.Param("id")
+	user, err := h.cfg.Users.FindByID(c.Request.Context(), userID)
+	if err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if user.Username == nil || *user.Username == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "no_linux_account", "detail": "user has no linux account"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(ctx, "user.limits.report", map[string]any{
+		"username":     *user.Username,
+		"quota_mount":  h.cfg.QuotaMount,
+		"measure_disk": true,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
+		return
+	}
+	usageReportCachePut(*user.Username+"|"+h.cfg.QuotaMount, raw)
+	c.JSON(http.StatusOK, gin.H{"current": json.RawMessage(raw)})
 }
 
 // resolveEffective hydrates the user's package + any override row and

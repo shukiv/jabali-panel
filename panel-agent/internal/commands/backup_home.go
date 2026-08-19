@@ -1,10 +1,10 @@
 // Step 3 of M30: backup.home agent command. `restic backup /home/<u>` with
 // the canonical account_backup tag set.
 //
-// A best-effort `du -sb` pre-pass records the account's logical content size
-// (reported back as logical_bytes). It no longer caps the backup — large
-// accounts back up too; restic's dedup keeps the repo far below the logical
-// size (the old 50 GiB refusal was removed).
+// No size pre-pass: the old `du -sb` walk (a leftover from the removed
+// 50 GiB refusal ceiling) cost a full inode walk of every home on every
+// backup for a number nothing displayed. restic's own summary carries
+// bytes_total; disk accounting is the quota system's job.
 package commands
 
 import (
@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
@@ -69,7 +68,6 @@ type backupHomeResult struct {
 	ParentSnapshot string   `json:"parent_snapshot,omitempty"`
 	BytesAdded     uint64   `json:"bytes_added"`
 	BytesTotal     uint64   `json:"bytes_total"`
-	LogicalBytes   uint64   `json:"logical_bytes"`
 	Warnings       []string `json:"warnings,omitempty"`
 }
 
@@ -91,14 +89,6 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	homePath := filepath.Join("/home", req.Username)
 	if _, err := os.Stat(homePath); err != nil {
 		return nil, bkInvalidArg(fmt.Sprintf("user home not found: %s", homePath))
-	}
-
-	// Best-effort logical-size pre-pass, for reporting only (no ceiling). A
-	// du failure (e.g. a transient permission hiccup) must not block the
-	// backup — restic walks the tree itself.
-	logical, derr := duBytes(ctx, homePath)
-	if derr != nil {
-		logical = 0
 	}
 
 	if _, err := bkResticBin(); err != nil {
@@ -157,28 +147,8 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		SnapshotID:   summary.SnapshotID,
 		BytesAdded:   summary.DataAdded,
 		BytesTotal:   summary.TotalBytesProcessed,
-		LogicalBytes: logical,
 		Warnings:     summary.Warnings,
 	}, nil
-}
-
-// duBytes runs `du -sb <path>` and returns the byte count. Hard-fails
-// on a non-zero exit (could be permission-denied; treat as scan failure
-// rather than silently passing).
-func duBytes(ctx context.Context, path string) (uint64, error) {
-	out, err := execCommandContext(ctx, "du", "-sb", path).Output()
-	if err != nil {
-		return 0, fmt.Errorf("du -sb %s: %w", path, err)
-	}
-	fields := strings.Fields(strings.TrimSpace(string(out)))
-	if len(fields) == 0 {
-		return 0, fmt.Errorf("du -sb %s: empty output", path)
-	}
-	n, err := strconv.ParseUint(fields[0], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse du output %q: %w", fields[0], err)
-	}
-	return n, nil
 }
 
 func init() {

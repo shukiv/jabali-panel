@@ -5452,6 +5452,14 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /users/{id}/usage/measure-disk:
+    post:
+      tags: [Users]
+      summary: Measure disk usage on demand (quota-less hosts)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Whois (auto) ---
 

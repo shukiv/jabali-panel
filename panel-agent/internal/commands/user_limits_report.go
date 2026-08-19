@@ -33,6 +33,14 @@ import (
 type userLimitsReportParams struct {
 	Username   string `json:"username"`
 	QuotaMount string `json:"quota_mount"` // empty = skip quota reporting
+	// MeasureDisk opts in to an ON-DEMAND `du` walk when quota has no
+	// answer. The old behavior ran the walk automatically — including
+	// whenever quota reported 0 KB for an empty-looking user — which,
+	// under the dashboard's polling cadence, IO-starved a production box
+	// at peak hours. Now the walk runs ONLY when a human clicks Measure
+	// (still cached, and under ionice/nice so it can never compete with
+	// serving traffic).
+	MeasureDisk bool `json:"measure_disk,omitempty"`
 }
 
 type diskReport struct {
@@ -113,13 +121,16 @@ func userLimitsReportHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 		// quota exits non-zero when the user has no quota set on this
 		// mount — we treat that as "no disk report" rather than error.
-		if resp.Disk == nil || resp.Disk.UsedKB == 0 {
-			if du, ok := diskUsageFallback(ctx, p.Username); ok {
-				if resp.Disk == nil {
-					resp.Disk = &diskReport{UsedKB: du}
-				} else {
-					resp.Disk.UsedKB = du
-				}
+	}
+	// Quota is the ONLY automatic source. When it has no answer, the
+	// dashboard shows "—" and offers a Measure button; only that explicit
+	// request reaches the du path below.
+	if p.MeasureDisk && (resp.Disk == nil || resp.Disk.UsedKB == 0) {
+		if du, ok := diskUsageMeasure(ctx, p.Username); ok {
+			if resp.Disk == nil {
+				resp.Disk = &diskReport{UsedKB: du}
+			} else {
+				resp.Disk.UsedKB = du
 			}
 		}
 	}
@@ -292,10 +303,12 @@ var (
 	duCache   = map[string]duCacheEntry{}
 )
 
-// diskUsageFallback returns used KB for /home/<username> using `du -sk`.
-// Cached for duCacheTTL. Returns (0, false) on any error so the caller
-// falls through to the existing "no disk report" branch.
-func diskUsageFallback(ctx context.Context, username string) (uint64, bool) {
+// diskUsageMeasure returns used KB for /home/<username> using an
+// ionice'd/niced `du -sk`. ON-DEMAND ONLY (Measure button) — never called
+// automatically. Cached for duCacheTTL so button-mashing costs one walk.
+// Returns (0, false) on any error so the caller falls through to the
+// existing "no disk report" branch.
+func diskUsageMeasure(ctx context.Context, username string) (uint64, bool) {
 	duCacheMu.Lock()
 	if e, ok := duCache[username]; ok && time.Since(e.at) < duCacheTTL {
 		duCacheMu.Unlock()
@@ -308,11 +321,26 @@ func diskUsageFallback(ctx context.Context, username string) (uint64, bool) {
 		return 0, false
 	}
 
+	used, ok := measureHomeKB(ctx, home)
+	if !ok {
+		return 0, false
+	}
+
+	duCacheMu.Lock()
+	duCache[username] = duCacheEntry{usedKB: used, at: time.Now()}
+	duCacheMu.Unlock()
+	return used, true
+}
+
+// measureHomeKB runs the actual walk: idle IO class + lowest CPU priority,
+// so a Measure click on a huge home loses every fight against serving
+// traffic. Split from diskUsageMeasure so the command shape is testable.
+func measureHomeKB(ctx context.Context, home string) (uint64, bool) {
 	testMutex.Lock()
 	runCmdFn := runCmd
 	testMutex.Unlock()
 
-	stdout, _, err := runCmdFn(ctx, "du", "-sk", home)
+	stdout, _, err := runCmdFn(ctx, "ionice", "-c3", "nice", "-n19", "du", "-sk", home)
 	if err != nil {
 		return 0, false
 	}
@@ -324,10 +352,6 @@ func diskUsageFallback(ctx context.Context, username string) (uint64, bool) {
 	if err != nil {
 		return 0, false
 	}
-
-	duCacheMu.Lock()
-	duCache[username] = duCacheEntry{usedKB: used, at: time.Now()}
-	duCacheMu.Unlock()
 	return used, true
 }
 

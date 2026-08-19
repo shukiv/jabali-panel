@@ -103,6 +103,16 @@ export function UserLimitsCard({ userId }: { userId: string }) {
     onError: () => feedback.message.error("Failed to clear overrides"),
   });
 
+  const measureMutation = useMutation({
+    mutationFn: async () => {
+      await apiClient.post(`/users/${userId}/usage/measure-disk`);
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["user-usage", userId] });
+    },
+    onError: () => feedback.message.error("Disk measurement failed"),
+  });
+
   const rows: Row[] = FIELDS.map((f) => {
     const pkg = data?.package?.[f.key];
     const override = data?.override?.[f.key];
@@ -195,7 +205,20 @@ export function UserLimitsCard({ userId }: { userId: string }) {
         <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
           Live disk usage: {(diskUsed / 1024).toFixed(0)} MB
         </Typography.Paragraph>
-      ) : null}
+      ) : (
+        // No quota answer on this host (quotas off, or the user genuinely
+        // empty). Nothing walks the disk automatically anymore — the old
+        // automatic `du` fallback IO-starved a box at peak — so offer a
+        // one-click, agent-side-throttled measurement instead.
+        <Space style={{ marginTop: 12 }}>
+          <Typography.Text type="secondary">Disk usage: —</Typography.Text>
+          <Tooltip title="Runs a one-time size scan on the server (low IO priority). Only needed when filesystem quotas are off.">
+            <Button size="small" loading={measureMutation.isPending} onClick={() => measureMutation.mutate()}>
+              Measure
+            </Button>
+          </Tooltip>
+        </Space>
+      )}
 
       <EditOverridesDrawer
         open={editOpen}
