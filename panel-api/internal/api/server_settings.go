@@ -52,6 +52,10 @@ func RegisterServerSettingsRoutes(g *gin.RouterGroup, cfg ServerSettingsHandlerC
 	// toggle installs, and re-dispatches an install as a retry affordance.
 	admin.GET("/modules/status", h.moduleStatus)
 	admin.POST("/modules/install", h.moduleInstall)
+	// JAB-259/260 phase C: observed-vs-desired FTP posture so the FTP card can
+	// warn when the host disagrees with the panel (still serving after a disable,
+	// or plaintext after a tighten) instead of rendering a false off/secure.
+	admin.GET("/modules/ftp/status", h.ftpStatus)
 	// JAB-213: activate a free jabalihosted.com hostname from Server Settings.
 	admin.POST("/free-hostname/register", h.freeHostnameRegister)
 	admin.POST("/free-hostname/claim", h.freeHostnameClaim)
@@ -1503,6 +1507,65 @@ func (h *serverSettingsHandler) moduleStatus(c *gin.Context) {
 		out[key] = e
 	}
 	c.JSON(http.StatusOK, gin.H{"modules": out})
+}
+
+// ftpStatus returns the observed-vs-desired FTP posture (JAB-259/260 phase C).
+// The FTP card renders a drift warning when the host disagrees with the panel:
+//   - exposure: FTP is desired OFF but vsftpd is still active (a fail-open
+//     disable — JAB-259).
+//   - tls: FTP is desired ON + secure but the live daemon still accepts plaintext
+//     (a silently-failed tighten — JAB-260).
+//
+// A missing/unreachable agent yields effective=null + no drift; the UI treats an
+// absent effective state as "unknown", never as a confirmed secure state.
+func (h *serverSettingsHandler) ftpStatus(c *gin.Context) {
+	ctx := c.Request.Context()
+	s, err := h.cfg.Repo.Get(ctx)
+	if errors.Is(err, repository.ErrNotFound) {
+		s = &models.ServerSettings{ID: 1}
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	desired := gin.H{"enabled": s.FTPEnabled, "allow_plaintext": s.FTPAllowPlaintext}
+	noDrift := gin.H{"exposure": false, "tls": false}
+
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusOK, gin.H{"desired": desired, "effective": nil, "drift": noDrift})
+		return
+	}
+	sctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(sctx, "ftp.status", map[string]any{})
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"desired": desired, "effective": nil, "drift": noDrift})
+		return
+	}
+	var eff struct {
+		ConfExists  bool `json:"conf_exists"`
+		SSLEnforced bool `json:"ssl_enforced"`
+		Active      bool `json:"active"`
+		Masked      bool `json:"masked"`
+		PortsOpen   bool `json:"ports_open"`
+	}
+	if err := json.Unmarshal(raw, &eff); err != nil {
+		c.JSON(http.StatusOK, gin.H{"desired": desired, "effective": nil, "drift": noDrift})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"desired":   desired,
+		"effective": eff,
+		"drift": gin.H{
+			// exposure (error): FTP off but vsftpd still serving (JAB-259).
+			"exposure": !s.FTPEnabled && eff.Active,
+			// tls (error): FTP on + secure but the live daemon accepts plaintext (JAB-260).
+			"tls": s.FTPEnabled && !s.FTPAllowPlaintext && eff.Active && !eff.SSLEnforced,
+			// ports (warning): FTP off, daemon stopped, but the firewall still
+			// allows the FTP ports. Not exposure (nothing is listening) but a
+			// leftover rule worth flagging.
+			"ports": !s.FTPEnabled && !eff.Active && eff.PortsOpen,
+		},
+	})
 }
 
 // moduleInstall re-dispatches a module install in the background. It is the UI's

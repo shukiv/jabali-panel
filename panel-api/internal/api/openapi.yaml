@@ -4645,6 +4645,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/settings/modules/ftp/status:
+    get:
+      tags: [Settings]
+      summary: FTP observed-vs-desired status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /admin/settings/notification-events:
     get:
       tags: [Settings]

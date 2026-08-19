@@ -20,6 +20,42 @@ export const FtpServerCard = () => {
   const [maxRateKBs, setMaxRateKBs] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // JAB-259/260 phase C: observed-vs-desired. The host converges asynchronously,
+  // so a toggle can leave a transient gap; a persistent gap (a fail-open disable
+  // or a silently-failed plaintext tighten) is a real security drift the operator
+  // must see rather than trust a false "off"/"secure". Polled so a healed drift
+  // clears itself and a stuck one stays visible.
+  const [drift, setDrift] = useState<{ exposure: boolean; tls: boolean; ports: boolean }>({
+    exposure: false,
+    tls: false,
+    ports: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const resp = await apiClient.get<{
+          drift?: { exposure?: boolean; tls?: boolean; ports?: boolean };
+        }>("/admin/settings/modules/ftp/status");
+        if (!cancelled) {
+          setDrift({
+            exposure: !!resp.data.drift?.exposure,
+            tls: !!resp.data.drift?.tls,
+            ports: !!resp.data.drift?.ports,
+          });
+        }
+      } catch {
+        // Status is best-effort; never block the card on a probe hiccup.
+      }
+    };
+    poll();
+    const id = window.setInterval(poll, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +106,30 @@ export const FtpServerCard = () => {
         {t("ftpservercard.description")}
       </Typography.Paragraph>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        {drift.exposure && (
+          <Alert
+            type="error"
+            showIcon
+            message={t("ftpservercard.drift_exposure_title")}
+            description={t("ftpservercard.drift_exposure_desc")}
+          />
+        )}
+        {drift.tls && (
+          <Alert
+            type="error"
+            showIcon
+            message={t("ftpservercard.drift_tls_title")}
+            description={t("ftpservercard.drift_tls_desc")}
+          />
+        )}
+        {drift.ports && (
+          <Alert
+            type="warning"
+            showIcon
+            message={t("ftpservercard.drift_ports_title")}
+            description={t("ftpservercard.drift_ports_desc")}
+          />
+        )}
         <Form.Item label={t("ftpservercard.enable_label")} style={{ marginBottom: 0 }}>
           <Switch
             checked={enabled}

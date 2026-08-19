@@ -41,15 +41,22 @@ func ftpConfigStatusHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "read vsftpd.conf: " + err.Error()}
 	}
 	kv := parseVsftpdConf(string(data))
-	// Absent directives read as "" — the legitimate ssl_enable=NO render (no TLS
-	// block at all) correctly reports SSLEnforced=false, which equals the
-	// plaintext-desired state, so it is NOT flagged as drift.
 	return ftpConfigStatusResponse{
-		Exists: true,
-		SSLEnforced: kv["ssl_enable"] == "YES" &&
-			kv["force_local_logins_ssl"] == "YES" &&
-			kv["force_local_data_ssl"] == "YES",
+		Exists:      true,
+		SSLEnforced: vsftpdSSLEnforced(kv),
 	}, nil
+}
+
+// vsftpdSSLEnforced reports whether the parsed config enforces TLS on BOTH the
+// control and data channels. Absent directives read as "" — the legitimate
+// ssl_enable=NO render (no TLS block at all) correctly reports false, which
+// equals the plaintext-desired state and is therefore NOT drift. Shared by
+// ftp.config_status and ftp.status so the two verbs can never disagree on what
+// "enforced" means.
+func vsftpdSSLEnforced(kv map[string]string) bool {
+	return kv["ssl_enable"] == "YES" &&
+		kv["force_local_logins_ssl"] == "YES" &&
+		kv["force_local_data_ssl"] == "YES"
 }
 
 // parseVsftpdConf maps the `key=value` directives, skipping comments/blanks.

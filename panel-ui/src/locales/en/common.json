@@ -1577,7 +1577,13 @@
     "save": "Save",
     "saved": "Saved",
     "load_failed": "Failed to load FTP settings",
-    "save_failed": "Failed to save FTP settings"
+    "save_failed": "Failed to save FTP settings",
+    "drift_exposure_title": "FTP is set to Off but the server is still running",
+    "drift_exposure_desc": "vsftpd is still active on this host despite FTP being disabled. The panel is retrying the shutdown; if this persists, the ports may still be reachable — check the host.",
+    "drift_tls_title": "Encryption is required but the server still accepts plaintext",
+    "drift_tls_desc": "The running FTP configuration does not enforce TLS even though plaintext is not allowed. A configuration apply likely failed; the panel is retrying. Until it clears, credentials could be sent unencrypted.",
+    "drift_ports_title": "FTP is off but the firewall still allows the FTP ports",
+    "drift_ports_desc": "The FTP server is stopped, so nothing is listening, but port 21 and the passive range are still open in the firewall. This is not an active exposure; the panel is closing the rules."
   },
   "forwarderstab": {
     "add_forwarder": "Add forwarder",
