@@ -352,6 +352,24 @@ export const UserFtpAccountsPage = () => {
           >
             <Switch disabled={!isoAvailable} />
           </Form.Item>
+          {/* GH #1145: a shared account's SFTP chroots to the whole account
+              home, so it is NOT directory-scoped (it starts in the folder but
+              can navigate up). Warn when the account will be shared. */}
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, cur) => prev.isolated !== cur.isolated}
+          >
+            {({ getFieldValue }) =>
+              !isoAvailable || getFieldValue("isolated") === false ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message={t("ftpaccounts.shared_sftp_scope_warning")}
+                />
+              ) : null
+            }
+          </Form.Item>
           <Form.Item
             noStyle
             shouldUpdate={(prev, cur) => prev.isolated !== cur.isolated}

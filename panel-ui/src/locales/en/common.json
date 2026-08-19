@@ -1553,6 +1553,7 @@
     "isolated_label": "Isolated account",
     "isolated_tooltip": "Give this account its own identity confined to the chosen folder — it cannot reach the rest of your files. Recommended. Turn off only for a legacy shared-access account.",
     "isolated_unavailable": "Isolated accounts need filesystem disk quota, which isn't enabled on this server, so new accounts are created shared. Ask your administrator to enable the disk-quota module to use isolation.",
+    "shared_sftp_scope_warning": "Shared accounts aren't directory-scoped over SFTP: the connection starts in the chosen folder but can navigate up to the whole account home. Isolated accounts confine SFTP to their folder (they need filesystem disk quota).",
     "isolated_tag": "Isolated",
     "shared_tag": "Shared access",
     "quota_label": "Disk quota",
