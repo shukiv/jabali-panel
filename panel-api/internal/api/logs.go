@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/logaccess"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -182,8 +184,11 @@ func (h *logHandler) createAccess(c *gin.Context) {
 		return
 	}
 
-	// Validate domain access if domain_id is provided
-	if req.DomainID != "" {
+	// Validate grant scope through the shared policy (JAB-303). The caller is
+	// the beneficiary here, so claims.IsAdmin is the beneficiary's admin status.
+	domainProvided := req.DomainID != ""
+	domainOwned := false
+	if domainProvided {
 		if h.cfg.Domains == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "domain service not available"})
 			return
@@ -198,15 +203,15 @@ func (h *logHandler) createAccess(c *gin.Context) {
 			}
 			return
 		}
+		domainOwned = domain.UserID == claims.UserID
+	}
 
-		// Non-admin users can only access their own domain logs
-		if !claims.IsAdmin && domain.UserID != claims.UserID {
+	if err := logaccess.ValidateGrantScope(claims.IsAdmin, domainProvided, domainOwned); err != nil {
+		if errors.Is(err, logaccess.ErrDomainNotOwned) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
-			return
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "domain_id required for non-admin users"})
 		}
-	} else if !claims.IsAdmin {
-		// Non-admin users must specify a domain
-		c.JSON(http.StatusBadRequest, gin.H{"error": "domain_id required for non-admin users"})
 		return
 	}
 

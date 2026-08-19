@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -25,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/logaccess"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -109,16 +111,26 @@ func newLogAccessCreateCmd() *cobra.Command {
 			}
 			repo := logAccessRepoFromDB()
 
+			// JAB-303: enforce the SAME grant-scope policy the HTTP handler uses.
+			// The beneficiary is --user (u); a nil-domain grant is server-wide, so
+			// it is admin-only. Without this an operator could mint a server-wide
+			// grant owned by a tenant (cross-tenant / system log disclosure).
 			var domainID *string
-			if domainRef != "" {
+			domainProvided := domainRef != ""
+			domainOwned := false
+			if domainProvided {
 				dom, derr := resolveDomainCLI(ctx, domainRef)
 				if derr != nil {
 					return derr
 				}
-				if dom.UserID != u.ID {
-					return fmt.Errorf("domain %s does not belong to %s", dom.Name, u.Email)
-				}
+				domainOwned = dom.UserID == u.ID
 				domainID = &dom.ID
+			}
+			if err := logaccess.ValidateGrantScope(u.IsAdmin, domainProvided, domainOwned); err != nil {
+				if errors.Is(err, logaccess.ErrDomainNotOwned) {
+					return fmt.Errorf("domain %s does not belong to %s", domainRef, u.Email)
+				}
+				return fmt.Errorf("%w (user %s is not an admin)", err, u.Email)
 			}
 
 			// Per-user concurrency cap (5), same as the REST handler.
