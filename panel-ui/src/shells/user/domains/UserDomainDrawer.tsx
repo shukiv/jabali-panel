@@ -1,7 +1,7 @@
 // UserDomainDrawer — tenant Add-domain Drawer (replaces the
 // /jabali-panel/domains/create page route).
 import { useTranslation } from "react-i18next";
-import { Button, Checkbox, Drawer, Form, Grid, Input, Modal, Select, Space } from "antd";
+import { Button, Checkbox, Drawer, Form, Grid, Input, Select, Space } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect } from "react";
 
@@ -50,7 +50,7 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
       // must act on (bind their app to it), so surface it in a modal that
       // stays until dismissed rather than a toast they might miss.
       if (values.reverse_proxy && created?.reverse_proxy_port) {
-        Modal.success({
+        feedback.modal.success({
           title: "Reverse proxy ready",
           content: `Run your app on 127.0.0.1:${created.reverse_proxy_port}. The panel proxies ${values.name} to that port and keeps the vhost in sync across TLS renewals.`,
         });

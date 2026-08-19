@@ -4,7 +4,7 @@
 // auto-generates doc_root when blank. Post-M21: Form.useForm +
 // useCreateMutation, no Refine wrappers.
 import { useTranslation } from "react-i18next";
-import { Button, Card, Checkbox, Form, Input, Modal, Select, Typography } from "antd";
+import { Button, Card, Checkbox, Form, Input, Select, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
@@ -54,7 +54,7 @@ export const DomainCreate = () => {
       // GH #1175: the assigned loopback port is the one thing the operator
       // must act on, so surface it in a modal that stays until dismissed.
       if (values.reverse_proxy && created?.reverse_proxy_port) {
-        Modal.success({
+        feedback.modal.success({
           title: "Reverse proxy ready",
           content: `Run the app on 127.0.0.1:${created.reverse_proxy_port}. The panel proxies ${values.name} to that port and keeps the vhost in sync across TLS renewals.`,
         });
