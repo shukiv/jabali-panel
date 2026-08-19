@@ -1937,6 +1937,7 @@ jabali domain create [flags]
 
 - `--doc-root` — Document root (optional, auto-generated if not provided)
 - `--name` — Domain name (required)
+- `--reverse-proxy` — Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)
 - `--user` — User email, username, or ULID (required)
 
 #### `jabali domain delete`
