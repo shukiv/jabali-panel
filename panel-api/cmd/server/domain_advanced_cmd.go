@@ -228,6 +228,26 @@ func newDomainSetCmd() *cobra.Command {
 			if err := domainRepoFromDB().Update(ctx, d); err != nil {
 				return fmt.Errorf("update domain: %w", err)
 			}
+			// JAB-313: ssl_mode is authoritative (ADR-0141) but is NOT in the
+			// general Update column allowlist (domain_repository.go: "SSL flags ...
+			// have their own dedicated repo methods"), so the assignment above was
+			// silently dropped — the command reported success while the mode never
+			// changed and the reconciler kept the old TLS behavior. Persist it
+			// through the dedicated writer, which also keeps ssl_enabled consistent,
+			// exactly as the HTTP path and ssl_custom_cmd.go do.
+			if cmd.Flags().Changed("ssl-mode") {
+				if err := domainRepoFromDB().UpdateSSLMode(ctx, d.ID, sslMode); err != nil {
+					return fmt.Errorf("persist ssl mode: %w", err)
+				}
+			}
+			// JAB-313 sibling: cache_enabled is likewise excluded from the general
+			// Update allowlist and has its own dedicated writer (ADR-0108), so
+			// --cache was being silently dropped the same way. Persist it here too.
+			if cmd.Flags().Changed("cache") {
+				if err := domainRepoFromDB().UpdateCacheEnabled(ctx, d.ID, d.CacheEnabled); err != nil {
+					return fmt.Errorf("persist cache setting: %w", err)
+				}
+			}
 			cliAuditOK(ctx, "domain.settings_update", "domain", d.ID, &d.UserID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Updated %s. Converges on the next reconcile pass (≤60s): nginx re-render/reload%s.\n",
 				d.Name, map[bool]string{true: " + SSL re-issue", false: ""}[cmd.Flags().Changed("ssl-mode")])
