@@ -110,7 +110,7 @@ export function UserLayout() {
   }, [location.pathname]);
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
+    <Layout style={{ minHeight: "100dvh" }}>
       <ImpersonationBanner />
       <JabaliHeader
         showMenuButton={!isDesktop}

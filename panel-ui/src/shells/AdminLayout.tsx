@@ -111,7 +111,7 @@ export function AdminLayout() {
     // Content scrolls). On mobile that pins the version footer to the bottom of a
     // viewport-height scroll box, eating screen space on short pages — so mobile
     // uses natural document scroll (minHeight) and the footer flows after content.
-    <Layout style={isDesktop ? { height: "100vh", overflow: "hidden" } : { minHeight: "100vh" }}>
+    <Layout style={isDesktop ? { height: "100vh", overflow: "hidden" } : { minHeight: "100dvh" }}>
       <JabaliHeader
         showMenuButton={!isDesktop}
         onMenuClick={() => setDrawerOpen(true)}
