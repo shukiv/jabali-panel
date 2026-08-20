@@ -31,20 +31,25 @@ vi.mock("../../../hooks/useQueries", () => ({
   useCreateMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
-const mariaRow = {
-  id: "db1",
-  user_id: "u1",
-  name: "shop_db",
-  engine: "mariadb",
-  charset: "utf8mb4",
-  created_at: "2026-08-01T00:00:00Z",
-  updated_at: "2026-08-01T00:00:00Z",
-};
+// Hoisted mutable holder so a test can swap the table's rows (e.g. to a
+// Postgres row) before render. Defaults to a single MariaDB row.
+const { rowsHolder, mariaRow } = vi.hoisted(() => {
+  const mariaRow = {
+    id: "db1",
+    user_id: "u1",
+    name: "shop_db",
+    engine: "mariadb",
+    charset: "utf8mb4",
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+  };
+  return { rowsHolder: { rows: [mariaRow] as Array<typeof mariaRow> }, mariaRow };
+});
 
 vi.mock("../../../hooks/useTableURL", () => ({
   useTableURL: () => ({
-    items: [mariaRow],
-    total: 1,
+    items: rowsHolder.rows,
+    total: rowsHolder.rows.length,
     isLoading: false,
     params: { page: 1, pageSize: 20, q: "", sort: "name", order: "asc" },
     setParams: vi.fn(),
@@ -74,6 +79,8 @@ const openRowMenu = async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Restore the default single-MariaDB-row table (a PG test swaps it).
+  rowsHolder.rows = [mariaRow];
   // jsdom doesn't implement createObjectURL — stub it so the save-as
   // path runs.
   vi.stubGlobal("URL", {
@@ -152,6 +159,44 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
     });
     // Same teardown-race guard as the download test: flush the restore
     // continuation (toast + query invalidation), then unmount.
+    await act(async () => {});
+    unmount();
+  });
+
+  // GH #1045 PostgreSQL parity: Download backup works for a Postgres row
+  // (pg_dump path), but Restore from file stays disabled until the
+  // privilege-scoped loader ships.
+  it("enables Download for Postgres but keeps Restore disabled", async () => {
+    rowsHolder.rows = [{ ...mariaRow, name: "pg_shop", engine: "postgres" }];
+    mockedDownload.mockResolvedValue({
+      blob: new Blob(["SQL"], { type: "application/sql" }),
+      filename: "pg_shop-20260821-010203.sql",
+    });
+
+    const { unmount } = render(
+      <App>
+        <UserDatabaseList />
+      </App>,
+    );
+
+    await openRowMenu();
+
+    // Restore is present but disabled for Postgres. AntD marks the menu item
+    // aria-disabled (pointer-events:none blocks the real click); assert that
+    // state rather than a click, which jsdom would let through.
+    const restoreItem = await screen.findByText("Restore from file", undefined, {
+      timeout: 5000,
+    });
+    const restoreLi = restoreItem.closest("li");
+    expect(restoreLi).not.toBeNull();
+    // AntD adds the -item-disabled modifier class to a disabled menu item.
+    expect(restoreLi?.className).toMatch(/-item-disabled\b/);
+
+    // Download still works.
+    fireEvent.click(await screen.findByText("Download backup"));
+    await waitFor(() => {
+      expect(mockedDownload).toHaveBeenCalledWith("db1");
+    });
     await act(async () => {});
     unmount();
   });

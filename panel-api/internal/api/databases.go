@@ -487,7 +487,15 @@ func (h *databaseHandler) backup(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	result, err := h.cfg.Agent.Call(agentCtx, "db.backup", map[string]any{
+	// Dispatch by engine — Postgres dumps via pg_dump, MariaDB via mysqldump.
+	// Both agent verbs write to the panel-readable staging dir and re-own the
+	// dump to the service user, so the streaming below is engine-agnostic
+	// (GH #1045 PostgreSQL parity). Mirrors the delete handler's dropCmd branch.
+	backupCmd := "db.backup"
+	if d.Engine == "postgres" {
+		backupCmd = "db.postgres.backup"
+	}
+	result, err := h.cfg.Agent.Call(agentCtx, backupCmd, map[string]any{
 		"db_name": d.Name,
 	})
 	if err != nil {
@@ -557,6 +565,23 @@ func (h *databaseHandler) restore(c *gin.Context) {
 	// Check authorization: admins can restore any; users only their own
 	if !claims.IsAdmin && d.UserID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	// GH #1045 PostgreSQL parity — restore is MariaDB-only for now. The
+	// MariaDB path loads tenant-supplied SQL through a db-scoped, unprivileged
+	// shadow account (db_load_scoped.go, JAB-239); loading an uploaded dump as
+	// the postgres superuser would execute arbitrary attacker SQL (COPY FROM
+	// PROGRAM, CREATE FUNCTION, cross-DB reads) with cluster privileges. The
+	// privilege-scoped Postgres loader is the next slice — until it lands,
+	// refuse rather than fall through to the MariaDB verb (which would run
+	// mysql against a Postgres database). The UI keeps the action disabled for
+	// Postgres rows; this is the belt-and-braces server guard.
+	if d.Engine == "postgres" {
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error":  "not_implemented",
+			"detail": "PostgreSQL restore from file is not yet available",
+		})
 		return
 	}
 

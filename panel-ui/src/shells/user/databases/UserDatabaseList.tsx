@@ -3,8 +3,9 @@
 // apiClient helper; a blank tab is opened synchronously to dodge
 // popup blockers while the SSO call runs.
 // GH #1045: per-database Backup/Restore actions (download a one-shot
-// dump; restore from an uploaded .sql file) — MariaDB only, the agent
-// verbs shell out to mariadb-dump/mysql.
+// dump; restore from an uploaded .sql file). Download backup works for
+// MariaDB (mariadb-dump) and PostgreSQL (pg_dump); restore is MariaDB
+// only for now — the privilege-scoped Postgres loader is the next slice.
 import { useTranslation } from "react-i18next";
 import { useRef, useState, type ChangeEvent } from "react";
 import { shortDateTime } from "../../../utils/datetime";
@@ -350,20 +351,19 @@ export const UserDatabaseList = () => {
                 disabled: isAdminerLoading,
                 loading: isAdminerLoading,
               };
-              // GH #1045 — per-database backup/restore. The agent verbs
-              // shell out to mariadb-dump/mysql, so both are MariaDB-only
-              // (same gate as phpMyAdmin).
-              const mariaOnlyTooltip = isPostgres
-                ? "Backup/restore supports MySQL/MariaDB only"
-                : undefined;
+              // GH #1045 — per-database backup/restore. Download backup works
+              // for both engines (mariadb-dump / pg_dump). Restore is still
+              // MariaDB-only: the MariaDB loader confines a tenant dump to a
+              // db-scoped, unprivileged account, and the equivalent
+              // privilege-scoped Postgres loader is the next slice — until it
+              // lands, restore stays disabled for Postgres rows.
               const backupAction = {
                 key: "backup",
                 label: "Download backup",
                 icon: <DownloadOutlined />,
                 onClick: () => void handleDownloadBackup(r),
-                disabled: isPostgres || loadingBackupId === r.id,
+                disabled: loadingBackupId === r.id,
                 loading: loadingBackupId === r.id,
-                tooltip: mariaOnlyTooltip,
               };
               const restoreAction = {
                 key: "restore",
@@ -372,7 +372,9 @@ export const UserDatabaseList = () => {
                 onClick: () => handlePickRestore(r),
                 disabled: isPostgres || restoringId === r.id,
                 loading: restoringId === r.id,
-                tooltip: mariaOnlyTooltip,
+                tooltip: isPostgres
+                  ? "Restore from file is coming to PostgreSQL — download backup works now"
+                  : undefined,
                 confirm: {
                   title: `Restore into "${r.name}"?`,
                   description:

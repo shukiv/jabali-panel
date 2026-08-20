@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -706,4 +708,60 @@ func TestDatabaseDeleteUnauthenticated(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// GH #1045 PostgreSQL parity — GET /databases/:id/backup dispatches the agent
+// verb by engine: Postgres → db.postgres.backup, MariaDB → db.backup. The
+// stream path is engine-agnostic, so the mock returns a real temp dump the
+// handler streams back (200).
+func TestDatabaseBackup_DispatchesByEngine(t *testing.T) {
+	cases := []struct {
+		name    string
+		engine  string
+		wantCmd string
+	}{
+		{"postgres uses pg_dump verb", "postgres", "db.postgres.backup"},
+		{"mariadb uses mysqldump verb", "mariadb", "db.backup"},
+		{"empty engine defaults to mariadb", "", "db.backup"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dump := filepath.Join(t.TempDir(), "dump.sql")
+			if err := os.WriteFile(dump, []byte("-- dump\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			agent := &mockAgent{callFn: func(_ context.Context, _ string, _ any) (json.RawMessage, error) {
+				return json.RawMessage(`{"path":"` + dump + `","size_bytes":8}`), nil
+			}}
+			r, dbRepo := databaseRouterWithAgent("user1", false, agent)
+			dbRepo.databases = []models.Database{{ID: "id1", UserID: "user1", Name: "alice_db", Engine: tc.engine}}
+
+			req := httptest.NewRequest("GET", "/api/v1/databases/id1/backup", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tc.wantCmd, agent.lastCommand)
+		})
+	}
+}
+
+// GH #1045 — Postgres restore-from-file is refused with 501 until the
+// privilege-scoped loader ships; the handler must NOT fall through to the
+// MariaDB verb (which would run mysql against a Postgres database). The guard
+// fires before any agent call.
+func TestDatabaseRestore_PostgresNotImplemented(t *testing.T) {
+	agent := &mockAgent{}
+	r, dbRepo := databaseRouterWithAgent("user1", false, agent)
+	dbRepo.databases = []models.Database{{ID: "id1", UserID: "user1", Name: "alice_db", Engine: "postgres"}}
+
+	req := httptest.NewRequest("POST", "/api/v1/databases/id1/restore", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotImplemented, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "not_implemented", resp["error"])
+	assert.Equal(t, 0, agent.callCount)
 }
