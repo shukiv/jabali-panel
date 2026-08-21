@@ -1187,118 +1187,31 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 // fails we flip status to failed but still allow a future retry.
 // Non-empty osUser+docroot are required; the handler pre-fills them.
 func createDeleteAndKickAgent(parentCtx context.Context, installID, userID, appType, subdirectory, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername string, cfg ApplicationHandlerConfig) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	if cfg.Agent == nil {
-		errMsg := "agent not configured"
-		cfg.ApplicationInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
-		return
-	}
-
-	// Default appType to "wordpress" for any install row that pre-dates
-	// the M19 migration (the column NOT NULL DEFAULT 'wordpress' should
-	// have backfilled, but treat empty defensively).
-	if appType == "" {
-		appType = "wordpress"
-	}
-
-	// Agent removes the app's files from the docroot AND restores
-	// the domain.create placeholder index.html (when domain is non-empty)
-	// so the docroot doesn't 403 after delete. Does NOT touch the MySQL
-	// side — panel handles that below.
-	//
-	// M19: dispatched through app.delete with app_type discriminator
-	// (was hardcoded "wordpress" before the rename).
-	// install_id + subdirectory let deleters that opted into the
-	// managed-data-dir contract recompute /home/<user>/<install_id>-data
-	// for cleanup, and let subdir installs target the right path.
-	_, err := cfg.Agent.Call(ctx, "app.delete", map[string]any{
-		"app_type":     appType,
-		"install_id":   installID,
-		"os_user":      osUser,
-		"docroot":      docroot,
-		"subdirectory": subdirectory,
-		"domain":       domainName,
+	// JAB-314: the delete side-effect sequence now lives in the shared
+	// RunAppDelete so the operator CLI (cli_ops_app.go) produces an identical,
+	// fail-closed transcript. parentCtx is intentionally unused — RunAppDelete
+	// detaches onto its own background context so an accepted deletion outlives
+	// the request context.
+	_ = parentCtx
+	_ = RunAppDelete(AppDeleteArgs{
+		InstallID:      installID,
+		UserID:         userID,
+		AppType:        appType,
+		Subdirectory:   subdirectory,
+		DatabaseID:     databaseID,
+		DBUserID:       dbUserID,
+		OSUser:         osUser,
+		Docroot:        docroot,
+		DomainName:     domainName,
+		DBUserUsername: dbUserUsername,
+	}, AppDeleteDeps{
+		Installs:       cfg.ApplicationInstalls,
+		Databases:      cfg.Databases,
+		DatabaseUsers:  cfg.DatabaseUsers,
+		DatabaseGrants: cfg.DatabaseGrants,
+		CronJobs:       cfg.CronJobs,
+		Agent:          cfg.Agent,
 	})
-	if err != nil {
-		errMsg := truncateError(fmt.Sprintf("agent delete failed: %v", err), 1024)
-		cfg.ApplicationInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
-		return
-	}
-
-	// Apps that auto-create cron jobs at install — tear them down now
-	// (crons aren't FK-linked to the install).
-	switch appType {
-	case "itflow":
-		removeITFlowCrons(ctx, cfg, userID, osUser, appInstallPath(docroot, subdirectory))
-	case "wordpress", "joomla", "mediawiki":
-		removeAppCrons(ctx, cfg, userID, osUser, appType, appInstallPath(docroot, subdirectory))
-	}
-
-	// DB-side cleanup: drop the mariadb database + user on the host via the
-	// agent, then remove the panel-side rows so the slot is freed up.
-	//
-	// The panel row is only removed once the host-side object is actually
-	// gone. This used to log the drop failure and delete the row anyway,
-	// which is how an invisible orphan is made: the agent call is a root RPC
-	// and an agent restart, a timeout, or a long-call 502 is enough to fail
-	// it, after which the MariaDB database and user survive with no panel row
-	// left to name them — absent from `jabali db list`, absent from the
-	// account backup, still holding their grants. testserver carries four
-	// such orphan pairs, two of them complete WordPress schemas (75 and 64
-	// tables) that no backup has ever covered.
-	//
-	// Keeping the rows instead leaves an ordinary, visible database the owner
-	// can retry from the Databases page, and databases.go's delete refuses to
-	// remove the row unless its own drop succeeds — so the retry cannot
-	// reintroduce the orphan.
-	dropFailed := false
-
-	// The agent command is `db_user.drop` with `db_user_name` — NOT
-	// `mysql.user.delete` (which doesn't exist; the prior call silently
-	// no-op'd and the account survived every WP delete).
-	if dbUserID != "" && dbUserUsername != "" {
-		if _, agentErr := cfg.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": dbUserUsername}); agentErr != nil {
-			dropFailed = true
-			slog.ErrorContext(ctx, "wordpress delete: db_user.drop failed — keeping the panel rows so the account stays visible instead of becoming an orphan",
-				"err", agentErr, "db_user", dbUserUsername)
-		}
-	}
-
-	// Agent command is `db.drop` with `db_name` — NOT
-	// `mysql.database.delete` (same silent-no-op bug as above, the schema
-	// survived every delete).
-	if databaseID != "" {
-		if db, dbErr := cfg.Databases.FindByID(ctx, databaseID); dbErr == nil && db != nil {
-			if _, agentErr := cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": db.Name}); agentErr != nil {
-				dropFailed = true
-				slog.ErrorContext(ctx, "wordpress delete: db.drop failed — keeping the panel rows so the database stays visible instead of becoming an orphan",
-					"err", agentErr, "db_name", db.Name)
-			}
-		}
-	}
-
-	// The install's files are gone (the app.delete above succeeded or we
-	// returned), so its row goes either way. Deleting it before the databases
-	// row also releases fk_wpinstalls_db, which is RESTRICT.
-	cfg.ApplicationInstalls.Delete(ctx, installID)
-
-	if dropFailed {
-		return
-	}
-
-	if dbUserID != "" {
-		if grants, gErr := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, dbUserID); gErr == nil {
-			for _, g := range grants {
-				cfg.DatabaseGrants.Delete(ctx, g.ID)
-			}
-		}
-		cfg.DatabaseUsers.Delete(ctx, dbUserID)
-	}
-	if databaseID != "" {
-		cfg.Databases.Delete(ctx, databaseID)
-	}
 }
 
 // createCloneAndKickAgent clones WordPress asynchronously.

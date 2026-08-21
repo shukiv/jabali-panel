@@ -1220,11 +1220,11 @@ func createOsTicketCron(ctx context.Context, args osticketKickArgs, cfg Applicat
 // removeITFlowCrons tears down the ITFlow cron jobs for an install on
 // delete. Matches by command path (`php <installPath>/cron/`) since crons
 // aren't FK-linked to the install. Best-effort.
-func removeITFlowCrons(ctx context.Context, cfg ApplicationHandlerConfig, userID, osUser, installPath string) {
-	if cfg.CronJobs == nil || userID == "" {
+func removeITFlowCrons(ctx context.Context, deps AppDeleteDeps, userID, osUser, installPath string) {
+	if deps.CronJobs == nil || userID == "" {
 		return
 	}
-	jobs, err := cfg.CronJobs.ListByUserID(ctx, userID)
+	jobs, err := deps.CronJobs.ListByUserID(ctx, userID)
 	if err != nil {
 		return
 	}
@@ -1233,15 +1233,15 @@ func removeITFlowCrons(ctx context.Context, cfg ApplicationHandlerConfig, userID
 		if !strings.HasPrefix(j.Command, marker) {
 			continue
 		}
-		if cfg.Agent != nil && osUser != "" {
-			_, _ = cfg.Agent.Call(ctx, "cron.remove", cronRemoveAgentParams{
+		if deps.Agent != nil && osUser != "" {
+			_, _ = deps.Agent.Call(ctx, "cron.remove", cronRemoveAgentParams{
 				UserID:    userID,
 				Username:  osUser,
 				JobID:     j.ID,
 				RunAsRoot: j.RunAsRoot,
 			})
 		}
-		_ = cfg.CronJobs.Delete(ctx, j.ID)
+		_ = deps.CronJobs.Delete(ctx, j.ID)
 	}
 }
 
@@ -1294,8 +1294,8 @@ func createAppCrons(ctx context.Context, cfg ApplicationHandlerConfig, userID, a
 // removeAppCrons tears down an app's auto-created cron jobs on delete. Matches
 // by EXACT command (rebuilt from installPath) so a docroot install can't sweep
 // a subdir install's jobs. Best-effort.
-func removeAppCrons(ctx context.Context, cfg ApplicationHandlerConfig, userID, osUser, appType, installPath string) {
-	if userID == "" || cfg.CronJobs == nil {
+func removeAppCrons(ctx context.Context, deps AppDeleteDeps, userID, osUser, appType, installPath string) {
+	if userID == "" || deps.CronJobs == nil {
 		return
 	}
 	// The auto-created app crons (exact-command match)...
@@ -1303,7 +1303,7 @@ func removeAppCrons(ctx context.Context, cfg ApplicationHandlerConfig, userID, o
 	for _, c := range appCronSpecs(appType, installPath) {
 		want[c.command] = true
 	}
-	jobs, err := cfg.CronJobs.ListByUserID(ctx, userID)
+	jobs, err := deps.CronJobs.ListByUserID(ctx, userID)
 	if err != nil {
 		return
 	}
@@ -1316,15 +1316,15 @@ func removeAppCrons(ctx context.Context, cfg ApplicationHandlerConfig, userID, o
 		if !want[j.Command] && (installPath == "" || !strings.Contains(j.Command, pathRef)) {
 			continue
 		}
-		if cfg.Agent != nil && osUser != "" {
-			_, _ = cfg.Agent.Call(ctx, "cron.remove", cronRemoveAgentParams{
+		if deps.Agent != nil && osUser != "" {
+			_, _ = deps.Agent.Call(ctx, "cron.remove", cronRemoveAgentParams{
 				UserID:    userID,
 				Username:  osUser,
 				JobID:     j.ID,
 				RunAsRoot: j.RunAsRoot,
 			})
 		}
-		_ = cfg.CronJobs.Delete(ctx, j.ID)
+		_ = deps.CronJobs.Delete(ctx, j.ID)
 	}
 }
 

@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -198,63 +197,34 @@ func deleteAppDirect(ctx context.Context, installID string) (*models.Application
 		appType = "wordpress"
 	}
 
-	agentCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	if _, agentErr := sharedAgent.Call(agentCtx, "app.delete", map[string]any{
-		"app_type":     appType,
-		"install_id":   installID,
-		"os_user":      osUser,
-		"docroot":      domain.DocRoot,
-		"subdirectory": install.Subdirectory,
-		"domain":       domain.Name,
-	}); agentErr != nil {
-		// Match the HTTP path: stamp last_error onto the row and
-		// surface to the operator. We still drop the panel rows below
-		// so a fresh install of the same slot doesn't hit a 409.
-		errMsg := truncString(fmt.Sprintf("agent delete failed: %v", agentErr), 1024)
-		if uErr := installs.UpdateStatus(ctx, installID, "failed", &errMsg, nil); uErr != nil {
-			slog.Warn("cli app delete: status update failed", "err", uErr)
-		}
-		slog.Warn("cli app delete: agent app.delete failed — continuing with DB cleanup",
-			"install_id", installID, "err", agentErr)
+	// JAB-314: delegate to the shared, fail-closed delete lifecycle so the CLI
+	// and the HTTP handler produce identical transcripts. RunAppDelete retains
+	// the install row on an agent app.delete failure (retryable) and keeps the
+	// DB rows visible when a drop fails — instead of the old behaviour of
+	// dropping every panel row regardless, which is how invisible host/DB
+	// orphans were made. It also tears down the app's auto-created cron jobs,
+	// which this CLI path never did.
+	if err := api.RunAppDelete(api.AppDeleteArgs{
+		InstallID:      installID,
+		UserID:         install.UserID,
+		AppType:        appType,
+		Subdirectory:   install.Subdirectory,
+		DatabaseID:     install.DBIDOr(),
+		DBUserID:       dbUserID,
+		OSUser:         osUser,
+		Docroot:        domain.DocRoot,
+		DomainName:     domain.Name,
+		DBUserUsername: dbUserUsername,
+	}, api.AppDeleteDeps{
+		Installs:       installs,
+		Databases:      dbs,
+		DatabaseUsers:  dbUsers,
+		DatabaseGrants: dbGrants,
+		CronJobs:       repository.NewCronJobRepository(sharedDB),
+		Agent:          sharedAgent,
+	}); err != nil {
+		return install, err
 	}
-
-	// DB-side cleanup. Order is grants → mariadb user → install row →
-	// mariadb database. Reordering breaks fk_wpinstalls_db RESTRICT.
-	if dbUserID != "" {
-		if userGrants, gErr := dbGrants.ListByDatabaseUserID(ctx, dbUserID); gErr == nil {
-			for _, g := range userGrants {
-				if dErr := dbGrants.Delete(ctx, g.ID); dErr != nil {
-					slog.Warn("cli app delete: drop grant failed", "grant_id", g.ID, "err", dErr)
-				}
-			}
-		}
-		if dbUserUsername != "" {
-			if _, agentErr := sharedAgent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": dbUserUsername}); agentErr != nil {
-				slog.Warn("cli app delete: db_user.drop failed", "db_user", dbUserUsername, "err", agentErr)
-			}
-		}
-		if dErr := dbUsers.Delete(ctx, dbUserID); dErr != nil {
-			slog.Warn("cli app delete: db_user row delete failed", "db_user_id", dbUserID, "err", dErr)
-		}
-	}
-
-	if dErr := installs.Delete(ctx, installID); dErr != nil {
-		return install, fmt.Errorf("delete install row: %w", dErr)
-	}
-
-	if install.DBIDOr() != "" {
-		if db, dbErr := dbs.FindByID(ctx, install.DBIDOr()); dbErr == nil && db != nil {
-			if _, agentErr := sharedAgent.Call(agentCtx, "db.drop", map[string]any{"db_name": db.Name}); agentErr != nil {
-				slog.Warn("cli app delete: db.drop failed", "db_name", db.Name, "err", agentErr)
-			}
-		}
-		if dErr := dbs.Delete(ctx, install.DBIDOr()); dErr != nil {
-			slog.Warn("cli app delete: database row delete failed", "db_id", install.DBIDOr(), "err", dErr)
-		}
-	}
-
 	return install, nil
 }
 
