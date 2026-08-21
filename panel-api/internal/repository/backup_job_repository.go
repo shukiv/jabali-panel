@@ -44,6 +44,13 @@ type BackupJobRepository interface {
 	// follow-up). CountByStatus + ListQueuedOldest let it cap
 	// dispatches at server_settings.backup_max_concurrent_jobs.
 	CountByStatus(ctx context.Context, status string) (int64, error)
+	// HasPendingForTarget reports whether a queued or running backup_job already
+	// exists for this (schedule, destination, user) target. The scheduler uses it
+	// to skip re-enqueueing while a prior job is still pending — otherwise a
+	// slow/dead destination that holds each slot for the finalizer's 4h stall
+	// window lets the cadence pile unbounded duplicate jobs and starve every
+	// other backup (JAB-361).
+	HasPendingForTarget(ctx context.Context, scheduleID, destinationID, userID string) (bool, error)
 	ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error)
 	// ListRunning is the finalizer's worklist. It must query status
 	// directly: paging the newest N of ALL statuses and filtering in Go
@@ -213,6 +220,21 @@ func (r *backupJobRepo) CountByStatus(ctx context.Context, status string) (int64
 		return 0, translate(err)
 	}
 	return n, nil
+}
+
+func (r *backupJobRepo) HasPendingForTarget(ctx context.Context, scheduleID, destinationID, userID string) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&models.BackupJob{}).
+		Where("schedule_id = ? AND destination_id = ? AND user_id = ? AND status IN ?",
+			scheduleID, destinationID, userID,
+			[]string{models.BackupJobStatusQueued, models.BackupJobStatusRunning}).
+		Limit(1).
+		Count(&n).Error
+	if err != nil {
+		return false, translate(err)
+	}
+	return n > 0, nil
 }
 
 func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]BackupRunSummary, int64, error) {

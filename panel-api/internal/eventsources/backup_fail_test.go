@@ -39,6 +39,9 @@ func (f *fakeBackupJobs) MarkFinished(context.Context, string, string, string, s
 	return nil
 }
 func (f *fakeBackupJobs) CountByStatus(context.Context, string) (int64, error) { return 0, nil }
+func (f *fakeBackupJobs) HasPendingForTarget(context.Context, string, string, string) (bool, error) {
+	return false, nil
+}
 func (f *fakeBackupJobs) ListRunning(context.Context, int) ([]models.BackupJob, error) {
 	return nil, nil
 }

@@ -437,6 +437,18 @@ func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.Backu
 			}
 		}
 	}
+	// JAB-361: skip if a job for this exact (schedule, destination, user) target
+	// is already queued or running. A slow/dead destination holds each slot for
+	// the finalizer's 4h stall window, so without this the cadence piles up
+	// duplicate jobs faster than they drain — the queue grows unbounded and real
+	// tenant backups starve for days behind the grind.
+	if pending, perr := s.deps.Jobs.HasPendingForTarget(ctx, sched.ID, dest.ID, user.ID); perr != nil {
+		logger.Error("check pending backup_job failed", "err", perr)
+		return false
+	} else if pending {
+		logger.Info("scheduled backup skipped: a job for this target is already queued/running")
+		return false
+	}
 	schedID := sched.ID
 	rid := runID
 	dID := dest.ID
@@ -573,6 +585,16 @@ func (s *Scheduler) notifyBackupLimit(ctx context.Context, user *models.User, ou
 
 func (s *Scheduler) enqueueSystemBackup(ctx context.Context, sched models.BackupSchedule, dest *models.BackupDestination, runID string) bool {
 	logger := s.deps.Log.With("schedule_id", sched.ID, "kind", "system_backup", "destination_id", dest.ID, "run_id", runID)
+	// JAB-361: skip if a system_backup for this (schedule, destination) is already
+	// queued or running. This is the exact case that piled 133 jobs on .86 — a
+	// dead SFTP destination on a */30 schedule, each job holding a slot for 4h.
+	if pending, perr := s.deps.Jobs.HasPendingForTarget(ctx, sched.ID, dest.ID, "system"); perr != nil {
+		logger.Error("check pending system backup_job failed", "err", perr)
+		return false
+	} else if pending {
+		logger.Info("system backup skipped: a job for this target is already queued/running")
+		return false
+	}
 	schedID := sched.ID
 	rid := runID
 	dID := dest.ID
