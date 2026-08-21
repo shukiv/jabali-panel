@@ -163,7 +163,7 @@ func newPHPPoolDeleteCmd() *cobra.Command {
 		Use:     "delete <pool-id>",
 		Short:   "Delete a PHP-FPM pool and its ini overrides",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDB,
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !force {
 				return fmt.Errorf("deleting a pool affects the owner's PHP sites; re-run with --force")
@@ -175,6 +175,22 @@ func newPHPPoolDeleteCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("pool not found: %w", err)
 			}
+			// JAB-342: refuse deletion while any domain still references this pool,
+			// mirroring the HTTP handler's 409 pool_has_bound_domains. Deleting the
+			// row out from under bound domains leaves them pointing at a pool that
+			// no longer exists (dangling binding); the operator must unbind first.
+			bound, cerr := repository.NewDomainRepository(sharedDB).CountByPHPPoolID(ctx, pool.ID)
+			if cerr != nil {
+				return fmt.Errorf("count domains bound to pool: %w", cerr)
+			}
+			if bound > 0 {
+				return fmt.Errorf("pool %s has %d bound domain(s) — unbind them before deleting", pool.ID, bound)
+			}
+			// Resolve the owner before deleting so we can remove the live FPM pool.
+			owner, uerr := repository.NewUserRepository(sharedDB).FindByID(ctx, pool.UserID)
+			if uerr != nil || owner == nil || owner.Username == nil {
+				return fmt.Errorf("resolve pool owner: %w", uerr)
+			}
 			ovRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 			if ovs, lerr := ovRepo.ListByPool(ctx, pool.ID); lerr == nil {
 				for _, o := range ovs {
@@ -185,7 +201,13 @@ func newPHPPoolDeleteCmd() *cobra.Command {
 				return fmt.Errorf("delete pool: %w", err)
 			}
 			cliAuditOK(ctx, "php_pool.delete", "php_pool", pool.ID, &pool.UserID)
-			fmt.Fprintf(cmd.OutOrStdout(), "Deleted pool %s\n", pool.ID)
+			// JAB-342: remove the live FPM pool on the host too, mirroring the HTTP
+			// handler's php.pool.remove. Without this the pool's socket + config
+			// linger under the FPM tree after its row is gone (orphaned config).
+			if _, aerr := sharedAgent.Call(ctx, "php.pool.remove", map[string]any{"username": *owner.Username}); aerr != nil {
+				return fmt.Errorf("pool row deleted but host pool removal failed (re-run to retry): %w", aerr)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Deleted pool %s (host pool removed)\n", pool.ID)
 			return nil
 		},
 	}
