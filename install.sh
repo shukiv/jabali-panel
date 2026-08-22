@@ -13424,7 +13424,25 @@ install_bulwark() {
     _log "creating jabali-webmail service user"
     useradd --system --no-create-home --shell /usr/sbin/nologin \
       --user-group jabali-webmail
-    usermod -a -G "$SERVICE_USER" jabali-webmail
+  fi
+
+  # JAB-351/357: jabali-webmail must NOT belong to the broad "$SERVICE_USER"
+  # (jabali) group. That group can read the panel DB password + TLS private keys
+  # under /etc/jabali (JAB-351) AND owns the root Agent socket
+  # /run/jabali/agent.sock (JAB-357), so an internet-facing webmail compromise
+  # would reach panel secrets and host root. Webmail's own secrets (session key,
+  # impersonate JWT, bulwark.env) are all jabali-webmail-owned; it needs only
+  # jabali-sockets (primary) + jabali-webmail. Fresh installs no longer add the
+  # membership; this converges upgraded hosts by dropping the legacy one. The
+  # unit's SupplementaryGroups=jabali-webmail is the runtime belt; this removes
+  # the /etc/group state so nothing re-leaks it.
+  if id -nG jabali-webmail 2>/dev/null | tr ' ' '\n' | grep -qx "$SERVICE_USER"; then
+    if gpasswd -d jabali-webmail "$SERVICE_USER" >/dev/null 2>&1; then
+      _ok "removed jabali-webmail from the broad $SERVICE_USER group (JAB-351/357)"
+      systemctl restart jabali-webmail.service >/dev/null 2>&1 || true
+    else
+      _warn "could not remove jabali-webmail from $SERVICE_USER — run: gpasswd -d jabali-webmail $SERVICE_USER"
+    fi
   fi
 
   install -d -m 0755 -o jabali-webmail -g jabali-webmail /opt/jabali-webmail

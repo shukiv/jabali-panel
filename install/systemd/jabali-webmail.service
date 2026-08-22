@@ -12,6 +12,15 @@ User=jabali-webmail
 # /run/jabali-bulwark/ is reachable by nginx (also a jabali-sockets
 # member). User= stays jabali-webmail; only Group= flips.
 Group=jabali-sockets
+# JAB-351/357: pin the supplementary group set to EXACTLY what webmail needs
+# (its own jabali-webmail group, which owns every Bulwark secret: session key,
+# impersonate JWT, bulwark.env). Without this, the account's stray membership in
+# the broad `jabali` group leaks in at runtime — and that group can read the
+# panel DB password + TLS private keys (/etc/jabali, JAB-351) AND owns the root
+# Agent socket /run/jabali/agent.sock (JAB-357), turning an internet-facing
+# webmail compromise into host root. Listing SupplementaryGroups here drops
+# `jabali` even if a legacy /etc/group membership survives on an upgraded host.
+SupplementaryGroups=jabali-webmail
 Slice=jabali.slice
 
 WorkingDirectory=/opt/jabali-webmail
