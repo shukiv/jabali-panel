@@ -11795,6 +11795,12 @@ install_apparmor() {
   else
     _ok "AppArmor profiles applied ($(aa-status 2>/dev/null | grep -c 'jabali-') jabali profiles loaded)"
   fi
+
+  # JAB-349: install the daily auto-promotion timer so soak-clean complain
+  # profiles flip to enforce on their own. Reached on every install AND update
+  # (install_apparmor runs on both). Only meaningful when AppArmor is active —
+  # the early returns above bail before here on kernels without it.
+  install_apparmor_flip_timer
 }
 
 # apply_apparmor_system_profiles activates distro-supplied profiles for
@@ -11926,6 +11932,48 @@ cleanup_apparmor_legacy() {
   if command -v aa-remove-unknown >/dev/null 2>&1; then
     aa-remove-unknown >/dev/null 2>&1 || true
   fi
+}
+
+# install_apparmor_flip_timer — JAB-349. Without this, jabali profiles load in
+# complain mode and stay there forever unless an operator manually runs
+# `jabali apparmor flip-mature`, so an Internet-facing panel keeps
+# audit-only (non-enforcing) MAC indefinitely. This daily timer promotes
+# SOAK-CLEAN complain profiles to enforce automatically.
+#
+# It is SAFE to auto-run: `jabali apparmor flip-mature` flips ONLY a profile
+# with ZERO AppArmor DENIED events in the soak window and SKIPS any profile
+# still denying (surfacing the pending denials) — so it can never enforce a
+# profile that would then EACCES its daemon (the #705 crash-loop). Mirrors the
+# per-user-egress flip-mature timer. Idempotent; runs on every install + update
+# (install_apparmor is on both paths).
+install_apparmor_flip_timer() {
+  cat >/etc/systemd/system/jabali-apparmor-flip-mature.service <<'UNIT'
+[Unit]
+Description=Flip soak-clean jabali AppArmor profiles from complain to enforce (JAB-349)
+After=jabali-agent.service jabali-panel.service
+Requires=jabali-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jabali apparmor flip-mature --soak-days 7
+User=root
+UNIT
+  cat >/etc/systemd/system/jabali-apparmor-flip-mature.timer <<'UNIT'
+[Unit]
+Description=Daily promotion of soak-clean jabali AppArmor profiles to enforce (JAB-349)
+
+[Timer]
+OnCalendar=*-*-* 04:10:00
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable --now jabali-apparmor-flip-mature.timer >/dev/null 2>&1 \
+    && _ok "AppArmor auto-promotion timer enabled (soak-clean profiles flip to enforce daily)" \
+    || _warn "could not enable jabali-apparmor-flip-mature.timer — profiles stay in their current mode until 'jabali apparmor flip-mature' is run"
 }
 
 apply_apparmor_system_profiles() {
