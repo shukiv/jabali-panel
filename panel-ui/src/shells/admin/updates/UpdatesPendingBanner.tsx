@@ -18,6 +18,7 @@
 //   auto-update OFF — warning. Nothing will fix this on its own.
 //   auto-update ON  — info. It converges tonight; say when, and stop nagging.
 import { Alert, Button, Space, Typography } from "antd";
+import dayjs from "dayjs";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 
@@ -60,6 +61,66 @@ export const UpdatesPendingBanner = () => {
               {enabled
                 ? t("dashboard.updates_pending.action_auto")
                 : t("dashboard.updates_pending.action")}
+            </Button>
+          </Link>
+        </Space>
+      }
+    />
+  );
+};
+
+// OsSecurityUpdatesBanner — JAB-353. A dashboard-level, persistent warning for
+// the OS security-patch posture, distinct from the Jabali-panel-behind banner
+// above (OS packages and the panel self-update are governed separately). It
+// surfaces three cases, in severity order:
+//   apt auto-updates OFF        — error. The host will not self-patch.
+//   reboot required             — warning. Updates applied but not active.
+//   security updates pending    — warning. Fixes are waiting to apply.
+// Silent when auto-updates are on, nothing is pending, and no reboot is due.
+export const OsSecurityUpdatesBanner = () => {
+  const state = useUpdateState();
+  const auto = useAutoupdateConfig();
+
+  if (state.isLoading || state.isError || auto.isLoading) return null;
+
+  const enabled = auto.data?.apt_enabled ?? true;
+  const pendingSecurity = state.data?.apt_security ?? 0;
+  const rebootRequired = state.data?.apt_reboot_required ?? false;
+  const lastApplied = state.data?.apt_last_applied_at;
+
+  if (enabled && pendingSecurity === 0 && !rebootRequired) return null;
+
+  const disabled = !enabled;
+  const message = disabled
+    ? "OS security auto-updates are OFF"
+    : rebootRequired
+      ? "Reboot required to finish applying OS security updates"
+      : `${pendingSecurity} OS security update${pendingSecurity === 1 ? "" : "s"} pending`;
+
+  const patchAge = lastApplied
+    ? `Last applied ${dayjs(lastApplied).format("MMM D, YYYY")}.`
+    : "OS security patches have never been applied automatically on this host.";
+
+  return (
+    <Alert
+      type={disabled ? "error" : "warning"}
+      showIcon
+      style={{ marginBottom: 16 }}
+      message={message}
+      description={
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Typography.Text>
+            {disabled
+              ? `This Internet-facing host will not apply OS security patches automatically${
+                  pendingSecurity > 0 ? ` (${pendingSecurity} pending)` : ""
+                }. ${patchAge} A Jabali panel update does not apply OS packages.`
+              : rebootRequired
+                ? `Security packages are installed but a reboot is needed to activate them (e.g. kernel/libc). ${patchAge}`
+                : `${patchAge} They apply automatically in the maintenance window; review them now if urgent.`}
+          </Typography.Text>
+          <Link to="/jabali-admin/updates">
+            <Button size="small" type="primary" danger={disabled}>
+              Review OS updates
             </Button>
           </Link>
         </Space>

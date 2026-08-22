@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // systemAptCheckResponse is the wire shape for system.apt_check.
@@ -25,6 +27,12 @@ type systemAptCheckResponse struct {
 	SecurityTotal  int                    `json:"security_total"`
 	InstalledTotal int                    `json:"installed_total"`
 	Error          *aptCheckError         `json:"error,omitempty"`
+	// JAB-353 OS-patch status (cheap file stats, independent of the apt-get
+	// update above): RebootRequired mirrors /var/run/reboot-required;
+	// LastAppliedAt is when unattended-upgrades last completed an apply.
+	RebootRequired     bool       `json:"reboot_required"`
+	RebootRequiredPkgs []string   `json:"reboot_required_pkgs,omitempty"`
+	LastAppliedAt      *time.Time `json:"last_applied_at,omitempty"`
 }
 
 // aptCheckError is the admin-facing, structured diagnostic for a failed
@@ -81,12 +89,53 @@ func systemAptCheckHandler(ctx context.Context, _ json.RawMessage) (any, error) 
 			sec++
 		}
 	}
+	rebootReq, rebootPkgs := aptRebootRequired()
 	return systemAptCheckResponse{
-		Packages:       pkgs,
-		Total:          len(pkgs),
-		SecurityTotal:  sec,
-		InstalledTotal: countInstalledPackages(ctx),
+		Packages:           pkgs,
+		Total:              len(pkgs),
+		SecurityTotal:      sec,
+		InstalledTotal:     countInstalledPackages(ctx),
+		RebootRequired:     rebootReq,
+		RebootRequiredPkgs: rebootPkgs,
+		LastAppliedAt:      aptLastApplied(),
 	}, nil
+}
+
+// aptRebootRequired reports whether the host needs a reboot to finish applying
+// updates (Debian/Ubuntu drop /var/run/reboot-required after a kernel/libc/…
+// upgrade) and, best-effort, the packages that triggered it.
+func aptRebootRequired() (bool, []string) {
+	if _, err := os.Stat("/var/run/reboot-required"); err != nil {
+		return false, nil
+	}
+	var pkgs []string
+	if b, err := os.ReadFile("/var/run/reboot-required.pkgs"); err == nil {
+		seen := map[string]bool{}
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !seen[line] {
+				seen[line] = true
+				pkgs = append(pkgs, line)
+			}
+		}
+	}
+	return true, pkgs
+}
+
+// aptLastApplied returns when unattended-upgrades last completed an apply, taken
+// from the mtime of the periodic stamp it rewrites after each run. Nil when it
+// has never run (fresh host, or the feature was only just enabled).
+func aptLastApplied() *time.Time {
+	for _, p := range []string{
+		"/var/lib/apt/periodic/unattended-upgrades-stamp",
+		"/var/lib/apt/periodic/upgrade-stamp",
+	} {
+		if fi, err := os.Stat(p); err == nil {
+			t := fi.ModTime().UTC()
+			return &t
+		}
+	}
+	return nil
 }
 
 // aptLockPatterns / aptRepoPatterns / aptPermPatterns are matched

@@ -25,8 +25,10 @@ type updateCheckView struct {
 }
 
 type aptCheckView struct {
-	Total         int `json:"total"`
-	SecurityTotal int `json:"security_total"`
+	Total          int        `json:"total"`
+	SecurityTotal  int        `json:"security_total"`
+	RebootRequired bool       `json:"reboot_required"`
+	LastAppliedAt  *time.Time `json:"last_applied_at"`
 }
 
 func (r *Reconciler) reconcileUpdatePoll(ctx context.Context) {
@@ -67,6 +69,8 @@ func (r *Reconciler) reconcileUpdatePoll(ctx context.Context) {
 		return
 	}
 	_ = r.updateState.UpsertApt(ctx, av.Total, av.SecurityTotal, time.Now())
+	// JAB-353: refresh the OS-patch status the Updates Center reports.
+	_ = r.updateState.UpsertAptStatus(ctx, av.LastAppliedAt, av.RebootRequired)
 
 	// Notify only when security updates newly appear or increase, so we don't
 	// re-alert every 6h for the same standing count.

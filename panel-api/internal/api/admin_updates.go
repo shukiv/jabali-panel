@@ -329,10 +329,14 @@ func (h *adminUpdatesHandler) autoupdateGet(c *gin.Context) {
 }
 
 type autoupdatePutBody struct {
-	AptEnabled    bool   `json:"apt_enabled"`
-	AptTime       string `json:"apt_time"`
-	JabaliEnabled bool   `json:"jabali_enabled"`
-	JabaliTime    string `json:"jabali_time"`
+	AptEnabled bool `json:"apt_enabled"`
+	// AptOptoutAcknowledged must be true to disable OS security auto-updates
+	// (JAB-353): turning them off is an intentional, recorded decision, not a
+	// silent insecure default.
+	AptOptoutAcknowledged bool   `json:"apt_optout_acknowledged"`
+	AptTime               string `json:"apt_time"`
+	JabaliEnabled         bool   `json:"jabali_enabled"`
+	JabaliTime            string `json:"jabali_time"`
 }
 
 // timeHHMM validates a 24h HH:MM string. Rejecting non-conforming input at the
@@ -361,11 +365,19 @@ func (h *adminUpdatesHandler) autoupdatePut(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_time", "details": "apt_time/jabali_time must be HH:MM (24h)"})
 		return
 	}
+	// JAB-353: disabling OS security auto-updates is an intentional, recorded
+	// decision — reject a disable that doesn't carry the acknowledgement so the
+	// UI must surface the risk + a confirm step. Re-enabling clears the opt-out.
+	if !body.AptEnabled && !body.AptOptoutAcknowledged {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ack_required", "details": "disabling OS security auto-updates requires explicit acknowledgement (apt_optout_acknowledged)"})
+		return
+	}
 	cfg := &models.UpdateAutoupdateConfig{
-		AptEnabled:    body.AptEnabled,
-		AptTime:       body.AptTime,
-		JabaliEnabled: body.JabaliEnabled,
-		JabaliTime:    body.JabaliTime,
+		AptEnabled:            body.AptEnabled,
+		AptOptoutAcknowledged: !body.AptEnabled && body.AptOptoutAcknowledged,
+		AptTime:               body.AptTime,
+		JabaliEnabled:         body.JabaliEnabled,
+		JabaliTime:            body.JabaliTime,
 	}
 	if err := h.cfg.Autoupdate.Upsert(c.Request.Context(), cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "autoupdate_save"})

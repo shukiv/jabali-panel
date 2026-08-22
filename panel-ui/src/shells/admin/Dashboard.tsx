@@ -15,7 +15,7 @@ import { StatCard } from "../../components/StatCard";
 import { useListQuery } from "../../hooks/useQueries";
 import { useServerStatus } from "../../hooks/useServerStatus";
 import { useServerCapabilities } from "../../hooks/useServerCapabilities";
-import { UpdatesPendingBanner } from "./updates/UpdatesPendingBanner";
+import { UpdatesPendingBanner, OsSecurityUpdatesBanner } from "./updates/UpdatesPendingBanner";
 
 interface UserRow {
   id: string;
@@ -112,6 +112,7 @@ export const Dashboard = () => {
           production incidents came from boxes silently running builds that
           predated an already-merged fix. */}
       <UpdatesPendingBanner />
+      <OsSecurityUpdatesBanner />
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={8}>
           <StatCard

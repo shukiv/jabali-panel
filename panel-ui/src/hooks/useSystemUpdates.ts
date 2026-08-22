@@ -184,6 +184,9 @@ export interface UpdateState {
   apt_total: number;
   apt_security: number;
   apt_checked_at?: string;
+  // JAB-353 OS-patch status.
+  apt_last_applied_at?: string;
+  apt_reboot_required?: boolean;
 }
 
 export interface UpdateHistoryRow {
@@ -200,6 +203,9 @@ export interface UpdateHistoryRow {
 
 export interface AutoupdateConfig {
   apt_enabled: boolean;
+  // JAB-353: must be sent true to disable OS security auto-updates. The API
+  // rejects a disable without it; the UI collects it via a confirm modal.
+  apt_optout_acknowledged?: boolean;
   apt_time: string;
   jabali_enabled: boolean;
   jabali_time: string;

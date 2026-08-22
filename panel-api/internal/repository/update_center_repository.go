@@ -24,6 +24,9 @@ type UpdateStateRepository interface {
 	EnsureDefault(ctx context.Context) (*models.UpdateState, error)
 	UpsertJabali(ctx context.Context, behind int, sha string, at time.Time) error
 	UpsertApt(ctx context.Context, total, security int, at time.Time) error
+	// UpsertAptStatus refreshes the JAB-353 OS-patch status fields (last applied
+	// time, reboot-required) independently of the upgradable-package counts.
+	UpsertAptStatus(ctx context.Context, lastApplied *time.Time, rebootRequired bool) error
 }
 
 type updateStateRepo struct{ db *gorm.DB }
@@ -76,6 +79,19 @@ func (r *updateStateRepo) UpsertApt(ctx context.Context, total, security int, at
 			"apt_total":      total,
 			"apt_security":   security,
 			"apt_checked_at": at,
+		}).Error
+}
+
+func (r *updateStateRepo) UpsertAptStatus(ctx context.Context, lastApplied *time.Time, rebootRequired bool) error {
+	if _, err := r.EnsureDefault(ctx); err != nil {
+		return err
+	}
+	// Map-based update writes both keys explicitly (a nil lastApplied clears the
+	// column, and a false rebootRequired is written, not skipped as a zero value).
+	return r.db.WithContext(ctx).Model(&models.UpdateState{}).Where("id = ?", 1).
+		Updates(map[string]any{
+			"apt_last_applied_at": lastApplied,
+			"apt_reboot_required": rebootRequired,
 		}).Error
 }
 
@@ -160,9 +176,13 @@ func NewUpdateAutoupdateConfigRepository(db *gorm.DB) UpdateAutoupdateConfigRepo
 
 func (r *updateAutoupdateConfigRepo) EnsureDefault(ctx context.Context) (*models.UpdateAutoupdateConfig, error) {
 	row := &models.UpdateAutoupdateConfig{ID: 1}
+	// JAB-353: fresh installs seed apt_enabled=TRUE (OS security auto-upgrades on
+	// by default). AptEnabled:true is a non-zero attr, so it lands in the INSERT
+	// on first create; existing rows are untouched (FirstOrCreate) and were
+	// force-enabled by migration 000272.
 	if err := r.db.WithContext(ctx).
 		Where(models.UpdateAutoupdateConfig{ID: 1}).
-		Attrs(models.UpdateAutoupdateConfig{ID: 1, AptTime: "03:30", JabaliTime: "04:30"}).
+		Attrs(models.UpdateAutoupdateConfig{ID: 1, AptEnabled: true, AptTime: "03:30", JabaliTime: "04:30"}).
 		FirstOrCreate(row).Error; err != nil {
 		return nil, err
 	}
@@ -184,6 +204,6 @@ func (r *updateAutoupdateConfigRepo) Upsert(ctx context.Context, c *models.Updat
 	c.ID = 1
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"apt_enabled", "apt_time", "jabali_enabled", "jabali_time"}),
+		DoUpdates: clause.AssignmentColumns([]string{"apt_enabled", "apt_optout_acknowledged", "apt_time", "jabali_enabled", "jabali_time"}),
 	}).Create(c).Error
 }

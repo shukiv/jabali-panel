@@ -6,7 +6,7 @@
 // so the page shows real numbers immediately instead of empty placeholders.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState, type CSSProperties } from "react";
-import { Alert, Button, Card, Checkbox, Collapse, Col, Empty, Row, Segmented, Space, Spin, Switch, Table, Tag, TimePicker, Timeline, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Collapse, Col, Empty, Modal, Row, Segmented, Space, Spin, Switch, Table, Tag, TimePicker, Timeline, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import dayjs from "dayjs";
 
@@ -866,14 +866,32 @@ function SystemPackagesCard({ check }: { check: ReturnType<typeof useAptCheck> }
 function AutomaticUpdatesCard() {
   const { t } = useTranslation();
   const { data, isLoading } = useAutoupdateConfig();
+  const state = useUpdateState();
   const save = useUpdateAutoupdate();
   const [draft, setDraft] = useState<AutoupdateConfig | null>(null);
+  const [ackOpen, setAckOpen] = useState(false);
+  const [ackChecked, setAckChecked] = useState(false);
   const cfg = draft ?? data ?? null;
   const dirty = draft !== null && data !== undefined && JSON.stringify(draft) !== JSON.stringify(data);
 
   const patch = (p: Partial<AutoupdateConfig>) => {
     if (!cfg) return;
     setDraft({ ...cfg, ...p });
+  };
+  // JAB-353: turning OS security updates OFF is an intentional, recorded
+  // decision — never a silent flip. Enabling clears the opt-out; disabling opens
+  // a confirm modal and only then records apt_optout_acknowledged.
+  const onAptToggle = (v: boolean) => {
+    if (v) {
+      patch({ apt_enabled: true, apt_optout_acknowledged: false });
+    } else {
+      setAckChecked(false);
+      setAckOpen(true);
+    }
+  };
+  const confirmDisable = () => {
+    patch({ apt_enabled: false, apt_optout_acknowledged: true });
+    setAckOpen(false);
   };
   const onSave = async () => {
     if (!cfg) return;
@@ -885,6 +903,10 @@ function AutomaticUpdatesCard() {
       feedback.message.error(e instanceof Error ? e.message : "save failed");
     }
   };
+
+  const lastApplied = state.data?.apt_last_applied_at;
+  const rebootRequired = state.data?.apt_reboot_required;
+  const pendingSecurity = state.data?.apt_security ?? 0;
 
   return (
     <Card
@@ -900,12 +922,39 @@ function AutomaticUpdatesCard() {
         <div style={{ textAlign: "center", padding: 24 }}><Spin /></div>
       ) : (
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          {/* JAB-353: persistent, high-visibility warning while OS security
+              auto-updates are OFF — an operator opt-out is deliberate but must
+              stay visible. */}
+          {!cfg.apt_enabled && (
+            <Alert
+              type="error"
+              showIcon
+              message="OS security auto-updates are OFF"
+              description={
+                pendingSecurity > 0
+                  ? `${pendingSecurity} security update${pendingSecurity === 1 ? "" : "s"} pending. This host will not apply OS security patches automatically.`
+                  : "This host will not apply OS security patches automatically, so known vulnerabilities can remain unpatched."
+              }
+            />
+          )}
+          {rebootRequired && (
+            <Alert type="warning" showIcon message="Reboot required to finish applying updates" />
+          )}
           <Row align="middle" gutter={[12, 12]}>
             <Col flex="auto">
               <Text strong>OS security updates</Text>
               <div>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  Apply Debian security patches automatically via unattended-upgrades.
+                  Apply Debian/Ubuntu security patches automatically via unattended-upgrades. Separate from the Jabali panel self-update below.
+                </Text>
+              </div>
+              <div style={{ marginTop: 4 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  Last applied:{" "}
+                  {lastApplied ? dayjs(lastApplied).format("MMM D, YYYY HH:mm") : "never"}
+                  {typeof pendingSecurity === "number" && pendingSecurity > 0 && (
+                    <> · <Tag color="red" style={{ marginInlineStart: 4 }}>{pendingSecurity} security pending</Tag></>
+                  )}
                 </Text>
               </div>
             </Col>
@@ -920,9 +969,30 @@ function AutomaticUpdatesCard() {
               />
             </Col>
             <Col>
-              <Switch checked={cfg.apt_enabled} onChange={(v) => patch({ apt_enabled: v })} />
+              <Switch checked={cfg.apt_enabled} onChange={onAptToggle} />
             </Col>
           </Row>
+
+          <Modal
+            open={ackOpen}
+            title="Disable OS security auto-updates?"
+            okText="Disable security updates"
+            okButtonProps={{ danger: true, disabled: !ackChecked }}
+            onOk={confirmDisable}
+            onCancel={() => setAckOpen(false)}
+          >
+            <Space direction="vertical" size={12}>
+              <Text>
+                Turning this off means this Internet-facing host will <Text strong>not</Text> apply
+                Debian/Ubuntu security patches automatically. Known vulnerabilities in the kernel,
+                OpenSSH, OpenSSL, and other exposed components can remain exploitable until you patch
+                manually. A Jabali panel update does <Text strong>not</Text> apply OS packages.
+              </Text>
+              <Checkbox checked={ackChecked} onChange={(e) => setAckChecked(e.target.checked)}>
+                I understand the risk and intentionally want OS security auto-updates off.
+              </Checkbox>
+            </Space>
+          </Modal>
 
           <Row align="middle" gutter={[12, 12]}>
             <Col flex="auto">
