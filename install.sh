@@ -4364,10 +4364,22 @@ local-address=${pdns_local_addresses}
 # right ownership. Overriding socket-dir here collides with pdns's own
 # attempt to create the directory (it fails under LXC drop-ins).
 
-# Per-zone AXFR allow-lists and NOTIFY targets are managed via the
-# panel's domainmetadata table (ALLOW-AXFR-FROM and ALSO-NOTIFY kinds).
-# The global allow-axfr-ips is left empty — PowerDNS denies AXFR by
-# default, and per-zone metadata takes precedence.
+# AXFR authorization (JAB-350). Per-zone allow-lists + NOTIFY targets are
+# managed via the panel's domainmetadata table (ALLOW-AXFR-FROM and
+# ALSO-NOTIFY kinds), which authorize any configured secondary nameserver.
+#
+# The GLOBAL ACL is pinned EXPLICITLY to loopback here — it is NOT left to
+# PowerDNS's built-in default. Relying on the default is unsafe: a permissive
+# global value from an operator edit, a differing package/build default, or a
+# stale hand-written /etc/powerdns/pdns.conf would otherwise let ANY internet
+# client transfer every managed zone (bulk enumeration of hostnames, MX/service
+# topology, and TXT metadata — verified reproducible). This drop-in is read
+# after the main pdns.conf, so this line overrides such a permissive value and
+# repairs the host on the next `jabali update` (config change → pdns restart).
+# Configured secondaries still transfer via their per-zone ALLOW-AXFR-FROM
+# metadata, which is unioned with this global; loopback stays allowed for local
+# operator troubleshooting (dig AXFR @127.0.0.1).
+allow-axfr-ips=127.0.0.0/8,::1
 disable-axfr-rectify=no
 
 # GH #896: a freshly created domain gets its OWN pdns zone, inserted
@@ -5669,6 +5681,43 @@ ZONECACHE
       || _warn "pdns restart failed after zone-cache config — new setting applies on next pdns restart"
   else
     _log "pdns not active — zone-cache setting staged in $conf for next start"
+  fi
+}
+
+# JAB-350: pin the GLOBAL AXFR ACL to loopback on EXISTING boxes. The fresh-
+# install template (install_powerdns) writes allow-axfr-ips=127.0.0.0/8,::1, but
+# install_powerdns does NOT run on `jabali update`, so a host that only ever
+# updates would keep whatever global ACL it has. If that global is permissive —
+# an operator edit, a package/build default, or a stale hand-written
+# /etc/powerdns/pdns.conf — ANY internet client can transfer every managed zone
+# (bulk hostname/MX/TXT enumeration). This drop-in is read after the main
+# pdns.conf, so the pinned line overrides such a value. Configured secondaries
+# still transfer via their per-zone ALLOW-AXFR-FROM metadata (unioned with this
+# global); loopback stays allowed for local operator troubleshooting.
+ensure_pdns_axfr_deny() {
+  local conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
+  [[ -f "$conf" ]] || return 0   # dns module never installed here
+  if grep -Fxq 'allow-axfr-ips=127.0.0.0/8,::1' "$conf"; then
+    return 0
+  fi
+  if grep -q '^allow-axfr-ips=' "$conf"; then
+    sed -i 's|^allow-axfr-ips=.*|allow-axfr-ips=127.0.0.0/8,::1|' "$conf"
+  else
+    cat >> "$conf" <<'AXFRDENY'
+
+# JAB-350: pin the global AXFR ACL to loopback so a permissive main pdns.conf
+# (operator edit / package default) can't leave zones internet-transferable.
+# Secondaries still transfer via per-zone ALLOW-AXFR-FROM metadata. Appended by
+# ensure_pdns_axfr_deny on update.
+allow-axfr-ips=127.0.0.0/8,::1
+AXFRDENY
+  fi
+  if systemctl is-active --quiet pdns 2>/dev/null; then
+    systemctl restart pdns \
+      && _ok "pdns global AXFR ACL pinned to loopback (JAB-350 — external zone transfers denied; secondaries via per-zone metadata)" \
+      || _warn "pdns restart failed after AXFR config — new setting applies on next pdns restart"
+  else
+    _log "pdns not active — AXFR ACL staged in $conf for next start"
   fi
 }
 
@@ -14892,6 +14941,9 @@ provision_new_software() {
   # ships it) does not run
   # on this path.
   ensure_pdns_zone_cache
+  # JAB-350: same reasoning — pin the global AXFR ACL to loopback on update so a
+  # permissive global on an existing host stops leaving zones internet-transferable.
+  ensure_pdns_axfr_deny
 
   # GH #860: retrofit the default-vhost catch-all include onto existing
   # boxes. install_disabled_page is seed-only now (never clobbers operator
