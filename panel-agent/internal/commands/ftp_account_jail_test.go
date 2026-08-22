@@ -5,13 +5,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 )
 
 // TestQuotaEnabledOn covers the GH #1053 isolated-create preflight: quota is
-// "on" only when `quotaon -pu` reports it; a missing binary / unsupported fs
-// (command error) or an "is off" line both mean setquota would fail.
+// "on" only when `quotaon -pu` reports it. The command EXIT CODE is ignored on
+// purpose — `quotaon -p` returns non-zero even when quota is fully enabled on
+// the fleet OS (Debian 13, observed live: "... is on (enforced)", exit 1), so
+// gating on the exit code was a false negative that dead-ended isolated FTP.
+// Only the printed "is on" text is authoritative; a missing binary / unsupported
+// fs (empty output) or an "is off" line still fail closed.
 func TestQuotaEnabledOn(t *testing.T) {
 	orig := execCommandContext
 	t.Cleanup(func() { execCommandContext = orig })
@@ -19,20 +24,22 @@ func TestQuotaEnabledOn(t *testing.T) {
 	cases := []struct {
 		name string
 		out  string
-		fail bool
+		rc   int
 		want bool
 	}{
-		{"user quota on", "user quota on / (/dev/root) is on", false, true},
-		{"user quota off", "user quota on / is off", false, false},
-		{"command error", "", true, false},
+		{"on, exit 0", "user quota on / (/dev/root) is on", 0, true},
+		// The regression: quota IS on but quotaon -p exits non-zero (Debian 13).
+		{"on but exit 1 (debian13 quotaon -p)", "user quota on / (/dev/sda1) is on (enforced)", 1, true},
+		{"off, exit 1", "user quota on / is off", 1, false},
+		{"binary error, empty output", "", 127, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			out, rc := tc.out, tc.rc
 			execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-				if tc.fail {
-					return exec.CommandContext(ctx, "false")
-				}
-				return exec.CommandContext(ctx, "echo", tc.out)
+				// Emit the canned output AND the exit code together, so the real
+				// CombinedOutput + exit-status path is exercised through the seam.
+				return exec.CommandContext(ctx, "sh", "-c", "printf '%s\\n' \""+out+"\"; exit "+strconv.Itoa(rc))
 			}
 			if got := quotaEnabledOn(context.Background(), "/"); got != tc.want {
 				t.Fatalf("quotaEnabledOn=%v want %v", got, tc.want)

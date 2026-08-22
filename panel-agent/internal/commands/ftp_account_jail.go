@@ -241,14 +241,23 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 
 // quotaEnabledOn reports whether user disk quota is active on mount. `quotaon
 // -pu` prints the current state without changing anything; a line containing
-// "is on" means user quota is active. A missing quota binary, an unsupported
-// filesystem, or "is off" all mean a per-uid setquota would fail — so isolated
-// FTP (which needs the per-account cap) cannot run there.
+// "is on" means user quota is active.
+//
+// The exit code is deliberately IGNORED. On the fleet OS (Debian 13, observed
+// live), `quotaon -p` does NOT exit 0 on success — it returns a non-zero status
+// even when quota is fully enabled ("... is on (enforced)", exit 1), so the old
+// `if err != nil { return false }` was a false negative that made every isolated
+// FTP create fail its precondition and the panel's Isolated toggle read
+// unavailable, despite `setquota` working. Parse the printed state instead.
+//
+// This does NOT relax the disk-fill guard: the precheck is only a fast, friendly
+// fail — the authoritative cap is provisionIsolatedJail step 5's setquota, whose
+// failure rolls the whole account back, so an uncapped isolated account can never
+// exist regardless of this check. And the parse still fails closed on every
+// error mode: a missing binary or a run error leaves empty/error output (no "is
+// on"), and "is off" does not contain "is on".
 func quotaEnabledOn(ctx context.Context, mount string) bool {
-	out, err := execCommandContext(ctx, "quotaon", "-pu", mount).CombinedOutput()
-	if err != nil {
-		return false
-	}
+	out, _ := execCommandContext(ctx, "quotaon", "-pu", mount).CombinedOutput()
 	return strings.Contains(string(out), "is on")
 }
 
