@@ -85,7 +85,12 @@ func buildWebdavDropin(wp webdavWorkerParams) string {
 	fmt.Fprintf(&b, "User=%d\n", wp.UID)
 	fmt.Fprintf(&b, "Group=%d\n", wp.GID)
 	fmt.Fprintf(&b, "Environment=WEBDAV_ROOT=%s\n", wp.ServedRoot)
-	b.WriteString("Environment=WEBDAV_PREFIX=\n")
+	// Prefix=/dav: nginx serves every subaccount under https://<panel>:8443/dav/
+	// and proxies the path through UNSTRIPPED, so the worker strips /dav itself
+	// (x/net/webdav also rewrites the Destination header for MOVE/COPY when Prefix
+	// is set — nginx cannot). Shared across all subs; the socket, not the URL,
+	// distinguishes them (GH #1146 step 4).
+	b.WriteString("Environment=WEBDAV_PREFIX=/dav\n")
 	if wp.Jail != "" {
 		fmt.Fprintf(&b, "RootDirectory=%s\n", wp.Jail)
 		b.WriteString("BindReadOnlyPaths=/usr/local/bin/jabali-webdav\n")

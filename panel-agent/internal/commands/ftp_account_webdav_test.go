@@ -56,6 +56,7 @@ func TestBuildWebdavDropin(t *testing.T) {
 		"User=1000000042",
 		"Group=1000000042",
 		"Environment=WEBDAV_ROOT=/data",
+		"Environment=WEBDAV_PREFIX=/dav",
 		"RootDirectory=/var/lib/jabali-ftp-jails/t1/t1_web",
 		"BindReadOnlyPaths=/usr/local/bin/jabali-webdav",
 	} {

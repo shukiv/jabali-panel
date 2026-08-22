@@ -752,6 +752,11 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-fpm@.service /etc/systemd
 # here on update; install.sh drops them on fresh installs.
 install -m 0644 ` + repoDir + `/install/systemd/jabali-webdav@.service /etc/systemd/system/jabali-webdav@.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-webdav@.socket /etc/systemd/system/jabali-webdav@.socket
+# GH #1146 step 4: the WebDAV auth_request authenticator unit. Installed here so
+# it exists before install_nginx_panel_vhost (run later in this update) installs
+# its rate-limit conf and enables the service; the panel vhost's /dav/ block is
+# re-rendered from the template by that same call.
+install -m 0644 ` + repoDir + `/install/systemd/jabali-webdav-auth.service /etc/systemd/system/jabali-webdav-auth.service
 # GH #1146: WebDAV activation-socket dir + auth-gate group for existing hosts
 # (install.sh seeds both on fresh installs; the agent also self-heals the group).
 getent group jabali-webdav >/dev/null || groupadd --system jabali-webdav

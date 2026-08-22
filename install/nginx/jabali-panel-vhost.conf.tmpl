@@ -192,6 +192,50 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
   }
 
+  # GH #1146: WebDAV for FTP/SFTP subaccounts. ONE endpoint serves every
+  # subaccount — the HTTP Basic username selects the worker. auth_request hands
+  # the credentials to the privileged jabali-webdav authenticator (unix_chkpwd
+  # over /run/jabali-webdav/auth.sock); it validates the subaccount (owned,
+  # webdav-enabled, unlocked, non-system) and returns the worker to proxy to.
+  # The per-subaccount worker runs as the tenant uid inside its #1145 chroot and
+  # performs no auth of its own — so it is NEVER reachable without passing here.
+  location = /jabali-webdav-auth {
+    internal;
+    proxy_pass http://unix:/run/jabali-webdav/auth.sock:/;
+    proxy_pass_request_body off;              # auth is decided before any body streams
+    proxy_set_header Content-Length "";
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Original-URI $request_uri;
+  }
+  location ^~ /dav/ {
+    # Outer per-IP flood cap. Complements the authenticator's per-username token
+    # bucket (which a username-spraying attacker would otherwise sidestep). Zone
+    # defined in /etc/nginx/conf.d/jabali-webdav-ratelimit.conf.
+    limit_req zone=jabali_webdav burst=30 nodelay;
+
+    auth_request /jabali-webdav-auth;
+    # The worker socket is named by the AUTHENTICATOR (X-Webdav-Sub = the
+    # username IT validated), never by anything the client supplied.
+    auth_request_set $jab_wdsub $upstream_http_x_webdav_sub;
+    error_page 401 = @jabali_webdav_401;
+
+    # The worker owns the /dav prefix (Prefix=/dav) — it strips it from the
+    # request path AND rewrites the Destination header for MOVE/COPY — so pass
+    # the original URI through unstripped.
+    proxy_pass http://unix:/run/jabali-webdav/$jab_wdsub.sock:$request_uri;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_read_timeout 300s;
+    proxy_request_buffering off;               # stream large PUTs; never buffer to disk
+    client_max_body_size 0;                    # no nginx cap — the per-uid disk quota bounds it
+  }
+  # auth_request discards the upstream 401's WWW-Authenticate header, so re-emit
+  # it here or WebDAV clients never prompt for credentials.
+  location @jabali_webdav_401 {
+    add_header WWW-Authenticate 'Basic realm="Jabali WebDAV"' always;
+    return 401;
+  }
+
   # /.ory/* is handled by panel-api itself (in-process reverse proxy
   # to the Kratos public socket). nginx just forwards to the panel
   # upstream — no special-case for /.ory/.

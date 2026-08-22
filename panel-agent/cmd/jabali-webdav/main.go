@@ -29,25 +29,40 @@ import (
 )
 
 func main() {
-	socket := flag.String("socket", "", "unix socket path to listen on (tests; production uses systemd socket activation)")
-	root := flag.String("root", "", "directory to serve (the subaccount home)")
-	prefix := flag.String("prefix", "", "URL path prefix to strip (e.g. /dav/<sub>)")
+	mode := flag.String("mode", "worker", "worker = serve one subaccount's WebDAV (socket-activated, tenant uid); auth = privileged nginx auth_request authenticator (root)")
+	socket := flag.String("socket", "", "unix socket path to listen on (worker: tests only, prod uses socket activation; auth: the listen path)")
+	root := flag.String("root", "", "worker only: directory to serve (the subaccount home)")
+	prefix := flag.String("prefix", "", "worker only: URL path prefix stripped by the WebDAV handler (e.g. /dav)")
 	flag.Parse()
 
-	if *root == "" {
-		log.Fatal("jabali-webdav: --root is required")
+	switch *mode {
+	case "auth":
+		runAuth(*socket)
+	case "worker":
+		runWorker(*socket, *root, *prefix)
+	default:
+		log.Fatalf("jabali-webdav: unknown --mode %q (want worker|auth)", *mode)
 	}
-	if fi, err := os.Stat(*root); err != nil || !fi.IsDir() {
-		log.Fatalf("jabali-webdav: --root %q is not a directory: %v", *root, err)
+}
+
+// runWorker serves ONE subaccount's home over WebDAV. Socket-activated in
+// production (runs as the subaccount uid inside the #1145 chroot); binds --socket
+// directly in tests.
+func runWorker(socket, root, prefix string) {
+	if root == "" {
+		log.Fatal("jabali-webdav: --root is required in worker mode")
+	}
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		log.Fatalf("jabali-webdav: --root %q is not a directory: %v", root, err)
 	}
 
-	ln, err := acquireListener(*socket)
+	ln, err := acquireListener(socket)
 	if err != nil {
 		log.Fatalf("jabali-webdav: %v", err)
 	}
 
 	srv := &http.Server{
-		Handler:           newWebdavHandler(*root, *prefix),
+		Handler:           newWebdavHandler(root, prefix),
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
@@ -61,7 +76,7 @@ func main() {
 		_ = srv.Shutdown(ctx)
 	}()
 
-	log.Printf("jabali-webdav: serving %s on %s (prefix %q)", *root, ln.Addr(), *prefix)
+	log.Printf("jabali-webdav: serving %s on %s (prefix %q)", root, ln.Addr(), prefix)
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("jabali-webdav: serve: %v", err)
 	}

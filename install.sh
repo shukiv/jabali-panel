@@ -2849,6 +2849,9 @@ install_jabali_slices() {
   # subaccounts.
   install -m 0644 "$REPO_DIR/install/systemd/jabali-webdav@.service" /etc/systemd/system/jabali-webdav@.service
   install -m 0644 "$REPO_DIR/install/systemd/jabali-webdav@.socket" /etc/systemd/system/jabali-webdav@.socket
+  # GH #1146 step 4: the privileged auth_request authenticator (enabled + started
+  # later in install_nginx_panel_vhost, once the binary + /run dir + group exist).
+  install -m 0644 "$REPO_DIR/install/systemd/jabali-webdav-auth.service" /etc/systemd/system/jabali-webdav-auth.service
   # jabali-webdav is the Phase-4 auth gate (nginx authenticator checks
   # membership); the agent also creates it on demand, but seed it here so a host
   # that grants webdav_access before the agent redeploys still has it.
@@ -7357,6 +7360,11 @@ d}" "$panel_vhost_file"
   [[ -f /etc/nginx/sites-available/includes/phpmyadmin.conf ]] || : > /etc/nginx/sites-available/includes/phpmyadmin.conf
   [[ -f /etc/nginx/snippets/jabali-adminer.conf ]] || : > /etc/nginx/snippets/jabali-adminer.conf
 
+  # GH #1146: the panel vhost's /dav/ location references limit_req zone
+  # `jabali_webdav`, which is declared at http{} scope — install it into conf.d
+  # BEFORE the nginx -t below or the test fails on the unknown zone.
+  install -m 0644 "$REPO_DIR/install/nginx/jabali-webdav-ratelimit.conf" /etc/nginx/conf.d/jabali-webdav-ratelimit.conf
+
   _log "testing nginx configuration"
   if ! nginx -t 2>&1 | grep -q "successful"; then
     nginx -t 2>&1 >&2 || true
@@ -7368,6 +7376,20 @@ d}" "$panel_vhost_file"
     _warn "nginx reload failed; trying restart"
     systemctl restart nginx
   }
+
+  # GH #1146 step 4: enable + start the WebDAV auth_request authenticator. Done
+  # here (not in install_jabali_slices) because it runs after build_backend, so
+  # the jabali-webdav binary, /run/jabali-webdav (tmpfiles), and the
+  # jabali-sockets group are all present. Non-fatal: WebDAV is opt-in per
+  # subaccount and must never abort the panel install.
+  if [[ -x /usr/local/bin/jabali-webdav ]]; then
+    systemctl daemon-reload
+    if systemctl enable --now jabali-webdav-auth.service >/dev/null 2>&1; then
+      _ok "jabali-webdav auth authenticator enabled"
+    else
+      _warn "jabali-webdav-auth.service failed to start — WebDAV auth unavailable until fixed (non-fatal)"
+    fi
+  fi
 
   _ok "panel nginx vhost installed: ${panel_vhost_file}"
 }

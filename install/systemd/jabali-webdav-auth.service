@@ -1,0 +1,37 @@
+# WebDAV auth_request authenticator (GH #1146, plans/gh1146-webdav.md step 4).
+#
+# Privileged (root) daemon fronting the per-subaccount WebDAV workers: nginx on
+# the panel :8443 vhost sends every /dav/ request through auth_request to this
+# socket. It verifies the subaccount's system password with unix_chkpwd (the only
+# credential store) and names the worker to proxy to. Must run as root — the
+# setuid unix_chkpwd helper refuses a non-root caller checking another user, and
+# the daemon reads /etc/shadow to reject locked accounts.
+#
+# Always-on (not socket-activated): one long-lived daemon holds the per-username
+# brute-force buckets in memory. The socket lives under /run/jabali-webdav (the
+# tmpfiles.d dir shared with the workers); "auth.sock" cannot collide with a
+# subaccount worker's "<sub>.sock" because '.' is not in the subaccount charset.
+[Unit]
+Description=Jabali WebDAV auth_request authenticator
+After=network.target
+# /run/jabali-webdav is created by tmpfiles.d before local-fs sysinit completes.
+
+[Service]
+Type=simple
+# Runs as root (default): needs unix_chkpwd + /etc/shadow read. The daemon binds
+# the socket root:jabali-sockets 0660 itself so nginx (a jabali-sockets member)
+# can connect.
+ExecStart=/usr/local/bin/jabali-webdav --mode=auth --socket /run/jabali-webdav/auth.sock
+Restart=on-failure
+RestartSec=5s
+# Hardening kept deliberately minimal. NoNewPrivileges MUST stay no: unix_chkpwd
+# is setgid `shadow`, and NoNewPrivileges=yes would block that transition and
+# break every verification. ProtectSystem=strict makes the fs read-only except
+# the socket dir (unix_chkpwd only reads /etc/shadow + execs from /usr, both RO-
+# safe). Do not add PrivateTmp/ProtectHome without re-verifying unix_chkpwd live.
+NoNewPrivileges=no
+ProtectSystem=strict
+ReadWritePaths=/run/jabali-webdav
+
+[Install]
+WantedBy=multi-user.target
