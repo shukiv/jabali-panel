@@ -237,6 +237,6 @@ var tenantRedisProvision = func(h *redisAccessHandler, ctx context.Context, osUs
 	return h.provisionTenantRedisACL(ctx, osUser, token)
 }
 
-// The t_<osuser> user is torn down on account delete by revokeAllUserCacheACLs
+// The t_<osuser> user is torn down on account delete by RevokeAllUserCacheACLs
 // (applications_cache.go), which the userops delete cascade already invokes as
 // RevokeCacheACLs — so a recycled username can't inherit the old principal.

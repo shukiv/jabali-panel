@@ -543,7 +543,7 @@ func (h *userHandler) delete(c *gin.Context) {
 		DatabaseUsers: h.cfg.DatabaseUsers,
 		FtpAccounts:   h.cfg.FtpAccounts,
 		RevokeCacheACLs: func(ctx context.Context, osUser string) error {
-			return revokeAllUserCacheACLs(ctx, h.cfg.Redis, osUser)
+			return RevokeAllUserCacheACLs(ctx, h.cfg.Redis, osUser)
 		},
 	}, target, claims.UserID)
 	if err != nil {

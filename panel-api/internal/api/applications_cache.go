@@ -102,7 +102,7 @@ func revokeInstallACL(ctx context.Context, rdb *redis.Client, osUser, installID 
 	return rdb.Do(ctx, "ACL", "SAVE").Err()
 }
 
-// revokeAllUserCacheACLs removes EVERY cache ACL user of an OS user on the
+// RevokeAllUserCacheACLs removes EVERY cache ACL user of an OS user on the
 // user-delete cascade (JAB-62): the legacy shared wp_<osUser> plus every
 // per-install wp_<osUser>_<installID>. Enumerates via ACL LIST so it needs no
 // install repo. The per-install match is anchored to the fixed 26-char ULID so a
@@ -118,7 +118,7 @@ func ReapLegacySharedCacheACL(ctx context.Context, rdb *redis.Client, osUser str
 	return revokeTenantRedisACL(ctx, rdb, osUser)
 }
 
-func revokeAllUserCacheACLs(ctx context.Context, rdb *redis.Client, osUser string) error {
+func RevokeAllUserCacheACLs(ctx context.Context, rdb *redis.Client, osUser string) error {
 	if rdb == nil || osUser == "" {
 		return nil
 	}

@@ -88,7 +88,7 @@ func billingDeleteDeps(cfg AutomationConfig) userops.DeleteDeps {
 	if cfg.Redis != nil {
 		rdb := cfg.Redis
 		dd.RevokeCacheACLs = func(ctx context.Context, osUser string) error {
-			return revokeAllUserCacheACLs(ctx, rdb, osUser)
+			return RevokeAllUserCacheACLs(ctx, rdb, osUser)
 		}
 	}
 	return dd

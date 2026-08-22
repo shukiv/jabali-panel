@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
@@ -78,119 +80,59 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 		}
 	}
 
-	// Cascade domains first, through the JAB-236 durable path: tombstone
-	// before the row, then the synchronous executor (Stalwart purge +
-	// nginx vhost + pdns zone — the old inline version skipped the zone,
-	// leaking it in the pdns backend). Best-effort per-row so one failure
-	// doesn't strand a half-deleted user; a failed teardown leaves its
-	// tombstone for the reconciler to retry.
-	domains := domainRepoFromDB()
-	if owned, _, err := domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 500}); err == nil {
-		// sharedAgent is *agent.Client (concrete); assign only when
-		// non-nil — a nil *agent.Client boxed into AgentCaller is a
-		// non-nil interface and would panic inside Call.
-		var caller userops.AgentCaller
-		if sharedAgent != nil {
-			caller = sharedAgent
-		}
-		cascadeDeps := userops.Deps{
-			Domains:         domains,
-			DomainTeardowns: repository.NewDomainTeardownRepository(sharedDB),
-			PortAllocations: repository.NewPortAllocationRepository(sharedDB),
-			Agent:           caller,
-			Log:             slog.Default(),
-		}
-		for _, d := range owned {
-			pending, err := userops.DeleteDomain(ctx, cascadeDeps, d.ID, d.Name, false)
-			if err != nil {
-				slog.Warn("cli delete: cascade domain failed",
-					"user_id", userID, "domain_id", d.ID, "domain", d.Name, "err", err)
-				continue
+	// JAB-278: route through the one canonical User Account Lifecycle cascade
+	// (userops.DeleteCascade, ADR-0164) that the REST + automation adapters use,
+	// instead of a divergent CLI copy. The copy omitted Docker teardown (which
+	// must BLOCK the delete on failure), FTP subaccount reaping (JAB-265), Redis
+	// cache-ACL revocation, PostgreSQL role handling, and port-allocation
+	// release, and it dropped the panel row even when a MariaDB drop failed —
+	// leaving invisible orphans. The cascade owns the whole ordered teardown
+	// (domains → MariaDB → docker(blocking) → kratos → redis → row → OS+home).
+	var caller userops.AgentCaller
+	if sharedAgent != nil {
+		caller = sharedAgent
+	}
+	var kc *kratosclient.Client
+	if sharedCfg.Auth.Kratos.PublicURL != "" {
+		kc = kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
+	}
+	deps := userops.Deps{
+		Users:           users,
+		Packages:        repository.NewPackageRepository(sharedDB),
+		Domains:         domainRepoFromDB(),
+		DockerApps:      repository.NewDockerAppRepository(sharedDB),
+		DomainTeardowns: repository.NewDomainTeardownRepository(sharedDB),
+		PortAllocations: repository.NewPortAllocationRepository(sharedDB),
+		Agent:           caller,
+		KratosClient:    kc,
+		Log:             slog.Default(),
+	}
+	deleteDeps := userops.DeleteDeps{
+		Databases:     databaseRepoFromDB(),
+		DatabaseUsers: databaseUserRepoFromDB(),
+		FtpAccounts:   repository.NewFtpAccountRepository(sharedDB),
+		RevokeCacheACLs: func(ctx context.Context, osUser string) error {
+			if sharedRedis == nil {
+				return nil // redis not wired here; ACLs get reaped on the next cache op
 			}
-			if pending {
-				slog.Warn("cli delete: domain host teardown pending — the reconciler retries it",
-					"user_id", userID, "domain", d.Name)
-			}
-		}
+			return api.RevokeAllUserCacheACLs(ctx, sharedRedis, osUser)
+		},
 	}
-
-	// Drop MariaDB schemas + DB users via the agent BEFORE the panel row
-	// goes (which CASCADEs the metadata). Best-effort: log + continue.
-	dbs := databaseRepoFromDB()
-	if dbs != nil && sharedAgent != nil {
-		if rows, _, err := dbs.ListByUserID(ctx, userID, repository.ListOptions{Limit: 500}); err == nil {
-			for _, d := range rows {
-				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				if _, err := sharedAgent.Call(agentCtx, "db.drop", map[string]any{"db_name": d.Name}); err != nil {
-					slog.Warn("cli delete: db.drop failed",
-						"user_id", userID, "db_name", d.Name, "err", err)
-				}
-				cancel()
-			}
-		}
-	}
-	dbus := databaseUserRepoFromDB()
-	if dbus != nil && sharedAgent != nil {
-		if rows, _, err := dbus.ListByUserID(ctx, userID, repository.ListOptions{Limit: 500}); err == nil {
-			for _, du := range rows {
-				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				if _, err := sharedAgent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": du.Username}); err != nil {
-					slog.Warn("cli delete: db_user.drop failed",
-						"user_id", userID, "db_user_name", du.Username, "err", err)
-				}
-				cancel()
-			}
-		}
-	}
-
-	// Drop the per-user MariaDB shadow-admin account (<osuser>_mysqladmin).
-	// It is provisioned by db.mysqladmin.ensure but is not a database_users
-	// row, so the loop above misses it — an orphaned MySQL login otherwise
-	// survives the deleted account. Mirrors the HTTP delete cascade. Reuses
-	// the idempotent db_user.drop (DROP USER IF EXISTS): a no-op when absent.
-	if sharedAgent != nil && target.Username != nil && *target.Username != "" {
-		shadowUser := *target.Username + "_mysqladmin"
-		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		if _, err := sharedAgent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": shadowUser}); err != nil {
-			slog.Warn("cli delete: mysqladmin shadow drop failed",
-				"user_id", userID, "mysqladmin_user", shadowUser, "err", err)
-		}
-		cancel()
-	}
-
-	// Kratos identity delete (if linked).
-	if target.KratosIdentityID != nil && sharedCfg.Auth.Kratos.PublicURL != "" {
-		k := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
-		if err := k.DeleteIdentity(ctx, *target.KratosIdentityID); err != nil {
-			// Non-fatal: log + continue with panel delete so the operator
-			// isn't blocked by a Kratos 500. They can clean orphan
-			// identities via `kratos identities delete <id>`.
-			slog.Warn("cli delete: kratos identity delete failed",
-				"user_id", userID, "identity_id", *target.KratosIdentityID, "err", err)
-		}
-	}
-
-	// Panel row delete.
-	if err := users.Delete(ctx, userID); err != nil {
-		return fmt.Errorf("delete panel row: %w", err)
-	}
-
-	// OS teardown. Sync here — the CLI should surface agent failures
-	// instead of fire-and-forget silence. purgeHome is always treated as
-	// true by the handler's contract; jabali user delete is destructive.
+	// purgeHome is always true for `jabali user delete` (destructive by
+	// contract); DeleteCascade removes the home + OS account unconditionally.
 	_ = purgeHome
-	if sharedAgent != nil && target.Username != nil && *target.Username != "" {
-		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if _, err := sharedAgent.Call(agentCtx, "user.delete", map[string]any{
-			"username":    *target.Username,
-			"remove_home": true,
-		}); err != nil {
-			slog.Warn("cli delete: agent user.delete failed — panel row gone, OS user remains",
-				"user_id", userID, "username", *target.Username, "err", err)
-			return fmt.Errorf("panel row deleted but OS teardown failed: %w (manually clean up /home/%s + the OS account)",
-				err, *target.Username)
+	if err := userops.DeleteCascade(ctx, deps, deleteDeps, target, "cli"); err != nil {
+		var dte *userops.DockerTeardownError
+		if errors.As(err, &dte) {
+			return fmt.Errorf("refusing to delete %s: Docker app teardown failed for %s — resolve on the host and retry",
+				userID, strings.Join(dte.Slugs, ", "))
 		}
+		var dbe *userops.DBCleanupError
+		if errors.As(err, &dbe) {
+			return fmt.Errorf("account KEPT: MariaDB object(s) %v could not be dropped — deleting now would orphan them; retry once the agent is healthy",
+				dbe.Objects)
+		}
+		return err
 	}
 	return nil
 }
