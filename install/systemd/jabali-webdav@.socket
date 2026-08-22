@@ -14,6 +14,9 @@ Description=WebDAV socket for jabali subaccount %i
 ListenStream=/run/jabali-webdav/%i.sock
 SocketMode=0660
 SocketGroup=jabali-sockets
+# Unlink the socket node when the unit stops, so a disabled subaccount leaves no
+# dead socket file behind in /run/jabali-webdav (systemd keeps it otherwise).
+RemoveOnStop=yes
 
 [Install]
 WantedBy=sockets.target
