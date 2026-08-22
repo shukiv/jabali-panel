@@ -151,13 +151,14 @@ func (r *ftpAccountRepo) Update(ctx context.Context, acct *models.FtpAccount) er
 	err := r.db.WithContext(ctx).
 		Model(&models.FtpAccount{}).
 		Where("id = ?", acct.ID).
-		Select("home_path", "ftp_access", "sftp_access", "is_enabled", "updated_at").
+		Select("home_path", "ftp_access", "sftp_access", "webdav_access", "is_enabled", "updated_at").
 		Updates(map[string]any{
-			"home_path":   acct.HomePath,
-			"ftp_access":  acct.FTPAccess,
-			"sftp_access": acct.SFTPAccess,
-			"is_enabled":  acct.IsEnabled,
-			"updated_at":  acct.UpdatedAt,
+			"home_path":     acct.HomePath,
+			"ftp_access":    acct.FTPAccess,
+			"sftp_access":   acct.SFTPAccess,
+			"webdav_access": acct.WebDAVAccess,
+			"is_enabled":    acct.IsEnabled,
+			"updated_at":    acct.UpdatedAt,
 		}).Error
 	return translateFtpAccount(err)
 }

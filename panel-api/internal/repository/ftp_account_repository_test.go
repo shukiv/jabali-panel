@@ -59,9 +59,9 @@ func TestFtpAccountCreate_Success(t *testing.T) {
 	acct := testFtpAccount(time.Now())
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`is_enabled`,`uid`,`isolated`,`quota_mb`,`jail_path`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")).
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`webdav_access`,`is_enabled`,`uid`,`isolated`,`quota_mb`,`jail_path`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")).
 		WithArgs(acct.ID, acct.UserID, acct.Username, acct.HomePath,
-			acct.FTPAccess, acct.SFTPAccess, acct.IsEnabled,
+			acct.FTPAccess, acct.SFTPAccess, acct.WebDAVAccess, acct.IsEnabled,
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -85,9 +85,9 @@ func TestFtpAccountCreate_ExplicitFalseSFTPAccess(t *testing.T) {
 	acct.FTPAccess = true
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`is_enabled`,`uid`,`isolated`,`quota_mb`,`jail_path`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")).
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `ftp_accounts` (`id`,`user_id`,`username`,`home_path`,`ftp_access`,`sftp_access`,`webdav_access`,`is_enabled`,`uid`,`isolated`,`quota_mb`,`jail_path`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")).
 		WithArgs(acct.ID, acct.UserID, acct.Username, acct.HomePath,
-			true, false, acct.IsEnabled,
+			true, false, acct.WebDAVAccess, acct.IsEnabled,
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -202,8 +202,8 @@ func TestFtpAccountUpdate_AllowlistOnly(t *testing.T) {
 	acct.IsEnabled = false
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE `ftp_accounts` SET `ftp_access`=?,`home_path`=?,`is_enabled`=?,`sftp_access`=?,`updated_at`=? WHERE id = ?")).
-		WithArgs(acct.FTPAccess, acct.HomePath, false, acct.SFTPAccess, sqlmock.AnyArg(), acct.ID).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE `ftp_accounts` SET `ftp_access`=?,`home_path`=?,`is_enabled`=?,`sftp_access`=?,`updated_at`=?,`webdav_access`=? WHERE id = ?")).
+		WithArgs(acct.FTPAccess, acct.HomePath, false, acct.SFTPAccess, sqlmock.AnyArg(), acct.WebDAVAccess, acct.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

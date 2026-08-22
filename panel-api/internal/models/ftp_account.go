@@ -31,7 +31,12 @@ type FtpAccount struct {
 	// carries NO gorm default on purpose — `default:1` on a bool silently
 	// flips an explicit false back to true on create (recurring scar).
 	SFTPAccess bool `gorm:"column:sftp_access;type:tinyint(1);not null" json:"sftp_access"`
-	IsEnabled  bool `gorm:"type:tinyint(1);not null" json:"is_enabled"`
+	// WebDAVAccess gates the per-subaccount WebDAV worker + jabali-webdav group
+	// (GH #1146). Column default is 0 (opt-in); the tag carries NO gorm default
+	// on purpose — a `default:1`-style tag on a bool silently flips an explicit
+	// false back to true on create (same recurring scar as sftp_access).
+	WebDAVAccess bool `gorm:"column:webdav_access;type:tinyint(1);not null" json:"webdav_access"`
+	IsEnabled    bool `gorm:"type:tinyint(1);not null" json:"is_enabled"`
 	// UID is the subaccount's own uid when isolated (GH #1145 separate-uid
 	// model). nil = legacy shared-uid alias sharing the tenant uid. Explicit
 	// column tag: GORM mangles the initialism (UID -> u_id) otherwise.
