@@ -29,19 +29,24 @@ func ft264DSN(t *testing.T) string {
 	return dsn
 }
 
-// migrateToExact drops everything and migrates to exactly `version`, leaving the
-// schema clean at that version with nothing above it applied.
+// migrateToExact wipes the schema and migrates to exactly `version`, leaving it
+// clean at that version with nothing above applied. Two golang-migrate quirks
+// force the shape: (1) after Drop() the SAME migrator can't Migrate — it reads
+// the now-gone schema_migrations before recreating it — so a fresh migrator is
+// needed; (2) the advisory GET_LOCK is per-connection, so the first migrator
+// must be CLOSED (releasing the lock) before the second opens, or the second
+// dies on "can't acquire lock".
 func migrateToExact(t *testing.T, dsn string, version uint) {
 	t.Helper()
-	m, closeFn, err := newMigrator(dsn)
+	m1, close1, err := newMigrator(dsn)
 	require.NoError(t, err)
-	defer closeFn()
-	// Drop wipes all objects + the version table, so the Migrate below starts
-	// from zero regardless of prior test state.
-	require.NoError(t, m.Drop())
-	m2, closeFn2, err := newMigrator(dsn)
+	dropErr := m1.Drop()
+	close1() // release the lock + connection before the next migrator opens
+	require.NoError(t, dropErr)
+
+	m2, close2, err := newMigrator(dsn)
 	require.NoError(t, err)
-	defer closeFn2()
+	defer close2()
 	require.NoError(t, m2.Migrate(version))
 }
 

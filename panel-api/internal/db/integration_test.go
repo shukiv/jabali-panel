@@ -16,7 +16,6 @@ import (
 	"context"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,63 +138,10 @@ func TestIntegration_UserCRUD(t *testing.T) {
 	assert.ErrorIs(t, err, repository.ErrNotFound)
 }
 
-func TestIntegration_RefreshTokenRotateSerialises(t *testing.T) {
-	dsn := testDSN(t)
-	resetSchema(t, dsn)
-
-	gdb, err := db.Open(db.Options{DSN: dsn, Silent: true})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		sqlDB, _ := gdb.DB()
-		_ = sqlDB.Close()
-	})
-
-	users := repository.NewUserRepository(gdb)
-	tokens := repository.NewRefreshTokenRepository(gdb)
-	ctx := context.Background()
-
-	u := &models.User{
-		ID:           ids.NewULID(),
-		Email:        "rtr-" + ids.NewULID() + "@example.com",
-		PasswordHash: "hash",
-	}
-	require.NoError(t, users.Create(ctx, u))
-
-	oldHash := "a" + ids.NewULID() // 27 chars — we just need something unique
-	oldTok := &models.RefreshToken{
-		ID:        ids.NewULID(),
-		UserID:    u.ID,
-		DeviceID:  "dev",
-		TokenHash: oldHash,
-		ExpiresAt: time.Now().UTC().Add(time.Hour),
-		CreatedAt: time.Now().UTC(),
-	}
-	require.NoError(t, tokens.Create(ctx, oldTok))
-
-	// First rotate succeeds.
-	newTok := &models.RefreshToken{
-		ID:        ids.NewULID(),
-		UserID:    u.ID,
-		DeviceID:  "dev",
-		TokenHash: "n" + ids.NewULID(),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
-		CreatedAt: time.Now().UTC(),
-	}
-	require.NoError(t, tokens.Rotate(ctx, oldHash, newTok))
-
-	// Second rotate of the same old hash must fail (already revoked).
-	second := &models.RefreshToken{
-		ID:        ids.NewULID(),
-		UserID:    u.ID,
-		DeviceID:  "dev",
-		TokenHash: "z" + ids.NewULID(),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
-		CreatedAt: time.Now().UTC(),
-	}
-	err = tokens.Rotate(ctx, oldHash, second)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, repository.ErrNotFound)
-}
+// (Removed TestIntegration_RefreshTokenRotateSerialises: the RefreshToken model
+// + repository no longer exist, so the test referenced deleted symbols and broke
+// the `integration` build tag on main. Refresh-token rotation is gone from the
+// codebase; nothing to cover here.)
 
 func TestIntegration_DSN_InvalidFailsFast(t *testing.T) {
 	_ = testDSN(t) // skip unless integration env configured
