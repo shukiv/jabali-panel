@@ -260,8 +260,19 @@ func confirm(prompt string) (bool, error) {
 func repairSteps() []repairStep {
 	return []repairStep{
 		{
-			// First: a dirty schema means the panel is already down, which
-			// makes every other finding secondary.
+			// Runs before the general dirty-migration detector: this is the ONE
+			// dirty state we can recover automatically and safely, so fix it
+			// rather than only reporting it (GH #1094 / #1103). Precisely gated —
+			// see detectBrokenFtp264.
+			id:     "dirty-ftp-264",
+			label:  "schema half-applied migration 264 (GH #1094 FTP row-size) — panel-api cannot start",
+			detect: detectBrokenFtp264,
+			fix:    fixBrokenFtp264,
+		},
+		{
+			// A dirty schema means the panel is already down, which makes every
+			// other finding secondary. (The recoverable 264 case above is caught
+			// first; anything reaching here is operator-driven.)
 			id:     "dirty-migration",
 			label:  "database schema is dirty — panel-api cannot start",
 			detect: detectDirtyMigration,
@@ -1517,4 +1528,52 @@ func detectDirtyMigration(_ repairCtx) (bool, string, error) {
 	return true, fmt.Sprintf(
 		"schema dirty at version %d — panel-api cannot start; run `jabali migrate status` for how to clear it",
 		st.Version), nil
+}
+
+// detectBrokenFtp264 reports the one dirty state repair can recover on its own:
+// the half-applied original migration 000264 (GH #1094). The `ftp_pasv_address
+// VARCHAR` ALTER hit InnoDB's row-size ceiling and rolled back, but the earlier
+// `CREATE TABLE ftp_accounts` had committed, leaving the schema dirty at 264
+// with a fix (#1103) that a dirty host can't apply. See db.IsBrokenFtp264 for
+// the precise fingerprint — anything else falls through to detectDirtyMigration.
+func detectBrokenFtp264(_ repairCtx) (bool, string, error) {
+	if err := initConfig(); err != nil {
+		return false, "", nil
+	}
+	cfg := sharedCfg
+	if cfg.Database.URL == "" || cfg.Database.URL == "placeholder-until-phase-3" {
+		return false, "", nil
+	}
+	broken, err := db.IsBrokenFtp264(cfg.Database.URL)
+	if err != nil {
+		// Unreachable DB is its own finding; don't misreport it here.
+		return false, "", nil
+	}
+	if !broken {
+		return false, "", nil
+	}
+	return true, "migration 264 half-applied (ftp_accounts created, server_settings ALTER rolled back at the row-size ceiling); recoverable", nil
+}
+
+// fixBrokenFtp264 clears the half-applied 000264 and re-applies the corrected
+// migration (drop the orphan empty ftp_accounts table, force back to 263,
+// migrate up). Gated on the fingerprint via db.RecoverBrokenFtp264, so it is a
+// no-op unless detectBrokenFtp264 matched — never a blind force.
+func fixBrokenFtp264(_ repairCtx) error {
+	if err := initConfig(); err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	cfg := sharedCfg
+	if cfg.Database.URL == "" || cfg.Database.URL == "placeholder-until-phase-3" {
+		return fmt.Errorf("database URL not configured")
+	}
+	recovered, err := db.RecoverBrokenFtp264(cfg.Database.URL)
+	if err != nil {
+		return err
+	}
+	if !recovered {
+		// Fingerprint no longer matches (e.g. already recovered) — nothing to do.
+		return nil
+	}
+	return nil
 }
