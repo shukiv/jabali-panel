@@ -568,23 +568,6 @@ func (h *databaseHandler) restore(c *gin.Context) {
 		return
 	}
 
-	// GH #1045 PostgreSQL parity — restore is MariaDB-only for now. The
-	// MariaDB path loads tenant-supplied SQL through a db-scoped, unprivileged
-	// shadow account (db_load_scoped.go, JAB-239); loading an uploaded dump as
-	// the postgres superuser would execute arbitrary attacker SQL (COPY FROM
-	// PROGRAM, CREATE FUNCTION, cross-DB reads) with cluster privileges. The
-	// privilege-scoped Postgres loader is the next slice — until it lands,
-	// refuse rather than fall through to the MariaDB verb (which would run
-	// mysql against a Postgres database). The UI keeps the action disabled for
-	// Postgres rows; this is the belt-and-braces server guard.
-	if d.Engine == "postgres" {
-		c.JSON(http.StatusNotImplemented, gin.H{
-			"error":  "not_implemented",
-			"detail": "PostgreSQL restore from file is not yet available",
-		})
-		return
-	}
-
 	// Parse multipart form (max 500 MB)
 	const maxUploadSize = 500 * 1024 * 1024 // 500 MB
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadSize)
@@ -636,10 +619,18 @@ func (h *databaseHandler) restore(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	_, err = h.cfg.Agent.Call(agentCtx, "db.restore", map[string]any{
-		"db_name": d.Name,
-		"path":    restorePath,
-	})
+	// Dispatch by engine. Postgres loads the dump through a privilege-scoped
+	// shadow role and re-establishes ownership afterwards (GH #1045), so it
+	// needs the DB's granted tenant roles; MariaDB's db.restore is unchanged.
+	restoreCmd := "db.restore"
+	restoreParams := map[string]any{"db_name": d.Name, "path": restorePath}
+	if d.Engine == "postgres" {
+		restoreCmd = "db.postgres.restore"
+		ownerRole, grantRoles := h.pgGrantedRoles(ctx, d.ID)
+		restoreParams["owner_role"] = ownerRole
+		restoreParams["grant_roles"] = grantRoles
+	}
+	_, err = h.cfg.Agent.Call(agentCtx, restoreCmd, restoreParams)
 	if err != nil {
 		// Agent cleanup the file on failure, but delete it here too just in case
 		_ = deleteFile(restorePath)
@@ -648,4 +639,31 @@ func (h *databaseHandler) restore(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// pgGrantedRoles resolves the Postgres roles granted on a database for the
+// restore post-pass (GH #1045): `all` is every granted postgres role, `owner`
+// is a deterministic primary (the first granted role) that restored objects are
+// reassigned to. Empty owner when the database has no postgres grants — the
+// agent then leaves restored objects owned by postgres. Mirrors the delete
+// handler's grant -> db-user resolution.
+func (h *databaseHandler) pgGrantedRoles(ctx context.Context, dbID string) (owner string, all []string) {
+	if h.cfg.DatabaseGrants == nil || h.cfg.DatabaseUsers == nil {
+		return "", nil
+	}
+	grants, err := h.cfg.DatabaseGrants.ListByDatabaseID(ctx, dbID)
+	if err != nil {
+		return "", nil
+	}
+	for _, g := range grants {
+		u, uErr := h.cfg.DatabaseUsers.FindByID(ctx, g.DatabaseUserID)
+		if uErr != nil || u == nil || u.Engine != "postgres" || u.Username == "" {
+			continue
+		}
+		all = append(all, u.Username)
+	}
+	if len(all) > 0 {
+		owner = all[0]
+	}
+	return owner, all
 }

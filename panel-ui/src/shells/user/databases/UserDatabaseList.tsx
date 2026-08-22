@@ -3,9 +3,8 @@
 // apiClient helper; a blank tab is opened synchronously to dodge
 // popup blockers while the SSO call runs.
 // GH #1045: per-database Backup/Restore actions (download a one-shot
-// dump; restore from an uploaded .sql file). Download backup works for
-// MariaDB (mariadb-dump) and PostgreSQL (pg_dump); restore is MariaDB
-// only for now — the privilege-scoped Postgres loader is the next slice.
+// dump; restore from an uploaded .sql file) for both MariaDB (mariadb-dump
+// / mysql) and PostgreSQL (pg_dump / privilege-scoped psql loader).
 import { useTranslation } from "react-i18next";
 import { useRef, useState, type ChangeEvent } from "react";
 import { shortDateTime } from "../../../utils/datetime";
@@ -351,12 +350,11 @@ export const UserDatabaseList = () => {
                 disabled: isAdminerLoading,
                 loading: isAdminerLoading,
               };
-              // GH #1045 — per-database backup/restore. Download backup works
-              // for both engines (mariadb-dump / pg_dump). Restore is still
-              // MariaDB-only: the MariaDB loader confines a tenant dump to a
-              // db-scoped, unprivileged account, and the equivalent
-              // privilege-scoped Postgres loader is the next slice — until it
-              // lands, restore stays disabled for Postgres rows.
+              // GH #1045 — per-database backup/restore for both engines.
+              // Download uses mariadb-dump / pg_dump; restore loads the uploaded
+              // dump through a db-scoped, unprivileged account (MariaDB shadow
+              // user, or the Postgres scoped shadow role over scram) so tenant
+              // SQL can never exceed its own database.
               const backupAction = {
                 key: "backup",
                 label: "Download backup",
@@ -370,15 +368,15 @@ export const UserDatabaseList = () => {
                 label: "Restore from file",
                 icon: <UploadOutlined />,
                 onClick: () => handlePickRestore(r),
-                disabled: isPostgres || restoringId === r.id,
+                disabled: restoringId === r.id,
                 loading: restoringId === r.id,
-                tooltip: isPostgres
-                  ? "Restore from file is coming to PostgreSQL — download backup works now"
-                  : undefined,
                 confirm: {
                   title: `Restore into "${r.name}"?`,
-                  description:
-                    "The uploaded dump runs against this database — existing tables with the same names are overwritten.",
+                  // Postgres restore resets the whole database (drop + rebuild
+                  // from the dump); MariaDB overwrites the dump's own tables.
+                  description: isPostgres
+                    ? "This REPLACES the entire database — all current data in it is dropped and rebuilt from the uploaded dump."
+                    : "The uploaded dump runs against this database — existing tables with the same names are overwritten.",
                   okText: "Choose .sql file",
                 },
               };

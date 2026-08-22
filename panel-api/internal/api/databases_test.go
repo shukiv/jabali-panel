@@ -746,22 +746,57 @@ func TestDatabaseBackup_DispatchesByEngine(t *testing.T) {
 	}
 }
 
-// GH #1045 — Postgres restore-from-file is refused with 501 until the
-// privilege-scoped loader ships; the handler must NOT fall through to the
-// MariaDB verb (which would run mysql against a Postgres database). The guard
-// fires before any agent call.
-func TestDatabaseRestore_PostgresNotImplemented(t *testing.T) {
-	agent := &mockAgent{}
-	r, dbRepo := databaseRouterWithAgent("user1", false, agent)
-	dbRepo.databases = []models.Database{{ID: "id1", UserID: "user1", Name: "alice_db", Engine: "postgres"}}
+// GH #1045 — pgGrantedRoles resolves the Postgres roles the restore post-pass
+// reassigns ownership + re-grants to: `all` is every granted postgres role
+// (mariadb grants filtered out), `owner` is the first of them; empty when the
+// database has no postgres grants.
+func TestPgGrantedRoles(t *testing.T) {
+	h := &databaseHandler{cfg: DatabaseHandlerConfig{
+		DatabaseGrants: &pgGrantFake{grants: []models.DatabaseUserGrant{
+			{DatabaseUserID: "u1"}, {DatabaseUserID: "u2"}, {DatabaseUserID: "u3"},
+		}},
+		DatabaseUsers: &pgUserFake{users: map[string]*models.DatabaseUser{
+			"u1": {Username: "alice_pg", Engine: "postgres"},
+			"u2": {Username: "bob_maria", Engine: "mariadb"}, // filtered out
+			"u3": {Username: "carol_pg", Engine: "postgres"},
+		}},
+	}}
+	owner, all := h.pgGrantedRoles(context.Background(), "db1")
+	assert.Equal(t, "alice_pg", owner)
+	assert.Equal(t, []string{"alice_pg", "carol_pg"}, all)
 
-	req := httptest.NewRequest("POST", "/api/v1/databases/id1/restore", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	// No postgres grants → empty owner + no roles.
+	h2 := &databaseHandler{cfg: DatabaseHandlerConfig{
+		DatabaseGrants: &pgGrantFake{grants: []models.DatabaseUserGrant{{DatabaseUserID: "u2"}}},
+		DatabaseUsers:  &pgUserFake{users: map[string]*models.DatabaseUser{"u2": {Username: "bob", Engine: "mariadb"}}},
+	}}
+	o2, a2 := h2.pgGrantedRoles(context.Background(), "db1")
+	assert.Equal(t, "", o2)
+	assert.Empty(t, a2)
 
-	require.Equal(t, http.StatusNotImplemented, w.Code)
-	var resp map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&resp)
-	assert.Equal(t, "not_implemented", resp["error"])
-	assert.Equal(t, 0, agent.callCount)
+	// Nil repos → empty, no panic (fail-safe).
+	h3 := &databaseHandler{cfg: DatabaseHandlerConfig{}}
+	o3, a3 := h3.pgGrantedRoles(context.Background(), "db1")
+	assert.Equal(t, "", o3)
+	assert.Nil(t, a3)
+}
+
+// Minimal fakes for pgGrantedRoles — embed the interfaces so only the two
+// methods the helper calls need bodies (others panic if ever invoked).
+type pgGrantFake struct {
+	repository.DatabaseUserGrantRepository
+	grants []models.DatabaseUserGrant
+}
+
+func (f *pgGrantFake) ListByDatabaseID(context.Context, string) ([]models.DatabaseUserGrant, error) {
+	return f.grants, nil
+}
+
+type pgUserFake struct {
+	repository.DatabaseUserRepository
+	users map[string]*models.DatabaseUser
+}
+
+func (f *pgUserFake) FindByID(_ context.Context, id string) (*models.DatabaseUser, error) {
+	return f.users[id], nil
 }

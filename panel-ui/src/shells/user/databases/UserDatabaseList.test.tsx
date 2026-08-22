@@ -163,15 +163,11 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
     unmount();
   });
 
-  // GH #1045 PostgreSQL parity: Download backup works for a Postgres row
-  // (pg_dump path), but Restore from file stays disabled until the
-  // privilege-scoped loader ships.
-  it("enables Download for Postgres but keeps Restore disabled", async () => {
+  // GH #1045 PostgreSQL parity: Restore from file is now enabled for Postgres
+  // rows, and its confirm warns that the whole database is replaced (the
+  // pg reset-restore drops + rebuilds, unlike MariaDB's per-table overwrite).
+  it("enables Restore for Postgres with a whole-database warning", async () => {
     rowsHolder.rows = [{ ...mariaRow, name: "pg_shop", engine: "postgres" }];
-    mockedDownload.mockResolvedValue({
-      blob: new Blob(["SQL"], { type: "application/sql" }),
-      filename: "pg_shop-20260821-010203.sql",
-    });
 
     const { unmount } = render(
       <App>
@@ -181,22 +177,21 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
 
     await openRowMenu();
 
-    // Restore is present but disabled for Postgres. AntD marks the menu item
-    // aria-disabled (pointer-events:none blocks the real click); assert that
-    // state rather than a click, which jsdom would let through.
+    // Restore is present and NOT disabled for Postgres.
     const restoreItem = await screen.findByText("Restore from file", undefined, {
       timeout: 5000,
     });
     const restoreLi = restoreItem.closest("li");
     expect(restoreLi).not.toBeNull();
-    // AntD adds the -item-disabled modifier class to a disabled menu item.
-    expect(restoreLi?.className).toMatch(/-item-disabled\b/);
+    expect(restoreLi?.className).not.toMatch(/-item-disabled\b/);
 
-    // Download still works.
-    fireEvent.click(await screen.findByText("Download backup"));
-    await waitFor(() => {
-      expect(mockedDownload).toHaveBeenCalledWith("db1");
-    });
+    // Clicking opens the confirm with the Postgres whole-database wording.
+    fireEvent.click(restoreItem);
+    expect(
+      await screen.findByText(/REPLACES the entire database/i, undefined, {
+        timeout: 5000,
+      }),
+    ).toBeTruthy();
     await act(async () => {});
     unmount();
   });
