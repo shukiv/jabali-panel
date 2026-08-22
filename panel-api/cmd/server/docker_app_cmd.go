@@ -376,7 +376,11 @@ func newDockerAppStatusCmd() *cobra.Command {
 				"ports": ports,
 			}
 			if sharedAgent != nil {
-				raw, agerr := sharedAgent.Call(ctx, "docker_app.status", map[string]any{"slug": app.Slug})
+				// JAB-315: agent ops must target EffectiveSlug (instance_slug when
+				// set), not the catalog Slug — otherwise a second install of the
+				// same catalog app (EffectiveSlug slug-2, slug-3…) is addressed by
+				// its base slug and the op hits the WRONG instance.
+				raw, agerr := sharedAgent.Call(ctx, "docker_app.status", map[string]any{"slug": app.EffectiveSlug()})
 				if agerr != nil {
 					out["agent_error"] = agerr.Error()
 				} else {
@@ -403,11 +407,13 @@ func newDockerAppLifecycleCmd(verb, short string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := sharedAgent.Call(ctx, "docker_app."+verb, map[string]any{"slug": app.Slug})
+			// JAB-315: target EffectiveSlug so start/stop/restart hit this exact
+			// instance, not the base-slug container of a different install.
+			raw, err := sharedAgent.Call(ctx, "docker_app."+verb, map[string]any{"slug": app.EffectiveSlug()})
 			if err != nil {
 				return err
 			}
-			fmt.Printf("ok: %s -> %s\n", verb, app.Slug)
+			fmt.Printf("ok: %s -> %s\n", verb, app.EffectiveSlug())
 			os.Stdout.Write(raw)
 			os.Stdout.Write([]byte{'\n'})
 			return nil
@@ -430,8 +436,10 @@ func newDockerAppDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// JAB-315: delete the container/data for THIS instance (EffectiveSlug),
+			// not whatever the base catalog slug resolves to.
 			if _, err := sharedAgent.Call(ctx, "docker_app.delete", map[string]any{
-				"slug":          app.Slug,
+				"slug":          app.EffectiveSlug(),
 				"purge_volumes": !keepVolumes,
 			}); err != nil {
 				return err
@@ -476,7 +484,8 @@ func newDockerAppLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			params := map[string]any{"slug": app.Slug}
+			// JAB-315: tail THIS instance's container logs (EffectiveSlug).
+			params := map[string]any{"slug": app.EffectiveSlug()}
 			if lines > 0 {
 				params["lines"] = lines
 			}
