@@ -94,6 +94,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// ---- DB ----
 	if cfg.Database.URL != "" && cfg.Database.URL != "placeholder-until-phase-3" {
 		if os.Getenv("SKIP_MIGRATIONS") != "true" {
+			// GH #1094/#1103: a host stuck on the half-applied migration 264
+			// crash-loops here (db.Migrate refuses a dirty schema). Self-heal it
+			// before migrating so the panel recovers on restart without an
+			// operator step. No-op unless the exact fingerprint matches.
+			if recovered, rerr := db.RecoverBrokenFtp264(cfg.Database.URL); rerr != nil {
+				log.Warn("dirty-264 auto-recovery attempt failed; continuing to migrate", "err", rerr)
+			} else if recovered {
+				log.Info("recovered from half-applied migration 264 (GH #1094)")
+			}
 			if err := db.Migrate(cfg.Database.URL); err != nil {
 				return err
 			}

@@ -48,6 +48,18 @@ func newMigrateUpCmd() *cobra.Command {
 				return fmt.Errorf("DATABASE_URL not configured")
 			}
 
+			// GH #1094/#1103: `jabali update` runs this (via the freshly-installed
+			// binary) and rolls the binary back if it fails — so a host stuck on
+			// the half-applied migration 264 could never receive the fix. Self-heal
+			// that exact state here so the update completes on its own. No-op unless
+			// the precise fingerprint matches; anything else falls through to the
+			// normal (and, if dirty, still-failing → operator-driven) migrate.
+			if recovered, rerr := db.RecoverBrokenFtp264(cfg.Database.URL); rerr != nil {
+				fmt.Printf("warning: dirty-264 auto-recovery attempt failed; continuing to migrate: %v\n", rerr)
+			} else if recovered {
+				fmt.Println("recovered from half-applied migration 264 (GH #1094)")
+			}
+
 			if err := db.Migrate(cfg.Database.URL); err != nil {
 				return fmt.Errorf("migrate: %w", err)
 			}
