@@ -21,8 +21,10 @@ import (
 	"strings"
 )
 
-// pdnsutilBinary is the path to the pdnsutil CLI. Overridable in tests.
-var pdnsutilBinary = "/usr/bin/pdnsutil"
+// pdnsutilBinary is the path to the pdnsutil CLI. Overridable in tests; defaults
+// to a no-op stub under `go test` so mutating dnssec ops can't reach real
+// pdnsutil (GH #994/#1160 — see exec_seam.go).
+var pdnsutilBinary = defaultPdnsutilBinary()
 
 // DNSSECKey mirrors one row from `pdnsutil show-zone` output.
 type DNSSECKey struct {

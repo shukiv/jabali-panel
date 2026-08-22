@@ -35,7 +35,10 @@ type Runner struct {
 // NewRunner creates a default certbot runner.
 func NewRunner() *Runner {
 	return &Runner{
-		Binary:  "certbot",
+		// defaultCertbotBinary is "certbot" in production, or a no-op stub under
+		// `go test` so callers can't reach real ACME (GH #994/#1160). Tests that
+		// need real certbot output set Binary themselves after NewRunner.
+		Binary:  defaultCertbotBinary(),
 		OpenSSL: "openssl",
 		Env:     nil,
 		LERoot:  "/etc/letsencrypt",

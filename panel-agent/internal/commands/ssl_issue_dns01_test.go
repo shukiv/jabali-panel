@@ -59,9 +59,11 @@ func TestSSLIssueDNS01_RejectsBadEmail(t *testing.T) {
 }
 
 func TestSSLIssueDNS01_AcceptsSingleWildcardSAN(t *testing.T) {
-	requireHostMutationAllowed(t) // GH #994: reaches internal/certbot\'s own exec (real `certbot certonly` / ACME) — outside the commands exec seam
-	// Passes validation and reaches certbot — which is absent in CI, so a
-	// CodeInternal (not CodeInvalidArgument) proves validation let it through.
+	// GH #1160: internal/certbot's exec is now test-safe (NewRunner defaults
+	// Binary to a no-op stub under `go test`), so this no longer reaches real
+	// ACME and the stopgap requireHostMutationAllowed gate is gone. Validation
+	// passes and reaches the (stubbed) certbot: a non-CodeInvalidArgument error
+	// (or success) proves the wildcard SAN was let through.
 	_, err := callDNS01(t, `{"cert_name":"wildcard.example.com","sans":["example.com","*.example.com"],"email":"a@b.co"}`)
 	if err == nil {
 		t.Skip("real certbot present and succeeded — validation clearly passed")
