@@ -27,29 +27,60 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 const filesAgentTimeout = 2 * time.Minute
-const cliUploadStagingDir = "/var/lib/jabali-uploads"
 
-// maxCLIUploadBytes bounds a single CLI upload (GH #661) — mirrors the agent's
-// 100 MiB read/write cap. Checked BEFORE os.ReadFile so a multi-GB file can't
-// OOM the CLI or fill the staging dir.
-const maxCLIUploadBytes = int64(100 << 20)
+// cliUploadStagingDir is the shared dir the agent reads uploads from. A var (not
+// const) only so tests can point the per-owner budget accounting at a temp dir.
+var cliUploadStagingDir = "/var/lib/jabali-uploads"
 
-// maxCLIStagingMultiple bounds the AGGREGATE staging dir at this multiple of a
-// single upload, so abandoned CLI temps can't fill the service partition
-// (mirrors the GUI per-user staging budget, GH #425/#674).
+// maxCLIAgentIngestBytes is the agent's single-shot files.ingest hard cap (GH
+// #660/#661). The CLI ingests in one shot, so it can never exceed this — larger
+// files use SFTP/SSH. It is the ceiling; the effective per-upload limit is the
+// admin-configured max clamped to it (see cliResolveMaxUploadBytes).
+const maxCLIAgentIngestBytes = int64(100 << 20)
+
+// maxCLIStagingMultiple bounds a single owner's in-flight staging at this
+// multiple of the upload limit, so abandoned CLI temps can't fill the service
+// partition (mirrors the GUI per-user staging budget, GH #425/#674).
 const maxCLIStagingMultiple = int64(2)
 
-// cliStagingDirBytes sums the regular files currently in the CLI staging dir.
-func cliStagingDirBytes() int64 {
+// cliResolveMaxUploadBytes returns the effective single-CLI-upload ceiling
+// (JAB-337): the admin-configured server_settings.upload_max_size_mb — so the
+// CLI honours a tighter operator limit instead of always allowing the hardcoded
+// 100 MiB — clamped down to the agent's single-ingest cap. Falls back to the
+// agent cap when the setting is unset or unreadable.
+func cliResolveMaxUploadBytes(ctx context.Context) int64 {
+	var configured int64
+	if s, err := repository.NewServerSettingsRepository(sharedDB).Get(ctx); err == nil && s != nil && s.UploadMaxSizeMB > 0 {
+		configured = int64(s.UploadMaxSizeMB) * 1024 * 1024
+	}
+	if configured == 0 || configured > maxCLIAgentIngestBytes {
+		return maxCLIAgentIngestBytes
+	}
+	return configured
+}
+
+// cliUploadTmpPrefix namespaces staging temps by owner (JAB-337) so one owner's
+// abandoned CLI temps count only against that owner's budget, not a global pool
+// shared across every tenant, and so session paths cannot collide across owners.
+func cliUploadTmpPrefix(userID string) string { return "jabali-upload-cli-" + userID + "-" }
+
+// cliStagingDirBytesForUser sums the regular staging files belonging to one
+// owner (by the owner-namespaced prefix).
+func cliStagingDirBytesForUser(userID string) int64 {
 	var total int64
 	entries, err := os.ReadDir(cliUploadStagingDir)
 	if err != nil {
 		return 0
 	}
+	pfx := cliUploadTmpPrefix(userID)
 	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), pfx) {
+			continue
+		}
 		if fi, iErr := e.Info(); iErr == nil && fi.Mode().IsRegular() {
 			total += fi.Size()
 		}
@@ -497,12 +528,13 @@ func newFilesUploadCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			maxUpload := cliResolveMaxUploadBytes(c.Context())
 			if fi, statErr := os.Stat(args[0]); statErr != nil {
 				return statErr
-			} else if fi.Size() > maxCLIUploadBytes {
-				return fmt.Errorf("file is %d bytes; the CLI upload limit is %d — use SFTP/SSH for larger files", fi.Size(), maxCLIUploadBytes)
-			} else if budget := maxCLIUploadBytes * maxCLIStagingMultiple; cliStagingDirBytes()+fi.Size() > budget {
-				return fmt.Errorf("CLI upload staging budget exceeded (%d in-flight + %d > %d bytes) — clear %s or retry after in-flight uploads finish", cliStagingDirBytes(), fi.Size(), budget, cliUploadStagingDir)
+			} else if fi.Size() > maxUpload {
+				return fmt.Errorf("file is %d bytes; the configured CLI upload limit is %d — use SFTP/SSH for larger files", fi.Size(), maxUpload)
+			} else if budget := maxUpload * maxCLIStagingMultiple; cliStagingDirBytesForUser(u.ID)+fi.Size() > budget {
+				return fmt.Errorf("this owner's CLI upload staging budget is exceeded (%d in-flight for %s + %d > %d bytes) — retry after their in-flight uploads finish", cliStagingDirBytesForUser(u.ID), *u.Username, fi.Size(), budget)
 			}
 			data, rerr := os.ReadFile(args[0])
 			if rerr != nil {
@@ -514,7 +546,7 @@ func newFilesUploadCmd() *cobra.Command {
 			}
 			idb := make([]byte, 16)
 			_, _ = rand.Read(idb)
-			tmpPath := filepath.Join(cliUploadStagingDir, "jabali-upload-cli-"+hex.EncodeToString(idb))
+			tmpPath := filepath.Join(cliUploadStagingDir, cliUploadTmpPrefix(u.ID)+hex.EncodeToString(idb))
 			if werr := os.WriteFile(tmpPath, data, 0o640); werr != nil {
 				return werr
 			}
