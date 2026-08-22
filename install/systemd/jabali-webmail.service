@@ -32,15 +32,23 @@ WorkingDirectory=/opt/jabali-webmail
 # bulwark updates that overwrite server.js leave server-unix.js alone.
 Environment=SOCKET_PATH=/run/jabali-bulwark/bulwark.sock
 Environment=NODE_ENV=production
-# Ensure .next/cache exists before main process starts. The Bulwark
-# tarball doesn't ship the cache subdir; without it, systemd refuses
-# to enter mount namespacing (ReadWritePaths below references the
-# path) and the unit fails with status=226/NAMESPACE. The leading +
-# runs the command as root so the directory can be created even when
-# /opt/jabali-webmail is owned by jabali-webmail:jabali-webmail and
-# the user-mode process couldn't mkdir at the required time.
+# JAB-375: dedicated per-service tmp. The AppArmor profile replaces the old
+# PrivateTmp= mount-namespace isolation (which it can't coexist with — see
+# the AppArmorProfile= note below); pointing TMPDIR at a private 0700 subtree
+# under the state dir, plus the profile's `deny /tmp/**`, keeps tmp isolation
+# without a mount namespace. Node's os.tmpdir() and well-behaved libs honour
+# TMPDIR; anything that hardcodes /tmp is denied by the profile.
+Environment=TMPDIR=/var/lib/jabali-webmail/tmp
+# Ensure .next/cache and the tmp subtree exist before the main process
+# starts. The Bulwark tarball doesn't ship the cache subdir. The leading +
+# runs each command as root so the directory can be created even when
+# /opt/jabali-webmail is owned by jabali-webmail:jabali-webmail and the
+# user-mode process couldn't mkdir at the required time.
 ExecStartPre=+/bin/mkdir -p /opt/jabali-webmail/.next/cache
 ExecStartPre=+/bin/chown jabali-webmail:jabali-webmail /opt/jabali-webmail/.next/cache
+ExecStartPre=+/bin/mkdir -p /var/lib/jabali-webmail/tmp
+ExecStartPre=+/bin/chown jabali-webmail:jabali-webmail /var/lib/jabali-webmail/tmp
+ExecStartPre=+/bin/chmod 0700 /var/lib/jabali-webmail/tmp
 ExecStart=/usr/bin/node /opt/jabali-webmail/server-unix.js
 
 # RuntimeDirectory creates /run/jabali-bulwark on every start, owned
@@ -67,11 +75,26 @@ Restart=always
 RestartSec=5s
 
 # Security hardening.
+#
+# JAB-375: confinement is via the AppArmor profile jabali-bulwark, NOT the
+# systemd mount-namespace directives. ProtectSystem=/PrivateTmp=/ProtectHome=
+# each build a private mount namespace, and a mount namespace + this
+# profile's label transition makes Node self-abort at node::Start
+# (status=6/ABRT, no message; deterministic on .86, any one of the three is
+# enough). The AppArmor profile provides strictly tighter file MAC in their
+# place (default-deny read+write vs ProtectSystem=strict's read-only-only),
+# plus network/unix/capability MAC, and TMPDIR+`deny /tmp/**` replace
+# PrivateTmp. Do NOT reintroduce those directives here without removing the
+# AppArmor attach — they cannot coexist. NoNewPrivileges is kept (it is NOT
+# the trigger and is good hardening).
+#
+# The leading '-' on AppArmorProfile makes systemd ignore the attach when
+# AppArmor is absent or the profile isn't loaded (no-LSM hosts, or the
+# install_apparmor kernel-bug skip), so webmail still starts — unconfined —
+# there rather than failing. The profile loads complain on install and the
+# flip-mature timer promotes it to enforce after a clean soak.
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/jabali-webmail /opt/jabali-webmail/.next/cache /run/jabali-bulwark
+AppArmorProfile=-jabali-bulwark
 
 StandardOutput=journal
 StandardError=journal

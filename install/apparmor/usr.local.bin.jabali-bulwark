@@ -1,24 +1,34 @@
-# AppArmor profile — jabali-bulwark (M40.1, ADR-0086)
+# AppArmor profile — jabali-bulwark (M40.1 / JAB-375, ADR-0086)
 #
-# bulwark is the Node.js public-facing fronting daemon. Untrusted
-# input boundary; profile is tight: state dir + unix socket + outbound
-# TCP for relay/upstream calls. NO access to /etc/jabali/ panel
-# secrets — bulwark gets its own config from /etc/jabali-bulwark/.
+# bulwark is the Node.js public-facing webmail daemon (Next.js). It is an
+# untrusted-input boundary, so the profile is tight: a read-only app tree,
+# its own state dir + a dedicated tmp, the listen socket, the panel-api
+# upstream socket, and outbound TCP for JMAP/relay. NO access to panel
+# secrets, /etc/shadow, user homes, the audit log, or the shared /tmp.
 #
-# AA 4.x (Debian 13) enforces the `unix` mediation class separately
-# from `network unix`. Without explicit unix rules the Node.js process
-# fails to bind its own socket or connect to the panel-api upstream
-# socket even in complain mode.
+# JAB-375 path correction: the app actually runs as
+# `/usr/bin/node /opt/jabali-webmail/server-unix.js`, reads its config from
+# /etc/jabali-panel/bulwark.env, and keeps state under /var/lib/jabali-webmail.
+# The M40 profile granted the old /usr/local/bin + /var/lib/jabali-bulwark
+# layout and therefore confined nothing real. Paths are corrected here.
 #
-# M40.1 socket path fix: M25 (ADR-0050) moved bulwark's socket into
-# a directory at /run/jabali-bulwark/bulwark.sock (not the flat
-# /run/jabali-bulwark.sock the M40 profile had). Similarly panel-api
-# lives at /run/jabali-panel/api.sock (not /run/jabali-panel.sock).
-
-# GH #705: pin AppArmor 3.0 ABI — predates unix-socket mediation, so
-# these broken-mediation kernels (Debian 13/Ubuntu 24.04) SKIP unix
-# mediation for this profile; attaching it can't EACCES a unix connect()
-# while still confining files/caps/network. Verified on .86.
+# JAB-375 attach contract: the unit attaches this via
+# `AppArmorProfile=-jabali-bulwark` and MUST NOT set ProtectSystem= /
+# PrivateTmp= / ProtectHome=. A systemd private MOUNT NAMESPACE combined
+# with this label transition makes Node self-abort at node::Start
+# (status=6/ABRT, no message) — reproduced deterministically on .86: any one
+# of those three directives is enough; aa-exec (no mount ns) never triggers
+# it. This profile REPLACES that mount-ns hardening with file MAC
+# (default-deny read+write of everything unlisted, which is strictly tighter
+# than ProtectSystem=strict's read-only-rootfs) and redirects tmp to a
+# dedicated per-service subtree (the unit sets TMPDIR=/var/lib/jabali-webmail/tmp)
+# with the shared /tmp explicitly denied — equal-or-tighter than PrivateTmp.
+#
+# GH #705: pin AppArmor 3.0 ABI — it predates unix-socket mediation, so
+# broken-mediation kernels (Debian 13 / Ubuntu 24.04, no
+# /sys/kernel/security/apparmor/features/unix) SKIP unix mediation for this
+# profile; attaching it can't EACCES a unix connect() while still confining
+# files/caps/network. Verified on .86.
 abi <abi/3.0>,
 
 #include <tunables/global>
@@ -30,17 +40,26 @@ profile jabali-bulwark /usr/local/bin/jabali-bulwark {
   #include <abstractions/ssl_certs>
 
   # Inline minimum Node.js runtime needs — Debian 13 doesn't ship
-  # abstractions/nodejs (parser error: "Could not open
-  # 'abstractions/nodejs'"). These cover libuv epoll/eventfd, V8 ICU
-  # tables, libc DNS, /dev/urandom for crypto.randomBytes, and CPU
-  # topology that Node samples at startup.
+  # abstractions/nodejs. These cover libuv epoll/eventfd, V8 ICU tables,
+  # libc DNS, /dev/urandom for crypto.randomBytes, CPU topology Node samples
+  # at startup, and /proc/self/{maps,stat,status} that Node reads to print a
+  # native stack trace.
   /dev/urandom                    r,
   /dev/null                       rw,
   /proc/sys/kernel/random/uuid    r,
   /proc/*/maps                    r,
   /proc/*/stat                    r,
+  /proc/*/status                  r,
+  # Node samples its own cgroup at startup for the memory/CPU limits it
+  # derives V8 heap sizing from.
+  /proc/*/cgroup                  r,
+  /proc/sys/net/core/somaxconn    r,
   /sys/devices/system/cpu/        r,
   /sys/devices/system/cpu/**      r,
+  # Node reads its cgroup-v2 memory limits (memory.max / memory.high) to
+  # auto-size the V8 heap; the lookup chains /proc/self/cgroup → these files.
+  /sys/fs/cgroup/                 r,
+  /sys/fs/cgroup/**               r,
   /etc/ssl/openssl.cnf            r,
 
   capability net_bind_service,
@@ -51,48 +70,64 @@ profile jabali-bulwark /usr/local/bin/jabali-bulwark {
   network inet6 stream,
   network unix  stream,
 
-  # AA 4.x unix mediation — bind own socket + connect to panel-api upstream.
+  # AA 4.x unix mediation — bind own listener socket + connect to the
+  # panel-api upstream socket.
   unix (create, bind, listen, accept, connect, send, receive) type=stream,
   # AA 4.x: complain mode still enforces unix peer-label checks. Explicit
-  # peer=(label=unconfined) allows connecting to panel-api upstream socket
-  # when that profile label differs from bulwark's label.
+  # peer=(label=unconfined) allows connecting to the panel-api upstream
+  # socket when that profile label differs from bulwark's.
   unix (connect, send, receive) type=stream peer=(label=unconfined),
 
-  /usr/local/bin/jabali-bulwark    mr,
-  /usr/local/bin/node              mr,
+  # systemd (unconfined) sends SIGTERM/SIGKILL on stop; Node signals its own
+  # workers under this same label. Allow both without over-mediating.
+  signal,
+
+  # Node binary itself (abstractions/base covers libc + system libs; V8
+  # native addons that live under the app tree get their mmap grant below).
   /usr/bin/node                    mr,
-  /etc/jabali-bulwark/             r,
-  /etc/jabali-bulwark/**           r,
+  /usr/local/bin/node              mr,
 
-  /var/lib/jabali-bulwark/         rw,
-  /var/lib/jabali-bulwark/**       rwk,
-  /var/log/jabali-bulwark/         rw,
-  /var/log/jabali-bulwark/**       rwk,
+  # --- Application tree: read-only, native addons mmap'd ---
+  /opt/jabali-webmail/               r,
+  /opt/jabali-webmail/**             r,
+  /opt/jabali-webmail/**.node        mr,
+  /opt/jabali-webmail/**.so*         mr,
+  # Next.js writes its build/runtime cache here — the only writable spot in
+  # the app tree (the unit's ExecStartPre pre-creates it).
+  /opt/jabali-webmail/.next/cache/   rw,
+  /opt/jabali-webmail/.next/cache/** rwk,
 
-  # M25 unix-socket layout (ADR-0050).
-  # Own listener socket (nginx upstream: server unix:/run/jabali-bulwark/bulwark.sock).
+  # --- Writable state + the dedicated tmp subtree (replaces PrivateTmp) ---
+  /var/lib/jabali-webmail/         rw,
+  /var/lib/jabali-webmail/**       rwk,
+
+  # --- Config: its OWN env file only, NOT the rest of /etc/jabali-panel ---
+  /etc/jabali-panel/bulwark.env    r,
+
+  # --- Sockets (M25 layout, ADR-0050) ---
+  # Own listener (nginx upstream: server unix:/run/jabali-bulwark/bulwark.sock).
   /run/jabali-bulwark/             rw,
-  /run/jabali-bulwark/**           rw,
+  /run/jabali-bulwark/**           rwlk,
   # panel-api upstream sockets (api + sso).
   /run/jabali-panel/               r,
   /run/jabali-panel/**             rw,
 
-  /usr/lib/node_modules/           r,
-  /usr/lib/node_modules/**         r,
-  /usr/share/jabali-bulwark/       r,
-  /usr/share/jabali-bulwark/**     r,
-  /usr/local/lib/jabali-bulwark/   r,
-  /usr/local/lib/jabali-bulwark/** r,
-
-  /proc/sys/net/core/somaxconn     r,
-  /proc/*/status                   r,
-
-  # Hard denies — bulwark must NOT read panel secrets, /etc/shadow,
-  # user homes, or audit logs.
+  # Hard denies — bulwark must NOT read panel secrets, /etc/shadow, user
+  # homes, or audit logs, and must NOT touch the shared /tmp (its tmp is
+  # redirected to /var/lib/jabali-webmail/tmp).
   deny /etc/jabali/ rwklx,
   deny /etc/jabali/** rwklx,
   deny /etc/shadow rwklx,
   deny /home/** rwlkx,
   deny /root/** rwlkx,
   deny /var/log/audit/** rwklx,
+  deny /tmp/** rwklx,
+  deny /var/tmp/** rwklx,
+  # The stock Bulwark update-check best-effort writes state under the app
+  # tree (/opt/jabali-webmail/data/version-check/). That path is read-only
+  # under the app-tree grant above — and was already read-only under the old
+  # ProtectSystem=strict unit — so this write has never worked and is
+  # non-fatal. A silent deny keeps the app tree read-only AND suppresses the
+  # audit noise so the profile stays soak-clean for the flip-mature timer.
+  deny /opt/jabali-webmail/data/** wk,
 }
