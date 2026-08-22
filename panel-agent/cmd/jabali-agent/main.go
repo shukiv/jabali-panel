@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -56,9 +57,18 @@ func main() {
 		// every install. -pty-gid overrides it for the broker; falls back
 		// to -gid when unset so old units keep their prior behaviour.
 		ptyGID = flag.Int("pty-gid", envInt("JABALI_AGENT_PTY_GID", -1), "PTY broker socket gid + SO_PEERCRED gate (panel-api primary gid = jabali-sockets); -1 falls back to -gid")
-		timeout    = flag.Duration("timeout", defaultTimeout, "per-request wall-clock timeout (when caller sets no deadline)")
-		logFormat  = flag.String("log-format", envOr("JABALI_AGENT_LOG_FORMAT", "json"), "json|text")
-		logLevel   = flag.String("log-level", envOr("JABALI_AGENT_LOG_LEVEL", "info"), "debug|info|warn|error")
+		// JAB-366 / JAB-357: SO_PEERCRED allow-list for the MAIN agent socket.
+		// The socket's 0660 root:jabali perms were the only trust boundary, so a
+		// service account accidentally left in the jabali group (JAB-351/357:
+		// webmail) could connect and drive every privileged command. Gate by the
+		// CONNECTING UID too: only the panel-api user (jabali) + root (operator
+		// CLI) are authorised, so a group regression can never silently re-grant
+		// agent root. Empty = allow any (kept for out-of-systemd test runs);
+		// install.sh always passes the real list.
+		allowedUIDs = flag.String("allowed-uids", envOr("JABALI_AGENT_ALLOWED_UIDS", ""), "comma-separated UIDs allowed to connect to the main socket (SO_PEERCRED gate); empty = allow any (testing only)")
+		timeout     = flag.Duration("timeout", defaultTimeout, "per-request wall-clock timeout (when caller sets no deadline)")
+		logFormat   = flag.String("log-format", envOr("JABALI_AGENT_LOG_FORMAT", "json"), "json|text")
+		logLevel    = flag.String("log-level", envOr("JABALI_AGENT_LOG_LEVEL", "info"), "debug|info|warn|error")
 	)
 	flag.Parse()
 
@@ -92,10 +102,18 @@ func main() {
 		// Note: we hold the client for the process lifetime; no defer Close().
 	}
 
+	allowUID := parseUIDList(*allowedUIDs)
+	if len(allowUID) > 0 {
+		log.Info("agent main socket SO_PEERCRED gate active", "allowed_uids", allowUID)
+	} else {
+		log.Warn("agent main socket SO_PEERCRED gate DISABLED (no -allowed-uids) — any local UID with socket access may connect")
+	}
+
 	srv, err := server.New(server.Config{
 		SocketPath:        *socketPath,
 		SocketMode:        0660,
 		SocketOwnerGID:    *socketGID,
+		AllowedUIDs:       allowUID,
 		PerRequestTimeout: *timeout,
 		Logger:            log,
 	})
@@ -168,6 +186,27 @@ func newLogger(format, level string) *slog.Logger {
 		return slog.New(slog.NewTextHandler(os.Stderr, opts))
 	}
 	return slog.New(slog.NewJSONHandler(os.Stderr, opts))
+}
+
+// parseUIDList parses a comma-separated UID list ("1001,0") into []uint32,
+// skipping blanks and unparseable entries. An empty/blank input yields an
+// empty slice, which the server treats as "gate disabled" (allow any). Used
+// only at startup, so a bad entry logs nothing louder than being ignored —
+// install.sh builds the value from `id -u`, not user input.
+func parseUIDList(s string) []uint32 {
+	var out []uint32
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(part, 10, 32)
+		if err != nil {
+			continue
+		}
+		out = append(out, uint32(n))
+	}
+	return out
 }
 
 // envOr returns the env var if set + non-empty, else fallback. Tiny helper

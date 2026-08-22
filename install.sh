@@ -6470,6 +6470,16 @@ write_agent_systemd_unit() {
   jabali_sockets_gid="$(getent group jabali-sockets | cut -d: -f3)"
   [[ -n "$jabali_sockets_gid" ]] || _die "can't resolve gid of jabali-sockets"
 
+  # JAB-366 / JAB-357: SO_PEERCRED allow-list for the MAIN agent socket. The
+  # socket's 0660 root:jabali perms are only a GROUP gate — a service account
+  # accidentally left in the jabali group (JAB-351/357: webmail) could connect
+  # and drive every privileged command. Gate by the connecting UID too: only
+  # the panel-api user ($SERVICE_USER) + root (operator CLI) may connect, so a
+  # future group regression can never silently re-grant agent root.
+  local panel_uid
+  panel_uid="$(id -u "$SERVICE_USER" 2>/dev/null)"
+  [[ -n "$panel_uid" ]] || _die "can't resolve uid of $SERVICE_USER"
+
   cat >"/etc/systemd/system/${AGENT_SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=Jabali Agent (privileged host operations)
@@ -6489,7 +6499,7 @@ Group=$SERVICE_USER
 RuntimeDirectory=jabali
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=no
-ExecStart=$AGENT_BIN_PATH -socket $AGENT_SOCKET -gid $jabali_gid -pty-gid $jabali_sockets_gid
+ExecStart=$AGENT_BIN_PATH -socket $AGENT_SOCKET -gid $jabali_gid -pty-gid $jabali_sockets_gid -allowed-uids ${panel_uid},0
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
