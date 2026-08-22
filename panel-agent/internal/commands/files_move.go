@@ -62,6 +62,9 @@ func filesMoveHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	// String-gate both paths; the rename act below is escape-proof (renameat
 	// between openat2 parent fds), so a parent-symlink swap can't redirect a
 	// root-side move (Gitea #422 / TOCTOU #428).
+	// JAB-358: move mutates BOTH ends — confine them to the admin write
+	// allow-list (no-op for tenants).
+	scope = scope.WriteScope()
 	oldClean, err := scope.Clean(p.OldPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{

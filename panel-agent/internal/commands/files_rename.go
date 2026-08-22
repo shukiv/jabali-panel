@@ -65,6 +65,9 @@ func filesRenameHandler(ctx context.Context, params json.RawMessage) (any, error
 
 	// String-gate both paths; the rename act is escape-proof (renameat between
 	// openat2 parent fds), closing the TOCTOU parent-swap (Gitea #428).
+	// JAB-358: rename mutates BOTH ends — confine them to the admin write
+	// allow-list (no-op for tenants).
+	scope = scope.WriteScope()
 	oldClean, err := scope.Clean(p.OldPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{

@@ -33,6 +33,7 @@ const (
 	ErrCodeSymlinkLoop     = "symlink_loop"     // circular symlink chain
 	ErrCodeBadCharacters   = "bad_characters"   // invalid filename characters
 	ErrCodeDenied          = "path_denied"      // path within an explicit deny prefix (GH #1184 admin FM)
+	ErrCodeReadOnly        = "read_only"        // mutating op on a path outside the write allow-list (JAB-358)
 )
 
 // DefaultAdminDeniedPrefixes is the hard deny-list for the GH #1184 admin File
@@ -61,6 +62,31 @@ var DefaultAdminDeniedPrefixes = []string{
 	"/run/jabali",   // agent + panel unix sockets
 	"/run/jabali-kratos",
 	"/var/lib/jabali-uploads", // agent↔panel handoff staging
+	// JAB-358: control-plane secret + state stores outside /etc/jabali that the
+	// original deny-list missed. Blocked for read too — these hold the panel DB
+	// password, session/JWT keys, mail creds, and restic repo state.
+	"/etc/jabali-panel",  // bulwark session/JWT keys, restic repo password, panel env
+	"/var/lib/jabali-panel",
+	"/run/jabali-panel", // panel api + sso sockets
+	"/run/jabali-bulwark",
+}
+
+// DefaultAdminMutableRoots is the closed WRITE allow-list for the admin File
+// Manager (JAB-358). The admin scope may READ anywhere on the filesystem (minus
+// DeniedPrefixes), but every MUTATING operation — write, mkdir, delete, rename,
+// move, copy, chmod, extract, archive-create — is confined to these tenant /
+// application data roots. This replaces the old "write everywhere except a
+// deny-list" model: a deny-list can never enumerate every path through which
+// root later executes, loads, or trusts a file (/etc/cron.d, systemd units,
+// /etc/passwd, PAM, the dynamic loader, package hooks, …), so writes are a
+// closed allow-list instead. System/config paths stay read-only; admins use
+// root SSH for anything outside these roots.
+var DefaultAdminMutableRoots = []string{
+	"/home",    // tenant home trees — the admin FM's primary use
+	"/var/www", // web content roots
+	"/srv",     // some deployments serve tenant content here
+	"/tmp",
+	"/var/tmp",
 }
 
 // ValidationError is the error type returned by validators.
@@ -87,6 +113,20 @@ type Scope struct {
 	// symlink-resolved path, so a symlink from an allowed dir into a denied
 	// one is caught.
 	DeniedPrefixes []string
+	// MutableRoots is the closed WRITE allow-list (JAB-358). When non-empty, it
+	// is the set of docroots that WriteScope narrows to for every mutating
+	// operation, even though reads may range across all of OwnedDocroots (the
+	// admin FM reads "/" but writes only these safe data roots). Empty is a pure
+	// no-op: an ordinary tenant scope leaves it nil and its writes stay bounded
+	// by OwnedDocroots alone, so this is backward-compatible with every existing
+	// NewScope caller. Only NewAdminScope populates it, replacing the old "write
+	// anywhere on / except a deny-list" model — a deny-list can never name every
+	// path root later trusts, so admin writes are allow-listed.
+	MutableRoots []string
+	// writeNarrowed marks a scope produced by WriteScope: its OwnedDocroots are
+	// the write allow-list, so a docroot miss means "read-only under the admin
+	// File Manager" (ErrCodeReadOnly) rather than a plain not-in-scope.
+	writeNarrowed bool
 	// resolveCache caches EvalSymlinks results to detect symlink loops
 	resolveCache map[string]string
 }
@@ -130,14 +170,23 @@ func NewScope(userID, username string, ownedDocroots []string) (*Scope, error) {
 }
 
 // NewAdminScope creates a root-scoped Scope for the GH #1184 admin File
-// Manager: OwnedDocroots is "/" (the whole filesystem) but every path in
-// deniedPrefixes is blocked for all operations. Pass
-// DefaultAdminDeniedPrefixes unless a caller has a reason to differ. This is
-// a privileged constructor — the panel gates it behind admin auth AND a
-// default-off server setting; the deny-list here is the last line of defence.
-func NewAdminScope(userID, username string, deniedPrefixes []string) (*Scope, error) {
+// Manager: OwnedDocroots is "/" so READS may range across the whole
+// filesystem, but every path in deniedPrefixes is blocked for all operations
+// AND every MUTATING operation is additionally confined to mutableRoots
+// (JAB-358). Pass DefaultAdminDeniedPrefixes and DefaultAdminMutableRoots
+// unless a caller has a reason to differ. This is a privileged constructor —
+// the panel gates it behind admin auth AND a default-off server setting; the
+// deny-list plus the write allow-list here are the last line of defence.
+//
+// A non-empty mutableRoots is required: passing an empty list would leave the
+// admin scope able to write anywhere on "/" (the very footgun JAB-358 closes),
+// so it is rejected rather than silently degrading to the old behaviour.
+func NewAdminScope(userID, username string, deniedPrefixes, mutableRoots []string) (*Scope, error) {
 	if username == "" {
 		return nil, &ValidationError{Code: ErrCodeEmpty, Detail: "username cannot be empty"}
+	}
+	if len(mutableRoots) == 0 {
+		return nil, &ValidationError{Code: ErrCodeEmpty, Detail: "admin scope requires a non-empty write allow-list (mutableRoots)"}
 	}
 	denied := make([]string, 0, len(deniedPrefixes))
 	for _, p := range deniedPrefixes {
@@ -147,11 +196,25 @@ func NewAdminScope(userID, username string, deniedPrefixes []string) (*Scope, er
 		}
 		denied = append(denied, p)
 	}
+	mutable := make([]string, 0, len(mutableRoots))
+	for _, p := range mutableRoots {
+		p = filepath.Clean(p)
+		if !filepath.IsAbs(p) {
+			return nil, &ValidationError{Code: ErrCodeNotAbsolute, Detail: fmt.Sprintf("mutable root %q must be absolute", p)}
+		}
+		if p == "/" {
+			// "/" as a mutable root would re-open whole-filesystem writes and
+			// defeat the allow-list entirely; reject it explicitly.
+			return nil, &ValidationError{Code: ErrCodeNotInScope, Detail: `"/" is not a valid mutable root`}
+		}
+		mutable = append(mutable, p)
+	}
 	return &Scope{
 		UserID:         userID,
 		Username:       username,
 		OwnedDocroots:  []string{"/"},
 		DeniedPrefixes: denied,
+		MutableRoots:   mutable,
 		resolveCache:   make(map[string]string),
 	}, nil
 }
@@ -247,6 +310,35 @@ func (s *Scope) Resolve(pathStr string) (string, error) {
 	}
 
 	return resolved, nil
+}
+
+// WriteScope returns the scope that every MUTATING file operation must run
+// against (JAB-358). When the scope carries a write allow-list (the admin File
+// Manager), it narrows OwnedDocroots down to MutableRoots and marks the copy
+// writeNarrowed. Because every escape-proof op resolves relative to a base fd
+// derived from OwnedDocroots (baseFor → openat2 RESOLVE_BENEATH), narrowing the
+// docroots is what actually CONFINES the write in the kernel: a path outside a
+// safe data root is refused, and — critically — a relative symlink planted
+// inside a safe root whose target climbs out via ".." (e.g. ~/x -> ../../etc/
+// cron.d) is rejected with EXDEV mid-walk, which a logical prefix check alone
+// can never guarantee against a concurrent swap. Reads keep using the original
+// scope (OwnedDocroots="/"), so the admin FM still browses the whole tree.
+//
+// For an ordinary tenant scope (no MutableRoots) it returns the scope
+// unchanged, so tenant file ops are byte-for-byte identical to before.
+func (s *Scope) WriteScope() *Scope {
+	if len(s.MutableRoots) == 0 {
+		return s
+	}
+	return &Scope{
+		UserID:         s.UserID,
+		Username:       s.Username,
+		OwnedDocroots:  s.MutableRoots,
+		DeniedPrefixes: s.DeniedPrefixes,
+		MutableRoots:   s.MutableRoots,
+		writeNarrowed:  true,
+		resolveCache:   make(map[string]string),
+	}
 }
 
 // Open opens a file at the given path with the given flags and perms.
@@ -373,6 +465,14 @@ func (s *Scope) verifyInScope(pathStr string) error {
 		}
 	}
 	if !inScope {
+		if s.writeNarrowed {
+			// A WriteScope miss: the path is readable (the admin FM browses "/")
+			// but not writable — say so plainly instead of a bare not-in-scope.
+			return &ValidationError{
+				Code:   ErrCodeReadOnly,
+				Detail: fmt.Sprintf("path %q is read-only in the admin File Manager; writable roots: %v", pathStr, s.OwnedDocroots),
+			}
+		}
 		return &ValidationError{
 			Code:   ErrCodeNotInScope,
 			Detail: fmt.Sprintf("path %q is not within owned docroots: %v", pathStr, s.OwnedDocroots),

@@ -57,6 +57,11 @@ func filesCopyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			Message: fmt.Sprintf("failed to create scope: %v", err),
 		}
 	}
+	// JAB-358: copy reads the source and writes the destination through a SINGLE
+	// escape-proof scope (CopyTreeInScope), so confine BOTH ends to the admin
+	// write allow-list. An admin copies within the tenant/app data roots; system
+	// files stay view-only (no-op for tenant scopes).
+	scope = scope.WriteScope()
 	srcClean, err := scope.Clean(p.SrcPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{

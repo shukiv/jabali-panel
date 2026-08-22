@@ -104,6 +104,11 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 			Message: fmt.Sprintf("failed to create scope: %v", err),
 		}
 	}
+	// JAB-358: write is a pure-mutation command — run every op against the write
+	// scope so the admin FM's whole-FS root scope is narrowed to the safe data
+	// roots. The openat2 base then IS a safe root, so RESOLVE_BENEATH refuses a
+	// symlink whose target climbs out of it. No-op for tenant scopes.
+	scope = scope.WriteScope()
 
 	// Validate path is in scope (string gate). The actual file ops below are
 	// performed against an escape-proof openat2 fd (RESOLVE_BENEATH), so a

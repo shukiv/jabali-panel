@@ -104,6 +104,25 @@ func TestFilesWriteHandler(t *testing.T) {
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
+		{
+			// JAB-358: an admin-root write to a system/config path (outside the
+			// safe data roots) must be refused before any filesystem op — the
+			// command routes through scope.WriteScope(). Rejection is at the
+			// string gate, so this runs unprivileged in CI. This is the
+			// command-level pin that the WriteScope wiring is present; the
+			// kernel-level symlink-escape confinement is proven in
+			// internal/filesafe/admin_scope_test.go.
+			name: "admin: system-path write rejected (JAB-358)",
+			input: filesWriteParams{
+				UserID:    "admin",
+				Username:  "admin",
+				AdminRoot: true,
+				Path:      "/etc/cron.d/jab358-pwn",
+				Content:   "* * * * * root id\n",
+			},
+			wantError: true,
+			wantCode:  agentwire.CodeInvalidArgument,
+		},
 	}
 
 	for _, tt := range tests {

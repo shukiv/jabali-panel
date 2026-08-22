@@ -74,18 +74,25 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("path validation failed: %v", err)}
 	}
 
+	// JAB-358: the archive may be READ from anywhere the admin FM can browse
+	// (cleanArchive above, on the broad scope), but extraction WRITES land in a
+	// separate write scope narrowed to the safe data roots — the admin FM can
+	// unpack into /home, /var/www, … but never into /etc, /usr, systemd, etc.
+	// No-op for tenant scopes.
+	wscope := scope.WriteScope()
+
 	// Destination directory: explicit dest, else the archive's parent.
 	destRel := p.Dest
 	if strings.TrimSpace(destRel) == "" {
 		destRel = filepath.Dir(p.Path)
 	}
-	destDir, err := scope.Clean(destRel)
+	destDir, err := wscope.Clean(destRel)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("destination validation failed: %v", err)}
 	}
 	// Verify the destination is an existing directory via the escape-proof stat,
 	// not an os.Stat(string) that re-resolves a swapped parent.
-	if di, derr := scope.StatInScope(destDir); derr != nil || !di.IsDir {
+	if di, derr := wscope.StatInScope(destDir); derr != nil || !di.IsDir {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "destination is not a directory"}
 	}
 
@@ -95,7 +102,7 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// relative to an escape-proof destDir fd (openat/mkdirat O_NOFOLLOW per
 	// component), so a tenant-planted parent-directory symlink inside their own
 	// destDir (e.g. sub -> /etc/cron.d) cannot redirect a root-side write.
-	ed, err := scope.NewExtractDir(destDir, uid, gid)
+	ed, err := wscope.NewExtractDir(destDir, uid, gid)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("failed to open destination: %v", err)}
 	}

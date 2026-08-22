@@ -66,6 +66,8 @@ func filesChmodHandler(ctx context.Context, params json.RawMessage) (any, error)
 			Message: fmt.Sprintf("failed to create scope: %v", err),
 		}
 	}
+	// JAB-358: confine chmod to the admin write allow-list (no-op for tenants).
+	scope = scope.WriteScope()
 	cleanPath, err := scope.Clean(p.Path)
 	if err != nil {
 		return nil, &agentwire.AgentError{

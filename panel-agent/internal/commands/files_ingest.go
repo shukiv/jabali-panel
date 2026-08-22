@@ -74,6 +74,8 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 			Message: fmt.Sprintf("scope: %v", err),
 		}
 	}
+	// JAB-358: confine the ingest destination to the admin write allow-list.
+	scope = scope.WriteScope()
 	dst, err := scope.Clean(p.DestPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{

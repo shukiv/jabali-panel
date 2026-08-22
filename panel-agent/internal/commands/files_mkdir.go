@@ -60,6 +60,8 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// String-gate the path; the directory is created escape-proof (mkdirat /
 	// openat(O_NOFOLLOW) descent against the base fd), so a parent-symlink swap
 	// can't redirect a root-side mkdir (Gitea #424 / #428).
+	// JAB-358: confine writes to the admin write allow-list (no-op for tenants).
+	scope = scope.WriteScope()
 	cleanPath, err := scope.Clean(p.Path)
 	if err != nil {
 		return nil, &agentwire.AgentError{

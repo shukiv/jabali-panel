@@ -78,6 +78,10 @@ func (s *Scope) baseFor(pathStr string) (base, rel string, err error) {
 			return dr, cleaned[len(dr)+1:], nil
 		}
 	}
+	if s.writeNarrowed {
+		// WriteScope miss: readable but not writable under the admin File Manager.
+		return "", "", &ValidationError{Code: ErrCodeReadOnly, Detail: fmt.Sprintf("path %q is read-only in the admin File Manager; writable roots: %v", pathStr, s.OwnedDocroots)}
+	}
 	return "", "", &ValidationError{Code: ErrCodeNotInScope, Detail: fmt.Sprintf("path %q is not within owned docroots: %v", pathStr, s.OwnedDocroots)}
 }
 

@@ -59,6 +59,8 @@ func filesDeleteHandler(ctx context.Context, params json.RawMessage) (any, error
 	// String-gate the path; the unlink act is escape-proof (unlinkat / fd-descent
 	// against openat2 parent fds), so os.RemoveAll's string re-resolution can't
 	// be redirected through a swapped parent symlink (Gitea #428).
+	// JAB-358: confine deletes to the admin write allow-list (no-op for tenants).
+	scope = scope.WriteScope()
 	cleanPath, err := scope.Clean(p.Path)
 	if err != nil {
 		return nil, &agentwire.AgentError{
