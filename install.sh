@@ -8572,6 +8572,53 @@ install_sftp_sshd_config() {
   ensure_sshd_running
 }
 
+# ensure_ssh_forwarding_lockdown — JAB-352. SSH-enabled hosting users (the
+# jabali-ssh-sandbox group) get the restricted jabali-ssh-shell as their login
+# shell, but sshd sets up TCP / Unix-socket / agent / X11 / tunnel forwarding
+# BEFORE the shell runs, so the shell sandbox can't stop a tenant tunnelling
+# into loopback-only services (MariaDB, PostgreSQL, the panel Agent socket,
+# unauthenticated profilers). A `Match Group jabali-ssh-sandbox` drop-in
+# disables every forwarding channel at the sshd layer; root/operator SSH is
+# untouched (different group). Idempotent: it repairs/installs the drop-in and
+# reloads sshd ONLY when the rendered file actually changed, so it is safe to
+# call on every `jabali update` — mirroring the ensure_pdns_* convergers, since
+# install_sftp_sshd_config runs on fresh install only.
+ensure_ssh_forwarding_lockdown() {
+  local src="${REPO_DIR:-/opt/jabali-panel}/install/ssh/jabali-ssh-sandbox.conf"
+  local dst=/etc/ssh/sshd_config.d/jabali-ssh-sandbox.conf
+  if [[ ! -f "$src" ]]; then
+    _warn "ssh forwarding-lockdown source missing at $src — skipping (JAB-352 not applied)"
+    return 0
+  fi
+  # Idempotent: already current → no rewrite, no sshd reload.
+  if [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
+    return 0
+  fi
+  install -m 0644 -o root -g root "$src" "$dst"
+  # Validate BEFORE relying on it. If the host's sshd rejects a directive,
+  # remove the drop-in rather than leaving sshd unparseable (a broken
+  # sshd_config would lock the operator out on the next restart). Every
+  # directive here is standard OpenSSH and box-verified on Debian 13, so this
+  # is a defensive backstop, not the expected path.
+  if ! sshd -t 2>/dev/null; then
+    _warn "sshd -t rejected $dst — removing it (JAB-352 forwarding lockdown NOT applied; check OpenSSH directive support)"
+    rm -f "$dst"
+    return 0
+  fi
+  # Socket-activated sshd (stock Debian 13 / Ubuntu 24.04) spawns a fresh
+  # sshd-session per connection that re-reads the config, so no reload is
+  # needed. Jabali normally converges to classic ssh.service (ensure_sshd_
+  # running / GH #133), which must be reloaded. Try both, fall back to SIGHUP.
+  if systemctl is-active --quiet ssh.socket || systemctl is-enabled --quiet ssh.socket; then
+    _ok "SSH forwarding lockdown installed (JAB-352); applies on next connection (socket-activated sshd)"
+  elif systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null \
+       || { pgrep -x sshd >/dev/null 2>&1 && pkill -HUP -x sshd; }; then
+    _ok "SSH forwarding lockdown installed + sshd reloaded (JAB-352 — tenant tunnels into loopback services blocked)"
+  else
+    _warn "installed $dst but sshd reload failed — new policy applies on next sshd restart"
+  fi
+}
+
 # ensure_sshd_running — converge the host onto a single classic ssh.service
 # listener and retire ssh.socket (GH #133). Delegates to the shared,
 # lockout-safe normalizer so a fresh install and a later `jabali update`
@@ -14944,6 +14991,10 @@ provision_new_software() {
   # JAB-350: same reasoning — pin the global AXFR ACL to loopback on update so a
   # permissive global on an existing host stops leaving zones internet-transferable.
   ensure_pdns_axfr_deny
+  # JAB-352: same reasoning — carry the SSH forwarding-lockdown drop-in to boxes
+  # that only ever update (install_sftp_sshd_config runs on fresh install only),
+  # so an existing tenant key can't tunnel into loopback-only services.
+  ensure_ssh_forwarding_lockdown
 
   # GH #860: retrofit the default-vhost catch-all include onto existing
   # boxes. install_disabled_page is seed-only now (never clobbers operator
@@ -15716,6 +15767,9 @@ main() {
   install_wp_cli
   install_sftp_group
   install_sftp_sshd_config
+  # JAB-352: disable SSH forwarding for hosting users so a tenant key can't
+  # tunnel into loopback-only services.
+  ensure_ssh_forwarding_lockdown
   install_ssh_sandbox
   build_default_nspawn_image
   install_nginx_default_vhost
