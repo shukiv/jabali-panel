@@ -1,0 +1,19 @@
+# WebDAV access for FTP/SFTP subaccount %i (GH #1146, plans/gh1146-webdav.md).
+#
+# Socket ACTIVATION: systemd (pid 1, as root) creates and owns this socket, so
+# the worker — which runs as the unprivileged subaccount uid inside a chroot
+# (jabali-webdav@%i.service) — never binds a path or touches socket ownership.
+# SocketGroup=jabali-sockets + SocketMode=0660 let nginx (a jabali-sockets
+# member) connect after its privileged auth_request passes (step 4), while no
+# other tenant can. The service starts on the first connection and the socket
+# enablement persists across reboots, so WebDAV self-heals with no boot reader.
+[Unit]
+Description=WebDAV socket for jabali subaccount %i
+
+[Socket]
+ListenStream=/run/jabali-webdav/%i.sock
+SocketMode=0660
+SocketGroup=jabali-sockets
+
+[Install]
+WantedBy=sockets.target

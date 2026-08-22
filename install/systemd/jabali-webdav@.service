@@ -1,0 +1,27 @@
+# WebDAV worker for FTP/SFTP subaccount %i (GH #1146, plans/gh1146-webdav.md).
+#
+# Serves ONE subaccount's home over WebDAV on the systemd-activated socket
+# (jabali-webdav@%i.socket). Started on the first connection; supervised while
+# it serves. It does NOT authenticate — nginx terminates TLS and reverse-proxies
+# here only after a privileged auth_request has verified the credentials (step
+# 4). Keeping auth out of the worker is deliberate: it runs as a tenant uid that
+# cannot read /etc/shadow.
+#
+# User / Group (numeric) / RootDirectory (the #1145 jail, for isolated accounts)
+# / BindReadOnlyPaths (the static worker binary, so it exists inside the chroot)
+# and Environment=WEBDAV_ROOT / WEBDAV_PREFIX are NOT set here — the agent writes
+# them all per-instance to /etc/systemd/system/jabali-webdav@<sub>.service.d/
+# when webdav_access is enabled. WEBDAV_ROOT is unset until then, so a bare
+# instance with no drop-in refuses to start (the worker requires --root),
+# fail-closed. Keeping the env in the drop-in (not a separate EnvironmentFile)
+# avoids the EnvironmentFile-vs-RootDirectory path-resolution ambiguity.
+[Unit]
+Description=WebDAV worker for jabali subaccount %i
+Requires=jabali-webdav@%i.socket
+After=jabali-webdav@%i.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/jabali-webdav --root ${WEBDAV_ROOT} --prefix ${WEBDAV_PREFIX}
+Restart=on-failure
+RestartSec=5s

@@ -2843,6 +2843,32 @@ install_jabali_slices() {
   install -m 0644 "$REPO_DIR/install/systemd/jabali.slice" /etc/systemd/system/jabali.slice
   install -m 0644 "$REPO_DIR/install/systemd/jabali-user.slice" /etc/systemd/system/jabali-user.slice
   install -m 0644 "$REPO_DIR/install/systemd/jabali-fpm@.service" /etc/systemd/system/jabali-fpm@.service
+  # GH #1146: per-subaccount WebDAV worker + its activation socket (templates
+  # only; the agent writes per-instance drop-ins on webdav_access grant). Core,
+  # not gated on the ftp module — WebDAV is HTTPS-served and also covers SFTP
+  # subaccounts.
+  install -m 0644 "$REPO_DIR/install/systemd/jabali-webdav@.service" /etc/systemd/system/jabali-webdav@.service
+  install -m 0644 "$REPO_DIR/install/systemd/jabali-webdav@.socket" /etc/systemd/system/jabali-webdav@.socket
+  # jabali-webdav is the Phase-4 auth gate (nginx authenticator checks
+  # membership); the agent also creates it on demand, but seed it here so a host
+  # that grants webdav_access before the agent redeploys still has it.
+  if ! getent group jabali-webdav >/dev/null; then
+    groupadd --system jabali-webdav
+    _ok "jabali-webdav system group created"
+  fi
+  # /run/jabali-webdav holds the per-instance activation sockets. /run is tmpfs,
+  # so a tmpfiles.d line recreates it on boot; --create makes it now. 0755
+  # root:root — nginx (www-data) traverses via o+x; each socket inside is 0660
+  # group jabali-sockets (SocketGroup in the .socket unit), so only nginx and
+  # the worker can connect.
+  local webdav_tf=/etc/tmpfiles.d/jabali-webdav.conf
+  local webdav_tf_want='# Managed by jabali install.sh — GH #1146 WebDAV activation socket dir.
+d /run/jabali-webdav 0755 root root -'
+  if [[ ! -f "$webdav_tf" ]] || ! cmp -s <(printf '%s\n' "$webdav_tf_want") "$webdav_tf"; then
+    printf '%s\n' "$webdav_tf_want" >"$webdav_tf"
+    chmod 0644 "$webdav_tf"
+  fi
+  systemd-tmpfiles --create "$webdav_tf" 2>/dev/null || install -d -m 0755 /run/jabali-webdav
   # JAB-213: heartbeat timer units (enabled conditionally below).
   install -m 0644 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.service" /etc/systemd/system/jabali-hostname-heartbeat.service
   install -m 0644 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.timer" /etc/systemd/system/jabali-hostname-heartbeat.timer
@@ -5783,7 +5809,7 @@ _prebuilt_ready() {
   local d="${JABALI_PREBUILT_BIN:-}"
   [[ -n "$d" && -d "$d" ]] || return 1
   local b
-  for b in jabali-panel jabali-agent jabali-ssh-shell jabali-mailhook jabali-sendmail; do
+  for b in jabali-panel jabali-agent jabali-ssh-shell jabali-mailhook jabali-sendmail jabali-webdav; do
     [[ -s "$d/$b" && -x "$d/$b" ]] || return 1
   done
   "$d/jabali-panel" version >/dev/null 2>&1 || return 1
@@ -5920,6 +5946,7 @@ build_backend() {
   local tmp_sshshell="$REPO_DIR/bin/jabali-ssh-shell.new"
   local tmp_mailhook="$REPO_DIR/bin/jabali-mailhook.new"
   local tmp_sendmail="$REPO_DIR/bin/jabali-sendmail.new"
+  local tmp_webdav="$REPO_DIR/bin/jabali-webdav.new"
 
   # Build-info ldflags: panel-api exposes api.Version (short SHA),
   # api.Commit (full SHA) and api.BuildTime (RFC3339) through
@@ -5959,6 +5986,7 @@ build_backend() {
     install -m 0755 "$JABALI_PREBUILT_BIN/jabali-ssh-shell" "$tmp_sshshell"
     install -m 0755 "$JABALI_PREBUILT_BIN/jabali-mailhook"  "$tmp_mailhook"
     install -m 0755 "$JABALI_PREBUILT_BIN/jabali-sendmail"  "$tmp_sendmail"
+    install -m 0755 "$JABALI_PREBUILT_BIN/jabali-webdav"    "$tmp_webdav"
   else
     # One invocation of go, three binaries — shared module, shared build cache.
     sudo -u "$SERVICE_USER" -H env \
@@ -5972,7 +6000,8 @@ build_backend() {
         go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_agent' ./panel-agent/cmd/jabali-agent && \
         go build -trimpath -ldflags '-s -w' -o '$tmp_sshshell' ./panel-agent/cmd/jabali-ssh-shell && \
         go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_mailhook' ./panel-agent/cmd/jabali-mailhook && \
-        go build -trimpath -ldflags '-s -w' -o '$tmp_sendmail' ./panel-agent/cmd/jabali-sendmail"
+        go build -trimpath -ldflags '-s -w' -o '$tmp_sendmail' ./panel-agent/cmd/jabali-sendmail && \
+        go build -trimpath -ldflags '-s -w' -o '$tmp_webdav' ./panel-agent/cmd/jabali-webdav"
   fi
 
   install -m 0755 "$tmp_panel" "$BIN_PATH"
@@ -6002,11 +6031,14 @@ build_backend() {
   # wired (Step 1 = skeleton; Step 2 + 3 wire bwrap + nspawn argv).
   install -m 0755 "$tmp_sshshell" /usr/local/bin/jabali-ssh-shell
   install -m 0755 "$tmp_mailhook" /usr/local/bin/jabali-mailhook
+  # GH #1146: the per-subaccount WebDAV worker. root:root 0755 like the other
+  # /usr/local/bin agents; the agent binds it into each #1145 chroot at start.
+  install -m 0755 -o root -g root "$tmp_webdav" /usr/local/bin/jabali-webdav
   # JAB-230: the PHP mail() submission shim lives in libexec (exec'd by FPM
   # workers via sendmail_path, never on an operator's PATH).
   install -d -m 0755 /usr/local/libexec/jabali
   install -m 0755 -o root -g root "$tmp_sendmail" /usr/local/libexec/jabali/jabali-sendmail
-  rm -f "$tmp_panel" "$tmp_agent" "$tmp_sshshell" "$tmp_mailhook" "$tmp_sendmail"
+  rm -f "$tmp_panel" "$tmp_agent" "$tmp_sshshell" "$tmp_mailhook" "$tmp_sendmail" "$tmp_webdav"
 
   # Sync the docker-app + py-framework catalogs into the production paths the
   # panel reads at startup, then reload it. Also runs from provision_new_software

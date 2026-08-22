@@ -19,6 +19,7 @@ build: ## Compile both binaries (panel + agent)
 	$(GO) build -o $(BIN) ./panel-api/cmd/server
 	$(GO) build -o $(AGENT_BIN) ./panel-agent/cmd/jabali-agent
 	$(GO) build -o bin/jabali-installer ./installer/cmd/jabali-installer
+	$(GO) build -o bin/jabali-webdav ./panel-agent/cmd/jabali-webdav
 
 demo-guard: ## JAB-159: prod build must EXCLUDE demo code; demo build must INCLUDE it
 	mkdir -p bin

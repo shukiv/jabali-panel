@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,6 +56,82 @@ func TestWebdavHandler_RoundTrip(t *testing.T) {
 	}
 	if code, _ := do(t, srv.URL, "PROPFIND", "/", ""); code != http.StatusMultiStatus {
 		t.Fatalf("PROPFIND: got %d, want 207", code)
+	}
+}
+
+// acquireListener with neither systemd socket activation (LISTEN_FDS) nor a
+// --socket path is a hard error — the worker has nothing to listen on.
+func TestAcquireListener_NoSocketNoActivation(t *testing.T) {
+	t.Setenv("LISTEN_PID", "")
+	t.Setenv("LISTEN_FDS", "")
+	if _, err := acquireListener(""); err == nil {
+		t.Fatal("expected an error with no socket and no activation, got nil")
+	}
+}
+
+// The --socket (test / manual) path binds the path itself at 0660.
+func TestAcquireListener_BindPath(t *testing.T) {
+	t.Setenv("LISTEN_PID", "")
+	sock := filepath.Join(t.TempDir(), "dav.sock")
+	ln, err := acquireListener(sock)
+	if err != nil {
+		t.Fatalf("acquireListener(%q): %v", sock, err)
+	}
+	defer ln.Close()
+	fi, err := os.Stat(sock)
+	if err != nil {
+		t.Fatalf("socket not created: %v", err)
+	}
+	if fi.Mode().Perm() != 0o660 {
+		t.Fatalf("socket mode = %o, want 0660", fi.Mode().Perm())
+	}
+}
+
+// listenerFromFd is the core of the socket-activation path: systemd binds the
+// socket and passes it as an inherited fd; the worker wraps that fd and serves
+// WebDAV over it. Exercising a real inherited fd here (rather than the exact
+// fd-3 the SD protocol mandates) proves the wrap end-to-end.
+func TestListenerFromFd_ServesWebdav(t *testing.T) {
+	root := t.TempDir()
+	sock := filepath.Join(t.TempDir(), "activated.sock")
+
+	// Stand in for systemd: bind the socket, then hand its fd to the worker.
+	raw, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("pre-bind socket: %v", err)
+	}
+	defer raw.Close()
+	f, err := raw.(*net.UnixListener).File()
+	if err != nil {
+		t.Fatalf("dup listener fd: %v", err)
+	}
+	defer f.Close()
+
+	ln, err := listenerFromFd(f.Fd(), "test-activated")
+	if err != nil {
+		t.Fatalf("listenerFromFd: %v", err)
+	}
+	srv := &http.Server{Handler: newWebdavHandler(root, "")}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		},
+	}}
+	// PUT over the activated socket, then confirm it landed in root.
+	req, _ := http.NewRequest("PUT", "http://unix/note.txt", strings.NewReader("via-fd"))
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("PUT over activated socket: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("PUT: got %d", resp.StatusCode)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(b) != "via-fd" {
+		t.Fatalf("file on disk: %q err=%v", b, err)
 	}
 }
 

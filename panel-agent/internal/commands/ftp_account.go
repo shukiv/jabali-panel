@@ -555,6 +555,12 @@ type ftpAccountSetAccessParams struct {
 	TenantUsername string `json:"tenant_username"`
 	Username       string `json:"username"`
 	FTPAccess      bool   `json:"ftp_access"`
+	// WebDAVAccess gates the per-subaccount WebDAV worker + jabali-webdav group
+	// (GH #1146). Pointer, not bool: nil = leave the worker unchanged. A plain
+	// bool would default an older panel's omitted field to false and tear the
+	// worker down on every unrelated set_access call — the same scar as
+	// set_password.Enabled (JAB-261). Effective only while Enabled is true.
+	WebDAVAccess *bool `json:"webdav_access"`
 	// Enabled locks/unlocks the account password (usermod -L/-U): a
 	// disabled subaccount fails auth on every protocol but keeps its
 	// row, memberships, and files.
@@ -590,7 +596,24 @@ func ftpAccountSetAccessHandler(ctx context.Context, params json.RawMessage) (an
 		uid, _ := strconv.Atoi(au.Uid)
 		terminateFtpSessions(ctx, p.Username, uid)
 	}
-	return map[string]any{"username": p.Username, "ftp_access": p.FTPAccess, "enabled": p.Enabled}, nil
+	// GH #1146: WebDAV worker lifecycle. Only touch it when the panel sent the
+	// field (older panels omit it → nil → leave as-is). Desired-running requires
+	// both webdav_access AND the account enabled — a disabled account serves no
+	// protocol.
+	resp := map[string]any{"username": p.Username, "ftp_access": p.FTPAccess, "enabled": p.Enabled}
+	if p.WebDAVAccess != nil {
+		if *p.WebDAVAccess && p.Enabled {
+			if aerr := enableWebdavWorker(ctx, tenant, au); aerr != nil {
+				return nil, aerr
+			}
+		} else {
+			if aerr := disableWebdavWorker(ctx, p.Username); aerr != nil {
+				return nil, aerr
+			}
+		}
+		resp["webdav_access"] = *p.WebDAVAccess
+	}
+	return resp, nil
 }
 
 // ---- ftpaccount.delete ----

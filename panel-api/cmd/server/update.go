@@ -747,6 +747,17 @@ install -m 0755 ` + repoDir + `/install/systemd/cron-precheck /usr/local/libexec
 install -m 0644 ` + repoDir + `/install/systemd/jabali.slice /etc/systemd/system/jabali.slice
 install -m 0644 ` + repoDir + `/install/systemd/jabali-user.slice /etc/systemd/system/jabali-user.slice
 install -m 0644 ` + repoDir + `/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service
+# GH #1146: per-subaccount WebDAV worker + its activation socket. Templates
+# only — the agent writes the per-instance drop-ins. Existing hosts get them
+# here on update; install.sh drops them on fresh installs.
+install -m 0644 ` + repoDir + `/install/systemd/jabali-webdav@.service /etc/systemd/system/jabali-webdav@.service
+install -m 0644 ` + repoDir + `/install/systemd/jabali-webdav@.socket /etc/systemd/system/jabali-webdav@.socket
+# GH #1146: WebDAV activation-socket dir + auth-gate group for existing hosts
+# (install.sh seeds both on fresh installs; the agent also self-heals the group).
+getent group jabali-webdav >/dev/null || groupadd --system jabali-webdav
+install -d -m 0755 /etc/tmpfiles.d
+printf '%s\n' '# Managed by jabali (GH #1146 WebDAV activation socket dir).' 'd /run/jabali-webdav 0755 root root -' > /etc/tmpfiles.d/jabali-webdav.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/jabali-webdav.conf 2>/dev/null || install -d -m 0755 /run/jabali-webdav
 install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.service /etc/systemd/system/jabali-sso-reaper.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer
 install -m 0644 ` + repoDir + `/install/systemd/jabali-retention-sweep.service /etc/systemd/system/jabali-retention-sweep.service
@@ -1406,6 +1417,18 @@ fi
 						"-o", repoDir+"/bin/jabali-sendmail.new", "./panel-agent/cmd/jabali-sendmail")
 				}()
 			}
+			// jabali-webdav: the per-subaccount WebDAV worker (GH #1146). Same
+			// panel-agent module; rebuild alongside the agent. Static (CGO off in
+			// the release build) so it can be bind-mounted into the #1145 chroot.
+			var webdavErr error
+			if !agentSkip {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					webdavErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAgent,
+						"-o", repoDir+"/bin/jabali-webdav.new", "./panel-agent/cmd/jabali-webdav")
+				}()
+			}
 			wg.Wait()
 			if apiErr != nil {
 				return fmt.Errorf("panel-api: %w", apiErr)
@@ -1421,6 +1444,9 @@ fi
 			}
 			if sendmailErr != nil {
 				return fmt.Errorf("jabali-sendmail: %w", sendmailErr)
+			}
+			if webdavErr != nil {
+				return fmt.Errorf("jabali-webdav: %w", webdavErr)
 			}
 			// Persist the sha only on the side we just rebuilt; skipped
 			// side keeps its existing sha file untouched.
@@ -1468,6 +1494,13 @@ fi
 					return err
 				}
 				_ = os.Remove(mailhookNew)
+			}
+			webdavNew := repoDir + "/bin/jabali-webdav.new"
+			if _, err := os.Stat(webdavNew); err == nil {
+				if err := run("", "install", "-m", "0755", "-o", "root", "-g", "root", webdavNew, "/usr/local/bin/jabali-webdav"); err != nil {
+					return err
+				}
+				_ = os.Remove(webdavNew)
 			}
 			sendmailNew := repoDir + "/bin/jabali-sendmail.new"
 			if _, err := os.Stat(sendmailNew); err == nil {

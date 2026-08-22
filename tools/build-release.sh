@@ -84,6 +84,10 @@ echo "==> go build jabali-sendmail"
 $GO_BIN build -trimpath -ldflags "-s -w" \
   -o "$STAGE/bin/jabali-sendmail" ./panel-agent/cmd/jabali-sendmail
 
+echo "==> go build jabali-webdav"
+$GO_BIN build -trimpath -ldflags "-s -w" \
+  -o "$STAGE/bin/jabali-webdav" ./panel-agent/cmd/jabali-webdav
+
 echo "==> go build jabali-installer"
 $GO_BIN build -trimpath -ldflags "-s -w" \
   -o "$STAGE/bin/jabali-installer" ./installer/cmd/jabali-installer

@@ -15,11 +15,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -27,30 +29,21 @@ import (
 )
 
 func main() {
-	socket := flag.String("socket", "", "unix socket path to listen on")
+	socket := flag.String("socket", "", "unix socket path to listen on (tests; production uses systemd socket activation)")
 	root := flag.String("root", "", "directory to serve (the subaccount home)")
 	prefix := flag.String("prefix", "", "URL path prefix to strip (e.g. /dav/<sub>)")
 	flag.Parse()
 
-	if *socket == "" || *root == "" {
-		log.Fatal("jabali-webdav: --socket and --root are required")
+	if *root == "" {
+		log.Fatal("jabali-webdav: --root is required")
 	}
 	if fi, err := os.Stat(*root); err != nil || !fi.IsDir() {
 		log.Fatalf("jabali-webdav: --root %q is not a directory: %v", *root, err)
 	}
 
-	// Stale socket from a previous run (systemd restart) would make Listen fail
-	// with EADDRINUSE; the worker owns this path, so removing it is safe.
-	_ = os.Remove(*socket)
-	ln, err := net.Listen("unix", *socket)
+	ln, err := acquireListener(*socket)
 	if err != nil {
-		log.Fatalf("jabali-webdav: listen %s: %v", *socket, err)
-	}
-	// 0660: nginx (www-data, added to the socket group in step 3/4) connects;
-	// no other tenant can. The worker runs as the subaccount uid, so the socket
-	// is owned by that uid:group.
-	if err := os.Chmod(*socket, 0o660); err != nil {
-		log.Printf("jabali-webdav: chmod socket %s: %v", *socket, err)
+		log.Fatalf("jabali-webdav: %v", err)
 	}
 
 	srv := &http.Server{
@@ -68,10 +61,69 @@ func main() {
 		_ = srv.Shutdown(ctx)
 	}()
 
-	log.Printf("jabali-webdav: serving %s on %s (prefix %q)", *root, *socket, *prefix)
+	log.Printf("jabali-webdav: serving %s on %s (prefix %q)", *root, ln.Addr(), *prefix)
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("jabali-webdav: serve: %v", err)
 	}
+}
+
+// acquireListener returns the unix listener the worker serves on. In production
+// systemd passes the already-created listening socket as fd 3 (socket
+// activation: LISTEN_PID + LISTEN_FDS) — systemd, as root, created it at
+// /run/jabali-webdav/<sub>.sock with SocketMode=0660 SocketGroup=jabali-sockets,
+// so the unprivileged worker (a tenant uid, inside the chroot) never binds a
+// path or touches socket ownership, and nginx (a jabali-sockets member) can
+// connect. In tests / manual runs, --socket makes the worker bind the path
+// itself.
+func acquireListener(socketPath string) (net.Listener, error) {
+	if pidStr := os.Getenv("LISTEN_PID"); pidStr != "" {
+		pid, _ := strconv.Atoi(pidStr)
+		if pid == os.Getpid() {
+			nfds, _ := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+			if nfds < 1 {
+				return nil, fmt.Errorf("socket activation: LISTEN_FDS=%d, expected >= 1", nfds)
+			}
+			// systemd hands the first passed fd at SD_LISTEN_FDS_START (3).
+			const listenFdsStart = 3
+			ln, err := listenerFromFd(listenFdsStart, "systemd-webdav-socket")
+			if err != nil {
+				return nil, fmt.Errorf("socket activation: %w", err)
+			}
+			return ln, nil
+		}
+	}
+	if socketPath == "" {
+		return nil, fmt.Errorf("no systemd socket (LISTEN_FDS unset) and no --socket given")
+	}
+	return bindListener(socketPath)
+}
+
+// listenerFromFd wraps an inherited file descriptor (systemd socket activation)
+// into a net.Listener. Factored out so the fd-to-listener wrapping is testable
+// without simulating the exact fd-3 the SD protocol mandates.
+func listenerFromFd(fd uintptr, name string) (net.Listener, error) {
+	ln, err := net.FileListener(os.NewFile(fd, name))
+	if err != nil {
+		return nil, fmt.Errorf("FileListener on fd %d: %w", fd, err)
+	}
+	return ln, nil
+}
+
+// bindListener binds the unix socket ourselves — the test / manual path. In
+// production systemd owns the socket (activation), so this is never reached.
+func bindListener(socketPath string) (net.Listener, error) {
+	// Stale socket from a previous manual run would make Listen fail with
+	// EADDRINUSE; the worker owns this path, so removing it is safe. (Never
+	// reached on the socket-activation path, where systemd owns the socket.)
+	_ = os.Remove(socketPath)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("listen %s: %w", socketPath, err)
+	}
+	if err := os.Chmod(socketPath, 0o660); err != nil {
+		log.Printf("jabali-webdav: chmod socket %s: %v", socketPath, err)
+	}
+	return ln, nil
 }
 
 // newWebdavHandler builds the WebDAV handler for one home directory. webdav.Dir
