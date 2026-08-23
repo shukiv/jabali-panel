@@ -21,12 +21,57 @@ type BackupDestinationRepository interface {
 	Delete(ctx context.Context, id string) error
 	// M30.2: per-destination restic password (AES-GCM via sso.key).
 	SetPassword(ctx context.Context, id string, sealed []byte, rotatedAt time.Time) error
+
+	// JAB-362 circuit-breaker. RecordFailure sets the destination's
+	// consecutive-failure count + backoff-until after a 4h stall-failure.
+	// ResetHealth clears them on the next successful seal. ListBackedOffIDs
+	// returns the set of destination ids currently in backoff (backoff_until >
+	// now), which the dispatcher skips.
+	RecordFailure(ctx context.Context, id string, failures int, backoffUntil time.Time) error
+	ResetHealth(ctx context.Context, id string) error
+	ListBackedOffIDs(ctx context.Context, now time.Time) (map[string]bool, error)
 }
 
 type backupDestinationRepo struct{ db *gorm.DB }
 
 func NewBackupDestinationRepository(db *gorm.DB) BackupDestinationRepository {
 	return &backupDestinationRepo{db: db}
+}
+
+func (r *backupDestinationRepo) RecordFailure(ctx context.Context, id string, failures int, backoffUntil time.Time) error {
+	return translate(r.db.WithContext(ctx).
+		Model(&models.BackupDestination{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"consecutive_failures": failures,
+			"backoff_until":        backoffUntil,
+		}).Error)
+}
+
+func (r *backupDestinationRepo) ResetHealth(ctx context.Context, id string) error {
+	return translate(r.db.WithContext(ctx).
+		Model(&models.BackupDestination{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"consecutive_failures": 0,
+			"backoff_until":        nil,
+		}).Error)
+}
+
+func (r *backupDestinationRepo) ListBackedOffIDs(ctx context.Context, now time.Time) (map[string]bool, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).
+		Model(&models.BackupDestination{}).
+		Where("backoff_until IS NOT NULL AND backoff_until > ?", now).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
 }
 
 func (r *backupDestinationRepo) Create(ctx context.Context, d *models.BackupDestination) error {
@@ -106,9 +151,9 @@ func (r *backupDestinationRepo) SetPassword(ctx context.Context, id string, seal
 		Model(&models.BackupDestination{}).
 		Where("id = ?", id).
 		Updates(map[string]any{
-			"password_enc":         sealed,
-			"password_rotated_at":  rotatedAt,
-			"updated_at":           time.Now().UTC(),
+			"password_enc":        sealed,
+			"password_rotated_at": rotatedAt,
+			"updated_at":          time.Now().UTC(),
 		})
 	if res.Error != nil {
 		return translate(res.Error)

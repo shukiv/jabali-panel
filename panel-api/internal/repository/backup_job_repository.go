@@ -44,6 +44,12 @@ type BackupJobRepository interface {
 	// follow-up). CountByStatus + ListQueuedOldest let it cap
 	// dispatches at server_settings.backup_max_concurrent_jobs.
 	CountByStatus(ctx context.Context, status string) (int64, error)
+	// CountRunningByDestination returns the number of status='running' jobs
+	// grouped by destination id, mirroring CountByStatus('running') exactly
+	// (all kinds, incl. restores). The nil/empty destination bucket is keyed by
+	// "". The dispatcher uses it to cap the slots any one destination may hold
+	// (JAB-362).
+	CountRunningByDestination(ctx context.Context) (map[string]int, error)
 	// HasPendingForTarget reports whether a queued or running backup_job already
 	// exists for this (schedule, destination, user) target. The scheduler uses it
 	// to skip re-enqueueing while a prior job is still pending — otherwise a
@@ -220,6 +226,36 @@ func (r *backupJobRepo) CountByStatus(ctx context.Context, status string) (int64
 		return 0, translate(err)
 	}
 	return n, nil
+}
+
+func (r *backupJobRepo) CountRunningByDestination(ctx context.Context) (map[string]int, error) {
+	type row struct {
+		DestinationID *string
+		N             int
+	}
+	var rows []row
+	// Same predicate as CountByStatus('running') — all kinds, incl. restores —
+	// so the per-destination counts sum to the global running count the
+	// dispatcher gates on. COALESCE the nullable destination_id to '' so legacy
+	// rows bucket together under the "" key.
+	err := r.db.WithContext(ctx).
+		Model(&models.BackupJob{}).
+		Select("destination_id, COUNT(*) AS n").
+		Where("status = ?", models.BackupJobStatusRunning).
+		Group("destination_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	out := make(map[string]int, len(rows))
+	for _, r := range rows {
+		key := ""
+		if r.DestinationID != nil {
+			key = *r.DestinationID
+		}
+		out[key] += r.N
+	}
+	return out, nil
 }
 
 func (r *backupJobRepo) HasPendingForTarget(ctx context.Context, scheduleID, destinationID, userID string) (bool, error) {

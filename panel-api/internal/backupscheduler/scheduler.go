@@ -107,7 +107,13 @@ type Deps struct {
 
 // Scheduler is the goroutine wrapper. Construct via New, start with
 // Start(ctx). Returns immediately; the loop runs until ctx is done.
-type Scheduler struct{ deps Deps }
+type Scheduler struct {
+	deps Deps
+	// dispatch admits one queued job. Overridable in tests to capture the
+	// dispatcher's admission decisions (per-destination cap + breaker) without
+	// running the full per-job machinery. nil → dispatchOne.
+	dispatch func(context.Context, models.BackupJob)
+}
 
 // New returns a configured scheduler. Returns nil if any required dep
 // is missing — callers log + skip start in that case so an incomplete
@@ -213,14 +219,102 @@ func (s *Scheduler) tickDispatch(ctx context.Context) {
 	if slots <= 0 {
 		return
 	}
-	queued, err := s.deps.Jobs.ListQueuedOldest(ctx, slots)
+
+	// JAB-362 per-destination fairness + circuit-breaker.
+	//   - runningByDest caps the slots any one destination may hold, so a
+	//     stall-failing destination (each attempt burns a 4h slot) cannot
+	//     monopolise the pool and starve backups to healthy destinations.
+	//   - backedOff destinations (tripped breaker, backoff not yet expired) are
+	//     skipped entirely so a dead destination is not retried every tick.
+	// Admission is WORK-CONSERVING: pass 1 honours the per-destination cap; pass
+	// 2 fills any slots the cap left idle (e.g. a single-destination server) so
+	// the cap only ever redistributes under contention, never throttles.
+	runningByDest, err := s.deps.Jobs.CountRunningByDestination(ctx)
+	if err != nil {
+		s.deps.Log.Error("dispatcher count-by-destination failed", "err", err)
+		return
+	}
+	var backedOff map[string]bool
+	if s.deps.Destinations != nil {
+		if bo, boErr := s.deps.Destinations.ListBackedOffIDs(ctx, time.Now().UTC()); boErr != nil {
+			s.deps.Log.Error("dispatcher list-backed-off failed", "err", boErr)
+			return
+		} else {
+			backedOff = bo
+		}
+	}
+
+	// Fetch a generous window so pass 1 can skip past saturated/backed-off
+	// destinations and still fill slots from others.
+	window := int(max) * 8
+	if window < 50 {
+		window = 50
+	}
+	queued, err := s.deps.Jobs.ListQueuedOldest(ctx, window)
 	if err != nil {
 		s.deps.Log.Error("dispatcher list-queued failed", "err", err)
 		return
 	}
-	for _, j := range queued {
-		s.dispatchOne(ctx, j)
+
+	perDestCap := (int(max) + 1) / 2
+	if perDestCap < 1 {
+		perDestCap = 1
 	}
+
+	admittedByDest := make(map[string]int)
+	admitted := 0
+	var deferred []models.BackupJob // hit the per-dest cap in pass 1
+
+	dispatch := s.dispatchOne
+	if s.dispatch != nil {
+		dispatch = s.dispatch
+	}
+	admit := func(j models.BackupJob) {
+		dispatch(ctx, j)
+		admittedByDest[destKey(j)]++
+		admitted++
+	}
+
+	// Pass 1 — oldest-first, respecting the per-destination cap + breaker.
+	for _, j := range queued {
+		if admitted >= slots {
+			break
+		}
+		dk := destKey(j)
+		if backedOff[dk] {
+			continue
+		}
+		if runningByDest[dk]+admittedByDest[dk] >= perDestCap {
+			deferred = append(deferred, j)
+			continue
+		}
+		admit(j)
+	}
+	// Pass 2 — work-conserving: fill leftover slots beyond the cap (still never a
+	// backed-off destination).
+	for _, j := range deferred {
+		if admitted >= slots {
+			break
+		}
+		if backedOff[destKey(j)] {
+			continue
+		}
+		admit(j)
+	}
+
+	if admitted < slots && len(queued) == window {
+		s.deps.Log.Info("dispatcher window exhausted with slots free; more queued jobs deferred to next tick",
+			"window", window, "admitted", admitted, "slots", slots)
+	}
+}
+
+// destKey buckets a job by its destination for per-destination slot accounting.
+// Legacy jobs with no destination share the "" bucket.
+func destKey(j models.BackupJob) string {
+	if j.DestinationID != nil {
+		return *j.DestinationID
+	}
+	return ""
 }
 
 // enqueue handles one overdue schedule end-to-end: compute next

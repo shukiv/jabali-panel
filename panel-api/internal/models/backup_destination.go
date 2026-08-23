@@ -116,9 +116,15 @@ type BackupDestination struct {
 	// INSERT, so default:1 would silently re-enable it. See
 	// feedback_gorm_default1_bool_zero_value. Every create site sets Enabled
 	// explicitly; the DB column keeps its DEFAULT 1 for raw inserts.
-	Enabled   bool      `gorm:"not null" json:"enabled"`
-	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
-	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
+	Enabled bool `gorm:"not null" json:"enabled"`
+	// JAB-362 circuit-breaker: ConsecutiveFailures counts back-to-back 4h
+	// stall-failures of jobs to this destination; BackoffUntil (NULL = healthy)
+	// is the time before which the dispatcher skips this destination. Both reset
+	// to 0 / NULL on the next successful seal. Not tenant-facing.
+	ConsecutiveFailures int        `gorm:"type:int;not null;default:0" json:"consecutive_failures"`
+	BackoffUntil        *time.Time `gorm:"type:datetime(6)" json:"backoff_until,omitempty"`
+	CreatedAt           time.Time  `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt           time.Time  `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 func (BackupDestination) TableName() string { return "backup_destinations" }

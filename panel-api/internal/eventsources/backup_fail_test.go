@@ -51,6 +51,9 @@ func (f *fakeBackupJobs) CountRetainedForUser(context.Context, string) (int64, e
 func (f *fakeBackupJobs) ListQueuedOldest(context.Context, int) ([]models.BackupJob, error) {
 	return nil, nil
 }
+func (f *fakeBackupJobs) CountRunningByDestination(context.Context) (map[string]int, error) {
+	return nil, nil
+}
 func (f *fakeBackupJobs) ListRuns(context.Context, int, int) ([]repository.BackupRunSummary, int64, error) {
 	return nil, 0, nil
 }

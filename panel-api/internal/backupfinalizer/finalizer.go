@@ -54,7 +54,7 @@ type Deps struct {
 	// ungated finalizer churned the standby (and the shared DR repo) probing
 	// jobs that belong to another box. Optional; nil = never gated.
 	Settings repository.ServerSettingsRepository
-	Agent        agent.AgentInterface
+	Agent    agent.AgentInterface
 	// SSOKey unseals a destination's per-row restic password (M30.2.x).
 	// Without it backup.status cannot open a rotated destination's repo,
 	// so a finished backup is never sealed — it sits "running" until the
@@ -181,6 +181,14 @@ func (f *Finalizer) tickOnce(ctx context.Context) {
 				"job_id", j.ID, "started_at", j.StartedAt)
 			_ = f.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusFailed,
 				"", "", 0, 0, nil, nil, "stalled: no manifest snapshot after 4h")
+			// JAB-362: a 4h stall is the signal that this destination is dead or
+			// unreachable. Trip its breaker so the dispatcher backs it off
+			// instead of burning a shared slot on it every tick. Only the stall
+			// path counts — dispatch-time failures (user/dest lookup) are not
+			// destination health.
+			if j.DestinationID != nil && *j.DestinationID != "" {
+				f.tripDestinationBreaker(ctx, *j.DestinationID, now)
+			}
 			continue
 		}
 		f.checkOne(ctx, j)
@@ -268,4 +276,58 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 	}
 	logger.Info("backup finalized", "snapshot_id", manifestSnapID,
 		"status", status, "failed_stages", st.FailedStages)
+
+	// JAB-362: a landed snapshot proves the destination is reachable — clear any
+	// tripped breaker so the dispatcher stops backing it off. Both Succeeded and
+	// Partial reached the repo (Partial = some stage failed, not the transport).
+	if dest != nil && dest.ConsecutiveFailures > 0 {
+		if err := f.deps.Destinations.ResetHealth(ctx, dest.ID); err != nil {
+			logger.Warn("failed to reset backup destination breaker", "dest", dest.ID, "err", err)
+		} else {
+			logger.Warn("backup destination breaker RESET after success", "dest", dest.ID)
+		}
+	}
+}
+
+// backupBreakerBaseBackoff / backupBreakerMaxBackoff bound the exponential
+// dispatch backoff a repeatedly stall-failing destination earns (JAB-362).
+const (
+	backupBreakerBaseBackoff = time.Hour
+	backupBreakerMaxBackoff  = 24 * time.Hour
+)
+
+// breakerBackoffFor returns the dispatch backoff for the n-th consecutive
+// failure: base * 2^(n-1), capped. n>=1.
+func breakerBackoffFor(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	d := backupBreakerBaseBackoff
+	for i := 1; i < n && d < backupBreakerMaxBackoff; i++ {
+		d *= 2
+	}
+	if d > backupBreakerMaxBackoff {
+		d = backupBreakerMaxBackoff
+	}
+	return d
+}
+
+// tripDestinationBreaker increments a destination's consecutive-failure count
+// and pushes its backoff-until out exponentially. The next dispatch tick skips
+// the destination until the window expires, at which point one job is admitted
+// as a probe (a success resets the breaker via checkOne).
+func (f *Finalizer) tripDestinationBreaker(ctx context.Context, destID string, now time.Time) {
+	d, err := f.deps.Destinations.Get(ctx, destID)
+	if err != nil || d == nil {
+		f.deps.Log.Warn("breaker trip: destination lookup failed", "dest", destID, "err", err)
+		return
+	}
+	failures := d.ConsecutiveFailures + 1
+	until := now.Add(breakerBackoffFor(failures))
+	if err := f.deps.Destinations.RecordFailure(ctx, destID, failures, until); err != nil {
+		f.deps.Log.Warn("breaker trip: record-failure failed", "dest", destID, "err", err)
+		return
+	}
+	f.deps.Log.Warn("backup destination breaker TRIPPED",
+		"dest", destID, "consecutive_failures", failures, "backoff_until", until)
 }
