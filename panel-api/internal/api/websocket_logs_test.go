@@ -106,14 +106,14 @@ type fakeLogStreamRepo struct {
 func (f *fakeLogStreamRepo) Create(ctx context.Context, s *models.LogAccessStream) error {
 	return nil
 }
+func (f *fakeLogStreamRepo) ReserveWithinCap(ctx context.Context, s *models.LogAccessStream, max int) error {
+	return nil
+}
 func (f *fakeLogStreamRepo) FindByStreamKey(ctx context.Context, k string) (*models.LogAccessStream, error) {
 	return f.stream, f.err
 }
 func (f *fakeLogStreamRepo) DeleteByID(ctx context.Context, id string) error { return nil }
 func (f *fakeLogStreamRepo) CleanupExpired(ctx context.Context) (int64, error) {
-	return 0, nil
-}
-func (f *fakeLogStreamRepo) CountByUserID(ctx context.Context, uid string) (int64, error) {
 	return 0, nil
 }
 

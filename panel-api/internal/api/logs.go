@@ -215,19 +215,6 @@ func (h *logHandler) createAccess(c *gin.Context) {
 		return
 	}
 
-	// Check rate limit - max 5 concurrent streams per user
-	if h.cfg.LogAccessStreams != nil {
-		count, err := h.cfg.LogAccessStreams.CountByUserID(c.Request.Context(), claims.UserID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		if count >= 5 {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many active log streams"})
-			return
-		}
-	}
-
 	// Generate cryptographically secure stream key
 	keyBytes := make([]byte, 16) // 32 hex chars
 	if _, err := rand.Read(keyBytes); err != nil {
@@ -251,7 +238,20 @@ func (h *logHandler) createAccess(c *gin.Context) {
 		ExpiresAt: expiresAt,
 	}
 
-	if err := h.cfg.LogAccessStreams.Create(c.Request.Context(), stream); err != nil {
+	if h.cfg.LogAccessStreams == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	// Per-user concurrency cap, enforced atomically (JAB-347): the count and
+	// insert run under a FOR UPDATE lock on the user row so concurrent creates
+	// cannot both pass a check-then-create gap and exceed the cap. Any reserve
+	// error (lock failure, missing user row) fails CLOSED — the old
+	// count-then-create swallowed count errors and proceeded (fail-open).
+	if err := h.cfg.LogAccessStreams.ReserveWithinCap(c.Request.Context(), stream, logaccess.MaxActiveStreamsPerUser); err != nil {
+		if errors.Is(err, repository.ErrLogStreamCapExceeded) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many active log streams"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

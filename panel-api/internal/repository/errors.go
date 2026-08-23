@@ -36,6 +36,12 @@ var ErrFtpCapExceeded = errors.New("repository: ftp account cap exceeded")
 // quotas over the package disk quota (JAB-262).
 var ErrFtpQuotaSplitExceeded = errors.New("repository: ftp isolated quota split exceeded")
 
+// ErrLogStreamCapExceeded is returned by LogAccessStreamRepository.ReserveWithinCap
+// when the user already holds the maximum active log-stream grants. The
+// reservation locks the tenant's users row FOR UPDATE, so concurrent creates get
+// a deterministic error instead of racing past the cap (JAB-347).
+var ErrLogStreamCapExceeded = errors.New("repository: log stream cap exceeded")
+
 // ErrPanelPrimaryNotFound is returned by DomainRepository.FindPanelPrimary
 // when no row has is_panel_primary=1. Distinct from ErrNotFound so the
 // Settings → Email endpoint can differentiate "row missing, return 202

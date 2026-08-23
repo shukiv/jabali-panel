@@ -133,11 +133,6 @@ func newLogAccessCreateCmd() *cobra.Command {
 				return fmt.Errorf("%w (user %s is not an admin)", err, u.Email)
 			}
 
-			// Per-user concurrency cap (5), same as the REST handler.
-			if count, cerr := repo.CountByUserID(ctx, u.ID); cerr == nil && count >= 5 {
-				return fmt.Errorf("user already has %d active streams (max 5) — revoke one first", count)
-			}
-
 			keyBytes := make([]byte, 16) // 32 hex chars
 			if _, err := rand.Read(keyBytes); err != nil {
 				return fmt.Errorf("rng: %w", err)
@@ -152,8 +147,15 @@ func newLogAccessCreateCmd() *cobra.Command {
 				StreamKey: streamKey,
 				ExpiresAt: expiresAt,
 			}
-			if err := repo.Create(ctx, stream); err != nil {
+			// Per-user concurrency cap, enforced atomically (JAB-347): the count
+			// and insert run under a FOR UPDATE lock on the user row so concurrent
+			// creates cannot both pass a check-then-create gap. Same cap + shared
+			// enforcement as the REST handler.
+			if err := repo.ReserveWithinCap(ctx, stream, logaccess.MaxActiveStreamsPerUser); err != nil {
 				cliAuditErr(ctx, "log_access.create", "log_access_stream", stream.ID, &u.ID)
+				if errors.Is(err, repository.ErrLogStreamCapExceeded) {
+					return fmt.Errorf("user already has the maximum of %d active streams — revoke one first", logaccess.MaxActiveStreamsPerUser)
+				}
 				return fmt.Errorf("create stream: %w", err)
 			}
 			cliAuditOK(ctx, "log_access.create", "log_access_stream", stream.ID, &u.ID)

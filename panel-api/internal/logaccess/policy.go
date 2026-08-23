@@ -18,6 +18,12 @@ package logaccess
 
 import "errors"
 
+// MaxActiveStreamsPerUser is the per-user cap on concurrent active log-stream
+// grants, enforced by both adapters through
+// LogAccessStreamRepository.ReserveWithinCap (JAB-347). Shared here so the HTTP
+// and CLI adapters cannot drift, matching the ValidateGrantScope pattern.
+const MaxActiveStreamsPerUser = 5
+
 // ErrDomainRequired is returned when a non-admin beneficiary omits the domain.
 // A nil-domain grant is server-wide, so it is never valid for a tenant.
 var ErrDomainRequired = errors.New("log access: a domain owned by the beneficiary is required for non-admin grants")
