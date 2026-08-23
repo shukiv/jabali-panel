@@ -74,7 +74,15 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
       const { password: _pw, ...rest } = existing;
       void _pw;
       form.resetFields();
-      form.setFieldsValue(rest);
+      // The "Name" field is a single display name bound to name_first, but a
+      // user migrated/imported (or created via the API) may have a split
+      // name_first + name_last. Show the FULL joined name so editing doesn't
+      // silently drop everything after the first word (GH #1227); handleFinish
+      // writes it back whole into name_first and clears name_last.
+      form.setFieldsValue({
+        ...rest,
+        name_first: [rest.name_first, rest.name_last].filter(Boolean).join(" "),
+      });
     } else if (!isEdit) {
       form.resetFields();
       form.setFieldsValue({ is_admin: false, webmail_enabled: true });
@@ -92,6 +100,10 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
         if (payload.package_id == null) {
           payload.package_id = "" as unknown as string;
         }
+        // GH #1227: the Name field carries the full display name in name_first;
+        // collapse any legacy split by clearing name_last, so the whole name
+        // round-trips instead of an orphaned last name reappearing on display.
+        payload.name_last = "";
         await update.mutateAsync({ id: editingId, input: payload });
         feedback.message.success("User updated");
       } else {
