@@ -15,7 +15,8 @@ import { apiClient } from "../../../apiClient";
 
 interface UserSuspendActionProps {
   userId: string;
-  userEmail: string;
+  // Display identifier — username-led (see userLabel, GH #1239).
+  userLabel: string;
   suspended: boolean;
   open: boolean;
   onClose: () => void;
@@ -23,7 +24,7 @@ interface UserSuspendActionProps {
 
 export const UserSuspendAction = ({
   userId,
-  userEmail,
+  userLabel,
   suspended,
   open,
   onClose,
@@ -52,11 +53,11 @@ export const UserSuspendAction = ({
       const data = res.data;
       if (suspended) {
         feedback.message.success(
-          `Unsuspended "${userEmail}" — ${data.domains_enabled ?? 0} domain(s) re-enabled.`,
+          `Unsuspended "${userLabel}" — ${data.domains_enabled ?? 0} domain(s) re-enabled.`,
         );
       } else {
         feedback.message.success(
-          `Suspended "${userEmail}" — ${data.domains_disabled ?? 0} domain(s) disabled.`,
+          `Suspended "${userLabel}" — ${data.domains_disabled ?? 0} domain(s) disabled.`,
         );
       }
       if (data.kratos_warning) {
@@ -92,13 +93,13 @@ export const UserSuspendAction = ({
     >
       {suspended ? (
         <p>
-          Restores access for <strong>{userEmail}</strong>. The Kratos
+          Restores access for <strong>{userLabel}</strong>. The Kratos
           identity is reactivated and every owned domain is re-enabled.
         </p>
       ) : (
         <>
           <p>
-            Takes <strong>{userEmail}</strong> offline:
+            Takes <strong>{userLabel}</strong> offline:
           </p>
           <ul>
             <li>Kratos identity → inactive (blocks panel + webmail login)</li>

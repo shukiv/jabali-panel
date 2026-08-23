@@ -14,14 +14,15 @@ import { apiClient } from "../../../apiClient";
 
 interface UserReset2FAActionProps {
   userId: string;
-  userEmail: string;
+  // Display identifier — username-led (see userLabel, GH #1239).
+  userLabel: string;
   open: boolean;
   onClose: () => void;
 }
 
 export const UserReset2FAAction = ({
   userId,
-  userEmail,
+  userLabel,
   open,
   onClose,
 }: UserReset2FAActionProps) => {
@@ -32,7 +33,7 @@ export const UserReset2FAAction = ({
     setIsLoading(true);
     try {
       await apiClient.post(`/admin/users/${encodeURIComponent(userId)}/2fa/reset`);
-      feedback.message.success(`Two-factor authentication reset for "${userEmail}"`);
+      feedback.message.success(`Two-factor authentication reset for "${userLabel}"`);
       onClose();
     } catch (err: unknown) {
       const errMsg =
@@ -55,7 +56,7 @@ export const UserReset2FAAction = ({
     >
       <p>
         Removes the TOTP authenticator and recovery codes from{" "}
-        <strong>{userEmail}</strong>. The user keeps their password and can
+        <strong>{userLabel}</strong>. The user keeps their password and can
         re-enrol from their profile page after their next sign-in.
       </p>
       <p>Use only when the user has confirmed they cannot recover access.</p>

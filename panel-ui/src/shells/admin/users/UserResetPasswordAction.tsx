@@ -12,12 +12,13 @@ import { apiClient } from "../../../apiClient";
 
 interface Props {
   userId: string;
-  userEmail: string;
+  // Display identifier — username-led (see userLabel, GH #1239).
+  userLabel: string;
   open: boolean;
   onClose: () => void;
 }
 
-export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Props) => {
+export const UserResetPasswordAction = ({ userId, userLabel, open, onClose }: Props) => {
   const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
@@ -29,7 +30,7 @@ export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Pr
         `/admin/users/${encodeURIComponent(userId)}/password/reset`,
       );
       setTempPassword(res.data.password);
-      feedback.message.success(`Password reset for "${userEmail}"`);
+      feedback.message.success(`Password reset for "${userLabel}"`);
     } catch (err: unknown) {
       feedback.message.error(err instanceof Error ? err.message : "Failed to reset password");
     } finally {
@@ -53,7 +54,7 @@ export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Pr
         okText={t("userresetpasswordaction.done")}
       >
         <p>
-          Hand this temporary password to <strong>{userEmail}</strong>. It is shown
+          Hand this temporary password to <strong>{userLabel}</strong>. It is shown
           only once. They sign in with it and should change it from their profile.
         </p>
         <Typography.Paragraph copyable strong style={{ fontSize: 16 }}>
@@ -74,7 +75,7 @@ export const UserResetPasswordAction = ({ userId, userEmail, open, onClose }: Pr
       okButtonProps={{ danger: true }}
     >
       <p>
-        Sets a new temporary password for <strong>{userEmail}</strong> and shows it
+        Sets a new temporary password for <strong>{userLabel}</strong> and shows it
         once. Their current password stops working immediately.
       </p>
       <p>There is no self-service recovery under username login — this is the reset.</p>

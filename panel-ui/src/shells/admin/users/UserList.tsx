@@ -27,6 +27,7 @@ import { useListQuery } from "../../../hooks/useQueries";
 import { useSelectQuery } from "../../../hooks/useSelectQuery";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { UserDeleteAction } from "./UserDeleteAction";
+import { userLabel } from "./userLabel";
 import { UserDrawer } from "./UserDrawer";
 import { UserDiskUsage, UserDiskUsageCell } from "./UserDiskUsage";
 import { UserReset2FAAction } from "./UserReset2FAAction";
@@ -125,20 +126,20 @@ function UserRowActions({
       <RowActions actions={actions} />
       <UserReset2FAAction
         userId={user.id}
-        userEmail={user.email}
+        userLabel={userLabel(user)}
         open={reset2faOpen}
         onClose={() => setReset2faOpen(false)}
       />
       <UserResetPasswordAction
         userId={user.id}
-        userEmail={user.email}
+        userLabel={userLabel(user)}
         open={resetPwOpen}
         onClose={() => setResetPwOpen(false)}
       />
       {!user.is_admin && (
         <UserSuspendAction
           userId={user.id}
-          userEmail={user.email}
+          userLabel={userLabel(user)}
           suspended={!!user.suspended}
           open={suspendOpen}
           onClose={() => setSuspendOpen(false)}
@@ -146,6 +147,8 @@ function UserRowActions({
       )}
       <UserDeleteAction
         recordItemId={user.id}
+        userLabel={userLabel(user)}
+        username={user.username}
         userEmail={user.email}
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}

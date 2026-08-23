@@ -8,6 +8,7 @@
 // Password on edit is optional — blank means "keep current".
 import { Button, Drawer, Form, Grid, Input, Select, Space, Spin, Switch } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { userLabel } from "./userLabel";
 import { useEffect } from "react";
 
 import { CheckOutlined, CloseOutlined } from "@icons";
@@ -118,7 +119,7 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
 
   return (
     <Drawer
-      title={isEdit ? "Edit user" : "Create user"}
+      title={isEdit ? (existing ? `Edit ${userLabel(existing)}` : "Edit user") : "Create user"}
       open={open}
       onClose={onClose}
       width={isDesktop ? 520 : undefined}

@@ -12,6 +12,11 @@ import { apiClient } from "../../../apiClient";
 
 interface UserDeleteActionProps {
   recordItemId: string;
+  // Display identifier — username-led (see userLabel, GH #1239).
+  userLabel: string;
+  // POSIX account name (M54). Absent only for legacy rows created
+  // before usernames existed — then the email local part is the account.
+  username?: string | null;
   userEmail: string;
   open: boolean;
   onClose: () => void;
@@ -19,6 +24,8 @@ interface UserDeleteActionProps {
 
 export const UserDeleteAction = ({
   recordItemId,
+  userLabel,
+  username,
   userEmail,
   open,
   onClose,
@@ -31,7 +38,7 @@ export const UserDeleteAction = ({
     try {
       await apiClient.delete(`/users/${encodeURIComponent(recordItemId)}`);
 
-      feedback.message.success(`User "${userEmail}" and all related data deleted`);
+      feedback.message.success(`User "${userLabel}" and all related data deleted`);
 
       // Invalidate every ["list", "users", *] variant so admin tabs
       // and the parent badge counters all refetch after a delete.
@@ -48,11 +55,11 @@ export const UserDeleteAction = ({
     }
   };
 
-  const localPart = userEmail.split("@")[0];
+  const osAccount = username || userEmail.split("@")[0];
 
   return (
     <Modal
-      title={`Delete user "${userEmail}"?`}
+      title={`Delete user "${userLabel}"?`}
       open={open}
       onCancel={onClose}
       footer={[
@@ -72,7 +79,7 @@ export const UserDeleteAction = ({
     >
       <p>
         This is permanent and cannot be undone. Deleting{" "}
-        <strong>{userEmail}</strong> will remove:
+        <strong>{userLabel}</strong> will remove:
       </p>
       <ul>
         <li>All owned domains, DNS zones, SSL certificates, nginx sites</li>
@@ -80,7 +87,7 @@ export const UserDeleteAction = ({
         <li>All mailboxes, forwarders, and Stalwart mail accounts</li>
         <li>All cron jobs, applications, SSH keys</li>
         <li>
-          The OS account <code>{localPart}</code> and <code>/home/{localPart}</code>
+          The OS account <code>{osAccount}</code> and <code>/home/{osAccount}</code>
         </li>
         <li>The Kratos identity (login record)</li>
       </ul>
