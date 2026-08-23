@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -160,6 +161,13 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	// nginx.test remains the gate for nginx.reload, where it belongs.
 	call("nginx", "nginx.status", nil, subCallTimeout)
 
+	// JAB-379: lightweight AppArmor profile-mode summary (no audit scrape) so
+	// synthesizeAlerts can warn when a jabali profile is complain/missing/
+	// unconfined rather than enforce. security.apparmor.summary is the cheap
+	// verb built for this poller — the full security.apparmor.status scrapes an
+	// 8MB audit tail and must not run on the 5s dashboard cadence.
+	call("apparmor", "security.apparmor.summary", nil, subCallTimeout)
+
 	// M31.1 — Redis queue depths run in parallel with the agent calls.
 	// Three XLEN/XPending pipelines, each with its own short timeout so
 	// a Redis hiccup never delays the whole envelope.
@@ -305,11 +313,59 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 			})
 			continue
 		}
+		if name == "apparmor" {
+			// JAB-379: degraded-observability must fail SILENT. A missing
+			// security.apparmor.summary verb (agent/panel version skew, trimmed
+			// update path) would otherwise raise a persistent false "agent
+			// sub-call failed" banner every 5s until both binaries align. Don't
+			// alert on the alerting mechanism's own unavailability.
+			continue
+		}
 		alerts = append(alerts, ServerStatusAlert{
 			Level:  "warning",
 			Kind:   "agent",
 			Detail: "agent sub-call '" + name + "': " + msg,
 		})
+	}
+
+	// JAB-379: degraded-AppArmor alert. Warn (not critical — nothing is down)
+	// when a jabali profile is loaded but NOT enforcing: a fresh install still
+	// in its complain soak, or a profile the flip-mature timer hasn't promoted
+	// (or was blocked from promoting by a denial). Excluded on purpose:
+	//   - enforce      — the desired state
+	//   - kernel-gated — working-as-designed on kernels without unix mediation;
+	//                    the agent already labels these, alerting is a false alarm
+	//   - enabled=false — a no-AppArmor host would otherwise show a permanent,
+	//                     unactionable banner
+	if rawAA, ok := results["apparmor"]; ok {
+		var payload struct {
+			Enabled  bool `json:"enabled"`
+			Profiles []struct {
+				Name string `json:"name"`
+				Mode string `json:"mode"`
+			} `json:"profiles"`
+		}
+		if err := json.Unmarshal(rawAA, &payload); err == nil && payload.Enabled {
+			degraded := []string{}
+			for _, p := range payload.Profiles {
+				switch p.Mode {
+				case "complain", "missing", "unconfined":
+					degraded = append(degraded, p.Name+" ("+p.Mode+")")
+				}
+			}
+			if len(degraded) > 0 {
+				sort.Strings(degraded) // deterministic order for the banner + tests
+				noun := "profiles"
+				if len(degraded) == 1 {
+					noun = "profile"
+				}
+				alerts = append(alerts, ServerStatusAlert{
+					Level: "warning", Kind: "apparmor",
+					Detail: formatInt64(int64(len(degraded))) + " AppArmor " + noun +
+						" not enforcing: " + strings.Join(degraded, ", "),
+				})
+			}
+		}
 	}
 
 	// Failed services → critical. Inactive services → critical only if

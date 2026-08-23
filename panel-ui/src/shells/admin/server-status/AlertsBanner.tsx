@@ -57,6 +57,11 @@ function deriveLink(a: ServerAlert): { path: string; label: string } | null {
       return { path: "/jabali-admin/updates", label: "Open Updates" };
     case "crowdsec":
       return { path: "/jabali-admin/security", label: "Open Security" };
+    case "apparmor":
+      // JAB-379: a jabali AppArmor profile is complain/missing/unconfined
+      // rather than enforce. The Security page's AppArmor section shows each
+      // profile's mode + the per-profile enforce/complain flip control.
+      return { path: "/jabali-admin/security", label: "Open Security" };
     default:
       return null;
   }

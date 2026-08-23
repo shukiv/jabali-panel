@@ -127,10 +127,35 @@ func mwApparmorStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 		return resp, nil
 	}
 
-	for name, mode := range raw.Profiles {
+	profiles, reason := buildApparmorProfileList(raw.Profiles)
+	resp.Profiles = profiles
+	if reason != "" {
+		resp.Reason = reason
+	}
+
+	// Best-effort denial scrape. Failures (journalctl missing, no
+	// matches) leave Denials as the empty slice — never error here.
+	resp.Denials = readApparmorEvents(ctx, "DENIED")
+	resp.Violations = readApparmorEvents(ctx, "ALLOWED")
+	return resp, nil
+}
+
+// buildApparmorProfileList filters the raw `aa-status --json` profile map to the
+// jabali (+ stalwart-mail) profiles we own, and reports EXPECTED-but-absent
+// profiles as "missing" (a genuine failure) or "kernel-gated" (a DELIBERATE skip
+// on kernels lacking /sys/kernel/security/apparmor/features/unix — Debian 13 /
+// Ubuntu 24.04 broken unix mediation, #687/#679; not a failure). Returns the
+// profile rows plus an optional human-readable reason for any kernel-gated rows.
+//
+// Single-sourced so the full status verb (with the audit-log denial scrape) and
+// the lightweight summary verb (dashboard degraded-alert source) agree on the
+// hard-won special cases: the `//` child-shadow skip, the jabali-ssh-shell
+// unconfined-by-design exclusion, and the missing-vs-kernel-gated distinction.
+func buildApparmorProfileList(rawProfiles map[string]string) ([]apparmorProfile, string) {
+	profiles := []apparmorProfile{}
+	for name, mode := range rawProfiles {
 		// Filter to jabali profiles + the system-service profiles we ship.
-		if !strings.HasPrefix(name, "jabali-") &&
-			name != "stalwart-mail" {
+		if !strings.HasPrefix(name, "jabali-") && name != "stalwart-mail" {
 			continue
 		}
 		// Skip complain-mode child shadow profiles (e.g. "jabali-panel//null-/usr/sbin/...").
@@ -143,50 +168,36 @@ func mwApparmorStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 		if name == "jabali-ssh-shell" {
 			continue
 		}
-		resp.Profiles = append(resp.Profiles, apparmorProfile{
-			Name: name,
-			Mode: mode,
-		})
+		profiles = append(profiles, apparmorProfile{Name: name, Mode: mode})
 	}
 
 	// GH #679: report EXPECTED jabali profiles that are missing/unloaded instead
-	// of silently omitting them. BUT distinguish two cases: a genuine failure
-	// ("missing", red) vs a DELIBERATE kernel-gate skip. On kernels lacking
-	// /sys/kernel/security/apparmor/features/unix (Debian 13 / Ubuntu 24.04
-	// broken unix-socket mediation), install_apparmor intentionally does NOT load
-	// the daemon profiles (#687) — attaching them would EACCES DNS/DB. That is
-	// working-as-designed, not a failure, so report it as "kernel-gated" (neutral)
-	// and explain it, rather than an alarming red "missing".
-	// Profiles are now abi/3.0-pinned and LOADED in complain even on kernels
-	// without unix mediation (GH #705-followup), so a profile absent from
-	// aa-status on such a kernel is "kernel-gated" (couldn't load / was skipped
-	// by an older install) rather than a genuine "missing" failure. Only surface
-	// the explanatory reason if we actually have such a row.
+	// of silently omitting them, distinguishing a genuine failure ("missing", red)
+	// from a DELIBERATE kernel-gate skip. Profiles are abi/3.0-pinned and load in
+	// complain even without unix mediation (GH #705-followup), so a profile absent
+	// on such a kernel is "kernel-gated" (couldn't load / predates the fix) rather
+	// than a genuine "missing" failure. Only surface the reason if we have such a row.
 	unixOK := apparmorUnixMediationAvailable()
+	reason := ""
 	sawKernelGated := false
 	for name := range allowedProfiles {
-		if _, ok := raw.Profiles[name]; !ok {
+		if _, ok := rawProfiles[name]; !ok {
 			mode := "missing"
 			if !unixOK {
 				mode = "kernel-gated"
 				sawKernelGated = true
 			}
-			resp.Profiles = append(resp.Profiles, apparmorProfile{Name: name, Mode: mode})
+			profiles = append(profiles, apparmorProfile{Name: name, Mode: mode})
 		}
 	}
-	if sawKernelGated && resp.Reason == "" {
-		resp.Reason = "AppArmor unix-socket mediation is unavailable on this kernel " +
+	if sawKernelGated {
+		reason = "AppArmor unix-socket mediation is unavailable on this kernel " +
 			"(no /sys/kernel/security/apparmor/features/unix — Debian 13 / Ubuntu 24.04). " +
 			"Jabali profiles are abi/3.0-pinned so they normally load in complain here; a " +
 			"profile still showing kernel-gated failed to load or predates this fix — run " +
 			"jabali update. This is not a security failure."
 	}
-
-	// Best-effort denial scrape. Failures (journalctl missing, no
-	// matches) leave Denials as the empty slice — never error here.
-	resp.Denials = readApparmorEvents(ctx, "DENIED")
-	resp.Violations = readApparmorEvents(ctx, "ALLOWED")
-	return resp, nil
+	return profiles, reason
 }
 
 // AppArmor AVC audit-line format the kernel emits. Sample:
@@ -370,8 +381,51 @@ func mwApparmorSetModeHandler(ctx context.Context, raw json.RawMessage) (any, er
 	}, nil
 }
 
+// apparmorSummaryResponse is the lightweight status shape: profile modes only,
+// no denial/violation audit scrape.
+type apparmorSummaryResponse struct {
+	Enabled  bool              `json:"enabled"`
+	Profiles []apparmorProfile `json:"profiles"`
+	Reason   string            `json:"reason,omitempty"`
+}
+
+// mwApparmorSummaryHandler backs the admin dashboard's degraded-security alert.
+// It returns the same jabali profile modes as the status verb but SKIPS the
+// audit-log denial/violation scrape (8MB tail + regex). The dashboard polls
+// /admin/server-status every ~5s from any open admin tab; running that scrape
+// on such a cadence would burn a core — the same reason server_status uses the
+// cheap nginx.status verb over nginx.test. aa-status --json is sub-second.
+func mwApparmorSummaryHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	ctx, cancel := context.WithTimeout(ctx, apparmorCallTimeout)
+	defer cancel()
+
+	resp := apparmorSummaryResponse{Profiles: []apparmorProfile{}}
+
+	out, err := execCommandContext(ctx, "aa-status", "--json").Output()
+	if err != nil {
+		// Disabled / not-installed → Enabled=false, not an internal error;
+		// the dashboard treats !enabled as "nothing to alert on".
+		resp.Enabled = false
+		resp.Reason = fmt.Sprintf("aa-status: %v", err)
+		return resp, nil
+	}
+	resp.Enabled = true
+
+	var raw struct {
+		Profiles map[string]string `json:"profiles"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return resp, nil
+	}
+	profiles, reason := buildApparmorProfileList(raw.Profiles)
+	resp.Profiles = profiles
+	resp.Reason = reason
+	return resp, nil
+}
+
 func init() {
 	Default.Register("security.apparmor.status", mwApparmorStatusHandler)
+	Default.Register("security.apparmor.summary", mwApparmorSummaryHandler)
 	Default.Register("security.apparmor.set_mode", mwApparmorSetModeHandler)
 }
 
