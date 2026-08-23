@@ -32,6 +32,7 @@ type PackageEditInput = {
   max_domains: number;
   max_email_accounts: number;
   max_databases: number;
+  max_database_users: number;
   max_docker_apps: number;
   max_python_apps: number;
   max_ftp_accounts: number;
@@ -287,6 +288,16 @@ export const PackageEdit = () => {
               label={t("packageedit.max_databases")}
               name="max_databases"
               rules={[{ required: true, message: "Max databases is required" }]}
+              tooltip="0 = unlimited"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label={t("packageedit.max_database_users")}
+              name="max_database_users"
+              rules={[{ required: true, message: "Max database users is required" }]}
               tooltip="0 = unlimited"
             >
               <InputNumber min={0} style={{ width: "100%" }} />

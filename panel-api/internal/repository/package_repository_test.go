@@ -135,3 +135,11 @@ func TestPackage_Update_PersistsBackupLimits(t *testing.T) {
 func TestPackage_Update_PersistsMaxFTPAccounts(t *testing.T) {
 	updatePersistsColumn(t, "max_ftp_accounts")
 }
+
+// JAB-329: max_database_users was enforced (database_users.go) + seeded, but
+// omitted from the Update Select allowlist (and the create/update request
+// models), so an operator could never configure the DB-user cap through a
+// package — the same silent-drop class as #170/#402/#454/#1053 above.
+func TestPackage_Update_PersistsMaxDatabaseUsers(t *testing.T) {
+	updatePersistsColumn(t, "max_database_users")
+}

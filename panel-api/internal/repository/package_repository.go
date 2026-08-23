@@ -104,7 +104,7 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 	// See feedback_domain_update_allowlist_silent_drop.
 	if err := r.db.WithContext(ctx).Model(p).Where("id = ?", p.ID).Select(
 		"name", "disk_quota_mb", "bandwidth_quota_mb", "max_domains",
-		"max_email_accounts", "max_databases",
+		"max_email_accounts", "max_databases", "max_database_users",
 		"cpu_quota_percent", "memory_limit_mb", "io_read_mbps", "io_write_mbps",
 		"max_tasks", "max_docker_apps", "max_python_apps", "max_ftp_accounts", "docker_app_slugs",
 		"ssh_enabled", "cgi_enabled", "php_exec_enabled",

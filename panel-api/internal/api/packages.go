@@ -80,6 +80,7 @@ type createPackageRequest struct {
 	MaxDomains       uint32 `json:"max_domains"`
 	MaxEmailAccounts uint32 `json:"max_email_accounts"`
 	MaxDatabases     uint32 `json:"max_databases"`
+	MaxDatabaseUsers uint32 `json:"max_database_users"`
 	MaxDockerApps    uint32 `json:"max_docker_apps"`
 	MaxPythonApps    uint32 `json:"max_python_apps"`
 	MaxFTPAccounts   uint32 `json:"max_ftp_accounts"`
@@ -114,6 +115,7 @@ type updatePackageRequest struct {
 	MaxDomains       *uint32 `json:"max_domains"`
 	MaxEmailAccounts *uint32 `json:"max_email_accounts"`
 	MaxDatabases     *uint32 `json:"max_databases"`
+	MaxDatabaseUsers *uint32 `json:"max_database_users"`
 	MaxDockerApps    *uint32 `json:"max_docker_apps"`
 	MaxPythonApps    *uint32 `json:"max_python_apps"`
 	MaxFTPAccounts   *uint32 `json:"max_ftp_accounts"`
@@ -205,6 +207,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		MaxDomains:       req.MaxDomains,
 		MaxEmailAccounts: req.MaxEmailAccounts,
 		MaxDatabases:     req.MaxDatabases,
+		MaxDatabaseUsers: req.MaxDatabaseUsers,
 		MaxDockerApps:    req.MaxDockerApps,
 		MaxPythonApps:    req.MaxPythonApps,
 		MaxFTPAccounts:   req.MaxFTPAccounts,
@@ -338,6 +341,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.MaxDatabases != nil {
 		pkg.MaxDatabases = *req.MaxDatabases
+	}
+	if req.MaxDatabaseUsers != nil {
+		pkg.MaxDatabaseUsers = *req.MaxDatabaseUsers
 	}
 	if req.MaxDockerApps != nil {
 		pkg.MaxDockerApps = *req.MaxDockerApps
