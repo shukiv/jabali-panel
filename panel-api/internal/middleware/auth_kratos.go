@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -108,10 +108,14 @@ func RequireKratosSession(kratosClient *kratosclient.Client, users repository.Us
 			UserID:  panelUser.ID,
 			Email:   panelUser.Email,
 			IsAdmin: panelUser.IsAdmin,
+			// JAB-380: carry the session's last-authenticated time + assurance
+			// level so recent-auth gates (root File Manager / Root Terminal)
+			// can require a fresh login. Source stays SourceKratos (zero value).
+			AuthenticatedAt: identity.AuthenticatedAt,
+			AAL:             identity.AAL,
 		}
 
 		ginctx.SetClaims(c, claims)
 		c.Next()
 	}
 }
-

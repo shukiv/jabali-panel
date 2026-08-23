@@ -21,6 +21,19 @@ var ErrUnauthenticated = errors.New("unauthenticated")
 type Identity struct {
 	ID     string                 `json:"id"`
 	Traits map[string]interface{} `json:"traits"`
+
+	// Session-envelope metadata (JAB-380). /sessions/whoami returns these at
+	// the SESSION level, not on the identity; whoamiRemote lifts them onto the
+	// returned Identity so the auth middleware can thread them into claims for
+	// recent-auth (step-up) gating on the root File Manager + Root Terminal.
+	//
+	// AuthenticatedAt is when Kratos last authenticated this session (bumped by
+	// a `?refresh=true` login). Zero if Kratos omitted/failed to parse it —
+	// callers treat zero as "not recently authenticated" (fail closed).
+	// AAL is the assurance level ("aal1"/"aal2"); captured for a future
+	// TOTP/passkey requirement, not enforced in v1.
+	AuthenticatedAt time.Time `json:"-"`
+	AAL             string    `json:"-"`
 }
 
 // Client is a Kratos session validator. It calls /sessions/whoami and caches results
@@ -166,13 +179,18 @@ func (c *Client) whoamiRemote(ctx context.Context, cookie string) (*Identity, er
 	}
 
 	// Kratos /sessions/whoami returns a Session envelope, not a bare identity:
-	//   { "id": "<session_uuid>", "active": true, ..., "identity": { "id": "<identity_uuid>", "traits": {...} } }
+	//   { "id": "<session_uuid>", "active": true, "authenticated_at": "...",
+	//     "authenticator_assurance_level": "aal1",
+	//     "identity": { "id": "<identity_uuid>", "traits": {...} } }
 	// The top-level "id" is the SESSION id — decoding into Identity directly
 	// would populate Identity.ID with that session id and the caller's
 	// FindByKratosIdentityID(id) would never match any users row. Decode the
-	// envelope, then hand back the nested identity.
+	// envelope, then hand back the nested identity — with the session-level
+	// authenticated_at / assurance level lifted onto it (JAB-380 step-up).
 	var sess struct {
-		Identity Identity `json:"identity"`
+		Identity        Identity `json:"identity"`
+		AuthenticatedAt string   `json:"authenticated_at"`
+		AAL             string   `json:"authenticator_assurance_level"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
 		return nil, fmt.Errorf("whoami: failed to decode response: %w", err)
@@ -180,7 +198,36 @@ func (c *Client) whoamiRemote(ctx context.Context, cookie string) (*Identity, er
 	if sess.Identity.ID == "" {
 		return nil, fmt.Errorf("whoami: response missing identity.id")
 	}
-	return &sess.Identity, nil
+	ident := sess.Identity
+	ident.AAL = sess.AAL
+	// Parse the RFC3339 timestamp; on any parse failure leave the zero value
+	// so a recent-auth check fails closed rather than treating an unparseable
+	// time as "now".
+	if sess.AuthenticatedAt != "" {
+		if ts, perr := time.Parse(time.RFC3339Nano, sess.AuthenticatedAt); perr == nil {
+			ident.AuthenticatedAt = ts
+		}
+	}
+	return &ident, nil
+}
+
+// WhoamiUncached validates a session cookie by round-tripping to Kratos,
+// bypassing the positive whoami cache, and refreshes the cache with the fresh
+// result. JAB-380 step-up uses it: after a stale-session 403 the user completes
+// a `?refresh=true` login on the SAME cookie, so a cached (pre-refresh)
+// authenticated_at would otherwise keep failing the recency check for the rest
+// of the TTL — a redirect loop. This forces one authoritative read of the
+// post-refresh authenticated_at.
+func (c *Client) WhoamiUncached(ctx context.Context, cookie string) (*Identity, error) {
+	if cookie == "" {
+		return nil, ErrUnauthenticated
+	}
+	identity, err := c.whoamiRemote(ctx, cookie)
+	if err != nil {
+		return nil, err
+	}
+	c.cache.Set(cookie, identity)
+	return identity, nil
 }
 
 // GetTraitEmail extracts the email from a Kratos identity's traits.

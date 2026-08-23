@@ -26,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -248,6 +249,10 @@ type FilesHandlerConfig struct {
 	ServerSettings repository.ServerSettingsRepository // optional; nil → fall back to defaultMaxUploadBytes
 	// Audits records admin File Manager mutations (GH #1184). Optional.
 	Audits repository.AuditEventRepository
+	// KratosClient powers the JAB-380 recent-auth (step-up) check on the
+	// admin (/admin/files) mount. Optional: nil disables step-up (tests /
+	// non-Kratos deployments) — the mount is still admin + opt-in gated.
+	KratosClient *kratosclient.Client
 }
 
 const (
@@ -377,6 +382,17 @@ func (h *filesHandler) adminGate(c *gin.Context) {
 	if err != nil || s == nil || !s.AdminFileManagerEnabled {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "admin_file_manager_disabled"})
 		return
+	}
+	// JAB-380 recent-auth (step-up): every admin File Manager request —
+	// reads included, because the root scope exposes arbitrary files — needs a
+	// recently authenticated interactive session. Checked AFTER the opt-in gate
+	// so a disabled FM still reports admin_file_manager_disabled. A nil
+	// KratosClient (tests / non-Kratos deploys) leaves the mount admin+opt-in
+	// gated only.
+	if h.cfg.KratosClient != nil {
+		if !requireRecentAuth(c, h.cfg.KratosClient, stepUpWindow) {
+			return
+		}
 	}
 	c.Set(adminFilesCtxKey, true)
 	if h.cfg.Audits != nil && c.Request.Method != http.MethodGet {

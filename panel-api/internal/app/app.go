@@ -1361,6 +1361,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:            deps.Log,
 				ServerSettings: deps.ServerSettings,
 				Audits:         automationAudits(deps.DB),
+				// JAB-380: recent-auth step-up on the /admin/files mount.
+				KratosClient: deps.KratosClient,
 			})
 		}
 
@@ -1445,6 +1447,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				ServerSettings: deps.ServerSettings,
 				Notifications:  deps.NotificationQueue,
 				Log:            deps.Log,
+				// JAB-380: recent-auth step-up on root terminal mint.
+				KratosClient: deps.KratosClient,
 			})
 		}
 		// M34 per-user PHP-FPM egress firewall — admin + user routes share

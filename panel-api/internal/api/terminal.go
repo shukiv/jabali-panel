@@ -30,6 +30,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -57,6 +58,10 @@ type TerminalHandlerConfig struct {
 	Notifications  *notifications.Queue
 	AgentPTYSocket string // override for tests; default terminalAgentPTYSk
 	Log            *slog.Logger
+	// KratosClient powers the JAB-380 recent-auth (step-up) check on token
+	// mint. Optional: nil disables step-up (tests) — the mint is still admin +
+	// root_terminal_enabled gated.
+	KratosClient *kratosclient.Client
 }
 
 type terminalHandler struct{ cfg TerminalHandlerConfig }
@@ -98,6 +103,15 @@ func (h *terminalHandler) mint(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "root_terminal_disabled",
 			"detail": "Enable it in Server Settings first (off by default)."})
 		return
+	}
+	// JAB-380 recent-auth (step-up): opening a root shell requires a recently
+	// authenticated interactive session. Checked at mint; the WS upgrade
+	// inherits it via the one-shot 60s IP+uid-bound token, so ws() doesn't
+	// re-prompt. nil KratosClient (tests) leaves mint admin+opt-in gated only.
+	if h.cfg.KratosClient != nil {
+		if !requireRecentAuth(c, h.cfg.KratosClient, stepUpWindow) {
+			return
+		}
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

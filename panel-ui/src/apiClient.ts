@@ -67,9 +67,50 @@ apiClient.interceptors.response.use(
         window.location.assign("/jabali-admin");
       }
     }
+
+    // JAB-380 recent-auth step-up: a root-privileged surface (admin File
+    // Manager / Root Terminal) rejected the request because the Kratos session
+    // wasn't authenticated recently enough. Send the user through a Kratos
+    // refresh login, then Kratos returns them to the current page to retry.
+    // `stepup_unavailable` (API-token / impersonated callers) is NOT redirected
+    // — there is no interactive session to refresh; it surfaces as a message.
+    if (err.response?.status === 403 && data?.error === "stepup_required") {
+      stepUpRedirect();
+    }
+
     return Promise.reject(normalizeError(err));
   },
 );
+
+/**
+ * JAB-380: redirect the browser through a Kratos *refresh* login for a
+ * recent-auth (step-up) challenge on the root File Manager / Root Terminal.
+ * Kratos re-authenticates the existing session (bumping authenticated_at) and
+ * the panel's Login page returns the user to where they were, to repeat the
+ * action against a now-fresh session.
+ *
+ * The return path is carried in sessionStorage `post_login_return_to`, NOT the
+ * Kratos `return_to` query — that query is dropped on the
+ * /self-service/login/browser → /login hop (see the M20.1 note in Login.tsx).
+ * This mirrors MyProfile's refresh-flow escalation exactly. The stashed value
+ * is a path (starts with "/") so it satisfies Login.tsx's same-origin guard;
+ * the query is still appended belt-and-braces. Exported for tests; guarded so
+ * it is inert during SSR/tests without a window.
+ */
+export function stepUpRedirect(): void {
+  if (typeof window === "undefined" || !window.location) return;
+  const returnTo = window.location.pathname + window.location.search;
+  try {
+    sessionStorage.setItem("post_login_return_to", returnTo);
+  } catch {
+    // sessionStorage unavailable — the refresh still works; the user just
+    // lands on their role home instead of back on this exact page.
+  }
+  const url =
+    "/.ory/self-service/login/browser?refresh=true&return_to=" +
+    encodeURIComponent(returnTo);
+  window.location.assign(url);
+}
 
 /**
  * JAB-177: the demo write-guard rejects every write with
@@ -144,6 +185,9 @@ function humanizeErrorCode(code: string): string {
     invalid_session: "Session expired — please log in again",
     identity_service_unavailable: "Identity service temporarily unavailable — try again shortly",
     validation_failed: "Some fields are invalid",
+    stepup_required: "Re-authenticate to continue — redirecting you to sign in again…",
+    stepup_unavailable:
+      "This action needs an interactive browser session with a recent login (API tokens and act-as sessions can't perform it)",
     internal: "Something went wrong on the server",
     agent_error:
       "The server's host agent failed — details are in the server logs (journalctl -u jabali-panel / -u jabali-agent)",

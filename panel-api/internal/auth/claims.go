@@ -1,5 +1,7 @@
 package auth
 
+import "time"
+
 // AccessClaims is the resolved identity for an authenticated request. It is
 // populated by middleware (RequireKratosSession) from the Kratos whoami
 // response + the panel users row, and stashed on the gin.Context via ginctx.
@@ -24,6 +26,15 @@ type AccessClaims struct {
 	// path) for backwards compatibility — old middleware that pre-
 	// dates the user-API-token feature leaves Source unset.
 	Source AuthSource
+	// AuthenticatedAt is when the Kratos session behind this request was last
+	// authenticated (JAB-380). Only populated for SourceKratos requests; zero
+	// for API-token / automation-HMAC callers (which have no interactive
+	// session). Recent-auth gates on the root File Manager + Root Terminal read
+	// it to require a fresh login before privileged root actions.
+	AuthenticatedAt time.Time
+	// AAL is the Kratos assurance level ("aal1"/"aal2") of the session.
+	// Captured for a future TOTP/passkey step-up requirement; not enforced yet.
+	AAL string
 }
 
 // AuthSource is the kind of credential that produced the claims.
