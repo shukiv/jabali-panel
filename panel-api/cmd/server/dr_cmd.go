@@ -34,7 +34,7 @@ func newDRCmd() *cobra.Command {
 			"primary's state from a read-only backup destination and serves no live " +
 			"traffic until `dr promote`. No automatic failover, no split-brain.",
 	}
-	cmd.AddCommand(newDRStatusCmd(), newDRPairCmd(), newDRUnpairCmd(), newDRFeedCmd(), newDRPromoteCmd())
+	cmd.AddCommand(newDRStatusCmd(), newDRPairCmd(), newDRUnpairCmd(), newDRFeedCmd(), newDRUnfeedCmd(), newDRPromoteCmd())
 	return cmd
 }
 
@@ -160,6 +160,10 @@ func newDRUnpairCmd() *cobra.Command {
 			if err != nil || s == nil {
 				return fmt.Errorf("read server settings: %w", err)
 			}
+			// Capture the DR destination BEFORE the Upsert clears the pointer —
+			// the feed-teardown below needs it, and after this it is only
+			// recoverable from `backup destination list`.
+			oldDestID := strOrEmpty(s.DRDestinationID)
 			s.ServerRole = models.ServerRolePrimary
 			s.DRDestinationID = nil
 			s.DRPeerLabel = ""
@@ -168,6 +172,23 @@ func newDRUnpairCmd() *cobra.Command {
 				return fmt.Errorf("clear DR pairing: %w", err)
 			}
 			fmt.Println("This box is now a PRIMARY. DR pairing cleared.")
+
+			// JAB-363: best-effort local feed teardown. A true standby has no
+			// feed schedule (the feed lives on the remote PRIMARY) so this is a
+			// silent no-op there; a single box that played both roles (the .86
+			// repro) gets its orphaned feed disabled. A teardown failure must
+			// never fail the unpair — the role change already succeeded.
+			if oldDestID != "" {
+				res, terr := tearDownDRFeed(ctx, scheduleRepoFromDB(), backupDestinationRepoFromDB(), oldDestID)
+				switch {
+				case terr != nil:
+					fmt.Printf("WARNING: could not tear down the local DR feed for destination %s: %v\n", oldDestID, terr)
+					fmt.Printf("If this box feeds it, run: jabali dr unfeed --destination %s\n", oldDestID)
+				case res.scheduleDisabled || res.destDisabled:
+					fmt.Printf("Disabled the local DR feed (schedule=%t, destination=%t).\n",
+						res.scheduleDisabled, res.destDisabled)
+				}
+			}
 			return nil
 		},
 	}
@@ -249,6 +270,52 @@ func newDRFeedCmd() *cobra.Command {
 	return cmd
 }
 
+// newDRUnfeedCmd is the primary-side inverse of `dr feed` (JAB-363). It stops a
+// DR feed and is also the repair path for a feed orphaned by a standby unpair:
+// pass the DR destination id (from `jabali backup destination list`) — that
+// explicit id is the operator confirmation, so nothing is auto-detected.
+func newDRUnfeedCmd() *cobra.Command {
+	var destID string
+	cmd := &cobra.Command{
+		Use:   "unfeed",
+		Short: "Primary side: stop shipping system backups to a DR destination (inverse of `dr feed`)",
+		Long: "Run on the PRIMARY. Disables the DR feed system_backup schedule that targets the " +
+			"destination and (unless another enabled schedule still uses it) the destination itself. " +
+			"Non-destructive — nothing is deleted, and `dr feed` re-enables the schedule on re-pair. " +
+			"Also the repair for a feed left orphaned by `dr unpair`: pass the destination id.",
+		PreRunE: requireDB,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if destID == "" {
+				return fmt.Errorf("--destination is required (the DR backup destination to stop feeding)")
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+			defer cancel()
+			res, err := tearDownDRFeed(ctx, scheduleRepoFromDB(), backupDestinationRepoFromDB(), destID)
+			if err != nil {
+				return err
+			}
+			if res.scheduleID == "" {
+				fmt.Println("No DR feed schedule targets that destination — nothing to disable.")
+			} else if res.scheduleDisabled {
+				fmt.Printf("Disabled DR feed schedule %s.\n", res.scheduleID)
+			} else {
+				fmt.Printf("DR feed schedule %s was already disabled.\n", res.scheduleID)
+			}
+			switch {
+			case res.destShared:
+				fmt.Println("Left the destination ENABLED — another enabled schedule still targets it.")
+			case res.destDisabled:
+				fmt.Println("Disabled the DR destination.")
+			default:
+				fmt.Println("Destination was already disabled (or not found).")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&destID, "destination", "", "the DR backup destination id to stop feeding")
+	return cmd
+}
+
 // findSystemScheduleForDest returns the first enabled-or-disabled system_backup
 // schedule whose destination set includes destID, or nil if none exists.
 func findSystemScheduleForDest(ctx context.Context, repo repository.BackupScheduleRepository, destID string) (*models.BackupSchedule, error) {
@@ -271,6 +338,94 @@ func findSystemScheduleForDest(ctx context.Context, repo repository.BackupSchedu
 		}
 	}
 	return nil, nil
+}
+
+// drFeedTeardown reports what tearDownDRFeed disabled, for operator messaging.
+type drFeedTeardown struct {
+	scheduleID       string
+	scheduleDisabled bool
+	destDisabled     bool
+	destShared       bool // another enabled schedule still targets the destination
+}
+
+// tearDownDRFeed disables the DR feed system_backup schedule targeting destID
+// and — unless another enabled schedule still targets it — the destination too.
+// Non-destructive: it disables, never deletes, so `dr feed` re-enables the same
+// schedule on re-pair (the round-trip that makes disable the right primitive).
+// JAB-363: the primary-side inverse of `dr feed`; the repair path for an
+// orphaned feed left behind after a standby unpair.
+func tearDownDRFeed(
+	ctx context.Context,
+	schedRepo repository.BackupScheduleRepository,
+	destRepo repository.BackupDestinationRepository,
+	destID string,
+) (drFeedTeardown, error) {
+	var res drFeedTeardown
+	sched, err := findSystemScheduleForDest(ctx, schedRepo, destID)
+	if err != nil {
+		return res, err
+	}
+	if sched != nil {
+		res.scheduleID = sched.ID
+		if sched.Enabled {
+			sched.Enabled = false
+			if err := schedRepo.Update(ctx, sched); err != nil {
+				return res, fmt.Errorf("disable DR feed schedule %s: %w", sched.ID, err)
+			}
+			res.scheduleDisabled = true
+		}
+	}
+	// Shared-destination guard: `dr feed` accepts any existing destination, so
+	// "dedicated" is an assumption, not an invariant. Only disable the
+	// destination when no OTHER enabled schedule still targets it.
+	shared, err := destinationHasOtherEnabledSchedule(ctx, schedRepo, destID, sched)
+	if err != nil {
+		return res, err
+	}
+	res.destShared = shared
+	if !shared {
+		d, gerr := destRepo.Get(ctx, destID)
+		if gerr == nil && d != nil && d.Enabled {
+			d.Enabled = false
+			if err := destRepo.Update(ctx, d); err != nil {
+				return res, fmt.Errorf("disable DR destination %s: %w", destID, err)
+			}
+			res.destDisabled = true
+		}
+	}
+	return res, nil
+}
+
+// destinationHasOtherEnabledSchedule reports whether any ENABLED schedule other
+// than `except` still targets destID.
+func destinationHasOtherEnabledSchedule(
+	ctx context.Context,
+	schedRepo repository.BackupScheduleRepository,
+	destID string,
+	except *models.BackupSchedule,
+) (bool, error) {
+	all, err := schedRepo.List(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list backup schedules: %w", err)
+	}
+	for i := range all {
+		if !all[i].Enabled {
+			continue
+		}
+		if except != nil && all[i].ID == except.ID {
+			continue
+		}
+		dests, derr := schedRepo.GetDestinations(ctx, all[i].ID)
+		if derr != nil {
+			return false, fmt.Errorf("read schedule destinations: %w", derr)
+		}
+		for _, d := range dests {
+			if d.ID == destID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func orDefault(v, def string) string {

@@ -2351,6 +2351,18 @@ Show this box's DR role + pairing
 jabali dr status
 ```
 
+#### `jabali dr unfeed`
+
+Primary side: stop shipping system backups to a DR destination (inverse of `dr feed`)
+
+```
+jabali dr unfeed [flags]
+```
+
+**Flags:**
+
+- `--destination` — the DR backup destination id to stop feeding
+
 #### `jabali dr unpair`
 
 Revert this box to a primary (clears standby role)
