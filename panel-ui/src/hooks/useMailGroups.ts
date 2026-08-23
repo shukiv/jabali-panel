@@ -168,6 +168,10 @@ export function useSetMailGroupMembers(): UseMutationResult<
     },
     onSuccess: (_d, { id, domainId }) => {
       invalidateGroups(qc, domainId);
+      // JAB-372: replacing the whole member set changes the mailbox→group edge
+      // set, so the mailbox table's group badges (mailbox-group-memberships
+      // projection) must refresh too — not just the group detail.
+      invalidateMemberships(qc, domainId);
       qc.invalidateQueries({ queryKey: ["one", "mailgroup", id] });
     },
   });
@@ -224,6 +228,11 @@ export function useDeleteMailGroup(): UseMutationResult<
     mutationFn: async ({ id }) => {
       await apiClient.delete(`/mailgroups/${id}`);
     },
-    onSuccess: (_d, { domainId }) => invalidateGroups(qc, domainId),
+    // JAB-372: deleting a group drops every mailbox's membership in it, so the
+    // mailbox table's group badges must refresh, not only the group list.
+    onSuccess: (_d, { domainId }) => {
+      invalidateGroups(qc, domainId);
+      invalidateMemberships(qc, domainId);
+    },
   });
 }
