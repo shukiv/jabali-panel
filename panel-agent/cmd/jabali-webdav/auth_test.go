@@ -150,6 +150,34 @@ func TestAuth_SuccessNotThrottled_FailuresAre(t *testing.T) {
 	}
 }
 
+// shadowLocked must allow ONLY a real crypt hash and fail closed on every
+// locked/disabled/unset/missing state — pinned so the deny boundary can't drift.
+func TestShadowLocked(t *testing.T) {
+	const shadow = "acme_web:$y$j9T$abcdef:19000:0:99999:7:::\n" +
+		"acme_lck:!$y$j9T$abcdef:19000:0:99999:7:::\n" +
+		"acme_bang:!:19000:0:99999:7:::\n" +
+		"acme_bb:!!:19000:0:99999:7:::\n" +
+		"acme_star:*:19000:0:99999:7:::\n" +
+		"acme_empty::19000:0:99999:7:::\n"
+	cases := []struct {
+		user   string
+		locked bool
+	}{
+		{"acme_web", false},  // real yescrypt hash → allow
+		{"acme_lck", true},   // usermod -L (!hash) → deny
+		{"acme_bang", true},  // bare ! → deny
+		{"acme_bb", true},    // !! → deny
+		{"acme_star", true},  // * (disabled) → deny
+		{"acme_empty", true}, // empty → deny
+		{"acme_ghost", true}, // no entry → deny (fail closed)
+	}
+	for _, tc := range cases {
+		if got := shadowLocked(shadow, tc.user); got != tc.locked {
+			t.Errorf("shadowLocked(%s) = %v, want %v", tc.user, got, tc.locked)
+		}
+	}
+}
+
 func TestParseBasicAuth(t *testing.T) {
 	u, p, ok := parseBasicAuth(basic("acme_web", "s3cret:with:colons"))
 	if !ok || u != "acme_web" || p != "s3cret:with:colons" {

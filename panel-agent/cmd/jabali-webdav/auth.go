@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -35,6 +36,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -79,6 +82,22 @@ func runAuth(socket string) {
 		log.Printf("jabali-webdav auth: chmod socket: %v", err)
 	}
 
+	// Defense in depth beyond the 0660 root:jabali-sockets mode: jabali-sockets
+	// also contains the panel (jabali) and webmail uids, so socket perms alone
+	// would let a compromised panel/webmail process brute-force or oracle every
+	// subaccount password here offline (no nginx limit_req, no CrowdSec). Gate on
+	// SO_PEERCRED: only root and nginx (www-data) may connect. Mirrors the agent
+	// socket's UID allow-list (JAB-366).
+	allowed := map[uint32]bool{0: true}
+	if wu, werr := user.Lookup("www-data"); werr == nil {
+		if wuid, perr := strconv.Atoi(wu.Uid); perr == nil {
+			allowed[uint32(wuid)] = true
+		}
+	} else {
+		log.Printf("jabali-webdav auth: www-data not found — only root may connect: %v", werr)
+	}
+	ln = &peerCredListener{Listener: ln, allowed: allowed}
+
 	a := newAuthenticator()
 	srv := &http.Server{
 		Handler:           a,
@@ -97,6 +116,54 @@ func runAuth(socket string) {
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("jabali-webdav auth: serve: %v", err)
 	}
+}
+
+// peerCredListener rejects any connection whose peer uid is not in allowed,
+// checked via SO_PEERCRED at accept time. Only root and nginx (www-data) may
+// reach the authenticator; every other local uid is closed immediately.
+type peerCredListener struct {
+	net.Listener
+	allowed map[uint32]bool
+}
+
+func (l *peerCredListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		uid, uerr := connPeerUID(c)
+		if uerr != nil || !l.allowed[uid] {
+			if uerr == nil {
+				log.Printf("jabali-webdav auth: rejected connection from uid %d (only root + www-data allowed)", uid)
+			}
+			_ = c.Close()
+			continue
+		}
+		return c, nil
+	}
+}
+
+func connPeerUID(conn net.Conn) (uint32, error) {
+	uc, ok := conn.(*net.UnixConn)
+	if !ok {
+		return 0, fmt.Errorf("not a unix connection")
+	}
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var cred *unix.Ucred
+	var credErr error
+	if cerr := raw.Control(func(fd uintptr) {
+		cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+	}); cerr != nil {
+		return 0, cerr
+	}
+	if credErr != nil {
+		return 0, credErr
+	}
+	return cred.Uid, nil
 }
 
 // authenticator holds the rate-limiting state + concurrency cap. The four
@@ -230,7 +297,17 @@ func accountLocked(username string) bool {
 	if err != nil {
 		return true
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	return shadowLocked(string(data), username)
+}
+
+// shadowLocked reports whether username's shadow entry denies password auth. It
+// is the pure core of accountLocked (testable without /etc/shadow). Deny when the
+// hash is locked (usermod -L prepends '!'), disabled ('*'), unset/empty, or the
+// user has no shadow entry at all — every one of these means "no usable password"
+// and must fail CLOSED. Only a real crypt hash ($y$/$6$/…) allows the auth to
+// proceed to unix_chkpwd.
+func shadowLocked(shadow, username string) bool {
+	for _, line := range strings.Split(shadow, "\n") {
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) < 2 || parts[0] != username {
 			continue

@@ -205,7 +205,6 @@ server {
     proxy_pass_request_body off;              # auth is decided before any body streams
     proxy_set_header Content-Length "";
     proxy_set_header Authorization $http_authorization;
-    proxy_set_header X-Original-URI $request_uri;
   }
   location ^~ /dav/ {
     # Outer per-IP flood cap. Complements the authenticator's per-username token
