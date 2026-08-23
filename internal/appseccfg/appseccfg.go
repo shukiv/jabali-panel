@@ -368,7 +368,15 @@ func Render(o Opts) string {
 		// unaffected (this only skips AppSec body inspection). Path-prefix,
 		// matching the /api/v1/ precedent — both are jabali-owned paths not
 		// routed on tenant vhosts.
-		adminFilter := `req.URL.Path startsWith "/api/v1/" || req.URL.Path startsWith "/phpmyadmin/" || req.URL.Path startsWith "/jabali-adminer/"`
+		//
+		// /dav/ — WebDAV for FTP/SFTP subaccounts (GH #1146). Its non-standard
+		// methods (PROPFIND/MKCOL/MOVE/COPY/PUT) and XML request bodies
+		// categorically trip CRS method/protocol/body rules, so the WAF 403-bans
+		// every WebDAV request (verified live). The real boundary is the
+		// per-request auth_request authenticator (unix_chkpwd + jabali-webdav
+		// group), exactly as the signon gate is for the DB tools; IP-reputation
+		// banning still applies (this only skips AppSec body inspection).
+		adminFilter := `req.URL.Path startsWith "/api/v1/" || req.URL.Path startsWith "/phpmyadmin/" || req.URL.Path startsWith "/jabali-adminer/" || req.URL.Path startsWith "/dav/"`
 		if o.PanelHost != "" {
 			// GH #706: only skip AppSec for these paths ON THE PANEL HOST, so a
 			// tenant vhost serving the same paths is still WAF-inspected. req.Host
