@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -429,4 +431,36 @@ func TestMeNotif_InvalidEventKind_Is422(t *testing.T) {
 		"channel_id": mine.ID,
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+// JAB-326: the channels list surfaces the effective admin allowlist so the
+// tenant picker offers exactly the creatable kinds.
+func TestMeNotif_ListReturnsAllowedKinds(t *testing.T) {
+	t.Parallel()
+
+	allowedKindsOf := func(rec *httptest.ResponseRecorder) []string {
+		var body struct {
+			AllowedKinds []string `json:"allowed_kinds"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		return body.AllowedKinds
+	}
+
+	// Empty policy → safe defaults (ntfy/telegram/discord/webpush), no risky kinds.
+	r := newMeNotifRouter(t, meNotifSettings(true), &fakeChannelsRepo{}, &fakeUserRoutesRepo{}, newUserCtxID("u1"))
+	rec := doNotifJSON(t, r, http.MethodGet, "/api/v1/me/notifications/channels", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.ElementsMatch(t,
+		[]string(models.DefaultTenantNotificationKinds()), allowedKindsOf(rec))
+	require.NotContains(t, allowedKindsOf(rec), "webhook")
+
+	// Admin-widened policy → returned verbatim, including webhook + email.
+	st := &mockServerSettingsRepo{getResult: &models.ServerSettings{
+		TenantNotificationsEnabled: true,
+		TenantNotificationKinds:    models.TenantNotificationKinds{"ntfy", "webhook", "email"},
+	}}
+	r2 := newMeNotifRouter(t, st, &fakeChannelsRepo{}, &fakeUserRoutesRepo{}, newUserCtxID("u1"))
+	rec2 := doNotifJSON(t, r2, http.MethodGet, "/api/v1/me/notifications/channels", nil)
+	require.Equal(t, http.StatusOK, rec2.Code)
+	require.ElementsMatch(t, []string{"ntfy", "webhook", "email"}, allowedKindsOf(rec2))
 }

@@ -173,7 +173,8 @@ func (h *meNotificationsHandler) loadOwnedChannel(c *gin.Context, id, userID str
 }
 
 func (h *meNotificationsHandler) listChannels(c *gin.Context) {
-	if !h.gateOpen(c) {
+	st, ok := h.loadSettings(c)
+	if !ok {
 		return
 	}
 	claims, ok := requireBrowserAuth(c)
@@ -187,7 +188,13 @@ func (h *meNotificationsHandler) listChannels(c *gin.Context) {
 		return
 	}
 	redactChannelSecrets(rows)
-	c.JSON(http.StatusOK, gin.H{"items": rows})
+	// JAB-326: surface the effective admin allowlist so the tenant picker offers
+	// exactly the kinds the server will accept (empty policy → safe defaults),
+	// instead of a hardcoded four. The server create-gate stays authoritative.
+	c.JSON(http.StatusOK, gin.H{
+		"items":         rows,
+		"allowed_kinds": st.TenantNotificationKinds.OrDefault(),
+	})
 }
 
 type meChannelCreateReq struct {

@@ -17,9 +17,12 @@ import {
   type ChannelKind,
 } from "../../admin/notifications/channelKindConfig";
 
-// TENANT_KINDS — the kinds a tenant may create in the UI. The safe default
-// server allowlist; if an admin has widened it, the server still accepts other
-// kinds via API, but the common surface is these four.
+// TENANT_KINDS — the safe default server allowlist, used as a fallback only
+// (first paint / older API). JAB-326: the real list of creatable kinds comes
+// from the server's effective policy (GET /me/notifications/channels →
+// allowed_kinds), passed in as the allowedKinds prop, so an admin who widens the
+// policy (webhook/slack/sms/email) makes those kinds appear in the picker. The
+// server create-gate stays authoritative regardless.
 export const TENANT_KINDS: ChannelKind[] = ["ntfy", "telegram", "discord", "webpush"];
 
 export type MyChannel = {
@@ -44,11 +47,18 @@ export interface MyChannelDrawerProps {
   open: boolean;
   onClose: () => void;
   existing?: MyChannel;
+  /** Effective server allowlist (JAB-326). Falls back to the safe defaults. */
+  allowedKinds?: ChannelKind[];
 }
 
 const RESOURCE = "me/notifications/channels";
 
-export function MyChannelDrawer({ open, onClose, existing }: MyChannelDrawerProps) {
+export function MyChannelDrawer({ open, onClose, existing, allowedKinds }: MyChannelDrawerProps) {
+  // Effective creatable kinds: server policy when present, else the safe
+  // defaults. The default selected kind is the first allowed one so we never
+  // pre-select a kind the server would reject.
+  const kinds = allowedKinds && allowedKinds.length > 0 ? allowedKinds : TENANT_KINDS;
+  const defaultKind: ChannelKind = existing?.kind ?? kinds[0] ?? "ntfy";
   const [form] = Form.useForm<FormValues>();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
@@ -61,15 +71,21 @@ export function MyChannelDrawer({ open, onClose, existing }: MyChannelDrawerProp
     form.resetFields();
     form.setFieldsValue({
       name: existing?.name ?? "",
-      kind: existing?.kind ?? "ntfy",
+      kind: defaultKind,
       enabled: existing?.enabled ?? true,
       config: existing?.config ?? {},
     });
-  }, [open, existing, form]);
+  }, [open, existing, form, defaultKind]);
 
-  const watchedKind = Form.useWatch<ChannelKind | undefined>("kind", form) ?? existing?.kind ?? "ntfy";
+  const watchedKind = Form.useWatch<ChannelKind | undefined>("kind", form) ?? defaultKind;
   const watchedConfig = Form.useWatch<ChannelFormConfig | undefined>("config", form);
   const fields = useMemo(() => {
+    // Tenant email is forced server-side to the caller's own account address
+    // over the local mail server (no arbitrary destination / custom SMTP — see
+    // forceOwnEmailConfig). Rendering the admin email form's destination + SMTP
+    // fields would only mislead: the server silently overrides them. Show a note
+    // instead and submit no email config.
+    if (watchedKind === "email") return [];
     const all = kindFields[watchedKind] ?? [];
     return all.filter((f) => {
       if (!f.dependsOn) return true;
@@ -125,7 +141,7 @@ export function MyChannelDrawer({ open, onClose, existing }: MyChannelDrawerProp
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
-        initialValues={{ kind: "ntfy", enabled: true, config: {} }}
+        initialValues={{ kind: defaultKind, enabled: true, config: {} }}
       >
         <Form.Item
           name="name"
@@ -141,7 +157,7 @@ export function MyChannelDrawer({ open, onClose, existing }: MyChannelDrawerProp
         <Form.Item name="kind" label="Kind" rules={[{ required: true }]}>
           <Select
             disabled={isEdit}
-            options={TENANT_KINDS.map((k) => ({ value: k, label: kindLabels[k] }))}
+            options={kinds.map((k) => ({ value: k, label: kindLabels[k] }))}
           />
         </Form.Item>
 
@@ -155,6 +171,15 @@ export function MyChannelDrawer({ open, onClose, existing }: MyChannelDrawerProp
             showIcon
             message="Web Push has no fields to configure"
             description="It delivers to this browser's push subscription, created from the notification bell."
+          />
+        ) : null}
+
+        {watchedKind === "email" ? (
+          <Alert
+            type="info"
+            showIcon
+            message="Email delivers to your account address"
+            description="For security, tenant email notifications are always sent to your own account email over the local mail server — the destination and SMTP settings are fixed."
           />
         ) : null}
 

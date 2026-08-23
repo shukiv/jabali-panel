@@ -17,8 +17,8 @@ import type { AxiosError } from "axios";
 import { DeleteOutlined, EditOutlined, PlusOutlined, SendOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
 import { useDeleteMutation, useUpdateMutation } from "../../../hooks/useQueries";
-import { kindColors, kindLabels } from "../../admin/notifications/channelKindConfig";
-import { MyChannelDrawer, type MyChannel } from "./MyChannelDrawer";
+import { kindColors, kindLabels, type ChannelKind } from "../../admin/notifications/channelKindConfig";
+import { MyChannelDrawer, TENANT_KINDS, type MyChannel } from "./MyChannelDrawer";
 
 const CH_RESOURCE = "me/notifications/channels";
 const RT_RESOURCE = "me/notifications/routes";
@@ -55,11 +55,15 @@ export function MyNotificationsPage(): JSX.Element {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<MyChannel | undefined>();
 
-  const channelsQ = useQuery<MyChannel[]>({
+  const channelsQ = useQuery<{ items: MyChannel[]; allowedKinds: ChannelKind[] }>({
     queryKey: ["list", CH_RESOURCE],
     queryFn: async () => {
-      const { data } = await apiClient.get<{ items: MyChannel[] }>(`/${CH_RESOURCE}`);
-      return data.items ?? [];
+      const { data } = await apiClient.get<{ items?: MyChannel[]; allowed_kinds?: ChannelKind[] }>(
+        `/${CH_RESOURCE}`,
+      );
+      // JAB-326: the effective admin allowlist rides along with the list; fall
+      // back to the safe defaults if an older API omits it.
+      return { items: data.items ?? [], allowedKinds: data.allowed_kinds ?? TENANT_KINDS };
     },
     retry: false,
   });
@@ -89,7 +93,8 @@ export function MyNotificationsPage(): JSX.Element {
   const updateMutation = useUpdateMutation<MyChannel, { enabled: boolean }>({ resource: CH_RESOURCE });
   const deleteMutation = useDeleteMutation({ resource: CH_RESOURCE });
 
-  const channels = channelsQ.data ?? [];
+  const channels = channelsQ.data?.items ?? [];
+  const allowedKinds = channelsQ.data?.allowedKinds ?? TENANT_KINDS;
 
   // event_kind -> [{channelId, routeId}] so the matrix can show current
   // selections and delete the right route row when a channel is unpicked.
@@ -300,7 +305,12 @@ export function MyNotificationsPage(): JSX.Element {
         </Table>
       </Card>
 
-      <MyChannelDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} existing={editing} />
+      <MyChannelDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        existing={editing}
+        allowedKinds={allowedKinds}
+      />
       {/* t() kept referenced for future i18n of this page */}
       <span style={{ display: "none" }}>{t("nav.user.notifications", "Notifications")}</span>
     </Space>
