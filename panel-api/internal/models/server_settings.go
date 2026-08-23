@@ -152,6 +152,25 @@ type ServerSettings struct {
 	// whole-filesystem browser/editor (hard deny-listed in the agent) on the
 	// admin side. OFF by default: it exposes root-owned paths + edits through
 	// the panel UI, so it must be an explicit, deliberate enable.
+	//
+	// JAB-367 upgrade-gating audit (criterion 7): is there a mixed-version window
+	// (new panel / old agent) where this is ON but the old whole-FS write policy
+	// is still live? A narrow one exists and is deliberately NOT hard-gated:
+	//   - Mutation confinement to the safe data roots is enforced in TWO places:
+	//     the API-side pre-check (rejectAdminWriteOutOfScope, JAB-367) AND the
+	//     agent's WriteScope (JAB-358). The API-side check ships with THIS panel,
+	//     so every LEXICAL out-of-allow-list write is refused regardless of agent
+	//     version — even against a pre-#1209 agent that lacks WriteScope.
+	//   - The only residual is a SYMLINK inside a safe root whose target climbs
+	//     out: the lexical API check can't see it, so it would reach a pre-#1209
+	//     agent that also lacks the openat2 RESOLVE_BENEATH resolution — bounded
+	//     by that agent's deny-list. This requires (a) a pre-#1209 agent, i.e. a
+	//     partial update — panel-api + agent ship from the same stable tag and
+	//     update together, so this is a transient skew, not a steady state — AND
+	//     (b) this default-off setting deliberately enabled during that skew.
+	// Given transient-skew × opt-in × symlink-only-on-an-old-agent, and that the
+	// API-side check already closes the whole lexical surface, this is documented
+	// rather than hard-gated on a brittle minimum agent version.
 	AdminFileManagerEnabled bool `gorm:"column:admin_file_manager_enabled;type:tinyint(1);not null;default:0" json:"admin_file_manager_enabled"`
 
 	// InterceptAppErrorsDefault (GH #879) — server-wide default for the

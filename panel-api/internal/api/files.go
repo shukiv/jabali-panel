@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -488,6 +489,59 @@ const adminFilesCtxKey = "jabali_admin_files"
 
 func (h *filesHandler) adminRoot(c *gin.Context) bool { return c.GetBool(adminFilesCtxKey) }
 
+// rejectAdminWriteOutOfScope is the API-side, defense-in-depth pre-check for the
+// GH #1184 admin File Manager (JAB-367, criterion 4). For an admin_root mutation
+// it validates every destination path against the SAME write allow-list the
+// agent enforces — filesafe.NewAdminScope(...).WriteScope(), the safe data roots
+// (/home, /var/www, …) minus the hard deny-list — and refuses, BEFORE the agent
+// call, a write outside the allow-list (read_only) or inside a denied prefix
+// (path_denied). The agent remains authoritative: it re-runs this exact check
+// AND adds the kernel openat2 RESOLVE_BENEATH resolution that catches a symlink
+// escape this lexical layer cannot see. So this is layered enforcement, never
+// the sole gate.
+//
+// Tenant (non-admin_root) requests are scoped to the tenant docroot by the agent
+// and are deliberately NOT checked here — the API doesn't know a tenant's
+// docroots and must not second-guess the agent's per-tenant scope.
+//
+// Returns true (and writes the 403) when the request is rejected — the caller
+// must stop. Returns false when every path is allowed (or the request isn't
+// admin_root). The 403 body matches respondAgentError's envelope for the same
+// violation so the SPA renders one message regardless of which layer rejected.
+func (h *filesHandler) rejectAdminWriteOutOfScope(c *gin.Context, paths ...string) bool {
+	if !h.adminRoot(c) {
+		return false
+	}
+	// The username is irrelevant to a root-scoped admin write check (WriteScope
+	// narrows to the fixed mutable roots, not /home/<user>); NewAdminScope only
+	// requires it to be non-empty, so a fixed placeholder is correct here.
+	scope, err := filesafe.NewAdminScope("", "admin-file-manager",
+		filesafe.DefaultAdminDeniedPrefixes, filesafe.DefaultAdminMutableRoots)
+	if err != nil {
+		// The allow-list is a package constant; a construction failure is a
+		// server fault, never caller input. Fail CLOSED — never let an
+		// admin_root mutation through on a broken pre-check.
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return true
+	}
+	wscope := scope.WriteScope()
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if _, err := wscope.Clean(p); err != nil {
+			code := filesafe.ErrCodeReadOnly
+			var ve *filesafe.ValidationError
+			if errors.As(err, &ve) {
+				code = ve.Code
+			}
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": code})
+			return true
+		}
+	}
+	return false
+}
+
 func (h *filesHandler) requireClaimsAndUsername(c *gin.Context) (userID, username string, ok bool) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -552,7 +606,14 @@ func agentErrorStatus(err error) int {
 		return http.StatusInsufficientStorage
 	case strings.Contains(msg, "not_in_scope"),
 		strings.Contains(msg, "symlink_escape"),
-		strings.Contains(msg, "path_traversal"):
+		strings.Contains(msg, "path_traversal"),
+		// JAB-367: admin File Manager write allow-list rejections. The agent's
+		// WriteScope refuses a mutation outside the safe data roots (read_only)
+		// or inside the hard deny-list (path_denied); both are a 403, not the
+		// generic 500 they used to fall through to — and they now match the
+		// envelope the API-side pre-check emits for the same violation.
+		strings.Contains(msg, "read_only"),
+		strings.Contains(msg, "path_denied"):
 		return http.StatusForbidden
 	case strings.Contains(msg, "contains_null"),
 		strings.Contains(msg, "bad_characters"),
@@ -585,6 +646,13 @@ func agentErrorCode(err error) string {
 		return "disk_full"
 	case strings.Contains(msg, "already_exists"):
 		return "already_exists"
+	// JAB-367: surface the admin FM write-allow-list codes distinctly (was
+	// "agent_error") so the SPA renders the right message AND the agent path
+	// matches the API-side pre-check's envelope for the same violation.
+	case strings.Contains(msg, "read_only"):
+		return "read_only"
+	case strings.Contains(msg, "path_denied"):
+		return "path_denied"
 	default:
 		return "agent_error"
 	}
@@ -909,6 +977,10 @@ func (h *filesHandler) upload(c *gin.Context) {
 	// written — supersedes any earlier pre-override audit_target on this path.
 	c.Set("audit_target", destPath+" (upload)")
 	c.Set("audit_target_type", "file")
+	if h.rejectAdminWriteOutOfScope(c, destPath) {
+		_ = os.Remove(tmpPath) // don't leak the panel staging file on a rejected admin upload
+		return
+	}
 	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), TmpPath: tmpPath, DestPath: destPath,
 		Overwrite: c.Query("overwrite") == "true",
@@ -929,6 +1001,9 @@ func (h *filesHandler) mkdir(c *gin.Context) {
 	var req mkdirRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if h.rejectAdminWriteOutOfScope(c, req.Path) {
 		return
 	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.mkdir", filesMkdirAgentParams{
@@ -956,6 +1031,16 @@ func (h *filesHandler) extract(c *gin.Context) {
 	}
 	c.Set("audit_target", req.Path) // GH #658: audit the concrete file path
 	c.Set("audit_target_type", "file")
+	// Only the extraction DESTINATION is a mutation (the archive itself is read
+	// from the broad scope). Mirror the agent: explicit dest, else the archive's
+	// parent directory.
+	extractDest := req.Dest
+	if strings.TrimSpace(extractDest) == "" {
+		extractDest = filepath.Dir(req.Path)
+	}
+	if h.rejectAdminWriteOutOfScope(c, extractDest) {
+		return
+	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.extract", filesExtractAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Dest: req.Dest,
 	})
@@ -983,6 +1068,10 @@ func (h *filesHandler) rename(c *gin.Context) {
 		return
 	}
 	newPath := filepath.Join(filepath.Dir(req.Path), req.NewName)
+	// The agent WriteScopes both the old and new paths; mirror that.
+	if h.rejectAdminWriteOutOfScope(c, req.Path, newPath) {
+		return
+	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.rename", filesRenameAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), OldPath: req.Path, NewPath: newPath,
 	})
@@ -1017,6 +1106,10 @@ func (h *filesHandler) move(c *gin.Context) {
 		return
 	}
 	newPath := filepath.Join(req.DestDir, filepath.Base(req.Path))
+	// The agent WriteScopes both the source and destination; mirror that.
+	if h.rejectAdminWriteOutOfScope(c, req.Path, newPath) {
+		return
+	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.move", filesMoveAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), OldPath: req.Path, NewPath: newPath,
 	})
@@ -1044,6 +1137,9 @@ func (h *filesHandler) chmod(c *gin.Context) {
 	}
 	c.Set("audit_target", req.Path) // GH #658: audit the concrete file path
 	c.Set("audit_target_type", "file")
+	if h.rejectAdminWriteOutOfScope(c, req.Path) {
+		return
+	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.chmod", filesChmodAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Mode: req.Mode,
 	})
@@ -1171,6 +1267,11 @@ func (h *filesHandler) copy(c *gin.Context) {
 		return
 	}
 	dst := filepath.Join(req.DestDir, filepath.Base(req.Path))
+	// The agent WriteScopes both the source and destination of a copy; mirror
+	// that (an admin FM copy stays within the safe data roots on both ends).
+	if h.rejectAdminWriteOutOfScope(c, req.Path, dst) {
+		return
+	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.copy", filesCopyAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), SrcPath: req.Path, DstPath: dst,
 	})
@@ -1195,6 +1296,9 @@ func (h *filesHandler) write(c *gin.Context) {
 	}
 	c.Set("audit_target", req.Path) // GH #658: audit the concrete file path
 	c.Set("audit_target_type", "file")
+	if h.rejectAdminWriteOutOfScope(c, req.Path) {
+		return
+	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.write", filesWriteAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Content: req.Content,
 	})
@@ -1345,6 +1449,10 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 	// GH #658: the chunked-upload finalize must record the mutation target too.
 	c.Set("audit_target", destPath+" (chunked upload)")
 	c.Set("audit_target_type", "file")
+	if h.rejectAdminWriteOutOfScope(c, destPath) {
+		_ = os.Remove(tmpPath) // don't leak the panel staging file on a rejected admin upload
+		return
+	}
 	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), TmpPath: tmpPath, DestPath: destPath,
 		Overwrite: c.Query("overwrite") == "true",
@@ -1399,6 +1507,9 @@ func (h *filesHandler) delete(c *gin.Context) {
 	recursive := c.Query("recursive") == "true"
 	c.Set("audit_target", p) // GH #658: audit which path was deleted
 	c.Set("audit_target_type", "file")
+	if h.rejectAdminWriteOutOfScope(c, p) {
+		return
+	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.delete", filesDeleteAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p, Recursive: recursive,
 	})
