@@ -223,7 +223,10 @@ server {
     # request path AND rewrites the Destination header for MOVE/COPY — so pass
     # the original URI through unstripped.
     proxy_pass http://unix:/run/jabali-webdav/$jab_wdsub.sock:$request_uri;
-    proxy_set_header Host $host;
+    # $http_host (NOT $host) preserves the port: x/net/webdav rejects a MOVE/COPY
+    # whose Destination host:port (e.g. host:8443) doesn't match the request Host,
+    # and $host strips the port — breaking every MOVE/COPY.
+    proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto https;
     proxy_read_timeout 300s;
     proxy_request_buffering off;               # stream large PUTs; never buffer to disk
