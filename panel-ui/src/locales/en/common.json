@@ -675,7 +675,22 @@
     "description": "Description",
     "enabled": "Enabled",
     "event": "Event",
-    "severity": "Severity"
+    "severity": "Severity",
+    "category": {
+      "ssl": "SSL & Certificates",
+      "domains": "Domains & DNS",
+      "disk": "Disk & Quotas",
+      "system": "Server & System",
+      "services": "Services",
+      "backups": "Backups",
+      "mail": "Mail",
+      "security": "Security",
+      "users": "Users & Accounts",
+      "apps": "Applications & Docker",
+      "updates": "Updates",
+      "other": "Other",
+      "count": "{{enabled}} / {{total}} enabled"
+    }
   },
   "historytab": {
     "body": "Body",
