@@ -12722,13 +12722,17 @@ install_stalwart() {
   # /etc/stalwart and /var/lib/stalwart.
   rm -rf /etc/postfix /etc/exim4 /etc/sendmail 2>/dev/null || true
 
-  # Ensure service user + group exist. Supplementary group `jabali` lets
-  # Stalwart read /etc/jabali-panel/stalwart-admin.token (0640 jabali:jabali-mail).
+  # Ensure service user + group exist. JAB-357: jabali-mail must NOT join the
+  # broad `$SERVICE_USER` (jabali) group — that group owns the root Agent socket
+  # and panel secrets, so a mail compromise must not hold it. Stalwart reads its
+  # admin token via its own primary group (token is 0640 jabali:jabali-mail) and
+  # signs DKIM from Stalwart's registry (seeded by the root agent), so the broad
+  # group is dead weight. ensure_stalwart_not_in_panel_group() converges
+  # already-installed hosts that still carry the legacy membership.
   if ! getent passwd jabali-mail >/dev/null 2>&1; then
     _log "creating jabali-mail service user"
     useradd --system --no-create-home --shell /usr/sbin/nologin \
       --user-group jabali-mail
-    usermod -a -G "$SERVICE_USER" jabali-mail
   fi
 
   # Data + config dirs. `install -d` only changes the dir itself's
@@ -15081,6 +15085,48 @@ ensure_jabali_panel_dir_traversable() {
   fi
 }
 
+# ensure_stalwart_not_in_panel_group — JAB-357 criterion 2. The Stalwart mail
+# server (User=jabali-mail) must NOT hold the broad `$SERVICE_USER` (jabali)
+# group: that group owns the root Agent socket (/run/jabali/agent.sock, 0660
+# root:jabali) + panel secrets under /etc/jabali-panel, so an internet-facing
+# mail-server compromise must not hold it. The agent's SO_PEERCRED gate already
+# rejects non-panel UIDs; this strips the FS-layer reach too (defense in depth).
+# Stalwart needs no supplementary group — its admin token is read via its own
+# primary group (0640 jabali:jabali-mail), and DKIM is signed from Stalwart's
+# registry (seeded by the root agent via createDkimSignature), never from the
+# on-disk /etc/jabali-panel/dkim keys. Converge upgraded hosts: redeploy the
+# corrected unit (drops the legacy SupplementaryGroups=jabali), strip the
+# /etc/group membership, then restart so the live process sheds the gid.
+# Idempotent — no-op once converged.
+ensure_stalwart_not_in_panel_group() {
+  getent passwd jabali-mail >/dev/null 2>&1 || return 0
+  local changed=0
+  local unit=/etc/systemd/system/jabali-stalwart.service
+  # 1. Redeploy the unit if the legacy SupplementaryGroups=jabali still lingers
+  #    (else a restart re-grants the gid from the stale unit file).
+  if [[ -f "$unit" ]] && grep -qxE 'SupplementaryGroups=jabali' "$unit"; then
+    if [[ -f "${REPO_DIR}/install/systemd/jabali-stalwart.service" ]]; then
+      install -m 0644 -o root -g root \
+        "${REPO_DIR}/install/systemd/jabali-stalwart.service" "$unit"
+      systemctl daemon-reload 2>/dev/null || true
+      changed=1
+    fi
+  fi
+  # 2. Drop the legacy /etc/group membership so nothing re-leaks it.
+  if id -nG jabali-mail 2>/dev/null | tr ' ' '\n' | grep -qx "$SERVICE_USER"; then
+    if gpasswd -d jabali-mail "$SERVICE_USER" >/dev/null 2>&1; then
+      changed=1
+    else
+      _warn "could not remove jabali-mail from $SERVICE_USER group — run: gpasswd -d jabali-mail $SERVICE_USER"
+    fi
+  fi
+  # 3. Restart so the running Stalwart sheds the supplementary gid.
+  if [[ "$changed" -eq 1 ]]; then
+    systemctl try-restart jabali-stalwart.service >/dev/null 2>&1 || true
+    _ok "Stalwart dropped the broad $SERVICE_USER group (JAB-357)"
+  fi
+}
+
 # provision_php_extensions — self-heal PHP runtime extensions on every
 # `jabali update`. install_base_packages installs the ext set only on a full
 # install and only for JABALI_PHP_VERSIONS, so a newly-required extension (e.g.
@@ -15160,6 +15206,12 @@ provision_new_software() {
   # that only ever update (install_sftp_sshd_config runs on fresh install only),
   # so an existing tenant key can't tunnel into loopback-only services.
   ensure_ssh_forwarding_lockdown
+
+  # JAB-357: strip the broad `jabali` group from the Stalwart mail server on
+  # already-installed hosts (install_stalwart runs on fresh install only). The
+  # group is dead weight for mail and let a mail compromise reach the root Agent
+  # socket at the FS layer.
+  ensure_stalwart_not_in_panel_group
 
   # GH #860: retrofit the default-vhost catch-all include onto existing
   # boxes. install_disabled_page is seed-only now (never clobbers operator

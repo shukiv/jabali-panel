@@ -9,11 +9,16 @@ PartOf=jabali.slice
 Type=simple
 User=jabali-mail
 Group=jabali-mail
-# Supplementary group so Stalwart can read /etc/jabali-panel/stalwart-admin.token
-# (owned jabali:jabali-mail, mode 0640) and /etc/jabali-panel/dkim/*.key
-# (owned jabali:jabali, mode 0600 — Stalwart reads per-domain DKIM keys via
-# its config loader).
-SupplementaryGroups=jabali
+# JAB-357: NO broad `jabali` supplementary group. That group owns the root
+# Agent socket (/run/jabali/agent.sock, 0660 root:jabali) + panel secrets under
+# /etc/jabali-panel, so a mail-server compromise must not hold it — the agent's
+# SO_PEERCRED gate already rejects non-panel UIDs, and this drops the FS-layer
+# reach too (defense in depth). Stalwart needs no supplementary group:
+#   - /etc/jabali-panel/stalwart-admin.token is 0640 jabali:jabali-mail, read
+#     via jabali-mail's own PRIMARY group.
+#   - DKIM signatures are provisioned into Stalwart's REGISTRY by the root agent
+#     (createDkimSignature); Stalwart signs from the registry and never reads
+#     the on-disk /etc/jabali-panel/dkim/*.key files.
 Slice=jabali.slice
 
 # v0.16 config is a small JSON file describing only the datastore
