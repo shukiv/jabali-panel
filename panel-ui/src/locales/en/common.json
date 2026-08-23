@@ -690,7 +690,27 @@
       "updates": "Updates",
       "other": "Other",
       "count": "{{enabled}} / {{total}} enabled"
-    }
+    },
+    "categories": "Categories",
+    "search_all": "Search all events",
+    "filter_category": "Filter in this category",
+    "only_overridden": "Only overridden",
+    "overridden": "Overridden",
+    "enable_all": "Enable all",
+    "disable_all": "Disable all",
+    "reset_defaults": "Reset to defaults",
+    "enabled_of_total": "{{enabled}} of {{total}} enabled",
+    "search_title": "Search: “{{q}}”",
+    "matches": "{{count}} matches across all categories",
+    "no_match": "No events match",
+    "summary_events": "events",
+    "summary_enabled": "enabled",
+    "summary_overridden": "overridden",
+    "bulk_failed": "{{failed}} of {{total}} updates failed",
+    "default_on": "Default: on",
+    "default_off": "Default: off",
+    "overridden_default_on": "Overridden — default is on",
+    "overridden_default_off": "Overridden — default is off"
   },
   "historytab": {
     "body": "Body",
