@@ -171,6 +171,15 @@ export function UserLayout() {
             width={256}
             closable
             title={<JabaliTitle />}
+            // GH #1066: AntD v6 leaves the .ant-drawer portal mounted after
+            // close — a full-viewport `position: fixed; inset: 0` element that
+            // lingers in the DOM. Reproduced on a mobile viewport: this element
+            // is present exactly in the state where the reporter sees the
+            // residual bottom bar (after opening the menu) and absent after a
+            // refresh (when there is no bar). destroyOnHidden makes rc-drawer
+            // return null once closed, unmounting the portal so no fixed
+            // element is left behind.
+            destroyOnHidden
             styles={{
               body: { padding: 8, background: siderBg },
               header: { background: siderBg },

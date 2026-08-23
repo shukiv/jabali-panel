@@ -174,6 +174,10 @@ export function AdminLayout() {
             width={256}
             closable
             title={<JabaliTitle />}
+            // GH #1066: unmount the drawer portal on close so no residual
+            // full-viewport `position: fixed` .ant-drawer element is left in
+            // the DOM. See UserLayout for the reproduced detail.
+            destroyOnHidden
             styles={{
               body: { padding: 8, background: siderBg },
               header: { background: siderBg },
