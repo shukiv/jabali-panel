@@ -24,6 +24,10 @@ import (
 
 type mockDomainRepo struct {
 	domains map[string]*models.Domain
+	// listByUserResult, when set, is returned by ListByUserID (used by the
+	// DDNS path which walks a user's domains). Nil keeps the historical
+	// empty-return behaviour for tests that don't exercise ListByUserID.
+	listByUserResult []models.Domain
 }
 
 func newMockDomainRepo() *mockDomainRepo {
@@ -80,7 +84,7 @@ func (m *mockDomainRepo) List(ctx context.Context, opts repository.ListOptions) 
 }
 
 func (m *mockDomainRepo) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
-	return nil, 0, nil
+	return m.listByUserResult, int64(len(m.listByUserResult)), nil
 }
 
 func (m *mockDomainRepo) ListForRegistrarRefresh(ctx context.Context, staleBefore time.Time, limit int) ([]models.Domain, error) {

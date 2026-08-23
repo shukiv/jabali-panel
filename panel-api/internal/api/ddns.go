@@ -144,7 +144,6 @@ func (h *ddnsHandler) handle(c *gin.Context) {
 		ddnsReply(c, http.StatusNotFound, "nohost")
 		return
 	}
-	_ = zone // currently unused; reserved for managed_by check
 
 	// 4. Update only when content actually changed. nochg matches
 	//    what every other DDNS provider returns; ddclient throttles
@@ -164,7 +163,12 @@ func (h *ddnsHandler) handle(c *gin.Context) {
 		return
 	}
 	if h.cfg.Reconciler != nil {
-		h.cfg.Reconciler.Schedule(record.ZoneID)
+		// JAB-371: Reconciler.Schedule takes a DOMAIN id and looks the resource
+		// up in the domains table. record.ZoneID is a dns_zones id — passing it
+		// here made ReconcileOne fail to resolve, so the DNS change only landed
+		// on the next full periodic sweep. Zones are 1:1 with domains, so
+		// zone.DomainID is the resolvable domain to reconcile immediately.
+		h.cfg.Reconciler.Schedule(zone.DomainID)
 	}
 	ddnsReply(c, http.StatusOK, "good "+parsedIP.String())
 }
