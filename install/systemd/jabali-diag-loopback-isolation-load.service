@@ -1,0 +1,16 @@
+[Unit]
+Description=Apply jabali diagnostic-listener loopback isolation (JAB-368)
+Documentation=https://github.com/shukiv/jabali-panel
+After=network-pre.target
+Before=jabali-panel.service
+# Unlike the Docker per-tenant loopback isolation, this ruleset matches on
+# skuid (not a cgroupv2 path), so it has nothing to resolve at boot and needs
+# no ConditionPathExists — it can and must load on every boot.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/jabali-diag-loopback-isolation.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

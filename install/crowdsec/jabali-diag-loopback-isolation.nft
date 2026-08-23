@@ -1,0 +1,29 @@
+# Managed by jabali install.sh (JAB-368) — do not edit.
+#
+# CrowdSec's prometheus listener on 127.0.0.1:6060 is UNAUTHENTICATED and, on
+# `level: full`, also serves Go /debug/pprof (heap/goroutine dumps → info leak;
+# CPU profiling → mild local DoS) alongside /metrics. The listener cannot be
+# disabled — `cscli metrics` (the panel's CrowdSec metrics source) requires it —
+# so instead we make it unreachable from tenant code.
+#
+# JAB-352 blocked the SSH *forwarding* path to loopback services, but a tenant's
+# own app code (per-user PHP-FPM workers, CGI) or an interactive tenant shell
+# (the ssh-shell shares the net namespace) can open a loopback socket to
+# 127.0.0.1:6060 directly — a vector independent of SSH forwarding.
+#
+# Match on skuid, NOT cgroup: tenant PHP-FPM runs under system.slice
+# (jabali-fpm@<user>.service) and tenant shells under user.slice — neither is in
+# jabali.slice/jabali-user.slice — but ALL tenant execution contexts run as a
+# real user (uid >= 1000, jabali's login UID_MIN). Root (cscli metrics) and every
+# system service (uid < 1000, including the panel user ~997) are unaffected.
+# skuid also needs no cgroupv2 path, so this loads cleanly at boot (no
+# ConditionPathExists window).
+#
+# A future metrics scraper (Zabbix) runs as a system user (<1000) / in
+# system.slice → unaffected. Separate `add`/`flush` table idiom so a re-apply on
+# `jabali update` replaces the rules rather than appending duplicates.
+add table inet jabali_diag_isolation
+flush table inet jabali_diag_isolation
+add chain inet jabali_diag_isolation output { type filter hook output priority filter; policy accept; }
+add rule inet jabali_diag_isolation output meta skuid >= 1000 ip daddr 127.0.0.1 tcp dport 6060 drop
+add rule inet jabali_diag_isolation output meta skuid >= 1000 ip6 daddr ::1 tcp dport 6060 drop

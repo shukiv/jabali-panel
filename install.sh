@@ -9407,6 +9407,11 @@ install_crowdsec() {
   # the next install.sh run. Install a dpkg Post-Invoke hook so the
   # heal runs after every apt/dpkg operation.
   install_crowdsec_bouncer_apt_heal_hook
+
+  # JAB-368: block tenant-uid access to the unauthenticated prometheus/pprof
+  # listener (127.0.0.1:6060). provision_new_software is jabali-update-only, so
+  # the fresh-install path calls it here too (idempotent).
+  ensure_crowdsec_diag_isolation
 }
 
 # install_crowdsec_bouncer_apt_heal_hook — write the heal script +
@@ -14867,6 +14872,54 @@ ensure_crowdsec_bouncer_poll_frequency() {
   return 0
 }
 
+# ensure_crowdsec_diag_isolation — JAB-368. CrowdSec's prometheus listener on
+# 127.0.0.1:6060 is UNAUTHENTICATED and (on level: full) serves Go /debug/pprof
+# alongside /metrics. It cannot be disabled — `cscli metrics` (the panel's
+# CrowdSec metrics source) requires it — so we make it unreachable from tenant
+# code instead. JAB-352 blocked the SSH-forwarding path; this closes the
+# independent direct-loopback path from a tenant's own PHP-FPM/CGI/shell.
+#
+# The nft ruleset matches on skuid >= 1000 (jabali's login UID_MIN): every tenant
+# execution context runs as a real user, while root (cscli) and system services
+# (uid < 1000, incl. the panel user) are unaffected. skuid — not cgroup — because
+# tenant PHP-FPM runs under system.slice and tenant shells under user.slice, so a
+# cgroup match would miss both; it also needs no cgroupv2 path, so the load unit
+# has no ConditionPathExists boot window.
+#
+# Idempotent + runs on install AND every `jabali update` (provision_new_software),
+# so existing fleet hosts converge. Never `systemctl restart nftables` (would
+# flush UFW + crowdsec-bouncer chains) — `nft -f` the single file only.
+ensure_crowdsec_diag_isolation() {
+  command -v nft >/dev/null 2>&1 || return 0
+  local src="${REPO_DIR:-/opt/jabali-panel}/install/crowdsec/jabali-diag-loopback-isolation.nft"
+  local dst=/etc/nftables.d/jabali-diag-loopback-isolation.nft
+  local unit_src="${REPO_DIR:-/opt/jabali-panel}/install/systemd/jabali-diag-loopback-isolation-load.service"
+  local unit_dst=/etc/systemd/system/jabali-diag-loopback-isolation-load.service
+  if [[ ! -f "$src" || ! -f "$unit_src" ]]; then
+    _warn "crowdsec diag-isolation source missing ($src) — skipping (JAB-368 not applied)"
+    return 0
+  fi
+  install -d -m 0755 /etc/nftables.d
+  local changed=0
+  if [[ ! -f "$dst" ]] || ! cmp -s "$src" "$dst"; then
+    install -m 0644 -o root -g root "$src" "$dst"; changed=1
+  fi
+  if [[ ! -f "$unit_dst" ]] || ! cmp -s "$unit_src" "$unit_dst"; then
+    install -m 0644 -o root -g root "$unit_src" "$unit_dst"
+    systemctl daemon-reload 2>/dev/null || true
+    changed=1
+  fi
+  systemctl enable jabali-diag-loopback-isolation-load.service >/dev/null 2>&1 || true
+  # The add/flush idiom in the file makes a re-apply replace the rules rather
+  # than append duplicates; nft -f is a single transaction.
+  if nft -f "$dst" 2>/dev/null; then
+    [[ $changed -eq 1 ]] && _ok "crowdsec :6060 diagnostics blocked from tenant code (JAB-368)"
+  else
+    _warn "could not apply crowdsec diag-isolation nft rules now — will retry at boot (JAB-368)"
+  fi
+  return 0
+}
+
 # install_cloudflare_realip — drop /etc/nginx/conf.d/jabali-cloudflare-realip.conf
 # so nginx rewrites $remote_addr from the CF-Connecting-IP header when the
 # request arrives from a Cloudflare proxy range. Without it, every
@@ -15421,6 +15474,12 @@ EOF
   # sustained LAPI CPU when CAPI has many decisions loaded).
   if declare -f ensure_crowdsec_bouncer_poll_frequency >/dev/null 2>&1; then
     ensure_crowdsec_bouncer_poll_frequency
+  fi
+
+  # JAB-368: block tenant-uid access to CrowdSec's unauthenticated
+  # prometheus/pprof listener (127.0.0.1:6060) at the packet layer.
+  if declare -f ensure_crowdsec_diag_isolation >/dev/null 2>&1; then
+    ensure_crowdsec_diag_isolation
   fi
 
   # Cloudflare real-IP rewrite. Without this, every CF-fronted hit logs
