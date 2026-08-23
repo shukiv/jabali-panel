@@ -151,6 +151,7 @@ func Start(ctx context.Context, d Deps) {
 	go runBandwidthQuota(ctx, d)
 	go runExecAuditBurst(ctx, d)
 	go runBackupFail(ctx, d)
+	go runBackupSuccess(ctx, d)
 	go runMailRBL(ctx, d)
 	go runMailDmarcIngest(ctx, d)
 	go runMailTlsRptIngest(ctx, d)

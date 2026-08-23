@@ -122,6 +122,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		DefaultOn:   true,
 	},
 	{
+		Kind:        "backup.success",
+		Label:       "Backup completed",
+		Description: "A backup job finished. Fires once per fully-succeeded job (info); a job that finished with some items skipped/failed (partial) fires as a warning. Opt-in — off by default to avoid a message per backup.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
 		Kind:        "backup.limit.reached",
 		Label:       "Tenant backup limit reached",
 		Description: "A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins (GH #454).",

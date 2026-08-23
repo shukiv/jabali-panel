@@ -52,7 +52,7 @@ func TestAllNotificationEventKinds_WellFormed(t *testing.T) {
 func TestNotificationEventKinds_EmittedKindsAreRegistered(t *testing.T) {
 	emitted := []string{
 		// pre-existing (sanity — these were already registered)
-		"admin.login", "ssh.login", "backup.fail", "backup.limit.reached",
+		"admin.login", "ssh.login", "backup.fail", "backup.success", "backup.limit.reached",
 		"cert.renew.fail", "cert.renew.ok", "crowdsec.ban.spike", "digest.daily",
 		"disk.quota.warn", "docker_app.update_available", "load.high",
 		"security.decision.fired", "security.root_terminal.opened", "service.down",
