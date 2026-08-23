@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -136,7 +135,7 @@ func collect(ctx context.Context) []collectedFile {
 }
 
 func runOrErr(ctx context.Context, name string, args ...string) []byte {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	out, err := execCommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
 		return []byte(fmt.Sprintf("ERROR running %s %s: %v\n--- partial output ---\n%s",
 			name, strings.Join(args, " "), err, string(out)))
@@ -145,7 +144,7 @@ func runOrErr(ctx context.Context, name string, args ...string) []byte {
 }
 
 func catFileOrErr(path string) []byte {
-	out, err := exec.Command("cat", path).Output()
+	out, err := execCommand("cat", path).Output()
 	if err != nil {
 		return []byte(fmt.Sprintf("ERROR reading %s: %v", path, err))
 	}
@@ -155,7 +154,7 @@ func catFileOrErr(path string) []byte {
 // tailFileOrErr reads the final n lines of path. Used for log files
 // that grow unbounded between rotations (letsencrypt.log).
 func tailFileOrErr(ctx context.Context, path string, n int) []byte {
-	out, err := exec.CommandContext(ctx, "tail", "-n", fmt.Sprintf("%d", n), path).Output()
+	out, err := execCommandContext(ctx, "tail", "-n", fmt.Sprintf("%d", n), path).Output()
 	if err != nil {
 		return []byte(fmt.Sprintf("ERROR tailing %s: %v", path, err))
 	}
