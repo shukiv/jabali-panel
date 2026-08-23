@@ -12,6 +12,7 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
+  Popover,
   Space,
   Switch,
   Table,
@@ -25,6 +26,7 @@ import {
   DeleteOutlined,
   KeyOutlined,
   CloudServerOutlined,
+  LinkOutlined,
 } from "@icons";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { PasswordInput } from "../../../components/PasswordInput";
@@ -87,6 +89,7 @@ export const UserFtpAccountsPage = () => {
     home_rel?: string;
     password: string;
     ftp_access?: boolean;
+    webdav_access?: boolean;
     isolated?: boolean;
     quota_mb?: number;
   }) => {
@@ -101,6 +104,7 @@ export const UserFtpAccountsPage = () => {
         home_path: rel ? `${homePrefix}/${rel}` : homePrefix,
         password: values.password,
         ftp_access: !!values.ftp_access,
+        webdav_access: !!values.webdav_access,
         isolated,
         quota_mb: isolated ? values.quota_mb : undefined,
       });
@@ -247,6 +251,47 @@ export const UserFtpAccountsPage = () => {
             )}
           />
           <Table.Column<FtpAccount>
+            dataIndex="webdav_access"
+            title="WebDAV"
+            render={(v: boolean, row) => (
+              <Space size={4}>
+                <Switch
+                  size="small"
+                  checked={v}
+                  loading={busyId === row.id}
+                  onChange={(next) => handleToggle(row, { webdav_access: next })}
+                />
+                {v && row.is_enabled && (
+                  <Popover
+                    trigger="click"
+                    title={t("ftpaccounts.webdav_url_title")}
+                    content={
+                      <Space direction="vertical" size={4} style={{ maxWidth: 340 }}>
+                        <Typography.Text type="secondary">
+                          {t("ftpaccounts.webdav_url_hint")}
+                        </Typography.Text>
+                        <Typography.Text
+                          code
+                          copyable={{ text: `${window.location.origin}/dav/` }}
+                        >
+                          {`${window.location.origin}/dav/`}
+                        </Typography.Text>
+                        <Typography.Text type="secondary">
+                          {t("ftpaccounts.webdav_user_hint")}{" "}
+                          <Typography.Text code>{row.username}</Typography.Text>
+                        </Typography.Text>
+                      </Space>
+                    }
+                  >
+                    <a aria-label={t("ftpaccounts.webdav_url_title")}>
+                      <LinkOutlined />
+                    </a>
+                  </Popover>
+                )}
+              </Space>
+            )}
+          />
+          <Table.Column<FtpAccount>
             dataIndex="is_enabled"
             title={t("ftpaccounts.status")}
             render={(v: boolean) => (
@@ -298,7 +343,7 @@ export const UserFtpAccountsPage = () => {
           form={form}
           layout="vertical"
           onFinish={handleCreate}
-          initialValues={{ ftp_access: false, isolated: isoAvailable }}
+          initialValues={{ ftp_access: false, webdav_access: false, isolated: isoAvailable }}
         >
           <Form.Item
             label={t("ftpaccounts.label")}
@@ -410,6 +455,14 @@ export const UserFtpAccountsPage = () => {
             }
           >
             <Switch disabled={!caps?.ftp_server_enabled} />
+          </Form.Item>
+          <Form.Item
+            label={t("ftpaccounts.webdav_access_label")}
+            name="webdav_access"
+            valuePropName="checked"
+            tooltip={t("ftpaccounts.webdav_access_tooltip")}
+          >
+            <Switch />
           </Form.Item>
           <StandardDrawerFooter
             primaryText={t("ftpaccounts.add_account")}

@@ -46,7 +46,7 @@ func desiredFtpHash(rows []models.FtpAccount, tenantByUserID map[string]string) 
 	for _, a := range rows {
 		lines = append(lines, strings.Join([]string{
 			a.ID, a.Username, tenantByUserID[a.UserID], a.HomePath,
-			fmt.Sprintf("%t|%t|%t", a.FTPAccess, a.SFTPAccess, a.IsEnabled),
+			fmt.Sprintf("%t|%t|%t|%t", a.FTPAccess, a.SFTPAccess, a.WebDAVAccess, a.IsEnabled),
 			// GH #1145: isolation mode + jail path change the rendered sshd
 			// chroot and the recreate params, so they must move the hash.
 			fmt.Sprintf("%t|%s", a.Isolated, a.JailPath),
@@ -71,10 +71,11 @@ func randomThrowawayPassword() (string, error) {
 }
 
 type agentFtpListEntry struct {
-	Username  string `json:"username"`
-	HomePath  string `json:"home_path"`
-	FTPAccess bool   `json:"ftp_access"`
-	Locked    bool   `json:"locked"`
+	Username      string `json:"username"`
+	HomePath      string `json:"home_path"`
+	FTPAccess     bool   `json:"ftp_access"`
+	Locked        bool   `json:"locked"`
+	WebdavEnabled bool   `json:"webdav_enabled"` // GH #1146: worker drop-in present
 }
 
 // reconcileFtpAccounts converges host state to the ftp_accounts table.
@@ -367,6 +368,7 @@ func (r *Reconciler) reconcileFtpTenant(ctx context.Context, tenant string, acct
 				"home_path":       want.HomePath,
 				"password":        pw,
 				"ftp_access":      want.FTPAccess,
+				"webdav_access":   want.WebDAVAccess,
 			}
 			// GH #1145: an isolated row must be recreated ISOLATED, not as a
 			// legacy same-uid alias — otherwise a DR restore silently drops the
@@ -390,18 +392,24 @@ func (r *Reconciler) reconcileFtpTenant(ctx context.Context, tenant string, acct
 				continue
 			}
 			r.log.Info("ftp: recreated missing subaccount — password reset required before it can log in", "account", name, "tenant", tenant)
-			got = agentFtpListEntry{Username: name, FTPAccess: want.FTPAccess, Locked: false}
+			got = agentFtpListEntry{Username: name, FTPAccess: want.FTPAccess, Locked: false, WebdavEnabled: want.WebDAVAccess}
 		}
 		enabled := eff[name]
 		// Ineligible/over-cap => also drop the jabali-ftp group so the
 		// vsftpd PAM gate closes, not just the shadow lock.
 		wantFTP := want.FTPAccess && enabled
+		// GH #1146: converge the WebDAV worker too. wantWebdav requires the account
+		// be enabled — a disabled/suspended account serves no protocol. WebdavEnabled
+		// (drop-in presence) is the host truth; a mismatch heals a failed API
+		// enable/disable, including the JAB-256-class "should be off but is live".
+		wantWebdav := want.WebDAVAccess && enabled
 		wantLocked := !enabled
-		if got.FTPAccess != wantFTP || got.Locked != wantLocked {
+		if got.FTPAccess != wantFTP || got.Locked != wantLocked || got.WebdavEnabled != wantWebdav {
 			if _, err := r.agent.Call(ctx, "ftpaccount.set_access", map[string]any{
 				"tenant_username": tenant,
 				"username":        name,
 				"ftp_access":      wantFTP,
+				"webdav_access":   wantWebdav,
 				"enabled":         enabled,
 			}); err != nil {
 				r.log.Warn("ftp: access drift repair failed", "account", name, "err", err)

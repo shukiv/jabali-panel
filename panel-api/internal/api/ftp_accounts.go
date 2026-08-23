@@ -141,6 +141,9 @@ func (h *ftpAccountsHandler) adminUpdate(c *gin.Context) {
 	if req.SFTPAccess != nil {
 		acct.SFTPAccess = *req.SFTPAccess
 	}
+	if req.WebDAVAccess != nil {
+		acct.WebDAVAccess = *req.WebDAVAccess
+	}
 	if req.IsEnabled != nil {
 		acct.IsEnabled = *req.IsEnabled
 	}
@@ -149,6 +152,7 @@ func (h *ftpAccountsHandler) adminUpdate(c *gin.Context) {
 		"tenant_username": ownerName,
 		"username":        acct.Username,
 		"ftp_access":      acct.FTPAccess,
+		"webdav_access":   acct.WebDAVAccess,
 		"enabled":         acct.IsEnabled,
 	}); err != nil {
 		status, payload := h.mapAgentErr(err, "update_failed")
@@ -207,6 +211,8 @@ type ftpAccountCreateRequest struct {
 	Password   string `json:"password" binding:"required"`
 	FTPAccess  bool   `json:"ftp_access"`
 	SFTPAccess *bool  `json:"sftp_access"` // default true
+	// WebDAVAccess (GH #1146) — the 3rd access protocol. Default false (opt-in).
+	WebDAVAccess bool `json:"webdav_access"`
 	// Isolated selects the GH #1145 separate-uid jailed model. Nil/false =
 	// legacy same-uid alias (back-compat). The UI defaults this on; a direct
 	// API caller that omits it stays legacy.
@@ -217,9 +223,10 @@ type ftpAccountCreateRequest struct {
 }
 
 type ftpAccountUpdateRequest struct {
-	FTPAccess  *bool `json:"ftp_access"`
-	SFTPAccess *bool `json:"sftp_access"`
-	IsEnabled  *bool `json:"is_enabled"`
+	FTPAccess    *bool `json:"ftp_access"`
+	SFTPAccess   *bool `json:"sftp_access"`
+	WebDAVAccess *bool `json:"webdav_access"` // GH #1146; nil = leave unchanged
+	IsEnabled    *bool `json:"is_enabled"`
 }
 
 type ftpAccountPasswordRequest struct {
@@ -431,6 +438,7 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		"home_path":       req.HomePath,
 		"password":        req.Password,
 		"ftp_access":      req.FTPAccess,
+		"webdav_access":   req.WebDAVAccess,
 	}
 	var allocUID uint32
 	var jailPath string
@@ -465,17 +473,18 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 
 	now := time.Now().UTC()
 	acct := &models.FtpAccount{
-		ID:         ids.NewULID(),
-		UserID:     u.ID,
-		Username:   username,
-		HomePath:   req.HomePath,
-		FTPAccess:  req.FTPAccess,
-		SFTPAccess: sftpAccess,
-		IsEnabled:  true,
-		Isolated:   isolated,
-		QuotaMB:    req.QuotaMB,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:           ids.NewULID(),
+		UserID:       u.ID,
+		Username:     username,
+		HomePath:     req.HomePath,
+		FTPAccess:    req.FTPAccess,
+		SFTPAccess:   sftpAccess,
+		WebDAVAccess: req.WebDAVAccess,
+		IsEnabled:    true,
+		Isolated:     isolated,
+		QuotaMB:      req.QuotaMB,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if isolated {
 		acct.UID = &allocUID
@@ -544,6 +553,9 @@ func (h *ftpAccountsHandler) update(c *gin.Context) {
 	if req.SFTPAccess != nil {
 		acct.SFTPAccess = *req.SFTPAccess
 	}
+	if req.WebDAVAccess != nil {
+		acct.WebDAVAccess = *req.WebDAVAccess
+	}
 	if req.IsEnabled != nil {
 		acct.IsEnabled = *req.IsEnabled
 	}
@@ -566,6 +578,7 @@ func (h *ftpAccountsHandler) update(c *gin.Context) {
 		"tenant_username": *u.Username,
 		"username":        acct.Username,
 		"ftp_access":      acct.FTPAccess,
+		"webdav_access":   acct.WebDAVAccess,
 		"enabled":         acct.IsEnabled,
 	})
 	// Always re-render the sshd drop-in — for a disable, the SFTP revocation IS

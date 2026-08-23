@@ -314,6 +314,11 @@ type ftpAccountCreateParams struct {
 	HomePath       string `json:"home_path"`
 	Password       string `json:"password"`
 	FTPAccess      bool   `json:"ftp_access"`
+	// WebDAVAccess realizes the per-subaccount WebDAV worker at create time (GH
+	// #1146) — same treatment as FTPAccess: the account is provisioned, then the
+	// worker + jabali-webdav group are enabled. Rolls the whole create back on
+	// failure, like every other create step.
+	WebDAVAccess bool `json:"webdav_access"`
 	// Isolated selects the separate-uid jailed model (GH #1145). When false
 	// the legacy same-uid alias path runs. The fields below are required only
 	// when Isolated is true; the panel allocates the uid + computes the split.
@@ -393,6 +398,12 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 				return nil, aerr
 			}
 		}
+		if p.WebDAVAccess {
+			if aerr := enableWebdavForCreate(ctx, tenant, p.Username); aerr != nil {
+				rollback()
+				return nil, aerr
+			}
+		}
 		return ftpAccountCreateResponse{Username: p.Username, UID: int(p.UID), HomePath: homePath}, nil
 	}
 
@@ -456,6 +467,12 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 	}
 	if p.FTPAccess {
 		if aerr := setFtpGroupMembership(ctx, p.Username, true); aerr != nil {
+			rollback()
+			return nil, aerr
+		}
+	}
+	if p.WebDAVAccess {
+		if aerr := enableWebdavForCreate(ctx, tenant, p.Username); aerr != nil {
 			rollback()
 			return nil, aerr
 		}
@@ -641,6 +658,11 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 		// on DB rows — both gone). Tear the jail down here too; idempotent and
 		// ENOENT-safe, so it no-ops for a legacy account that never had one.
 		if aerr.Code == agentwire.CodeNotFound {
+			// GH #1146: also tear down any orphaned WebDAV worker/drop-in/group
+			// from a partial prior delete. Idempotent + safe on absent.
+			if derr := disableWebdavWorker(ctx, p.Username); derr != nil {
+				return nil, derr
+			}
 			if terr := teardownIsolatedJail(ctx, ftpJailPathFor(tenant, p.Username)); terr != nil {
 				return nil, terr
 			}
@@ -654,6 +676,11 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	delUID, _ := strconv.Atoi(u.Uid)
 	isolated := delUID >= ftpSubaccountUIDMin
 	_ = setFtpGroupMembership(ctx, p.Username, false)
+	// GH #1146: stop + disable the WebDAV worker and remove its drop-in/group
+	// BEFORE userdel, so nothing references the about-to-be-removed uid.
+	if derr := disableWebdavWorker(ctx, p.Username); derr != nil {
+		return nil, derr
+	}
 	// JAB-256: kill live sessions BEFORE userdel so the credential's open
 	// connections drop with the account, not linger past it.
 	terminateFtpSessions(ctx, p.Username, delUID)
@@ -688,6 +715,11 @@ type ftpAccountListEntry struct {
 	HomePath  string `json:"home_path"`
 	FTPAccess bool   `json:"ftp_access"`
 	Locked    bool   `json:"locked"`
+	// WebdavEnabled reflects whether the WebDAV worker is provisioned (GH #1146),
+	// so the per-tenant reconcile pass can heal a failed enable/disable. This is
+	// the list the reconciler actually diffs (reconcileFtpTenant), so it MUST
+	// carry the field — not just list_all.
+	WebdavEnabled bool `json:"webdav_enabled"`
 }
 
 // ftpAccountListHandler reports the host's view of a tenant's subaccounts —
@@ -725,10 +757,11 @@ func ftpAccountListHandler(ctx context.Context, params json.RawMessage) (any, er
 			locked = len(fields) >= 2 && fields[1] == "L"
 		}
 		entries = append(entries, ftpAccountListEntry{
-			Username:  name,
-			HomePath:  parts[5],
-			FTPAccess: isFtp,
-			Locked:    locked,
+			Username:      name,
+			HomePath:      parts[5],
+			FTPAccess:     isFtp,
+			Locked:        locked,
+			WebdavEnabled: webdavWorkerEnabled(name),
 		})
 	}
 	return map[string]any{"accounts": entries}, nil
@@ -813,6 +846,9 @@ type ftpAccountListAllEntry struct {
 	HomePath       string `json:"home_path"`
 	FTPAccess      bool   `json:"ftp_access"`
 	Locked         bool   `json:"locked"`
+	// WebdavEnabled reflects whether the WebDAV worker is provisioned (GH #1146),
+	// so the reconciler can heal a failed enable/disable. Drop-in-dir presence.
+	WebdavEnabled bool `json:"webdav_enabled"`
 }
 
 // ftpAccountListAllHandler reports EVERY subaccount alias on the host in
@@ -929,6 +965,7 @@ func ftpAccountListAllHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 		entries[i].Locked = locked
 		entries[i].FTPAccess, _ = isUserInGroup(ctx, entries[i].Username, ftpGroupName)
+		entries[i].WebdavEnabled = webdavWorkerEnabled(entries[i].Username)
 	}
 	return map[string]any{"accounts": entries, "skipped_unmarked": skipped}, nil
 }

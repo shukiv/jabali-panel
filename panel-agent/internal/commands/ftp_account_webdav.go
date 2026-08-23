@@ -105,6 +105,17 @@ func webdavDropinDir(username string) string {
 func webdavSocketUnit(username string) string  { return fmt.Sprintf("jabali-webdav@%s.socket", username) }
 func webdavServiceUnit(username string) string { return fmt.Sprintf("jabali-webdav@%s.service", username) }
 
+// webdavWorkerEnabled reports whether the WebDAV worker is provisioned for
+// username, by the presence of its per-instance drop-in dir (written by
+// enableWebdavWorker, removed by disableWebdavWorker). A cheap os.Stat — no
+// systemctl exec — so the reconciler can poll it per-account each tick without
+// churn. The reconciler diffs this against the row's desired webdav_access to
+// heal a failed enable/disable.
+func webdavWorkerEnabled(username string) bool {
+	fi, err := os.Stat(webdavDropinDir(username))
+	return err == nil && fi.IsDir()
+}
+
 // ensureWebdavGroup makes the jabali-webdav authorization group exist.
 // Idempotent; install.sh's webdav provisioning also creates it, but an older
 // host that enables webdav_access before that lands must not fail here.
@@ -116,6 +127,18 @@ func ensureWebdavGroup(ctx context.Context) *agentwire.AgentError {
 		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("groupadd %s: %v: %s", webdavGroupName, err, strings.TrimSpace(string(out)))}
 	}
 	return nil
+}
+
+// enableWebdavForCreate realizes the WebDAV worker for a freshly-created
+// subaccount: it resolves the just-created passwd entry (for its uid/gid + home)
+// and enables the worker + jabali-webdav group. Called by the create handler
+// after the account exists, mirroring the FTPAccess group step.
+func enableWebdavForCreate(ctx context.Context, tenant *ftpTenant, username string) *agentwire.AgentError {
+	u, err := user.Lookup(username)
+	if err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("lookup %q for webdav enable: %v", username, err)}
+	}
+	return enableWebdavWorker(ctx, tenant, u)
 }
 
 // enableWebdavWorker provisions and starts the per-subaccount WebDAV worker.

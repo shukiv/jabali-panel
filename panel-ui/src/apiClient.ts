@@ -317,6 +317,8 @@ export interface FtpAccount {
   home_path: string;
   ftp_access: boolean;
   sftp_access: boolean;
+  // GH #1146: WebDAV access (the 3rd protocol). Served at <origin>/dav/.
+  webdav_access: boolean;
   is_enabled: boolean;
   // GH #1145: true = separate-uid jailed (kernel-isolated); false/absent =
   // legacy shared-access alias.
@@ -342,6 +344,7 @@ export async function createFtpAccount(body: {
   password: string;
   ftp_access: boolean;
   sftp_access?: boolean;
+  webdav_access?: boolean;
   isolated?: boolean;
   quota_mb?: number;
 }): Promise<FtpAccount> {
@@ -351,7 +354,7 @@ export async function createFtpAccount(body: {
 
 export async function updateFtpAccount(
   id: string,
-  body: { ftp_access?: boolean; sftp_access?: boolean; is_enabled?: boolean },
+  body: { ftp_access?: boolean; sftp_access?: boolean; webdav_access?: boolean; is_enabled?: boolean },
 ): Promise<FtpAccount> {
   const resp = await apiClient.patch<FtpAccount>(`/me/ftp-accounts/${id}`, body);
   return resp.data;

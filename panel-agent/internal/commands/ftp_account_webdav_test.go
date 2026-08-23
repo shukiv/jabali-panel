@@ -1,10 +1,28 @@
 package commands
 
 import (
+	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// webdavWorkerEnabled is the reconciler's drift signal: true iff the per-instance
+// drop-in dir exists (written by enable, removed by disable).
+func TestWebdavWorkerEnabled(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("JABALI_SYSTEMD_ROOT", root)
+	if webdavWorkerEnabled("t1_web") {
+		t.Fatal("no drop-in dir yet → must report disabled")
+	}
+	if err := os.MkdirAll(filepath.Join(root, "jabali-webdav@t1_web.service.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !webdavWorkerEnabled("t1_web") {
+		t.Fatal("drop-in dir present → must report enabled")
+	}
+}
 
 // deriveWebdavWorker must chroot isolated (#1145) accounts to their jail and
 // serve the bind-mounted /data, while legacy same-uid aliases serve their passwd
