@@ -1397,6 +1397,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Reconciler: deps.Reconciler,
 				Log:        deps.Log,
 			})
+			// GH #1169: admin DR status card feed.
+			api.RegisterDRStatusRoute(admin, api.DRStatusConfig{
+				Settings:     deps.ServerSettings,
+				Destinations: deps.BackupDestinations,
+			})
 		}
 		// M44: Automation API token management. Admin mints + revokes
 		// HMAC-signed tokens; the matching public read-only routes

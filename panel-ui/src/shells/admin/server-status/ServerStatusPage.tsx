@@ -16,6 +16,7 @@ import { ChartBarOutlined } from "@icons";
 import { useServerStatus } from "../../../hooks/useServerStatus";
 import { AlertsBanner } from "./AlertsBanner";
 import { DisksTable } from "./DisksTable";
+import { DRStatusCard } from "./DRStatusCard";
 import { CPUMeterCard, MemoryMeterCard } from "./MetersGrid";
 import { NetworkTable } from "./NetworkTable";
 import { ProcessesCard } from "./ProcessesCard";
@@ -38,6 +39,7 @@ export const ServerStatusPage = () => {
     { key: "disks", data: null, children: <DisksTable partitions={env?.host?.partitions ?? []} /> },
     { key: "network", data: null, children: <NetworkTable interfaces={env?.network?.interfaces ?? []} /> },
     { key: "services", data: null, children: <ServicesSummaryCard services={env?.services?.services ?? []} /> },
+    { key: "dr", data: null, children: <DRStatusCard /> },
     {
       key: "sysinfo",
       data: null,

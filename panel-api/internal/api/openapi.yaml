@@ -4524,6 +4524,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/dr/status:
+    get:
+      tags: [DR]
+      summary: DR standby status (role, peer, last-sync age, freshness)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /admin/reconcile/php-pools:
     post:
       tags: [Reconcile]
