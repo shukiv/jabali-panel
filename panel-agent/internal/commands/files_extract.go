@@ -15,11 +15,22 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 	"golang.org/x/sys/unix"
 )
+
+// extractWallClockBudget bounds the total wall-clock of one archive extraction
+// (JAB-387 defense-in-depth). The per-entry ex.ctx.Err() checks (GH #664) plus
+// the entry-count / uncompressed-size / decompression-bomb caps already bound
+// the work, and go1.25.13 (JAB-383) fixes the archive/zip quadratic-index CVE
+// (GO-2026-4342); this adds an explicit ceiling so a pathological tenant archive
+// can never hold a root-side extract worker indefinitely, regardless of the
+// caller's deadline. Generous relative to the size cap so legitimate large
+// archives are unaffected.
+const extractWallClockBudget = 5 * time.Minute
 
 // files.extract — unpack an archive (.zip / .tar / .tar.gz / .tgz / .tar.bz2 /
 // .gz) into a directory inside the user's scope. Every destination path is
@@ -107,6 +118,11 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("failed to open destination: %v", err)}
 	}
 	defer ed.Close()
+
+	// JAB-387: cap the extraction wall-clock; the per-entry ctx.Err() checks in
+	// untar/unzip enforce it.
+	ctx, cancel := context.WithTimeout(ctx, extractWallClockBudget)
+	defer cancel()
 
 	ex := &extractor{ctx: ctx, ed: ed}
 
