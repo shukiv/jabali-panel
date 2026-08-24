@@ -755,7 +755,7 @@ jabali cron add [flags]
 
 #### `jabali cron delete`
 
-Delete a cron job (reconciler removes the timer on next tick)
+Delete a cron job (removes the systemd timer, then the row)
 
 ```
 jabali cron delete <job-id> [flags]

@@ -400,18 +400,12 @@ func (h *cronHandler) delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	username, err := h.linuxUsername(ctx, job.UserID)
-	if err != nil {
-		// Still proceed — user might have been deleted. Just skip agent call.
-		h.cfg.Log.Warn("cron delete: no linux username, skipping agent call", "user_id", job.UserID, "err", err)
-	} else {
-		if err := h.agentRemove(ctx, job.UserID, username, job.ID, job.RunAsRoot); err != nil {
-			// Per plan §6: on user_manager_unreachable still delete the row, reconciler will clean up.
-			h.cfg.Log.Warn("cron delete: agent remove failed, reconciler will clean up", "job_id", job.ID, "err", err)
-		}
-	}
-	if err := h.cfg.CronJobs.Delete(ctx, job.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+	// JAB-293: route through the shared cronops.Delete so REST + CLI share one
+	// safe path — synchronous host timer removal, row dropped only on success,
+	// row KEPT for retry on agent failure (a last-job orphan is otherwise never
+	// swept by the reconciler).
+	if err := cronops.Delete(ctx, h.cronopsDeps(), job.ID); err != nil {
+		h.mapCronopsErr(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -517,10 +511,3 @@ func (h *cronHandler) readLog(c *gin.Context) {
 }
 
 // ---- agent dispatch helpers ----
-
-func (h *cronHandler) agentRemove(ctx context.Context, userID, username, jobID string, runAsRoot bool) error {
-	_, err := h.cfg.Agent.Call(ctx, "cron.remove", cronRemoveAgentParams{
-		UserID: userID, Username: username, JobID: jobID, RunAsRoot: runAsRoot,
-	})
-	return err
-}

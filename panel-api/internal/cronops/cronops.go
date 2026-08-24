@@ -297,8 +297,64 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 		actx, cancel := context.WithTimeout(ctx, agentTimeout)
 		_, _ = d.Agent.Call(actx, "cron.remove", removeParams{
 			UserID: job.UserID, Username: username, JobID: job.ID,
+			RunAsRoot: job.RunAsRoot, // JAB-293: a root job's timer is system-scoped
 		})
 		cancel() // best-effort — reconciler converges a stale timer
 	}
 	return job, nil
+}
+
+// Delete removes a cron job: resolve the owner, SYNCHRONOUSLY remove the host
+// timer, and drop the row only after host success. JAB-293: the CLI previously
+// deleted only the row (always orphaning the timer) and REST removed the timer
+// best-effort then deleted the row regardless — but the reconciler sweeps host
+// orphans ONLY for owners who still have ≥1 desired job, so deleting an owner's
+// FINAL job on a failed/absent remove leaves a live timer forever. On agent
+// failure the row is kept as the retry handle. A non-root job whose owner has no
+// Linux account (deleted user) has no live user-scoped timer to remove, so the
+// agent call is skipped and the row is dropped (mirrors the REST handler).
+func Delete(ctx context.Context, d Deps, jobID string) error {
+	if !depsWired(d) {
+		return ErrDeps
+	}
+	job, err := d.CronJobs.FindByID(ctx, jobID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrJobNotFound
+		}
+		return fmt.Errorf("%w: load job: %v", ErrInternal, err)
+	}
+
+	username := "root"
+	skipAgent := false
+	if !job.RunAsRoot {
+		username, err = resolveLinuxUser(ctx, d, job.UserID)
+		if err != nil {
+			// Owner gone / no Linux account: nothing user-scoped to remove.
+			if errors.Is(err, cronvalidate.ErrNoLinuxAccount) || errors.Is(err, ErrUserNotFound) {
+				skipAgent = true
+			} else {
+				return err
+			}
+		}
+	}
+
+	if !skipAgent {
+		actx, cancel := context.WithTimeout(ctx, agentTimeout)
+		_, aerr := d.Agent.Call(actx, "cron.remove", removeParams{
+			UserID: job.UserID, Username: username, JobID: job.ID,
+			RunAsRoot: job.RunAsRoot,
+		})
+		cancel()
+		if aerr != nil {
+			// Keep the row: it is the reconciler's only handle, and a
+			// last-job orphan would otherwise never be swept.
+			return fmt.Errorf("%w: %v", ErrAgentFailed, aerr)
+		}
+	}
+
+	if err := d.CronJobs.Delete(ctx, jobID); err != nil {
+		return fmt.Errorf("%w: delete row: %v", ErrInternal, err)
+	}
+	return nil
 }

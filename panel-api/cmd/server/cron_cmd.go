@@ -230,11 +230,11 @@ func newCronDeleteCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:     "delete <job-id>",
-		Short:   "Delete a cron job (reconciler removes the timer on next tick)",
+		Short:   "Delete a cron job (removes the systemd timer, then the row)",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDB,
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 40*time.Second)
 			defer cancel()
 			repo := cronJobRepoFromDB()
 			job, err := repo.FindByID(ctx, args[0])
@@ -253,7 +253,14 @@ func newCronDeleteCmd() *cobra.Command {
 					return nil
 				}
 			}
-			if err := repo.Delete(ctx, job.ID); err != nil {
+			// JAB-293: shared safe delete — synchronously removes the host timer
+			// and drops the row only on success; a failed remove KEEPS the row so
+			// the reconciler still has a handle (deleting a last job's row on a
+			// failed remove would leave a live timer forever).
+			if err := cronops.Delete(ctx, cronopsCLIDeps(), job.ID); err != nil {
+				if errors.Is(err, cronops.ErrAgentFailed) {
+					return fmt.Errorf("host timer removal failed; the job row was kept for retry: %w", err)
+				}
 				return fmt.Errorf("delete cron job: %w", err)
 			}
 			if jsonOutput {
