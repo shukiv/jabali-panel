@@ -104,6 +104,7 @@ export const EVENT_KIND_CATEGORY: Record<string, EventCategoryId> = {
   "backup.fail": "backups",
   "backup.success": "backups",
   "backup.limit.reached": "backups",
+  "dr.sync.stalled": "backups",
 
   // Mail
   "mail.rbl.listed": "mail",

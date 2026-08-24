@@ -73,6 +73,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		DefaultOn:   true,
 	},
 	{
+		Kind:        "dr.sync.stalled",
+		Label:       "DR standby sync stalled",
+		Description: "This DR standby has not applied a fresh snapshot within several sync cycles — the replica is going stale. Fix before you need to promote.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
 		Kind:        "disk.quota.warn",
 		Label:       "User reached 90% quota",
 		Description: "A hosting user crossed 90% of their disk quota.",

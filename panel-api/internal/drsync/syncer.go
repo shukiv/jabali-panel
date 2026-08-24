@@ -38,6 +38,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
@@ -76,6 +77,20 @@ type Deps struct {
 	// DefaultTickTimeout. system.restore over a slow remote can take minutes,
 	// so this is generous; the agent client honours the ctx deadline.
 	TickTimeout time.Duration
+
+	// Notify publishes the dr.sync.stalled alert when the replica goes stale
+	// (GH #1169). Optional: nil disables the alert (the loop still runs). This
+	// is the failure an operator must learn about BEFORE a disaster — a standby
+	// that silently stopped syncing is worthless at promote time.
+	Notify DRNotifier
+	// StalledAfter is how long without a fresh applied snapshot counts as
+	// stalled. Zero → DefaultStalledCycles × Interval.
+	StalledAfter time.Duration
+}
+
+// DRNotifier is the Publish subset of *notifications.Queue the stall alert needs.
+type DRNotifier interface {
+	Publish(ctx context.Context, env notifications.Envelope) (string, error)
 }
 
 const (
@@ -85,6 +100,10 @@ const (
 	DefaultInterval = 60 * time.Second
 	// DefaultTickTimeout bounds one list+restore cycle.
 	DefaultTickTimeout = 15 * time.Minute
+	// DefaultStalledCycles: without a fresh applied snapshot for this many
+	// intervals, the replica is declared stalled. 5 × 60s = a 5-minute grace,
+	// long enough to ride out a couple of transient destination hiccups.
+	DefaultStalledCycles = 5
 )
 
 // Syncer runs the standby pull-restore loop.
@@ -96,6 +115,10 @@ type Syncer struct {
 	// applied restore (the DB was just reloaded, so one transient failure is
 	// plausible). Tests shrink it.
 	reassertRetryDelay time.Duration
+	// stalledAfter is the resolved staleness threshold; stalledAlerted
+	// de-dupes the alert to once per stall episode (reset on a fresh sync).
+	stalledAfter   time.Duration
+	stalledAlerted bool
 }
 
 // New returns a Syncer, or nil if a required dependency is missing (so the
@@ -115,7 +138,11 @@ func New(deps Deps) *Syncer {
 	if tt <= 0 {
 		tt = DefaultTickTimeout
 	}
-	return &Syncer{deps: deps, interval: interval, tickTimeout: tt, reassertRetryDelay: 2 * time.Second}
+	stalledAfter := deps.StalledAfter
+	if stalledAfter <= 0 {
+		stalledAfter = time.Duration(DefaultStalledCycles) * interval
+	}
+	return &Syncer{deps: deps, interval: interval, tickTimeout: tt, reassertRetryDelay: 2 * time.Second, stalledAfter: stalledAfter}
 }
 
 // Start runs the loop until ctx is cancelled. Ticks are sequential: the next
@@ -154,6 +181,9 @@ func (s *Syncer) tick(parent context.Context) {
 	default:
 		s.deps.Log.Debug("DR sync tick", "status", res.Status, "snapshot_id", res.SnapshotID)
 	}
+	// GH #1169: after every standby tick, check whether the replica has gone
+	// stale and alert once per episode.
+	s.checkStall(parent)
 }
 
 // Result reports what one SyncOnce did, for tests and the tick logger.

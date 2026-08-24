@@ -27,6 +27,7 @@ const CATALOG_KINDS = [
   "backup.fail",
   "backup.success",
   "backup.limit.reached",
+  "dr.sync.stalled",
   "admin.login",
   "ssh.login",
   "notifications.channel.auto_disabled",

@@ -1039,13 +1039,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// GH #331 Step 2: DR standby pull-restore loop. Inert on a primary (it
 	// re-reads server_role each tick), so it is always safe to start; on a
 	// standby it converges the panel DB/config/TLS from the DR destination.
-	if syncer := drsync.New(drsync.Deps{
+	drSyncDeps := drsync.Deps{
 		Settings:     deps.ServerSettings,
 		Destinations: deps.BackupDestinations,
 		Agent:        deps.Agent,
 		SSOKey:       deps.SSOKey,
 		Log:          log,
-	}); syncer != nil {
+	}
+	// GH #1169: wire the dr.sync.stalled alert only when the queue exists —
+	// assigning a nil *Queue into the DRNotifier interface would be a non-nil
+	// interface wrapping a nil pointer (Publish would panic).
+	if deps.NotificationQueue != nil {
+		drSyncDeps.Notify = deps.NotificationQueue
+	}
+	if syncer := drsync.New(drSyncDeps); syncer != nil {
 		go syncer.Start(ctx)
 	} else {
 		log.Info("DR sync loop not started — required deps missing")
