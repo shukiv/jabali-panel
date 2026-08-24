@@ -203,10 +203,15 @@ func newDBMaintenanceCmd() *cobra.Command {
 				summary = r.Summary
 			}
 			_ = adminRepo.FinishJob(ctx, job.ID, status, summary)
-			cliAuditOK(ctx, "database.maintenance", "db_admin_job", job.ID, nil)
+			// JAB-305: audit exactly one true outcome. This recorded
+			// cliAuditOK unconditionally — a false success audit when the Agent
+			// call failed. Mirror the kill command: OK only on success, Err on
+			// failure.
 			if aerr != nil {
+				cliAuditErr(ctx, "database.maintenance", "db_admin_job", job.ID, nil)
 				return fmt.Errorf("maintenance failed: %w", aerr)
 			}
+			cliAuditOK(ctx, "database.maintenance", "db_admin_job", job.ID, nil)
 			fmt.Fprintf(cmd.OutOrStdout(), "Maintenance %s: %s\n", status, summary)
 			return nil
 		},
