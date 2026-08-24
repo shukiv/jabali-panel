@@ -22,6 +22,10 @@ type EmailAutoresponderRepository interface {
 	// mailboxes (GH #240 — the Mailboxes tab "Auto replies" column fans
 	// out one bulk call per domain instead of one GET per mailbox).
 	ListByDomain(ctx context.Context, domainID string) ([]models.EmailAutoresponder, error)
+
+	// ListAll returns every autoresponder row server-wide (JAB-76 — the
+	// read-only automation mail inventory a fleet manager reads).
+	ListAll(ctx context.Context) ([]models.EmailAutoresponder, error)
 }
 
 type emailAutoresponderRepo struct {
@@ -69,5 +73,11 @@ func (r *emailAutoresponderRepo) ListByDomain(ctx context.Context, domainID stri
 		Joins("JOIN mailboxes m ON m.id = a.mailbox_id").
 		Where("m.domain_id = ?", domainID).
 		Find(&rows).Error
+	return rows, err
+}
+
+func (r *emailAutoresponderRepo) ListAll(ctx context.Context) ([]models.EmailAutoresponder, error) {
+	var rows []models.EmailAutoresponder
+	err := r.db.WithContext(ctx).Order("mailbox_id").Find(&rows).Error
 	return rows, err
 }

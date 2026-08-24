@@ -52,11 +52,12 @@ type AutomationConfig struct {
 	// M31 system.* collectors so a fleet monitor gets the same data the admin
 	// Server Status page shows. Nil → /status stays the bare healthy stub.
 	Agent agent.AgentInterface
-	// Mail-stack read repos power the read:mail endpoints (JAB-77). Nil → those
-	// routes aren't mounted.
-	Mailboxes  repository.MailboxRepository
-	MailGroups repository.MailGroupRepository
-	Forwarders repository.EmailForwarderRepository
+	// Mail-stack read repos power the read:mail endpoints (JAB-77, extended by
+	// JAB-76). Nil → those routes aren't mounted.
+	Mailboxes      repository.MailboxRepository
+	MailGroups     repository.MailGroupRepository
+	Forwarders     repository.EmailForwarderRepository
+	Autoresponders repository.EmailAutoresponderRepository
 	// JAB-140 write layer. Operations powers async backups + the idempotency
 	// ledger; Audits records every write (M49). Backups drives POST /backups.
 	// All optional — a nil repo/agent drops the matching write route (mirrors
@@ -218,97 +219,248 @@ func RegisterAutomation(rg *gin.RouterGroup, cfg AutomationConfig) {
 	metrics := newAutomationMetrics(cfg.Agent)
 	g.GET("/status", middleware.RequireScope("read:status"), metrics.handle)
 
-	// read:mail — mail-stack inventory for a fleet manager (JAB-77). Thin,
-	// secrets-free: never password hashes / SSO tokens. Reuses the same
-	// server-wide repos the admin pages use.
-	if cfg.Mailboxes != nil {
-		mg := g.Group("/mail", middleware.RequireScope("read:mail"))
-
-		mg.GET("/mailboxes", func(c *gin.Context) {
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-			defer cancel()
-			rows, err := cfg.Mailboxes.ListAllWithDomain(ctx)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-				return
-			}
-			out := make([]map[string]any, 0, len(rows))
-			for _, m := range rows {
-				out = append(out, map[string]any{
-					"email":            m.EmailCached,
-					"domain":           m.DomainName,
-					"owner":            m.UserUsername,
-					"quota_bytes":      m.QuotaBytes,
-					"last_usage_bytes": m.LastUsageBytes,
-					"disabled":         m.IsDisabled,
-				})
-			}
-			c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
-		})
-
-		mg.GET("/domains", func(c *gin.Context) {
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-			defer cancel()
-			rows, _, err := cfg.Domains.List(ctx, repository.ListOptions{Limit: 500})
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-				return
-			}
-			out := make([]map[string]any, 0)
-			for _, d := range rows {
-				if !d.EmailEnabled {
-					continue
-				}
-				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "user_id": d.UserID})
-			}
-			c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
-		})
-
-		mg.GET("/summary", func(c *gin.Context) {
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-			defer cancel()
-			// COUNT, not a full-table read. This endpoint is polled by fleet
-			// monitors; loading every mailbox row (two JOINs, every column
-			// including password material) just to len() it was the single
-			// most expensive thing here.
-			mailboxCount := 0
-			if n, err := cfg.Mailboxes.CountAll(ctx); err == nil {
-				mailboxCount = int(n)
-			}
-			mailDomains := 0
-			if cfg.Domains != nil {
-				if doms, _, err := cfg.Domains.List(ctx, repository.ListOptions{Limit: 500}); err == nil {
-					for _, d := range doms {
-						if d.EmailEnabled {
-							mailDomains++
-						}
-					}
-				}
-			}
-			groups := 0
-			if cfg.MailGroups != nil {
-				if gr, err := cfg.MailGroups.ListAllWithDomain(ctx); err == nil {
-					groups = len(gr)
-				}
-			}
-			forwarders := 0
-			if cfg.Forwarders != nil {
-				if _, n, err := cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 1}); err == nil {
-					forwarders = int(n)
-				}
-			}
-			c.JSON(http.StatusOK, gin.H{
-				"mail_domains": mailDomains,
-				"mailboxes":    mailboxCount,
-				"forwarders":   forwarders,
-				"mail_groups":  groups,
-			})
-		})
-	}
+	// read:mail — mail-stack inventory for a fleet manager (JAB-77 + JAB-76).
+	registerAutomationMailReads(g, cfg)
 
 	// JAB-140 write layer + capabilities (additive; each route self-guards on
 	// its repo/agent being present, mirroring the read routes).
 	registerAutomationWrites(g, cfg)
+}
+
+// registerAutomationMailReads mounts the read:mail inventory endpoints a fleet
+// manager (GH #308) reads to populate its Mail tab. Thin + secrets-free: never
+// password hashes, SSO tokens, or message bodies — reuses the same server-wide
+// repos the admin pages use so there is one source of truth. Split out as its
+// own function (like registerAutomationWrites) so the handlers are unit
+// testable behind the scope gate. JAB-77 shipped mailboxes/domains/summary;
+// JAB-76 adds forwarders, domain-forwarders, groups, autoresponders.
+func registerAutomationMailReads(g *gin.RouterGroup, cfg AutomationConfig) {
+	if cfg.Mailboxes == nil {
+		return
+	}
+	mg := g.Group("/mail", middleware.RequireScope("read:mail"))
+
+	// domainLookup builds an id → {name, owner} map once per request so the
+	// forwarder/group rows can carry a human domain + owner without a per-row
+	// query. Best-effort: a missing Domains repo just yields blank enrichment.
+	domainLookup := func(ctx context.Context) map[string]struct{ Name, Owner string } {
+		m := map[string]struct{ Name, Owner string }{}
+		if cfg.Domains == nil {
+			return m
+		}
+		doms, _, err := cfg.Domains.List(ctx, repository.ListOptions{Limit: 5000})
+		if err != nil {
+			return m
+		}
+		for _, d := range doms {
+			m[d.ID] = struct{ Name, Owner string }{Name: d.Name, Owner: d.UserID}
+		}
+		return m
+	}
+
+	mg.GET("/mailboxes", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		rows, err := cfg.Mailboxes.ListAllWithDomain(ctx)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		out := make([]map[string]any, 0, len(rows))
+		for _, m := range rows {
+			out = append(out, map[string]any{
+				"email":            m.EmailCached,
+				"domain":           m.DomainName,
+				"owner":            m.UserUsername,
+				"quota_bytes":      m.QuotaBytes,
+				"last_usage_bytes": m.LastUsageBytes,
+				"disabled":         m.IsDisabled,
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
+	})
+
+	mg.GET("/domains", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		rows, _, err := cfg.Domains.List(ctx, repository.ListOptions{Limit: 500})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		out := make([]map[string]any, 0)
+		for _, d := range rows {
+			if !d.EmailEnabled {
+				continue
+			}
+			out = append(out, map[string]any{"id": d.ID, "name": d.Name, "user_id": d.UserID})
+		}
+		c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
+	})
+
+	mg.GET("/summary", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		// COUNT, not a full-table read. This endpoint is polled by fleet
+		// monitors; loading every mailbox row (two JOINs, every column
+		// including password material) just to len() it was the single
+		// most expensive thing here.
+		mailboxCount := 0
+		if n, err := cfg.Mailboxes.CountAll(ctx); err == nil {
+			mailboxCount = int(n)
+		}
+		mailDomains := 0
+		if cfg.Domains != nil {
+			if doms, _, err := cfg.Domains.List(ctx, repository.ListOptions{Limit: 500}); err == nil {
+				for _, d := range doms {
+					if d.EmailEnabled {
+						mailDomains++
+					}
+				}
+			}
+		}
+		groups := 0
+		if cfg.MailGroups != nil {
+			if gr, err := cfg.MailGroups.ListAllWithDomain(ctx); err == nil {
+				groups = len(gr)
+			}
+		}
+		forwarders := 0
+		if cfg.Forwarders != nil {
+			if _, n, err := cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 1}); err == nil {
+				forwarders = int(n)
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"mail_domains": mailDomains,
+			"mailboxes":    mailboxCount,
+			"forwarders":   forwarders,
+			"mail_groups":  groups,
+		})
+	})
+
+	// JAB-76: mailbox-level forwarders (MailboxID set). Domain-scoped rows
+	// (MailboxID nil) are served by /domain-forwarders below, so the two views
+	// stay distinct — matching the panel's own split.
+	mg.GET("/forwarders", func(c *gin.Context) {
+		listForwarders(c, cfg, domainLookup, false)
+	})
+
+	// JAB-76: domain-scoped forwarders (MailboxID nil — catch-alls / domain
+	// aliases, not tied to a single mailbox).
+	mg.GET("/domain-forwarders", func(c *gin.Context) {
+		listForwarders(c, cfg, domainLookup, true)
+	})
+
+	// JAB-76: mail groups with member counts + per-service flags.
+	mg.GET("/groups", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		if cfg.MailGroups == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "mail groups unavailable"})
+			return
+		}
+		rows, err := cfg.MailGroups.ListAllWithDomain(ctx)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		out := make([]map[string]any, 0, len(rows))
+		for _, gr := range rows {
+			out = append(out, map[string]any{
+				"id":              gr.ID,
+				"email":           gr.EmailCached,
+				"domain":          gr.DomainName,
+				"owner":           gr.UserUsername,
+				"display_name":    gr.DisplayName,
+				"group_kind":      gr.GroupKind,
+				"member_count":    gr.MemberCount,
+				"internal_only":   gr.InternalOnly,
+				"has_mailbox":     gr.HasMailbox,
+				"has_calendar":    gr.HasCalendar,
+				"has_addressbook": gr.HasAddressbook,
+				"has_files":       gr.HasFiles,
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
+	})
+
+	// JAB-76: autoresponder status + schedule metadata. Deliberately
+	// metadata-only — the subject line, text, and HTML bodies are tenant
+	// content and are never exposed to an automation token.
+	mg.GET("/autoresponders", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		if cfg.Autoresponders == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autoresponders unavailable"})
+			return
+		}
+		rows, err := cfg.Autoresponders.ListAll(ctx)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		// mailbox_id → email, so the manager sees an address, not a ULID.
+		emailByMailbox := map[string]string{}
+		if mbs, err := cfg.Mailboxes.ListAllWithDomain(ctx); err == nil {
+			for _, m := range mbs {
+				emailByMailbox[m.ID] = m.EmailCached
+			}
+		}
+		out := make([]map[string]any, 0, len(rows))
+		for _, ar := range rows {
+			out = append(out, map[string]any{
+				"mailbox_id": ar.MailboxID,
+				"email":      emailByMailbox[ar.MailboxID],
+				"enabled":    ar.Enabled,
+				"from_date":  ar.FromDate,
+				"to_date":    ar.ToDate,
+				"updated_at": ar.UpdatedAt,
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
+	})
+}
+
+// listForwarders serves both the mailbox-level (/forwarders) and domain-scoped
+// (/domain-forwarders) views: they read the same table and differ only by
+// whether MailboxID is set. domainScoped=true selects the nil-MailboxID rows.
+func listForwarders(c *gin.Context, cfg AutomationConfig, domainLookup func(context.Context) map[string]struct{ Name, Owner string }, domainScoped bool) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	if cfg.Forwarders == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "forwarders unavailable"})
+		return
+	}
+	rows, _, err := cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	doms := domainLookup(ctx)
+	out := make([]map[string]any, 0, len(rows))
+	for _, f := range rows {
+		isDomainScoped := f.MailboxID == nil
+		if isDomainScoped != domainScoped {
+			continue
+		}
+		d := doms[f.DomainID]
+		row := map[string]any{
+			"id":            f.ID,
+			"domain":        d.Name,
+			"owner_user_id": d.Owner,
+			"type":          f.Type,
+			"local_part":    f.LocalPart,
+			"target":        f.Target,
+			"enabled":       f.Enabled,
+			"keep_copy":     f.KeepCopy,
+		}
+		if !domainScoped {
+			row["mailbox_id"] = f.MailboxID
+		}
+		out = append(out, row)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
 }
 
 // automationMetrics caches the aggregated server metrics for a short TTL so a
