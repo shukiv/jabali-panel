@@ -15,12 +15,15 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -265,34 +268,20 @@ Mariadb-only in v1; postgres grants land via panel UI / admin REST.`,
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
-			repo := dbUserRepoFromDB()
-			du, err := repo.FindByID(ctx, dbUserID)
+			g, du, err := dbUserGrantCreate(ctx, dbGrantDeps{
+				agent:     sharedAgent,
+				dbUsers:   dbUserRepoFromDB(),
+				databases: repository.NewDatabaseRepository(sharedDB),
+				grants:    repository.NewDatabaseUserGrantRepository(sharedDB),
+			}, dbUserID, dbName, privileges, level)
 			if err != nil {
-				return fmt.Errorf("find db user: %w", err)
+				return err
 			}
-			if du.Engine != "mariadb" {
-				return fmt.Errorf("grant CLI only supports mariadb in v1; got %q (use admin REST/UI for postgres)", du.Engine)
+			cliAuditOK(ctx, "db_user.grant", "database_user_grant", g.ID, &du.UserID)
+			if jsonOutput {
+				return printJSON(g)
 			}
-			privs := privileges
-			if len(privs) == 0 {
-				switch level {
-				case "rw":
-					privs = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "INDEX"}
-				case "ro":
-					privs = []string{"SELECT"}
-				default:
-					return fmt.Errorf("--level must be 'rw' or 'ro' (got %q)", level)
-				}
-			}
-			if _, err := sharedAgent.Call(ctx, "db_user.grant", map[string]any{
-				"db_name":      dbName,
-				"db_user_name": du.Username,
-				"grant_level":  level,
-				"privileges":   privs,
-			}); err != nil {
-				return fmt.Errorf("agent db_user.grant: %w", err)
-			}
-			fmt.Fprintf(os.Stdout, "Granted %v on %s to %s\n", privs, dbName, du.Username)
+			fmt.Fprintf(os.Stdout, "Granted %s on %s to %s (grant id=%s)\n", g.Privileges, dbName, du.Username, g.ID)
 			return nil
 		},
 	}
@@ -302,4 +291,99 @@ Mariadb-only in v1; postgres grants land via panel UI / admin REST.`,
 	cmd.Flags().StringSliceVar(&privileges, "privileges", nil, "MariaDB privilege list (e.g. SELECT,INSERT,UPDATE)")
 	cmd.AddCommand(newDBUserGrantUpdateCmd(), newDBUserGrantRevokeCmd())
 	return cmd
+}
+
+// dbGrantDeps is the narrow slice of collaborators dbUserGrantCreate needs,
+// so the cobra RunE stays a thin wire-up over globals and the logic is
+// unit-testable with fakes.
+type dbGrantDeps struct {
+	agent     agent.AgentInterface
+	dbUsers   repository.DatabaseUserRepository
+	databases repository.DatabaseRepository
+	grants    repository.DatabaseUserGrantRepository
+}
+
+// dbUserGrantCreate applies a MariaDB grant to the engine AND persists the
+// matching database_user_grants desired-state row (JAB-284). Before this, the
+// CLI applied the engine grant with no row, so the grant was invisible to the
+// reconciler, the backup metadata builder, and the delete-cascade — and, having
+// no row, could not even be revoked via `db user grant revoke <id>`.
+//
+// Parity with the REST handler: same canonical privilege set (api.CanonicalDBGrant),
+// duplicate guard, and host-grant compensation on a persist failure.
+func dbUserGrantCreate(ctx context.Context, d dbGrantDeps, dbUserID, dbName string, privileges []string, level string) (*models.DatabaseUserGrant, *models.DatabaseUser, error) {
+	du, err := d.dbUsers.FindByID(ctx, dbUserID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("find db user: %w", err)
+	}
+	if du.Engine != "mariadb" {
+		return nil, nil, fmt.Errorf("grant CLI only supports mariadb in v1; got %q (use admin REST/UI for postgres)", du.Engine)
+	}
+	canonical, computedLevel, err := api.CanonicalDBGrant(privileges, level)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Owner-scoped resolution: match by exact name within the db-user's owner's
+	// databases. This makes the CLI strictly same-owner — narrower than the
+	// admin REST path, which may grant cross-user; cross-user grants stay
+	// REST/UI-only. It also validates the database exists + is owned.
+	dbs, _, err := d.databases.ListByUserID(ctx, du.UserID, repository.ListOptions{Limit: 1000})
+	if err != nil {
+		return nil, nil, fmt.Errorf("list databases: %w", err)
+	}
+	var db *models.Database
+	for i := range dbs {
+		if dbs[i].Name == dbName {
+			db = &dbs[i]
+			break
+		}
+	}
+	if db == nil {
+		return nil, nil, fmt.Errorf("database %q not found for this db user's owner (cross-user grants are REST/UI-only)", dbName)
+	}
+
+	// Duplicate guard BEFORE the agent call: a retry must error cleanly rather
+	// than re-grant and then have Create's unique-key failure compensate away a
+	// live grant. (A grant orphaned before this fix — engine yes, row no — slips
+	// past here, the re-grant no-ops, and Create adopts the orphan into desired
+	// state: the migration path for existing damage.)
+	if existing, _ := d.grants.FindByDBAndDBUser(ctx, db.ID, du.ID); existing != nil {
+		return nil, nil, fmt.Errorf("grant already exists for %s on %s (id=%s)", du.Username, db.Name, existing.ID)
+	}
+
+	if _, err := d.agent.Call(ctx, "db_user.grant", map[string]any{
+		"db_name":      db.Name,
+		"db_user_name": du.Username,
+		"privileges":   strings.Split(canonical, ","),
+	}); err != nil {
+		return nil, nil, fmt.Errorf("agent db_user.grant: %w", err)
+	}
+
+	now := time.Now().UTC()
+	g := &models.DatabaseUserGrant{
+		ID:             ids.NewULID(),
+		DatabaseID:     db.ID,
+		DatabaseUserID: du.ID,
+		GrantLevel:     computedLevel,
+		Privileges:     canonical,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := d.grants.Create(ctx, g); err != nil {
+		// Compensate: revoke the host grant we just applied so we never leave an
+		// engine grant with no desired-state row — the exact bug this closes.
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, rerr := d.agent.Call(rctx, "db_user.revoke", map[string]any{
+			"db_name":      db.Name,
+			"db_user_name": du.Username,
+			"privileges":   strings.Split(canonical, ","),
+		})
+		cancel()
+		if rerr != nil {
+			return nil, nil, fmt.Errorf("persist grant row failed (%v) AND the compensating revoke ALSO failed (%v) — an engine grant for %s on %s is now orphaned; revoke it directly on the DB engine", err, rerr, du.Username, db.Name)
+		}
+		return nil, nil, fmt.Errorf("persist grant row: %w (host grant rolled back)", err)
+	}
+	return g, du, nil
 }

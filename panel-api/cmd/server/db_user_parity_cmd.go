@@ -19,18 +19,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// privsForLevel maps the rw/ro shortcut to the MariaDB privilege list — the
-// same mapping the CLI grant-create uses.
-func privsForLevel(level string) []string {
-	switch level {
-	case "rw":
-		return []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "INDEX"}
-	case "ro":
-		return []string{"SELECT"}
-	}
-	return nil
-}
-
 func newDBUserRotatePasswordCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "rotate-password <db-user-id>",
@@ -138,7 +126,16 @@ func newDBUserGrantUpdateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("find database: %w", err)
 			}
-			verb, params := "db_user.grant", map[string]any{"db_name": db.Name, "db_user_name": du.Username, "grant_level": level, "privileges": privsForLevel(level)}
+			// JAB-284: canonicalise via the shared helper so the CLI update
+			// sends + persists the SAME normalised privilege set as create/REST
+			// (rw = ALL, not the old 8-item list — which stored as "custom" and
+			// diverged from the engine). MariaDB sends only `privileges`, exactly
+			// like the REST addGrant payload.
+			canonical, computedLevel, cerr := api.CanonicalDBGrant(nil, level)
+			if cerr != nil {
+				return cerr
+			}
+			verb, params := "db_user.grant", map[string]any{"db_name": db.Name, "db_user_name": du.Username, "privileges": strings.Split(canonical, ",")}
 			if du.Engine == "postgres" {
 				verb, params = "db.postgres.grant", map[string]any{"db_name": db.Name, "role": du.Username}
 			}
@@ -146,8 +143,14 @@ func newDBUserGrantUpdateCmd() *cobra.Command {
 				cliAuditErr(ctx, "db_user.grant_update", "database_user_grant", g.ID, &du.UserID)
 				return fmt.Errorf("agent %s: %w", verb, err)
 			}
-			if err := grants.UpdateLevel(ctx, g.ID, level); err != nil {
+			// Persist BOTH level and the canonical privilege set so the stored
+			// grant matches what the engine received (AC #4 — the update used to
+			// persist only the level, leaving the privilege set stale).
+			if err := grants.UpdateLevel(ctx, g.ID, computedLevel); err != nil {
 				return fmt.Errorf("persist grant level: %w", err)
+			}
+			if err := grants.UpdatePrivileges(ctx, g.ID, canonical); err != nil {
+				return fmt.Errorf("persist grant privileges: %w", err)
 			}
 			cliAuditOK(ctx, "db_user.grant_update", "database_user_grant", g.ID, &du.UserID)
 			fmt.Fprintf(os.Stdout, "Updated grant %s to %s on %s for %s\n", g.ID, level, db.Name, du.Username)

@@ -140,6 +140,38 @@ func privilegesToCanonicalString(privs []string) (string, error) {
 	return strings.Join(result, ","), nil
 }
 
+// CanonicalDBGrant resolves a grant's privilege inputs into the stored
+// canonical privilege string + the computed grant_level, applying the same
+// validation the REST handler and the operator CLI both use (JAB-284) so the
+// two adapters can never drift. Exactly one of an explicit privileges list or a
+// rw/ro level must be supplied: rw = ALL, ro = SELECT; a custom list that is
+// not exactly ALL/SELECT stores with level "custom".
+func CanonicalDBGrant(privileges []string, level string) (canonical, computedLevel string, err error) {
+	switch {
+	case len(privileges) > 0:
+		canonical, err = privilegesToCanonicalString(privileges)
+		if err != nil {
+			return "", "", err
+		}
+	case level == "rw":
+		canonical = "ALL"
+	case level == "ro":
+		canonical = "SELECT"
+	case level != "":
+		return "", "", fmt.Errorf("grant_level must be 'rw' or 'ro' (got %q)", level)
+	default:
+		return "", "", fmt.Errorf("either privileges or grant_level must be provided")
+	}
+	computedLevel = "custom"
+	switch canonical {
+	case "ALL":
+		computedLevel = "rw"
+	case "SELECT":
+		computedLevel = "ro"
+	}
+	return canonical, computedLevel, nil
+}
+
 // ---- Request/Response types ----
 
 type createDatabaseUserRequest struct {
@@ -556,37 +588,13 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		return
 	}
 
-	// Determine privileges to use: either from privileges array or fallback to grant_level.
-	var canonicalPrivileges string
-	if len(req.Privileges) > 0 {
-		// Validate and normalize privileges.
-		var err error
-		canonicalPrivileges, err = privilegesToCanonicalString(req.Privileges)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_privileges", "detail": err.Error()})
-			return
-		}
-	} else if req.GrantLevel != "" {
-		// Legacy path: translate grant_level to privileges.
-		if req.GrantLevel == "rw" {
-			canonicalPrivileges = "ALL"
-		} else if req.GrantLevel == "ro" {
-			canonicalPrivileges = "SELECT"
-		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant_level", "detail": "grant_level must be 'rw' or 'ro'"})
-			return
-		}
-	} else {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_privileges", "detail": "either privileges or grant_level must be provided"})
+	// Canonicalise the privilege set + compute the stored grant_level. Shared
+	// with the operator CLI (JAB-284) so both adapters validate + normalise
+	// privileges identically and can never drift.
+	canonicalPrivileges, computedGrantLevel, err := CanonicalDBGrant(req.Privileges, req.GrantLevel)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant", "detail": err.Error()})
 		return
-	}
-
-	// Compute grant_level from canonical privileges for backward compat.
-	computedGrantLevel := "custom"
-	if canonicalPrivileges == "ALL" {
-		computedGrantLevel = "rw"
-	} else if canonicalPrivileges == "SELECT" {
-		computedGrantLevel = "ro"
 	}
 
 	du, err := h.cfg.DatabaseUsers.FindByID(ctx, c.Param("id"))
