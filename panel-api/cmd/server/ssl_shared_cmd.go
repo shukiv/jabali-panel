@@ -247,6 +247,18 @@ func newSSLSharedDetachCmd() *cobra.Command {
 	return cmd
 }
 
+// sharedCertTeardown returns the source-aware agent teardown call for deleting a
+// shared certificate (JAB-317). An ACME shared cert is a certbot lineage — revoke
+// it so `certbot renew` stops and its DNS-01 hooks stop writing challenge records;
+// an uploaded cert is a file pair in the shared-certs dir. Mirrors
+// deleteSharedCert in internal/api/ssl_shared.go.
+func sharedCertTeardown(cert *models.SharedCertificate) (verb string, params map[string]any) {
+	if cert.Source == models.SharedCertSourceACME {
+		return "ssl.revoke", map[string]any{"domain": cert.ACMELineageName()}
+	}
+	return "ssl.delete_shared", map[string]any{"id": cert.ID}
+}
+
 func newSSLSharedDeleteCmd() *cobra.Command {
 	var id string
 	cmd := &cobra.Command{
@@ -271,7 +283,12 @@ func newSSLSharedDeleteCmd() *cobra.Command {
 			if err := repo.Delete(ctx, id); err != nil {
 				return fmt.Errorf("delete: %w", err)
 			}
-			_, _ = sharedAgent.Call(ctx, "ssl.delete_shared", map[string]any{"id": id})
+			// JAB-317: source-aware teardown, mirroring the HTTP handler. The CLI
+			// previously always called ssl.delete_shared, so deleting an ACME
+			// shared cert left its certbot lineage renewing + its DNS-01 hooks
+			// writing challenge records forever.
+			verb, params := sharedCertTeardown(cert)
+			_, _ = sharedAgent.Call(ctx, verb, params)
 			fmt.Printf("Deleted shared certificate %s.\n", id)
 			return nil
 		},
