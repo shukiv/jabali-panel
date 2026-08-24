@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -49,12 +50,11 @@ func newDBUserRotatePasswordCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("hash password: %w", err)
 			}
-			verb, params := "db_user.rotate_password", map[string]any{"db_user_name": du.Username, "password": plain}
-			if du.Engine == "postgres" {
-				// pg has no separate rotate; create_role's idempotent upsert ALTERs
-				// the password (mirrors the REST handler).
-				verb, params = "db.postgres.create_role", map[string]any{"role": du.Username, "password": plain}
-			}
+			// JAB-285: same engine-correct wire contract as the REST handler.
+			// The CLI previously sent `password` for the MariaDB rotate verb,
+			// but the agent field is `new_password` (empty → rejected), so CLI
+			// MariaDB rotation always failed. The shared helper prevents re-drift.
+			verb, params := api.DBUserRotateAgentCommand(du.Engine, du.Username, plain)
 			if _, err := sharedAgent.Call(ctx, verb, params); err != nil {
 				cliAuditErr(ctx, "db_user.rotate_password", "database_user", du.ID, &du.UserID)
 				return fmt.Errorf("agent %s: %w", verb, err)

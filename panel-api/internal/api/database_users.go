@@ -847,6 +847,20 @@ func (h *databaseUserHandler) delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// DBUserRotateAgentCommand returns the engine-correct agent verb + params for
+// rotating a database user's password. Shared by the REST handler and the
+// operator CLI so they can never drift on the wire contract (JAB-285): the
+// MariaDB rotate command's field is new_password — the CLI had regressed to
+// `password`, which the agent rejects as "new_password cannot be empty", so
+// CLI MariaDB rotation always failed. PostgreSQL has no separate rotate verb;
+// create_role's idempotent upsert ALTERs the password (field `password`).
+func DBUserRotateAgentCommand(engine, username, newPassword string) (verb string, params map[string]any) {
+	if engine == "postgres" {
+		return "db.postgres.create_role", map[string]any{"role": username, "password": newPassword}
+	}
+	return "db_user.rotate_password", map[string]any{"db_user_name": username, "new_password": newPassword}
+}
+
 func (h *databaseUserHandler) rotatePassword(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -898,17 +912,8 @@ func (h *databaseUserHandler) rotatePassword(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	if du.Engine == "postgres" {
-		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.create_role", map[string]any{
-			"role":     du.Username,
-			"password": plainPassword,
-		})
-	} else {
-		_, err = h.cfg.Agent.Call(agentCtx, "db_user.rotate_password", map[string]any{
-			"db_user_name": du.Username,
-			"new_password": plainPassword,
-		})
-	}
+	rotateVerb, rotateParams := DBUserRotateAgentCommand(du.Engine, du.Username, plainPassword)
+	_, err = h.cfg.Agent.Call(agentCtx, rotateVerb, rotateParams)
 	if err != nil {
 		respondAgentErr(c, "agent_failed", err)
 		return
