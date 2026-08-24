@@ -262,8 +262,33 @@ func promoteRestoreAccounts(ctx context.Context, s *models.ServerSettings) error
 				for _, a := range out.Applied {
 					fmt.Println("  applied:", a)
 				}
+				zeroAccounts := false
 				for _, w := range out.ApplyWarnings {
 					fmt.Println("  WARNING:", w)
+					if strings.Contains(w, "no account_backup manifest snapshots found") {
+						zeroAccounts = true
+					}
+				}
+				// GH #1169 gap 3 — hard-warn on an empty account restore. The
+				// drill's first promote "succeeded" while restoring ZERO tenant
+				// data, because `dr feed` ships only system_backup and no
+				// account_backup manifests ever reach the DR repo. That is a
+				// silent data-loss cutover: the box comes up, the reconciler
+				// builds vhosts, and every tenant's home/mail/DB is empty. Make
+				// it impossible to miss.
+				if zeroAccounts {
+					fmt.Println("")
+					fmt.Println("  ============================================================")
+					fmt.Println("  ⚠  NO TENANT DATA WAS RESTORED — the DR repo has no")
+					fmt.Println("     account_backup manifests. Every tenant's home directory,")
+					fmt.Println("     mail, and per-user databases will be EMPTY after promote.")
+					fmt.Println("")
+					fmt.Println("     Cause: the DR feed shipped only system backups. Ensure")
+					fmt.Println("     account-backup coverage to the DR destination (see")
+					fmt.Println("     `jabali dr feed`), let a cycle run, then re-restore before")
+					fmt.Println("     pointing live traffic here.")
+					fmt.Println("  ============================================================")
+					fmt.Println("")
 				}
 			}
 			return nil
