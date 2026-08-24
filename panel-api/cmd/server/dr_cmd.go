@@ -229,30 +229,58 @@ func newDRFeedCmd() *cobra.Command {
 			}
 
 			schedRepo := scheduleRepoFromDB()
-			// Idempotency: reuse an existing system_backup schedule already
-			// linked to this destination rather than stacking duplicates.
-			existing, ferr := findSystemScheduleForDest(ctx, schedRepo, destID)
+			// Idempotency: reuse the existing DR feed schedule linked to this
+			// destination rather than stacking duplicates.
+			existing, ferr := findDRScheduleForDest(ctx, schedRepo, destID)
 			if ferr != nil {
 				return ferr
 			}
 			if existing != nil {
+				// GH #1169 gap 3b: upgrade a legacy system-only DR feed to also
+				// ship account backups. Without account_backup manifests in the
+				// DR repo, promote's include_accounts restore finds nothing and
+				// every tenant comes up empty (the exact silent data-loss the
+				// promote hard-warn now shouts about). An account_backup schedule
+				// with no explicit users fans out to ALL non-admin tenants, and
+				// IncludeSystemBackup keeps the system backup on the same tick.
+				changed := false
+				if existing.Kind != models.BackupScheduleKindAccount || !existing.IncludeSystemBackup {
+					existing.Kind = models.BackupScheduleKindAccount
+					existing.IncludeSystemBackup = true
+					if existing.Content == "" {
+						existing.Content = "full"
+					}
+					changed = true
+				}
 				if !existing.Enabled {
 					existing.Enabled = true
-					if err := schedRepo.Update(ctx, existing); err != nil {
-						return fmt.Errorf("re-enable existing DR feed schedule: %w", err)
-					}
+					changed = true
 				}
-				fmt.Printf("DR feed already configured (schedule %s → %s); ensured enabled.\n", existing.ID, dest.Name)
+				if changed {
+					if err := schedRepo.Update(ctx, existing); err != nil {
+						return fmt.Errorf("update existing DR feed schedule: %w", err)
+					}
+					fmt.Printf("DR feed schedule %s → %s upgraded to ship account + system backups; ensured enabled.\n", existing.ID, dest.Name)
+				} else {
+					fmt.Printf("DR feed already configured (schedule %s → %s); ensured enabled.\n", existing.ID, dest.Name)
+				}
 				return nil
 			}
 
 			next, _ := internalbackup.NextFire(cron, time.Now().UTC())
+			// GH #1169 gap 3b: an account_backup schedule with NO explicit users
+			// fans out to every non-admin tenant, and IncludeSystemBackup fires
+			// the system backup on the same tick — so one DR feed schedule ships
+			// both the control plane AND all tenant data to the DR repo, which is
+			// what promote's include_accounts restore needs.
 			s := &models.BackupSchedule{
-				ID:        ids.NewULID(),
-				Kind:      models.BackupScheduleKindSystem,
-				CronExpr:  cron,
-				Enabled:   true,
-				NextRunAt: &next,
+				ID:                  ids.NewULID(),
+				Kind:                models.BackupScheduleKindAccount,
+				IncludeSystemBackup: true,
+				Content:             "full",
+				CronExpr:            cron,
+				Enabled:             true,
+				NextRunAt:           &next,
 			}
 			if err := schedRepo.Create(ctx, s); err != nil {
 				return fmt.Errorf("create DR feed schedule: %w", err)
@@ -260,12 +288,12 @@ func newDRFeedCmd() *cobra.Command {
 			if err := schedRepo.ReplaceDestinations(ctx, s.ID, []string{destID}); err != nil {
 				return fmt.Errorf("link DR feed schedule to destination: %w", err)
 			}
-			fmt.Printf("DR feed configured: system_backup schedule %s ships to %s on cron %q.\n", s.ID, dest.Name, cron)
+			fmt.Printf("DR feed configured: schedule %s ships all tenant account backups + the system backup to %s on cron %q.\n", s.ID, dest.Name, cron)
 			fmt.Println("Pair the standby against this same destination with `jabali dr pair --destination <id>`.")
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&destID, "destination", "", "DR backup destination ID to ship system backups to")
+	cmd.Flags().StringVar(&destID, "destination", "", "DR backup destination ID to ship system + account backups to")
 	cmd.Flags().StringVar(&cron, "cron", "", "cron cadence for the DR feed (default hourly, \"0 * * * *\")")
 	return cmd
 }
@@ -316,15 +344,29 @@ func newDRUnfeedCmd() *cobra.Command {
 	return cmd
 }
 
-// findSystemScheduleForDest returns the first enabled-or-disabled system_backup
-// schedule whose destination set includes destID, or nil if none exists.
-func findSystemScheduleForDest(ctx context.Context, repo repository.BackupScheduleRepository, destID string) (*models.BackupSchedule, error) {
+// isDRFeedSchedule reports whether a schedule is a DR feed schedule for the
+// given destination-membership check to consider. Two shapes qualify:
+//   - legacy kind=system_backup (pre-GH #1169: system state only), and
+//   - kind=account_backup with IncludeSystemBackup=true (GH #1169 gap 3b: ships
+//     BOTH all tenants' account backups AND the system backup on one schedule).
+//
+// IncludeSystemBackup on an account schedule is a reliable DR marker: tenants
+// never set it (it's an admin/DR construct), so it doesn't collide with an
+// ordinary tenant account schedule that happens to target the same destination.
+func isDRFeedSchedule(s *models.BackupSchedule) bool {
+	return s.Kind == models.BackupScheduleKindSystem ||
+		(s.Kind == models.BackupScheduleKindAccount && s.IncludeSystemBackup)
+}
+
+// findDRScheduleForDest returns the first enabled-or-disabled DR feed schedule
+// whose destination set includes destID, or nil if none exists.
+func findDRScheduleForDest(ctx context.Context, repo repository.BackupScheduleRepository, destID string) (*models.BackupSchedule, error) {
 	all, err := repo.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list backup schedules: %w", err)
 	}
 	for i := range all {
-		if all[i].Kind != models.BackupScheduleKindSystem {
+		if !isDRFeedSchedule(&all[i]) {
 			continue
 		}
 		dests, derr := repo.GetDestinations(ctx, all[i].ID)
@@ -361,7 +403,7 @@ func tearDownDRFeed(
 	destID string,
 ) (drFeedTeardown, error) {
 	var res drFeedTeardown
-	sched, err := findSystemScheduleForDest(ctx, schedRepo, destID)
+	sched, err := findDRScheduleForDest(ctx, schedRepo, destID)
 	if err != nil {
 		return res, err
 	}
