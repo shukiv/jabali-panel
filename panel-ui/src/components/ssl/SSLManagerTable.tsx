@@ -359,38 +359,35 @@ export const SSLManagerTable = ({
       },
     },
     {
-      title: "Last check",
-      dataIndex: "last_attempt_at",
-      sorter: (a: SSLCertificate, b: SSLCertificate) => (a.last_attempt_at ? +new Date(a.last_attempt_at) : 0) - (b.last_attempt_at ? +new Date(b.last_attempt_at) : 0),
-      key: "last_attempt_at",
-      render: (dateStr: string | null) => {
-        if (!dateStr) return "—";
-        try {
-          const date = new Date(dateStr);
-          return date.toLocaleString();
-        } catch {
-          return "—";
-        }
-      },
-    },
-    {
-      title: "Issued",
-      dataIndex: "issued_at",
-      sorter: (a: SSLCertificate, b: SSLCertificate) => (a.issued_at ? +new Date(a.issued_at) : 0) - (b.issued_at ? +new Date(b.issued_at) : 0),
-      key: "issued_at",
-      render: (dateStr: string | null) => formatDate(dateStr),
-    },
-    {
       title: "Expires",
       dataIndex: "expires_at",
       sorter: (a: SSLCertificate, b: SSLCertificate) => (a.expires_at ? +new Date(a.expires_at) : 0) - (b.expires_at ? +new Date(b.expires_at) : 0),
       key: "expires_at",
       render: (dateStr: string | null, record: SSLCertificate) => {
+        // Issued + Last check fold into this column as a muted second
+        // line — three near-empty date columns collapsed into one.
+        const metaParts = [
+          record.issued_at ? `issued ${formatDate(record.issued_at)}` : null,
+          record.last_attempt_at
+            ? `checked ${new Date(record.last_attempt_at).toLocaleString()}`
+            : null,
+        ].filter(Boolean);
+        const meta = metaParts.length > 0 && (
+          <Typography.Text type="secondary" style={{ fontSize: 12, display: "block" }}>
+            {metaParts.join(" · ")}
+          </Typography.Text>
+        );
+        const withMeta = (main: JSX.Element) => (
+          <Space direction="vertical" size={0}>
+            {main}
+            {meta}
+          </Space>
+        );
         if (record.status === "self_signed") {
-          return (
+          return withMeta(
             <Typography.Text type="secondary">
               {formatDate(dateStr)} <em>(self-signed)</em>
-            </Typography.Text>
+            </Typography.Text>,
           );
         }
         // Failed / retry-pending rows have no meaningful expiry — show the
@@ -399,20 +396,20 @@ export const SSLManagerTable = ({
           const retryAt = record.next_retry_at
             ? new Date(record.next_retry_at).toLocaleString()
             : null;
-          return (
+          return withMeta(
             <Typography.Text type="secondary">
               {retryAt ? `retry ${retryAt}` : "—"}
               {record.retry_count ? ` · attempt ${record.retry_count}` : ""}
-            </Typography.Text>
+            </Typography.Text>,
           );
         }
         const days = daysUntilExpiry(dateStr);
         const fraction = expiryFraction(dateStr);
-        if (days === null || fraction === null) return formatExpiry(dateStr);
+        if (days === null || fraction === null) return withMeta(formatExpiry(dateStr));
         // Days-left meter over a 90-day LE lifetime: green >30d, orange ≤30d,
         // red ≤14d/expired. Date + relative label stay on hover.
         const color = days <= 14 ? "#ff4d4f" : days <= 30 ? "#fa8c16" : "#52c41a";
-        return (
+        return withMeta(
           <Tooltip title={formatExpiry(dateStr)}>
             <Space size={8}>
               <span
@@ -440,7 +437,7 @@ export const SSLManagerTable = ({
                 {days < 0 ? "expired" : `${days} d`}
               </Typography.Text>
             </Space>
-          </Tooltip>
+          </Tooltip>,
         );
       },
     },
