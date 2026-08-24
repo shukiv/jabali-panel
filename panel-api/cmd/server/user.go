@@ -364,7 +364,17 @@ func newUserPasswordCmd() *cobra.Command {
 			// Kratos. Login is via Kratos but several legacy paths
 			// (BootstrapAdmin idempotency check, password_hash audit columns)
 			// still read the DB hash.
-			if err := userRepo().Update(ctx, &models.User{ID: target.ID, Email: target.Email, PasswordHash: string(hash)}); err != nil {
+			// JAB-280: update the FULLY-LOADED target row, not a partial
+			// &User{ID,Email,PasswordHash}. userRepo().Update carries a
+			// Select-allowlist (name_first, name_last, linux_uid, package_id,
+			// webmail_enabled, …) that force-writes those columns even at zero
+			// value — so the old partial-model call nulled the user's Linux UID
+			// and package and wiped their names/webmail on every password reset.
+			// `target` came from resolveUser (a full SELECT *), so writing it back
+			// keeps every unrelated field at its current value; only the hash
+			// changes.
+			target.PasswordHash = string(hash)
+			if err := userRepo().Update(ctx, target); err != nil {
 				fmt.Fprintln(os.Stderr, "warning: kratos updated but DB hash sync failed:", err)
 			}
 
