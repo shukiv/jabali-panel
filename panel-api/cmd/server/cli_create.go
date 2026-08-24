@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -168,13 +169,35 @@ func createUserDirect(ctx context.Context, in cliUserInput) (*models.User, strin
 	if sharedAgent != nil && !in.IsAdmin && effectiveUsername != nil {
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if _, err := sharedAgent.Call(agentCtx, "user.create", map[string]any{
+		raw, err := sharedAgent.Call(agentCtx, "user.create", map[string]any{
 			"username": *effectiveUsername,
 			"home_dir": "/home/" + *effectiveUsername,
-			"shell":    "/bin/bash",
+			// JAB-277 (security): the hardened Jabali SSH shell, matching the
+			// REST + userops paths. The CLI used to provision /bin/bash, so a
+			// CLI-created tenant got an UNRESTRICTED login shell — bypassing the
+			// SSH sandbox (restricted shell + forwarding lockdown) every other
+			// creation path enforces.
+			"shell":    "/usr/local/bin/jabali-ssh-shell",
 			"password": in.Password,
-		}); err != nil {
+		})
+		if err != nil {
 			warning = "user saved but OS provisioning failed: " + err.Error()
+		} else {
+			// JAB-277 / JAB-33 parity: persist the provisioned OS UID so
+			// users.linux_uid isn't left NULL for CLI-created accounts (egress
+			// policy, quotas, and SFTP all map the panel row through linux_uid).
+			// Best-effort; `u` is the fully-built row, so Update writes it back
+			// unchanged plus the UID (no partial-model clobber — cf. JAB-280).
+			var pr struct {
+				UID int `json:"uid"`
+			}
+			if jErr := json.Unmarshal(raw, &pr); jErr == nil && pr.UID > 0 {
+				uid := uint32(pr.UID)
+				u.LinuxUID = &uid
+				if uErr := users.Update(ctx, u); uErr != nil {
+					slog.Warn("cli create: persist linux_uid failed", "user_id", u.ID, "uid", pr.UID, "err", uErr)
+				}
+			}
 		}
 	}
 
