@@ -250,14 +250,19 @@ export const MyProfileBackupCard = () => {
               <RowActions
                 actions={[
                   // GH #1044: Download + Restore only make sense on a backup
-                  // artifact. A restore row has no snapshot to download and
-                  // isn't itself restorable — gate both off it (Download would
-                  // hard-fail, no snapshot).
+                  // artifact, not a restore-history row (no snapshot to download,
+                  // not itself restorable). JAB-327: a `partial` backup has a
+                  // valid snapshot too — a non-critical stage failed but the
+                  // manifest was written — so it is DOWNLOADABLE (mirrors admin +
+                  // the backend's succeeded|partial download gate; a snapshotless
+                  // job is still hard-rejected server-side). Restore stays
+                  // succeeded-only (a partial account backup is not a safe restore
+                  // source).
+                  ...(!isRestoreRow(row) && (row.status === "succeeded" || row.status === "partial")
+                    ? [{ key: "download", label: "Download", icon: <DownloadOutlined />, onClick: () => { const act = getActAs(); downloadUrl(`/api/v1/me/backups/${row.id}/download${act ? `?act_as=${encodeURIComponent(act.id)}` : ""}`); } }]
+                    : []),
                   ...(!isRestoreRow(row) && row.status === "succeeded"
-                    ? [
-                        { key: "download", label: "Download", icon: <DownloadOutlined />, onClick: () => { const act = getActAs(); downloadUrl(`/api/v1/me/backups/${row.id}/download${act ? `?act_as=${encodeURIComponent(act.id)}` : ""}`); } },
-                        { key: "restore", label: "Restore", icon: <ReloadOutlined />, onClick: () => setRestoreId(row.id) },
-                      ]
+                    ? [{ key: "restore", label: "Restore", icon: <ReloadOutlined />, onClick: () => setRestoreId(row.id) }]
                     : []),
                   {
                     key: "delete",
