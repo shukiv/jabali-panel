@@ -2,6 +2,14 @@ module git.jabali-panel.com/shukivaknin/jabali2
 
 go 1.25.0
 
+// JAB-383: pin a minimum toolchain that carries the go1.25.2..go1.25.13 stdlib
+// security fixes (39 govulncheck-reachable CVEs: os.Root symlink+trailing-slash
+// root escape, net/mail + mime parsing DoS, archive/zip|tar extraction DoS,
+// crypto/tls + x509 + net/http). GOTOOLCHAIN=auto uses this when the local go is
+// older (e.g. the build-local-and-scp deploy path), and the newer installer Go
+// otherwise — so no build, wherever it runs, ships the vulnerable stdlib.
+toolchain go1.25.13
+
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/DATA-DOG/go-sqlmock v1.5.2

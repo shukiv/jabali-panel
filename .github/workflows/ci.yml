@@ -33,7 +33,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.25.13"
   NODE_VERSION: "20"
 
 jobs:

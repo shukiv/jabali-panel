@@ -23,7 +23,7 @@ permissions:
   pull-requests: write
 
 env:
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.25.13"
 
 jobs:
   bump:
