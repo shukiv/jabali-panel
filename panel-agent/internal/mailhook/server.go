@@ -50,6 +50,17 @@ type Handler struct {
 // accept is the passthrough response: deliver unchanged.
 var accept = hookResponse{Action: "accept"}
 
+// MaxRequestBytes bounds the hook request body before it is JSON-decoded
+// (JAB-384 defense-in-depth). The body carries the full inbound message —
+// attacker-influenced content that reaches net/mail + mime + textproto parsers.
+// The go1.25.13 toolchain (JAB-383) fixes the known quadratic/excessive-CPU
+// stdlib bugs; this cap additionally bounds memory so a pathological or
+// mis-sized message can never be read unbounded regardless of the MTA's own
+// size limit. 64 MiB comfortably clears a JSON-wrapped message at typical MTA
+// caps (~25–50 MiB raw); an over-cap body fails the decode, which already
+// fails open (deliver unchanged, never bounce). A var so tests can shrink it.
+var MaxRequestBytes int64 = 64 << 20
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -60,6 +71,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBytes)
 	var req hookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		// Malformed request: fail open so mail still flows.
