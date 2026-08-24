@@ -72,6 +72,12 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// the reconciler's orphan reaper (php.pool.reap-orphans) is the backstop.
 	reapUserFPMPools(ctx, p.Username)
 
+	// JAB-225: tear down the legacy per-user PHP nspawn unit
+	// (systemd-nspawn@<user>-php.service). Best-effort; the install.sh
+	// converger reap_orphan_nspawn_php_units is the self-heal backstop for
+	// units orphaned before this shipped.
+	reapUserNspawnPHPUnit(ctx, p.Username)
+
 	// Remove the per-user slice BEFORE userdel so systemd can still resolve the UID
 	// while stopping user@<uid>.service.
 	sliceParams, _ := json.Marshal(map[string]string{"username": p.Username}) // GH #694: Marshal, not string-concat

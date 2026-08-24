@@ -15127,6 +15127,43 @@ ensure_stalwart_not_in_panel_group() {
   fi
 }
 
+# reap_orphan_nspawn_php_units — JAB-225 self-heal for orphaned per-user PHP
+# nspawn units. Current code never creates systemd-nspawn@<user>-php.service
+# (bubblewrap replaced per-user nspawn containers), but a box carried over from
+# the M13-nspawn era can still have units enabled for accounts that were later
+# deleted. With the account and its machine image gone, an enabled unit fails on
+# EVERY boot ("No image for machine '<user>-php'"), permanently padding
+# `systemctl --failed` — a health signal operators are trained to trust. The
+# user.delete path now tears these down inline; this converger cleans up the
+# ones orphaned before that shipped, on every `jabali update`.
+#
+# Double guard: reap only when BOTH the OS user is gone AND no machine image
+# remains — a live container always has an image, so a real workload can never
+# be caught here even if a username is mis-parsed.
+reap_orphan_nspawn_php_units() {
+  local reaped=0 link svc inst user
+  shopt -s nullglob
+  # Enabled template instances surface as .wants symlinks (that is literally
+  # what `systemctl enable` creates) — dependency-free to enumerate.
+  for link in /etc/systemd/system/*.wants/systemd-nspawn@*-php.service; do
+    svc=$(basename "$link")          # systemd-nspawn@<inst>.service
+    inst=${svc#systemd-nspawn@}      # <inst>.service
+    inst=${inst%.service}            # <inst>  (== <user>-php)
+    user=${inst%-php}                # <user>
+    [[ -z "$user" || "$user" == "$inst" ]] && continue
+    id "$user" >/dev/null 2>&1 && continue          # OS user still exists → keep
+    [[ -e "/var/lib/machines/${inst}" ]] && continue # image present → keep
+    systemctl disable --now "$svc" >/dev/null 2>&1 || true
+    systemctl reset-failed "$svc" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/nspawn/${inst}.nspawn" 2>/dev/null || true
+    reaped=$((reaped + 1))
+  done
+  shopt -u nullglob
+  if [[ "$reaped" -gt 0 ]]; then
+    _ok "reaped $reaped orphaned per-user PHP nspawn unit(s) (JAB-225)"
+  fi
+}
+
 # provision_php_extensions — self-heal PHP runtime extensions on every
 # `jabali update`. install_base_packages installs the ext set only on a full
 # install and only for JABALI_PHP_VERSIONS, so a newly-required extension (e.g.
@@ -15212,6 +15249,11 @@ provision_new_software() {
   # group is dead weight for mail and let a mail compromise reach the root Agent
   # socket at the FS layer.
   ensure_stalwart_not_in_panel_group
+
+  # JAB-225: reap per-user PHP nspawn units orphaned before user.delete learned
+  # to tear them down — else each fails on every boot and pads `systemctl
+  # --failed` forever.
+  reap_orphan_nspawn_php_units
 
   # GH #860: retrofit the default-vhost catch-all include onto existing
   # boxes. install_disabled_page is seed-only now (never clobbers operator
