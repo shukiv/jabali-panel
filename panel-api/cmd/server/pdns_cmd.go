@@ -57,17 +57,13 @@ func newPdnsDNSSECEnableCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("dns.dnssec_enable: %w", err)
 			}
-			var resp struct {
-				Ok   bool `json:"ok"`
-				Keys []struct {
-					KeyTag    int    `json:"key_tag"`
-					KeyType   string `json:"key_type"`
-					Algorithm uint8  `json:"algorithm"`
-					PublicKey string `json:"public_key"`
-					Active    bool   `json:"active"`
-				} `json:"keys"`
+			// JAB-322 fail closed: only flip the DB flag on a well-formed,
+			// ok=true reply. A malformed / ok=false reply leaves DNSSEC state
+			// unchanged (the old `_ = json.Unmarshal` flipped it regardless).
+			resp, ok := models.ParseDNSSECEnableReply(raw)
+			if !ok {
+				return fmt.Errorf("dns.dnssec_enable returned a malformed or unsuccessful reply; DNSSEC state left unchanged")
 			}
-			_ = json.Unmarshal(raw, &resp)
 			if err := domainRepoFromDB().UpdateDNSSECEnabled(ctx, dom.ID, true); err != nil {
 				return fmt.Errorf("update dnssec flag: %w", err)
 			}
@@ -85,7 +81,13 @@ func newPdnsDNSSECEnableCmd() *cobra.Command {
 					ObservedAt: now,
 				})
 			}
-			_ = keysRepo.ReplaceAll(ctx, dom.ID, cached)
+			// AC #2: a key-cache persist failure must be visible. The enable
+			// itself succeeded (the zone is signed), so this warns rather than
+			// failing the command; `status` re-lists from the cache and `get`
+			// refreshes live, so the miss self-heals.
+			if err := keysRepo.ReplaceAll(ctx, dom.ID, cached); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: DNSSEC enabled for %s but key cache not persisted: %v\n", dom.Name, err)
+			}
 			if jsonOutput {
 				return printJSON(resp)
 			}
@@ -152,7 +154,19 @@ func newPdnsDNSSECDSCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
-			raw, err := sharedAgent.Call(ctx, "dns.dnssec_ds_export", map[string]any{"domain_name": args[0]})
+			// AC #3: DS export requires DNSSEC to be enabled for the zone.
+			// Exporting DS for an unsigned zone would tempt an operator to
+			// publish it at the registrar, which breaks resolution (resolvers
+			// expect a signed zone). The lookup also validates the domain
+			// exists before hitting the agent. Mirrors the HTTP dsExport 409.
+			dom, err := domainRepoFromDB().FindByName(ctx, args[0])
+			if err != nil {
+				return fmt.Errorf("lookup domain %q: %w", args[0], err)
+			}
+			if !dom.DNSSECEnabled {
+				return fmt.Errorf("DNSSEC is not enabled for %s — run `jabali pdns dnssec enable %s` first; publishing DS for an unsigned zone breaks resolution", dom.Name, dom.Name)
+			}
+			raw, err := sharedAgent.Call(ctx, "dns.dnssec_ds_export", map[string]any{"domain_name": dom.Name})
 			if err != nil {
 				return fmt.Errorf("dns.dnssec_ds_export: %w", err)
 			}

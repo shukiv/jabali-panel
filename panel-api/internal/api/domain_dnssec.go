@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -33,6 +34,10 @@ func RegisterDomainDNSSECRoutes(g *gin.RouterGroup, cfg DomainDNSSECHandlerConfi
 }
 
 type domainDNSSECHandler struct{ cfg DomainDNSSECHandlerConfig }
+
+// errMalformedDNSSECReply is returned (as a 502) when dns.dnssec_enable comes
+// back malformed or ok=false — JAB-322 fail-closed: the DB flag stays as-is.
+var errMalformedDNSSECReply = errors.New("dns.dnssec_enable returned a malformed or unsuccessful reply")
 
 type dnssecKey struct {
 	KeyTag    int    `json:"key_tag"`
@@ -147,19 +152,18 @@ func (h *domainDNSSECHandler) update(c *gin.Context) {
 			return
 		}
 		if req.Enabled {
-			var agentResp struct {
-				Ok   bool `json:"ok"`
-				Keys []struct {
-					KeyTag    int    `json:"key_tag"`
-					KeyType   string `json:"key_type"`
-					Algorithm uint8  `json:"algorithm"`
-					PublicKey string `json:"public_key"`
-					Active    bool   `json:"active"`
-				} `json:"keys"`
+			// JAB-322 fail closed: a malformed or ok=false reply must NOT flip
+			// dnssec_enabled — return 502 with the DB row untouched (the agent
+			// enable did not verifiably succeed). A transport failure is already
+			// an error handled above; this guards the success-with-garbage-body
+			// case the old `_ = json.Unmarshal` silently accepted.
+			reply, ok := models.ParseDNSSECEnableReply(raw)
+			if !ok {
+				respondAgentErr(c, "agent_error", errMalformedDNSSECReply)
+				return
 			}
-			_ = json.Unmarshal(raw, &agentResp)
 			now := time.Now().UTC()
-			for _, k := range agentResp.Keys {
+			for _, k := range reply.Keys {
 				liveKeys = append(liveKeys, models.DomainDNSSECKey{
 					DomainID:   dom.ID,
 					KeyTag:     k.KeyTag,
