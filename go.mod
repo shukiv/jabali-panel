@@ -29,6 +29,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/muesli/termenv v0.16.0
 	github.com/oklog/ulid/v2 v2.1.2
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
@@ -74,7 +75,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
@@ -91,7 +92,6 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/oschwald/maxminddb-golang v1.13.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
