@@ -356,20 +356,9 @@ func newPHPPoolReapplyAllCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
-			repo := repository.NewPHPPoolRepository(sharedDB)
-			pools, _, err := repo.ListAll(ctx, repository.ListOptions{Limit: 100000})
+			n, err := markActivePoolsPending(ctx, repository.NewPHPPoolRepository(sharedDB))
 			if err != nil {
-				return fmt.Errorf("list pools: %w", err)
-			}
-			n := 0
-			for i := range pools {
-				if pools[i].Status != "active" {
-					continue
-				}
-				if err := repo.SetStatus(ctx, pools[i].ID, "pending", nil); err != nil {
-					return fmt.Errorf("mark pool %s pending: %w", pools[i].ID, err)
-				}
-				n++
+				return err
 			}
 			fmt.Printf("marked %d active pool(s) pending; reconciler will re-render them from the template\n", n)
 			return nil
