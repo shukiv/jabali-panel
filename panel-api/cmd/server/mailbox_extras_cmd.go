@@ -339,9 +339,11 @@ func newMailboxForwarderAddCmd() *cobra.Command {
 			if fwdType == "alias" {
 				lp := localPart
 				f.LocalPart = &lp
-				// Alias target = the mailbox itself; matches the HTTP
-				// handler's default when target is omitted.
-				f.Target = mb.LocalPart + "@" + dom.Name
+				// Alias target = the alias's OWN address, matching the HTTP
+				// handler. It had regressed to the mailbox address, so a
+				// mailbox's 2nd alias collided on uq_external_forward and
+				// failed (GH #280 / JAB-319). Shared helper = no re-drift.
+				f.Target = models.AliasForwarderTarget(localPart, dom.Name)
 			} else {
 				f.Target = target
 				f.KeepCopy = keepCopy

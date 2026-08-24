@@ -220,7 +220,7 @@ func (h *forwarderHandler) create(c *gin.Context) {
 		// key and failed (GH #280). Store the alias's OWN address, which is unique
 		// per alias, so a mailbox can hold many aliases.
 		if req.Type == "alias" {
-			req.Target = req.LocalPart + "@" + dom.Name
+			req.Target = models.AliasForwarderTarget(req.LocalPart, dom.Name)
 		} else {
 			req.Target = mb.LocalPart + "@" + dom.Name
 		}

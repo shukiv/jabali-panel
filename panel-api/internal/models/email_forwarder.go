@@ -27,3 +27,20 @@ type EmailForwarder struct {
 }
 
 func (EmailForwarder) TableName() string { return "email_forwarders" }
+
+// AliasForwarderTarget is the canonical value stored in
+// email_forwarders.target for an ALIAS forwarder: the alias's OWN address
+// (aliasLocalPart@domain).
+//
+// The target column is unused at apply time (alias delivery is by
+// local_part -> mailbox), but it is part of the
+// uq_external_forward(mailbox_id, type, target) unique key. Every alias used
+// to default to the SAME mailbox address, so a mailbox's SECOND alias collided
+// on that key and failed (GH #280). Using the alias's own address keeps the
+// value unique per alias, so one mailbox can hold many aliases.
+//
+// The HTTP handler and the CLI both call this so they can never drift on the
+// stored target again (JAB-319: the CLI had regressed to the mailbox address).
+func AliasForwarderTarget(aliasLocalPart, domain string) string {
+	return aliasLocalPart + "@" + domain
+}
