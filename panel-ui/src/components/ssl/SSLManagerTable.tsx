@@ -503,7 +503,7 @@ export const SSLManagerTable = ({
           if (key === "retry") retryMutation.mutate(record.domain_id);
           else if (key === "error") setErrorRow(record);
           else if (key === "revoke") {
-            Modal.confirm({
+            feedback.modal.confirm({
               title: t("sslmanagertable.revoke_certificate"),
               content: t("sslmanagertable.are_you_sure_you_want_to_revoke_this_certifi"),
               okText: t("sslmanagertable.yes"),
