@@ -699,6 +699,14 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 				continue
 			}
 			applied = append(applied, "panel_config → /etc/jabali-panel")
+			// GH #1169 gap 4: rsync preserved the SOURCE box's numeric uid/gid, so
+			// on a cross-host restore /etc/jabali-panel files owned by system
+			// accounts (jabali, jabali-mail) whose ids differ here become
+			// unreadable by the local panel. Re-point them by NAME using the
+			// restore's own os_users.json.
+			ownApplied, ownWarn := normalizePanelConfigOwnership(stagingRoot, "/etc/jabali-panel")
+			applied = append(applied, ownApplied...)
+			warnings = append(warnings, ownWarn...)
 		case backup.StageTLS:
 			if err := rsyncStageOnto(ctx, stageDir, "/etc/letsencrypt", nil); err != nil {
 				warnings = append(warnings, fmt.Sprintf("tls: %v", err))
