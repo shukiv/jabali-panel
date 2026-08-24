@@ -50,6 +50,15 @@ the two boxes is the one-way backup destination (least privilege).
 4. The standby box installed with the same Jabali version as the primary. A
    standby running an older binary against a newer schema will fail to apply the
    restore — keep versions in lockstep.
+5. **A fresh/minimal standby box.** The account-materialisation at promote
+   (`os_users` merge) is deliberately **add-only**: it creates the primary's
+   tenant Linux users/groups with their *source* uid/gid, but it will **skip**
+   any name whose wanted uid/gid is already taken by a squatter on the standby.
+   So any local account occupying a uid ≥ 1000 (a leftover admin user, a manual
+   `useradd`, a prior tenant) can block a tenant from materialising — its home
+   restore then rsyncs into the wrong owner and the reconciler loops on "unknown
+   user". Pair a box with no pre-existing hosting accounts; a bare panel install
+   is ideal.
 
 ## Setup
 
@@ -160,6 +169,15 @@ jabali dr unpair        # role → primary, clears pairing; reconciler resumes
 | Standby accepts a write | It should 409. If not, confirm `server_role=standby` in `server_settings` and that `StandbyReadOnly` is wired (`panel-api/internal/app/app.go`). |
 | Promotion refused "primary still answers" | The old primary is reachable on 443/22. Confirm it is down, or `--force` if you have isolated it. |
 | Post-promote: domains 404 | Give the reconciler a tick, then `systemctl status jabali-panel`; force with the reconciler's periodic pass or restart the service. |
+| After a crash mid-restore, box reads `role=primary` | A tick's `system.restore` replaces `server_settings` with the primary's row (role=primary, no pairing); the standby re-stamps its own identity a moment later. A crash landing **in that window** leaves the box reading as a primary. Recovery: re-run `jabali dr pair --destination <id>` to re-stamp the standby role. The sync error text already points at this. |
+| Post-promote: a same-uid FTP alias subaccount is missing / can't log in | Same-uid FTP alias subaccounts (GH #1053) share a tenant's uid, so the `os_users` merge cannot create them (`useradd` refuses a non-unique uid) — they are skipped by design. Re-materialise them from the panel DB after promote via the normal `ftpaccount.*` flows (recreate the alias), or reset the affected account's password. |
+
+**Watching for a stalling replica.** A standby that stops applying snapshots now
+surfaces two ways without shelling into it: the **`dr.sync.stalled`** notification
+(fires once the last applied snapshot ages past ~5 sync cycles, re-arms on a fresh
+sync) and the **Disaster Recovery card** on the admin **Server Status** page
+(role / peer / last-sync age with an *In sync* / *Sync error* / *Stalled* badge).
+Enable a notification channel so the alert reaches you before you need to promote.
 
 ## Testing note
 
