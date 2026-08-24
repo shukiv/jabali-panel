@@ -15,6 +15,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -444,14 +445,8 @@ func newDockerAppDeleteCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			// Cleanup managed domain row + ports + the docker_apps row.
-			domRepo := repository.NewDomainRepository(sharedDB)
-			domList, _, _ := domRepo.List(ctx, repository.ListOptions{})
-			for _, d := range domList {
-				if d.DockerAppID != nil && *d.DockerAppID == app.ID {
-					_ = domRepo.Delete(ctx, d.ID)
-				}
-			}
+			// Cleanup domains + ports + the docker_apps row.
+			cleanupDockerAppDomains(ctx, repository.NewDomainRepository(sharedDB), sharedAgent, app.ID)
 			ports, _ := repo.ListPortsForApp(ctx, app.ID)
 			for _, p := range ports {
 				_ = repo.DeletePort(ctx, p.ID)
@@ -466,6 +461,36 @@ func newDockerAppDeleteCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&keepVolumes, "keep-volumes", false, "keep /var/lib/jabali/docker-apps/<slug> data on disk")
 	return cmd
+}
+
+// cleanupDockerAppDomains removes an app's auto-created MANAGED domains (+ their
+// proxy vhosts) and DETACHES — never deletes — a tenant's own domain attached to
+// a reverse-proxy app. JAB-364: the CLI delete previously deleted EVERY domain
+// row with docker_app_id = appID, destroying user-owned domains the HTTP handler
+// (docker_apps_user.go) preserves. Shared so the CLI matches that behaviour.
+func cleanupDockerAppDomains(ctx context.Context, domRepo repository.DomainRepository, ag agent.AgentInterface, appID string) {
+	domList, _, _ := domRepo.List(ctx, repository.ListOptions{})
+	for _, d := range domList {
+		if d.DockerAppID == nil || *d.DockerAppID != appID {
+			continue
+		}
+		if d.ManagedBy == models.DomainManagedByDockerApp {
+			// Hostname we auto-created for this app at install — remove the row
+			// and tear down its proxy vhost.
+			domName := d.Name
+			_ = domRepo.Delete(ctx, d.ID)
+			if ag != nil && domName != "" {
+				rmCtx, rmCancel := context.WithTimeout(ctx, 30*time.Second)
+				_, _ = ag.Call(rmCtx, "docker_app.vhost_remove",
+					map[string]string{"domain_name": domName})
+				rmCancel()
+			}
+		} else {
+			// The tenant's own pre-existing domain — keep the row, just detach
+			// the app link + clear the injected proxy_pass rule.
+			_ = domRepo.DetachDockerApp(ctx, d.ID, true)
+		}
+	}
 }
 
 func newDockerAppLogsCmd() *cobra.Command {
