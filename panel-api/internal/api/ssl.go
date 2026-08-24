@@ -507,6 +507,11 @@ type sslListRow struct {
 	repository.SSLCertificateWithDomain
 	Service string   `json:"service"`
 	SANs    []string `json:"sans"`
+	// SSLMode surfaces the domain's ssl_mode (le/self/custom/none/shared)
+	// so the SSL Manager can render a Mode column. Shadows the embedded
+	// struct's internal `json:"-"` field. Empty for panel-cert:*/mail-cert:*
+	// synthetic rows, which have no domain ssl_mode.
+	SSLMode string `json:"ssl_mode,omitempty"`
 }
 
 // enrichCertRows attaches Service + SANs to every cert row. SANs are
@@ -530,6 +535,7 @@ func (h *sslHandler) enrichCertRows(ctx context.Context, certs []repository.SSLC
 		default:
 			row.Service = "HTTPS"
 			row.SANs = h.webCertSANs(ctx, c)
+			row.SSLMode = c.SSLMode
 		}
 		out = append(out, row)
 	}

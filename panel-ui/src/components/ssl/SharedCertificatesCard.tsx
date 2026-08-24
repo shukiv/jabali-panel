@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type React from "react";
 import { Alert, Button, Card, Empty, Input, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography, Upload } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import type { UploadFile } from "antd";
@@ -66,7 +67,7 @@ const readFileText = (file: File): Promise<string> =>
     reader.readAsText(file);
   });
 
-export const SharedCertificatesCard = () => {
+export const SharedCertificatesCard = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -261,20 +262,36 @@ export const SharedCertificatesCard = () => {
     },
   ];
 
+  const actionButtons = (
+    <Space>
+      <Button icon={<SafetyCertificateOutlined />} onClick={() => setAcmeOpen(true)}>
+        Request wildcard (Let&apos;s Encrypt)
+      </Button>
+      <Button type="primary" icon={<PlusOutlined />} onClick={() => setUploadOpen(true)}>
+        Upload shared certificate
+      </Button>
+    </Space>
+  );
+
+  // Embedded = rendered as a tab inside the Certificate console card;
+  // no own Card chrome, the action buttons move into a toolbar row.
+  const Wrapper = embedded
+    ? ({ children }: { children: React.ReactNode }) => (
+        <div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+            {actionButtons}
+          </div>
+          {children}
+        </div>
+      )
+    : ({ children }: { children: React.ReactNode }) => (
+        <Card title={t("sharedcertificates.title")} extra={actionButtons}>
+          {children}
+        </Card>
+      );
+
   return (
-    <Card
-      title={t("sharedcertificates.title")}
-      extra={
-        <Space>
-          <Button icon={<SafetyCertificateOutlined />} onClick={() => setAcmeOpen(true)}>
-            Request wildcard (Let&apos;s Encrypt)
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setUploadOpen(true)}>
-            Upload shared certificate
-          </Button>
-        </Space>
-      }
-    >
+    <Wrapper>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Upload a wildcard or multi-SAN certificate once, then attach it to any
         covering domain from that domain&apos;s SSL tab. The reconciler renders
@@ -415,6 +432,6 @@ export const SharedCertificatesCard = () => {
           </div>
         </Space>
       </Modal>
-    </Card>
+    </Wrapper>
   );
 };

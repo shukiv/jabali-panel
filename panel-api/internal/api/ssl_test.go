@@ -318,6 +318,7 @@ func TestListAllSSL_Success(t *testing.T) {
 			LastRenewedAt: nil,
 			LastError:     nil,
 			Staging:       false,
+			SSLMode:       models.SSLModeLE,
 		},
 		{
 			ID:            "cert-2",
@@ -375,6 +376,9 @@ func TestListAllSSL_Success(t *testing.T) {
 	require.Equal(t, "example.com", cert1["domain_name"])
 	require.Equal(t, "alice", cert1["user_username"])
 	require.Equal(t, models.SSLStatusIssued, cert1["status"])
+	// Mode column source (Certificate console): domain ssl_mode is exposed
+	// on the wire for real domain rows.
+	require.Equal(t, models.SSLModeLE, cert1["ssl_mode"])
 
 	// Verify second certificate
 	cert2 := items[1].(map[string]interface{})

@@ -247,7 +247,8 @@ func (r *sslCertificateRepo) ListByUserID(ctx context.Context, userID string) ([
 		Select(`sc.id, sc.domain_id, d.name as domain_name,
 		        d.user_id, u.username as user_username,
 		        sc.status, sc.issued_at, sc.expires_at,
-		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at`).
+		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,
+		        d.ssl_mode`).
 		Table("ssl_certificates sc").
 		Joins("JOIN domains d ON sc.domain_id = d.id").
 		Joins("JOIN users u ON d.user_id = u.id").

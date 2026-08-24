@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Input, Table, Tag, Button, Popconfirm, Empty, Space, Tooltip, Typography, Modal, Descriptions } from "antd";
+import { Dropdown, Input, Table, Tag, Button, Empty, Space, Tooltip, Typography, Modal, Descriptions } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import {
   ReloadOutlined,
@@ -10,9 +10,12 @@ import {
   WarningOutlined,
   RedoOutlined,
   ExclamationCircleOutlined,
+  MoreOutlined,
 } from "@icons";
 import { apiClient } from "../../apiClient";
 import { columnSearchProps } from "../columnSearch";
+import { RowActionButton } from "../RowActionButton";
+import { expiryFraction, matchesFilter, modeTag, type SSLFilter } from "./sslHealth";
 
 interface SSLCertificate {
   id: string;
@@ -32,11 +35,18 @@ interface SSLCertificate {
   retry_count: number;
   service: string;
   sans?: string[];
+  // Domain ssl_mode (le/self/custom/none/shared) — absent on the synthetic
+  // panel-cert:*/mail-cert:* rows (Certificate console Mode column).
+  ssl_mode?: string;
 }
 
 interface SSLManagerTableProps {
   endpoint: string;
   showOwner: boolean;
+  /** Health-bucket filter driven by the admin summary tiles. Default "all". */
+  statusFilter?: SSLFilter;
+  /** Drop panel-cert:* synthetic rows — the admin SYSTEM band shows them instead. */
+  hideSystemRows?: boolean;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -114,6 +124,8 @@ const formatExpiry = (expiresAt: string | null): JSX.Element => {
 export const SSLManagerTable = ({
   endpoint,
   showOwner,
+  statusFilter = "all",
+  hideSystemRows = false,
 }: SSLManagerTableProps) => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -139,14 +151,18 @@ export const SSLManagerTable = ({
   });
 
   const filteredData = useMemo(() => {
-    if (!data || !search) return data;
+    if (!data) return data;
     const needle = search.toLowerCase();
-    return data.filter(
-      (row) =>
+    return data.filter((row) => {
+      if (hideSystemRows && row.id.startsWith("panel-cert:")) return false;
+      if (!matchesFilter(row, statusFilter)) return false;
+      if (!needle) return true;
+      return (
         row.domain_name.toLowerCase().includes(needle) ||
-        (row.user_username ?? "").toLowerCase().includes(needle),
-    );
-  }, [data, search]);
+        (row.user_username ?? "").toLowerCase().includes(needle)
+      );
+    });
+  }, [data, search, statusFilter, hideSystemRows]);
 
   // Renew certificate mutation
   const renewMutation = useMutation({
@@ -285,6 +301,17 @@ export const SSLManagerTable = ({
         ]
       : []),
     {
+      title: "Mode",
+      dataIndex: "ssl_mode",
+      key: "ssl_mode",
+      sorter: (a: SSLCertificate, b: SSLCertificate) => (a.ssl_mode ?? "").localeCompare(b.ssl_mode ?? ""),
+      render: (_: unknown, record: SSLCertificate) => {
+        if (record.id.startsWith("panel-cert:")) return <Tag color="purple">panel</Tag>;
+        const tag = modeTag(record.ssl_mode);
+        return tag ? <Tag color={tag.color}>{tag.label}</Tag> : <span>—</span>;
+      },
+    },
+    {
       title: "Service",
       dataIndex: "service",
       sorter: (a: SSLCertificate, b: SSLCertificate) => a.service.localeCompare(b.service),
@@ -366,7 +393,55 @@ export const SSLManagerTable = ({
             </Typography.Text>
           );
         }
-        return formatExpiry(dateStr);
+        // Failed / retry-pending rows have no meaningful expiry — show the
+        // retry schedule instead (was buried in the status tooltip).
+        if (record.status === "failed" || record.status === "pending_acme_retry") {
+          const retryAt = record.next_retry_at
+            ? new Date(record.next_retry_at).toLocaleString()
+            : null;
+          return (
+            <Typography.Text type="secondary">
+              {retryAt ? `retry ${retryAt}` : "—"}
+              {record.retry_count ? ` · attempt ${record.retry_count}` : ""}
+            </Typography.Text>
+          );
+        }
+        const days = daysUntilExpiry(dateStr);
+        const fraction = expiryFraction(dateStr);
+        if (days === null || fraction === null) return formatExpiry(dateStr);
+        // Days-left meter over a 90-day LE lifetime: green >30d, orange ≤30d,
+        // red ≤14d/expired. Date + relative label stay on hover.
+        const color = days <= 14 ? "#ff4d4f" : days <= 30 ? "#fa8c16" : "#52c41a";
+        return (
+          <Tooltip title={formatExpiry(dateStr)}>
+            <Space size={8}>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 60,
+                  height: 4,
+                  borderRadius: 2,
+                  background: "rgba(0,0,0,0.06)",
+                }}
+              >
+                <span
+                  style={{
+                    display: "block",
+                    width: `${Math.round(fraction * 100)}%`,
+                    height: 4,
+                    borderRadius: 2,
+                    background: color,
+                  }}
+                />
+              </span>
+              <Typography.Text
+                style={days <= 30 ? { color, fontWeight: 600 } : undefined}
+              >
+                {days < 0 ? "expired" : `${days} d`}
+              </Typography.Text>
+            </Space>
+          </Tooltip>
+        );
       },
     },
     {
@@ -398,53 +473,74 @@ export const SSLManagerTable = ({
         if (record.id.startsWith("mail-cert:")) {
           return (
             <Tooltip title={t("sslmanagertable.clears_backoff_and_reissues_the_let_s_encryp")}>
-              <Button
+              <RowActionButton
                 icon={<RedoOutlined />}
                 loading={reissueMailMutation.isPending}
                 onClick={() => reissueMailMutation.mutate(record.domain_id)}
               >
                 Reissue
-              </Button>
+              </RowActionButton>
             </Tooltip>
           );
         }
         const isRetryable = record.status === "failed" ||
           (record.status === "pending_acme_retry" && record.next_retry_at && new Date(record.next_retry_at) < new Date());
+        // One labeled, state-appropriate primary action per row; the rest
+        // live in the ⋯ overflow (Certificate console). Renew stays primary
+        // for issued rows, Retry now for retryable failures.
+        const menuItems = [
+          ...(record.status === "issued"
+            ? [{ key: "revoke", danger: true, icon: <DeleteOutlined />, label: t("sslmanagertable.revoke_certificate") }]
+            : []),
+          ...(record.status === "pending_acme_retry" && !isRetryable
+            ? [{ key: "retry", icon: <RedoOutlined />, label: "Force retry now" }]
+            : []),
+          ...(record.last_error
+            ? [{ key: "error", icon: <ExclamationCircleOutlined />, label: t("sslmanagertable.show_last_error") }]
+            : []),
+        ];
+        const onMenuClick = ({ key }: { key: string }) => {
+          if (key === "retry") retryMutation.mutate(record.domain_id);
+          else if (key === "error") setErrorRow(record);
+          else if (key === "revoke") {
+            Modal.confirm({
+              title: t("sslmanagertable.revoke_certificate"),
+              content: t("sslmanagertable.are_you_sure_you_want_to_revoke_this_certifi"),
+              okText: t("sslmanagertable.yes"),
+              okButtonProps: { danger: true },
+              cancelText: "No",
+              onOk: () => revokeMutation.mutate(record.domain_id),
+            });
+          }
+        };
         return (
           <Space>
-            {isRetryable && (
-              <Tooltip title={t("sslmanagertable.force_acme_retry_now")}>
-                <Button
-                  icon={<RedoOutlined />}
-                  loading={retryMutation.isPending}
-                  onClick={() => retryMutation.mutate(record.domain_id)}
-                />
-              </Tooltip>
-            )}
             {record.status === "issued" && (
               <Tooltip title={t("sslmanagertable.renew_certificate")}>
-                <Button
-                  type="primary"
+                <RowActionButton
                   icon={<ReloadOutlined />}
                   loading={renewMutation.isPending}
                   onClick={() => renewMutation.mutate(record.domain_id)}
-                />
+                >
+                  Renew
+                </RowActionButton>
               </Tooltip>
             )}
-            {record.status === "issued" && (
-              <Popconfirm
-                title={t("sslmanagertable.revoke_certificate")}
-                description={t("sslmanagertable.are_you_sure_you_want_to_revoke_this_certifi")}
-                onConfirm={() => revokeMutation.mutate(record.domain_id)}
-                okText={t("sslmanagertable.yes")}
-                cancelText="No"
-              >
-                <Button
-                  danger
-                  icon={<DeleteOutlined />}
-                  loading={revokeMutation.isPending}
-                />
-              </Popconfirm>
+            {isRetryable && (
+              <Tooltip title={t("sslmanagertable.force_acme_retry_now")}>
+                <RowActionButton
+                  icon={<RedoOutlined />}
+                  loading={retryMutation.isPending}
+                  onClick={() => retryMutation.mutate(record.domain_id)}
+                >
+                  Retry now
+                </RowActionButton>
+              </Tooltip>
+            )}
+            {menuItems.length > 0 && (
+              <Dropdown menu={{ items: menuItems, onClick: onMenuClick }} placement="bottomRight">
+                <RowActionButton color="default" icon={<MoreOutlined />} aria-label={`More actions for ${record.domain_name}`} />
+              </Dropdown>
             )}
           </Space>
         );

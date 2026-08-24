@@ -20,36 +20,10 @@ import {
   usePanelCertificateIssue,
   usePanelCertificateToggle,
 } from "../../../hooks/usePanelCertificate";
-
-function statusTag(c: PanelCertificate) {
-  switch (c.status) {
-    case "issued":
-      return (
-        <Tag color="success">
-          Issued by Let&apos;s Encrypt{c.staging ? " (staging)" : ""}
-        </Tag>
-      );
-    case "pending_acme":
-      return <Tag color="processing">Issuing…</Tag>;
-    case "pending_acme_retry":
-      return <Tag color="warning">Pending retry</Tag>;
-    case "failed":
-      return <Tag color="error">Failed</Tag>;
-    case "self_signed":
-    default:
-      return <Tag>Self-signed</Tag>;
-  }
-}
-
-function expiryHint(c: PanelCertificate): string | null {
-  if (c.status !== "issued" || !c.expires_at) return null;
-  const ms = new Date(c.expires_at).getTime() - Date.now();
-  if (Number.isNaN(ms)) return null;
-  const days = Math.floor(ms / (24 * 3600 * 1000));
-  if (days < 0) return "Expired";
-  if (days < 7) return `Expires in ${days} day${days === 1 ? "" : "s"}`;
-  return `Expires in ${days} days`;
-}
+import {
+  panelCertExpiryHint,
+  panelCertStatusTag,
+} from "../../../components/ssl/panelCertStatus";
 
 function CertRow({
   label,
@@ -62,7 +36,7 @@ function CertRow({
   onRetry: () => void;
   retrying: boolean;
 }) {
-  const expiry = expiryHint(cert);
+  const expiry = panelCertExpiryHint(cert);
   return (
     <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>
       <Space direction="vertical" size={6} style={{ width: "100%" }}>
@@ -73,7 +47,7 @@ function CertRow({
           <code>{cert.hostname || "<unset>"}</code>
         </Space>
         <Space wrap>
-          {statusTag(cert)}
+          {panelCertStatusTag(cert)}
           {cert.routable ? (
             <Tag icon={<CheckCircleOutlined />} color="success">
               Routable
