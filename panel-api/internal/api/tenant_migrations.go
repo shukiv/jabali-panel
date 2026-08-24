@@ -221,7 +221,18 @@ func (h *tenantMigrationsHandler) uploadSecrets(c *gin.Context) {
 	if uid == "" {
 		return
 	}
-	if h.ownedJob(c, uid) == nil {
+	job := h.ownedJob(c, uid)
+	if job == nil {
+		return
+	}
+	// JAB-301: a terminal job (done / failed / cancelled) must reject new
+	// secrets — accepting them would write credentials for a job that will
+	// never run (and, for cancelled, one whose secrets were just wiped).
+	if isTerminalMigrationState(job.State) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "terminal_state",
+			"detail": "cannot upload secrets to a terminal job (state=" + job.State + ")",
+		})
 		return
 	}
 	var req tenantSecretsRequest

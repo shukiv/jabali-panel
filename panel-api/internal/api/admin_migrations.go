@@ -537,6 +537,26 @@ type runImportWPRequest struct {
 // the create path; this only launches the already-bound job.
 func (h *adminMigrationsHandler) runImportWP(c *gin.Context) {
 	id := c.Param("id")
+	// JAB-301: load + state-gate the job before dispatch, exactly like
+	// runPullSource / runImport. This path used to dispatch on the raw URL id
+	// alone, so a missing job (bad id) or a terminal job (already done / failed
+	// / cancelled) could still reach the Agent.
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if isTerminalMigrationState(job.State) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "terminal_state",
+			"detail": "cannot import a terminal job (state=" + job.State + ")",
+		})
+		return
+	}
 	if h.cfg.Agent == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unconfigured"})
 		return
