@@ -5663,6 +5663,92 @@ ensure_swap() {
   _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
 }
 
+# ensure_fleet_swap — JAB-273. Distinct from the build-time ensure_swap above,
+# which only helps ≤4 GB build hosts. newaramaapp (18 GB RAM, 0 swap) wedged
+# into a kswapd death-spiral: once RAM filled on a swapless box the kernel had
+# nowhere to evict to, load hit ~385 on 8 cores, and sshd could not even
+# complete a login handshake — the operator was locked out mid-incident. Swap
+# gives kswapd an exit so a memory spike degrades gracefully instead of
+# wedging. Runs on EVERY box (any RAM size), on fresh install AND
+# `jabali update`, so the existing fleet self-heals.
+#
+# Conservative + idempotent:
+#   - Acts only when active swap < 2 GB — never resizes or swapoffs an
+#     operator's existing swap on a live box.
+#   - Sizes min(RAM, 8 GB), then halves until it fits behind a 10 GB free-disk
+#     margin (floor 1 GB); warns + skips if it still will not fit.
+#   - Reuses ensure_swap's mechanics: fallocate→dd fallback, 0600 before
+#     mkswap, rm-on-any-failure (no half state), grep -qF fstab idempotence,
+#     and swapon-failure tolerance as the container/btrfs guard.
+ensure_fleet_swap() {
+  local mem_kb cur_swap_kb mem_mb want_mb free_mb
+  mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  cur_swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  mem_mb=$((mem_kb / 1024))
+  if [[ $cur_swap_kb -ge 2097152 ]]; then
+    _log "fleet-swap: $((cur_swap_kb / 1024))MB swap already active — skip (JAB-273)"
+    return 0
+  fi
+  want_mb=8192
+  [[ $mem_mb -gt 0 && $mem_mb -lt $want_mb ]] && want_mb=$mem_mb
+  free_mb=$(df -Pm /var 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+  while [[ $want_mb -ge 1024 && $((free_mb - want_mb)) -lt 10240 ]]; do
+    want_mb=$((want_mb / 2))
+  done
+  if [[ $want_mb -lt 1024 || $((free_mb - want_mb)) -lt 10240 ]]; then
+    _warn "fleet-swap: only ${free_mb}MB free on /var — need swap + 10GB margin; skipping (JAB-273). Provision swap manually."
+    return 0
+  fi
+  local swap_file=/var/swap.jabali-fleet
+  _log "fleet-swap: provisioning ${want_mb}MB swap at $swap_file (JAB-273; can take a minute on slow disks)"
+  if [[ -e "$swap_file" ]]; then
+    swapoff "$swap_file" 2>/dev/null || true
+    rm -f "$swap_file"
+  fi
+  if ! fallocate -l "${want_mb}M" "$swap_file" 2>/dev/null; then
+    dd if=/dev/zero of="$swap_file" bs=1M count="$want_mb" status=none \
+      || { _warn "fleet-swap: allocate failed — box stays swapless (JAB-273)"; rm -f "$swap_file"; return 0; }
+  fi
+  chmod 0600 "$swap_file"
+  mkswap "$swap_file" >/dev/null 2>&1 \
+    || { _warn "fleet-swap: mkswap failed — box stays swapless"; rm -f "$swap_file"; return 0; }
+  swapon "$swap_file" \
+    || { _warn "fleet-swap: swapon failed (containerized/btrfs host?) — box stays swapless"; rm -f "$swap_file"; return 0; }
+  if ! grep -qF "$swap_file" /etc/fstab 2>/dev/null; then
+    echo "$swap_file none swap sw 0 0" >> /etc/fstab
+  fi
+  # Big-RAM fleet boxes never ran ensure_swap, so they never got the swappiness
+  # tune. Keep swap as an OOM safety net, not an eager pager.
+  echo 'vm.swappiness=10' > /etc/sysctl.d/99-jabali-swappiness.conf
+  sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+  _ok "fleet-swap: ${want_mb}MB active at $swap_file (persists via /etc/fstab); vm.swappiness=10 (JAB-273)"
+}
+
+# ensure_maintenance_isolation — JAB-273. Installs jabali-maintenance.slice and
+# (re)installs the all-tenant maintenance units so they run inside it
+# (MemoryMax=50%, Nice=19, idle IO). The per-unit install_* functions are
+# full-install-only, so without this converger the hardened units + the slice
+# would never reach the existing fleet — the template-only-change-never-reaches-
+# update lesson (see ensure_pdns_zone_cache). Runs on fresh install AND update.
+ensure_maintenance_isolation() {
+  install -m 0644 -o root -g root \
+    "${REPO_DIR}/install/systemd/jabali-maintenance.slice" \
+    /etc/systemd/system/jabali-maintenance.slice
+  local u src
+  for u in jabali-cache-doctor jabali-disk-maintenance jabali-backup-retention \
+           jabali-aide-check jabali-sso-reaper jabali-retention-sweep; do
+    src="${REPO_DIR}/install/systemd/${u}.service"
+    [[ -f "$src" ]] || continue
+    # Only re-install a unit that already exists, so this never resurrects a
+    # service an operator deliberately removed. On fresh install the per-unit
+    # functions lay them down first; this then hardens them in place.
+    if [[ -f "/etc/systemd/system/${u}.service" ]]; then
+      install -m 0644 -o root -g root "$src" "/etc/systemd/system/${u}.service"
+    fi
+  done
+  systemctl daemon-reload 2>/dev/null || true
+}
+
 # ensure_pdns_zone_cache — converge PowerDNS's zone cache OFF on EXISTING
 # boxes (GH #896 for new-zone blindness; PowerDNS/pdns#11416 for the crash
 # the old rediscover workaround triggered on 4.9).
@@ -15255,6 +15341,13 @@ provision_new_software() {
   # --failed` forever.
   reap_orphan_nspawn_php_units
 
+  # JAB-273: self-heal the fleet's zero-swap fragility (kswapd death-spiral that
+  # locked the operator out of newaramaapp) and contain every all-tenant
+  # maintenance job in a memory-capped slice. Idempotent; the existing fleet
+  # only picks these up on update, so they MUST run here, not just on install.
+  ensure_fleet_swap
+  ensure_maintenance_isolation
+
   # GH #860: retrofit the default-vhost catch-all include onto existing
   # boxes. install_disabled_page is seed-only now (never clobbers operator
   # edits), so re-running it here just ensures the docroots + catch-all
@@ -16022,6 +16115,11 @@ main() {
   install_retention_sweep_timer
   install_ssh_sandbox_prereqs
   install_backup_foundation
+  # JAB-273: give the box swap headroom (no more kswapd death-spiral) and
+  # contain every all-tenant maintenance job in a memory-capped slice. Both run
+  # again from provision_new_software so the existing fleet self-heals on update.
+  ensure_fleet_swap
+  ensure_maintenance_isolation
   # Order matters: install_phpmyadmin extracts the tarball to
   # /opt/phpmyadmin/current, which the pma pool config references as
   # chdir=. Starting the FPM service before the tarball is extracted

@@ -1,0 +1,23 @@
+[Unit]
+Description=Jabali all-tenant maintenance jobs — resource-contained (JAB-273)
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/install/systemd/jabali-maintenance.slice
+Before=slices.target
+
+[Slice]
+# JAB-273: a nightly all-tenant sweep (disk-maintenance, cache-doctor,
+# retention, AIDE, sso-reaper) must never be able to exhaust the box and lock
+# the operator out of sshd. newaramaapp wedged into a load-385 kswapd
+# death-spiral when the disk-maintenance du fan-out filled RAM on a swapless
+# box; capping the whole maintenance cohort here contains the blast radius.
+#
+# Percentages, NOT absolutes: a fixed 2G is no protection on a 2 GB box and
+# needlessly starves a legitimately large AIDE/restic run on a 38 GB one.
+# MemoryMax=50% guarantees the other half of RAM stays for sshd + the control
+# plane no matter the box size (a maintenance storm can take at most half);
+# MemoryHigh=25% forces the kernel to start reclaiming this cohort's own pages
+# before it reaches the hard cap. Low CPU/IO weight yields to tenants and sshd
+# under contention (this cohort is background work, always deferrable).
+MemoryHigh=25%
+MemoryMax=50%
+CPUWeight=20
+IOWeight=20

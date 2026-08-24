@@ -5,6 +5,13 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# JAB-273: contain this all-tenant maintenance job in the resource-limited
+# jabali-maintenance.slice (MemoryMax=50%, low CPU/IO weight) so a sweep can
+# never exhaust the box and lock the operator out of sshd; nice + idle IO keep
+# it yielding to tenants and the control plane.
+Slice=jabali-maintenance.slice
+Nice=19
+IOSchedulingClass=idle
 ExecStart=/usr/bin/aide --check --config=/etc/aide/aide.conf
 StandardOutput=append:/var/log/aide/aide.report.log
 StandardError=append:/var/log/aide/aide.report.log
