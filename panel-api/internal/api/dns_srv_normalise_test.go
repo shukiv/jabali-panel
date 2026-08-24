@@ -82,7 +82,7 @@ func TestNormaliseSRVRecord(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := tc.in
-			normaliseSRVRecord(&rec, tc.explicit)
+			NormaliseSRVRecord(&rec, tc.explicit)
 			if rec.Content != tc.wantContent {
 				t.Errorf("content = %q, want %q", rec.Content, tc.wantContent)
 			}

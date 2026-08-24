@@ -386,7 +386,7 @@ func (h *dnsHandler) createRecord(c *gin.Context) {
 		record.IsEnabled = *req.IsEnabled
 	}
 
-	normaliseSRVRecord(record, req.Priority)
+	NormaliseSRVRecord(record, req.Priority)
 
 	// Validate record
 	if err := ValidateDNSRecord(record); err != nil {
@@ -511,7 +511,7 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 		record.IsEnabled = *req.IsEnabled
 	}
 
-	normaliseSRVRecord(record, req.Priority)
+	NormaliseSRVRecord(record, req.Priority)
 
 	// Per-type permission gate for non-admin tenants (GH #466): editing the
 	// record needs the edit right on its current type, and changing its type
@@ -663,7 +663,7 @@ func IsValidDNSType(t string) bool {
 	return false
 }
 
-// normaliseSRVRecord moves an inline SRV priority into the priority column.
+// NormaliseSRVRecord moves an inline SRV priority into the priority column.
 //
 // PowerDNS's gmysql backend prepends the prio column to SRV content, so a
 // record carrying the priority in BOTH places assembles into a five-field
@@ -676,7 +676,7 @@ func IsValidDNSType(t string) bool {
 // Accept it, split the priority out, and leave the already-correct
 // three-field form untouched. An explicit priority in the request wins, since
 // that is the caller being unambiguous.
-func normaliseSRVRecord(r *models.DNSRecord, explicitPriority *int) {
+func NormaliseSRVRecord(r *models.DNSRecord, explicitPriority *int) {
 	if r.Type != "SRV" {
 		return
 	}
@@ -751,7 +751,7 @@ func ValidateDNSRecord(r *models.DNSRecord) error {
 		//
 		// This used to require the four-field form, which meant every SRV
 		// created through the panel was unresolvable and a caller supplying
-		// the correct three fields was rejected. normaliseSRVRecord now
+		// the correct three fields was rejected. NormaliseSRVRecord now
 		// splits a pasted RFC 2782 string before validation, so both shapes
 		// reach here as three fields.
 		fields := strings.Fields(r.Content)

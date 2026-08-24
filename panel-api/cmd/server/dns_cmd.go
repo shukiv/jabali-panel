@@ -60,7 +60,21 @@ type dnsRecordSpec struct {
 	Content  string
 	TTL      int
 	Priority int
-	Enabled  bool
+	// PriorityExplicit is true when the operator passed --priority. It mirrors
+	// the HTTP request's `*int` priority so SRV normalisation knows whether to
+	// derive the priority from a four-field content or keep the explicit value.
+	PriorityExplicit bool
+	Enabled          bool
+}
+
+// srvPriorityPtr adapts the CLI's (int, explicit-bool) to the *int the shared
+// api.NormaliseSRVRecord expects: nil = "derive priority from four-field SRV
+// content", non-nil = "operator set it explicitly, keep it".
+func srvPriorityPtr(p int, explicit bool) *int {
+	if explicit {
+		return &p
+	}
+	return nil
 }
 
 // dnsRecordAdd validates + conflict-checks + persists a new record in the zone
@@ -81,6 +95,11 @@ func dnsRecordAdd(ctx context.Context, zones repository.DNSZoneRepository, recs 
 		Managed:   false,
 		IsEnabled: spec.Enabled,
 	}
+	// JAB-323: split a four-field SRV content ("prio weight port target") into
+	// the priority column + three-field content, exactly as the HTTP handler
+	// does — the CLI used to persist the raw four-field content with priority 0,
+	// producing a malformed SRV record PowerDNS wouldn't serve correctly.
+	api.NormaliseSRVRecord(rec, srvPriorityPtr(spec.Priority, spec.PriorityExplicit))
 	// ValidateDNSRecord trims/upper-cases and defaults TTL 0 -> 300.
 	if err := api.ValidateDNSRecord(rec); err != nil {
 		return nil, err
@@ -133,6 +152,12 @@ func dnsRecordUpdate(ctx context.Context, zones repository.DNSZoneRepository, re
 	}
 	if set["enabled"] {
 		rec.IsEnabled = spec.Enabled
+	}
+	// JAB-323: normalise a four-field SRV content on update too (HTTP parity).
+	// An explicit --priority (set["priority"]) is kept; otherwise the priority
+	// is derived from the four-field content.
+	if set["content"] {
+		api.NormaliseSRVRecord(rec, srvPriorityPtr(spec.Priority, set["priority"]))
 	}
 	if err := api.ValidateDNSRecord(rec); err != nil {
 		return nil, err
@@ -303,7 +328,8 @@ func newDNSRecordAddCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 			rec, err := dnsRecordAdd(ctx, dnsZoneRepoFromDB(), dnsRecordRepoFromDB(), args[0], dnsRecordSpec{
-				Name: name, Type: rtype, Content: content, TTL: ttl, Priority: priority, Enabled: !disabled,
+				Name: name, Type: rtype, Content: content, TTL: ttl,
+				Priority: priority, PriorityExplicit: cmd.Flags().Changed("priority"), Enabled: !disabled,
 			})
 			if err != nil {
 				return err
