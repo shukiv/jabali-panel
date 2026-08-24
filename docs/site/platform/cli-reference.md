@@ -2314,7 +2314,7 @@ jabali dr feed [flags]
 **Flags:**
 
 - `--cron` — cron cadence for the DR feed (default hourly, "0 * * * *")
-- `--destination` — DR backup destination ID to ship system backups to
+- `--destination` — DR backup destination ID to ship system + account backups to
 
 #### `jabali dr pair`
 
