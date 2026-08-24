@@ -11,6 +11,7 @@ import { shortDateTime } from "../../../utils/datetime";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Space, Table, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { getIdentity } from "../../../identity";
 import {
   DatabaseOutlined,
   LinkOutlined,
@@ -203,6 +204,19 @@ export const UserDatabaseList = () => {
     e.target.value = "";
     const row = restoreTargetRef.current;
     if (!file || !row) return;
+    // GH #1044: fail fast + clearly when the dump is over the configured cap,
+    // instead of a slow upload that 413s at the app, nginx, or Cloudflare. The
+    // cap mirrors the File Manager's server_settings.upload_max_size_mb.
+    const id = await getIdentity().catch(() => null);
+    const capMb = id?.uploadMaxSizeMb && id.uploadMaxSizeMb > 0 ? id.uploadMaxSizeMb : 1024;
+    if (file.size > capMb * 1024 * 1024) {
+      feedback.message.error(
+        `"${file.name}" is ${Math.ceil(file.size / (1024 * 1024))} MB — over the ${capMb} MB restore cap ` +
+          `(raise it in Server Settings → Uploads). A larger upload may also be blocked upstream by nginx ` +
+          `(Server Settings → Nginx) or Cloudflare.`,
+      );
+      return;
+    }
     try {
       setRestoringId(row.id);
       await restoreDatabaseUpload(row.id, file);

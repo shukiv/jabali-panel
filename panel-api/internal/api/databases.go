@@ -542,6 +542,21 @@ func (h *databaseHandler) backup(c *gin.Context) {
 	_ = deleteFile(resp.Path)
 }
 
+// resolveMaxRestoreBytes returns the admin-configured restore-upload cap from
+// server_settings.upload_max_size_mb (the same cap the File Manager honours),
+// falling back to defaultMaxUploadBytes (1 GB) when the repo isn't wired or the
+// column is unset. GH #1044.
+func (h *databaseHandler) resolveMaxRestoreBytes(ctx context.Context) int64 {
+	if h.cfg.ServerSettings == nil {
+		return defaultMaxUploadBytes
+	}
+	s, err := h.cfg.ServerSettings.Get(ctx)
+	if err != nil || s == nil || s.UploadMaxSizeMB == 0 {
+		return defaultMaxUploadBytes
+	}
+	return int64(s.UploadMaxSizeMB) * 1024 * 1024
+}
+
 func (h *databaseHandler) restore(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -568,12 +583,24 @@ func (h *databaseHandler) restore(c *gin.Context) {
 		return
 	}
 
-	// Parse multipart form (max 500 MB)
-	const maxUploadSize = 500 * 1024 * 1024 // 500 MB
+	// GH #1044: the restore upload cap was hard-coded to 500 MB. Honour the
+	// admin-configured `server_settings.upload_max_size_mb` (default 1 GB) the
+	// File Manager already uses, so larger PostgreSQL dumps can be restored.
+	// NOTE: nginx's client_max_body_size (Server Settings → Nginx, default 512m)
+	// and any Cloudflare body limit sit IN FRONT of this — the effective cap is
+	// the smallest of the three, which is why an over-limit upload can 413 at the
+	// proxy before reaching this handler.
+	maxUploadSize := h.resolveMaxRestoreBytes(ctx)
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadSize)
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32 MB in-memory
 		if err.Error() == "http: request body too large" {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large", "max_size": "500MB"})
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error":    "file_too_large",
+				"max_size": fmt.Sprintf("%dMB", maxUploadSize/(1024*1024)),
+				"detail": "Upload exceeds the panel's restore cap (Server Settings → Uploads). " +
+					"A larger request may also be blocked upstream by nginx (Server Settings → Nginx, " +
+					"client_max_body_size) or Cloudflare — raise those too if needed.",
+			})
 		} else {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		}

@@ -26,6 +26,13 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 
+// getIdentity pulls in identity.ts → query.ts (which instantiates a real
+// QueryClient); with react-query mocked above that import throws at load. Mock
+// it directly and hand the restore-size pre-check (GH #1044) a cap.
+vi.mock("../../../identity", () => ({
+  getIdentity: () => Promise.resolve({ uploadMaxSizeMb: 1024 }),
+}));
+
 vi.mock("../../../hooks/useQueries", () => ({
   useDeleteMutation: () => ({ mutateAsync: vi.fn() }),
   useCreateMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
