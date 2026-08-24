@@ -71,9 +71,11 @@ type Deps struct {
 	Log         *slog.Logger
 	Now         Clock
 	CrowdSecBin string // path to cscli; empty → disable the crowdsec source
-	// disk_quota source — needs Users + Agent + QuotaMount to call
-	// agent.user.limits.report per user. All three required; missing
-	// any disables the source rather than panicking.
+	// disk_quota source — reads the disk snapshot the disk-usage
+	// sweeper persists on each user row (no per-user Agent call); needs
+	// Users + QuotaMount. Agent stays here for the other sources that
+	// do call it (nginx_config, snuffleupagus, exec_audit_burst,
+	// aide_tamper, domain_ghost).
 	Users      repository.UserRepository
 	Agent      AgentCaller
 	QuotaMount string
