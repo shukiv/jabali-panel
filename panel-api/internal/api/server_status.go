@@ -48,7 +48,7 @@ func RegisterAdminServerStatusRoutes(g *gin.RouterGroup, cfg AdminServerStatusHa
 	if cfg.Agent == nil {
 		return
 	}
-	h := &adminServerStatusHandler{cfg: cfg}
+	h := &adminServerStatusHandler{cfg: cfg, cache: newStatusCache()}
 	grp := g.Group("/admin/server-status")
 	grp.Use(middleware.RequireAdmin())
 	grp.GET("", h.get)
@@ -56,6 +56,11 @@ func RegisterAdminServerStatusRoutes(g *gin.RouterGroup, cfg AdminServerStatusHa
 
 type adminServerStatusHandler struct {
 	cfg AdminServerStatusHandlerConfig
+	// cache is the JAB-373 per-slice TTL + singleflight cache. Created once
+	// per handler (i.e. once per process at route registration), so it is
+	// shared across every request and every admin tab/operator — that shared
+	// scope is exactly what collapses the redundant agent fan-out.
+	cache *statusCache
 }
 
 const (
@@ -122,11 +127,19 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 		errMap  = map[string]string{}
 	)
 
-	call := func(name, cmd string, params any, timeout time.Duration) {
+	// JAB-373: each slice goes through the process-wide per-slice TTL +
+	// singleflight cache. A slice fresh within its ttl serves the last
+	// snapshot with zero agent calls; concurrent misses for the same slice
+	// collapse to one refresh. The agent call runs on a detached (background)
+	// context so a cancelled poller cannot abort a refresh that other pollers
+	// are blocked on — the per-call deadline still bounds it.
+	call := func(name, cmd string, params any, ttl time.Duration) {
 		g.Go(func() error {
-			subCtx, cancel := context.WithTimeout(gctx, timeout)
-			defer cancel()
-			raw, err := h.cfg.Agent.Call(subCtx, cmd, params)
+			raw, _, err := h.cache.get(name, ttl, func() (json.RawMessage, error) {
+				subCtx, cancel := detachedTimeout(subCallTimeout)
+				defer cancel()
+				return h.cfg.Agent.Call(subCtx, cmd, params)
+			})
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -142,13 +155,13 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 		})
 	}
 
-	call("host", "system.info", nil, subCallTimeout)
-	call("cpu", "system.cpu_usage", nil, subCallTimeout)
-	call("network", "system.network", nil, subCallTimeout)
-	call("processes", "system.processes", nil, subCallTimeout)
-	call("services", "system.service_details", nil, subCallTimeout)
-	call("user_slices", "system.user_slices", nil, subCallTimeout)
-	call("software", "system.software", nil, subCallTimeout)
+	call("host", "system.info", nil, ttlHost)
+	call("cpu", "system.cpu_usage", nil, ttlCPU)
+	call("network", "system.network", nil, ttlNetwork)
+	call("processes", "system.processes", nil, ttlProcesses)
+	call("services", "system.service_details", nil, ttlServices)
+	call("user_slices", "system.user_slices", nil, ttlUserSlices)
+	call("software", "system.software", nil, ttlSoftware)
 	// nginx.status, NOT nginx.test: this envelope is polled every few
 	// seconds from any open admin tab, and `nginx -t` recompiles every
 	// vhost plus the whole CrowdSec AppSec/CRS rule set (~19s at >60% CPU
@@ -159,14 +172,14 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	// which is liveness, while nginx.test answers config validity — a
 	// config typo used to raise a misleading "not running" critical.
 	// nginx.test remains the gate for nginx.reload, where it belongs.
-	call("nginx", "nginx.status", nil, subCallTimeout)
+	call("nginx", "nginx.status", nil, ttlNginx)
 
 	// JAB-379: lightweight AppArmor profile-mode summary (no audit scrape) so
 	// synthesizeAlerts can warn when a jabali profile is complain/missing/
 	// unconfined rather than enforce. security.apparmor.summary is the cheap
 	// verb built for this poller — the full security.apparmor.status scrapes an
 	// 8MB audit tail and must not run on the 5s dashboard cadence.
-	call("apparmor", "security.apparmor.summary", nil, subCallTimeout)
+	call("apparmor", "security.apparmor.summary", nil, ttlAppArmor)
 
 	// M31.1 — Redis queue depths run in parallel with the agent calls.
 	// Three XLEN/XPending pipelines, each with its own short timeout so
