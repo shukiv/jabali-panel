@@ -219,6 +219,14 @@ func RegisterAutomation(rg *gin.RouterGroup, cfg AutomationConfig) {
 	metrics := newAutomationMetrics(cfg.Agent)
 	g.GET("/status", middleware.RequireScope("read:status"), metrics.handle)
 
+	// read:metrics — thinned, NORMALIZED host metrics for a fleet manager's
+	// Monitor tab (JAB-74). The Manager probes /automation/server-status
+	// specifically; unlike /status (which passes raw agent slices through under
+	// system/cpu/net keys), this returns a stable {as_of, cpu, host} shape and
+	// is gated by its own read:metrics scope.
+	serverStatus := newAutomationServerStatus(cfg.Agent)
+	g.GET("/server-status", middleware.RequireScope("read:metrics"), serverStatus.handle)
+
 	// read:mail — mail-stack inventory for a fleet manager (JAB-77 + JAB-76).
 	registerAutomationMailReads(g, cfg)
 
@@ -564,6 +572,142 @@ func (m *automationMetrics) handle(c *gin.Context) {
 	m.mu.Lock()
 	m.cached, m.cachedAt = out, time.Now()
 	m.mu.Unlock()
+	c.JSON(http.StatusOK, out)
+}
+
+// automationServerStatus serves GET /automation/server-status (JAB-74): a
+// thinned, NORMALIZED host-metrics envelope for a fleet manager's Monitor tab.
+// It fetches only system.info + system.cpu_usage (two agent calls, vs /status's
+// four) and maps them into a stable {as_of, cpu, host} shape the Manager reads,
+// rather than passing raw agent slices through. A short TTL cache collapses a
+// monitor's rapid polls into one fan-out; per-slice failures degrade into an
+// `errors` map instead of failing the whole response. Concurrency-safe.
+type automationServerStatus struct {
+	agent    agent.AgentInterface
+	mu       sync.Mutex
+	cached   gin.H
+	cachedAt time.Time
+	ttl      time.Duration
+}
+
+func newAutomationServerStatus(a agent.AgentInterface) *automationServerStatus {
+	return &automationServerStatus{agent: a, ttl: 5 * time.Second}
+}
+
+// ssHostInfo / ssCPU mirror the subset of system.info / system.cpu_usage this
+// endpoint surfaces. Declared locally so panel-api never imports the agent's
+// command package.
+type ssHostInfo struct {
+	LoadAvg    [3]float64 `json:"load_avg"`
+	MemTotalKB uint64     `json:"mem_total_kb"`
+	MemUsedKB  uint64     `json:"mem_used_kb"`
+	Partitions []struct {
+		MountPoint string `json:"mount_point"`
+		TotalBytes uint64 `json:"total_bytes"`
+		UsedBytes  uint64 `json:"used_bytes"`
+	} `json:"partitions"`
+}
+
+type ssCPU struct {
+	UsagePercent  float64 `json:"usage_percent"`
+	IOWaitPercent float64 `json:"iowait_percent"`
+	AsOf          string  `json:"as_of"`
+}
+
+func (s *automationServerStatus) handle(c *gin.Context) {
+	// No agent wired → thin healthy envelope, never fail closed.
+	if s.agent == nil {
+		c.JSON(http.StatusOK, gin.H{"as_of": time.Now().UTC().Format(time.RFC3339), "errors": gin.H{"agent": "unavailable"}})
+		return
+	}
+
+	s.mu.Lock()
+	if s.cached != nil && time.Since(s.cachedAt) < s.ttl {
+		out := s.cached
+		s.mu.Unlock()
+		c.JSON(http.StatusOK, out)
+		return
+	}
+	s.mu.Unlock()
+
+	ctx := c.Request.Context()
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(2)
+	var (
+		mu      sync.Mutex
+		infoRaw json.RawMessage
+		cpuRaw  json.RawMessage
+		errs    = map[string]string{}
+	)
+	fetch := func(name, cmd string, dst *json.RawMessage) {
+		g.Go(func() error {
+			sub, cancel := context.WithTimeout(gctx, 8*time.Second)
+			defer cancel()
+			raw, err := s.agent.Call(sub, cmd, nil)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs[name] = err.Error()
+				return nil
+			}
+			*dst = raw
+			return nil
+		})
+	}
+	fetch("host", "system.info", &infoRaw)
+	fetch("cpu", "system.cpu_usage", &cpuRaw)
+	_ = g.Wait()
+
+	out := gin.H{}
+	asOf := time.Now().UTC().Format(time.RFC3339)
+
+	if cpuRaw != nil {
+		var cp ssCPU
+		if json.Unmarshal(cpuRaw, &cp) == nil {
+			out["cpu"] = gin.H{
+				"usage_percent":  cp.UsagePercent,
+				"iowait_percent": cp.IOWaitPercent,
+			}
+			if cp.AsOf != "" {
+				asOf = cp.AsOf
+			}
+		} else {
+			errs["cpu"] = "unparseable cpu slice"
+		}
+	}
+
+	if infoRaw != nil {
+		var hi ssHostInfo
+		if json.Unmarshal(infoRaw, &hi) == nil {
+			parts := make([]gin.H, 0, len(hi.Partitions))
+			for _, p := range hi.Partitions {
+				parts = append(parts, gin.H{
+					"mount_point": p.MountPoint,
+					"used_bytes":  p.UsedBytes,
+					"total_bytes": p.TotalBytes,
+				})
+			}
+			out["host"] = gin.H{
+				"mem_used_kb":  hi.MemUsedKB,
+				"mem_total_kb": hi.MemTotalKB,
+				"load_avg":     hi.LoadAvg,
+				"partitions":   parts,
+			}
+		} else {
+			errs["host"] = "unparseable host slice"
+		}
+	}
+
+	out["as_of"] = asOf
+	// io is omitted: the agent has no per-device bps collector yet. JAB-74
+	// allows omitting `io` rather than failing the response.
+	if len(errs) > 0 {
+		out["errors"] = errs
+	}
+
+	s.mu.Lock()
+	s.cached, s.cachedAt = out, time.Now()
+	s.mu.Unlock()
 	c.JSON(http.StatusOK, out)
 }
 

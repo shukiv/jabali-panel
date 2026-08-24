@@ -36,6 +36,32 @@ Authorization: Bearer <token>
 
 Tokens are sent as the `Authorization: Bearer …` header. The response includes `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers.
 
+## Fleet monitor metrics — `GET /api/v1/automation/server-status`
+
+For a central manager's Monitor tab. Gated by the `read:metrics` scope (a
+`read:*` token also grants it). Returns a thinned, normalized host-metrics
+envelope — not the raw admin server-status payload — so a fleet monitor gets
+live health without leaking host topology:
+
+```json
+{
+  "as_of": "2026-08-24T00:00:00Z",
+  "cpu":  { "usage_percent": 12.5, "iowait_percent": 1.2 },
+  "host": {
+    "mem_used_kb": 4000000,
+    "mem_total_kb": 8000000,
+    "load_avg": [0.5, 0.4, 0.3],
+    "partitions": [ { "mount_point": "/", "used_bytes": 40, "total_bytes": 100 } ]
+  }
+}
+```
+
+Each slice degrades independently: if the CPU or host collector fails, the
+other slice still renders and the failure is reported under an `errors` map
+rather than failing the whole response. `io` (read/write bps) is omitted until a
+per-device collector exists. Results are cached for a few seconds so a monitor
+polling every few seconds does not issue a fresh agent fan-out per request.
+
 ## Revocation
 
 Revoke from the same page. Revocation takes effect immediately; in-flight requests carrying the token complete but no further requests are accepted.

@@ -133,6 +133,9 @@ var AllowedAutomationScopes = []string{
 	"read:applications",
 	"read:status",
 	"read:mail",
+	// JAB-74: thinned host metrics for a fleet manager's Monitor tab
+	// (GET /automation/server-status).
+	"read:metrics",
 	// ADR-0164: hosting-package list for billing-panel product mapping.
 	"read:packages",
 	// JAB-140 write scopes — least-privilege, independent of read. read:* does
