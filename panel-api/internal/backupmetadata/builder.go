@@ -385,18 +385,21 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 		}
 	}
 	if d.LimitOverrides != nil {
-		all, _ := d.LimitOverrides.ListAll(ctx)
-		for _, lo := range all {
-			if lo.UserID != user.ID {
-				continue
-			}
+		// User-scoped lookup, not ListAll()+in-memory filter (JAB-374 AC#5):
+		// the override is one row keyed by user, but the old path read the
+		// entire user_limit_overrides table and scanned it for a match on
+		// every Build. Build runs once per account for manual, tenant, AND
+		// scheduled backups, so that whole-table scan multiplied across the
+		// fleet. FindByUserID returns ErrNotFound when the user has no
+		// override, which the guard treats as "no override" (m.LimitOverride
+		// stays nil) — identical to the old loop finding no match.
+		if lo, err := d.LimitOverrides.FindByUserID(ctx, user.ID); err == nil && lo != nil {
 			m.LimitOverride = &internalbackup.MetadataLimitOverride{
 				DiskQuotaMB: lo.DiskQuotaMB, CPUQuotaPercent: lo.CPUQuotaPercent,
 				MemoryLimitMB: lo.MemoryLimitMB,
 				IOReadMbps:    lo.IOReadMbps, IOWriteMbps: lo.IOWriteMbps,
 				MaxTasks: lo.MaxTasks,
 			}
-			break
 		}
 	}
 	if d.EgressPolicies != nil {
