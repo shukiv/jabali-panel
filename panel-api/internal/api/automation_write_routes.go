@@ -120,7 +120,14 @@ func userSuspendHandler(cfg AutomationConfig, suspend bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tok := middleware.AutomationToken(c)
 		id := c.Param("id")
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		// JAB-281: the suspend path now runs the full userops.Suspend cascade,
+		// which stops the tenant's Docker apps (budgeted up to 2m each) BEFORE it
+		// locks OS + FTP credentials. A 10s ceiling would expire mid-cascade on a
+		// Docker-heavy tenant and hand the credential-lock agent calls a dead ctx —
+		// leaving SSH/FTP live until the next reconcile tick. Give the cascade room
+		// (the DB flag + Kratos invalidation, the load-bearing gate, run first
+		// regardless; the reconciler is the durable backstop for the rest).
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Minute)
 		defer cancel()
 		u, err := cfg.Users.FindByID(ctx, id)
 		if err != nil || u == nil {
