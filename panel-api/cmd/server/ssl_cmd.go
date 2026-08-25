@@ -31,6 +31,7 @@ func newSSLCmd() *cobra.Command {
 		newSSLEnableCmd(),
 		newSSLDisableCmd(),
 		newSSLRenewCmd(),
+		newSSLRetryCmd(),
 		newSSLSetCustomCmd(),
 		newSSLSharedCmd(),
 		newSSLReadinessCmd(),
@@ -251,7 +252,11 @@ func newSSLRenewCmd() *cobra.Command {
 				return fmt.Errorf("no cert for %s — run `jabali ssl enable %s` first to create + issue", dom.Name, dom.Name)
 			}
 			if cert.Status != models.SSLStatusIssued && cert.Status != models.SSLStatusRenewing {
-				return fmt.Errorf("cert for %s is in status %q (expected 'issued') — wait for reconciler to finish issuing or check `jabali ssl list`", dom.Name, cert.Status)
+				hint := "wait for the reconciler to finish issuing, or check `jabali ssl list`"
+				if cert.Status == models.SSLStatusPendingACMERetry || cert.Status == models.SSLStatusFailed {
+					hint = fmt.Sprintf("run `jabali ssl retry %s` to reset the certificate and re-attempt issuance now", dom.Name)
+				}
+				return fmt.Errorf("cert for %s is in status %q (expected 'issued') — %s", dom.Name, cert.Status, hint)
 			}
 			raw, err := sharedAgent.Call(ctx, "ssl.renew", map[string]any{
 				"domain": dom.Name,
@@ -283,4 +288,51 @@ func newSSLRenewCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "force renewal even if cert is not due")
 	return cmd
+}
+
+// newSSLRetryCmd unblocks a certificate stuck in 'failed' or 'pending_acme_retry'
+// — e.g. a migrated domain that could not pass a challenge until its DNS
+// delegation was corrected (GH #1221). It resets the row to pending with a fresh
+// retry budget (repo.ResetForRetry); the long-lived reconciler's retry ticker
+// picks a 'pending' row up on its next pass and re-attempts ACME. DB-only: this
+// is a separate process from the running panel, so it never calls the agent or
+// the in-process reconciler directly.
+func newSSLRetryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "retry <domain>",
+		Short:   "Reset a stuck cert (failed / pending_acme_retry) and re-attempt ACME issuance now",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDB,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			defer cancel()
+			dom, err := domainRepoFromDB().FindByName(ctx, args[0])
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("domain %q not found", args[0])
+				}
+				return fmt.Errorf("lookup domain: %w", err)
+			}
+			cert, cerr := sslRepoFromDB().FindByDomainID(ctx, dom.ID)
+			if cerr != nil {
+				if errors.Is(cerr, repository.ErrNotFound) {
+					return fmt.Errorf("no cert for %s — run `jabali ssl enable %s` first to create + issue", dom.Name, dom.Name)
+				}
+				return fmt.Errorf("lookup cert: %w", cerr)
+			}
+			if cert.Status != models.SSLStatusFailed && cert.Status != models.SSLStatusPendingACMERetry {
+				return fmt.Errorf("cert for %s is in status %q — retry only applies to 'failed' or 'pending_acme_retry' (an issued cert renews with `jabali ssl renew`)", dom.Name, cert.Status)
+			}
+			if err := sslRepoFromDB().ResetForRetry(ctx, cert.ID, time.Now().UTC()); err != nil {
+				return fmt.Errorf("reset cert for retry: %w", err)
+			}
+			cliAuditOK(ctx, "ssl.retry", "domain", dom.ID, &dom.UserID)
+			if jsonOutput {
+				return printJSON(map[string]any{"domain": dom.Name, "status": models.SSLStatusPending, "queued": true})
+			}
+			fmt.Printf("Reset %s for re-issuance (status → pending, retry budget restored).\n"+
+				"The reconciler will attempt ACME on its next pass — watch `jabali ssl list`.\n", dom.Name)
+			return nil
+		},
+	}
 }

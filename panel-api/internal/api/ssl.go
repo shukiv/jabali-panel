@@ -347,16 +347,13 @@ func (h *sslHandler) retrySSL(c *gin.Context) {
 		return
 	}
 
-	// Reset retry count and clear next_retry_at to allow immediate retry
-	if err := h.cfg.SSLCerts.UpdateStatus(ctx, cert.ID, cert.Status, cert.LastError); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// For pending_acme_retry, reset retry_count to 0
-	// We'll do this via a direct update since we don't have a dedicated method
-	// Actually, let's just mark it as pending to trigger immediate retry
-	if err := h.cfg.SSLCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusPending, nil); err != nil {
+	// Flip to pending with a fresh budget: retry_count=0, next_retry_at + last_error
+	// cleared. A manual Retry is a deliberate operator action, so it resets the
+	// counter (matching the documented contract) rather than handing the cert its
+	// last one attempt — a pending_acme_retry cert that had already burned its
+	// budget would otherwise re-cap to 'failed' on the next tick. LE's own
+	// per-hostname failed-validation limit is the backstop against abuse.
+	if err := h.cfg.SSLCerts.ResetForRetry(ctx, cert.ID, time.Now().UTC()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

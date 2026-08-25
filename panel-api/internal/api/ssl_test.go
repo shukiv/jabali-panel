@@ -390,6 +390,66 @@ func TestListAllSSL_Success(t *testing.T) {
 	mockSSLCerts.AssertCalled(t, "ListAll", mock.MatchedBy(func(ctx context.Context) bool { return true }))
 }
 
+// retryTestScheduler records Schedule() calls for the retrySSL tests.
+type retryTestScheduler struct{ scheduled []string }
+
+func (r *retryTestScheduler) Schedule(domainID string) { r.scheduled = append(r.scheduled, domainID) }
+
+// TestRetrySSL covers the manual "Retry" path (GH #1221): a stuck cert
+// (pending_acme_retry / failed) is reset for a fresh-budget re-issuance and the
+// reconciler is scheduled; issued certs and non-admins are refused.
+func TestRetrySSL(t *testing.T) {
+	makeHandler := func(cert *models.SSLCertificate) (*sslHandler, *MockSSLCertificateRepository, *retryTestScheduler) {
+		mockCerts := new(MockSSLCertificateRepository)
+		sched := &retryTestScheduler{}
+		mockCerts.On("FindByDomainID", mock.Anything, "domain-1").Return(cert, nil)
+		mockCerts.On("ResetForRetry", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		cfg := SSLHandlerConfig{SSLCerts: mockCerts, Reconciler: sched}
+		return newSSLHandler(cfg), mockCerts, sched
+	}
+	// c.Writer.Status() is used rather than w.Code: the success path replies with
+	// c.Status(202) and no body, which gin does not flush to the httptest recorder
+	// on direct handler invocation (no Write). c.Writer.Status() reflects the code
+	// the handler set in every case.
+	do := func(h *sslHandler, admin bool) *gin.Context {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "id", Value: "domain-1"}}
+		c.Request = httptest.NewRequest("POST", "/api/v1/domains/domain-1/ssl/retry", nil)
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "admin", IsAdmin: admin})
+		h.retrySSL(c)
+		return c
+	}
+
+	t.Run("pending_acme_retry resets and schedules", func(t *testing.T) {
+		h, mockCerts, sched := makeHandler(&models.SSLCertificate{ID: "cert-1", DomainID: "domain-1", Status: models.SSLStatusPendingACMERetry, RetryCount: 12})
+		c := do(h, true)
+		require.Equal(t, http.StatusAccepted, c.Writer.Status())
+		mockCerts.AssertCalled(t, "ResetForRetry", mock.Anything, "cert-1", mock.Anything)
+		require.Equal(t, []string{"domain-1"}, sched.scheduled)
+	})
+
+	t.Run("failed is retryable", func(t *testing.T) {
+		h, mockCerts, _ := makeHandler(&models.SSLCertificate{ID: "cert-1", DomainID: "domain-1", Status: models.SSLStatusFailed})
+		c := do(h, true)
+		require.Equal(t, http.StatusAccepted, c.Writer.Status())
+		mockCerts.AssertCalled(t, "ResetForRetry", mock.Anything, "cert-1", mock.Anything)
+	})
+
+	t.Run("issued is not retryable", func(t *testing.T) {
+		h, mockCerts, _ := makeHandler(&models.SSLCertificate{ID: "cert-1", DomainID: "domain-1", Status: models.SSLStatusIssued})
+		c := do(h, true)
+		require.Equal(t, http.StatusConflict, c.Writer.Status())
+		mockCerts.AssertNotCalled(t, "ResetForRetry", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("non-admin forbidden", func(t *testing.T) {
+		h, _, _ := makeHandler(&models.SSLCertificate{ID: "cert-1", DomainID: "domain-1", Status: models.SSLStatusPendingACMERetry})
+		c := do(h, false)
+		require.Equal(t, http.StatusForbidden, c.Writer.Status())
+	})
+}
+
 // TestListAllSSL_AdminOnly tests non-admin users get 403
 func TestListAllSSL_AdminOnly(t *testing.T) {
 	mockSSLCerts := new(MockSSLCertificateRepository)
@@ -783,4 +843,9 @@ func (m *MockSSLCertificateRepository) ListExhaustedForSSLEnabledDomains(context
 
 func (m *MockSSLCertificateRepository) RearmACME(context.Context, string, int, time.Time) error {
 	return nil
+}
+
+func (m *MockSSLCertificateRepository) ResetForRetry(ctx context.Context, id string, now time.Time) error {
+	args := m.Called(ctx, id, now)
+	return args.Error(0)
 }

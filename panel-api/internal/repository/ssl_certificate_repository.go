@@ -79,6 +79,11 @@ type SSLCertificateRepository interface {
 	ListExhaustedForSSLEnabledDomains(ctx context.Context, before time.Time, limit int) ([]models.SSLCertificate, error)
 	// RearmACME puts an exhausted certificate back in the retry queue.
 	RearmACME(ctx context.Context, id string, retryCount int, now time.Time) error
+	// ResetForRetry unblocks a stuck certificate for an immediate, full-budget
+	// re-issuance attempt: status=pending, retry_count=0, next_retry_at + last_error
+	// cleared. Deliberate operator/tenant action ("Retry" button / `jabali ssl
+	// retry`), so a fresh budget is intended — unlike RearmACME's metered re-arm.
+	ResetForRetry(ctx context.Context, id string, now time.Time) error
 }
 
 type sslCertificateRepo struct{ db *gorm.DB }
@@ -433,6 +438,24 @@ func (r *sslCertificateRepo) RearmACME(ctx context.Context, id string, retryCoun
 			"status":        models.SSLStatusPendingACMERetry,
 			"retry_count":   retryCount,
 			"next_retry_at": now,
+			"updated_at":    now,
+		}).Error
+}
+
+// ResetForRetry unblocks a stuck cert for an immediate full-budget re-issuance:
+// status=pending (picked up by ListDueForACMERetry case 1 regardless of
+// next_retry_at), retry_count zeroed for a fresh budget, next_retry_at and
+// last_error cleared. gorm skips zero-valued struct fields on Updates, so the
+// map form is used to force retry_count=0 and the NULLs to persist.
+func (r *sslCertificateRepo) ResetForRetry(ctx context.Context, id string, now time.Time) error {
+	return r.db.WithContext(ctx).
+		Model(&models.SSLCertificate{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"status":        models.SSLStatusPending,
+			"retry_count":   0,
+			"next_retry_at": nil,
+			"last_error":    nil,
 			"updated_at":    now,
 		}).Error
 }

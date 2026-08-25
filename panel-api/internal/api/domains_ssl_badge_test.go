@@ -220,3 +220,4 @@ func (m *mockSSLCertsForBadge) ListExhaustedForSSLEnabledDomains(context.Context
 }
 
 func (m *mockSSLCertsForBadge) RearmACME(context.Context, string, int, time.Time) error { return nil }
+func (m *mockSSLCertsForBadge) ResetForRetry(context.Context, string, time.Time) error  { return nil }

@@ -139,3 +139,7 @@ func (f *fakeSSLCertRepo) RearmACME(_ context.Context, id string, retryCount int
 	f.rearmed[id] = retryCount
 	return nil
 }
+
+func (f *fakeSSLCertRepo) ResetForRetry(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}

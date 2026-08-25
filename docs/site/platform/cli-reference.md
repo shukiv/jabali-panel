@@ -4965,6 +4965,14 @@ jabali ssl renew <domain> [flags]
 
 - `--force` — force renewal even if cert is not due
 
+#### `jabali ssl retry`
+
+Reset a stuck cert (failed / pending_acme_retry) and re-attempt ACME issuance now
+
+```
+jabali ssl retry <domain>
+```
+
 #### `jabali ssl set-custom`
 
 Install an operator-supplied SSL cert + key (JAB-128)

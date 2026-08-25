@@ -163,6 +163,38 @@ func TestSSLCertificateRepository_UpdateStatus(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestSSLCertificateRepository_ResetForRetry(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := repository.NewSSLCertificateRepository(gdb)
+	ctx := context.Background()
+
+	certID := "01ARWX4FRYXZ73AK7EQQ69G5NV"
+	now := time.Now().UTC()
+
+	mock.ExpectBegin()
+	// One UPDATE: status=pending, retry_count=0, next_retry_at=NULL, last_error=NULL,
+	// updated_at=now. Map-ordered SET columns -> AnyArg for every value; the WHERE
+	// binds certID.
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE `ssl_certificates` SET")).
+		WithArgs(
+			sqlmock.AnyArg(), // last_error (NULL)
+			sqlmock.AnyArg(), // next_retry_at (NULL)
+			sqlmock.AnyArg(), // retry_count (0)
+			sqlmock.AnyArg(), // status (pending)
+			sqlmock.AnyArg(), // updated_at
+			certID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := repo.ResetForRetry(ctx, certID, now)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSSLCertificateRepository_UpdateAfterIssuance(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
