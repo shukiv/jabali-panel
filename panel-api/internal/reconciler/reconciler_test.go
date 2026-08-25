@@ -1569,11 +1569,53 @@ func TestReconcilePHPPools_SkipActivePool(t *testing.T) {
 
 	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
 		WithPHPPools(phpPoolRepo)
+	// The pool is active AND its socket is present — the healthy steady state,
+	// which must be skipped. (JAB-388 only re-applies an active pool whose socket
+	// has vanished; that path is covered by the self-heal test below.)
+	r.socketReady = func(context.Context, string, time.Duration, time.Duration) bool { return true }
 
 	r.ReconcilePHPPools(ctx)
 
 	// Verify that no agent calls were made (pool already active)
 	require.Len(t, agent.calls, 0, "should not call agent for active pool")
+}
+
+// JAB-388: an active pool whose FPM socket vanished (e.g. an update regenerated
+// the FPM tree and dropped the master) must self-heal on the ordinary tick — the
+// reconciler used to only re-apply pending/error pools, so a wiped-but-active
+// pool stayed broken until a manual `php pool reapply-all`.
+func TestReconcilePHPPools_SelfHealsActivePoolWithMissingSocket(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	username := "healme"
+	user := &models.User{ID: "user-1", Email: "healme@example.com", Username: &username}
+	userRepo.users[user.ID] = user
+
+	activePool := &models.PHPPool{ID: "pool-1", UserID: user.ID, PHPVersion: "8.3", PmMode: "ondemand", Status: "active"}
+	phpPoolRepo.pools[activePool.ID] = activePool
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+	// Socket is GONE — the self-heal trigger.
+	r.socketReady = func(context.Context, string, time.Duration, time.Duration) bool { return false }
+
+	r.ReconcilePHPPools(ctx)
+
+	// The pool must be re-applied despite being "active" — the agent gets a
+	// php.pool.apply for it.
+	found := false
+	for _, c := range agent.calls {
+		if c.method == "php.pool.apply" {
+			found = true
+		}
+	}
+	require.True(t, found, "an active pool with a missing socket must be re-applied (JAB-388)")
 }
 
 func TestReconcilePHPPools_RetryPendingPool(t *testing.T) {
@@ -2327,6 +2369,62 @@ func TestReconcileVersionedPHPPools(t *testing.T) {
 		t.Errorf("fresh versioned pool must be spared by the reap grace: %v", err)
 	}
 	require.Equal(t, "phpuser-php8.0", rp["slug"], "only the OLD orphan should be reaped, not the fresh one")
+}
+
+// JAB-388: a versioned pool that is ACTIVE and has a bound domain, but whose FPM
+// socket has vanished, must be re-applied by the ordinary versioned pass — the
+// same self-heal the default pool gets. Without it the pool stays broken until a
+// manual `php pool reapply-all` (the reported symptom on a migrated site whose
+// PHP version never actually switched after the 04:30 update wiped the master).
+func TestReconcileVersionedPHPPools_SelfHealsWipedActivePool(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	username := "phpuser"
+	user := &models.User{ID: "user-1", Email: "u@e.com", Username: &username}
+	userRepo.users[user.ID] = user
+
+	base := time.Now().UTC().Add(-1 * time.Hour)
+	phpPoolRepo.pools["pool-default"] = &models.PHPPool{
+		ID: "pool-default", UserID: user.ID, PHPVersion: "8.4",
+		PmMode: "ondemand", PmMaxChildren: 20, ProcessIdleTimeoutSeconds: 60,
+		Status: "active", CreatedAt: base,
+	}
+	// Versioned pool, ACTIVE, with a bound domain — but its socket is gone.
+	phpPoolRepo.pools["pool-82"] = &models.PHPPool{
+		ID: "pool-82", UserID: user.ID, PHPVersion: "8.2",
+		PmMode: "ondemand", PmMaxChildren: 20, ProcessIdleTimeoutSeconds: 60,
+		Status: "active", CreatedAt: base.Add(time.Minute),
+	}
+	pool82 := "pool-82"
+	domainRepo.domains["d1"] = &models.Domain{
+		ID: "d1", UserID: user.ID, Name: "a.com", IsEnabled: true, PHPPoolID: &pool82,
+	}
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: time.Second}).
+		WithPHPPools(phpPoolRepo)
+	// The 8.2 pool's socket is MISSING (the self-heal trigger). applyPHPPool's own
+	// post-apply readiness probe uses the same mock; returning false just leaves
+	// the pool "error" after the re-apply — the point here is that the agent was
+	// asked to re-render it at all.
+	r.socketReady = func(context.Context, string, time.Duration, time.Duration) bool { return false }
+
+	r.reconcileVersionedPHPPools(ctx)
+
+	var applied *fakeCall
+	for i := range agent.calls {
+		if agent.calls[i].method == "php.pool.apply" {
+			applied = &agent.calls[i]
+		}
+	}
+	require.NotNil(t, applied, "an active versioned pool with a missing socket must be re-applied (JAB-388)")
+	require.Equal(t, "phpuser-php8.2", applied.params.(map[string]any)["slug"],
+		"self-heal must re-apply the VERSIONED pool with its own slug, not the default")
 }
 
 func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {

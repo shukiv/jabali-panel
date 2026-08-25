@@ -56,11 +56,15 @@ func (r *phpPoolRepo) FindByID(ctx context.Context, id string) (*models.PHPPool,
 
 func (r *phpPoolRepo) FindByUserID(ctx context.Context, userID string) (*models.PHPPool, error) {
 	var pool models.PHPPool
-	// The DEFAULT pool is the earliest-created row (slug == username) — the
-	// same "pools[0]" convention domain_php_pool.go uses. Order by id ASC (ULIDs
-	// are time-ordered) so the default is deterministic and a later duplicate
-	// row can never win this lookup (JAB-174).
-	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("id ASC").First(&pool).Error; err != nil {
+	// The DEFAULT pool is the earliest-created row (slug == username) — the same
+	// "pools[0]" convention domain_php_pool.go / reconcileVersionedPHPPools use.
+	// JAB-388: order by created_at ASC to MATCH ListByUserID exactly (they used
+	// to disagree — id ASC here vs created_at ASC there — so with two rows the
+	// default-pool machinery and the versioned machinery could pick DIFFERENT
+	// rows as the default and fight over the master include / user-phpver). The
+	// id ASC tiebreak keeps it deterministic on a created_at tie, preserving the
+	// JAB-174 guarantee that a later duplicate row can never win this lookup.
+	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at ASC, id ASC").First(&pool).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
@@ -84,7 +88,9 @@ func (r *phpPoolRepo) ListByUserID(ctx context.Context, userID string) ([]models
 	var pools []models.PHPPool
 	if err := r.db.WithContext(ctx).
 		Where("user_id = ?", userID).
-		Order("created_at ASC").
+		// JAB-388: created_at ASC, id ASC — deterministic even on a created_at
+		// tie, and identical to FindByUserID so both agree on pools[0]=default.
+		Order("created_at ASC, id ASC").
 		Find(&pools).Error; err != nil {
 		return nil, err
 	}

@@ -106,9 +106,11 @@ func TestPHPPoolRepository_FindByUserID_Found(t *testing.T) {
 
 	repo := NewPHPPoolRepository(db)
 
-	// JAB-174: the default pool is the earliest row — the lookup must ORDER BY
-	// id ASC so a later duplicate can't win.
-	mock.ExpectQuery("SELECT .* FROM `php_pools` WHERE user_id = \\?.*ORDER BY .*id.* ASC.*LIMIT").
+	// JAB-388: the default pool is the earliest row — the lookup must ORDER BY
+	// created_at ASC, id ASC, identical to ListByUserID, so both paths agree on
+	// pools[0]=default (the id ASC tiebreak keeps the JAB-174 anti-duplicate
+	// determinism on a created_at tie).
+	mock.ExpectQuery("SELECT .* FROM `php_pools` WHERE user_id = \\?.*ORDER BY created_at ASC, id ASC.*LIMIT").
 		WithArgs("user1", 1).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "php_version", "pm_mode", "pm_max_children", "process_idle_timeout_seconds", "status", "last_error", "created_at", "updated_at"},

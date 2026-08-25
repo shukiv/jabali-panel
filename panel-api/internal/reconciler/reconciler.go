@@ -1187,6 +1187,27 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 
 // createDomainOnAgent calls the agent to provision a domain.
 // Logs errors but doesn't return them so reconciliation can continue.
+// activePoolSocketMissing reports whether an ACTIVE pool's FPM socket is gone
+// (JAB-388 self-heal trigger). The reconcilers otherwise only (re-)apply pools
+// in pending/error status, so a pool that is active in the DB but whose on-disk
+// artifacts were wiped out-of-band — e.g. an update regenerating the FPM tree
+// and dropping the versioned master, or a manual reset — is NEVER re-rendered,
+// and a full panel restart doesn't help (reconcile trusts the active status and
+// skips it). The only recovery was `jabali php pool reapply-all`. Probing the
+// socket here lets the ordinary tick self-heal instead.
+//
+// A non-active pool returns false — it is already handled by the pending/error
+// apply path. Admin / usernameless users return false (they own no pool). The
+// probe is a single non-blocking os.Stat (timeout 0 → one check) via the same
+// mockable socketReady the apply path uses, so tests drive it deterministically.
+func (r *Reconciler) activePoolSocketMissing(ctx context.Context, user *models.User, pool *models.PHPPool, isDefault bool) bool {
+	if pool == nil || pool.Status != "active" || user.Username == nil || *user.Username == "" || user.IsAdmin {
+		return false
+	}
+	socket := models.PoolSocketPath(*user.Username, pool.PHPVersion, isDefault)
+	return !r.socketReady(ctx, socket, 0, 0)
+}
+
 // reconcilePHPPools ensures every panel user has a default PHP pool
 // and converges pending/error pools to active status via agent apply.
 // Uses injectable socket-ready check for test mocking.
@@ -1212,8 +1233,10 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 			continue
 		}
 
-		// User needs a pool if no pool exists OR pool is pending/error
-		if pool == nil || pool.Status == "pending" || pool.Status == "error" {
+		// User needs a pool if no pool exists OR pool is pending/error OR the
+		// pool is active but its socket vanished (JAB-388 self-heal).
+		if pool == nil || pool.Status == "pending" || pool.Status == "error" ||
+			r.activePoolSocketMissing(ctx, user, pool, true) {
 			usersNeedingPools = append(usersNeedingPools, user)
 		}
 
@@ -1287,8 +1310,9 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 			r.log.Info("created default PHP pool for user", "user_id", user.ID, "pool_id", pool.ID)
 		}
 
-		// If pool is already active, skip agent call
-		if pool.Status == "active" {
+		// Skip a healthy active pool; but self-heal one whose socket vanished
+		// (JAB-388) by falling through to re-apply.
+		if pool.Status == "active" && !r.activePoolSocketMissing(ctx, user, pool, true) {
 			continue
 		}
 
@@ -1366,8 +1390,11 @@ func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) {
 				continue
 			}
 
-			// Apply pending/error versioned pools (active ones are converged).
-			if pool.Status == "pending" || pool.Status == "error" {
+			// Apply pending/error versioned pools; also self-heal an active one
+			// whose socket vanished (JAB-388) — otherwise a wiped-but-active pool
+			// is skipped forever and only manual reapply-all recovers it.
+			if pool.Status == "pending" || pool.Status == "error" ||
+				r.activePoolSocketMissing(ctx, user, pool, false) {
 				r.applyPHPPool(ctx, user, pool, false)
 				processed++
 			}
