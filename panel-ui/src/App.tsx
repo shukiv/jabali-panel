@@ -21,12 +21,12 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { App as AntdApp, ConfigProvider, Empty, Spin } from "antd";
-import type { ReactNode } from "react";
 import { lazy, Suspense, useEffect } from "react";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 import { FeedbackBridge } from "./lib/feedback";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { PublicOnly } from "./auth/PublicOnly";
 import { RequireAdmin } from "./auth/RequireAdmin";
 import { RequireUser } from "./auth/RequireUser";
 import useMuiTheme from "./muiTheme";
@@ -130,29 +130,6 @@ function KratosSettingsRedirect() {
   return <Navigate to={`${target}${search}`} replace />;
 }
 
-function PublicOnly({ children }: { children: ReactNode }) {
-  const { user, isLoading } = useAuth();
-  if (isLoading) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: "100vh",
-        }}
-      >
-        <Spin size="large" />
-      </div>
-    );
-  }
-  if (user) {
-    return (
-      <Navigate to={user.isAdmin ? "/jabali-admin" : "/jabali-panel"} replace />
-    );
-  }
-  return <>{children}</>;
-}
 
 const BrandingTitleApplier = () => {
   useApplyBrandingToTitle();
