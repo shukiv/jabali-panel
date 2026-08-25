@@ -8,13 +8,13 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 )
 
-// runSSHLogin tails the systemd journal for sshd Accepted lines and
-// publishes one ssh.login envelope per successful authentication.
+// runSSHLogin tails the systemd journal for sshd Accepted lines and publishes
+// ssh.login notifications through a smart grouper (ssh_login_group.go): the first
+// login from a (user, IP, method) fires immediately, repeats within the window
+// are suppressed and counted into periodic summaries, and a new IP/method fires
+// fresh. This stops a noisy per-minute account from flooding the admin inbox.
 //
 // We shell out to journalctl --follow rather than linking against
 // libsystemd's sd_journal: the panel-api binary already statics-builds
@@ -38,6 +38,27 @@ func runSSHLogin(ctx context.Context, d Deps) {
 		return
 	}
 
+	// One grouper for the life of the source (survives journalctl restarts), so
+	// login bursts collapse into counted summaries instead of one notification
+	// per login (the "drfeed spam"). A ticker flushes quiet/rolling summaries.
+	gr := newSSHLoginGrouper(d.Now)
+	go func() {
+		t := time.NewTicker(sshFlushInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				for _, env := range gr.flush() {
+					if _, err := d.Queue.Publish(ctx, env); err != nil {
+						d.Log.Warn("eventsources: publish ssh.login summary failed", "err", err)
+					}
+				}
+			}
+		}
+	}()
+
 	// Keep retrying with a backoff so a transient journalctl exit
 	// (rotated journal, OOM kill) doesn't permanently silence ssh
 	// notifications. Cap the backoff so we don't drift toward minute-
@@ -49,7 +70,7 @@ func runSSHLogin(ctx context.Context, d Deps) {
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		if err := tailSSHJournal(ctx, d); err != nil && ctx.Err() == nil {
+		if err := tailSSHJournal(ctx, d, gr); err != nil && ctx.Err() == nil {
 			// SIGTERM to the journalctl child races our ctx propagation
 			// at shutdown — the child returns "signal: terminated" before
 			// our ctx.Done() fires. Treat that as graceful and exit silently
@@ -79,7 +100,7 @@ func runSSHLogin(ctx context.Context, d Deps) {
 // tailSSHJournal runs journalctl in JSON-follow mode until ctx is
 // cancelled or the process exits. Each Accepted line is parsed and
 // published as ssh.login.
-func tailSSHJournal(ctx context.Context, d Deps) error {
+func tailSSHJournal(ctx context.Context, d Deps, gr *sshLoginGrouper) error {
 	cmd := exec.CommandContext(ctx,
 		"journalctl",
 		// Match the systemd unit rather than the syslog identifier:
@@ -112,7 +133,7 @@ func tailSSHJournal(ctx context.Context, d Deps) error {
 		if err := json.Unmarshal(sc.Bytes(), &entry); err != nil {
 			continue
 		}
-		processSSHJournalEntry(ctx, d, entry)
+		processSSHJournalEntry(ctx, d, gr, entry)
 	}
 	// Wait so we collect the exit error if the scanner ended on a
 	// process death rather than ctx cancellation.
@@ -140,7 +161,7 @@ type journalEntry struct {
 // worker (`_COMM=sshd-session`) rather than the listener; older Debians
 // still use `sshd`. Accept both, plus any sshd-* prefix to cover the
 // privsep variants without listing every name explicitly.
-func processSSHJournalEntry(ctx context.Context, d Deps, entry journalEntry) {
+func processSSHJournalEntry(ctx context.Context, d Deps, gr *sshLoginGrouper, entry journalEntry) {
 	if entry.Comm != "sshd" && !strings.HasPrefix(entry.Comm, "sshd-") {
 		return
 	}
@@ -151,26 +172,13 @@ func processSSHJournalEntry(ctx context.Context, d Deps, entry journalEntry) {
 	if user == "" {
 		return
 	}
-	tag := fmt.Sprintf("ssh:%s@%s", user, ip)
-	// 30 second cooldown — repeat logins from the same user+IP collapse
-	// (rsync/scp loops, CI bots) but distinct sessions still fire.
-	if !shouldFire(ctx, d, "ssh.login", tag, 30*time.Second) {
-		return
-	}
-	body := fmt.Sprintf("User %s logged in over SSH from %s", user, ip)
-	if method != "" {
-		body += fmt.Sprintf(" via %s", method)
-	}
-	body += fmt.Sprintf(". (%s)", tag)
-	_, err := d.Queue.Publish(ctx, notifications.Envelope{
-		EventKind: "ssh.login",
-		Severity:  models.NotificationSeverityInfo,
-		Title:     fmt.Sprintf("SSH login: %s from %s", user, ip),
-		Body:      body,
-		Deeplink:  "/jabali-admin/security",
-	})
-	if err != nil {
-		d.Log.Warn("eventsources: publish ssh.login failed", "err", err)
+	// Smart grouping: a new (user, IP, method) fires immediately; repeats within
+	// the window are suppressed and counted, surfaced as periodic summaries by
+	// observe/flush. See ssh_login_group.go.
+	for _, env := range gr.observe(user, ip, method) {
+		if _, err := d.Queue.Publish(ctx, env); err != nil {
+			d.Log.Warn("eventsources: publish ssh.login failed", "err", err)
+		}
 	}
 }
 
@@ -195,7 +203,6 @@ func parseAcceptedLine(msg string) (user, ip, method string) {
 	}
 	return fields[3], fields[5], fields[1]
 }
-
 
 // isShutdownChildExit returns true when err looks like the journalctl
 // child got killed (SIGTERM/SIGKILL). At panel-api shutdown the parent
