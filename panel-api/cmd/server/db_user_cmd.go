@@ -107,15 +107,6 @@ func newDBUserCreateCmd() *cobra.Command {
 			if userLookup == "" || name == "" {
 				return errors.New("--user and --name are required")
 			}
-			if engine == "" {
-				engine = "mariadb"
-			}
-			if engine != "mariadb" && engine != "postgres" {
-				return fmt.Errorf("--engine must be 'mariadb' or 'postgres' (got %q)", engine)
-			}
-			if !dbUserNameRe.MatchString(name) {
-				return fmt.Errorf("invalid db_user name %q — must match ^[a-zA-Z][a-zA-Z0-9_]{0,30}$", name)
-			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
@@ -123,74 +114,24 @@ func newDBUserCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !asAdmin && (panelUser.Username == nil || *panelUser.Username == "") {
-				return fmt.Errorf("user %s has no Linux username — cannot prefix db user name", panelUser.ID)
-			}
 
-			finalName := name
-			if !asAdmin {
-				finalName = *panelUser.Username + "_" + name
-			}
-
-			repo := dbUserRepoFromDB()
-			exists, err := repo.ExistsByUserAndUsername(ctx, panelUser.ID, finalName)
+			du, pw, err := dbUserCreate(ctx, dbUserCreateDeps{
+				agent:          sharedAgent,
+				dbUsers:        dbUserRepoFromDB(),
+				packages:       packageRepoFromDB(),
+				serverSettings: repository.NewServerSettingsRepository(sharedDB),
+			}, dbUserCreateInput{
+				panelUser: panelUser,
+				name:      name,
+				engine:    engine,
+				asAdmin:   asAdmin,
+				password:  password,
+			})
 			if err != nil {
-				return fmt.Errorf("collision check: %w", err)
-			}
-			if exists {
-				return fmt.Errorf("db user %q already exists for panel user %s", finalName, *panelUser.Username)
-			}
-
-			if engine == "postgres" {
-				ssRepo := repository.NewServerSettingsRepository(sharedDB)
-				ss, sErr := ssRepo.Get(ctx)
-				if sErr != nil {
-					return fmt.Errorf("server_settings: %w", sErr)
-				}
-				if ss == nil || !ss.PostgresEnabled {
-					return errors.New("postgres engine requested but server_settings.postgres_enabled=false")
-				}
-			}
-
-			pw := password
-			if pw == "" {
-				pw = ids.NewSecret()
-			}
-			hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
-			if err != nil {
-				return fmt.Errorf("bcrypt: %w", err)
-			}
-
-			if engine == "mariadb" {
-				_, err = sharedAgent.Call(ctx, "db_user.create", map[string]any{
-					"db_user_name": finalName,
-					"password":     pw,
-				})
-			} else {
-				_, err = sharedAgent.Call(ctx, "db.postgres.create_role", map[string]any{
-					"role":     finalName,
-					"password": pw,
-				})
-			}
-			if err != nil {
-				return fmt.Errorf("agent.%s create: %w", engine, err)
-			}
-
-			now := time.Now().UTC()
-			du := &models.DatabaseUser{
-				ID:           ids.NewULID(),
-				UserID:       panelUser.ID,
-				Username:     finalName,
-				Engine:       engine,
-				PasswordHash: string(hash),
-				CreatedAt:    now,
-				UpdatedAt:    now,
-			}
-			if err := repo.Create(ctx, du); err != nil {
-				return fmt.Errorf("db_user row insert: %w", err)
+				return err
 			}
 			cliAuditOK(ctx, "db_user.create", "database_user", du.ID, &panelUser.ID)
-			fmt.Fprintf(os.Stdout, "Created db user %s (id=%s, engine=%s)\n", finalName, du.ID, engine)
+			fmt.Fprintf(os.Stdout, "Created db user %s (id=%s, engine=%s)\n", du.Username, du.ID, du.Engine)
 			if password == "" {
 				fmt.Fprintf(os.Stdout, "Generated password: %s\n", pw)
 				fmt.Fprintln(os.Stdout, "Save it now — not stored in plaintext anywhere.")
@@ -204,6 +145,157 @@ func newDBUserCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&password, "password", "", "Password (auto-generated ULID if omitted; revealed once)")
 	cmd.Flags().BoolVar(&asAdmin, "as-admin", false, "Skip the panel-username prefix (admin-only DB user names)")
 	return cmd
+}
+
+// dbUserCreateDeps is the narrow slice of collaborators dbUserCreate needs, so
+// the cobra RunE stays a thin wire-up over globals and the logic is unit-testable
+// with fakes (mirrors dbGrantDeps).
+type dbUserCreateDeps struct {
+	agent          agent.AgentInterface
+	dbUsers        repository.DatabaseUserRepository
+	packages       repository.PackageRepository
+	serverSettings repository.ServerSettingsRepository
+}
+
+// dbUserCreateInput is the request for one database-identity creation.
+type dbUserCreateInput struct {
+	panelUser *models.User
+	name      string // bare name, without the panel-username prefix
+	engine    string // "" defaults to mariadb
+	asAdmin   bool   // skip the panel-username prefix
+	password  string // "" auto-generates a reveal-once secret
+}
+
+// dbUserCreateAgentCall / dbUserDropAgentCall centralise the engine-specific
+// command + param mapping the ticket flags as copied across REST, CLI, and
+// teardown. Param shapes match the REST handler (dbUserCmd/dbUserDropParams):
+// MariaDB uses db_user_name, Postgres uses role.
+func dbUserCreateAgentCall(engine, finalName, pw string) (string, map[string]any) {
+	if engine == "postgres" {
+		return "db.postgres.create_role", map[string]any{"role": finalName, "password": pw}
+	}
+	return "db_user.create", map[string]any{"db_user_name": finalName, "password": pw}
+}
+
+func dbUserDropAgentCall(engine, finalName string) (string, map[string]any) {
+	if engine == "postgres" {
+		return "db.postgres.drop_role", map[string]any{"role": finalName}
+	}
+	return "db_user.drop", map[string]any{"db_user_name": finalName}
+}
+
+// dbUserCreate is the shared CLI database-identity creation operation (JAB-282
+// slice). It closes two divergences from the REST create handler that this CLI
+// path had:
+//
+//   - it skipped the package max_database_users quota, so an operator could push
+//     a tenant past its limit;
+//   - a row-insert failure returned the error but left the freshly-created engine
+//     credential live — an orphaned MariaDB user / PostgreSQL role with no panel
+//     row, invisible to the reconciler and delete-cascade.
+//
+// Returns the persisted row and the plaintext password (revealed once). The
+// remaining module work (one shared REST+CLI operation, a single documented
+// name-length matrix) stays on the parent ticket.
+func dbUserCreate(ctx context.Context, d dbUserCreateDeps, in dbUserCreateInput) (*models.DatabaseUser, string, error) {
+	engine := in.engine
+	if engine == "" {
+		engine = "mariadb"
+	}
+	if engine != "mariadb" && engine != "postgres" {
+		return nil, "", fmt.Errorf("--engine must be 'mariadb' or 'postgres' (got %q)", engine)
+	}
+	if !dbUserNameRe.MatchString(in.name) {
+		return nil, "", fmt.Errorf("invalid db_user name %q — must match %s", in.name, dbUserNameRe.String())
+	}
+	if in.panelUser == nil {
+		return nil, "", errors.New("panel user required")
+	}
+	if !in.asAdmin && (in.panelUser.Username == nil || *in.panelUser.Username == "") {
+		return nil, "", fmt.Errorf("user %s has no Linux username — cannot prefix db user name", in.panelUser.ID)
+	}
+
+	finalName := in.name
+	if !in.asAdmin {
+		finalName = *in.panelUser.Username + "_" + in.name
+	}
+
+	exists, err := d.dbUsers.ExistsByUserAndUsername(ctx, in.panelUser.ID, finalName)
+	if err != nil {
+		return nil, "", fmt.Errorf("collision check: %w", err)
+	}
+	if exists {
+		return nil, "", fmt.Errorf("db user %q already exists for panel user %s", finalName, in.panelUser.ID)
+	}
+
+	// Package quota parity with the REST handler (JAB-282): enforce
+	// max_database_users when the owner has a package. A package-load error is
+	// non-fatal — matches REST, which skips the quota and proceeds.
+	if in.panelUser.PackageID != nil && *in.panelUser.PackageID != "" && d.packages != nil {
+		if pkg, pErr := d.packages.FindByID(ctx, *in.panelUser.PackageID); pErr == nil && pkg.MaxDatabaseUsers > 0 {
+			count, cErr := d.dbUsers.CountByUserID(ctx, in.panelUser.ID)
+			if cErr != nil {
+				return nil, "", fmt.Errorf("quota count: %w", cErr)
+			}
+			if count >= int64(pkg.MaxDatabaseUsers) {
+				return nil, "", fmt.Errorf("quota exceeded: package allows %d database users, %s already has %d",
+					pkg.MaxDatabaseUsers, in.panelUser.ID, count)
+			}
+		}
+	}
+
+	if engine == "postgres" {
+		if d.serverSettings == nil {
+			return nil, "", errors.New("server settings unavailable")
+		}
+		ss, sErr := d.serverSettings.Get(ctx)
+		if sErr != nil {
+			return nil, "", fmt.Errorf("server_settings: %w", sErr)
+		}
+		if ss == nil || !ss.PostgresEnabled {
+			return nil, "", errors.New("postgres engine requested but server_settings.postgres_enabled=false")
+		}
+	}
+
+	pw := in.password
+	if pw == "" {
+		pw = ids.NewSecret()
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, "", fmt.Errorf("bcrypt: %w", err)
+	}
+
+	createCmd, createParams := dbUserCreateAgentCall(engine, finalName, pw)
+	if _, err := d.agent.Call(ctx, createCmd, createParams); err != nil {
+		return nil, "", fmt.Errorf("agent.%s create: %w", engine, err)
+	}
+
+	now := time.Now().UTC()
+	du := &models.DatabaseUser{
+		ID:           ids.NewULID(),
+		UserID:       in.panelUser.ID,
+		Username:     finalName,
+		Engine:       engine,
+		PasswordHash: string(hash),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := d.dbUsers.Create(ctx, du); err != nil {
+		// Compensate: the engine credential is already live. Drop it so a failed
+		// row insert never leaves an orphaned MariaDB user / PostgreSQL role —
+		// the exact bug this closes. Background ctx so a near-deadline create ctx
+		// can't starve the rollback.
+		dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		dropCmd, dropParams := dbUserDropAgentCall(engine, finalName)
+		_, derr := d.agent.Call(dropCtx, dropCmd, dropParams)
+		cancel()
+		if derr != nil {
+			return nil, "", fmt.Errorf("db_user row insert failed (%v) AND the compensating engine drop ALSO failed (%v) — a live %s credential %q is now orphaned; drop it directly on the engine", err, derr, engine, finalName)
+		}
+		return nil, "", fmt.Errorf("db_user row insert: %w (engine credential rolled back)", err)
+	}
+	return du, pw, nil
 }
 
 func newDBUserDeleteCmd() *cobra.Command {
