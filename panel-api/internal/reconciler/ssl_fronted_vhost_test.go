@@ -80,7 +80,7 @@ func vhostHTTPSParams(t *testing.T, ag *fakeAgent) (redirect, serve bool) {
 func TestFrontedVhost_SelfSignedServes443NoRedirect(t *testing.T) {
 	r, ag, dom, _ := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, cfEdgeAddrs, true)
 
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 
 	redirect, serve := vhostHTTPSParams(t, ag)
 	if !serve {
@@ -95,7 +95,7 @@ func TestFrontedVhost_IssuedServes443NoRedirect(t *testing.T) {
 	r, ag, dom, sc := frontedVhostFixture(t, letsEncryptCertPath, letsEncryptKeyPath, cfEdgeAddrs, true)
 	sc.byDomain[dom.ID].Status = models.SSLStatusIssued
 
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 
 	redirect, serve := vhostHTTPSParams(t, ag)
 	if !serve || redirect {
@@ -106,7 +106,7 @@ func TestFrontedVhost_IssuedServes443NoRedirect(t *testing.T) {
 func TestDirectVhost_SelfSignedBootstrapStaysHTTPOnly(t *testing.T) {
 	r, ag, dom, _ := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, []string{frontedTestOwnIP}, true)
 
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 
 	redirect, serve := vhostHTTPSParams(t, ag)
 	if redirect || serve {
@@ -118,7 +118,7 @@ func TestDirectVhost_IssuedRedirectsAndServes(t *testing.T) {
 	r, ag, dom, sc := frontedVhostFixture(t, letsEncryptCertPath, letsEncryptKeyPath, []string{frontedTestOwnIP}, true)
 	sc.byDomain[dom.ID].Status = models.SSLStatusIssued
 
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 
 	redirect, serve := vhostHTTPSParams(t, ag)
 	if !redirect || !serve {
@@ -138,7 +138,7 @@ func TestDirectVhost_SelfSignedToLETransitionReRenders(t *testing.T) {
 	r, ag, dom, sc := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, []string{frontedTestOwnIP}, true)
 
 	// Tick 1: still on the self-signed bootstrap placeholder.
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 	if redirect, serve := vhostHTTPSParams(t, ag); redirect || serve {
 		t.Fatalf("pre-transition: (redirect=%v, serve=%v), want (false, false)", redirect, serve)
 	}
@@ -154,7 +154,7 @@ func TestDirectVhost_SelfSignedToLETransitionReRenders(t *testing.T) {
 	ag.mu.Unlock()
 
 	// Tick 2: the very next dispatch must reflect the trusted cert.
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 	if redirect, serve := vhostHTTPSParams(t, ag); !redirect || !serve {
 		t.Fatalf("post-transition: (redirect=%v, serve=%v), want (true, true) — the :80 shape must update the tick a real cert lands", redirect, serve)
 	}
@@ -164,7 +164,7 @@ func TestFrontedVhost_InconclusiveLookupKeepsCachedValue(t *testing.T) {
 	r, ag, dom, _ := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, cfEdgeAddrs, true)
 
 	// First render: definitive fronted answer, cached.
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 	// Expire the entry, then blind the resolvers.
 	r.frontedMu.Lock()
 	e := r.frontedCache[dom.Name]
@@ -176,7 +176,7 @@ func TestFrontedVhost_InconclusiveLookupKeepsCachedValue(t *testing.T) {
 	ag.mu.Lock()
 	ag.calls = nil
 	ag.mu.Unlock()
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 
 	redirect, serve := vhostHTTPSParams(t, ag)
 	if !serve || redirect {
@@ -191,7 +191,7 @@ func TestFrontedVhost_DNS01IssueMethodImpliesFronted(t *testing.T) {
 	sc.byDomain[dom.ID].Status = models.SSLStatusIssued
 	sc.byDomain[dom.ID].IssueMethod = issueMethodDNS01
 
-	r.createDomainOnAgent(context.Background(), dom)
+	r.createDomainOnAgent(context.Background(), dom, true)
 
 	redirect, serve := vhostHTTPSParams(t, ag)
 	if !serve || redirect {

@@ -272,6 +272,15 @@ type Reconciler struct {
 	// every pass, the payload could never converge, so no downstream gate
 	// could ever fire. Keyed by zone ID; value type dnsZoneDispatchState.
 	dnsZoneDispatchCache sync.Map
+
+	// domainDispatchCache: per-domain hash of the last-dispatched domain.create
+	// wire payload + timestamp, same shape and rationale as the caches above
+	// (JAB-369). Without it the reconciler re-sent domain.create for EVERY
+	// enabled domain every ~60s tick — a full per-domain params assembly plus an
+	// agent round-trip (nginx -t + content compare) that no-ops when nothing
+	// changed. Keyed by domain ID; value type domainDispatchState. Process-local
+	// so a restart or DR-standby promotion re-dispatches everything.
+	domainDispatchCache sync.Map
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -956,7 +965,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		if agentSites[name] {
 			r.log.Info("reconcile: disabling unwanted domain", "domain", name)
 			r.reconcileDNSZone(ctx, domain)
-			r.createDomainOnAgent(ctx, domain)
+			r.createDomainOnAgent(ctx, domain, false)
 		}
 	}
 
@@ -1137,7 +1146,7 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	// The agent handles both enabled and disabled via the is_enabled parameter.
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	r.createDomainOnAgent(agentCtx, domain)
+	r.createDomainOnAgent(agentCtx, domain, true) // ReconcileOne: event-driven, always dispatch
 
 	return nil
 }
@@ -1169,7 +1178,7 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 		sslCancel()
 
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		r.createDomainOnAgent(agentCtx, d)
+		r.createDomainOnAgent(agentCtx, d, true) // Force run: always dispatch
 		cancel()
 	}
 
@@ -1627,7 +1636,9 @@ func (r *Reconciler) regenerateNginxForPool(ctx context.Context, pool *models.PH
 	for i := range allDomains {
 		domain := &allDomains[i]
 		if domain.PHPPoolID != nil && *domain.PHPPoolID == pool.ID {
-			r.createDomainOnAgent(ctx, domain)
+			// force: the pool config changed, which is out-of-band to the
+			// per-domain payload hash — the cache would otherwise skip it.
+			r.createDomainOnAgent(ctx, domain, true)
 		}
 	}
 }
@@ -1701,7 +1712,13 @@ func (r *Reconciler) effectiveInterceptErrors(ctx context.Context, domain *model
 	return false
 }
 
-func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain) {
+// createDomainOnAgent assembles and dispatches domain.create for a domain.
+// When force is false (the periodic tick) an unchanged, recently-dispatched
+// domain is skipped via the process-local domainDispatchCache (JAB-369); force
+// is true for the event-driven ReconcileOne, ReconcileAllForce, and the
+// pool-regeneration pass, which must re-dispatch regardless of the cache
+// (a pool config change is out-of-band to the per-domain payload hash).
+func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain, force bool) {
 	user, err := r.users.FindByID(ctx, domain.UserID)
 	if err != nil {
 		r.log.Error("failed to fetch user for domain", "domain_id", domain.ID, "user_id", domain.UserID, "err", err)
@@ -1999,16 +2016,28 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		params[k] = v
 	}
 
+	// JAB-369: skip the agent round-trip when the fully-assembled payload is
+	// byte-identical to the last successful dispatch for this domain AND we're
+	// within the drift-repair interval. force paths (ReconcileOne / Force /
+	// pool-regen) always dispatch. params is exactly what the agent receives.
+	hash := desiredDomainDispatchHash(params)
+	if !force && !r.domainDispatchNeeded(domain.ID, hash, time.Now()) {
+		return
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	_, err = r.agent.Call(callCtx, "domain.create", params)
-	if err != nil {
+	if _, err = r.agent.Call(callCtx, "domain.create", params); err != nil {
+		// Left unstamped so the domain stays dirty and retries next tick — a
+		// failed apply is never recorded as applied.
 		r.log.Error("domain create failed on agent",
 			"domain_id", domain.ID,
 			"domain", domain.Name,
 			"err", err)
+		return
 	}
+	r.domainDispatched(domain.ID, hash, time.Now())
 }
 
 // redirectHTTPSForCert decides whether the agent should render the :80→:443
@@ -3563,7 +3592,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	// code shipped (or whose insert failed mid-flight). No-op when
 	// the rows already exist; safe on every tick.
 	r.ensureTenantDKIMRecords(ctx, domain)
-	r.createDomainOnAgent(ctx, domain)
+	r.createDomainOnAgent(ctx, domain, false)
 	// M6.3: ensure the recursor has a forwarder for this zone so
 	// local resolution hits pdns-server on loopback :5300. Idempotent.
 	r.reconcileRecursorForward(ctx, name)
