@@ -512,10 +512,16 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()
-		// M30.2.x: per-destination password file is provisioned by
-		// the agent's write_temp on demand; cleanup runs after
-		// dispatch completes (or fails).
-		callErr := backupwrapperhelpers.WithDestPasswordFile(ctx, dest, h.cfg.Agent, h.cfg.SSOKey,
+		// JAB-302: backup.create is ASYNC — the agent spawns the backup
+		// goroutine and returns immediately. So this dispatch must NOT unlink
+		// the per-destination password tempfile when the Call returns: the
+		// background restic/borg run still needs it to authenticate to the
+		// destination. Use the async variant (like the scheduler); the agent's
+		// backup.create goroutine owns the tempfile's lifetime and removes it
+		// when the job finishes (backup_create.go: defer removePasswordTempFile).
+		// The old sync WithDestPasswordFile raced its cleanup_temp against the
+		// live backup — the exact bug the agent comment records as "used to".
+		callErr := backupwrapperhelpers.WithDestPasswordFileAsync(ctx, dest, h.cfg.Agent, h.cfg.SSOKey,
 			func(passwordFile string) error {
 				if passwordFile != "" {
 					params["password_file"] = passwordFile
