@@ -120,6 +120,63 @@ func TestRotate_WithKey_Seals(t *testing.T) {
 	}
 }
 
+// CreateSystem mints the GH #1056 relay: System=true, SendOnly=true, a sealed
+// envelope, and the plaintext returned once. A nil SSO key is a hard error.
+func TestCreateSystem_MintsSealedRelayPrincipal(t *testing.T) {
+	repo := &fakeMBRepo{}
+	key := ssokey.Key{}
+	mb, pw, err := CreateSystem(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+		SystemCreateInput{Domain: enabledDomain(), LocalPart: "sendmail", DisplayName: "example.com (system sender)", QuotaBytes: 16 * 1024 * 1024}, nil)
+	if err != nil {
+		t.Fatalf("CreateSystem: %v", err)
+	}
+	if pw == "" {
+		t.Error("the generated relay password must be returned once")
+	}
+	if repo.created == nil || !repo.created.System || !repo.created.SendOnly {
+		t.Fatalf("relay must be System+SendOnly: %+v", repo.created)
+	}
+	if len(repo.created.PasswordEnc) == 0 {
+		t.Error("relay envelope must be sealed (webmail SSO depends on it)")
+	}
+	if repo.created.QuotaBytes != 16*1024*1024 {
+		t.Errorf("relay quota = %d, want 16 MiB", repo.created.QuotaBytes)
+	}
+	if mb.EmailCached != "sendmail@example.com" {
+		t.Errorf("email_cached = %q", mb.EmailCached)
+	}
+}
+
+func TestCreateSystem_NilKeyRejected(t *testing.T) {
+	if _, _, err := CreateSystem(context.Background(), Deps{Mailboxes: &fakeMBRepo{}, SSOKey: nil},
+		SystemCreateInput{Domain: enabledDomain(), LocalPart: "sendmail"}, nil); !errors.Is(err, ErrDeps) {
+		t.Errorf("a nil SSO key must be rejected (relay must be sealed), got %v", err)
+	}
+}
+
+// CreateForRestore persists a pre-computed hash and leaves password_enc NULL —
+// there is no plaintext to seal.
+func TestCreateForRestore_NoSealNoGate(t *testing.T) {
+	repo := &fakeMBRepo{}
+	mb, err := CreateForRestore(context.Background(), Deps{Mailboxes: repo},
+		RestoreCreateInput{DomainID: "d1", LocalPart: "info", PasswordHash: "$2b$12$sourcehash", QuotaBytes: 0})
+	if err != nil {
+		t.Fatalf("CreateForRestore: %v", err)
+	}
+	if repo.created.PasswordHash != "$2b$12$sourcehash" {
+		t.Errorf("restore must persist the pre-computed hash verbatim, got %q", repo.created.PasswordHash)
+	}
+	if repo.created.PasswordEnc != nil {
+		t.Errorf("restore has no plaintext to seal — password_enc must be nil, got %d bytes", len(repo.created.PasswordEnc))
+	}
+	if repo.created.QuotaBytes != DefaultQuotaBytes {
+		t.Errorf("quota 0 must default, got %d", repo.created.QuotaBytes)
+	}
+	if mb.ID == "" {
+		t.Error("row must be assigned an id")
+	}
+}
+
 // Delete destroys the Stalwart side first: an agent failure aborts BEFORE the
 // row is removed.
 func TestDelete_HostFailureKeepsRow(t *testing.T) {

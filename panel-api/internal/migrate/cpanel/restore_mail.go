@@ -9,13 +9,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -379,16 +378,16 @@ func insertOneMailboxRow(
 		}
 		passwordHash = string(hash)
 	}
-	mb := &models.Mailbox{
-		ID:           ids.NewULID(),
+	// JAB-291: assemble + persist the migrated row via the shared Mailbox
+	// Lifecycle's explicit restore entry point. It takes the already-computed
+	// bcrypt hash verbatim, leaves password_enc NULL (no plaintext to seal), and
+	// applies no EmailEnabled gate or agent notify — the migration's semantics.
+	if _, cErr := mailboxops.CreateForRestore(ctx, mailboxops.Deps{Mailboxes: mbRepo}, mailboxops.RestoreCreateInput{
 		DomainID:     domain.ID,
 		LocalPart:    localPart,
 		PasswordHash: passwordHash,
 		QuotaBytes:   1073741824,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
-	}
-	if cErr := mbRepo.Create(ctx, mb); cErr != nil {
+	}); cErr != nil {
 		return []string{fmt.Sprintf("mailbox_rows: create %s@%s: %v", localPart, domainName, cErr)}
 	}
 	// GH #327: the pre-scan already counted maildir-shaped dirs into

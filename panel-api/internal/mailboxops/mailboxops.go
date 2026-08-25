@@ -153,6 +153,109 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	return mb, generated, nil
 }
 
+// SystemCreateInput mints an INFRASTRUCTURE principal — the GH #1056 sendmail
+// relay the reconciler ensures per email-enabled domain. This is the one place
+// System=true is expressible, and it is deliberately separate from CreateInput
+// so a tenant-facing create can never reach it.
+type SystemCreateInput struct {
+	Domain      *models.Domain // pre-loaded by the reconciler
+	LocalPart   string         // already canonical (the reconciler controls it)
+	DisplayName string
+	QuotaBytes  uint64 // 0 → DefaultQuotaBytes
+}
+
+// CreateSystem mints the sendmail relay principal (System=true, SendOnly=true):
+// generate → hash → seal → persist, and return the plaintext once so the caller
+// can write it into the cred file. Unlike Create it applies NO EmailEnabled gate
+// and NO duplicate check — the reconciler owns idempotency (it calls this only
+// when the relay is absent). The SSO key is REQUIRED: the relay's webmail SSO
+// depends on the sealed envelope, so a nil key is a hard error rather than a
+// silently unsealed row.
+func CreateSystem(ctx context.Context, d Deps, in SystemCreateInput, notify NotifyFunc) (*models.Mailbox, string, error) {
+	if d.Mailboxes == nil || in.Domain == nil {
+		return nil, "", fmt.Errorf("%w: mailboxes repo + domain required", ErrDeps)
+	}
+	if d.SSOKey == nil {
+		return nil, "", fmt.Errorf("%w: SSO key required to seal the system relay", ErrDeps)
+	}
+	password := ids.NewSecret()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: hash: %v", ErrInternal, err)
+	}
+	enc, err := d.SSOKey.Seal([]byte(password))
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: seal: %v", ErrInternal, err)
+	}
+	quota := in.QuotaBytes
+	if quota == 0 {
+		quota = DefaultQuotaBytes
+	}
+	now := time.Now().UTC()
+	mb := &models.Mailbox{
+		ID:           ids.NewULID(),
+		DomainID:     in.Domain.ID,
+		LocalPart:    in.LocalPart,
+		DisplayName:  in.DisplayName,
+		System:       true, // GH #1056: hide the JAB-230 relay from the mailbox lists
+		PasswordHash: string(hash),
+		PasswordEnc:  enc,
+		QuotaBytes:   quota,
+		SendOnly:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := d.Mailboxes.Create(ctx, mb); err != nil {
+		return nil, "", fmt.Errorf("%w: insert: %v", ErrInternal, err)
+	}
+	email := in.LocalPart + "@" + in.Domain.Name
+	if notify != nil {
+		notify(ctx, "mailbox.create", map[string]any{"id": mb.ID, "email": email})
+	}
+	mb.EmailCached = email
+	return mb, password, nil
+}
+
+// RestoreCreateInput persists a migrated mailbox from an ALREADY-computed bcrypt
+// hash (the tag-stripped source hash, or a fresh temp hash the caller generated
+// when the source could not be preserved). There is no plaintext, so nothing is
+// sealed and password_enc stays NULL until the tenant rotates.
+type RestoreCreateInput struct {
+	DomainID     string
+	LocalPart    string // already canonical
+	PasswordHash string // pre-computed; NEVER sealed
+	QuotaBytes   uint64 // 0 → DefaultQuotaBytes
+}
+
+// CreateForRestore persists a migrated mailbox row. It exists so the migration
+// stops hand-assembling the row: it applies NO EmailEnabled gate (the migration
+// provisions the domain it imports into), NO duplicate check (the caller already
+// resolved existence), and fires NO agent notify (the migration batches Stalwart
+// registration separately). password_enc is left NULL by construction.
+func CreateForRestore(ctx context.Context, d Deps, in RestoreCreateInput) (*models.Mailbox, error) {
+	if d.Mailboxes == nil {
+		return nil, fmt.Errorf("%w: mailboxes repo required", ErrDeps)
+	}
+	quota := in.QuotaBytes
+	if quota == 0 {
+		quota = DefaultQuotaBytes
+	}
+	now := time.Now().UTC()
+	mb := &models.Mailbox{
+		ID:           ids.NewULID(),
+		DomainID:     in.DomainID,
+		LocalPart:    in.LocalPart,
+		PasswordHash: in.PasswordHash,
+		QuotaBytes:   quota,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := d.Mailboxes.Create(ctx, mb); err != nil {
+		return nil, fmt.Errorf("%w: insert: %v", ErrInternal, err)
+	}
+	return mb, nil
+}
+
 // RotatePassword rotates a mailbox's password. Empty newPassword → generate one
 // and return it once. The hash and the sealed envelope are updated ATOMICALLY:
 // with a live SSO key the envelope is re-sealed to the new password; WITHOUT a

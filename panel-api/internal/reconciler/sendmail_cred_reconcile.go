@@ -12,6 +12,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -212,37 +213,27 @@ func (r *Reconciler) ensureRelayMailbox(ctx context.Context, d *models.Domain) (
 }
 
 func (r *Reconciler) createRelayMailbox(ctx context.Context, d *models.Domain, localPart, email string) (string, error) {
-	password := ids.NewSecret()
-	hash, herr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if herr != nil {
-		return "", fmt.Errorf("hash: %w", herr)
+	// JAB-291: the sendmail relay is an infrastructure principal — mint it via
+	// the shared Mailbox Lifecycle's explicit system entry point (System=true,
+	// SendOnly=true, sealed envelope) rather than hand-assembling the row here.
+	// Stalwart JMAP-registry registration stays best-effort (ADR-0045: DB is
+	// authoritative), passed as the notify hook.
+	notify := func(nctx context.Context, cmd string, params any) {
+		ncctx, ncancel := context.WithTimeout(nctx, 10*time.Second)
+		defer ncancel()
+		_, _ = r.agent.Call(ncctx, cmd, params)
 	}
-	enc, serr := r.sendmailSSOKey.Seal([]byte(password))
-	if serr != nil {
-		return "", fmt.Errorf("seal: %w", serr)
+	_, password, err := mailboxops.CreateSystem(ctx,
+		mailboxops.Deps{Mailboxes: r.mailboxes, SSOKey: r.sendmailSSOKey},
+		mailboxops.SystemCreateInput{
+			Domain:      d,
+			LocalPart:   localPart,
+			DisplayName: d.Name + " (system sender)",
+			QuotaBytes:  16 * 1024 * 1024,
+		}, notify)
+	if err != nil {
+		return "", fmt.Errorf("create %s: %w", email, err)
 	}
-	now := time.Now().UTC()
-	mb := &models.Mailbox{
-		ID:           ids.NewULID(),
-		DomainID:     d.ID,
-		LocalPart:    localPart,
-		DisplayName:  d.Name + " (system sender)",
-		System:       true, // GH #1056: hide the JAB-230 relay from the mailbox lists
-		PasswordHash: string(hash),
-		PasswordEnc:  enc,
-		QuotaBytes:   16 * 1024 * 1024,
-		SendOnly:     true,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if cerr := r.mailboxes.Create(ctx, mb); cerr != nil {
-		return "", fmt.Errorf("create %s: %w", email, cerr)
-	}
-	// Register the principal in Stalwart's JMAP registry (best-effort,
-	// same as the HTTP create path — DB is authoritative, ADR-0045).
-	nctx, ncancel := context.WithTimeout(ctx, 10*time.Second)
-	_, _ = r.agent.Call(nctx, "mailbox.create", map[string]any{"id": mb.ID, "email": email})
-	ncancel()
 	return password, nil
 }
 
