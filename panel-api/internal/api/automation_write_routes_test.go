@@ -157,6 +157,56 @@ func TestUserDisable_NotFound(t *testing.T) {
 	}
 }
 
+// TestUserDisable_RoutesLifecycle proves automation disable runs the full
+// User Account Lifecycle transition (JAB-281) — not a bare suspended-flag flip.
+// With a Linux username + agent wired, userops.Suspend must lock OS + FTP
+// credentials; a bare SetSuspended would leave agent.calls empty.
+func TestUserDisable_RoutesLifecycle(t *testing.T) {
+	uname := "alice"
+	users := &awUsers{u: &models.User{ID: "u1", Email: "a@x.tld", Username: &uname}}
+	ag := &awAgent{}
+	aud := &awAudit{}
+	r := awRouter(AutomationConfig{Users: users, Agent: ag, Audits: aud}, writeTok())
+	w := awPost(r, "/users/u1/disable")
+	if w.Code != http.StatusOK {
+		t.Fatalf("disable: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if users.suspended == nil || !*users.suspended {
+		t.Fatal("suspended flag was not set true")
+	}
+	if !awCalled(ag, "user.suspend") || !awCalled(ag, "ftpaccount.lock_tenant") {
+		t.Fatalf("lifecycle OS/FTP lock did not fire; agent calls = %v", ag.calls)
+	}
+}
+
+// TestUserEnable_RoutesLifecycle is the unsuspend mirror: the OS unlock agent
+// command must fire, proving enable also routes through userops.Unsuspend.
+func TestUserEnable_RoutesLifecycle(t *testing.T) {
+	uname := "alice"
+	users := &awUsers{u: &models.User{ID: "u1", Email: "a@x.tld", Username: &uname, Suspended: true}}
+	ag := &awAgent{}
+	r := awRouter(AutomationConfig{Users: users, Agent: ag, Audits: &awAudit{}}, writeTok())
+	w := awPost(r, "/users/u1/enable")
+	if w.Code != http.StatusOK {
+		t.Fatalf("enable: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if users.suspended == nil || *users.suspended {
+		t.Fatal("suspended flag was not cleared")
+	}
+	if !awCalled(ag, "user.unsuspend") {
+		t.Fatalf("lifecycle OS unlock did not fire; agent calls = %v", ag.calls)
+	}
+}
+
+func awCalled(a *awAgent, cmd string) bool {
+	for _, c := range a.calls {
+		if c == cmd {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDomainSuspend_IdempotentNoop(t *testing.T) {
 	// Domain already disabled → suspend is a no-op 200, no Update call.
 	dom := &awDomains{d: &models.Domain{ID: "d1", Name: "x.test", IsEnabled: false}}

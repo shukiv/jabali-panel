@@ -20,6 +20,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // capability describes one mounted write action for GET /automation/capabilities.
@@ -133,9 +134,21 @@ func userSuspendHandler(cfg AutomationConfig, suspend bool) gin.HandlerFunc {
 			autoErr(c, http.StatusConflict, "conflict", "refusing to disable an admin user")
 			return
 		}
-		// SetSuspended is the same repo method the GUI calls; the reconciler
-		// converges the OS/service state (DB-is-truth). Idempotent by target state.
-		if err := cfg.Users.SetSuspended(ctx, id, suspend, "automation:"+tok.ID); err != nil {
+		// JAB-281: route through the full User Account Lifecycle transition —
+		// the SAME userops.Suspend/Unsuspend the admin GUI/API and CLI use, not a
+		// bare suspended-flag flip. Beyond the load-bearing DB flag this
+		// deactivates the Kratos identity + invalidates cached sessions, disables
+		// owned domains, stops Docker apps, and locks OS + FTP credentials.
+		// Steps 2-5 are best-effort warnings inside userops; a returned error is
+		// only the hard DB-write failure. Idempotent by target state.
+		reason := "automation:" + tok.ID
+		var opErr error
+		if suspend {
+			_, opErr = userops.Suspend(ctx, billingUserOpsDeps(cfg), u, reason)
+		} else {
+			_, opErr = userops.Unsuspend(ctx, billingUserOpsDeps(cfg), u)
+		}
+		if opErr != nil {
 			auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultError)
 			autoErr(c, http.StatusBadGateway, "internal", "suspend failed")
 			return
