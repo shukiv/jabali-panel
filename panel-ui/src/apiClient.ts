@@ -253,19 +253,49 @@ export async function downloadDatabaseBackup(
 }
 
 /**
+ * Progress snapshot for a database restore-from-file upload (GH #1044).
+ * `frac` is 0..1 of the upload; `rate`/`estimated` come from axios's
+ * AxiosProgressEvent (bytes/sec and seconds-remaining) when available.
+ * Progress covers only the upload leg — once the body is sent the server
+ * runs the restore synchronously and reports no further events, so the
+ * caller shows an indeterminate "Restoring…" state after frac reaches 1.
+ */
+export interface RestoreUploadProgress {
+  frac: number;
+  loaded: number;
+  total: number;
+  rate?: number;
+  estimated?: number;
+}
+
+/**
  * Restore a single database from an uploaded .sql dump (GH #1045).
- * Multipart field name is "file" (server contract, max 500 MB). The
- * restore runs synchronously server-side (agent pipes the dump into the
- * mysql client), so big dumps need the unbounded timeout too.
+ * Multipart field name is "file" (server contract; the app cap is the
+ * admin `upload_max_size_mb`). The restore runs synchronously server-side
+ * (the agent loads the dump), so the request uses no client timeout; the
+ * server clears its own read/write deadlines for this route (GH #1044).
+ * `onProgress` fires during the upload leg for the progress modal.
  */
 export async function restoreDatabaseUpload(
   databaseId: string,
   file: File,
+  onProgress?: (p: RestoreUploadProgress) => void,
 ): Promise<void> {
   const form = new FormData();
   form.append("file", file);
   await apiClient.post(`/databases/${databaseId}/restore`, form, {
     timeout: 0,
+    onUploadProgress: (e) => {
+      if (!onProgress) return;
+      const total = e.total ?? file.size;
+      onProgress({
+        frac: total > 0 ? Math.min(1, e.loaded / total) : 0,
+        loaded: e.loaded,
+        total,
+        rate: e.rate,
+        estimated: e.estimated,
+      });
+    },
   });
 }
 

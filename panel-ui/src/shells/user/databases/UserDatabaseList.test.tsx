@@ -161,11 +161,21 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
     });
     fireEvent.change(input, { target: { files: [file] } });
 
+    // GH #1044: the call now carries a third arg — the upload-progress
+    // callback that drives the restore progress modal.
     await waitFor(() => {
-      expect(mockedRestore).toHaveBeenCalledWith("db1", file);
+      expect(mockedRestore).toHaveBeenCalledWith(
+        "db1",
+        file,
+        expect.any(Function),
+      );
     });
+    // The progress modal reaches its success state after the upload resolves.
+    expect(
+      await screen.findByText(/restored from/i, undefined, { timeout: 5000 }),
+    ).toBeInTheDocument();
     // Same teardown-race guard as the download test: flush the restore
-    // continuation (toast + query invalidation), then unmount.
+    // continuation (modal state + query invalidation), then unmount.
     await act(async () => {});
     unmount();
   });

@@ -37,6 +37,10 @@ import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { QuickSetupModal } from "./QuickSetupModal";
 import { UserDatabaseDrawer } from "./UserDatabaseDrawer";
+import {
+  RestoreProgressModal,
+  type RestoreProgress,
+} from "./RestoreProgressModal";
 
 export type Database = {
   id: string;
@@ -84,6 +88,10 @@ export const UserDatabaseList = () => {
   );
   const [loadingBackupId, setLoadingBackupId] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  // GH #1044: drives the upload+restore progress modal for "Restore from file".
+  const [restoreProgress, setRestoreProgress] = useState<RestoreProgress | null>(
+    null,
+  );
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
   // Hidden file input for "Restore from file" — the row action only
@@ -217,18 +225,43 @@ export const UserDatabaseList = () => {
       );
       return;
     }
+    // GH #1044: show a File-Manager-style progress modal instead of a blind
+    // wait. The upload leg reports real progress/speed/ETA; the restore leg is
+    // indeterminate (the server emits no further events once the body is up).
+    setRestoringId(row.id);
+    setRestoreProgress({
+      dbName: row.name,
+      fileName: file.name,
+      fileSize: file.size,
+      phase: "uploading",
+      loaded: 0,
+    });
     try {
-      setRestoringId(row.id);
-      await restoreDatabaseUpload(row.id, file);
-      feedback.message.success(
-        `Database "${row.name}" restored from ${file.name}`,
+      await restoreDatabaseUpload(row.id, file, (pr) => {
+        setRestoreProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                // Once the body is fully sent, flip to the restoring leg.
+                phase: pr.frac >= 1 ? "restoring" : "uploading",
+                loaded: pr.loaded,
+                rate: pr.rate,
+                estimated: pr.estimated,
+              }
+            : prev,
+        );
+      });
+      setRestoreProgress((prev) =>
+        prev ? { ...prev, phase: "success" } : prev,
       );
       // Size changed — refresh the listing.
       qc.invalidateQueries({ queryKey: ["list", "databases"] });
     } catch (error) {
       const errorMsg =
         error instanceof Error ? error.message : "Restore failed";
-      feedback.message.error(`Restore failed: ${errorMsg}`);
+      setRestoreProgress((prev) =>
+        prev ? { ...prev, phase: "error", errorMessage: errorMsg } : prev,
+      );
     } finally {
       setRestoringId(null);
     }
@@ -285,6 +318,11 @@ export const UserDatabaseList = () => {
       <UserDatabaseDrawer
         open={createDrawerOpen}
         onClose={() => setCreateDrawerOpen(false)}
+      />
+
+      <RestoreProgressModal
+        progress={restoreProgress}
+        onClose={() => setRestoreProgress(null)}
       />
 
       <Card>

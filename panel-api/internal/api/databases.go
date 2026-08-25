@@ -557,8 +557,33 @@ func (h *databaseHandler) resolveMaxRestoreBytes(ctx context.Context) int64 {
 	return int64(s.UploadMaxSizeMB) * 1024 * 1024
 }
 
+// restoreAgentTimeout bounds the synchronous per-database restore-from-file
+// (GH #1044). A large PostgreSQL dump loaded through the privilege-scoped shadow
+// role (GH #1205) can run for several minutes; the previous 5-minute cap could
+// trip on 500 MB+ databases. Agent calls dial a fresh connection each and the
+// agent serves them concurrently (one goroutine per connection), so a long
+// restore stalls only this request, never other agent operations — a generous
+// cap is safe. Mirrors the 60-minute ceiling the async backup-restore uses.
+const restoreAgentTimeout = 60 * time.Minute
+
 func (h *databaseHandler) restore(c *gin.Context) {
 	ctx := c.Request.Context()
+
+	// GH #1044: the panel's http.Server sets a 30s Read/WriteTimeout (serve.go),
+	// which would guillotine both a large dump upload (read) and a long restore
+	// (write) — the "messenger dies while the restore keeps running" symptom the
+	// async backup-restore path already fixed (#1068). This per-database path
+	// stays synchronous, so clear the per-request deadlines for the whole
+	// upload+restore cycle. nginx allows 3600s upstream (proxy_read_timeout on
+	// `location /`), so the request survives end to end. ErrNotSupported comes
+	// from test ResponseRecorders (no real conn) — log at debug and continue.
+	rc := http.NewResponseController(c.Writer)
+	if err := rc.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		slog.DebugContext(ctx, "databases.restore: clear read deadline failed", "err", err)
+	}
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		slog.DebugContext(ctx, "databases.restore: clear write deadline failed", "err", err)
+	}
 
 	// Load the database first
 	d, err := h.cfg.Databases.FindByID(ctx, c.Param("id"))
@@ -643,7 +668,13 @@ func (h *databaseHandler) restore(c *gin.Context) {
 		return
 	}
 
-	agentCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	// GH #1044: detach from the request context so a client disconnect (closed
+	// tab, network blip) mid-restore does NOT cancel the agent call — at up to
+	// restoreAgentTimeout the disconnect window is real, and aborting MariaDB's
+	// pipe-into-mysql mid-load would leave the database half-restored (Postgres'
+	// load-then-swap #1205 is safe either way). The restore outlives the
+	// messenger, exactly as the async backup-restore path does.
+	agentCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreAgentTimeout)
 	defer cancel()
 
 	// Dispatch by engine. Postgres loads the dump through a privilege-scoped
