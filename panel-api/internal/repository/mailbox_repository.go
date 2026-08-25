@@ -138,13 +138,25 @@ func (r *mailboxRepo) CountAll(ctx context.Context) (int64, error) {
 	return n, err
 }
 
+// mailboxInventorySelect is the safe column projection for the WithDomain list
+// reads (JAB-370): every mailboxes column EXCEPT the secret-bearing
+// password_hash and the AES-encrypted password_enc. The inventory/directory
+// views never need either, and `SELECT m.*` was pulling both into memory (bcrypt
+// hash + up to 512 bytes of ciphertext per row) on admin- and fleet-polled
+// paths. An explicit allowlist also fails safe: a future secret column is not
+// materialised unless it is deliberately added here.
+const mailboxInventorySelect = "m.id, m.domain_id, m.local_part, m.email_cached, " +
+	"m.display_name, m.quota_bytes, m.is_disabled, m.send_only, m.system, " +
+	"m.last_usage_bytes, m.last_usage_at, m.created_at, m.updated_at, " +
+	"d.name AS domain_name, d.user_id AS owner_user_id, COALESCE(u.username, '') AS user_username"
+
 // ListAllWithDomain returns every mailbox on the server joined with its
 // domain name + owning user's username, ordered by email. Admin-only path.
 func (r *mailboxRepo) ListAllWithDomain(ctx context.Context) ([]MailboxWithDomain, error) {
 	var rows []MailboxWithDomain
 	err := r.db.WithContext(ctx).
 		Table("mailboxes m").
-		Select("m.*, d.name AS domain_name, d.user_id AS owner_user_id, COALESCE(u.username, '') AS user_username").
+		Select(mailboxInventorySelect).
 		Joins("JOIN domains d ON d.id = m.domain_id").
 		Joins("LEFT JOIN users u ON u.id = d.user_id").
 		Order("m.email_cached ASC").
@@ -158,7 +170,7 @@ func (r *mailboxRepo) ListByOwnerWithDomain(ctx context.Context, userID string) 
 	var rows []MailboxWithDomain
 	err := r.db.WithContext(ctx).
 		Table("mailboxes m").
-		Select("m.*, d.name AS domain_name, d.user_id AS owner_user_id, COALESCE(u.username, '') AS user_username").
+		Select(mailboxInventorySelect).
 		Joins("JOIN domains d ON d.id = m.domain_id").
 		Joins("LEFT JOIN users u ON u.id = d.user_id").
 		Where("d.user_id = ?", userID).
