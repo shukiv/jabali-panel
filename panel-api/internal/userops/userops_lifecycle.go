@@ -49,21 +49,22 @@ func (e *DockerTeardownError) Error() string {
 	return "userops: docker app teardown failed for " + strings.Join(e.Slugs, ", ")
 }
 
-// DBCleanupError reports MariaDB objects (schemas, logins, the mysqladmin
-// shadow) whose host-side drop failed during DeleteCascade. The user row is NOT
-// deleted when this is returned: deleting it CASCADEs the databases/
-// database_users metadata away, so a failed drop would strand the MariaDB
-// object on the host with no panel row left to name it — invisible to
-// `jabali db list`, excluded from backups, grants still live (#1010 / db fix
-// 541612543+4d455c150, originally inline in the delete handler; kept here so the
-// automation delete path gets the same guarantee). Retrying the delete is safe:
-// the domain/docker/ACL steps are idempotent and re-list empty on the retry.
+// DBCleanupError reports database engine objects (MariaDB schemas + logins and
+// the _mysqladmin shadow, plus the PostgreSQL _pgadmin shadow role) whose
+// host-side drop failed during DeleteCascade. The user row is NOT deleted when
+// this is returned: deleting it CASCADEs the databases/database_users metadata
+// away, so a failed drop would strand the engine object on the host with no
+// panel row left to name it — invisible to `jabali db list`, excluded from
+// backups, grants still live (#1010 / db fix 541612543+4d455c150, originally
+// inline in the delete handler; kept here so the automation delete path gets the
+// same guarantee; JAB-289 added the PG shadow role). Retrying the delete is
+// safe: the domain/docker/ACL steps are idempotent and re-list empty on the retry.
 type DBCleanupError struct {
 	Objects []string
 }
 
 func (e *DBCleanupError) Error() string {
-	return "userops: host-side MariaDB drop failed for " + strings.Join(e.Objects, ", ")
+	return "userops: host-side database engine drop failed for " + strings.Join(e.Objects, ", ")
 }
 
 // RotatePassword rotates a user's auth password. Order is load-bearing
@@ -378,6 +379,30 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 			undropped = append(undropped, shadowUser)
 			logError(d, "cascade delete: mysqladmin shadow drop failed — aborting so the login is not orphaned",
 				"user_id", id, "mysqladmin_user", shadowUser, "err", dropErr)
+		}
+	}
+
+	// Drop the per-user PostgreSQL shadow-admin ROLE (<osuser>_pgadmin) — the
+	// Adminer-SSO counterpart to the MariaDB _mysqladmin shadow above (JAB-289).
+	// Like it, the role is not a database_users row, so the reap loop never
+	// touches it; unlike it, it lives on Postgres, so db_user.drop (MariaDB)
+	// would never reach it. Left unreaped, deleting a tenant who used Adminer
+	// SSO against Postgres orphaned a live LOGIN role with a decryptable
+	// password (pgadmin_password_enc) — the same orphan class this guards.
+	//
+	// Guarded on a provisioned pgadmin_username: only PG-SSO tenants have one,
+	// and the guard also avoids calling db.postgres.drop_role on boxes where the
+	// optional Postgres engine isn't installed. db.postgres.drop_role is an
+	// idempotent DROP ROLE IF EXISTS.
+	if d.Agent != nil && target.PgadminUsername != nil && *target.PgadminUsername != "" {
+		pgShadow := *target.PgadminUsername
+		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, dropErr := d.Agent.Call(agentCtx, "db.postgres.drop_role", map[string]any{"role": pgShadow})
+		cancel()
+		if dropErr != nil {
+			undropped = append(undropped, pgShadow)
+			logError(d, "cascade delete: pgadmin shadow role drop failed — aborting so the login is not orphaned",
+				"user_id", id, "pgadmin_user", pgShadow, "err", dropErr)
 		}
 	}
 
