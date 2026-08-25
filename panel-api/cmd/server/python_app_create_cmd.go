@@ -169,15 +169,28 @@ func newPythonAppCreateCmd() *cobra.Command {
 			if err := repo.Create(ctx, app); err != nil {
 				return fmt.Errorf("create app (domain+path may already be in use): %w", err)
 			}
+			// JAB-343: app, env, and domain rules must not partially succeed
+			// silently. A failure after the app row is inserted rolls the app
+			// back (Delete) and returns the error, so the operator sees the
+			// failure instead of a half-created pending app whose env is missing
+			// or that has no proxy rule (and is therefore unreachable). The env
+			// rows are removed with the app (the parse-error path above uses the
+			// same Delete compensation).
 			if len(envPairs) > 0 {
 				rows, perr := parsePythonEnvPairs(envPairs)
 				if perr != nil {
 					_ = repo.Delete(ctx, app.ID)
 					return perr
 				}
-				_ = repo.ReplaceEnv(ctx, app.ID, rows)
+				if err := repo.ReplaceEnv(ctx, app.ID, rows); err != nil {
+					_ = repo.Delete(ctx, app.ID)
+					return fmt.Errorf("persist app env: %w", err)
+				}
 			}
-			attachPythonProxyRuleCLI(ctx, dom, app, fwStaticURL, fwStaticRoot)
+			if err := attachPythonProxyRuleCLI(ctx, dom, app, fwStaticURL, fwStaticRoot); err != nil {
+				_ = repo.Delete(ctx, app.ID)
+				return fmt.Errorf("attach proxy/static rules: %w", err)
+			}
 
 			cliAuditOK(ctx, "python_app.create", "python_app", app.ID, &dom.UserID)
 			if jsonOutput {
@@ -216,7 +229,7 @@ func parsePythonEnvPairs(pairs []string) ([]models.PythonAppEnv, error) {
 // attachPythonProxyRuleCLI mirrors api.attachProxyRule: proxy_pass base_uri ->
 // loopback port, replacing any same-path rule, then persists the domain so the
 // reconciler renders the vhost.
-func attachPythonProxyRuleCLI(ctx context.Context, dom *models.Domain, app *models.PythonApp, staticURL, staticRoot string) {
+func attachPythonProxyRuleCLI(ctx context.Context, dom *models.Domain, app *models.PythonApp, staticURL, staticRoot string) error {
 	port := 0
 	if app.LoopbackPort != nil {
 		port = *app.LoopbackPort
@@ -247,7 +260,7 @@ func attachPythonProxyRuleCLI(ctx context.Context, dom *models.Domain, app *mode
 	}
 
 	dom.NginxRules = rules
-	_ = domainRepoFromDB().Update(ctx, dom)
+	return domainRepoFromDB().Update(ctx, dom)
 }
 
 // detachPythonRulesCLI removes the app's proxy_pass + framework static_alias
