@@ -29,11 +29,21 @@ unit=install/systemd/jabali-diag-loopback-isolation-load.service
 if [[ ! -f "$nft" ]]; then
   echo "FAIL: missing nft ruleset $nft"; exit 1
 fi
-if ! grep -qE 'meta skuid >= 1000 ip daddr 127\.0\.0\.1 tcp dport 6060 drop' "$nft"; then
-  echo "FAIL: $nft must drop skuid>=1000 → 127.0.0.1 tcp/6060 (JAB-368)"; fail=1
+# GH #1229: the drop is now a port SET (still includes 6060) so opt-in SSH
+# forwarding can never tunnel into any sensitive loopback service.
+if ! grep -qE 'meta skuid >= 1000 ip daddr 127\.0\.0\.1 tcp dport \$jabali_blocked_loopback_ports drop' "$nft"; then
+  echo "FAIL: $nft must drop skuid>=1000 → 127.0.0.1 to the sensitive loopback port set (JAB-368/GH #1229)"; fail=1
 fi
-if ! grep -qE 'meta skuid >= 1000 ip6 daddr ::1 tcp dport 6060 drop' "$nft"; then
-  echo "FAIL: $nft must also drop the IPv6 ::1 :6060 path (JAB-368)"; fail=1
+if ! grep -qE 'meta skuid >= 1000 ip6 daddr ::1 tcp dport \$jabali_blocked_loopback_ports drop' "$nft"; then
+  echo "FAIL: $nft must also drop the IPv6 ::1 sensitive port set (JAB-368/GH #1229)"; fail=1
+fi
+# 6060 (the JAB-368 baseline) must stay in the blocked set.
+if ! grep -qE '^define jabali_blocked_loopback_ports = \{[^}]*(^|[ ,{])6060([ ,}])' "$nft"; then
+  echo "FAIL: $nft blocked-port set must include 6060 (JAB-368)"; fail=1
+fi
+# GH #1229: app-facing data services must NOT be blocked, or tenant DSNs break.
+if grep -E '^define jabali_blocked_loopback_ports' "$nft" | grep -qE '[ ,{](3306|5432|53)[ ,}]'; then
+  echo "FAIL: $nft blocked set must NOT include app-facing ports 3306/5432/53 (GH #1229)"; fail=1
 fi
 # Idempotent re-apply: the add/flush idiom must be present (a bare `table {...}`
 # re-declaration would append duplicate rules on every `jabali update`).

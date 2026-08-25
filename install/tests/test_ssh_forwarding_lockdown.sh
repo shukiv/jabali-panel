@@ -37,8 +37,11 @@ if [[ ! -f "$conf" ]]; then
   echo "FAIL: $conf missing"
   exit 1
 fi
-if ! grep -qE '^Match Group jabali-ssh-sandbox$' "$conf"; then
-  echo "FAIL: $conf does not Match the jabali-ssh-sandbox group"
+# GH #1229: the lockdown block now EXCLUDES the opt-in jabali-ssh-forward group so
+# VS Code Remote-SSH users can be relaxed. sshd first-value-wins → the exclusion
+# must be on the Match line here.
+if ! grep -qE '^Match Group jabali-ssh-sandbox,!jabali-ssh-forward$' "$conf"; then
+  echo "FAIL: $conf lockdown block must Match jabali-ssh-sandbox and exclude jabali-ssh-forward (GH #1229)"
   fail=1
 fi
 for d in 'AllowTcpForwarding no' 'AllowStreamLocalForwarding no' 'GatewayPorts no' \
@@ -53,6 +56,29 @@ if grep -qE '^[[:space:]]*ForceCommand' "$conf"; then
   echo "FAIL: $conf must NOT ForceCommand — the restricted login shell must still work"
   fail=1
 fi
+
+# GH #1229: the opt-in forward block must exist and be narrow — local forwarding
+# to loopback only; remote/socket/agent/X11/tunnel must stay off.
+if ! grep -qE '^Match Group jabali-ssh-forward$' "$conf"; then
+  echo "FAIL: $conf missing the Match Group jabali-ssh-forward opt-in block (GH #1229)"
+  fail=1
+fi
+if ! grep -qE '^[[:space:]]*AllowTcpForwarding local$' "$conf"; then
+  echo "FAIL: $conf forward block must allow only 'local' forwarding, not 'yes'/'all' (GH #1229)"
+  fail=1
+fi
+if ! grep -qE '^[[:space:]]*PermitOpen 127\.0\.0\.1:\* \[::1\]:\*$' "$conf"; then
+  echo "FAIL: $conf forward block must scope PermitOpen to loopback (GH #1229)"
+  fail=1
+fi
+for d in 'AllowStreamLocalForwarding no' 'AllowAgentForwarding no' 'X11Forwarding no' 'PermitTunnel no'; do
+  # These must appear at least twice — once per block — so the forward block does
+  # not silently re-enable a channel. (grep -c counts matching lines.)
+  if [[ "$(grep -cE "^[[:space:]]*${d}$" "$conf")" -lt 2 ]]; then
+    echo "FAIL: $conf forward block must also keep '$d' (GH #1229)"
+    fail=1
+  fi
+done
 
 # --- 2. The converger behaves, exercised for real against temp files. ---
 fn_src=$(awk '/^ensure_ssh_forwarding_lockdown\(\) \{$/,/^\}$/' install.sh)
