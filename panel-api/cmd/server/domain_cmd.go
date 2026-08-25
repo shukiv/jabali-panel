@@ -31,6 +31,7 @@ func newDomainCmd() *cobra.Command {
 		newDomainEnableCmd(),
 		newDomainDisableCmd(),
 		newDomainDeleteCmd(),
+		newDomainChownCmd(),
 		newDomainPruneOrphansCmd(),
 	)
 	// M6 email-* leaves live in their own file (domain_email_cmd.go).

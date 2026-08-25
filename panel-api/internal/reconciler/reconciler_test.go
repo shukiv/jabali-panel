@@ -2333,4 +2333,5 @@ func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, s
 	return 0, nil
 }
 
-func (r *fakeUserRepo) UpdateUsername(context.Context, string, string) error { return nil }
+func (r *fakeUserRepo) UpdateUsername(context.Context, string, string) error          { return nil }
+func (r *fakeDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }

@@ -84,3 +84,4 @@ func TestImportForwarders_InertByDefault(t *testing.T) {
 func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
 	return 0, nil
 }
+func (r *fakeDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }

@@ -27,6 +27,10 @@ type DomainRepository interface {
 	// Prefix-anchored + user-scoped, so it can never touch another tenant's
 	// paths. Returns the number of rows changed.
 	RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix, newPrefix string) (int64, error)
+	// TransferOwner reassigns a domain to a new owner and repoints its docroot
+	// (GH #1238 owner-change). Dedicated method: the Update allowlist excludes
+	// user_id, so a full-model Update would silently drop the transfer.
+	TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error
 	// BulkSetEnabledByUserID flips domains.is_enabled for every row
 	// owned by the user. Returns the count of changed rows. Used by
 	// the admin user-suspend handler so a single API call takes every
@@ -353,6 +357,13 @@ func (r *domainRepo) RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix
 		Where("user_id = ? AND doc_root LIKE ?", userID, oldPrefix+"%").
 		Update("doc_root", gorm.Expr("CONCAT(?, SUBSTRING(doc_root, ?))", newPrefix, len(oldPrefix)+1))
 	return res.RowsAffected, res.Error
+}
+
+func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("id = ?", domainID).
+		Updates(map[string]any{"user_id": newUserID, "doc_root": newDocRoot}).Error
 }
 
 func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {

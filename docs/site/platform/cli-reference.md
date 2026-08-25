@@ -1925,6 +1925,18 @@ Print the current catch-all target
 jabali domain catchall show <domain-name-or-id>
 ```
 
+#### `jabali domain chown`
+
+Reassign a domain to a different owner, moving its docroot (GH #1238)
+
+```
+jabali domain chown <domain> <new-owner> [flags]
+```
+
+**Flags:**
+
+- `--yes` — skip the confirmation prompt
+
 #### `jabali domain create`
 
 Create a new domain (direct DB; bypasses HTTP auth — M20-safe)

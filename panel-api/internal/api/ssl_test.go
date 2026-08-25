@@ -853,3 +853,6 @@ func (m *MockSSLCertificateRepository) ResetForRetry(ctx context.Context, id str
 func (m *MockDomainRepository) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
 	return 0, nil
 }
+func (r *MockDomainRepository) TransferOwner(context.Context, string, string, string) error {
+	return nil
+}

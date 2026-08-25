@@ -1266,3 +1266,4 @@ func (*mockDomainRepo) DetachDockerApp(context.Context, string, bool) error {
 func (r *mockDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
 	return 0, nil
 }
+func (r *mockDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }
