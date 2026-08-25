@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailpolicy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -18,6 +21,20 @@ type domainCatchallResponse struct {
 	DomainName string    `json:"domain_name"`
 	Target     *string   `json:"target"` // null if no catch-all set
 	UpdatedAt  time.Time `json:"updated_at"`
+	// Warning is set (JAB-338) when the DB write succeeded but the inline agent
+	// push failed; the reconciler re-asserts. Omitted on a clean push.
+	Warning string `json:"warning,omitempty"`
+}
+
+// catchallPush is the domainmailpolicy.PushFunc backed by the handler's agent.
+func (h *domainCatchallHandler) catchallPush(ctx context.Context, cmd string, params map[string]any) error {
+	if h.cfg.Agent == nil {
+		return nil
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := h.cfg.Agent.Call(agentCtx, cmd, params)
+	return err
 }
 
 // RegisterDomainCatchallRoutes registers catch-all endpoints.
@@ -102,37 +119,37 @@ func (h *domainCatchallHandler) update(c *gin.Context) {
 		return
 	}
 
-	// Call agent to update catch-all on Stalwart
-	if h.cfg.Agent != nil {
-		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		_, err := h.cfg.Agent.Call(agentCtx, "domain.catchall_set", map[string]any{
-			"domain_id":   domID,
-			"domain_name": dom.Name,
-			"target":      req.Target,
-		})
+	deps := domainmailpolicy.Deps{Domains: h.cfg.Domains}
+	// An empty target clears the catch-all; a non-empty one sets it (JAB-338:
+	// email-enabled gate + canonical target, DB-first then best-effort push).
+	if strings.TrimSpace(req.Target) == "" {
+		warning, err := domainmailpolicy.ClearCatchall(ctx, deps, dom, h.catchallPush)
 		if err != nil {
-			respondAgentErr(c, "agent_error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return
 		}
-	}
-
-	// Update database
-	now := time.Now().UTC()
-	var target *string
-	if req.Target != "" {
-		target = &req.Target
-	}
-	if err := h.cfg.Domains.UpdateCatchallTarget(ctx, domID, target); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update_failed", "details": err.Error()})
+		c.JSON(http.StatusOK, domainCatchallResponse{
+			DomainID: domID, DomainName: dom.Name, Target: nil,
+			UpdatedAt: time.Now().UTC(), Warning: warning,
+		})
 		return
 	}
-
+	canon, warning, err := domainmailpolicy.SetCatchall(ctx, deps, dom, req.Target, h.catchallPush)
+	if err != nil {
+		switch {
+		case errors.Is(err, domainmailpolicy.ErrEmailNotEnabled):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "email_not_enabled"})
+		case errors.Is(err, domainmailpolicy.ErrInvalidTarget):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_target", "details": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
+		return
+	}
+	ct := canon
 	c.JSON(http.StatusOK, domainCatchallResponse{
-		DomainID:   domID,
-		DomainName: dom.Name,
-		Target:     target,
-		UpdatedAt:  now,
+		DomainID: domID, DomainName: dom.Name, Target: &ct,
+		UpdatedAt: time.Now().UTC(), Warning: warning,
 	})
 }
 
@@ -160,25 +177,10 @@ func (h *domainCatchallHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Call agent to clear catch-all on Stalwart
-	if h.cfg.Agent != nil {
-		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		_, err := h.cfg.Agent.Call(agentCtx, "domain.catchall_clear", map[string]any{
-			"domain_id":   domID,
-			"domain_name": dom.Name,
-		})
-		if err != nil {
-			respondAgentErr(c, "agent_error", err)
-			return
-		}
-	}
-
-	// Clear database
-	if err := h.cfg.Domains.UpdateCatchallTarget(ctx, domID, nil); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete_failed", "details": err.Error()})
+	if _, err := domainmailpolicy.ClearCatchall(ctx,
+		domainmailpolicy.Deps{Domains: h.cfg.Domains}, dom, h.catchallPush); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-
 	c.JSON(http.StatusNoContent, nil)
 }

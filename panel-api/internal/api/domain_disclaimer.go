@@ -10,13 +10,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailpolicy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -31,6 +32,20 @@ type disclaimerResponse struct {
 	Enabled    bool   `json:"enabled"`
 	Text       string `json:"text"`
 	UpdatedAt  string `json:"updated_at"`
+	// Warning (JAB-338) is set when the DB write succeeded but the inline agent
+	// push failed; the reconciler re-asserts. Omitted on a clean push.
+	Warning string `json:"warning,omitempty"`
+}
+
+// disclaimerPush is the domainmailpolicy.PushFunc backed by the handler's agent.
+func (h *domainDisclaimerHandler) disclaimerPush(ctx context.Context, cmd string, params map[string]any) error {
+	if h.cfg.Agent == nil {
+		return nil
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := h.cfg.Agent.Call(agentCtx, cmd, params)
+	return err
 }
 
 type disclaimerUpdateRequest struct {
@@ -52,7 +67,7 @@ func RegisterDomainDisclaimerRoutes(g *gin.RouterGroup, cfg DomainDisclaimerHand
 	g.DELETE("/domains/:id/disclaimer", h.del)
 }
 
-func (h *domainDisclaimerHandler) loadDomain(c *gin.Context) (string, string, bool) {
+func (h *domainDisclaimerHandler) loadDomain(c *gin.Context) (*models.Domain, bool) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
 	dom, err := h.cfg.Domains.FindByID(ctx, c.Param("id"))
@@ -62,22 +77,17 @@ func (h *domainDisclaimerHandler) loadDomain(c *gin.Context) (string, string, bo
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
-		return "", "", false
+		return nil, false
 	}
 	if !claims.IsAdmin && dom.UserID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-		return "", "", false
+		return nil, false
 	}
 	if !dom.EmailEnabled {
 		c.JSON(http.StatusForbidden, gin.H{"error": "email_not_enabled"})
-		return "", "", false
+		return nil, false
 	}
-	text := ""
-	if dom.DisclaimerText != nil {
-		text = *dom.DisclaimerText
-	}
-	_ = text
-	return dom.ID, dom.Name, true
+	return dom, true
 }
 
 func (h *domainDisclaimerHandler) get(c *gin.Context) {
@@ -107,7 +117,7 @@ func (h *domainDisclaimerHandler) get(c *gin.Context) {
 
 func (h *domainDisclaimerHandler) put(c *gin.Context) {
 	ctx := c.Request.Context()
-	id, domainName, ok := h.loadDomain(c)
+	dom, ok := h.loadDomain(c)
 	if !ok {
 		return
 	}
@@ -116,52 +126,39 @@ func (h *domainDisclaimerHandler) put(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	if req.Enabled && strings.TrimSpace(req.Text) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "text_required_when_enabled"})
+	norm, warning, err := domainmailpolicy.SetDisclaimer(ctx,
+		domainmailpolicy.Deps{Domains: h.cfg.Domains}, dom, req.Enabled, req.Text, h.disclaimerPush)
+	if err != nil {
+		switch {
+		case errors.Is(err, domainmailpolicy.ErrDisclaimerTextRequired):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "text_required_when_enabled"})
+		case errors.Is(err, domainmailpolicy.ErrEmailNotEnabled):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "email_not_enabled"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
 		return
-	}
-	text := strings.TrimSpace(req.Text)
-	if err := h.cfg.Domains.UpdateDisclaimer(ctx, id, req.Enabled, &text); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	if h.cfg.Agent != nil {
-		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		_, _ = h.cfg.Agent.Call(agentCtx, "domain.disclaimer_apply", map[string]any{
-			"domain_name": domainName,
-			"enabled":     req.Enabled,
-			"text":        text,
-		})
 	}
 	c.JSON(http.StatusOK, disclaimerResponse{
-		DomainID:   id,
-		DomainName: domainName,
+		DomainID:   dom.ID,
+		DomainName: dom.Name,
 		Enabled:    req.Enabled,
-		Text:       text,
+		Text:       norm,
 		UpdatedAt:  time.Now().UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Warning:    warning,
 	})
 }
 
 func (h *domainDisclaimerHandler) del(c *gin.Context) {
 	ctx := c.Request.Context()
-	id, domainName, ok := h.loadDomain(c)
+	dom, ok := h.loadDomain(c)
 	if !ok {
 		return
 	}
-	empty := ""
-	if err := h.cfg.Domains.UpdateDisclaimer(ctx, id, false, &empty); err != nil {
+	if _, err := domainmailpolicy.ClearDisclaimer(ctx,
+		domainmailpolicy.Deps{Domains: h.cfg.Domains}, dom, h.disclaimerPush); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
-	}
-	if h.cfg.Agent != nil {
-		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		_, _ = h.cfg.Agent.Call(agentCtx, "domain.disclaimer_apply", map[string]any{
-			"domain_name": domainName,
-			"enabled":     false,
-			"text":        "",
-		})
 	}
 	c.JSON(http.StatusNoContent, nil)
 }

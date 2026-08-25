@@ -14,7 +14,18 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailpolicy"
 )
+
+// mailPolicyPush is the domainmailpolicy.PushFunc backed by the CLI's agent
+// client. It returns the agent error so Set/Clear can turn a failed push into a
+// warning while keeping the DB the desired-state truth (the reconciler
+// re-asserts).
+func mailPolicyPush(ctx context.Context, cmd string, params map[string]any) error {
+	_, err := callAgentMailbox(ctx, cmd, params)
+	return err
+}
 
 // domainExtraSubcommands returns the cobra commands wired into newDomainCmd.
 func domainExtraSubcommands() []*cobra.Command {
@@ -56,18 +67,15 @@ func newDomainCatchallSetCmd() *cobra.Command {
 			if strings.TrimSpace(target) == "" {
 				return fmt.Errorf("--target is required (use 'catchall clear' to remove)")
 			}
-			if _, err := callAgentMailbox(ctx, "domain.catchall_set", map[string]any{
-				"domain_id":   dom.ID,
-				"domain_name": dom.Name,
-				"target":      target,
-			}); err != nil {
-				return fmt.Errorf("agent domain.catchall_set: %w", err)
+			canon, warning, err := domainmailpolicy.SetCatchall(ctx,
+				domainmailpolicy.Deps{Domains: domainRepoFromDB()}, dom, target, mailPolicyPush)
+			if err != nil {
+				return fmt.Errorf("set catch-all: %w", err)
 			}
-			t := target
-			if err := domainRepoFromDB().UpdateCatchallTarget(ctx, dom.ID, &t); err != nil {
-				return fmt.Errorf("save catchall: %w", err)
+			fmt.Printf("Catch-all for %s -> %s\n", dom.Name, canon)
+			if warning != "" {
+				fmt.Printf("Note: %s\n", warning)
 			}
-			fmt.Printf("Catch-all for %s -> %s\n", dom.Name, target)
 			return nil
 		},
 	}
@@ -89,16 +97,15 @@ func newDomainCatchallClearCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := callAgentMailbox(ctx, "domain.catchall_clear", map[string]any{
-				"domain_id":   dom.ID,
-				"domain_name": dom.Name,
-			}); err != nil {
-				return fmt.Errorf("agent domain.catchall_clear: %w", err)
-			}
-			if err := domainRepoFromDB().UpdateCatchallTarget(ctx, dom.ID, nil); err != nil {
-				return fmt.Errorf("clear catchall: %w", err)
+			warning, err := domainmailpolicy.ClearCatchall(ctx,
+				domainmailpolicy.Deps{Domains: domainRepoFromDB()}, dom, mailPolicyPush)
+			if err != nil {
+				return fmt.Errorf("clear catch-all: %w", err)
 			}
 			fmt.Printf("Catch-all cleared for %s\n", dom.Name)
+			if warning != "" {
+				fmt.Printf("Note: %s\n", warning)
+			}
 			return nil
 		},
 	}
@@ -181,18 +188,15 @@ func newDomainDisclaimerSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !dom.EmailEnabled {
-				return fmt.Errorf("email is not enabled on %s — run 'jabali domain email-enable %s' first", dom.Name, dom.Name)
+			norm, warning, err := domainmailpolicy.SetDisclaimer(ctx,
+				domainmailpolicy.Deps{Domains: domainRepoFromDB()}, dom, true, text, mailPolicyPush)
+			if err != nil {
+				return fmt.Errorf("set disclaimer: %w", err)
 			}
-			if err := domainRepoFromDB().UpdateDisclaimer(ctx, dom.ID, true, &text); err != nil {
-				return fmt.Errorf("save disclaimer: %w", err)
+			fmt.Printf("Disclaimer enabled for %s (%d bytes)\n", dom.Name, len(norm))
+			if warning != "" {
+				fmt.Printf("Note: %s\n", warning)
 			}
-			notifyAgentMailbox(ctx, "domain.disclaimer_apply", map[string]any{
-				"domain_name": dom.Name,
-				"enabled":     true,
-				"text":        text,
-			})
-			fmt.Printf("Disclaimer enabled for %s (%d bytes)\n", dom.Name, len(text))
 			return nil
 		},
 	}
@@ -214,16 +218,15 @@ func newDomainDisclaimerClearCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			empty := ""
-			if err := domainRepoFromDB().UpdateDisclaimer(ctx, dom.ID, false, &empty); err != nil {
+			warning, err := domainmailpolicy.ClearDisclaimer(ctx,
+				domainmailpolicy.Deps{Domains: domainRepoFromDB()}, dom, mailPolicyPush)
+			if err != nil {
 				return fmt.Errorf("clear disclaimer: %w", err)
 			}
-			notifyAgentMailbox(ctx, "domain.disclaimer_apply", map[string]any{
-				"domain_name": dom.Name,
-				"enabled":     false,
-				"text":        "",
-			})
 			fmt.Printf("Disclaimer cleared for %s\n", dom.Name)
+			if warning != "" {
+				fmt.Printf("Note: %s\n", warning)
+			}
 			return nil
 		},
 	}
