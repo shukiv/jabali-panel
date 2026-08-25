@@ -207,6 +207,31 @@ func awCalled(a *awAgent, cmd string) bool {
 	return false
 }
 
+// TestUserDisable_ExposesLifecycleWarnings proves best-effort lifecycle failures
+// (JAB-281 criterion) surface in the automation response as a keyed `warnings`
+// map — here a failing OS lock agent call becomes warnings.os — while the write
+// still succeeds (the DB flag is the load-bearing gate).
+func TestUserDisable_ExposesLifecycleWarnings(t *testing.T) {
+	uname := "alice"
+	users := &awUsers{u: &models.User{ID: "u1", Email: "a@x.tld", Username: &uname}}
+	ag := &awAgent{err: context.DeadlineExceeded} // OS lock fails → os warning
+	r := awRouter(AutomationConfig{Users: users, Agent: ag, Audits: &awAudit{}}, writeTok())
+	w := awPost(r, "/users/u1/disable")
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200 (best-effort failure is not fatal), got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		OK       bool              `json:"ok"`
+		Warnings map[string]string `json:"warnings"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.OK || body.Warnings["os"] == "" {
+		t.Fatalf("expected ok with an os warning, got %s", w.Body.String())
+	}
+}
+
 func TestDomainSuspend_IdempotentNoop(t *testing.T) {
 	// Domain already disabled → suspend is a no-op 200, no Update call.
 	dom := &awDomains{d: &models.Domain{ID: "d1", Name: "x.test", IsEnabled: false}}

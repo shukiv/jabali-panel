@@ -142,11 +142,18 @@ func userSuspendHandler(cfg AutomationConfig, suspend bool) gin.HandlerFunc {
 		// Steps 2-5 are best-effort warnings inside userops; a returned error is
 		// only the hard DB-write failure. Idempotent by target state.
 		reason := "automation:" + tok.ID
-		var opErr error
+		var (
+			opErr    error
+			warnings map[string]string
+		)
 		if suspend {
-			_, opErr = userops.Suspend(ctx, billingUserOpsDeps(cfg), u, reason)
+			res, err := userops.Suspend(ctx, billingUserOpsDeps(cfg), u, reason)
+			opErr = err
+			warnings = lifecycleWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning)
 		} else {
-			_, opErr = userops.Unsuspend(ctx, billingUserOpsDeps(cfg), u)
+			res, err := userops.Unsuspend(ctx, billingUserOpsDeps(cfg), u)
+			opErr = err
+			warnings = lifecycleWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning)
 		}
 		if opErr != nil {
 			auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultError)
@@ -158,7 +165,10 @@ func userSuspendHandler(cfg AutomationConfig, suspend bool) gin.HandlerFunc {
 			"warning", "Automation "+verbDone(suspend, "disabled", "enabled")+" a user",
 			"User "+u.Email+" was "+verbDone(suspend, "disabled", "enabled")+" via the automation API.",
 			"/jabali-admin/users")
-		autoOK(c, "user "+id+" "+verbDone(suspend, "disabled", "enabled"))
+		// JAB-281 criterion: surface the lifecycle's best-effort warnings
+		// (kratos/domain/os) in the automation response without reimplementing
+		// the orchestration — the userops result is the single source.
+		autoOKWarnings(c, "user "+id+" "+verbDone(suspend, "disabled", "enabled"), warnings)
 	}
 }
 

@@ -30,6 +30,36 @@ func autoOK(c *gin.Context, msg string) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "done", "message": msg})
 }
 
+// autoOKWarnings is autoOK plus a non-empty `warnings` map (step-named,
+// best-effort failures from a multi-step lifecycle op). Empty map → omitted, so
+// the clean-path envelope is byte-identical to autoOK.
+func autoOKWarnings(c *gin.Context, msg string, warnings map[string]string) {
+	body := gin.H{"ok": true, "status": "done", "message": msg}
+	if len(warnings) > 0 {
+		body["warnings"] = warnings
+	}
+	c.JSON(http.StatusOK, body)
+}
+
+// lifecycleWarnings collapses the userops kratos/domain/os warning strings into a
+// keyed map, dropping the empties. Returns nil when every step succeeded.
+func lifecycleWarnings(kratos, domain, os string) map[string]string {
+	w := map[string]string{}
+	if kratos != "" {
+		w["kratos"] = kratos
+	}
+	if domain != "" {
+		w["domain"] = domain
+	}
+	if os != "" {
+		w["os"] = os
+	}
+	if len(w) == 0 {
+		return nil
+	}
+	return w
+}
+
 func autoAsync(c *gin.Context, opID, msg string) {
 	c.JSON(http.StatusAccepted, gin.H{"ok": true, "operation_id": opID, "status": "pending", "message": msg})
 }
