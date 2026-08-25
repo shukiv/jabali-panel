@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -179,5 +180,43 @@ func TestDNS01_FrontedPDNSZone_IssuesViaDNS01(t *testing.T) {
 
 	if !agentCalled(ag, "ssl.issue_dns01") {
 		t.Fatal("fronted + jabali-authoritative must issue via DNS-01 through pdns")
+	}
+}
+
+// TestDNS01_NegativeRouteCachedBriefly pins the GH #1221 fix: a "no provider"
+// route (operator mid-delegation-fix) is cached only briefly, so `jabali ssl
+// retry` right after the fix re-resolves instead of re-parking on a stale
+// ProviderNone. A positive route keeps the full 1h TTL.
+func TestDNS01_NegativeRouteCachedBriefly(t *testing.T) {
+	ctx := context.Background()
+
+	// No provider: Cloudflare NS but the token doesn't cover the zone.
+	rNeg, _, _, _ := dns01Fixture(t, []string{"kip.ns.cloudflare.com"}, "")
+	rNeg.dns01ZoneFinder = fixedZoneFinder{id: ""}
+	srvNeg, err := rNeg.serverSettings.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+	if route := rNeg.dns01Route(ctx, srvNeg, "example.com"); route.Provider != dns01.ProviderNone {
+		t.Fatalf("expected ProviderNone, got %v", route.Provider)
+	}
+	negTTL := time.Until(rNeg.dns01RouteCache["example.com"].expires)
+	if negTTL > dns01RouteNegativeCacheTTL+time.Minute {
+		t.Errorf("no-provider route cached for %v, want <= ~%v (a mid-fix delegation must be re-checked soon)", negTTL, dns01RouteNegativeCacheTTL)
+	}
+
+	// Positive: our PowerDNS is authoritative → provider available, long TTL.
+	rPos, _, _, _ := dns01Fixture(t, []string{"ns1.panel.example"}, "")
+	rPos.serverSettings.(*fakeServerSettingsRepo).settings.NS1Name = "ns1.panel.example"
+	srvPos, err := rPos.serverSettings.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+	if route := rPos.dns01Route(ctx, srvPos, "example.com"); route.Provider == dns01.ProviderNone {
+		t.Fatalf("expected a real provider for a jabali-authoritative zone, got ProviderNone")
+	}
+	posTTL := time.Until(rPos.dns01RouteCache["example.com"].expires)
+	if posTTL < dns01RouteCacheTTL-2*time.Minute {
+		t.Errorf("positive route cached for %v, want ~%v", posTTL, dns01RouteCacheTTL)
 	}
 }

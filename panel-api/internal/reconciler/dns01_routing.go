@@ -41,6 +41,14 @@ const (
 	// cert row as the ticket sketched): it survives across ticks in the
 	// long-lived reconciler process and self-heals after NS changes.
 	dns01RouteCacheTTL = time.Hour
+	// dns01RouteNegativeCacheTTL is the shorter TTL for a "no provider" result.
+	// ProviderNone is the transient "operator is mid-fix" state — they're moving
+	// NS to our PowerDNS or adding a Cloudflare token — so it must be re-checked
+	// soon, not held stale for the full hour. GH #1221: after correcting a DNS
+	// delegation an operator runs `jabali ssl retry`; without a short negative
+	// TTL the retry re-resolves to the cached ProviderNone and silently re-parks
+	// the cert for another day. A POSITIVE route is stable and keeps the 1h TTL.
+	dns01RouteNegativeCacheTTL = 5 * time.Minute
 )
 
 // IssueMethod values recorded on ssl_certificates rows.
@@ -107,11 +115,15 @@ func (r *Reconciler) dns01Route(ctx context.Context, srv *models.ServerSettings,
 	route := dns01.AuthoritativeRoute(routeCtx, cfg, name)
 	cancel()
 
+	ttl := dns01RouteCacheTTL
+	if route.Provider == dns01.ProviderNone {
+		ttl = dns01RouteNegativeCacheTTL // re-check a mid-fix delegation soon (GH #1221)
+	}
 	r.dns01RouteMu.Lock()
 	if r.dns01RouteCache == nil {
 		r.dns01RouteCache = map[string]dns01CachedRoute{}
 	}
-	r.dns01RouteCache[name] = dns01CachedRoute{route: route, expires: time.Now().Add(dns01RouteCacheTTL)}
+	r.dns01RouteCache[name] = dns01CachedRoute{route: route, expires: time.Now().Add(ttl)}
 	r.dns01RouteMu.Unlock()
 	return route
 }

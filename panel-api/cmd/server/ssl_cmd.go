@@ -331,7 +331,7 @@ func newSSLRetryCmd() *cobra.Command {
 				return printJSON(map[string]any{"domain": dom.Name, "status": models.SSLStatusPending, "queued": true})
 			}
 			fmt.Printf("Reset %s for re-issuance (status → pending, retry budget restored).\n"+
-				"The reconciler will attempt ACME on its next pass — watch `jabali ssl list`.\n", dom.Name)
+				"The reconciler will attempt ACME within about a minute — watch `jabali ssl list`.\n", dom.Name)
 			return nil
 		},
 	}
