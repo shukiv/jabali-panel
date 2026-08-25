@@ -301,7 +301,31 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
           type="warning"
           showIcon
           title={t("domainsslsection.using_self_signed_certificate")}
-          description={t("domainsslsection.this_domain_is_using_a_self_signed_certifica")}
+          description={
+            <>
+              {t("domainsslsection.this_domain_is_using_a_self_signed_certifica")}
+              {/* GH #1221: a parked (pending_acme_retry) cert is serving the
+                  self-signed fallback while Let's Encrypt retries on a slow
+                  cadence. Surface the reason + a manual Retry so an operator
+                  who just fixed DNS/delegation can re-attempt immediately,
+                  instead of waiting for the daily recheck. */}
+              {status === "pending_acme_retry" && (
+                <>
+                  {cert?.last_error && (
+                    <div style={{ marginTop: 8 }}>Reason: {cert.last_error}</div>
+                  )}
+                  <Button
+                    type="primary"
+                    loading={renewing}
+                    onClick={onRetry}
+                    style={{ marginTop: 8 }}
+                  >
+                    Retry now
+                  </Button>
+                </>
+              )}
+            </>
+          }
         />
       ) : null}
 
