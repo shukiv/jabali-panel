@@ -374,6 +374,16 @@ func (f *fakeDNSZoneRepo) FindByDomainID(ctx context.Context, domainID string) (
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeDNSZoneRepo) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DNSZone, error) {
+	var out []models.DNSZone
+	for _, id := range domainIDs {
+		if z, err := f.FindByDomainID(ctx, id); err == nil && z != nil {
+			out = append(out, *z)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeDNSZoneRepo) ListAll(ctx context.Context) ([]models.DNSZone, error) {
 	var result []models.DNSZone
 	for _, z := range f.zones {
@@ -418,6 +428,17 @@ func (f *fakeDNSRecordRepo) ListByZoneID(ctx context.Context, zoneID string) ([]
 		}
 	}
 	return result, nil
+}
+
+func (f *fakeDNSRecordRepo) CountByZoneIDs(ctx context.Context, zoneIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64)
+	for _, zid := range zoneIDs {
+		recs, _ := f.ListByZoneID(ctx, zid)
+		if len(recs) > 0 {
+			out[zid] = int64(len(recs))
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeDNSRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) error {

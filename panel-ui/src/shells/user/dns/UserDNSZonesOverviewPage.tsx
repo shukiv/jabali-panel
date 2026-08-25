@@ -1,101 +1,55 @@
 // UserDNSZonesOverviewPage — tenant landing for DNS. Card.tabList
 // pattern matches admin DNS + UserList — controlled activeTabKey,
-// count Tag in each tab label, panel-attached strip. Both tabs view
-// the same `domains` list.
+// panel-attached strip. The Zones tab is the batched /dns/zones inventory.
 import { useTranslation } from "react-i18next";
-import { useEffect, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { Alert, Button, Card, Empty, Spin, Table, Tag, Tooltip, Typography } from "antd";
 import { CloudServerOutlined } from "@icons";
 import { useNavigate } from "react-router";
 
-import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { DNSSECTable } from "../../../components/dnssec/DNSSECTable";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { sorterToParams } from "../../../utils/tableSorter";
 
-interface Domain {
+// DnsZoneRow is one row of the batched GET /dns/zones inventory (JAB-377):
+// the domain plus its provisioning state, record count, and effective TTL,
+// resolved server-side in one request instead of a per-row zone fan-out.
+interface DnsZoneRow {
   id: string;
   user_id: string;
   name: string;
-  created_at: string;
-  updated_at: string;
+  provisioned: boolean;
+  record_count: number;
+  effective_ttl?: number | null;
   dnssec_enabled?: boolean;
   registrar_expires_at?: string | null;
-}
-
-interface ZoneStatus {
-  provisioned: boolean;
-  recordCount?: number;
-  ttl?: number | null;
 }
 
 const ZonesTab = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
-    new Map(),
-  );
 
-  const query = useTableURL<Domain>({
-    resource: "domains",
+  // One batched request (JAB-377): the endpoint returns provisioning state +
+  // record count + effective TTL per row, so there is no per-domain zone fetch
+  // and a transient failure surfaces as an error, not a false "Not provisioned".
+  const query = useTableURL<DnsZoneRow>({
+    resource: "dns/zones",
     defaultSort: "name",
     defaultOrder: "asc",
   });
-
-  useEffect(() => {
-    const domains = query.items;
-    if (domains.length === 0) return;
-
-    Promise.all(
-      domains.map(async (domain) => {
-        try {
-          const res = await apiClient.get(`/domains/${domain.id}/dns/zone`);
-          return {
-            domainId: domain.id,
-            provisioned: !!res.data?.zone?.id,
-            recordCount: res.data?.record_count as number | undefined,
-            // GH #527: show the effective default record TTL (what records
-            // use), not the SOA minimum_ttl (negative-cache timer, fixed 3600).
-            ttl: (res.data?.effective_ttl ?? null) as number | null,
-          };
-        } catch {
-          return { domainId: domain.id, provisioned: false, recordCount: undefined, ttl: null };
-        }
-      }),
-    ).then((results) => {
-      const statusMap = new Map<string, ZoneStatus>();
-      results.forEach(({ domainId, provisioned, recordCount, ttl }) => {
-        statusMap.set(domainId, { provisioned, recordCount, ttl });
-      });
-      setZoneStatuses(statusMap);
-    });
-  }, [query.items]);
-
-  const getZoneStatusTag = (domainId: string) => {
-    const status = zoneStatuses.get(domainId);
-    if (status === undefined) {
-      return <Spin />;
-    }
-    return status.provisioned ? (
-      <Tag color="green">Provisioned</Tag>
-    ) : (
-      <Tag>Not provisioned</Tag>
-    );
-  };
 
   // Project AntD's sorter into the URL params so the server does the
   // ORDER BY. Without an onChange the sort arrows rendered but changed
   // nothing — the columns declared a server-side sorter and nothing was
   // listening for it.
-  const handleTableChange: React.ComponentProps<typeof Table<Domain>>["onChange"] = (
+  const handleTableChange: React.ComponentProps<typeof Table<DnsZoneRow>>["onChange"] = (
     _pagination,
     _filters,
     sorter,
   ) => {
-    const { sort, order } = sorterToParams<Domain>(sorter);
+    const { sort, order } = sorterToParams<DnsZoneRow>(sorter);
     query.setParams({ sort, order, page: 1 });
   };
 
@@ -109,10 +63,19 @@ const ZonesTab = () => {
       />
       {query.isLoading ? (
         <Spin />
+      ) : query.isError ? (
+        // A load failure is an error, never rendered as an empty list or a false
+        // "Not provisioned" (JAB-377 — the fan-out swallowed exactly this).
+        <Alert
+          type="error"
+          showIcon
+          message="Failed to load DNS zones"
+          description="The zone inventory could not be loaded. This is usually temporary — retry shortly."
+        />
       ) : query.items.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("userdnszonesoverviewpage.no_domains_found")} />
       ) : (
-        <SearchableTableStringQ<Domain>
+        <SearchableTableStringQ<DnsZoneRow>
           onChange={handleTableChange}
           rowKey="id"
           loading={query.isLoading}
@@ -127,46 +90,46 @@ const ZonesTab = () => {
             onChange: (page, pageSize) => query.setParams({ page, pageSize }),
           }}
         >
-          <Table.Column<Domain>
+          <Table.Column<DnsZoneRow>
             dataIndex="name"
             title={t("userdnszonesoverviewpage.domain_name")}
             key="name"
             sorter
             defaultSortOrder="ascend"
-            {...columnSearchProps<Domain>({
+            {...columnSearchProps<DnsZoneRow>({
               placeholder: "Search by domain name",
               currentQ: query.params.q,
               onSearch: (v) => query.setParams({ q: v, page: 1 }),
             })}
           />
-          <Table.Column<Domain>
+          <Table.Column<DnsZoneRow>
             title={t("userdnszonesoverviewpage.zone_status")}
-            render={(_, record) => getZoneStatusTag(record.id)}
+            render={(_, record) =>
+              record.provisioned ? (
+                <Tag color="green">Provisioned</Tag>
+              ) : (
+                <Tag>Not provisioned</Tag>
+              )
+            }
           />
-          <Table.Column<Domain>
+          <Table.Column<DnsZoneRow>
             title={t("userdnszonesoverviewpage.records")}
-            render={(_, record) => {
-              const s = zoneStatuses.get(record.id);
-              if (s === undefined) return <Spin size="small" />;
-              return s.recordCount ?? 0;
-            }}
+            render={(_, record) => record.record_count ?? 0}
           />
-          <Table.Column<Domain>
+          <Table.Column<DnsZoneRow>
             title={t("userdnszonesoverviewpage.ttl")}
-            render={(_, record) => {
-              const s = zoneStatuses.get(record.id);
-              if (s === undefined) return <Spin size="small" />;
-              return s.ttl != null ? `${s.ttl}s` : "—";
-            }}
+            render={(_, record) =>
+              record.effective_ttl != null ? `${record.effective_ttl}s` : "—"
+            }
           />
-          <Table.Column<Domain>
+          <Table.Column<DnsZoneRow>
             title={t("userdnszonesoverviewpage.dnssec")}
             dataIndex="dnssec_enabled"
             render={(enabled: boolean | undefined) =>
               enabled ? <Tag color="green">Signed</Tag> : <Tag>Unsigned</Tag>
             }
           />
-          <Table.Column<Domain>
+          <Table.Column<DnsZoneRow>
             title={t("userdnszonesoverviewpage.expiration")}
             dataIndex="registrar_expires_at"
             render={(d: string | null | undefined) =>
@@ -179,7 +142,7 @@ const ZonesTab = () => {
               )
             }
           />
-          <Table.Column<Domain>
+          <Table.Column<DnsZoneRow>
             title={t("userdnszonesoverviewpage.actions")}
             render={(_, record) => (
               <Button

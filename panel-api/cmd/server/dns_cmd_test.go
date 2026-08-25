@@ -39,6 +39,15 @@ func (f *memDNSZoneRepo) FindByDomainID(context.Context, string) (*models.DNSZon
 	return nil, repository.ErrNotFound
 }
 func (f *memDNSZoneRepo) ListAll(context.Context) ([]models.DNSZone, error) { return nil, nil }
+func (f *memDNSZoneRepo) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DNSZone, error) {
+	var out []models.DNSZone
+	for _, id := range domainIDs {
+		if z, err := f.FindByDomainID(ctx, id); err == nil && z != nil {
+			out = append(out, *z)
+		}
+	}
+	return out, nil
+}
 
 type memDNSRecordRepo struct{ byID map[string]*models.DNSRecord }
 
@@ -81,6 +90,16 @@ func (f *memDNSRecordRepo) ListByZoneID(_ context.Context, zoneID string) ([]mod
 	return out, nil
 }
 func (f *memDNSRecordRepo) DeleteByZoneID(context.Context, string) error { return nil }
+func (f *memDNSRecordRepo) CountByZoneIDs(ctx context.Context, zoneIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64)
+	for _, zid := range zoneIDs {
+		recs, _ := f.ListByZoneID(ctx, zid)
+		if len(recs) > 0 {
+			out[zid] = int64(len(recs))
+		}
+	}
+	return out, nil
+}
 func (f *memDNSRecordRepo) DeleteByZoneIDAndManagedBy(context.Context, string, string) error {
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -27,7 +28,11 @@ type DNSHandlerConfig struct {
 	Zones          repository.DNSZoneRepository
 	Records        repository.DNSRecordRepository
 	ServerSettings repository.ServerSettingsRepository
-	Reconciler     DNSScheduler
+	// Users resolves owner display names for the admin-scope zone inventory
+	// (JAB-377). Optional: nil drops the owner column, leaving user_id on the
+	// wire as the fallback (mirrors the domains list).
+	Users      repository.UserRepository
+	Reconciler DNSScheduler
 }
 
 func RegisterDNSRoutes(g *gin.RouterGroup, cfg DNSHandlerConfig) {
@@ -43,6 +48,10 @@ func RegisterDNSRoutes(g *gin.RouterGroup, cfg DNSHandlerConfig) {
 	// dns_records). Expose them read-only so operators can verify the
 	// zone-level bits without reaching for `dig`.
 	d.GET("/system-records", h.listSystemRecords)
+
+	// Batched DNS Zone overview inventory (JAB-377) — one request replaces the
+	// per-domain GET /domains/:id/dns/zone fan-out both overview pages issued.
+	g.GET("/dns/zones", h.listZoneInventory)
 
 	// Record-level operations don't need the domain id in the path
 	rec := g.Group("/dns/records")
@@ -110,6 +119,144 @@ func (h *dnsHandler) loadDomainOwned(c *gin.Context, domainID string) *models.Do
 	}
 
 	return domain
+}
+
+// dnsZoneInventoryRow is one row of the batched DNS Zone overview (JAB-377):
+// the domain plus its provisioning state, user-record count, effective default
+// TTL, DNSSEC state, and registrar expiry. Username is populated for admin
+// scope only.
+type dnsZoneInventoryRow struct {
+	ID                 string     `json:"id"`
+	Name               string     `json:"name"`
+	UserID             string     `json:"user_id"`
+	Username           *string    `json:"username,omitempty"`
+	Provisioned        bool       `json:"provisioned"`
+	RecordCount        int64      `json:"record_count"`
+	EffectiveTTL       int        `json:"effective_ttl"`
+	DNSSECEnabled      bool       `json:"dnssec_enabled"`
+	RegistrarExpiresAt *time.Time `json:"registrar_expires_at,omitempty"`
+}
+
+// listZoneInventory serves GET /dns/zones — the batched DNS Zone overview
+// inventory (JAB-377). One request with a query budget independent of page
+// size: the scoped + paginated domain page, one zones-by-domain read, one
+// COUNT(*) GROUP BY zone_id aggregate, one settings read for the effective TTL,
+// and (admin) one owner-username batch. It replaces the per-row
+// GET /domains/:id/dns/zone fan-out both overview pages issued — a fan-out that
+// also silently rendered any transient failure as "Not provisioned". Here a
+// lookup failure is an honest 500; a success carries accurate provisioned state.
+func (h *dnsHandler) listZoneInventory(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	page, pageSize, opts := parseListOptions(c, defaultDomainsPageSize, maxDomainsPageSize)
+	opts.OmitHeavyColumns = true
+
+	var (
+		domains []models.Domain
+		total   int64
+		err     error
+	)
+	if claims.IsAdmin {
+		// Admins may scope to one owner via ?user_id (mirrors the domains list);
+		// tenants are always owner-scoped and cannot select another owner.
+		if uid := c.Query("user_id"); uid != "" {
+			if !ids.IsValidULID(uid) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+				return
+			}
+			domains, total, err = h.cfg.Domains.ListByUserID(c.Request.Context(), uid, opts)
+		} else {
+			domains, total, err = h.cfg.Domains.List(c.Request.Context(), opts)
+		}
+	} else {
+		domains, total, err = h.cfg.Domains.ListByUserID(c.Request.Context(), claims.UserID, opts)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	ttl := h.defaultRecordTTL(c.Request.Context())
+	rows := make([]dnsZoneInventoryRow, len(domains))
+	for i := range domains {
+		rows[i] = dnsZoneInventoryRow{
+			ID:                 domains[i].ID,
+			Name:               domains[i].Name,
+			UserID:             domains[i].UserID,
+			EffectiveTTL:       ttl,
+			DNSSECEnabled:      domains[i].DNSSECEnabled,
+			RegistrarExpiresAt: domains[i].RegistrarExpiresAt,
+		}
+	}
+
+	if len(domains) > 0 {
+		domainIDs := make([]string, len(domains))
+		for i := range domains {
+			domainIDs[i] = domains[i].ID
+		}
+
+		// Provisioned + zone id: one read. A DB error is a real 500, never
+		// silently collapsed to "not provisioned" (the fan-out's bug).
+		zones, zErr := h.cfg.Zones.FindByDomainIDs(c.Request.Context(), domainIDs)
+		if zErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		zoneByDomain := make(map[string]models.DNSZone, len(zones))
+		zoneIDs := make([]string, 0, len(zones))
+		for i := range zones {
+			zoneByDomain[zones[i].DomainID] = zones[i]
+			zoneIDs = append(zoneIDs, zones[i].ID)
+		}
+
+		// Record counts: one COUNT(*) GROUP BY zone_id aggregate — no record
+		// payload is loaded merely to count.
+		counts, cErr := h.cfg.Records.CountByZoneIDs(c.Request.Context(), zoneIDs)
+		if cErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		for i := range rows {
+			if z, ok := zoneByDomain[rows[i].ID]; ok {
+				rows[i].Provisioned = true
+				rows[i].RecordCount = counts[z.ID]
+			}
+		}
+
+		// Owner username (admin scope only): one batch lookup, non-fatal —
+		// user_id stays on the wire as the fallback (mirrors the domains list).
+		if claims.IsAdmin && h.cfg.Users != nil {
+			userIDs := make([]string, 0, len(domains))
+			seen := make(map[string]struct{}, len(domains))
+			for i := range domains {
+				if _, ok := seen[domains[i].UserID]; ok {
+					continue
+				}
+				seen[domains[i].UserID] = struct{}{}
+				userIDs = append(userIDs, domains[i].UserID)
+			}
+			if users, uErr := h.cfg.Users.FindByIDs(c.Request.Context(), userIDs); uErr == nil {
+				nameByID := make(map[string]*string, len(users))
+				for i := range users {
+					nameByID[users[i].ID] = users[i].Username
+				}
+				for i := range rows {
+					rows[i].Username = nameByID[rows[i].UserID]
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      rows,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 func (h *dnsHandler) getZone(c *gin.Context) {

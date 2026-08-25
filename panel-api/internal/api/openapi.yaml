@@ -2832,6 +2832,26 @@ paths:
 
   # --- Dns (auto) ---
 
+  /dns/zones:
+    get:
+      tags: [Dns]
+      summary: List DNS zone inventory
+      description: >-
+        Batched DNS Zone overview — one row per domain with provisioning state,
+        record count, effective default TTL, DNSSEC state, and registrar expiry
+        (owner shown for admin scope). One request replaces the per-domain
+        GET /domains/{id}/dns/zone fan-out. Bounded query budget independent of
+        page size.
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: query, name: page, schema: { type: integer } }
+        - { in: query, name: page_size, schema: { type: integer } }
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: sort, schema: { type: string } }
+        - { in: query, name: order, schema: { type: string, enum: [asc, desc] } }
+        - { in: query, name: user_id, description: "admin-only owner scope", schema: { type: string } }
+      responses: { "200": { description: OK } }
+
   /dns/policy:
     get:
       tags: [Dns]

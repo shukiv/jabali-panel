@@ -27,6 +27,9 @@ func (f *fakeDNSZoneRepo) FindByDomainID(context.Context, string) (*models.DNSZo
 	return nil, nil
 }
 func (f *fakeDNSZoneRepo) ListAll(context.Context) ([]models.DNSZone, error) { return nil, nil }
+func (f *fakeDNSZoneRepo) FindByDomainIDs(context.Context, []string) ([]models.DNSZone, error) {
+	return nil, nil
+}
 
 type fakeDNSRecordRepo struct {
 	existing []models.DNSRecord
@@ -46,6 +49,9 @@ func (f *fakeDNSRecordRepo) FindByID(context.Context, string) (*models.DNSRecord
 	return nil, nil
 }
 func (f *fakeDNSRecordRepo) DeleteByZoneID(context.Context, string) error { return nil }
+func (f *fakeDNSRecordRepo) CountByZoneIDs(context.Context, []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
 func (f *fakeDNSRecordRepo) DeleteByZoneIDAndManagedBy(context.Context, string, string) error {
 	return nil
 }

@@ -924,6 +924,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Zones:          deps.DNSZones,
 				Records:        deps.DNSRecords,
 				ServerSettings: deps.ServerSettings,
+				Users:          deps.Users,
 				Reconciler:     deps.Reconciler,
 			})
 		}

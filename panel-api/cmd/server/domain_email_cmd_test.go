@@ -195,6 +195,15 @@ func (*fakeDNSZoneRepo) FindByName(context.Context, string) (*models.DNSZone, er
 func (*fakeDNSZoneRepo) ListAll(context.Context) ([]models.DNSZone, error) {
 	return nil, nil
 }
+func (f *fakeDNSZoneRepo) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DNSZone, error) {
+	var out []models.DNSZone
+	for _, id := range domainIDs {
+		if z, err := f.FindByDomainID(ctx, id); err == nil && z != nil {
+			out = append(out, *z)
+		}
+	}
+	return out, nil
+}
 
 type fakeDNSRecordRepo struct {
 	records     map[string][]models.DNSRecord // zoneID → rows
@@ -205,6 +214,15 @@ type fakeDNSRecordRepo struct {
 
 func (f *fakeDNSRecordRepo) ListByZoneID(_ context.Context, zoneID string) ([]models.DNSRecord, error) {
 	return f.records[zoneID], nil
+}
+func (f *fakeDNSRecordRepo) CountByZoneIDs(_ context.Context, zoneIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64)
+	for _, zid := range zoneIDs {
+		if n := len(f.records[zid]); n > 0 {
+			out[zid] = int64(n)
+		}
+	}
+	return out, nil
 }
 func (f *fakeDNSRecordRepo) Create(_ context.Context, rec *models.DNSRecord) error {
 	if f.createErr != nil {
