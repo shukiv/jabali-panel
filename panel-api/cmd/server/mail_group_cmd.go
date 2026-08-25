@@ -253,7 +253,7 @@ func newMailGroupSetResourcesCmd() *cobra.Command {
 		Use:     "set-resources <group-email|group-id>",
 		Short:   "Toggle a resource group's shared collections (mailbox/calendar/addressbook/files)",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDB,
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
@@ -269,6 +269,21 @@ func newMailGroupSetResourcesCmd() *cobra.Command {
 				cliAuditErr(ctx, "mail_group.set_resources", "mail_group", g.ID, nil)
 				return fmt.Errorf("update resources: %w", err)
 			}
+			g.HasMailbox, g.HasCalendar, g.HasAddressbook, g.HasFiles = mbx, cal, ab, fl
+			// JAB-321: dispatch the SAME mailgroup.apply the REST update handler
+			// runs after a resource change (internal/api/mailgroups.go), so a
+			// CLI-enabled files/calendar/addressbook node is actually projected
+			// into Stalwart. Previously set-resources wrote only the DB flags and
+			// no reconciler re-asserts a group's resource nodes (apply is
+			// push-only, per shared_resource_reconcile.go), so the CLI could
+			// report resources that never existed on the mail server.
+			notifyAgentMailGroup(ctx, "mailgroup.apply", map[string]any{
+				"email":         g.EmailCached,
+				"display_name":  g.DisplayName,
+				"description":   g.Description,
+				"internal_only": g.InternalOnly,
+				"has_files":     g.HasFiles,
+			})
 			cliAuditOK(ctx, "mail_group.set_resources", "mail_group", g.ID, nil)
 			fmt.Printf("%s resources: mailbox=%v calendar=%v addressbook=%v files=%v\n", g.EmailCached, mbx, cal, ab, fl)
 			return nil
