@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/autoresponderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -41,25 +42,10 @@ func (p *autoresponderPhase) ReconcileMailbox(ctx context.Context, mb *models.Ma
 		}
 		return fmt.Errorf("autoresponder: find %s: %w", mb.ID, err)
 	}
-	params := map[string]any{
-		"mailbox_email": mb.LocalPart + "@" + dom.Name,
-		"enabled":       ar.Enabled,
-	}
-	if ar.FromDate != nil {
-		params["from_date"] = ar.FromDate.UTC().Format(time.RFC3339)
-	}
-	if ar.ToDate != nil {
-		params["to_date"] = ar.ToDate.UTC().Format(time.RFC3339)
-	}
-	if ar.Subject != nil {
-		params["subject"] = *ar.Subject
-	}
-	if ar.TextBody != nil {
-		params["text_body"] = *ar.TextBody
-	}
-	if ar.HTMLBody != nil {
-		params["html_body"] = *ar.HTMLBody
-	}
+	// JAB-346: the agent payload comes from the one canonical projection the
+	// HTTP + CLI Set path also uses, so all three callers push byte-identical
+	// parameters.
+	params := autoresponderops.AgentParams(mb.LocalPart+"@"+dom.Name, ar)
 	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if _, err := p.agent.Call(callCtx, "autoresponder.set", params); err != nil {

@@ -59,6 +59,19 @@ export const AutoReplyModal = ({
 
   const submit = async () => {
     const vals = await form.validateFields();
+    // JAB-346: an enabled reply needs a subject and a text or HTML body — the
+    // same policy the API now enforces. Check it here so the user gets a clear
+    // inline message instead of a raw 400 toast.
+    if (vals.enabled) {
+      const hasSubject = !!vals.subject?.trim();
+      const hasBody = !!vals.text_body?.trim() || !!vals.html_body?.trim();
+      if (!hasSubject || !hasBody) {
+        feedback.message.error(
+          "An enabled automatic reply needs a subject and a text or HTML body.",
+        );
+        return;
+      }
+    }
     const [from, to] = vals.date_range ?? [null, null];
     try {
       await updateMut.mutateAsync({
@@ -75,10 +88,9 @@ export const AutoReplyModal = ({
       feedback.message.success("Automatic replies saved");
       onClose();
     } catch (err) {
-      const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error ?? "Failed to save automatic replies";
-      feedback.message.error(msg);
+      const data = (err as { response?: { data?: { error?: string; detail?: string } } })
+        ?.response?.data;
+      feedback.message.error(data?.detail ?? data?.error ?? "Failed to save automatic replies");
     }
   };
 

@@ -18,10 +18,21 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/autoresponderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// optStr returns nil for an empty flag value, else a pointer to it — so an
+// omitted --subject/--body reaches autoresponderops as a nil (absent) field,
+// not an empty string that would masquerade as content.
+func optStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 // ---- repo helpers ---------------------------------------------------------
 
@@ -120,6 +131,10 @@ func newMailboxAutoresponderSetCmd() *cobra.Command {
 				return err
 			}
 
+			// Flag-specific hints for the operator; the shared lifecycle
+			// (autoresponderops.Set) is the actual enforcement backstop, so CLI
+			// and REST reject the same intake — this just phrases it in terms of
+			// the flags the operator typed.
 			if subject == "" {
 				return fmt.Errorf("--subject is required")
 			}
@@ -127,59 +142,45 @@ func newMailboxAutoresponderSetCmd() *cobra.Command {
 				return fmt.Errorf("at least one of --body or --html-body is required")
 			}
 
-			ar := &models.EmailAutoresponder{
-				MailboxID: mb.ID,
-				Enabled:   true,
-				Subject:   &subject,
-				ManagedBy: "m6.5",
-			}
-			if body != "" {
-				v := body
-				ar.TextBody = &v
-			}
-			if htmlBody != "" {
-				v := htmlBody
-				ar.HTMLBody = &v
-			}
+			// The date-range rule is enforced centrally too (from must be <= to).
+			var fromT, toT *time.Time
 			if from != "" {
 				t, err := time.Parse(time.RFC3339, from)
 				if err != nil {
 					return fmt.Errorf("--from must be RFC3339 (e.g. 2026-05-01T00:00:00Z): %w", err)
 				}
-				ar.FromDate = &t
+				fromT = &t
 			}
 			if to != "" {
 				t, err := time.Parse(time.RFC3339, to)
 				if err != nil {
 					return fmt.Errorf("--to must be RFC3339: %w", err)
 				}
-				ar.ToDate = &t
+				toT = &t
 			}
+			subjP, bodyP, htmlP := optStr(subject), optStr(body), optStr(htmlBody)
 
-			if err := autoresponderRepoFromDB().Update(ctx, ar); err != nil {
-				return fmt.Errorf("save autoresponder: %w", err)
+			// callAgentMailbox returns the agent error so Set can turn a failed
+			// push into a warning while keeping the DB the desired-state truth.
+			push := func(pctx context.Context, cmd string, params map[string]any) error {
+				_, err := callAgentMailbox(pctx, cmd, params)
+				return err
 			}
-
-			// Best-effort inline push to Stalwart. Reconciler re-asserts
-			// on drift, so a swallowed error doesn't lose the change.
-			params := map[string]any{
-				"mailbox_email": mb.LocalPart + "@" + dom.Name,
-				"enabled":       true,
-				"subject":       subject,
+			_, warning, err := autoresponderops.Set(ctx,
+				autoresponderops.Deps{Autoresponders: autoresponderRepoFromDB()},
+				autoresponderops.SetInput{
+					MailboxID:    mb.ID,
+					MailboxEmail: mb.LocalPart + "@" + dom.Name,
+					Enabled:      true,
+					Subject:      subjP,
+					TextBody:     bodyP,
+					HTMLBody:     htmlP,
+					FromDate:     fromT,
+					ToDate:       toT,
+				}, push)
+			if err != nil {
+				return fmt.Errorf("set autoresponder: %w", err)
 			}
-			if body != "" {
-				params["text_body"] = body
-			}
-			if htmlBody != "" {
-				params["html_body"] = htmlBody
-			}
-			if ar.FromDate != nil {
-				params["from_date"] = ar.FromDate.UTC().Format(time.RFC3339)
-			}
-			if ar.ToDate != nil {
-				params["to_date"] = ar.ToDate.UTC().Format(time.RFC3339)
-			}
-			notifyAgentMailbox(ctx, "autoresponder.set", params)
 
 			if jsonOutput {
 				return printJSON(map[string]any{
@@ -190,6 +191,9 @@ func newMailboxAutoresponderSetCmd() *cobra.Command {
 			}
 			cliAuditOK(ctx, "mailbox.autoresponder_set", "mailbox", email, nil)
 			fmt.Printf("Autoresponder enabled for %s\n", email)
+			if warning != "" {
+				fmt.Printf("Note: %s\n", warning)
+			}
 			return nil
 		},
 	}
@@ -216,14 +220,15 @@ func newMailboxAutoresponderClearCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := autoresponderRepoFromDB().Delete(ctx, mb.ID); err != nil &&
-				!errors.Is(err, repository.ErrNotFound) {
-				return fmt.Errorf("delete autoresponder: %w", err)
+			push := func(pctx context.Context, cmd string, params map[string]any) error {
+				_, err := callAgentMailbox(pctx, cmd, params)
+				return err
 			}
-			notifyAgentMailbox(ctx, "autoresponder.set", map[string]any{
-				"mailbox_email": mb.LocalPart + "@" + dom.Name,
-				"enabled":       false,
-			})
+			if err := autoresponderops.Clear(ctx,
+				autoresponderops.Deps{Autoresponders: autoresponderRepoFromDB()},
+				mb.ID, mb.LocalPart+"@"+dom.Name, push); err != nil {
+				return fmt.Errorf("clear autoresponder: %w", err)
+			}
 			cliAuditOK(ctx, "mailbox.autoresponder_clear", "mailbox", email, nil)
 			fmt.Printf("Autoresponder cleared for %s\n", email)
 			return nil

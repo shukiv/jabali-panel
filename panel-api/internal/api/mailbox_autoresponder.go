@@ -16,6 +16,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/autoresponderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -39,6 +40,10 @@ type autoresponderResponse struct {
 	TextBody  *string    `json:"text_body"`
 	HTMLBody  *string    `json:"html_body"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// Warning is set (JAB-346 criterion 5) when the desired state was saved but
+	// the inline agent push failed; the reconciler re-asserts shortly. Omitted
+	// on a clean push.
+	Warning string `json:"warning,omitempty"`
 }
 
 type autoresponderUpdateRequest struct {
@@ -190,46 +195,26 @@ func (h *mailboxAutoresponderHandler) put(c *gin.Context) {
 		return
 	}
 
-	ar := &models.EmailAutoresponder{
-		MailboxID: mb.ID,
-		Enabled:   req.Enabled,
-		FromDate:  req.FromDate,
-		ToDate:    req.ToDate,
-		Subject:   req.Subject,
-		TextBody:  req.TextBody,
-		HTMLBody:  req.HTMLBody,
-		ManagedBy: "m6.5",
-	}
-	if err := h.cfg.Autoresponders.Update(ctx, ar); err != nil {
+	email := mb.LocalPart + "@" + mustDomainName(ctx, h.cfg.Domains, mb.DomainID)
+	ar, warning, err := autoresponderops.Set(ctx,
+		autoresponderops.Deps{Autoresponders: h.cfg.Autoresponders},
+		autoresponderops.SetInput{
+			MailboxID:    mb.ID,
+			MailboxEmail: email,
+			Enabled:      req.Enabled,
+			Subject:      req.Subject,
+			TextBody:     req.TextBody,
+			HTMLBody:     req.HTMLBody,
+			FromDate:     req.FromDate,
+			ToDate:       req.ToDate,
+		}, h.pushAutoresponder)
+	if err != nil {
+		if errors.Is(err, autoresponderops.ErrContentRequired) || errors.Is(err, autoresponderops.ErrInvalidDateRange) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_autoresponder", "detail": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
-	}
-
-	// Best-effort inline push to Stalwart. Reconciler re-asserts on drift.
-	if h.cfg.Agent != nil {
-		email := mb.LocalPart + "@" + mustDomainName(ctx, h.cfg.Domains, mb.DomainID)
-		params := map[string]any{
-			"mailbox_email": email,
-			"enabled":       req.Enabled,
-		}
-		if req.FromDate != nil {
-			params["from_date"] = req.FromDate.UTC().Format(time.RFC3339)
-		}
-		if req.ToDate != nil {
-			params["to_date"] = req.ToDate.UTC().Format(time.RFC3339)
-		}
-		if req.Subject != nil {
-			params["subject"] = *req.Subject
-		}
-		if req.TextBody != nil {
-			params["text_body"] = *req.TextBody
-		}
-		if req.HTMLBody != nil {
-			params["html_body"] = *req.HTMLBody
-		}
-		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		_, _ = h.cfg.Agent.Call(agentCtx, "autoresponder.set", params)
 	}
 
 	c.JSON(http.StatusOK, autoresponderResponse{
@@ -241,7 +226,20 @@ func (h *mailboxAutoresponderHandler) put(c *gin.Context) {
 		TextBody:  ar.TextBody,
 		HTMLBody:  ar.HTMLBody,
 		UpdatedAt: ar.UpdatedAt,
+		Warning:   warning,
 	})
+}
+
+// pushAutoresponder is the autoresponderops.PushFunc backed by the handler's
+// agent client — a bounded best-effort call whose error becomes a Set warning.
+func (h *mailboxAutoresponderHandler) pushAutoresponder(ctx context.Context, cmd string, params map[string]any) error {
+	if h.cfg.Agent == nil {
+		return nil
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := h.cfg.Agent.Call(agentCtx, cmd, params)
+	return err
 }
 
 func (h *mailboxAutoresponderHandler) del(c *gin.Context) {
@@ -260,19 +258,12 @@ func (h *mailboxAutoresponderHandler) del(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if err := h.cfg.Autoresponders.Delete(ctx, mb.ID); err != nil && !errors.Is(err, repository.ErrNotFound) {
+	email := mb.LocalPart + "@" + mustDomainName(ctx, h.cfg.Domains, mb.DomainID)
+	if err := autoresponderops.Clear(ctx,
+		autoresponderops.Deps{Autoresponders: h.cfg.Autoresponders},
+		mb.ID, email, h.pushAutoresponder); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
-	}
-	// Disable on Stalwart too.
-	if h.cfg.Agent != nil {
-		email := mb.LocalPart + "@" + mustDomainName(ctx, h.cfg.Domains, mb.DomainID)
-		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		_, _ = h.cfg.Agent.Call(agentCtx, "autoresponder.set", map[string]any{
-			"mailbox_email": email,
-			"enabled":       false,
-		})
 	}
 	c.JSON(http.StatusNoContent, nil)
 }
