@@ -5362,6 +5362,14 @@ jabali update [flags]
 - `--force` — Run the full rebuild/restart cycle even when git pull found no new commits
 - `--from-source` — Build binaries on this host instead of downloading the release tarball from Gitea Releases. Default is to download the tarball (90s update vs 5-10min source build). Use --from-source when offline, on a private fork, or to test uncommitted changes.
 
+#### `jabali update apt-refresh`
+
+Refresh the Updates Center OS-patch state now (used after an auto-apply) (GH #1224)
+
+```
+jabali update apt-refresh
+```
+
 ### `jabali user`
 
 Manage panel users

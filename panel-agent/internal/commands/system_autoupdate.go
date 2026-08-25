@@ -44,9 +44,14 @@ const (
 	aptUpgradeOverrideDir  = "/etc/systemd/system/apt-daily-upgrade.timer.d"
 	aptUpgradeOverrideFile = "/etc/systemd/system/apt-daily-upgrade.timer.d/jabali-schedule.conf"
 	aptUpgradeTimer        = "apt-daily-upgrade.timer"
-	jabaliAutoSvcFile      = "/etc/systemd/system/jabali-autoupdate.service"
-	jabaliAutoTimerFile    = "/etc/systemd/system/jabali-autoupdate.timer"
-	jabaliAutoTimer        = "jabali-autoupdate.timer"
+	// GH #1224: report the apply to the Updates Center immediately. The background
+	// poll only runs every 6h, so without this the page shows a stale "Last
+	// Applied" for hours after the scheduled run — which reads as "never ran".
+	aptUpgradeSvcDropinDir  = "/etc/systemd/system/apt-daily-upgrade.service.d"
+	aptUpgradeSvcDropinFile = "/etc/systemd/system/apt-daily-upgrade.service.d/jabali-report.conf"
+	jabaliAutoSvcFile       = "/etc/systemd/system/jabali-autoupdate.service"
+	jabaliAutoTimerFile     = "/etc/systemd/system/jabali-autoupdate.timer"
+	jabaliAutoTimer         = "jabali-autoupdate.timer"
 )
 
 var autoupdateHHMM = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
@@ -85,6 +90,20 @@ func systemAutoupdateApplyHandler(ctx context.Context, raw json.RawMessage) (any
 	// Reset OnCalendar (blank line clears the stock value) then pin ours.
 	aptOverride := fmt.Sprintf("[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\nRandomizedDelaySec=0\nPersistent=true\n", p.AptTime)
 	if wrote, err := writeIfChanged(aptUpgradeOverrideFile, aptOverride); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	} else if wrote {
+		changed = true
+	}
+
+	// --- apt-daily-upgrade.service ExecStartPost: push state to the panel now ---
+	// (GH #1224) So the Updates Center reflects a scheduled apply within seconds
+	// instead of waiting up to 6h for the background poll. Best-effort ('-'): a
+	// refresh failure must never fail the apt upgrade itself.
+	if err := os.MkdirAll(aptUpgradeSvcDropinDir, 0o755); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir service dropin dir: %v", err)}
+	}
+	aptReport := "[Service]\nExecStartPost=-/usr/local/bin/jabali update apt-refresh\n"
+	if wrote, err := writeIfChanged(aptUpgradeSvcDropinFile, aptReport); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	} else if wrote {
 		changed = true

@@ -76,6 +76,11 @@ func newUpdateCmd() *cobra.Command {
 		"Run the full rebuild/restart cycle even when git pull found no new commits")
 	cmd.Flags().Bool("from-source", false,
 		"Build binaries on this host instead of downloading the release tarball from Gitea Releases. Default is to download the tarball (90s update vs 5-10min source build). Use --from-source when offline, on a private fork, or to test uncommitted changes.")
+	// GH #1224: `jabali update apt-refresh` pushes the Updates Center state now
+	// (called by the apt-daily-upgrade ExecStartPost). A real subcommand routes
+	// here; the parent's NoArgs still rejects a mistyped positional, so this never
+	// accidentally triggers the self-updater.
+	cmd.AddCommand(newUpdateAptRefreshCmd())
 	return cmd
 }
 
