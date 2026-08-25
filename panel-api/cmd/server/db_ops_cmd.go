@@ -150,11 +150,16 @@ func newDBKillCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			err := csCall(ctx, verb, map[string]any{"id": args[0]})
-			if err == nil {
-				cliAuditOK(ctx, "database.process_kill", "database_process", args[0], nil)
+			// JAB-305: audit exactly one true outcome. This recorded only the
+			// success case, so a failed privileged kill left no audit trail;
+			// mirror the maintenance + root-password commands (Err on failure,
+			// OK on success).
+			if err := csCall(ctx, verb, map[string]any{"id": args[0]}); err != nil {
+				cliAuditErr(ctx, "database.process_kill", "database_process", args[0], nil)
+				return err
 			}
-			return err
+			cliAuditOK(ctx, "database.process_kill", "database_process", args[0], nil)
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&engine, "engine", "mariadb", "mariadb|postgres")
