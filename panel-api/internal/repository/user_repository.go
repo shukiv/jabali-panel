@@ -37,6 +37,10 @@ type UserRepository interface {
 	// Dedicated method: the Select-allowlist Update would silently drop it, and
 	// a *string lets NULL (auto) be written.
 	UpdateCLIPHPVersion(ctx context.Context, id string, version *string) error
+	// UpdateUsername renames the tenant's login/Linux username (GH #1238).
+	// Dedicated method: the Select-allowlist Update excludes username, so a
+	// full-model Update would silently drop the rename.
+	UpdateUsername(ctx context.Context, id string, username string) error
 	// LinkKratosIdentity writes kratos_identity_id on the row. Deliberately
 	// separate from Update — Update's column allowlist excludes this field so
 	// a profile-edit handler can't accidentally overwrite it, but the M20
@@ -162,6 +166,16 @@ func (r *userRepo) List(ctx context.Context, opts ListOptions) ([]models.User, i
 		return nil, 0, translate(err)
 	}
 	return out, total, nil
+}
+
+// UpdateUsername renames the tenant's username in isolation (GH #1238). Returns
+// a translated duplicate-key error if the new username is already taken (the
+// ux_users_username unique index), so the caller can surface a clean conflict.
+func (r *userRepo) UpdateUsername(ctx context.Context, id string, username string) error {
+	return translate(r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("username", username).Error)
 }
 
 func (r *userRepo) UpdateCLIPHPVersion(ctx context.Context, id string, version *string) error {

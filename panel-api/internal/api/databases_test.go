@@ -800,3 +800,5 @@ type pgUserFake struct {
 func (f *pgUserFake) FindByID(_ context.Context, id string) (*models.DatabaseUser, error) {
 	return f.users[id], nil
 }
+
+func (r *mockUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

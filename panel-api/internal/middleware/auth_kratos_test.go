@@ -327,3 +327,5 @@ func TestRequireKratosSession_KratosUnreachable_Returns503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Contains(t, rec.Body.String(), "identity_service_unavailable")
 }
+
+func (r *fakeUsersRepo) UpdateUsername(context.Context, string, string) error { return nil }

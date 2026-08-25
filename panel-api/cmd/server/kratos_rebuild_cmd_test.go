@@ -370,3 +370,5 @@ func TestRebuildOne_ProbeNotFoundTriggersRebuild(t *testing.T) {
 		t.Errorf("newID = %q, want new-kratos-uuid", newID)
 	}
 }
+
+func (r *fakeRebuildUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

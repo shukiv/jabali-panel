@@ -1147,3 +1147,5 @@ func TestUsers_Patch_MalformedEmailRejected(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "malformed non-empty email must 400")
 }
+
+func (r *memUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

@@ -293,3 +293,7 @@ func TestTTLOrDefault(t *testing.T) {
 		t.Errorf("ttlOrDefault(14400,0) = %d, want 14400 (no default keeps source)", got)
 	}
 }
+
+func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
+	return 0, nil
+}

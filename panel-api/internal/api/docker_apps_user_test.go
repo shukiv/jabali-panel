@@ -435,3 +435,9 @@ func TestTenantDocker_StopOverQuotaNeverGated(t *testing.T) {
 		t.Fatalf("stop of over-quota app = %d, want 200 — blocking stop would be perverse (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
+	return 0, nil
+}
+
+func (r *fakeUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

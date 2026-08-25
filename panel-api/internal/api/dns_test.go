@@ -1262,3 +1262,7 @@ func (*mockDomainRepo) AttachDockerApp(context.Context, string, string, models.N
 func (*mockDomainRepo) DetachDockerApp(context.Context, string, bool) error {
 	return nil
 }
+
+func (r *mockDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
+	return 0, nil
+}

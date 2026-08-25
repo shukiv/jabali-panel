@@ -5417,6 +5417,18 @@ jabali user password <email|username|user-id> [flags]
 - `--password` — explicit new password (omit to auto-generate)
 - `--password-stdin` — read new password from stdin (no prompt, no echo)
 
+#### `jabali user rename`
+
+Rename a tenant's Linux/login username in place (GH #1238)
+
+```
+jabali user rename <email|username|user-id> <new-username> [flags]
+```
+
+**Flags:**
+
+- `--yes` — skip the confirmation prompt
+
 #### `jabali user reprovision`
 
 Re-run OS provisioning for a user + sync the panel password

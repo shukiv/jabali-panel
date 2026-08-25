@@ -22,6 +22,11 @@ type DomainRepository interface {
 	List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error)
 	Update(ctx context.Context, d *models.Domain) error
+	// RewriteDocRootPrefix rewrites the leading /home/<old> of every doc_root
+	// owned by userID to /home/<new> when a user is renamed (GH #1238).
+	// Prefix-anchored + user-scoped, so it can never touch another tenant's
+	// paths. Returns the number of rows changed.
+	RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix, newPrefix string) (int64, error)
 	// BulkSetEnabledByUserID flips domains.is_enabled for every row
 	// owned by the user. Returns the count of changed rows. Used by
 	// the admin user-suspend handler so a single API call takes every
@@ -337,6 +342,17 @@ func (r *domainRepo) ListByUserID(ctx context.Context, userID string, opts ListO
 		return nil, 0, err
 	}
 	return domains, total, nil
+}
+
+func (r *domainRepo) RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix, newPrefix string) (int64, error) {
+	// Prefix-anchored (LIKE oldPrefix%) AND user-scoped, so it only ever rewrites
+	// this tenant's own docroots — CONCAT the new prefix onto the tail after the
+	// old prefix. MariaDB SUBSTRING is 1-indexed, so start at len(oldPrefix)+1.
+	res := r.db.WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("user_id = ? AND doc_root LIKE ?", userID, oldPrefix+"%").
+		Update("doc_root", gorm.Expr("CONCAT(?, SUBSTRING(doc_root, ?))", newPrefix, len(oldPrefix)+1))
+	return res.RowsAffected, res.Error
 }
 
 func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {

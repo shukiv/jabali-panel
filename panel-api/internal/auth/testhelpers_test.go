@@ -154,3 +154,5 @@ func seedUser(t *testing.T, users *fakeUserRepo, email, password string, admin b
 	require.NoError(t, users.Create(context.Background(), u))
 	return u
 }
+
+func (r *fakeUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

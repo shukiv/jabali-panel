@@ -182,3 +182,7 @@ func (u *userRepoAdapterForCronAdminTest) SetSuspended(context.Context, string, 
 	return nil
 }
 func (u *userRepoAdapterForCronAdminTest) Delete(context.Context, string) error { return nil }
+
+func (r *userRepoAdapterForCronAdminTest) UpdateUsername(context.Context, string, string) error {
+	return nil
+}

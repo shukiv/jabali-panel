@@ -419,3 +419,5 @@ func TestValidate_OwnerMismatchRefused(t *testing.T) {
 	h, tok := jab8Setup(t, user, db)
 	assert.Equal(t, http.StatusUnauthorized, jab8Run(t, h, tok))
 }
+
+func (m *mockUserRepoValidate) UpdateUsername(context.Context, string, string) error { return nil }

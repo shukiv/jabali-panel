@@ -2328,3 +2328,9 @@ func TestReconcileVersionedPHPPools(t *testing.T) {
 	}
 	require.Equal(t, "phpuser-php8.0", rp["slug"], "only the OLD orphan should be reaped, not the fresh one")
 }
+
+func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
+	return 0, nil
+}
+
+func (r *fakeUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

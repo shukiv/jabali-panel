@@ -28,6 +28,7 @@ func newUserCmd() *cobra.Command {
 	cmd.AddCommand(
 		newUserListCmd(),
 		newUserCreateCmd(),
+		newUserRenameCmd(),
 		newUserDeleteCmd(),
 		newUserPasswordCmd(),
 		newUserReprovisionCmd(),

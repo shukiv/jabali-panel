@@ -849,3 +849,7 @@ func (m *MockSSLCertificateRepository) ResetForRetry(ctx context.Context, id str
 	args := m.Called(ctx, id, now)
 	return args.Error(0)
 }
+
+func (m *MockDomainRepository) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
+	return 0, nil
+}

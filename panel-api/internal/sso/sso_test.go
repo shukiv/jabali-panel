@@ -188,3 +188,5 @@ func (m *mockTokensForSSO) PurgeExpired(ctx context.Context) (int64, error) {
 func ptrString(s string) *string {
 	return &s
 }
+
+func (r *mockUsersForSSO) UpdateUsername(context.Context, string, string) error { return nil }

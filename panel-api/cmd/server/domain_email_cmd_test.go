@@ -554,3 +554,7 @@ func (*fakeDomainRepo) AttachDockerApp(context.Context, string, string, models.N
 func (*fakeDomainRepo) DetachDockerApp(context.Context, string, bool) error {
 	return nil
 }
+
+func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
+	return 0, nil
+}
