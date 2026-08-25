@@ -11,41 +11,15 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/json"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
-
-// cliParseLeafNotAfter extracts the leaf certificate + its NotAfter from a PEM
-// chain. Mirrors parseLeafNotAfter in internal/api/ssl.go. Never logs the input.
-func cliParseLeafNotAfter(certPEM []byte) (*x509.Certificate, time.Time, error) {
-	rest := certPEM
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-		leaf, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, time.Time{}, fmt.Errorf("parse certificate: %w", err)
-		}
-		return leaf, leaf.NotAfter, nil
-	}
-	return nil, time.Time{}, errors.New("no CERTIFICATE block found in --cert file")
-}
 
 func newSSLSetCustomCmd() *cobra.Command {
 	var (
@@ -84,54 +58,21 @@ func newSSLSetCustomCmd() *cobra.Command {
 				return err
 			}
 
-			// Panel-side validation, same as the handler: parse the leaf and
-			// confirm it covers the domain before touching the agent.
-			leaf, notAfter, err := cliParseLeafNotAfter(certPEM)
+			// Route through the shared Domain Certificate Lifecycle operation
+			// (JAB-345) — the same op the REST handler uses: parse + hostname
+			// validation, agent install, the authoritative mode+row finalize on a
+			// fresh context, and (REST-only) scheduling. nil scheduler: the CLI is
+			// out-of-process from the in-process reconciler, which converges on its
+			// next tick (JAB-292 limit).
+			res, err := api.InstallCustomDomainCert(ctx, api.CustomCertDeps{
+				Agent:    sharedAgent,
+				Domains:  domainRepoFromDB(),
+				SSLCerts: sslRepoFromDB(),
+			}, dom, string(certPEM), string(keyPEM), nil)
 			if err != nil {
-				return fmt.Errorf("invalid certificate: %w", err)
+				cliAuditErr(ctx, "ssl.install_custom", "domain", dom.ID, &dom.UserID)
+				return err
 			}
-			if leaf.VerifyHostname(dom.Name) != nil {
-				return fmt.Errorf("certificate does not cover %s", dom.Name)
-			}
-
-			raw, err := sharedAgent.Call(ctx, "ssl.install_custom", map[string]any{
-				"domain":   dom.Name,
-				"cert_pem": string(certPEM),
-				"key_pem":  string(keyPEM),
-			})
-			if err != nil {
-				return fmt.Errorf("ssl.install_custom: %w", err)
-			}
-			var res struct {
-				CertPath string `json:"cert_path"`
-				KeyPath  string `json:"key_path"`
-			}
-			if uerr := json.Unmarshal(raw, &res); uerr != nil || res.CertPath == "" {
-				return fmt.Errorf("agent returned no cert path")
-			}
-
-			// Authoritative: switch mode to custom (sets ssl_enabled shadow too).
-			if err := domainRepoFromDB().UpdateSSLMode(ctx, dom.ID, models.SSLModeCustom); err != nil {
-				return fmt.Errorf("switch ssl_mode: %w", err)
-			}
-			// Upsert the cert row (status=custom, paths, parsed expiry).
-			cert, _ := sslRepoFromDB().FindByDomainID(ctx, dom.ID)
-			if cert == nil {
-				newCert := &models.SSLCertificate{
-					ID:        ids.NewULID(),
-					DomainID:  dom.ID,
-					Status:    models.SSLStatusCustom,
-					CertPath:  &res.CertPath,
-					KeyPath:   &res.KeyPath,
-					ExpiresAt: &notAfter,
-				}
-				if err := sslRepoFromDB().Create(ctx, newCert); err != nil {
-					return fmt.Errorf("create cert row: %w", err)
-				}
-			} else if err := sslRepoFromDB().UpdateCustom(ctx, cert.ID, res.CertPath, res.KeyPath, notAfter); err != nil {
-				return fmt.Errorf("update cert row: %w", err)
-			}
-
 			cliAuditOK(ctx, "ssl.install_custom", "domain", dom.ID, &dom.UserID)
 
 			out := map[string]any{
@@ -139,13 +80,13 @@ func newSSLSetCustomCmd() *cobra.Command {
 				"status":     models.SSLStatusCustom,
 				"cert_path":  res.CertPath,
 				"key_path":   res.KeyPath,
-				"expires_at": notAfter,
+				"expires_at": res.ExpiresAt,
 			}
 			if jsonOutput {
 				return printJSON(out)
 			}
 			fmt.Printf("Installed custom cert for %s\n  cert:    %s\n  key:     %s\n  expires: %s\n  (reconciler will re-render the vhost)\n",
-				dom.Name, res.CertPath, res.KeyPath, notAfter.Format(time.RFC3339))
+				dom.Name, res.CertPath, res.KeyPath, res.ExpiresAt.Format(time.RFC3339))
 			return nil
 		},
 	}

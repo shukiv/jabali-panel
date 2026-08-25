@@ -3,8 +3,8 @@ package api
 import (
 	"context"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -638,74 +638,42 @@ func (h *sslHandler) installCustomSSL(c *gin.Context) {
 		return
 	}
 
-	// Parse not-after + check the cert covers the domain (warn-only via 400
-	// when it clearly doesn't, so an operator can't pin a wrong cert).
-	leaf, notAfter, err := parseLeafNotAfter(req.CertPEM)
+	// The shared Domain Certificate Lifecycle operation (JAB-345) owns parse +
+	// hostname validation, the agent install, the authoritative mode+row
+	// finalize (on a fresh context so a client disconnect can't strand a live
+	// cert), and scheduling. The CLI routes through the same op.
+	res, err := InstallCustomDomainCert(c.Request.Context(), CustomCertDeps{
+		Agent:    h.cfg.Agent,
+		Domains:  h.cfg.Domains,
+		SSLCerts: h.cfg.SSLCerts,
+	}, domain, req.CertPEM, req.KeyPEM, h.cfg.Reconciler)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_cert", "detail": err.Error()})
-		return
-	}
-	if leaf.VerifyHostname(domain.Name) != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "cert_domain_mismatch",
-			"detail": fmt.Sprintf("certificate does not cover %s", domain.Name),
-		})
-		return
-	}
-
-	ctx := c.Request.Context()
-	raw, err := h.cfg.Agent.Call(ctx, "ssl.install_custom", map[string]any{
-		"domain":   domain.Name,
-		"cert_pem": req.CertPEM,
-		"key_pem":  req.KeyPEM,
-	})
-	if err != nil {
-		// Agent validation errors (bad pair, parse) are the caller's fault.
-		c.JSON(http.StatusBadRequest, gin.H{"error": "install_failed", "detail": firstLineSSL(err.Error())})
-		return
-	}
-	var res struct {
-		CertPath string `json:"cert_path"`
-		KeyPath  string `json:"key_path"`
-	}
-	if err := json.Unmarshal(raw, &res); err != nil || res.CertPath == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Authoritative: switch mode to custom (sets ssl_enabled shadow too).
-	if err := h.cfg.Domains.UpdateSSLMode(ctx, domain.ID, models.SSLModeCustom); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	// Upsert the cert row (status=custom, paths, parsed expiry).
-	cert, _ := h.cfg.SSLCerts.FindByDomainID(ctx, domain.ID)
-	if cert == nil {
-		cert = &models.SSLCertificate{
-			ID:        ids.NewULID(),
-			DomainID:  domain.ID,
-			Status:    models.SSLStatusCustom,
-			CertPath:  &res.CertPath,
-			KeyPath:   &res.KeyPath,
-			ExpiresAt: &notAfter,
-		}
-		if err := h.cfg.SSLCerts.Create(ctx, cert); err != nil {
+		switch {
+		case errors.Is(err, ErrCustomCertInvalid):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_cert", "detail": firstLineSSL(err.Error())})
+		case errors.Is(err, ErrCustomCertMismatch):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":  "cert_domain_mismatch",
+				"detail": fmt.Sprintf("certificate does not cover %s", domain.Name),
+			})
+		case errors.Is(err, ErrCustomCertAgent):
+			// Agent validation errors (bad pair, parse) are the caller's fault.
+			c.JSON(http.StatusBadRequest, gin.H{"error": "install_failed", "detail": firstLineSSL(err.Error())})
+		case errors.Is(err, ErrCustomCertFinalize):
+			// The cert is live on the host; only the panel record failed. Surface
+			// the idempotent-retry recovery so the operator knows re-running is safe.
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "install_not_recorded", "detail": firstLineSSL(err.Error())})
+		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
 		}
-	} else if err := h.cfg.SSLCerts.UpdateCustom(ctx, cert.ID, res.CertPath, res.KeyPath, notAfter); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
-	if h.cfg.Reconciler != nil {
-		h.cfg.Reconciler.Schedule(domain.ID)
-	}
 	c.JSON(http.StatusOK, gin.H{"ssl": gin.H{
 		"status":     models.SSLStatusCustom,
 		"cert_path":  res.CertPath,
 		"key_path":   res.KeyPath,
-		"expires_at": notAfter,
+		"expires_at": res.ExpiresAt,
 	}})
 }
 
