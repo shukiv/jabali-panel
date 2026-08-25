@@ -211,6 +211,16 @@ describe("useDeleteMailbox", () => {
     expect(mocked.delete).toHaveBeenCalledWith("/mailboxes/mb1");
     const invalidatedKeys = invalidate.mock.calls.map((c) => c[0]?.queryKey);
     expect(invalidatedKeys).toContainEqual(["list", "mailboxes", "dom1"]);
+    expect(invalidatedKeys).toContainEqual(["admin", "mailboxes"]);
+    // JAB-333: a deleted mailbox also leaves the tenant screen's group-membership
+    // and autoresponder panels — those shared keys must be invalidated too, or
+    // they render a ghost row for the deleted mailbox until the next refetch.
+    expect(invalidatedKeys).toContainEqual([
+      "list",
+      "mailbox-group-memberships",
+      "dom1",
+    ]);
+    expect(invalidatedKeys).toContainEqual(["autoresponders", "by-domain", "dom1"]);
   });
 });
 

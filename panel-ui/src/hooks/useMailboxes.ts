@@ -248,6 +248,11 @@ export function useDeleteMailbox(): UseMutationResult<
     onSuccess: (_data, { domainId }) => {
       qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
       qc.invalidateQueries({ queryKey: ["admin", "mailboxes"] });
+      // JAB-333: a deleted mailbox also disappears from the tenant screen's
+      // group-membership and autoresponder panels — invalidate those shared
+      // keys so they don't render a ghost row until the next refetch.
+      qc.invalidateQueries({ queryKey: ["list", "mailbox-group-memberships", domainId] });
+      qc.invalidateQueries({ queryKey: ["autoresponders", "by-domain", domainId] });
     },
   });
 }

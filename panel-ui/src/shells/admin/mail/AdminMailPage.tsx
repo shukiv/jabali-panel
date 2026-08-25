@@ -12,12 +12,10 @@ import {
   Input,
   Modal,
   Card,
-  Progress,
   Skeleton,
   Space,
   Table,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import { DeleteOutlined, EditOutlined, KeyOutlined, MailOutlined, PlusOutlined } from "@icons";
@@ -25,7 +23,6 @@ import { DeleteOutlined, EditOutlined, KeyOutlined, MailOutlined, PlusOutlined }
 import {
   useAdminMailboxes,
   useDeleteMailbox,
-  useMintMailboxSSO,
   useRotateMailboxPassword,
   type AdminMailbox,
 } from "../../../hooks/useMailboxes";
@@ -35,19 +32,17 @@ import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, ownerLabel, adminLinks } from "../../../components/admin/entityLinks";
 import type { Domain } from "../../user/domains/UserDomainList";
 import { EditMailboxModal } from "../../../components/mail/EditMailboxModal";
+import {
+  renderMailboxQuota,
+  renderMailboxStatus,
+  useMailboxWebmail,
+} from "../../../components/mail/mailboxInventory";
 import { AdminGroupsTab } from "./AdminGroupsTab";
 import { MailStatsTab } from "./MailStatsTab";
 import { CreateMailboxWizardModal } from "../../user/mail/CreateMailboxWizardModal";
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../components/PasswordInput";
 import { RowActions } from "../../../components/RowActions";
-
-function formatBytes(n: number): string {
-  if (!n) return "0 B";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  const i = Math.floor(Math.log(n) / Math.log(1024));
-  return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
 
 export function AdminMailPage() {
   const { t } = useTranslation();
@@ -76,41 +71,7 @@ export function AdminMailPage() {
 
   const deleteMutation = useDeleteMailbox();
   const rotate = useRotateMailboxPassword();
-  const ssoMutation = useMintMailboxSSO();
-
-  const openWebmail = (row: AdminMailbox) => {
-    // Sever the opener link so the webmail tab can't reverse-tabnab the panel.
-    // (noopener can't be passed to window.open here — it returns null and
-    // breaks the synchronous-popup-then-set-href pattern that dodges blockers.)
-    const popup = window.open("about:blank", "_blank");
-    if (popup) {
-      try {
-        popup.opener = null;
-      } catch {
-        // older Safari — best effort
-      }
-    }
-    ssoMutation.mutate(
-      { id: row.id },
-      {
-        onSuccess: (data) => {
-          if (popup && data?.url) popup.location.href = data.url;
-        },
-        onError: (err) => {
-          const code = (err as { response?: { data?: { error?: string } } })?.response
-            ?.data?.error;
-          popup?.close();
-          if (code === "sso_unavailable_rotate_password") {
-            message.error(
-              "Rotate the mailbox password first — SSO material is populated on rotation.",
-            );
-          } else {
-            message.error("Failed to open webmail");
-          }
-        },
-      },
-    );
-  };
+  const webmail = useMailboxWebmail();
 
   const [tab, setTab] = useTabParam<string>("mailboxes");
   const [createOpen, setCreateOpen] = useState(false);
@@ -264,28 +225,14 @@ export function AdminMailPage() {
               dataIndex: "quota_bytes",
               width: 200,
               sorter: (a, b) => (a.quota_bytes ?? 0) - (b.quota_bytes ?? 0),
-              render: (quota: number, row) => {
-                const used = row.last_usage_bytes ?? 0;
-                const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
-                return (
-                  <Tooltip title={`${formatBytes(used)} of ${formatBytes(quota)}`}>
-                    <Progress
-                      percent={pct}
-                      size="small"
-                      status={pct >= 90 ? "exception" : "normal"}
-                      format={() => `${formatBytes(used)} / ${formatBytes(quota)}`}
-                    />
-                  </Tooltip>
-                );
-              },
+              render: (_quota: number, row) => renderMailboxQuota(row),
             },
             {
               title: "Status",
               dataIndex: "is_disabled",
               width: 100,
               sorter: (a, b) => Number(a.is_disabled) - Number(b.is_disabled),
-              render: (disabled: boolean) =>
-                disabled ? <Tag color="red">disabled</Tag> : <Tag color="green">active</Tag>,
+              render: (disabled: boolean) => renderMailboxStatus(disabled),
             },
             {
               title: "Actions",
@@ -293,7 +240,7 @@ export function AdminMailPage() {
               render: (_, row) => (
                 <RowActions
                   actions={[
-                    { key: "webmail", label: "Open webmail", icon: <MailOutlined />, loading: ssoMutation.isPending && ssoMutation.variables?.id === row.id, onClick: () => openWebmail(row) },
+                    { key: "webmail", label: "Open webmail", icon: <MailOutlined />, loading: webmail.isLaunching(row.id), onClick: () => webmail.launch(row.id) },
                     { key: "edit", label: "Edit mailbox", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
                     { key: "reset", label: "Reset password", icon: <KeyOutlined />, onClick: () => { resetForm.resetFields(); setResetTarget(row); } },
                     {

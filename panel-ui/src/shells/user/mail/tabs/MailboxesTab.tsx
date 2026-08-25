@@ -5,7 +5,7 @@
 // client-side and provides password rotation, SSO mint, and delete actions.
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
-import { Button, Empty, Form, Modal, Progress, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
+import { Button, Empty, Form, Modal, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../../components/RowActions";
 import { SearchableTableStringQ } from "../../../../components/SearchableTable";
@@ -26,10 +26,14 @@ import { useForwarders } from "../../../../hooks/useForwarders";
 import { apiClient } from "../../../../apiClient";
 import {
   useDeleteMailbox,
-  useMintMailboxSSO,
   useRotateMailboxPassword,
   type Mailbox,
 } from "../../../../hooks/useMailboxes";
+import {
+  renderMailboxQuota,
+  renderMailboxStatus,
+  useMailboxWebmail,
+} from "../../../../components/mail/mailboxInventory";
 import { useListQuery } from "../../../../hooks/useQueries";
 import type { Domain } from "../../domains/UserDomainList";
 import { DatabaseUserPasswordModal } from "../../../../components/DatabaseUserPasswordModal";
@@ -43,14 +47,6 @@ type GroupMembership = {
   group_name: string;
   group_email: string;
 };
-
-function formatBytes(n: number): string {
-  if (n === 0) return "0 B";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  const i = Math.floor(Math.log(n) / Math.log(1024));
-  const v = n / Math.pow(1024, i);
-  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
-}
 
 export const MailboxesTab = () => {
   const { t } = useTranslation();
@@ -172,7 +168,7 @@ export const MailboxesTab = () => {
 
   const deleteMutation = useDeleteMailbox();
   const rotateMutation = useRotateMailboxPassword();
-  const ssoMutation = useMintMailboxSSO();
+  const webmail = useMailboxWebmail();
 
   const openReset = (row: MailboxRow) => {
     resetForm.resetFields();
@@ -208,40 +204,6 @@ export const MailboxesTab = () => {
     } finally {
       setRotatingId(null);
     }
-  };
-
-  const openWebmail = (row: MailboxRow) => {
-    // Sever the opener link so the webmail tab can't reverse-tabnab the panel.
-    // (noopener can't be passed to window.open here — it returns null and
-    // breaks the synchronous-popup-then-set-href pattern that dodges blockers.)
-    const popup = window.open("about:blank", "_blank");
-    if (popup) {
-      try {
-        popup.opener = null;
-      } catch {
-        // older Safari — best effort
-      }
-    }
-    ssoMutation.mutate(
-      { id: row.id },
-      {
-        onSuccess: (data) => {
-          if (popup && data?.url) popup.location.href = data.url;
-        },
-        onError: (err) => {
-          const code = (err as { response?: { data?: { error?: string } } })?.response
-            ?.data?.error;
-          popup?.close();
-          if (code === "sso_unavailable_rotate_password") {
-            feedback.message.error(
-              "Rotate the mailbox password first — SSO material is populated on rotation.",
-            );
-          } else {
-            feedback.message.error("Failed to open webmail");
-          }
-        },
-      },
-    );
   };
 
   const loading = loadingDomains || mailboxResults.some((r) => r.isLoading);
@@ -386,26 +348,7 @@ export const MailboxesTab = () => {
             dataIndex: "quota_bytes",
             sorter: (a, b) => (a.quota_bytes ?? 0) - (b.quota_bytes ?? 0),
             width: 220,
-            render: (quota: number, row) => {
-              const used = row.last_usage_bytes ?? 0;
-              const pct =
-                quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
-              return (
-                <Tooltip title={`${formatBytes(used)} of ${formatBytes(quota)}`}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <Typography.Text style={{ fontSize: 12 }}>
-                      {`${formatBytes(used)} / ${formatBytes(quota)}`}
-                    </Typography.Text>
-                    <Progress
-                      percent={pct}
-                      size="small"
-                      showInfo={false}
-                      status={pct >= 90 ? "exception" : "normal"}
-                    />
-                  </div>
-                </Tooltip>
-              );
-            },
+            render: (_quota: number, row) => renderMailboxQuota(row),
           },
           {
             title: "Last usage",
@@ -424,12 +367,7 @@ export const MailboxesTab = () => {
             dataIndex: "is_disabled",
             sorter: (a, b) => Number(a.is_disabled) - Number(b.is_disabled),
             width: 100,
-            render: (disabled: boolean) =>
-              disabled ? (
-                <Tag color="red">disabled</Tag>
-              ) : (
-                <Tag color="green">active</Tag>
-              ),
+            render: (disabled: boolean) => renderMailboxStatus(disabled),
           },
           {
             title: "Actions",
@@ -442,8 +380,8 @@ export const MailboxesTab = () => {
                     label: "Webmail",
                     icon: <MailOutlined />,
                     tooltip: "Open webmail for this mailbox",
-                    loading: ssoMutation.isPending && ssoMutation.variables?.id === row.id,
-                    onClick: () => openWebmail(row),
+                    loading: webmail.isLaunching(row.id),
+                    onClick: () => webmail.launch(row.id),
                   },
                   { key: "edit", label: "Edit", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
                   // Send-only mailboxes (GH #371 relays like noreply@) have no

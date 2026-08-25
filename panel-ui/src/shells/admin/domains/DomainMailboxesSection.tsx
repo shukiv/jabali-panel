@@ -8,7 +8,7 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { RowActions } from "../../../components/RowActions";
-import { Alert, Button, Card, Form, Input, Checkbox, InputNumber, Modal, Progress, Select, Skeleton, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Form, Input, Checkbox, InputNumber, Modal, Select, Skeleton, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   DeleteOutlined,
@@ -20,12 +20,16 @@ import {
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../components/PasswordInput";
 import {
+  renderMailboxQuota,
+  renderMailboxStatus,
+  useMailboxWebmail,
+} from "../../../components/mail/mailboxInventory";
+import {
   useCreateMailbox,
   useDeleteMailbox,
   useDomainEmail,
   useEnableDomainEmail,
   useMailboxes,
-  useMintMailboxSSO,
   useRotateMailboxPassword,
   type Mailbox,
 } from "../../../hooks/useMailboxes";
@@ -49,14 +53,6 @@ type Props = {
 // the 16 MiB floor is panel-api's minMailboxQuotaBytes.
 const QUOTA_DEFAULT_BYTES = 1 * 1024 * 1024 * 1024;
 const QUOTA_MIN_BYTES = 16 * 1024 * 1024;
-
-function formatBytes(n: number): string {
-  if (n === 0) return "0 B";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  const i = Math.floor(Math.log(n) / Math.log(1024));
-  const v = n / Math.pow(1024, i);
-  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
-}
 
 function parseQuotaInput(v: number | string | null | undefined): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
@@ -85,7 +81,7 @@ export const DomainMailboxesSection = ({
   const createMutation = useCreateMailbox();
   const deleteMutation = useDeleteMailbox();
   const rotateMutation = useRotateMailboxPassword();
-  const ssoMutation = useMintMailboxSSO();
+  const webmail = useMailboxWebmail();
   // enableMutation is only used when the section lands in the
   // disabled state (auto-enable failed at domain.create time, or an
   // operator explicitly turned email off). In the happy path — email
@@ -181,51 +177,6 @@ export const DomainMailboxesSection = ({
     }
   };
 
-  // openWebmail mints a one-shot SSO URL and opens it in a new tab.
-  // IMPORTANT: window.open MUST be called synchronously with the click
-  // event or popup blockers intercept it. We pop a blank tab first,
-  // then navigate it once the mint responds — same trick the
-  // phpMyAdmin-SSO flow uses.
-  const openWebmail = (row: Mailbox) => {
-    const popup = window.open("about:blank", "_blank");
-    if (!popup) {
-      feedback.message.warning(
-        "Browser blocked the webmail popup — allow popups for this site or click again.",
-      );
-      return;
-    }
-    // JAB-330: sever the opener link BEFORE the async SSO mint so the webmail
-    // tab can never reach back into the panel window (reverse tabnabbing). Must
-    // run synchronously here — the same fix the sibling mailbox flows already
-    // apply. (noopener can't be passed to window.open: it returns null and
-    // breaks the synchronous-popup-then-set-href trick that dodges blockers.)
-    popup.opener = null;
-    ssoMutation.mutate(
-      { id: row.id },
-      {
-        onSuccess: (data) => {
-          popup.location.href = data.url;
-        },
-        onError: (err: unknown) => {
-          popup.close();
-          const resp = (err as { response?: { data?: { error?: string; detail?: string } } })
-            ?.response?.data;
-          // sso_unavailable_rotate_password is the typed hint for
-          // pre-Step-8 mailboxes (password_enc is NULL) — surface the
-          // remediation so the user knows what to do.
-          if (resp?.error === "sso_unavailable_rotate_password") {
-            feedback.message.warning(
-              resp.detail ??
-                "Rotate the mailbox password to enable webmail SSO.",
-            );
-            return;
-          }
-          feedback.message.error(resp?.detail ?? resp?.error ?? "Failed to open webmail");
-        },
-      },
-    );
-  };
-
   const onCreate = async () => {
     const values = await form.validateFields();
     // Fall back to the section's bound domain when the picker wasn't
@@ -315,20 +266,7 @@ export const DomainMailboxesSection = ({
               title: "Quota",
               dataIndex: "quota_bytes",
               width: 220,
-              render: (quota: number, row: Mailbox) => {
-                const used = row.last_usage_bytes ?? 0;
-                const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
-                return (
-                  <Tooltip title={`${formatBytes(used)} of ${formatBytes(quota)}`}>
-                    <Progress
-                      percent={pct}
-                      size="small"
-                      status={pct >= 90 ? "exception" : "normal"}
-                      format={() => `${formatBytes(used)} / ${formatBytes(quota)}`}
-                    />
-                  </Tooltip>
-                );
-              },
+              render: (_quota: number, row: Mailbox) => renderMailboxQuota(row),
             },
             {
               title: "Last usage",
@@ -344,8 +282,10 @@ export const DomainMailboxesSection = ({
               dataIndex: "is_disabled",
               width: 100,
               render: (disabled: boolean, row: Mailbox) => (
+                // Domain adapter composes the shared active/disabled tag with its
+                // own send-only marker (GH #371) — kept explicit per JAB-333.
                 <Space size={4} wrap>
-                  {disabled ? <Tag color="red">disabled</Tag> : <Tag color="green">active</Tag>}
+                  {renderMailboxStatus(disabled)}
                   {row.send_only && <Tag color="blue">send-only</Tag>}
                 </Space>
               ),
@@ -356,7 +296,7 @@ export const DomainMailboxesSection = ({
               render: (_, row) => (
                 <RowActions
                   actions={[
-                    { key: "webmail", label: "Open webmail", icon: <MailOutlined />, loading: ssoMutation.isPending && ssoMutation.variables?.id === row.id, onClick: () => openWebmail(row) },
+                    { key: "webmail", label: "Open webmail", icon: <MailOutlined />, loading: webmail.isLaunching(row.id), onClick: () => webmail.launch(row.id) },
                     { key: "rotate", label: "Rotate password", icon: <KeyOutlined />, loading: rotatingId === row.id, onClick: () => rotate(row) },
                     {
                       key: "delete",
