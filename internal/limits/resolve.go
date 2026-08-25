@@ -124,6 +124,31 @@ const (
 // Validate rejects out-of-range values. Non-zero values above the cap
 // fail; zero always passes (unlimited is always legal). Returns the
 // first violation or nil.
+// ValidateOverrideBounds runs each present (non-nil) per-user override value
+// through the same bounds check EffectiveLimits.Validate applies, treating each
+// as a field-of-one so any combination of NULLs is allowed. Shared by the REST
+// handler and the operator CLI so a CLI-set override cannot bypass the bounds
+// (JAB-309). DiskQuotaMB has no upper bound and is not checked, matching Validate.
+func ValidateOverrideBounds(cpu, mem, ioRead, ioWrite, maxTasks *uint32) error {
+	e := EffectiveLimits{}
+	if cpu != nil {
+		e.CPUQuotaPercent = *cpu
+	}
+	if mem != nil {
+		e.MemoryLimitMB = *mem
+	}
+	if ioRead != nil {
+		e.IOReadMbps = *ioRead
+	}
+	if ioWrite != nil {
+		e.IOWriteMbps = *ioWrite
+	}
+	if maxTasks != nil {
+		e.MaxTasks = *maxTasks
+	}
+	return e.Validate()
+}
+
 func (e EffectiveLimits) Validate() error {
 	if e.CPUQuotaPercent > MaxCPUQuotaPercent {
 		return &BoundError{Field: "cpu_quota_percent", Value: e.CPUQuotaPercent, Max: MaxCPUQuotaPercent}

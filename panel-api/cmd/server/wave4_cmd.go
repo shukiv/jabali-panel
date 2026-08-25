@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/htaccess"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -161,6 +162,12 @@ func newLimitsOverrideCmd() *cobra.Command {
 			}
 			if !set {
 				return fmt.Errorf("specify at least one override (--disk-mb/--cpu/--memory-mb/--io-read-mbps/--io-write-mbps/--max-tasks)")
+			}
+			// JAB-309: enforce the same bounds the REST handler does — the CLI
+			// previously wrote overrides unvalidated, so an out-of-range value
+			// could be persisted and dispatched to the agent.
+			if err := limits.ValidateOverrideBounds(o.CPUQuotaPercent, o.MemoryLimitMB, o.IOReadMbps, o.IOWriteMbps, o.MaxTasks); err != nil {
+				return fmt.Errorf("invalid override: %w", err)
 			}
 			if err := repository.NewUserLimitOverrideRepository(sharedDB).Upsert(ctx, o); err != nil {
 				return fmt.Errorf("upsert override: %w", err)

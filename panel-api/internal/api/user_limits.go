@@ -311,25 +311,10 @@ func (h *userLimitsHandler) upsertOverride(c *gin.Context) {
 // the bundle-style Validate() on EffectiveLimits because an override
 // can have any combination of NULL values.
 func validateOverrideBounds(req overrideRequest) error {
-	// Treat each present value as an EffectiveLimits field-of-one and
-	// let the central validator decide.
-	e := limits.EffectiveLimits{}
-	if req.CPUQuotaPercent != nil {
-		e.CPUQuotaPercent = *req.CPUQuotaPercent
-	}
-	if req.MemoryLimitMB != nil {
-		e.MemoryLimitMB = *req.MemoryLimitMB
-	}
-	if req.IOReadMbps != nil {
-		e.IOReadMbps = *req.IOReadMbps
-	}
-	if req.IOWriteMbps != nil {
-		e.IOWriteMbps = *req.IOWriteMbps
-	}
-	if req.MaxTasks != nil {
-		e.MaxTasks = *req.MaxTasks
-	}
-	return e.Validate()
+	// Shared with the operator CLI (JAB-309) so both enforce the identical
+	// bounds; each present value is validated as an EffectiveLimits field-of-one.
+	return limits.ValidateOverrideBounds(
+		req.CPUQuotaPercent, req.MemoryLimitMB, req.IOReadMbps, req.IOWriteMbps, req.MaxTasks)
 }
 
 func (h *userLimitsHandler) clearOverride(c *gin.Context) {
