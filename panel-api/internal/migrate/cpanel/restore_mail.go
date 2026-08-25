@@ -359,7 +359,11 @@ func insertOneMailboxRow(
 		if cur.PasswordHash == srcHash {
 			return []string{fmt.Sprintf("mailbox_rows: %s@%s already exists with the SOURCE password", localPart, domainName)}
 		}
-		if uErr := mbRepo.UpdatePasswordHash(ctx, cur.ID, srcHash); uErr != nil {
+		// JAB-291 (#5): retrofitting the SOURCE hash changes the password, so any
+		// password_enc sealed by the earlier fresh-random create is now stale — it
+		// would decrypt to a password the new hash rejects, breaking webmail SSO.
+		// Clear it (enc=nil); a later rotate with a live SSO key re-seals it.
+		if uErr := mbRepo.UpdatePasswordHashAndEnc(ctx, cur.ID, srcHash, nil); uErr != nil {
 			return []string{fmt.Sprintf("mailbox_rows: %s@%s exists; SOURCE-password retrofit failed: %v", localPart, domainName, uErr)}
 		}
 		return []string{fmt.Sprintf(

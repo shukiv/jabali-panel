@@ -6,18 +6,18 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -45,20 +45,12 @@ const (
 	defaultMailboxesPageSize = 20
 	maxMailboxesPageSize     = 200
 
-	// Default mailbox quota — 1 GiB. Mirrors the column DEFAULT in
-	// migration 000054; kept here as a fallback if a caller somehow
-	// sends a zero QuotaBytes.
-	defaultMailboxQuotaBytes uint64 = 1 << 30
-
-	// Floor for user-supplied quotas. Anything below 16 MiB would make
-	// even a test mailbox unusable (a single MIME attachment would
-	// push past quota). The panel-UI will carry its own slider min,
-	// but defence in depth here.
-	minMailboxQuotaBytes uint64 = 16 * 1024 * 1024
-
-	// Bcrypt cost — matches what Stalwart's SqlDirectory expects.
-	// DefaultCost (10) is fine; higher would slow logins noticeably.
-	mailboxBcryptCost = bcrypt.DefaultCost
+	// Mailbox quota floor/default + bcrypt cost are owned by the shared Mailbox
+	// Lifecycle package (JAB-291) and aliased here so these handlers and the CLI
+	// reference one source and can't drift.
+	defaultMailboxQuotaBytes = mailboxops.DefaultQuotaBytes
+	minMailboxQuotaBytes     = mailboxops.MinQuotaBytes
+	mailboxBcryptCost        = mailboxops.BcryptCost
 
 	// Agent call budget. Matches other handlers that SSH or shell out.
 	mailboxAgentTimeout = 30 * time.Second
@@ -243,13 +235,6 @@ func (h *mailboxHandler) create(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
-	if !dom.EmailEnabled {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":  "email_not_enabled",
-			"detail": "enable email on the domain before creating mailboxes",
-		})
-		return
-	}
 
 	var req createMailboxRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -257,105 +242,41 @@ func (h *mailboxHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Canonicalise the full address (local@domain.name) so rejection
-	// rules (shell meta, empty, too long, non-ASCII) match what the
-	// agent's domain.email_enable validator enforces.
-	canonLocal, _, err := mailaddr.Canonicalise(req.LocalPart + "@" + dom.Name)
+	// Shared Mailbox Lifecycle create (JAB-291): the EmailEnabled gate, address
+	// canonicalization, quota default/floor, password gen/hash/seal, duplicate
+	// rule, and display_name/send_only all live in the op. Authorization stayed
+	// here (the ownership check above).
+	mb, generatedPassword, err := mailboxops.Create(ctx, mailboxops.Deps{
+		Mailboxes: h.cfg.Mailboxes,
+		SSOKey:    h.cfg.SSOKey,
+	}, mailboxops.CreateInput{
+		Domain:      dom,
+		LocalPart:   req.LocalPart,
+		Password:    req.Password,
+		QuotaBytes:  req.QuotaBytes,
+		DisplayName: req.DisplayName,
+		SendOnly:    req.SendOnly,
+	}, h.notifyAgent)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_local_part", "detail": err.Error()})
-		return
-	}
-
-	// Uniqueness is enforced by the UNIQUE index on email_cached — we
-	// check up-front for a friendlier error code than the driver's
-	// "duplicate entry" string.
-	exists, err := h.cfg.Mailboxes.ExistsByDomainAndLocalPart(ctx, dom.ID, canonLocal)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "mailbox_exists"})
-		return
-	}
-
-	password := req.Password
-	generatedPassword := ""
-	if password == "" {
-		// ULID as password — 26 chars of Crockford base32 is ~130 bits
-		// of entropy. Adequate for "reveal once, user copies to a
-		// client". No hidden dependency, no extra import.
-		password = ids.NewSecret()
-		generatedPassword = password
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), mailboxBcryptCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	quota := req.QuotaBytes
-	if quota == 0 {
-		quota = defaultMailboxQuotaBytes
-	}
-	if quota < minMailboxQuotaBytes {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "quota_too_small",
-			"detail": "quota_bytes must be at least 16 MiB",
-		})
-		return
-	}
-
-	// Cipher the plaintext for the webmail SSO flow. Best-effort — when
-	// the SSOKey isn't configured (panel running without sso.key) we
-	// store the mailbox without an encrypted blob; the SSO mint endpoint
-	// will then 503 until the next rotate repopulates it.
-	var enc []byte
-	if h.cfg.SSOKey != nil {
-		sealed, err := h.cfg.SSOKey.Seal([]byte(password))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		enc = sealed
-	}
-
-	now := time.Now().UTC()
-	mb := &models.Mailbox{
-		ID:           ids.NewULID(),
-		DomainID:     dom.ID,
-		LocalPart:    canonLocal,
-		DisplayName:  strings.TrimSpace(req.DisplayName),
-		PasswordHash: string(hash),
-		PasswordEnc:  enc,
-		QuotaBytes:   quota,
-		SendOnly:     req.SendOnly,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if err := h.cfg.Mailboxes.Create(ctx, mb); err != nil {
-		if isConflict(err) {
+		switch {
+		case errors.Is(err, mailboxops.ErrEmailNotEnabled):
+			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled", "detail": "enable email on the domain before creating mailboxes"})
+		case errors.Is(err, mailboxops.ErrInvalidLocalPart):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_local_part", "detail": err.Error()})
+		case errors.Is(err, mailboxops.ErrMailboxExists):
 			c.JSON(http.StatusConflict, gin.H{"error": "mailbox_exists"})
-			return
+		case errors.Is(err, mailboxops.ErrQuotaTooSmall):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "quota_too_small", "detail": "quota_bytes must be at least 16 MiB"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-
-	// Inline best-effort agent notify (ADR-0013). Stalwart's
-	// SqlDirectory syncs on every auth so this is a typed
-	// acknowledgement rather than a cache-invalidate — but we still
-	// surface agent errors so operators can see them.
-	h.notifyAgent(ctx, "mailbox.create", map[string]any{
-		"id":           mb.ID,
-		"email":        canonLocal + "@" + dom.Name,
-		"display_name": mb.DisplayName,
-	})
 
 	c.JSON(http.StatusCreated, createMailboxResponse{
 		ID:          mb.ID,
-		Email:       canonLocal + "@" + dom.Name,
-		QuotaBytes:  quota,
+		Email:       mb.EmailCached,
+		QuotaBytes:  mb.QuotaBytes,
 		DisplayName: mb.DisplayName,
 		SendOnly:    mb.SendOnly,
 		Password:    generatedPassword,
@@ -488,39 +409,22 @@ func (h *mailboxHandler) rotatePassword(c *gin.Context) {
 		return
 	}
 
-	password := req.NewPassword
-	generated := ""
-	if password == "" {
-		password = ids.NewSecret()
-		generated = password
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), mailboxBcryptCost)
+	// Shared Mailbox Lifecycle rotate (JAB-291): hash + sealed envelope are
+	// updated atomically — with a live SSO key the envelope is re-sealed, without
+	// one it is cleared (never left stale, which previously made the SSO mint
+	// decrypt to the old password Stalwart no longer accepts).
+	generated, err := mailboxops.RotatePassword(ctx, mailboxops.Deps{
+		Mailboxes: h.cfg.Mailboxes,
+		SSOKey:    h.cfg.SSOKey,
+	}, mb.LocalPart+"@"+dom.Name, req.NewPassword, h.notifyAgent)
 	if err != nil {
+		if errors.Is(err, mailboxops.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "mailbox_not_found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-
-	// Re-cipher the plaintext so password_enc stays in sync with
-	// password_hash. Same best-effort fallback as create.
-	if h.cfg.SSOKey != nil {
-		sealed, err := h.cfg.SSOKey.Seal([]byte(password))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		if err := h.cfg.Mailboxes.UpdatePasswordHashAndEnc(ctx, mb.ID, string(hash), sealed); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-	} else if err := h.cfg.Mailboxes.UpdatePasswordHash(ctx, mb.ID, string(hash)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	h.notifyAgent(ctx, "mailbox.set_password", map[string]any{
-		"id":    mb.ID,
-		"email": mb.LocalPart + "@" + dom.Name,
-	})
 
 	c.JSON(http.StatusOK, rotateMailboxPasswordResponse{Password: generated})
 }
@@ -540,23 +444,18 @@ func (h *mailboxHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Delete agent-side first: it's the step that actually removes mail
-	// content from RocksDB (via x:Account/set destroy — see
-	// mailbox_delete.go in panel-agent). If that fails, abort before
-	// the DB delete so the rows stays consistent with Stalwart's state.
-	agentCtx, cancel := context.WithTimeout(ctx, mailboxAgentTimeout)
-	defer cancel()
-	_, err = h.cfg.Agent.Call(agentCtx, "mailbox.delete", map[string]any{
-		"id":    mb.ID,
-		"email": mb.LocalPart + "@" + dom.Name,
-	})
-	if err != nil {
-		respondAgentErr(c, "agent_failed", err)
-		return
-	}
-
-	if err := h.cfg.Mailboxes.Delete(ctx, mb.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	// Shared Mailbox Lifecycle delete (JAB-291): destroy the Stalwart account
+	// first (hard dependency), then the row — a failed destroy aborts before the
+	// row delete so the DB never tombstones a mailbox whose Stalwart side is live.
+	if err := mailboxops.Delete(ctx, h.cfg.Mailboxes, h.cfg.Agent.Call, mb.LocalPart+"@"+dom.Name); err != nil {
+		switch {
+		case errors.Is(err, mailboxops.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "mailbox_not_found"})
+		case errors.Is(err, mailboxops.ErrAgentUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		default:
+			respondAgentErr(c, "agent_failed", err)
+		}
 		return
 	}
 

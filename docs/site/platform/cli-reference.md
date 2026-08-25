@@ -3136,10 +3136,12 @@ jabali mailbox create [flags]
 
 **Flags:**
 
+- `--display-name` — Human-readable display name (GH #197)
 - `--domain` — Domain name or ID (required)
 - `--local` — Local part, e.g. "alice" (required)
 - `--password` — Explicit password (omit to auto-generate)
 - `--quota-mb` — Disk quota in MiB (default 1024) (default `0`)
+- `--send-only` — SMTP-submission only — authenticates to send but never receives (GH #371)
 
 #### `jabali mailbox delete`
 

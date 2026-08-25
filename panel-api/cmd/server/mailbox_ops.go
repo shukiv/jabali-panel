@@ -7,10 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -22,16 +19,11 @@ import (
 // there's no per-user claims resolution — ownership checks collapse to
 // "admin", which is fine for operator-only tooling.
 //
-// Constants must stay in sync with panel-api/internal/api/mailboxes.go
-// (defaultMailboxQuotaBytes, minMailboxQuotaBytes, mailboxBcryptCost,
-// mailboxAgentTimeout). We duplicate them here rather than export from
-// the api package because the CLI doesn't link against gin.
-const (
-	cliMailboxDefaultQuotaBytes uint64 = 1 << 30
-	cliMailboxMinQuotaBytes     uint64 = 16 * 1024 * 1024
-	cliMailboxBcryptCost               = bcrypt.DefaultCost
-	cliMailboxAgentTimeout             = 30 * time.Second
-)
+// The create/rotate/quota/delete logic + the quota/bcrypt constants now live in
+// the shared mailboxops package (JAB-291); these helpers are thin CLI wrappers
+// over it, so the CLI and the REST handlers can no longer drift. Only the
+// CLI-local agent timeout stays here.
+const cliMailboxAgentTimeout = 30 * time.Second
 
 // agentNotifier is the minimal surface the CLI needs from the agent
 // client. Small interface so tests can pass a recording stub without
@@ -112,78 +104,15 @@ func listMailboxesDirect(ctx context.Context, repo repository.MailboxRepository,
 // Returns the row plus the generated password, which is empty when the
 // caller supplied one — the CLI layer owns the reveal-once printing
 // contract.
-func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, ssoKey *ssokey.Key, dom *models.Domain, localPart, password string, quotaBytes uint64) (*models.Mailbox, string, error) {
-	if !dom.EmailEnabled {
-		return nil, "", fmt.Errorf("email is not enabled on domain %s — run `jabali domain email-enable %s` first", dom.Name, dom.Name)
-	}
-	canonLocal, _, err := mailaddr.Canonicalise(localPart + "@" + dom.Name)
-	if err != nil {
-		return nil, "", fmt.Errorf("invalid local_part: %w", err)
-	}
-
-	exists, err := repo.ExistsByDomainAndLocalPart(ctx, dom.ID, canonLocal)
-	if err != nil {
-		return nil, "", fmt.Errorf("uniqueness check: %w", err)
-	}
-	if exists {
-		return nil, "", fmt.Errorf("mailbox %s@%s already exists", canonLocal, dom.Name)
-	}
-
-	generated := ""
-	if password == "" {
-		password = ids.NewSecret()
-		generated = password
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), cliMailboxBcryptCost)
-	if err != nil {
-		return nil, "", fmt.Errorf("hash password: %w", err)
-	}
-
-	if quotaBytes == 0 {
-		quotaBytes = cliMailboxDefaultQuotaBytes
-	}
-	if quotaBytes < cliMailboxMinQuotaBytes {
-		return nil, "", fmt.Errorf("quota-mb must be at least 16 (MiB)")
-	}
-
-	var enc []byte
-	if ssoKey != nil {
-		sealed, err := ssoKey.Seal([]byte(password))
-		if err != nil {
-			return nil, "", fmt.Errorf("seal password: %w", err)
-		}
-		enc = sealed
-	}
-
-	now := time.Now().UTC()
-	mb := &models.Mailbox{
-		ID:           ids.NewULID(),
-		DomainID:     dom.ID,
-		LocalPart:    canonLocal,
-		PasswordHash: string(hash),
-		PasswordEnc:  enc,
-		QuotaBytes:   quotaBytes,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if err := repo.Create(ctx, mb); err != nil {
-		return nil, "", fmt.Errorf("insert mailbox row: %w", err)
-	}
-
-	// Best-effort agent notify, same as the HTTP handler. Errors are
-	// swallowed inside `notify`; the reconciler re-asserts if Stalwart
-	// ever diverges.
-	if notify != nil {
-		notify(ctx, "mailbox.create", map[string]any{
-			"id":    mb.ID,
-			"email": canonLocal + "@" + dom.Name,
-		})
-	}
-	// Fill EmailCached locally — the BEFORE INSERT trigger already wrote
-	// it in the DB, but our `mb` struct doesn't reflect that without a
-	// re-read. Set it so the caller's printout is correct.
-	mb.EmailCached = canonLocal + "@" + dom.Name
-	return mb, generated, nil
+func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, ssoKey *ssokey.Key, dom *models.Domain, localPart, password string, quotaBytes uint64, displayName string, sendOnly bool) (*models.Mailbox, string, error) {
+	return mailboxops.Create(ctx, mailboxops.Deps{Mailboxes: repo, SSOKey: ssoKey}, mailboxops.CreateInput{
+		Domain:      dom,
+		LocalPart:   localPart,
+		Password:    password,
+		QuotaBytes:  quotaBytes,
+		DisplayName: displayName,
+		SendOnly:    sendOnly,
+	}, mailboxops.NotifyFunc(notify))
 }
 
 // deleteMailboxDirect mirrors DELETE /mailboxes/:mbid: agent call first
@@ -202,54 +131,13 @@ func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository,
 type agentCaller func(ctx context.Context, cmd string, params any) (json.RawMessage, error)
 
 func deleteMailboxDirect(ctx context.Context, repo repository.MailboxRepository, call agentCaller, email string) error {
-	mb, err := repo.FindByEmail(ctx, email)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return fmt.Errorf("mailbox %s not found", email)
-		}
-		return fmt.Errorf("lookup mailbox: %w", err)
-	}
-	if call == nil {
-		return fmt.Errorf("agent not configured")
-	}
-	if _, err := call(ctx, "mailbox.delete", map[string]any{
-		"id":    mb.ID,
-		"email": email,
-	}); err != nil {
-		return fmt.Errorf("agent mailbox.delete: %w", err)
-	}
-	if err := repo.Delete(ctx, mb.ID); err != nil {
-		return fmt.Errorf("delete mailbox row: %w", err)
-	}
-	return nil
+	return mailboxops.Delete(ctx, repo, mailboxops.CallFunc(call), email)
 }
 
 // setMailboxQuotaDirect mirrors PATCH /mailboxes/:mbid. Quota floor
 // check matches the HTTP handler (16 MiB).
 func setMailboxQuotaDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, email string, quotaBytes uint64) (*models.Mailbox, error) {
-	if quotaBytes < cliMailboxMinQuotaBytes {
-		return nil, fmt.Errorf("quota-mb must be at least 16 (MiB)")
-	}
-	mb, err := repo.FindByEmail(ctx, email)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, fmt.Errorf("mailbox %s not found", email)
-		}
-		return nil, fmt.Errorf("lookup mailbox: %w", err)
-	}
-	if err := repo.UpdateQuota(ctx, mb.ID, quotaBytes); err != nil {
-		return nil, fmt.Errorf("update quota: %w", err)
-	}
-	if notify != nil {
-		notify(ctx, "mailbox.set_quota", map[string]any{
-			"id":          mb.ID,
-			"email":       email,
-			"quota_bytes": quotaBytes,
-		})
-	}
-	mb.QuotaBytes = quotaBytes
-	mb.UpdatedAt = time.Now().UTC()
-	return mb, nil
+	return mailboxops.SetQuota(ctx, mailboxops.Deps{Mailboxes: repo}, email, quotaBytes, mailboxops.NotifyFunc(notify))
 }
 
 // rotateMailboxPasswordDirect mirrors POST /mailboxes/:mbid/rotate-password.
@@ -257,41 +145,7 @@ func setMailboxQuotaDirect(ctx context.Context, repo repository.MailboxRepositor
 // AES-256-GCM envelope too when ssoKey is non-nil so the webmail SSO
 // flow stays in sync with the bcrypt hash.
 func rotateMailboxPasswordDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, ssoKey *ssokey.Key, email, newPassword string) (string, error) {
-	mb, err := repo.FindByEmail(ctx, email)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return "", fmt.Errorf("mailbox %s not found", email)
-		}
-		return "", fmt.Errorf("lookup mailbox: %w", err)
-	}
-
-	generated := ""
-	if newPassword == "" {
-		newPassword = ids.NewSecret()
-		generated = newPassword
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), cliMailboxBcryptCost)
-	if err != nil {
-		return "", fmt.Errorf("hash password: %w", err)
-	}
-	if ssoKey != nil {
-		sealed, err := ssoKey.Seal([]byte(newPassword))
-		if err != nil {
-			return "", fmt.Errorf("seal password: %w", err)
-		}
-		if err := repo.UpdatePasswordHashAndEnc(ctx, mb.ID, string(hash), sealed); err != nil {
-			return "", fmt.Errorf("update password: %w", err)
-		}
-	} else if err := repo.UpdatePasswordHash(ctx, mb.ID, string(hash)); err != nil {
-		return "", fmt.Errorf("update password: %w", err)
-	}
-	if notify != nil {
-		notify(ctx, "mailbox.set_password", map[string]any{
-			"id":    mb.ID,
-			"email": email,
-		})
-	}
-	return generated, nil
+	return mailboxops.RotatePassword(ctx, mailboxops.Deps{Mailboxes: repo, SSOKey: ssoKey}, email, newPassword, mailboxops.NotifyFunc(notify))
 }
 
 // notifyAgentMailbox is the production agentNotifier wired off the

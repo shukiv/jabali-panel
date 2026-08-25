@@ -19,6 +19,8 @@ type fakeExistingMailboxRepo struct {
 	updatedTo   string
 	updateCalls int
 	createCalls int
+	lastEnc     []byte
+	encCleared  bool
 }
 
 func (f *fakeExistingMailboxRepo) ExistsByDomainAndLocalPart(_ context.Context, _, _ string) (bool, error) {
@@ -27,9 +29,11 @@ func (f *fakeExistingMailboxRepo) ExistsByDomainAndLocalPart(_ context.Context, 
 func (f *fakeExistingMailboxRepo) FindByEmail(_ context.Context, _ string) (*models.Mailbox, error) {
 	return f.mb, nil
 }
-func (f *fakeExistingMailboxRepo) UpdatePasswordHash(_ context.Context, id, hash string) error {
+func (f *fakeExistingMailboxRepo) UpdatePasswordHashAndEnc(_ context.Context, id, hash string, enc []byte) error {
 	f.updateCalls++
 	f.updatedTo = hash
+	f.lastEnc = enc
+	f.encCleared = enc == nil
 	if f.mb != nil && f.mb.ID == id {
 		f.mb.PasswordHash = hash
 	}
@@ -66,6 +70,12 @@ func TestImportMailboxes_RetrofitsExistingRowOnPreserve(t *testing.T) {
 	}
 	if mb.updatedTo != testSrcBcrypt {
 		t.Errorf("retrofit hash = %q, want tag-stripped source %q", mb.updatedTo, testSrcBcrypt)
+	}
+	// JAB-291 (#5): changing the hash must CLEAR any password_enc sealed by the
+	// earlier fresh-random create — a stale envelope would decrypt to a password
+	// the new hash rejects, breaking webmail SSO.
+	if !mb.encCleared {
+		t.Errorf("retrofit must clear password_enc (enc=nil), got %d bytes", len(mb.lastEnc))
 	}
 	if !containsSubstr(res.Skipped, "SOURCE password RE-APPLIED") {
 		t.Errorf("expected a 'SOURCE password RE-APPLIED' notice, got %v", res.Skipped)

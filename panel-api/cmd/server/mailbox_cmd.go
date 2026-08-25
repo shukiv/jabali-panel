@@ -100,10 +100,12 @@ func newMailboxListCmd() *cobra.Command {
 
 func newMailboxCreateCmd() *cobra.Command {
 	var (
-		domainSpec string
-		localPart  string
-		password   string
-		quotaMB    uint64
+		domainSpec  string
+		localPart   string
+		password    string
+		quotaMB     uint64
+		displayName string
+		sendOnly    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -121,7 +123,7 @@ and cannot be recovered.`,
 				return err
 			}
 			quotaBytes := quotaMB * 1024 * 1024
-			mb, generatedPassword, err := createMailboxDirect(ctx, mailboxRepoFromDB(), notifyAgentMailbox, ssoKeyForCLI(), dom, localPart, password, quotaBytes)
+			mb, generatedPassword, err := createMailboxDirect(ctx, mailboxRepoFromDB(), notifyAgentMailbox, ssoKeyForCLI(), dom, localPart, password, quotaBytes, displayName, sendOnly)
 			if err != nil {
 				return err
 			}
@@ -147,6 +149,8 @@ and cannot be recovered.`,
 	cmd.Flags().StringVar(&localPart, "local", "", "Local part, e.g. \"alice\" (required)")
 	cmd.Flags().StringVar(&password, "password", "", "Explicit password (omit to auto-generate)")
 	cmd.Flags().Uint64Var(&quotaMB, "quota-mb", 0, "Disk quota in MiB (default 1024)")
+	cmd.Flags().StringVar(&displayName, "display-name", "", "Human-readable display name (GH #197)")
+	cmd.Flags().BoolVar(&sendOnly, "send-only", false, "SMTP-submission only — authenticates to send but never receives (GH #371)")
 	_ = cmd.MarkFlagRequired("domain")
 	_ = cmd.MarkFlagRequired("local")
 	return cmd

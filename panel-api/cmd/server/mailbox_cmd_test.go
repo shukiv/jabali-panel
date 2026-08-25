@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -284,7 +285,7 @@ func TestCreateMailbox_HappyPath(t *testing.T) {
 
 	mb, generated, err := createMailboxDirect(
 		context.Background(), repo, notify, nil,
-		dom, "Alice", "", 0,
+		dom, "Alice", "", 0, "", false,
 	)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -301,8 +302,8 @@ func TestCreateMailbox_HappyPath(t *testing.T) {
 	if bcrypt.CompareHashAndPassword([]byte(mb.PasswordHash), []byte(generated)) != nil {
 		t.Error("stored bcrypt hash must verify against generated password")
 	}
-	if mb.QuotaBytes != cliMailboxDefaultQuotaBytes {
-		t.Errorf("default quota should be %d, got %d", cliMailboxDefaultQuotaBytes, mb.QuotaBytes)
+	if mb.QuotaBytes != mailboxops.DefaultQuotaBytes {
+		t.Errorf("default quota should be %d, got %d", mailboxops.DefaultQuotaBytes, mb.QuotaBytes)
 	}
 	if notifyCmd != "mailbox.create" {
 		t.Errorf("agent notify should fire mailbox.create, got %q", notifyCmd)
@@ -322,7 +323,7 @@ func TestCreateMailbox_RefusesOnDisabledEmail(t *testing.T) {
 
 	_, _, err := createMailboxDirect(
 		context.Background(), repo, nil, nil,
-		dom, "alice", "", 0,
+		dom, "alice", "", 0, "", false,
 	)
 	if err == nil {
 		t.Fatal("expected error when email is not enabled on the domain")
@@ -346,7 +347,7 @@ func TestCreateMailbox_UniquenessConflict(t *testing.T) {
 	// First create succeeds.
 	_, _, err := createMailboxDirect(
 		context.Background(), repo, nil, nil,
-		dom, "alice", "", 0,
+		dom, "alice", "", 0, "", false,
 	)
 	if err != nil {
 		t.Fatalf("first create: %v", err)
@@ -354,7 +355,7 @@ func TestCreateMailbox_UniquenessConflict(t *testing.T) {
 	// Second create with the same local_part must fail.
 	_, _, err = createMailboxDirect(
 		context.Background(), repo, nil, nil,
-		dom, "alice", "", 0,
+		dom, "alice", "", 0, "", false,
 	)
 	if err == nil {
 		t.Fatal("duplicate create should have failed")
@@ -374,7 +375,7 @@ func TestCreateMailbox_ExplicitPassword(t *testing.T) {
 
 	mb, generated, err := createMailboxDirect(
 		context.Background(), repo, nil, nil,
-		dom, "alice", "super-secret-12345", 0,
+		dom, "alice", "super-secret-12345", 0, "", false,
 	)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -395,9 +396,9 @@ func TestCreateMailbox_QuotaFloor(t *testing.T) {
 
 	_, _, err := createMailboxDirect(
 		context.Background(), repo, nil, nil,
-		dom, "alice", "pw12345678", 1*1024*1024, // 1 MiB — below floor
+		dom, "alice", "pw12345678", 1*1024*1024, "", false, // 1 MiB — below floor
 	)
-	if err == nil || !strings.Contains(err.Error(), "at least 16") {
+	if err == nil || !strings.Contains(err.Error(), "16 MiB") {
 		t.Fatalf("expected quota-floor error, got %v", err)
 	}
 }
@@ -493,7 +494,7 @@ func TestSetMailboxQuota_Floor(t *testing.T) {
 		context.Background(), repo, nil,
 		"alice@example.com", 1*1024*1024,
 	)
-	if err == nil || !strings.Contains(err.Error(), "at least 16") {
+	if err == nil || !strings.Contains(err.Error(), "16 MiB") {
 		t.Fatalf("expected quota-floor error, got %v", err)
 	}
 }
