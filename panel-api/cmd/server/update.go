@@ -1080,6 +1080,10 @@ fi
 					// M13 SSH sandbox: refresh wrapper + nspawn-enter +
 					// sudoers + mode files on every update. Idempotent.
 					"getent group jabali-ssh-sandbox >/dev/null || groupadd --system jabali-ssh-sandbox; "+
+					// GH #1229: opt-in SSH-forwarding group (excluded from the JAB-352
+					// lockdown). Ensure it exists on every update so the sshd drop-in's
+					// Match negation resolves on existing fleet hosts.
+					"getent group jabali-ssh-forward >/dev/null || groupadd --system jabali-ssh-forward; "+
 					"install -d -m 0755 -o root -g root /etc/jabali /etc/jabali/users /var/lib/jabali-nspawn /var/lib/jabali-nspawn/images; "+
 					"install -m 0755 -o root -g root "+repoDir+"/install/ssh/jabali-nspawn-enter /usr/local/bin/jabali-nspawn-enter; "+
 					"visudo -cf "+repoDir+"/install/ssh/jabali-nspawn-sudoers >/dev/null && install -m 0440 -o root -g root "+repoDir+"/install/ssh/jabali-nspawn-sudoers /etc/sudoers.d/jabali-nspawn; "+

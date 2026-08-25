@@ -35,6 +35,7 @@ func newUserCmd() *cobra.Command {
 		newUser2FAResetCmd(),
 		newUserSuspendCmd(),
 		newUserUnsuspendCmd(),
+		newUserSSHForwardingCmd(),
 	)
 	return cmd
 }

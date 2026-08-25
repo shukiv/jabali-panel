@@ -8562,6 +8562,15 @@ install_ssh_sandbox() {
     _ok "jabali-ssh-sandbox system group created"
   fi
 
+  # GH #1229: members of jabali-ssh-forward are EXCLUDED from the JAB-352
+  # forwarding lockdown (opt-in, default empty) so VS Code Remote-SSH can forward
+  # to its own loopback VS Code Server. The sensitive loopback services stay
+  # firewall-blocked per-uid, so this never re-opens the tunneling vector.
+  if ! getent group jabali-ssh-forward >/dev/null; then
+    groupadd --system jabali-ssh-forward 2>/dev/null || true
+    _ok "jabali-ssh-forward system group created"
+  fi
+
   # Directories required by the wrapper / agent + reconciler.
   install -d -m 0755 -o root -g root /etc/jabali
   install -d -m 0755 -o root -g root /etc/jabali/users

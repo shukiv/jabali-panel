@@ -5454,6 +5454,14 @@ jabali user reprovision <email|username|user-id> [flags]
 - `--password` — new password (min 10 chars; omit to auto-generate)
 - `--password-stdin` — read password from stdin (no prompt, no echo)
 
+#### `jabali user ssh-forwarding`
+
+Opt a hosting user into/out of SSH TCP forwarding for VS Code Remote-SSH (GH #1229)
+
+```
+jabali user ssh-forwarding <email|username|user-id> <on|off>
+```
+
 #### `jabali user suspend`
 
 Suspend a user (same cascade as the admin GUI/API)
