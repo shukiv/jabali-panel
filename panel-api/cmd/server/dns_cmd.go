@@ -127,9 +127,16 @@ func dnsLoadRecordInZone(ctx context.Context, zones repository.DNSZoneRepository
 	if rec.ZoneID != zone.ID {
 		return nil, fmt.Errorf("record %s does not belong to zone %s", recordID, zone.Name)
 	}
-	if rec.Managed {
-		return nil, fmt.Errorf("record %s is managed by the panel (%s); edit the owning feature instead of the raw record",
-			rec.ID, managedByLabel(rec.ManagedBy))
+	// JAB-323 / ADR-0107: only SOA/NS managed rows are zone infrastructure and
+	// stay panel-owned (the SOA serial is auto-generated; the apex NS set must
+	// point at jabali's nameservers). Every other managed row (MX/SRV/A/…) is
+	// operator-editable/deletable — matching the HTTP handler. The CLI used to
+	// refuse ALL managed rows, so an admin could not, e.g., hand-edit a
+	// managed MX the way the web UI allows. The update path demotes it to
+	// operator-owned after the edit (see dnsRecordUpdate).
+	if rec.Managed && (rec.Type == "SOA" || rec.Type == "NS") {
+		return nil, fmt.Errorf("record %s is zone infrastructure (%s) managed by jabali's nameserver — the SOA serial is auto-generated and the apex NS set must point at the jabali nameservers, so it is not directly editable",
+			rec.ID, rec.Type)
 	}
 	return rec, nil
 }
@@ -159,6 +166,14 @@ func dnsRecordUpdate(ctx context.Context, zones repository.DNSZoneRepository, re
 	if set["content"] {
 		api.NormaliseSRVRecord(rec, srvPriorityPtr(spec.Priority, set["priority"]))
 	}
+	// JAB-323 / ADR-0107: an operator edit is authoritative. Demote a managed
+	// row to operator-owned (Managed=false, ManagedBy=NULL) so every reconciler
+	// hand-off path (which all gate on Managed=true + a matching ManagedBy)
+	// steps aside and the edited value becomes the desired state pushed into
+	// PowerDNS — identical to the HTTP handler. A no-op for already-unmanaged
+	// rows. SOA/NS were already refused in dnsLoadRecordInZone.
+	rec.Managed = false
+	rec.ManagedBy = nil
 	if err := api.ValidateDNSRecord(rec); err != nil {
 		return nil, err
 	}
@@ -181,13 +196,6 @@ func dnsRecordDelete(ctx context.Context, zones repository.DNSZoneRepository, re
 		return nil, fmt.Errorf("delete record: %w", err)
 	}
 	return rec, nil
-}
-
-func managedByLabel(m *string) string {
-	if m == nil {
-		return "unknown"
-	}
-	return *m
 }
 
 // ---------- cobra wiring ----------

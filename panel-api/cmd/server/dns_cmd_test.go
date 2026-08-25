@@ -198,19 +198,62 @@ func TestDNSRecordDelete_ForceRemovesNonManaged(t *testing.T) {
 	}
 }
 
-func TestDNSRecordDelete_RefusesManaged(t *testing.T) {
+// JAB-323 / ADR-0107: only managed SOA/NS (zone infrastructure) are undeletable;
+// a managed MX/SRV/etc. is operator-deletable, matching the HTTP handler.
+func TestDNSRecordDelete_RefusesManagedSOAandNS_AllowsOthers(t *testing.T) {
 	ctx := context.Background()
 	z := testDNSZone()
-	zones := newMemDNSZoneRepo(z)
 	mb := "m6"
-	rec := &models.DNSRecord{ID: "01MANAGEDREC00000000000000", ZoneID: z.ID, Name: "_autodiscover._tcp", Type: "SRV", Content: "0 0 443 mail.example.com", TTL: 300, Managed: true, ManagedBy: &mb, IsEnabled: true}
-	recs := newMemDNSRecordRepo(rec)
-	_, err := dnsRecordDelete(ctx, zones, recs, "example.com", rec.ID)
-	if err == nil || !strings.Contains(err.Error(), "managed") {
-		t.Fatalf("want managed-record refusal, got %v", err)
+
+	// Managed NS → refused (SOA/NS stay panel-owned).
+	nsRec := &models.DNSRecord{ID: "01MANAGEDNS000000000000000", ZoneID: z.ID, Name: "@", Type: "NS", Content: "ns1.jabali.example", TTL: 300, Managed: true, ManagedBy: &mb, IsEnabled: true}
+	recs := newMemDNSRecordRepo(nsRec)
+	if _, err := dnsRecordDelete(ctx, newMemDNSZoneRepo(z), recs, "example.com", nsRec.ID); err == nil || !strings.Contains(err.Error(), "infrastructure") {
+		t.Fatalf("managed NS must be refused, got %v", err)
 	}
-	if _, ok := recs.byID[rec.ID]; !ok {
-		t.Errorf("managed record was deleted despite refusal")
+	if _, ok := recs.byID[nsRec.ID]; !ok {
+		t.Errorf("managed NS was deleted despite refusal")
+	}
+
+	// Managed SRV (a feature row like _autodiscover) → operator may delete it.
+	srvRec := &models.DNSRecord{ID: "01MANAGEDSRV00000000000000", ZoneID: z.ID, Name: "_autodiscover._tcp", Type: "SRV", Content: "0 0 443 mail.example.com", TTL: 300, Managed: true, ManagedBy: &mb, IsEnabled: true}
+	recs2 := newMemDNSRecordRepo(srvRec)
+	if _, err := dnsRecordDelete(ctx, newMemDNSZoneRepo(z), recs2, "example.com", srvRec.ID); err != nil {
+		t.Fatalf("managed non-infra record must be deletable, got %v", err)
+	}
+	if _, ok := recs2.byID[srvRec.ID]; ok {
+		t.Errorf("managed SRV should have been deleted")
+	}
+}
+
+// JAB-323 / ADR-0107: an admin edit of a managed non-SOA/NS record hands it off
+// to operator-owned state (Managed=false, ManagedBy=nil) so the edit persists,
+// exactly like the HTTP handler. A managed SOA/NS edit is still refused.
+func TestDNSRecordUpdate_ManagedHandoff(t *testing.T) {
+	ctx := context.Background()
+	z := testDNSZone()
+	mb := "m6"
+
+	mxRec := &models.DNSRecord{ID: "01MANAGEDMX00000000000000A", ZoneID: z.ID, Name: "@", Type: "MX", Content: "mail.example.com", Priority: 10, TTL: 300, Managed: true, ManagedBy: &mb, IsEnabled: true}
+	recs := newMemDNSRecordRepo(mxRec)
+	out, err := dnsRecordUpdate(ctx, newMemDNSZoneRepo(z), recs, "example.com", mxRec.ID,
+		dnsRecordSpec{Content: "newmail.example.com"}, map[string]bool{"content": true})
+	if err != nil {
+		t.Fatalf("admin edit of a managed MX must succeed (handoff): %v", err)
+	}
+	if out.Managed || out.ManagedBy != nil {
+		t.Errorf("edited row must be demoted to operator-owned, got Managed=%v ManagedBy=%v", out.Managed, out.ManagedBy)
+	}
+	if got := recs.byID[mxRec.ID]; got.Content != "newmail.example.com" || got.Managed {
+		t.Errorf("handoff not persisted: %+v", got)
+	}
+
+	// A managed NS edit is still refused.
+	nsRec := &models.DNSRecord{ID: "01MANAGEDNS0000000000000AA", ZoneID: z.ID, Name: "@", Type: "NS", Content: "ns1.jabali.example", TTL: 300, Managed: true, ManagedBy: &mb, IsEnabled: true}
+	recs2 := newMemDNSRecordRepo(nsRec)
+	if _, err := dnsRecordUpdate(ctx, newMemDNSZoneRepo(z), recs2, "example.com", nsRec.ID,
+		dnsRecordSpec{Content: "ns2.jabali.example"}, map[string]bool{"content": true}); err == nil || !strings.Contains(err.Error(), "infrastructure") {
+		t.Fatalf("managed NS edit must be refused, got %v", err)
 	}
 }
 
