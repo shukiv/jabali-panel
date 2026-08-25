@@ -15,6 +15,7 @@ import {
   CheckOutlined,
   GlobalOutlined,
   LogoutOutlined,
+  MoonOutlined,
   MenuOutlined,
   SearchOutlined,
   UserOutlined,
@@ -29,6 +30,7 @@ import {
   Layout,
   Modal,
   Space,
+  Switch,
   theme,
 } from "antd";
 import type { MenuProps } from "antd";
@@ -45,7 +47,7 @@ import { InstallAppButton } from "./InstallAppButton";
 import { NotificationBell } from "./NotificationBell";
 import { TasksIndicator } from "./TasksIndicator";
 import { ServerHealthIndicator } from "./ServerHealthIndicator";
-import { ThemeToggle } from "./ThemeToggle";
+import { useThemeMode } from "../theme/ThemeModeContext";
 
 const { Header } = Layout;
 
@@ -98,6 +100,9 @@ export function navSearchOptions(
 
 export function JabaliHeader({ showMenuButton = false, onMenuClick, searchNav }: JabaliHeaderProps = {}) {
   const { user, logout } = useAuth();
+  // Dark-mode lives in the avatar menu as an inline switch (operator pick,
+  // 2026-08-25) — the header sun/moon button is gone.
+  const { mode: themeMode, setMode: setThemeMode } = useThemeMode();
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const [query, setQuery] = useState("");
@@ -317,6 +322,28 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick, searchNav }:
         },
       })),
     },
+    {
+      key: "theme",
+      icon: <MoonOutlined />,
+      // Inline Switch inside the item: stopPropagation keeps the Menu's own
+      // click (which would close the Dropdown) out of the way, so flipping
+      // the switch leaves the menu open. Clicking the row text toggles too.
+      label: (
+        <div
+          role="presentation"
+          onClick={(e) => e.stopPropagation()}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, minWidth: 140 }}
+        >
+          <span>{t("menu.dark_mode")}</span>
+          <Switch
+            size="small"
+            checked={themeMode === "dark"}
+            aria-label={t("menu.dark_mode")}
+            onChange={(checked) => setThemeMode(checked ? "dark" : "light")}
+          />
+        </div>
+      ),
+    },
     { type: "divider" },
     {
       key: "logout",
@@ -451,7 +478,6 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick, searchNav }:
         {isAdminShell && <TasksIndicator />}
         <InstallAppButton />
         <NotificationBell />
-        <ThemeToggle />
         <Dropdown menu={{ items: userMenu }} placement="bottomRight">
           <Button
             type="text"

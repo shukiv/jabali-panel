@@ -97,7 +97,8 @@
   "menu": {
     "profile": "Profile",
     "language": "Language",
-    "sign_out": "Sign out"
+    "sign_out": "Sign out",
+    "dark_mode": "Dark mode"
   },
   "dashboard": {
     "stats": {

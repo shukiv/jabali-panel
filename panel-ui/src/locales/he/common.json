@@ -88,7 +88,8 @@
   "menu": {
     "profile": "פרופיל",
     "language": "שפה",
-    "sign_out": "התנתקות"
+    "sign_out": "התנתקות",
+    "dark_mode": "מצב כהה"
   },
   "dashboard": {
     "stats": {
