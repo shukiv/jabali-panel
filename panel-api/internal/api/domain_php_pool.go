@@ -159,20 +159,10 @@ func (h *domainPHPPoolHandler) bind(c *gin.Context) {
 				// Create the versioned pool (pending). The reconciler applies
 				// it with the versioned slug/socket and regenerates this
 				// domain's vhost within a tick. pm_* copied from the default.
-				pool = &models.PHPPool{
-					ID:                             ids.NewULID(),
-					UserID:                         dom.UserID,
-					PHPVersion:                     req.PHPVersion,
-					PmMode:                         defaultPool.PmMode,
-					PmMaxChildren:                  defaultPool.PmMaxChildren,
-					ProcessIdleTimeoutSeconds:      defaultPool.ProcessIdleTimeoutSeconds,
-					PmStartServers:                 defaultPool.PmStartServers,
-					PmMinSpareServers:              defaultPool.PmMinSpareServers,
-					PmMaxSpareServers:              defaultPool.PmMaxSpareServers,
-					PmMaxRequests:                  defaultPool.PmMaxRequests,
-					RequestTerminateTimeoutSeconds: defaultPool.RequestTerminateTimeoutSeconds,
-					Status:                         "pending",
-				}
+				// JAB-344: clone the COMPLETE tuning model (incl. performance_mode)
+				// via the shared constructor so HTTP and CLI produce identical
+				// versioned pools.
+				pool = models.NewVersionedPHPPool(ids.NewULID(), req.PHPVersion, defaultPool)
 				if err := h.cfg.PHPPools.Create(ctx, pool); err != nil {
 					slog.ErrorContext(ctx, "bind php-pool: create versioned pool", "error", err, "php_version", req.PHPVersion)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

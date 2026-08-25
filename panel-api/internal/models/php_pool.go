@@ -24,3 +24,27 @@ type PHPPool struct {
 }
 
 func (PHPPool) TableName() string { return "php_pools" }
+
+// NewVersionedPHPPool builds a non-default (per-version) pool for a user by
+// cloning the COMPLETE tuning model from the user's default pool. It is the one
+// owner of that clone (JAB-344): the HTTP path cloned eight pm_* fields, the CLI
+// path cloned only three, and NEITHER cloned performance_mode — so switching a
+// domain's PHP version silently reset capacity/timeout behavior. The caller
+// supplies the fresh id + version; status starts pending for the reconciler.
+func NewVersionedPHPPool(id, phpVersion string, def *PHPPool) *PHPPool {
+	return &PHPPool{
+		ID:                             id,
+		UserID:                         def.UserID,
+		PHPVersion:                     phpVersion,
+		PmMode:                         def.PmMode,
+		PmMaxChildren:                  def.PmMaxChildren,
+		ProcessIdleTimeoutSeconds:      def.ProcessIdleTimeoutSeconds,
+		PmStartServers:                 def.PmStartServers,
+		PmMinSpareServers:              def.PmMinSpareServers,
+		PmMaxSpareServers:              def.PmMaxSpareServers,
+		PmMaxRequests:                  def.PmMaxRequests,
+		RequestTerminateTimeoutSeconds: def.RequestTerminateTimeoutSeconds,
+		PerformanceMode:                def.PerformanceMode,
+		Status:                         "pending",
+	}
+}

@@ -107,15 +107,12 @@ func newDomainPHPVersionSetCmd() *cobra.Command {
 				if ferr == nil {
 					pool = existing
 				} else if errors.Is(ferr, repository.ErrNotFound) {
-					pool = &models.PHPPool{
-						ID:                        ids.NewULID(),
-						UserID:                    dom.UserID,
-						PHPVersion:                version,
-						PmMode:                    defaultPool.PmMode,
-						PmMaxChildren:             defaultPool.PmMaxChildren,
-						ProcessIdleTimeoutSeconds: defaultPool.ProcessIdleTimeoutSeconds,
-						Status:                    "pending",
-					}
+					// JAB-344: clone the COMPLETE tuning model via the shared
+					// constructor. The CLI used to copy only pm_mode / max_children
+					// / idle_timeout, silently resetting spare-servers, max-requests,
+					// request-terminate-timeout, and performance_mode — so a CLI
+					// version switch changed capacity/timeout behavior vs HTTP.
+					pool = models.NewVersionedPHPPool(ids.NewULID(), version, defaultPool)
 					if err := pools.Create(ctx, pool); err != nil {
 						return fmt.Errorf("create pool: %w", err)
 					}
