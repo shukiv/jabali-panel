@@ -648,7 +648,7 @@ func (h *userHandler) reprovision(c *gin.Context) {
 	}
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, agentErr := h.cfg.Agent.Call(agentCtx, "user.create", map[string]any{
+	raw, agentErr := h.cfg.Agent.Call(agentCtx, "user.create", map[string]any{
 		"username": username,
 		"home_dir": "/home/" + username,
 		"shell":    "/usr/local/bin/jabali-ssh-shell",
@@ -680,6 +680,14 @@ func (h *userHandler) reprovision(c *gin.Context) {
 		return
 	}
 	user.PasswordHash = string(hash)
+	// JAB-287: useradd allocated a fresh uid (the verb pins none), so persist it
+	// or users.linux_uid drifts from the real OS uid — quota, nft skuid egress
+	// dispatch, and SFTP all map the panel row through linux_uid. Best-effort:
+	// the password sync (the load-bearing effect) is written in the same full-row
+	// Update regardless (no partial-model clobber — cf. JAB-280).
+	if uid := userops.ParseReprovisionedUID(raw); uid != nil {
+		user.LinuxUID = uid
+	}
 	if err := h.cfg.Repo.Update(ctx, user); err != nil {
 		h.translateErr(c, err)
 		return

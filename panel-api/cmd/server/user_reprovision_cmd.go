@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 func newUserReprovisionCmd() *cobra.Command {
@@ -86,12 +88,13 @@ Password: --password <pwd> | --password-stdin | (omitted → auto-generate + pri
 			// side fails, the DB password is left untouched.
 			agentCtx, cancel2 := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel2()
-			if _, aerr := sharedAgent.Call(agentCtx, "user.create", map[string]any{
+			raw, aerr := sharedAgent.Call(agentCtx, "user.create", map[string]any{
 				"username": username,
 				"home_dir": "/home/" + username,
 				"shell":    "/usr/local/bin/jabali-ssh-shell",
 				"password": newPwd,
-			}); aerr != nil {
+			})
+			if aerr != nil {
 				var ae *agent.AgentError
 				if errors.As(aerr, &ae) && ae.Code == agent.CodeAlreadyExists {
 					return fmt.Errorf("OS user %q already exists — sync the password only with `jabali user password %s` instead of reprovisioning", username, target.ID)
@@ -106,9 +109,24 @@ Password: --password <pwd> | --password-stdin | (omitted → auto-generate + pri
 				return fmt.Errorf("bcrypt hash: %w", err)
 			}
 			target.PasswordHash = string(hash)
+			// JAB-287: persist the freshly-allocated uid (parity with the REST
+			// handler) so users.linux_uid tracks the real OS uid after useradd.
+			if uid := userops.ParseReprovisionedUID(raw); uid != nil {
+				target.LinuxUID = uid
+			}
 			if err := repository.NewUserRepository(sharedDB).Update(ctx, target); err != nil {
 				return fmt.Errorf("update panel password hash: %w", err)
 			}
+
+			// JAB-287: re-evaluate maldet inotify watches (the reprovision may have
+			// recreated the home dir) — the REST handler does this; the CLI must too,
+			// or CLI-reprovisioned homes go unwatched until the next full reconcile.
+			// Best-effort, matching the REST path's fire-and-forget.
+			monCtx, monCancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, mErr := sharedAgent.Call(monCtx, "security.malware.monitor.reload", map[string]any{}); mErr != nil {
+				slog.Debug("malware monitor reload skipped", "err", mErr)
+			}
+			monCancel()
 
 			if jsonOutput {
 				out := map[string]any{"user_id": target.ID, "username": username, "reprovisioned": true}
