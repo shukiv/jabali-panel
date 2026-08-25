@@ -7,7 +7,9 @@ package models
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -96,6 +98,24 @@ type SFTPOptions struct {
 	Path    string `json:"path"`
 	Auth    string `json:"auth"` // SFTPAuthKey | SFTPAuthPassword
 	KeyPath string `json:"key_path,omitempty"`
+}
+
+// sftpUnsafeRe matches anything that must never appear in an SSH host or
+// username: whitespace (which would split restic's `-o sftp.command=...` into
+// extra argv entries) plus the usual shell metacharacters.
+var sftpUnsafeRe = regexp.MustCompile("[\\s'\"\\\\;|&$<>()`]")
+
+// ValidateSFTPHostUser rejects a host or user carrying whitespace or shell
+// metacharacters — values with no legitimate meaning as an SSH host/username
+// that would otherwise flow into restic's sftp.command and split or inject.
+// The single owner of this boundary rule so the REST and CLI destination
+// validators cannot drift (JAB-310); the check lives here even though
+// SFTPCommandFlag also quotes downstream, per CONVENTIONS.md's boundary rule.
+func ValidateSFTPHostUser(host, user string) error {
+	if sftpUnsafeRe.MatchString(host) || sftpUnsafeRe.MatchString(user) {
+		return errors.New("host and user must not contain whitespace or shell metacharacters")
+	}
+	return nil
 }
 
 type BackupDestination struct {

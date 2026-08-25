@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -283,11 +282,6 @@ func (h *backupDestinationHandler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, toDestDTO(d))
 }
 
-// sftpUnsafeRe matches anything that must never appear in an SSH host or
-// username: whitespace (which would split the sftp.command into extra argv
-// entries) plus the usual shell metacharacters.
-var sftpUnsafeRe = regexp.MustCompile("[\\s'\"\\\\;|&$<>()`]")
-
 // validateSFTPInputs enforces non-empty host+user, non-empty path, and
 // auth ∈ {key, password}. Key path absolute when auth=key.
 func validateSFTPInputs(s *sftpRequestOptions) error {
@@ -295,13 +289,11 @@ func validateSFTPInputs(s *sftpRequestOptions) error {
 		return errors.New("host and user are required")
 	}
 	// Host and user end up inside the restic `-o sftp.command=...` string,
-	// which restic tokenizes on whitespace and executes. SFTPCommandFlag quotes
-	// them, but validate here too: a value carrying whitespace or shell
-	// metacharacters has no legitimate meaning as an SSH host or username, and
-	// CONVENTIONS.md asks for the check at the boundary rather than relying on
-	// one downstream helper staying correct forever.
-	if sftpUnsafeRe.MatchString(s.Host) || sftpUnsafeRe.MatchString(s.User) {
-		return errors.New("host and user must not contain whitespace or shell metacharacters")
+	// which restic tokenizes on whitespace and executes. Reject whitespace and
+	// shell metacharacters at the boundary via the shared rule (JAB-310), the
+	// single owner both the REST and CLI validators call.
+	if err := models.ValidateSFTPHostUser(s.Host, s.User); err != nil {
+		return err
 	}
 	if s.Path == "" {
 		return errors.New("path is required")

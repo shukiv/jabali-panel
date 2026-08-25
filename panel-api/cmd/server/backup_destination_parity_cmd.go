@@ -30,6 +30,13 @@ func validateSFTPOpts(s *models.SFTPOptions) error {
 	if s.Host == "" || s.User == "" {
 		return errors.New("sftp host and user are required")
 	}
+	// JAB-310: the REST handler rejects whitespace/shell metacharacters in the
+	// host/user (they flow into restic's sftp.command); the CLI omitted this,
+	// so a CLI-created SFTP destination could carry an injectable host/user.
+	// Both adapters now call the one shared rule so they cannot drift.
+	if err := models.ValidateSFTPHostUser(s.Host, s.User); err != nil {
+		return err
+	}
 	if s.Path == "" {
 		return errors.New("sftp path is required")
 	}
