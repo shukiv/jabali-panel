@@ -71,15 +71,15 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 		return
 	}
 
-	// Read the global disk-quota toggle once per pass. When false we
-	// still apply cgroup limits (cpu/mem/io/tasks) but pass quota_mount=""
-	// to the agent so the setquota step short-circuits — matches the
-	// `QuotaMount empty skips setquota` convention used by user.limits.*.
-	// See server_settings.disk_quota_enabled (migration 000071).
-	quotaMount := r.quotaMount
+	// Read the global disk-quota toggle once per pass (server_settings.
+	// disk_quota_enabled, migration 000071). The shared PlanFor gates it into
+	// the wire mount: Apply blanks the mount when disabled (setquota
+	// short-circuits, cgroup limits still apply); Clear always carries the raw
+	// mount so a stale quota can still be removed.
+	quotaEnabled := true
 	if r.serverSettings != nil {
-		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil && !s.DiskQuotaEnabled {
-			quotaMount = ""
+		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil {
+			quotaEnabled = s.DiskQuotaEnabled
 		}
 	}
 
@@ -122,44 +122,18 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 				}
 			}
 		}
-		effective := limits.Resolve(pkgL, overridesByUser[u.ID])
-
-		// No package + no override → user must be unlimited.
-		// Dispatch user.limits.clear instead of skipping: skipping
-		// leaves stale POSIX quotas + cgroup drop-ins from a
-		// previously-assigned package on the host, so the user
-		// keeps hitting the old quota wall. The clear handler is
-		// idempotent (setquota -d is a no-op when no quota set;
-		// the cgroup drop-in delete is conditional on existence).
-		if pkgL == nil && overridesByUser[u.ID] == nil {
-			ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
-			if _, err := r.agent.Call(ctxCall, "user.limits.clear", map[string]any{
-				"username":    *u.Username,
-				"quota_mount": r.quotaMount,
-			}); err != nil {
-				r.log.WarnContext(ctx, "user.limits.clear failed",
-					"username", *u.Username, "err", err)
-			}
-			cancel()
-			continue
-		}
-
+		// Compute + dispatch the shared Apply/Clear plan (JAB-309). No package
+		// AND no override → Clear (the user must be unlimited); skipping would
+		// leave stale POSIX quotas + cgroup drop-ins from a previously-assigned
+		// package, so the user keeps hitting the old quota wall. Both agent
+		// handlers are idempotent.
+		plan := limits.PlanFor(pkgL, overridesByUser[u.ID], quotaEnabled, r.quotaMount)
 		ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, err := r.agent.Call(ctxCall, "user.limits.apply", map[string]any{
-			"username":          *u.Username,
-			"disk_quota_mb":     effective.DiskQuotaMB,
-			"cpu_quota_percent": effective.CPUQuotaPercent,
-			"memory_limit_mb":   effective.MemoryLimitMB,
-			"io_read_mbps":      effective.IOReadMbps,
-			"io_write_mbps":     effective.IOWriteMbps,
-			"max_tasks":         effective.MaxTasks,
-			"quota_mount":       quotaMount,
-		})
-		cancel()
-		if err != nil {
-			r.log.Warn("reconcile user-limits: apply failed",
-				"username", *u.Username, "quota_mount", quotaMount, "err", err)
+		if err := plan.Execute(ctxCall, r.agent, *u.Username); err != nil {
+			r.log.Warn("reconcile user-limits: dispatch failed",
+				"username", *u.Username, "plan", plan.Describe(*u.Username), "err", err)
 		}
+		cancel()
 	}
 }
 

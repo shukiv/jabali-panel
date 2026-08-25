@@ -167,7 +167,7 @@ func newLimitsApplyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			return applyForUsername(ctx, args[0])
+			return applyForUsername(ctx, args[0], diskQuotaEnabled(ctx))
 		},
 	}
 }
@@ -276,6 +276,9 @@ func newLimitsPackageCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("list users: %w", err)
 			}
+			// Read the disk-quota toggle once for the whole fan-out (mirrors the
+			// reconciler's once-per-pass read).
+			quotaEnabled := diskQuotaEnabled(ctx)
 			matched := 0
 			for i := range all {
 				u := &all[i]
@@ -291,7 +294,7 @@ func newLimitsPackageCmd() *cobra.Command {
 					fmt.Printf("would apply: %s\n", *u.Username)
 					continue
 				}
-				if err := applyForUsername(ctx, *u.Username); err != nil {
+				if err := applyForUsername(ctx, *u.Username, quotaEnabled); err != nil {
 					fmt.Printf("FAIL %s: %v\n", *u.Username, err)
 				} else {
 					fmt.Printf("ok   %s\n", *u.Username)
@@ -315,7 +318,7 @@ func newLimitsPackageCmd() *cobra.Command {
 //
 // `username` is misnamed for back-compat: any of email / username /
 // user-id is accepted (delegated to resolveUser).
-func applyForUsername(ctx context.Context, username string) error {
+func applyForUsername(ctx context.Context, username string, quotaEnabled bool) error {
 	pkgs := packageRepoFromDB()
 	// Direct new constructor — no helper yet because this is the only
 	// CLI consumer; if we grow more we'll factor it into root.go.
@@ -347,7 +350,7 @@ func applyForUsername(ctx context.Context, username string) error {
 		}
 	}
 	var ovL *limits.OverrideLimits
-	if ov, err := ovRepo.FindByUserID(ctx, user.ID); err == nil {
+	if ov, err := ovRepo.FindByUserID(ctx, user.ID); err == nil && ov != nil {
 		ovL = &limits.OverrideLimits{
 			DiskQuotaMB:     ov.DiskQuotaMB,
 			CPUQuotaPercent: ov.CPUQuotaPercent,
@@ -357,22 +360,26 @@ func applyForUsername(ctx context.Context, username string) error {
 			MaxTasks:        ov.MaxTasks,
 		}
 	}
-	effective := limits.Resolve(pkgL, ovL)
 
-	_, err = sharedAgent.Call(ctx, "user.limits.apply", map[string]any{
-		"username":          posixUsername,
-		"disk_quota_mb":     effective.DiskQuotaMB,
-		"cpu_quota_percent": effective.CPUQuotaPercent,
-		"memory_limit_mb":   effective.MemoryLimitMB,
-		"io_read_mbps":      effective.IOReadMbps,
-		"io_write_mbps":     effective.IOWriteMbps,
-		"max_tasks":         effective.MaxTasks,
-		"quota_mount":       quotaMountOrEmpty(),
-	})
-	if err != nil {
+	// JAB-309: dispatch the shared Apply/Clear plan the reconciler uses. A user
+	// with no package and no override is CLEARED (the CLI previously always
+	// applied — leaving a zeros drop-in instead of removing it), and the
+	// disk-quota feature gate is honoured (the CLI previously ignored it).
+	plan := limits.PlanFor(pkgL, ovL, quotaEnabled, quotaMountOrEmpty())
+	if err := plan.Execute(ctx, sharedAgent, posixUsername); err != nil {
 		return fmt.Errorf("agent: %w", err)
 	}
 	return nil
+}
+
+// diskQuotaEnabled reads the global disk-quota feature toggle
+// (server_settings.disk_quota_enabled). Defaults to enabled on a read failure,
+// matching the reconciler.
+func diskQuotaEnabled(ctx context.Context) bool {
+	if s, err := repository.NewServerSettingsRepository(sharedDB).Get(ctx); err == nil && s != nil {
+		return s.DiskQuotaEnabled
+	}
+	return true
 }
 
 // humanBytes renders a byte count using SI scaling so disk + memory
