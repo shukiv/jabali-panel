@@ -3,7 +3,42 @@ package commands
 import (
 	"reflect"
 	"testing"
+	"time"
 )
+
+// TestMaildirDeliveryTime — GH #1226: the received date must come from the
+// Maildir filename's leading delivery timestamp (canonical, survives an mtime
+// rewrite during migration), and must fall back (return false) when the head is
+// not a plausible unix time so the caller keeps the file mtime.
+func TestMaildirDeliveryTime(t *testing.T) {
+	const sec int64 = 1650000000 // 2022-04-15, comfortably in range
+	cases := []struct {
+		name string
+		want int64 // expected unix seconds; -1 = expect ok==false
+	}{
+		{"1650000000.M123456P789.mail.example:2,S", sec}, // Dovecot cur
+		{"1650000000.12345.host", sec},                   // qmail-style new
+		{"1650000000.abcXYZ", sec},                       // minimal
+		{"1650000000", sec},                              // bare numeric, no dot
+		{"Mabcdef.P1.host", -1},                          // non-numeric head
+		{"0.unique.host", -1},                            // below the 1990 floor
+		{"99999999999.unique.host", -1},                  // absurd future
+		{"", -1},                                         // empty
+	}
+	for _, c := range cases {
+		got, ok := maildirDeliveryTime(c.name)
+		if c.want == -1 {
+			if ok {
+				t.Errorf("maildirDeliveryTime(%q) = (%v, true), want ok=false", c.name, got)
+			}
+			continue
+		}
+		if !ok || !got.Equal(time.Unix(c.want, 0).UTC()) {
+			t.Errorf("maildirDeliveryTime(%q) = (%v, %v), want (%v, true)",
+				c.name, got, ok, time.Unix(c.want, 0).UTC())
+		}
+	}
+}
 
 // TestKeywordsToMaildirFlags — export side: JMAP keywords → sorted
 // Maildir info-flag letters (D,F,R,S order). Regression for the

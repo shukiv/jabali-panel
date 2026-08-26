@@ -11,7 +11,8 @@
 //     a. POST raw bytes to /jmap/upload → blobId
 //     b. Email/import with blobId + mailboxIds:{<inbox>:true} +
 //     keywords:{$seen:true for cur/, none for new/} +
-//     receivedAt parsed from Maildir filename
+//     receivedAt from the Maildir filename's delivery timestamp (GH #1226),
+//     falling back to the file mtime when the filename has no usable time
 //  4. Record bytes + count in MailboxImportResult
 //
 // Idempotent on resume: pushMaildirSlots skips any message whose
@@ -37,6 +38,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -395,7 +397,15 @@ func pushMaildirSlots(ctx context.Context, accountID, mailboxID, maildir string,
 					keywords["$seen"] = true
 				}
 			}
-			n, err := importOneMessage(ctx, accountID, mailboxID, path, info.Size(), keywords, info.ModTime(), allowedRoots)
+			// GH #1226: prefer the Maildir filename's delivery timestamp (the
+			// canonical received time) over the file mtime, which a migration
+			// copy can rewrite to "now". Fall back to mtime when the filename
+			// carries no usable time.
+			receivedAt := info.ModTime()
+			if t, ok := maildirDeliveryTime(e.Name()); ok {
+				receivedAt = t
+			}
+			n, err := importOneMessage(ctx, accountID, mailboxID, path, info.Size(), keywords, receivedAt, allowedRoots)
 			if err != nil {
 				skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
 				continue
@@ -427,6 +437,35 @@ func maildirInfoFlags(name string) (string, bool) {
 		return "", false
 	}
 	return name[i+3:], true
+}
+
+// maildirDeliveryTimeFloor is 1990-01-01T00:00:00Z — a sanity floor so a
+// malformed filename whose leading segment isn't really a timestamp (a huge
+// unique-id, or 0) can't stamp an absurd received date.
+const maildirDeliveryTimeFloor = 631152000
+
+// maildirDeliveryTime extracts the delivery (received) time encoded at the head
+// of a Maildir filename. Every Maildir name begins with the unix delivery time
+// in whole seconds ("<sec>.<unique>.<host>", or Dovecot's "<sec>.M<usec>P<pid>…");
+// a "cur" file's trailing ":2,<flags>" does not affect the head. GH #1226: this
+// is the canonical received time — more authoritative than the file mtime (which
+// a copy/rsync/tool can rewrite, the exact way a migration loses it) and than the
+// sender-supplied "Date:" header (unauthenticated). Returns (t, true) only when
+// the leading segment parses to a plausible unix time; a non-numeric head or an
+// out-of-range value returns false so the caller falls back to the file mtime.
+func maildirDeliveryTime(name string) (time.Time, bool) {
+	head := name
+	if i := strings.IndexByte(head, '.'); i >= 0 {
+		head = head[:i]
+	}
+	sec, err := strconv.ParseInt(head, 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if sec < maildirDeliveryTimeFloor || sec > time.Now().Add(24*time.Hour).Unix() {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0).UTC(), true
 }
 
 // maildirFlagsToKeywords maps Maildir info-flag letters to JMAP keywords
