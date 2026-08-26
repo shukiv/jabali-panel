@@ -94,3 +94,54 @@ jobs:
       - name: npm audit
         continue-on-error: true
         run: cd panel-ui && npm audit --omit=dev || true
+
+  # Failure notification — closes the blind spot that let nine red nights pass
+  # silently (Nightly had no alert step, only a Playwright-artifact upload).
+  # Fires on any job failure OR cancellation (always() so a cancelled job still
+  # alerts). Sends through the panel's own Stalwart submission endpoint; the
+  # ONLY secret is the webmaster mailbox password (NIGHTLY_SMTP_PASSWORD) — host
+  # and address are non-sensitive. No third-party action, so the supply-chain
+  # surface stays at zero (cf. release.yml). Self-hosted so it reaches the mail
+  # server on the internal network; a TOTAL runner outage won't self-alert, so
+  # also enable GitHub's built-in Actions failure email as a backstop.
+  notify:
+    name: Email on failure
+    needs: [go, ui-unit, e2e, audit]
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: self-hosted
+    steps:
+      - name: Send failure email
+        env:
+          SMTP_PASSWORD: ${{ secrets.NIGHTLY_SMTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SMTP_PASSWORD:-}" ]; then
+            echo "NIGHTLY_SMTP_PASSWORD not set — skipping email. Set the secret to enable alerts."
+            exit 0
+          fi
+          from="webmaster@jabali-panel.com"
+          to="webmaster@jabali-panel.com"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          {
+            printf 'From: Jabali CI <%s>\r\n' "$from"
+            printf 'To: %s\r\n' "$to"
+            printf 'Subject: [Nightly FAILED] %s @ %s\r\n' "$GITHUB_REPOSITORY" "${GITHUB_SHA:0:8}"
+            printf 'Date: %s\r\n' "$(date -R)"
+            printf '\r\n'
+            printf 'The Nightly workflow failed.\r\n\r\n'
+            printf 'Results: go=%s  ui-unit=%s  e2e=%s  audit=%s\r\n' \
+              '${{ needs.go.result }}' '${{ needs.ui-unit.result }}' '${{ needs.e2e.result }}' '${{ needs.audit.result }}'
+            printf 'Commit:  %s\r\n' "$GITHUB_SHA"
+            printf 'Run:     %s\r\n' "$run_url"
+          } > msg.txt
+          # Credentials via a 0600 config file, never argv (no `ps` exposure).
+          umask 077
+          printf 'user = "%s:%s"\n' "$from" "$SMTP_PASSWORD" > curlrc
+          trap 'rm -f curlrc' EXIT
+          curl --fail --show-error --silent --ssl-reqd \
+            --url "smtps://mx.jabali-panel.com:465" \
+            --config curlrc \
+            --mail-from "$from" \
+            --mail-rcpt "$to" \
+            --upload-file msg.txt
+          echo "Failure email sent to $to"
