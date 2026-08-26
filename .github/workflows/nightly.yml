@@ -139,7 +139,7 @@ jobs:
           printf 'user = "%s:%s"\n' "$from" "$SMTP_PASSWORD" > curlrc
           trap 'rm -f curlrc' EXIT
           curl --fail --show-error --silent --ssl-reqd \
-            --url "smtps://mx.jabali-panel.com:465" \
+            --url "smtps://mx1.reeva.me:465" \
             --config curlrc \
             --mail-from "$from" \
             --mail-rcpt "$to" \
