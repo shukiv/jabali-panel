@@ -187,3 +187,52 @@ func TestTeardownIsolatedJailPreservesSourceOnSameFs(t *testing.T) {
 		t.Fatalf("SOURCE DATA DELETED by teardown — marker gone: %v", err)
 	}
 }
+
+// TestTeardownIsolatedJail_AbsentMountpointSkipsUnmount is the GH #1226 / Nightly
+// regression: tearing down an account that was never provisioned (absent jail)
+// must be idempotent success WITHOUT issuing umount2(). On a real host that
+// syscall returns ENOENT and the old EINVAL/ENOENT branch swallowed it, but in an
+// unprivileged CI container (no CAP_SYS_ADMIN) the kernel checks the capability
+// before the path and returns EPERM, which fell through to a hard failure. The
+// existence guard skips the syscall entirely when the mountpoint is absent, so
+// this passes at any privilege level. Uses the seam to PROVE the syscall is never
+// issued (a privileged local run would otherwise mask the regression).
+func TestTeardownIsolatedJail_AbsentMountpointSkipsUnmount(t *testing.T) {
+	calls := 0
+	orig := ftpJailUnmount
+	t.Cleanup(func() { ftpJailUnmount = orig })
+	ftpJailUnmount = func(string, int) error { calls++; return syscall.EPERM }
+
+	// Jail (and therefore its "data" mountpoint) does not exist.
+	jail := filepath.Join(t.TempDir(), "bob", "nosuchacct")
+	if aerr := teardownIsolatedJail(context.Background(), jail); aerr != nil {
+		t.Fatalf("absent teardown must be idempotent success, got %v", aerr)
+	}
+	if calls != 0 {
+		t.Fatalf("umount2() must NOT be issued for an absent mountpoint; called %d times", calls)
+	}
+}
+
+// TestTeardownIsolatedJail_PresentPathSurfacesUnmountError proves the existence
+// guard did NOT weaken the data-safety invariant: when the mountpoint EXISTS and
+// the unmount fails for a reason other than EINVAL/ENOENT, teardown must surface
+// the error and must NOT RemoveAll (a RemoveAll through a still-live bind mount
+// would delete tenant data). Driven through the seam so it needs no privilege.
+func TestTeardownIsolatedJail_PresentPathSurfacesUnmountError(t *testing.T) {
+	orig := ftpJailUnmount
+	t.Cleanup(func() { ftpJailUnmount = orig })
+	ftpJailUnmount = func(string, int) error { return syscall.EPERM }
+
+	jail := filepath.Join(t.TempDir(), "jail")
+	mp := filepath.Join(jail, ftpJailMountpoint)
+	if err := os.MkdirAll(mp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aerr := teardownIsolatedJail(context.Background(), jail)
+	if aerr == nil {
+		t.Fatal("present mountpoint with a failing unmount must surface an error, got nil")
+	}
+	if _, err := os.Stat(jail); err != nil {
+		t.Fatalf("jail must be preserved when unmount fails (RemoveAll must not run): stat err=%v", err)
+	}
+}

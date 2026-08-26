@@ -392,26 +392,47 @@ func ftpEnsureJailHandler(ctx context.Context, params json.RawMessage) (any, err
 // reason we abort WITHOUT removing — a stranded empty jail is recoverable by
 // the reconciler; a RemoveAll that recurses through a live bind mount would
 // delete the tenant's real files.
+// ftpJailUnmount is the umount2(2) seam for teardownIsolatedJail — a package var
+// so a test can drive the unprivileged-container errno (EPERM) without root.
+var ftpJailUnmount = syscall.Unmount
+
 func teardownIsolatedJail(ctx context.Context, jailPath string) *agentwire.AgentError {
 	if jailPath == "" {
 		return nil
 	}
 	mountpoint := filepath.Join(jailPath, ftpJailMountpoint)
-	// MNT_DETACH: lazy unmount removes the mount from the tree immediately
-	// (new lookups see the underlying empty dir) even if a session holds it,
-	// so the subsequent RemoveAll cannot descend into the source.
-	for {
-		err := syscall.Unmount(mountpoint, syscall.MNT_DETACH)
-		if err == nil {
-			continue // detached one layer; loop for any stacked binds
+	// Existence guard (GH #1226 / Nightly CI). A bind mount can only exist on a
+	// mountpoint that EXISTS, so an absent mountpoint means there is nothing to
+	// unmount — and we must not issue umount2() on it: an unprivileged caller
+	// (a CI container without CAP_SYS_ADMIN) gets EPERM, not ENOENT, because the
+	// kernel checks the capability before the path, turning this idempotent
+	// teardown into a hard failure. This is a pure EXISTENCE check on a fixed
+	// path — NOT the unreliable "is it mounted" stat-probe the blind loop below
+	// deliberately avoids: a mountpoint that EXISTS is still unmounted blind, so
+	// the same-device data-safety invariant is untouched.
+	switch _, statErr := os.Lstat(mountpoint); {
+	case statErr == nil:
+		// MNT_DETACH: lazy unmount removes the mount from the tree immediately
+		// (new lookups see the underlying empty dir) even if a session holds
+		// it, so the subsequent RemoveAll cannot descend into the source.
+		for {
+			err := ftpJailUnmount(mountpoint, syscall.MNT_DETACH)
+			if err == nil {
+				continue // detached one layer; loop for any stacked binds
+			}
+			// EINVAL = not a mountpoint (anymore); ENOENT = it vanished mid-
+			// teardown. Both mean "nothing mounted here" — safe to remove.
+			if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
+				break
+			}
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("unmount jail %q: %v", mountpoint, err)}
 		}
-		// EINVAL = not a mountpoint (anymore); ENOENT = the mountpoint/jail
-		// doesn't exist at all (e.g. teardown of a legacy account, or a
-		// double teardown). Both mean "nothing mounted here" — safe to remove.
-		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
-			break
-		}
-		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("unmount jail %q: %v", mountpoint, err)}
+	case errors.Is(statErr, os.ErrNotExist):
+		// Mountpoint absent — nothing mounted. Fall through to RemoveAll, which
+		// is itself a no-op when jailPath is also absent (the common idempotent
+		// "delete an account that was never provisioned" path).
+	default:
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("stat jail mountpoint %q: %v", mountpoint, statErr)}
 	}
 	if err := os.RemoveAll(jailPath); err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("remove jail %q: %v", jailPath, err)}
