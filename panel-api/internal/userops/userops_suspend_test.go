@@ -23,6 +23,9 @@ func (f *fakeSuspendUsers) SetSuspended(_ context.Context, id string, v bool, re
 	f.lastSetID, f.lastSetVal, f.lastSetReason = id, v, reason
 	return nil
 }
+func (f *fakeSuspendUsers) SetSSHForwardingEnabled(_ context.Context, _ string, _ bool) error {
+	return nil
+}
 
 type fakeSuspendDomains struct {
 	repository.DomainRepository

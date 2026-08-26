@@ -42,18 +42,23 @@ func desiredSSHKeysHash(keys []string) string {
 // desiredSSHFullHash combines every user-state input the reconcile pass
 // dispatches to the agent: keys + sshEnabled + nspawn pin + username.
 // When this hash matches the cached one AND we're within
-// sshKeysReDispatchInterval, we skip ALL six per-user agent calls (set_shell,
-// home_chown, join/leave sftp group, join/leave sandbox group, write_nspawn_pin,
-// authorized_keys write/delete) — not just the keys op the v1 cache covered.
+// sshKeysReDispatchInterval, we skip ALL seven per-user agent calls (set_shell,
+// home_chown, join/leave sftp group, join/leave sandbox group, join/leave
+// forward group, write_nspawn_pin, authorized_keys write/delete) — not just the
+// keys op the v1 cache covered.
 // This was the next per-tick chatter source after PR #61: even with the keys
 // op gated, 3 users x 5 unconditional IPCs/tick = 15 agent round-trips/min for
 // no diff. Self-heals on the next interval to catch drift (manual chsh, gpasswd).
-func desiredSSHFullHash(username string, sshEnabled bool, pin string, keys []string) string {
+func desiredSSHFullHash(username string, sshEnabled, forwardingEnabled bool, pin string, keys []string) string {
 	sorted := append([]string(nil), keys...)
 	sort.Strings(sorted)
 	parts := []string{
 		"u=" + username,
 		"ssh=" + strconv.FormatBool(sshEnabled),
+		// GH #1229: the forward-group converge below is one of the gated
+		// IPCs, so its input must be in the hash — otherwise flipping the
+		// opt-in leaves the hash unchanged and the reconcile is skipped.
+		"fwd=" + strconv.FormatBool(forwardingEnabled),
 		"pin=" + pin,
 		"n=" + strconv.Itoa(len(sorted)),
 		"k=" + strings.Join(sorted, "\n"),
@@ -122,7 +127,7 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		pinPreview = ""
 	}
 
-	fullHash := desiredSSHFullHash(*user.Username, sshEnabled, pinPreview, desiredLines)
+	fullHash := desiredSSHFullHash(*user.Username, sshEnabled, user.SSHForwardingEnabled, pinPreview, desiredLines)
 
 	// Combined-hash gate. When everything matches AND we re-dispatched
 	// within sshKeysReDispatchInterval, skip ALL six agent IPCs below.
@@ -212,6 +217,25 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		// can't sudo. Log and continue.
 		r.log.WarnContext(ctx, "reconcile ssh keys: sandbox group failed",
 			"user_id", userID, "username", *user.Username, "method", sandboxGroupMethod, "error", err)
+	}
+
+	// GH #1229 forward group: converge jabali-ssh-forward membership from the
+	// per-user opt-in. Membership EXCLUDES the user from the JAB-352 forwarding
+	// lockdown Match block and into the relaxed (loopback-only) one, so VS Code
+	// Remote-SSH can forward to its own VS Code Server. Only meaningful for an
+	// SSH-shell user; an SFTP-only user is always removed. Reconciling from the
+	// DB flag here is what makes the opt-in durable across reprovision.
+	forwardGroupMethod := "ssh.user.leave_forward_group"
+	if sshEnabled && user.SSHForwardingEnabled {
+		forwardGroupMethod = "ssh.user.join_forward_group"
+	}
+	if _, err := r.agent.Call(ctx, forwardGroupMethod, map[string]interface{}{
+		"username": *user.Username,
+	}); err != nil {
+		// Non-fatal, like the sandbox group: an older host without the
+		// forward group (jabali update pending) just stays in the lockdown.
+		r.log.WarnContext(ctx, "reconcile ssh keys: forward group failed",
+			"user_id", userID, "username", *user.Username, "method", forwardGroupMethod, "error", err)
 	}
 
 	// M13 nspawn pin (pre-computed as pinPreview above; reuse so the

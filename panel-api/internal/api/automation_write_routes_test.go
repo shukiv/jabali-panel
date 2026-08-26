@@ -45,6 +45,7 @@ func (r *awUsers) SetSuspended(_ context.Context, _ string, s bool, _ string) er
 	r.suspended = &s
 	return nil
 }
+func (r *awUsers) SetSSHForwardingEnabled(_ context.Context, _ string, _ bool) error { return nil }
 
 type awDomains struct {
 	repository.DomainRepository

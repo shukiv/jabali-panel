@@ -53,6 +53,19 @@ Takes effect on the user's next SSH connection.`,
 				return fmt.Errorf("second argument must be on|off, got %q", args[1])
 			}
 
+			// Persist the durable flag FIRST — the SSH reconciler is the source
+			// of truth and converges jabali-ssh-forward membership from
+			// users.ssh_forwarding_enabled (GH #1229). Without this write the
+			// reconciler would strip a CLI-only opt-in within one re-dispatch
+			// interval (the flag defaults OFF), silently regressing forwarding.
+			if err := userRepo().SetSSHForwardingEnabled(ctx, target.ID, enable); err != nil {
+				cliAuditErr(ctx, "ssh.forwarding", "user", target.ID, &target.ID)
+				return fmt.Errorf("persist ssh_forwarding_enabled: %w", err)
+			}
+
+			// Apply now so it takes effect on the user's next connection without
+			// waiting for the reconcile tick. Best-effort: the reconciler
+			// self-heals group membership from the flag regardless.
 			verb := "ssh.user.leave_forward_group"
 			if enable {
 				verb = "ssh.user.join_forward_group"

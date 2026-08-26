@@ -43,6 +43,7 @@ import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { adminLinks, ownerCrumbs, ownerLabel } from "../../../components/admin/entityLinks";
 import { startImpersonation } from "../../../impersonation";
 import { UserLimitsCard } from "./UserLimitsCard";
+import { AdminSSHForwardingCard } from "./AdminSSHForwardingCard";
 
 type AdminUser = {
   id: string;
@@ -229,6 +230,12 @@ export function AdminUserOverview() {
       {!user.is_admin && (
         <div style={{ marginTop: 24 }}>
           <UserLimitsCard userId={id} />
+        </div>
+      )}
+
+      {!user.is_admin && (
+        <div style={{ marginTop: 24 }}>
+          <AdminSSHForwardingCard userId={id} />
         </div>
       )}
 

@@ -181,6 +181,9 @@ func (u *userRepoAdapterForCronAdminTest) FindAdminsByEmail(context.Context) ([]
 func (u *userRepoAdapterForCronAdminTest) SetSuspended(context.Context, string, bool, string) error {
 	return nil
 }
+func (u *userRepoAdapterForCronAdminTest) SetSSHForwardingEnabled(context.Context, string, bool) error {
+	return nil
+}
 func (u *userRepoAdapterForCronAdminTest) Delete(context.Context, string) error { return nil }
 
 func (r *userRepoAdapterForCronAdminTest) UpdateUsername(context.Context, string, string) error {

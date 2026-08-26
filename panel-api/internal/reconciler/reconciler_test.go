@@ -578,6 +578,9 @@ func (f *fakeUserRepo) LinkKratosIdentity(ctx context.Context, userID, kratosID 
 }
 
 func (f *fakeUserRepo) SetSuspended(_ context.Context, _ string, _ bool, _ string) error { return nil }
+func (f *fakeUserRepo) SetSSHForwardingEnabled(_ context.Context, _ string, _ bool) error {
+	return nil
+}
 
 func (f *fakeUserRepo) Delete(ctx context.Context, id string) error {
 	delete(f.users, id)

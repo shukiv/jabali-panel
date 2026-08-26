@@ -60,6 +60,10 @@ type UserRepository interface {
 	// suspend_reason. Kept separate from Update so the profile-edit
 	// path can't accidentally lift / apply a suspension.
 	SetSuspended(ctx context.Context, id string, suspended bool, reason string) error
+	// SetSSHForwardingEnabled flips users.ssh_forwarding_enabled (GH #1229).
+	// Dedicated method: the profile-edit path must not toggle a security
+	// control, and the Select-allowlist Update would silently drop the column.
+	SetSSHForwardingEnabled(ctx context.Context, id string, enabled bool) error
 	Delete(ctx context.Context, id string) error
 }
 
@@ -284,6 +288,23 @@ func (r *userRepo) SetSuspended(ctx context.Context, id string, suspended bool, 
 		Model(&models.User{}).
 		Where("id = ?", id).
 		Updates(patch)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *userRepo) SetSSHForwardingEnabled(ctx context.Context, id string, enabled bool) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"ssh_forwarding_enabled": enabled,
+			"updated_at":             time.Now().UTC(),
+		})
 	if res.Error != nil {
 		return translate(res.Error)
 	}

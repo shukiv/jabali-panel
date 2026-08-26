@@ -640,6 +640,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Reconciler:      deps.Reconciler,
 				Log:             deps.Log,
 				Redis:           deps.Redis,
+				// GH #1229: audit the admin SSH-forwarding toggle.
+				AuditEvents: repository.NewAuditEventRepository(deps.DB),
 				// M20: atomic Kratos identity creation on POST /users.
 				KratosClient: deps.KratosClient,
 			})

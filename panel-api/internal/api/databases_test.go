@@ -211,6 +211,9 @@ func (m *mockUserRepo) FindAdminsByEmail(ctx context.Context) ([]*models.User, e
 }
 
 func (m *mockUserRepo) SetSuspended(_ context.Context, _ string, _ bool, _ string) error { return nil }
+func (m *mockUserRepo) SetSSHForwardingEnabled(_ context.Context, _ string, _ bool) error {
+	return nil
+}
 
 func (m *mockUserRepo) Delete(ctx context.Context, id string) error {
 	return nil

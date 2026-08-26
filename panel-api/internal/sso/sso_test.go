@@ -144,6 +144,9 @@ func (m *mockUsersForSSO) FindAdminsByEmail(ctx context.Context) ([]*models.User
 func (m *mockUsersForSSO) SetSuspended(_ context.Context, _ string, _ bool, _ string) error {
 	return nil
 }
+func (m *mockUsersForSSO) SetSSHForwardingEnabled(_ context.Context, _ string, _ bool) error {
+	return nil
+}
 
 func (m *mockUsersForSSO) Delete(ctx context.Context, id string) error {
 	return nil

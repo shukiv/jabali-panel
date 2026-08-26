@@ -214,6 +214,18 @@ func (m *memUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, erro
 
 func (m *memUserRepo) SetSuspended(_ context.Context, _ string, _ bool, _ string) error { return nil }
 
+func (m *memUserRepo) SetSSHForwardingEnabled(_ context.Context, id string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.byID[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	u.SSHForwardingEnabled = enabled
+	u.UpdatedAt = time.Now()
+	return nil
+}
+
 func (m *memUserRepo) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

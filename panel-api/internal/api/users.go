@@ -50,6 +50,9 @@ type UserHandlerConfig struct {
 	DomainTeardowns repository.DomainTeardownRepository
 	Reconciler      *reconciler.Reconciler
 	Log             *slog.Logger
+	// AuditEvents records the admin SSH-forwarding toggle (GH #1229), a
+	// hardening-relaxation control. Optional; nil skips the audit write.
+	AuditEvents repository.AuditEventRepository
 	// Redis is the shared client used to revoke a tenant's wp_<osuser> cache
 	// ACL user on the delete cascade (GH #408). Optional; nil skips revoke.
 	Redis *redis.Client
@@ -118,6 +121,12 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 	// bulk-disable owned domains. See users_suspend.go.
 	g.POST("/admin/users/:id/suspend", middleware.RequireAdmin(), h.suspend)
 	g.POST("/admin/users/:id/unsuspend", middleware.RequireAdmin(), h.unsuspend)
+
+	// GH #1229: admin opt-in for a user's SSH TCP forwarding (VS Code
+	// Remote-SSH). Admin-only to flip; the tenant can read their own status.
+	g.GET("/admin/users/:id/ssh-forwarding", middleware.RequireAdmin(), h.getSSHForwarding)
+	g.POST("/admin/users/:id/ssh-forwarding", middleware.RequireAdmin(), h.setSSHForwarding)
+	g.GET("/me/ssh-forwarding", h.mySSHForwarding)
 }
 
 type userHandler struct{ cfg UserHandlerConfig }

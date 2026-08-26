@@ -90,6 +90,17 @@ type User struct {
 	// 1 = ON (migration 000203). Mail delivery (IMAP/SMTP/JMAP) is unaffected.
 	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"webmail_enabled"`
 
+	// SSHForwardingEnabled (GH #1229) opts an SSH-enabled user out of the
+	// JAB-352 forwarding lockdown into loopback-only TCP forwarding, which
+	// VS Code Remote-SSH needs to reach its own VS Code Server on 127.0.0.1.
+	// Default 0 = OFF: the lockdown is unchanged for everyone. Admin-only to
+	// flip. The SSH reconciler converges jabali-ssh-forward group membership
+	// from this flag, so the opt-in is durable across user reprovision (unlike
+	// the v1 group-only opt-in, which reverted to OFF). Sensitive loopback
+	// services stay firewall-blocked per-uid regardless, so an opted-in user
+	// can still only forward to their own apps + the VS Code Server.
+	SSHForwardingEnabled bool `gorm:"column:ssh_forwarding_enabled;type:tinyint(1);not null;default:0" json:"ssh_forwarding_enabled"`
+
 	// Disk-usage snapshot, written by the disk-usage sweeper
 	// (panel-api/internal/diskusagesweeper) from the same agent report the
 	// per-user /users/:id/usage endpoint calls.

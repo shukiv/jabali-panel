@@ -5536,6 +5536,32 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /admin/users/{id}/ssh-forwarding:
+    get:
+      tags: [Users]
+      summary: Get a user's SSH TCP forwarding opt-in status (admin, GH #1229)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { ssh_forwarding_enabled: { type: boolean }, ssh_enabled: { type: boolean } } } } } }
+    post:
+      tags: [Users]
+      summary: Enable/disable a user's SSH TCP forwarding for VS Code Remote-SSH (admin, GH #1229)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { enabled: { type: boolean } }, required: [enabled] } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { ssh_forwarding_enabled: { type: boolean }, ssh_enabled: { type: boolean } } } } } }
+        "422": { description: Not a hosting user, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /me/ssh-forwarding:
+    get:
+      tags: [Users]
+      summary: The caller's own SSH TCP forwarding status (read-only, GH #1229)
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { ssh_forwarding_enabled: { type: boolean }, ssh_enabled: { type: boolean } } } } } }
+
   /users:
     get:
       tags: [Users]

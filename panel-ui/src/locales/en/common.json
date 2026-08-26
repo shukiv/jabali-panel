@@ -1285,7 +1285,20 @@
     "update_carefully_especially_system_packages": "Update carefully — especially system packages"
   },
   "adminuseroverview": {
-    "user_not_found": "User not found"
+    "user_not_found": "User not found",
+    "ssh_fwd": {
+      "title": "SSH Forwarding",
+      "label": "Allow SSH TCP forwarding",
+      "note": "Enables the loopback-only forwarding VS Code Remote-SSH needs to reach its VS Code Server. Sensitive services (the panel, mail/DNS admin) stay firewall-blocked, so the user can only forward to their own apps. Takes effect on their next SSH connection.",
+      "no_ssh": "This user's package has no SSH shell access. Enable SSH on the package first — forwarding only applies to shell users.",
+      "confirm_on": "Allow SSH forwarding for this user? This relaxes the default SSH hardening to permit loopback-only forwarding.",
+      "confirm_ok": "Enable",
+      "confirm_cancel": "Cancel",
+      "enabled_toast": "SSH forwarding enabled — VS Code Remote-SSH will work on the user's next connection.",
+      "disabled_toast": "SSH forwarding disabled — the user is back in the default lockdown.",
+      "load_error": "Could not load SSH forwarding status.",
+      "save_error": "Could not update SSH forwarding."
+    }
   },
   "userreset2faaction": {
     "reset": "Reset",
@@ -1734,7 +1747,12 @@
     "save_your_private_key_now": "Save your private key now",
     "search_by_name_or_fingerprint": "Search by name or fingerprint",
     "this_is_the_only_time_the_private_key_will_b": "This is the only time the private key will be shown.",
-    "yes": "Yes"
+    "yes": "Yes",
+    "ssh_fwd": {
+      "title": "SSH Forwarding (VS Code Remote-SSH)",
+      "on": "Enabled. VS Code Remote-SSH can forward to its own server. Only loopback (127.0.0.1) forwarding is allowed; sensitive services stay blocked.",
+      "off": "Disabled. VS Code Remote-SSH needs SSH port forwarding, which is off by default for security — ask your administrator to enable SSH forwarding for your account."
+    }
   },
   "dnsrecordspage": {
     "no_dns_records_yet": "No DNS records yet",

@@ -65,7 +65,10 @@ func (*fakeRebuildUserRepo) FindAdminsByEmail(context.Context) ([]*models.User, 
 	return nil, nil
 }
 func (*fakeRebuildUserRepo) SetSuspended(context.Context, string, bool, string) error { return nil }
-func (*fakeRebuildUserRepo) Delete(context.Context, string) error                     { return nil }
+func (*fakeRebuildUserRepo) SetSSHForwardingEnabled(context.Context, string, bool) error {
+	return nil
+}
+func (*fakeRebuildUserRepo) Delete(context.Context, string) error { return nil }
 
 // fakeKratos routes POST /admin/identities → returns a new UUID; POST
 // /admin/recovery/code → returns a recovery link. Both paths are optional

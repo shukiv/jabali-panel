@@ -34,6 +34,7 @@ import {
   createSSHKey,
   deleteSSHKey,
   getSSHConnection,
+  getMySSHForwarding,
   type SSHKey,
 } from "../../../apiClient";
 import { useQuery } from "@tanstack/react-query";
@@ -92,6 +93,15 @@ export const UserSSHKeysPage = () => {
   const { data: conn, isLoading: connLoading } = useQuery({
     queryKey: ["ssh-connection"],
     queryFn: getSSHConnection,
+    retry: false,
+  });
+
+  // Read-only SSH-forwarding status (GH #1229). VS Code Remote-SSH needs
+  // forwarding, which is off by default (JAB-352 lockdown) and only an admin
+  // can enable per user — so this is display + guidance, not a control.
+  const { data: fwd } = useQuery({
+    queryKey: ["me-ssh-forwarding"],
+    queryFn: getMySSHForwarding,
     retry: false,
   });
 
@@ -281,6 +291,20 @@ export const UserSSHKeysPage = () => {
       )}
       {connLoading && !conn && (
         <Card loading style={{ marginBottom: 16 }} />
+      )}
+
+      {fwd?.ssh_enabled && (
+        <Alert
+          type={fwd.ssh_forwarding_enabled ? "success" : "info"}
+          showIcon
+          style={{ marginBottom: 16 }}
+          title={<strong>{t("usersshkeyspage.ssh_fwd.title")}</strong>}
+          description={
+            fwd.ssh_forwarding_enabled
+              ? t("usersshkeyspage.ssh_fwd.on")
+              : t("usersshkeyspage.ssh_fwd.off")
+          }
+        />
       )}
 
       <Card>

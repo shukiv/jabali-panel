@@ -459,6 +459,40 @@ export async function getSSHConnection(): Promise<SSHConnection> {
   return resp.data;
 }
 
+// === SSH TCP forwarding opt-in (GH #1229) ===
+// Off by default keeps the JAB-352 lockdown; opting a user in gives them
+// loopback-only forwarding (enough for VS Code Remote-SSH). Admin-only to flip;
+// a tenant can read their own status. ssh_enabled reflects the package grant —
+// the toggle is moot for a user with no SSH shell.
+export interface SSHForwardingStatus {
+  ssh_forwarding_enabled: boolean;
+  ssh_enabled: boolean;
+}
+
+/** The caller's own SSH-forwarding status (read-only for tenants). */
+export async function getMySSHForwarding(): Promise<SSHForwardingStatus> {
+  const resp = await apiClient.get<SSHForwardingStatus>("/me/ssh-forwarding");
+  return resp.data;
+}
+
+/** Admin: read a user's SSH-forwarding status. */
+export async function getUserSSHForwarding(userId: string): Promise<SSHForwardingStatus> {
+  const resp = await apiClient.get<SSHForwardingStatus>(`/admin/users/${userId}/ssh-forwarding`);
+  return resp.data;
+}
+
+/** Admin: enable/disable a user's SSH forwarding. Returns the new status. */
+export async function setUserSSHForwarding(
+  userId: string,
+  enabled: boolean,
+): Promise<SSHForwardingStatus> {
+  const resp = await apiClient.post<SSHForwardingStatus>(
+    `/admin/users/${userId}/ssh-forwarding`,
+    { enabled },
+  );
+  return resp.data;
+}
+
 // === Cron Jobs API ===
 
 export interface CronJob {

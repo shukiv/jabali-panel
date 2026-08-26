@@ -325,6 +325,10 @@ func (m *mockUserRepoValidate) SetSuspended(_ context.Context, _ string, _ bool,
 	return nil
 }
 
+func (m *mockUserRepoValidate) SetSSHForwardingEnabled(_ context.Context, _ string, _ bool) error {
+	return nil
+}
+
 func (m *mockUserRepoValidate) Delete(ctx context.Context, id string) error {
 	return nil
 }
