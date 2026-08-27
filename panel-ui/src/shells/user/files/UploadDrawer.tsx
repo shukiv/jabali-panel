@@ -35,8 +35,12 @@ import { tenantFilesApi, type FilesApi } from "./filesApi";
 import type { UploadOpts } from "./filesApi";
 
 export interface UploadDrawerHandle {
-  /** Enqueue a file for upload and open the drawer if closed. */
-  enqueue: (file: File) => void;
+  /**
+   * Enqueue a file for upload and open the drawer if closed. `relDir` is an
+   * optional subfolder under currentPath (GH #1243 folder upload) — the caller
+   * must have already created that directory tree.
+   */
+  enqueue: (file: File, relDir?: string) => void;
 }
 
 type UploadStatus = "queued" | "uploading" | "success" | "error";
@@ -44,6 +48,9 @@ type UploadStatus = "queued" | "uploading" | "success" | "error";
 interface UploadItem {
   id: string;
   file: File;
+  // relDir = subfolder under currentPath this file belongs in (GH #1243 folder
+  // upload), e.g. "my-folder/assets". Empty for a plain file drop.
+  relDir?: string;
   status: UploadStatus;
   progress: number;
   errorMessage?: string;
@@ -171,11 +178,16 @@ export const UploadDrawer = forwardRef<UploadDrawerHandle, UploadDrawerProps>(fu
         if (item.file.size > maxBytes) {
           throw new Error(`exceeds the ${formatBytes(maxBytes)} upload limit`);
         }
+        // GH #1243: a folder-upload file lands in currentPath/<relDir>. The
+        // drop handler has already created that directory tree (mkdir -p).
+        const destDir = item.relDir
+          ? `${currentPath.replace(/\/+$/, "")}/${item.relDir}`
+          : currentPath;
         const doUpload = (opts?: UploadOpts) => {
           const onp = (frac: number) => updateItem(item.id, { progress: frac });
           return item.file.size <= SINGLE_MULTIPART_CEILING
-            ? api.upload(currentPath, item.file, onp, opts)
-            : api.uploadChunked(currentPath, item.file, CHUNK_SIZE, onp, opts);
+            ? api.upload(destDir, item.file, onp, opts)
+            : api.uploadChunked(destDir, item.file, CHUNK_SIZE, onp, opts);
         };
         let mode: "ask" | "overwrite" | "rename" = alwaysOverwriteRef.current
           ? "overwrite"
@@ -244,11 +256,12 @@ export const UploadDrawer = forwardRef<UploadDrawerHandle, UploadDrawerProps>(fu
   }, [running, runOne, onUploaded]);
 
   const enqueue = useCallback(
-    (file: File) => {
+    (file: File, relDir?: string) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const item: UploadItem = {
         id,
         file,
+        relDir,
         status: "queued",
         progress: 0,
       };

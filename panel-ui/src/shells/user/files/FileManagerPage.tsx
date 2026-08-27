@@ -257,6 +257,59 @@ export interface FileManagerPageProps {
   rootPath?: string;
 }
 
+// collectDroppedEntries walks dropped file-system entries (files + folders)
+// into a flat list, each file tagged with its subfolder path relative to the
+// drop root (GH #1243). Directory reads are batched by the browser, so
+// readEntries is looped until it returns an empty batch. Exported for tests.
+export async function collectDroppedEntries(
+  roots: FileSystemEntry[],
+): Promise<{ file: File; relDir: string }[]> {
+  const out: { file: File; relDir: string }[] = [];
+  const readAll = (reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> => {
+    const all: FileSystemEntry[] = [];
+    const step = (): Promise<FileSystemEntry[]> =>
+      new Promise<FileSystemEntry[]>((resolve, reject) =>
+        reader.readEntries(resolve, reject),
+      ).then((batch) => {
+        if (batch.length === 0) return all;
+        all.push(...batch);
+        return step();
+      });
+    return step();
+  };
+  const walk = async (entry: FileSystemEntry, relDir: string): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) =>
+        (entry as FileSystemFileEntry).file(resolve, reject),
+      );
+      out.push({ file, relDir });
+      return;
+    }
+    if (entry.isDirectory) {
+      const childRel = relDir ? `${relDir}/${entry.name}` : entry.name;
+      const children = await readAll((entry as FileSystemDirectoryEntry).createReader());
+      for (const child of children) await walk(child, childRel);
+    }
+  };
+  for (const root of roots) await walk(root, "");
+  return out;
+}
+
+// ancestorDirs expands a set of subfolder paths to every directory level that
+// must exist, shallow → deep (GH #1243). A deeply-nested-only folder (files only
+// at the bottom) still yields every intermediate level, so each can be created
+// as its own single-level mkdir (and thus chowned to the tenant). Exported for
+// tests.
+export function ancestorDirs(relDirs: readonly string[]): string[] {
+  const set = new Set<string>();
+  for (const rd of relDirs) {
+    if (!rd) continue;
+    const parts = rd.split("/");
+    for (let i = 1; i <= parts.length; i++) set.add(parts.slice(0, i).join("/"));
+  }
+  return [...set].sort((a, b) => a.split("/").length - b.split("/").length);
+}
+
 export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }: FileManagerPageProps = {}) => {
   const { t } = useTranslation();
   // Pull live theme tokens so the bulk-action bar (and any other
@@ -737,9 +790,46 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
   // → enqueue into the UploadDrawer, which owns concurrency, per-file
   // progress bars, and error reporting. The drawer auto-opens on the
   // first enqueue.
-  const enqueueUpload = useCallback((file: File) => {
-    uploadDrawerRef.current?.enqueue(file);
+  const enqueueUpload = useCallback((file: File, relDir?: string) => {
+    uploadDrawerRef.current?.enqueue(file, relDir);
   }, []);
+
+  // GH #1243: dropping a FOLDER must recreate its tree, not write a binary file
+  // named after the folder. dataTransfer.files flattens a directory to a single
+  // contentless entry; the entries API (webkitGetAsEntry) exposes the real
+  // structure. Roots are extracted synchronously in onDrop (the DataTransfer is
+  // only valid during the event); here we walk them, mkdir -p each subfolder,
+  // then enqueue every file into its subfolder.
+  const handleFolderAwareDrop = useCallback(
+    async (roots: FileSystemEntry[]) => {
+      if (!currentPath) return;
+      let collected: { file: File; relDir: string }[];
+      try {
+        collected = await collectDroppedEntries(roots);
+      } catch {
+        feedback.message.error(t("filemanagerpage.folder_read_failed"));
+        return;
+      }
+      if (collected.length === 0) return;
+      // Create every directory level individually, shallow → deep. Each mkdir is
+      // a single level (its own leaf), so the agent chowns it to the tenant — a
+      // one-shot mkdir -p of a deep path leaves the intermediate levels
+      // root-owned and unusable (GH #1243). Expand each file's subdir to all of
+      // its ancestors so a deeply-nested-only folder still gets every level made.
+      const dirs = ancestorDirs(collected.map((c) => c.relDir));
+      const base = currentPath.replace(/\/+$/, "");
+      for (const d of dirs) {
+        try {
+          await api.mkdir(`${base}/${d}`);
+        } catch {
+          // A collision with an existing dir is fine; a genuine failure will
+          // surface when a file upload into it fails.
+        }
+      }
+      for (const c of collected) enqueueUpload(c.file, c.relDir || undefined);
+    },
+    [currentPath, api, enqueueUpload, t],
+  );
 
   // --- drag-to-move state ---
   // draggedPath is set on dragstart from a table row; consumed on drop
@@ -1502,8 +1592,24 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
             if (!e.dataTransfer.types.includes("Files")) return;
             e.preventDefault();
             if (!currentPath) return;
-            for (const f of Array.from(e.dataTransfer.files)) {
-              enqueueUpload(f);
+            // GH #1243: prefer the entries API so dropped FOLDERS keep their
+            // structure. The DataTransferItemList is only valid during this
+            // event, so extract the entry roots synchronously, then walk them
+            // async. Fall back to the flat file list when it's unavailable.
+            const dtItems = e.dataTransfer.items;
+            const roots: FileSystemEntry[] = [];
+            if (dtItems && dtItems.length > 0) {
+              for (const it of Array.from(dtItems)) {
+                const entry = it.webkitGetAsEntry?.();
+                if (entry) roots.push(entry);
+              }
+            }
+            if (roots.length > 0) {
+              void handleFolderAwareDrop(roots);
+            } else {
+              for (const f of Array.from(e.dataTransfer.files)) {
+                enqueueUpload(f);
+              }
             }
           }}
         >
