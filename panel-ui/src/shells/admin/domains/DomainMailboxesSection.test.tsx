@@ -266,7 +266,15 @@ describe("DomainMailboxesSection — webmail SSO opener isolation (JAB-330)", ()
 
     try {
       renderSection();
-      const btn = await screen.findByRole("button", { name: /open webmail/i });
+      // Default findBy timeout is 1s; the initial fetches + render cross it on
+      // the resource-starved nightly runner (same flake the waitFors above bump
+      // to 5s — run #3089). 5s is a wide margin that still catches a real
+      // never-renders regression.
+      const btn = await screen.findByRole(
+        "button",
+        { name: /open webmail/i },
+        { timeout: 5000 },
+      );
       fireEvent.click(btn);
 
       // Popup opened blank (blocker-dodge) and opener severed synchronously.
