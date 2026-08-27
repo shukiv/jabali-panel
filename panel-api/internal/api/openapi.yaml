@@ -5601,6 +5601,19 @@ paths:
         "200": { description: OK, content: { application/json: { schema: { type: object, properties: { ssh_forwarding_enabled: { type: boolean }, ssh_enabled: { type: boolean } } } } } }
         "422": { description: Not a hosting user, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  /admin/users/{id}/rename:
+    post:
+      tags: [Users]
+      summary: Rename a tenant's Linux/login username in place (admin, JAB-380 step-up, GH #1238)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { new_username: { type: string } }, required: [new_username] } } } }
+      responses:
+        "200": { description: Renamed, content: { application/json: { schema: { type: object, properties: { id: { type: string }, username: { type: string } } } } } }
+        "403": { description: Recent-auth step-up required (JAB-380), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: User not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Rename refused — invalid name, a v1 refusal (FTP subaccounts / Python apps / cross-filesystem), or the name is taken, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /me/ssh-forwarding:
     get:
       tags: [Users]

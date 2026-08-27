@@ -164,6 +164,7 @@
       "edit": "Edit",
       "reset_2fa": "Reset 2FA",
       "reset_password": "Reset password",
+      "rename": "Rename username",
       "suspend": "Suspend",
       "unsuspend": "Unsuspend",
       "delete": "Delete"

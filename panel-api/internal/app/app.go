@@ -632,6 +632,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Databases:       deps.Databases,
 				DatabaseUsers:   deps.DatabaseUsers,
 				FtpAccounts:     deps.FtpAccounts,
+				// GH #1238: the rename preflight refuses a tenant with Python apps.
+				PythonApps:      repository.NewPythonAppRepository(deps.DB),
 				DockerApps:      deps.DockerApps,
 				DomainTeardowns: deps.DomainTeardowns,
 				PortAllocations: repository.NewPortAllocationRepository(deps.DB),

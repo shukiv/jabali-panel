@@ -33,6 +33,7 @@ import { UserDiskUsage, UserDiskUsageCell } from "./UserDiskUsage";
 import { UserReset2FAAction } from "./UserReset2FAAction";
 import { UserResetPasswordAction } from "./UserResetPasswordAction";
 import { UserSuspendAction } from "./UserSuspendAction";
+import { UserRenameAction } from "./UserRenameAction";
 import { AdminSessionsPage } from "../sessions/AdminSessionsPage";
 
 type User = {
@@ -79,6 +80,7 @@ function UserRowActions({
   const [reset2faOpen, setReset2faOpen] = useState(false);
   const [resetPwOpen, setResetPwOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   // ADR-0128 — start act-as, then full-reload into the user shell so /me
@@ -107,6 +109,16 @@ function UserRowActions({
     { key: "edit", label: t("users.actions.edit"), icon: <EditOutlined />, onClick: () => onEdit(user.id) },
     { key: "reset2fa", label: t("users.actions.reset_2fa"), icon: <SafetyOutlined />, onClick: () => setReset2faOpen(true) },
     { key: "resetpw", label: t("users.actions.reset_password"), icon: <SafetyOutlined />, onClick: () => setResetPwOpen(true) },
+    ...(!user.is_admin
+      ? [
+          {
+            key: "rename",
+            label: t("users.actions.rename"),
+            icon: <EditOutlined />,
+            onClick: () => setRenameOpen(true),
+          },
+        ]
+      : []),
     ...(!user.is_admin
       ? [
           {
@@ -143,6 +155,15 @@ function UserRowActions({
           suspended={!!user.suspended}
           open={suspendOpen}
           onClose={() => setSuspendOpen(false)}
+        />
+      )}
+      {!user.is_admin && (
+        <UserRenameAction
+          userId={user.id}
+          currentUsername={user.username}
+          userLabel={userLabel(user)}
+          open={renameOpen}
+          onClose={() => setRenameOpen(false)}
         />
       )}
       <UserDeleteAction

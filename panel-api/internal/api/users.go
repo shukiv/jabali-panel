@@ -37,11 +37,16 @@ type UserHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Databases       repository.DatabaseRepository
 	DatabaseUsers   repository.DatabaseUserRepository
-	// FtpAccounts is reaped on user delete (JAB-265).
+	// FtpAccounts is reaped on user delete (JAB-265). It's also the GH #1238
+	// rename preflight's refusal check (a tenant with FTP/SFTP subaccounts is
+	// refused in v1 — their jails are bind-mounted under the home).
 	FtpAccounts repository.FtpAccountRepository
-	DockerApps  repository.DockerAppRepository
-	Mailboxes   repository.MailboxRepository
-	Packages    repository.PackageRepository
+	// PythonApps is the other GH #1238 rename refusal check (a tenant with
+	// Python apps is refused in v1 — their app-roots need move handling).
+	PythonApps repository.PythonAppRepository
+	DockerApps repository.DockerAppRepository
+	Mailboxes  repository.MailboxRepository
+	Packages   repository.PackageRepository
 	// PortAllocations frees a domain's reverse-proxy loopback port (GH #1175)
 	// during the account-delete cascade. Optional.
 	PortAllocations repository.PortAllocationRepository
@@ -126,6 +131,11 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 	// Remote-SSH). Admin-only to flip; the tenant can read their own status.
 	g.GET("/admin/users/:id/ssh-forwarding", middleware.RequireAdmin(), h.getSSHForwarding)
 	g.POST("/admin/users/:id/ssh-forwarding", middleware.RequireAdmin(), h.setSSHForwarding)
+
+	// GH #1238: rename a tenant's Linux/login username in place. Admin-only,
+	// and JAB-380 recent-auth step-up is enforced inside the handler (it's a
+	// data-moving, login-changing operation).
+	g.POST("/admin/users/:id/rename", middleware.RequireAdmin(), h.rename)
 	g.GET("/me/ssh-forwarding", h.mySSHForwarding)
 }
 
