@@ -20,6 +20,7 @@ func newTestLogger(t *testing.T) *slog.Logger {
 // mockWordPressInstallRepo is a minimal mock for testing.
 type mockWordPressInstallRepo struct {
 	installs    []models.WordPressInstall
+	ready       []models.WordPressInstall // returned by ListReadyByUpdatedAtAsc
 	updateCalls []struct {
 		id      string
 		status  string
@@ -71,7 +72,7 @@ func (m *mockWordPressInstallRepo) List(ctx context.Context, opts repository.Lis
 }
 
 func (m *mockWordPressInstallRepo) ListReadyByUpdatedAtAsc(_ context.Context, _ int) ([]models.WordPressInstall, error) {
-	return nil, nil
+	return m.ready, nil
 }
 
 func (m *mockWordPressInstallRepo) CountCacheEnabledByUserID(_ context.Context, _, _ string) (int64, error) {

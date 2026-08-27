@@ -131,30 +131,50 @@ func (r *Reconciler) probeOneWordPressInstall(ctx context.Context, install model
 	if subdir != "" && subdir[0] != '/' {
 		subdir = "/" + subdir
 	}
-	probePath := dom.DocRoot + subdir + "/wp-includes/version.php"
+	wpRoot := dom.DocRoot + subdir
 
 	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	raw, err := r.agent.Call(callCtx, "fs.stat", map[string]any{"path": probePath})
+	raw, err := r.agent.Call(callCtx, "wordpress.version_probe", map[string]any{"dir": wpRoot})
 	if err != nil {
-		r.log.Warn("reconcile: WordPress probe agent.fs.stat failed",
-			"id", install.ID, "path", probePath, "err", err)
+		r.log.Warn("reconcile: WordPress version probe failed",
+			"id", install.ID, "dir", wpRoot, "err", err)
 		return
 	}
-	var stat struct {
-		Exists bool `json:"exists"`
+	var probe struct {
+		Exists  bool   `json:"exists"`
+		Version string `json:"version"`
 	}
-	if err := json.Unmarshal(raw, &stat); err != nil {
+	if err := json.Unmarshal(raw, &probe); err != nil {
 		r.log.Warn("reconcile: WordPress probe parse failed", "id", install.ID, "err", err)
 		return
 	}
-	if !stat.Exists {
+	if !probe.Exists {
 		errMsg := "wp-includes/version.php missing — install drifted"
 		r.log.Warn("reconcile: WordPress install drift detected; marking failed",
-			"id", install.ID, "path", probePath)
+			"id", install.ID, "dir", wpRoot)
 		if err := r.wordPressInstalls.UpdateStatus(ctx, install.ID, "failed", &errMsg, nil); err != nil {
 			r.log.Error("reconcile: failed to flip drifted install to failed",
 				"id", install.ID, "err", err)
+		}
+		return
+	}
+	// GH #1237: refresh the stored version when the site was updated (WP core
+	// auto-update or an in-app update). The panel captured the version once at
+	// install and never re-read it, so the Applications UI kept showing a stale
+	// number. Write only on drift to avoid needless updated_at churn.
+	if probe.Version != "" && (install.Version == nil || *install.Version != probe.Version) {
+		newVer := probe.Version
+		if err := r.wordPressInstalls.UpdateStatus(ctx, install.ID, "ready", nil, &newVer); err != nil {
+			r.log.Warn("reconcile: failed to refresh WordPress version",
+				"id", install.ID, "version", newVer, "err", err)
+		} else {
+			old := ""
+			if install.Version != nil {
+				old = *install.Version
+			}
+			r.log.Info("reconcile: refreshed WordPress version",
+				"id", install.ID, "from", old, "to", newVer)
 		}
 	}
 }
