@@ -201,6 +201,9 @@ type updateServerSettingsRequest struct {
 	TenantBackupWindowEnd   *string `json:"tenant_backup_window_end,omitempty"`
 	// TenantBackupWindowEnforce (GH #1097) — opt-in gate for the window above.
 	TenantBackupWindowEnforce *bool `json:"tenant_backup_window_enforce,omitempty"`
+	// DefaultLocalBackupsEnabled (GH #1240) — opt-in automatic daily local
+	// backups for every user; the scheduler converges the managed schedule.
+	DefaultLocalBackupsEnabled *bool `json:"default_local_backups_enabled,omitempty"`
 
 	// M13 SSH shell sandbox.
 	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
@@ -653,6 +656,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.TenantBackupWindowEnforce != nil {
 		current.TenantBackupWindowEnforce = *req.TenantBackupWindowEnforce
+	}
+	if req.DefaultLocalBackupsEnabled != nil {
+		current.DefaultLocalBackupsEnabled = *req.DefaultLocalBackupsEnabled
 	}
 	if req.SSHSandboxMode != nil {
 		current.SSHSandboxMode = strings.TrimSpace(*req.SSHSandboxMode)

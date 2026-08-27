@@ -347,6 +347,15 @@ type ServerSettings struct {
 	// written explicitly (no GORM default-tag zero-value trap).
 	TenantBackupWindowEnforce bool `gorm:"column:tenant_backup_window_enforce;type:tinyint(1);not null;default:0" json:"tenant_backup_window_enforce"`
 
+	// DefaultLocalBackupsEnabled (GH #1240) turns on an opt-in server-wide default:
+	// a single panel-managed schedule that backs up EVERY tenant to the local repo
+	// daily. OFF by default (local backups are opt-in — chosen at install or here;
+	// remote is preferred). The provisioner converges the managed schedule
+	// (backup_schedules.is_managed_default) from this flag; flipping it OFF disables
+	// that schedule and never touches admin/tenant-created schedules. Persisted via
+	// the repo's Select("*") update so the false zero-value is written explicitly.
+	DefaultLocalBackupsEnabled bool `gorm:"column:default_local_backups_enabled;type:tinyint(1);not null;default:0" json:"default_local_backups_enabled"`
+
 	// DR / standby (GH #331). ServerRole is 'primary' (default — box is fully
 	// active) or 'standby' (a one-way async replica: pulls the primary's state,
 	// serves no live traffic until manually promoted). The whole DR feature is

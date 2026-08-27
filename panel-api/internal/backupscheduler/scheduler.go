@@ -186,6 +186,10 @@ func (s *Scheduler) tickEnqueue(ctx context.Context) {
 	if s.standbyInert(ctx) {
 		return
 	}
+	// GH #1240: converge the managed default-local-backup schedule from the flag
+	// before scanning due schedules, so a just-enabled default is picked up the
+	// same tick. Idempotent + cheap; skipped on standbys by the gate above.
+	s.ensureDefaultLocalBackup(ctx)
 	now := time.Now().UTC()
 	due, err := s.deps.Schedules.ListDue(ctx, now, MaxDuePerTick)
 	if err != nil {

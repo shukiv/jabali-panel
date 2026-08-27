@@ -19,8 +19,13 @@ type BackupSchedule struct {
 	// fires a system.backup job alongside the per-user account fan-out
 	// every time the schedule ticks. Ignored on kind=system_backup
 	// (those always back up the system by definition).
-	IncludeSystemBackup bool   `gorm:"not null;default:0" json:"include_system_backup"`
-	CronExpr            string `gorm:"type:varchar(64);not null" json:"cron_expr"`
+	IncludeSystemBackup bool `gorm:"not null;default:0" json:"include_system_backup"`
+	// IsManagedDefault marks the single panel-managed default-local-backup
+	// schedule (GH #1240). The provisioner finds + converges exactly this row
+	// from server_settings.default_local_backups_enabled; admin/tenant schedules
+	// always have it 0 and are never touched. Default 0 = false (no flip trap).
+	IsManagedDefault bool   `gorm:"column:is_managed_default;type:tinyint(1);not null;default:0" json:"is_managed_default"`
+	CronExpr         string `gorm:"type:varchar(64);not null" json:"cron_expr"`
 	// Content is what a firing of this schedule backs up: full / files /
 	// database / folders (GH #454). Default 'full' preserves the pre-feature
 	// behaviour. Used by the scheduler fan-out (wired in a follow-up) and set by

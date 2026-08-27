@@ -1056,6 +1056,31 @@ seed_module_flags() {
   fi
 }
 
+# seed_default_local_backups — GH #1240. Optional opt-in: automatic daily local
+# backups for EVERY user. OFF by default (the operator prefers remote; local uses
+# disk + IO). Enable via JABALI_DEFAULT_LOCAL_BACKUPS=1 (non-interactive / TUI) or
+# a y/N prompt on an interactive install. Only writes when opted in — the DB
+# default (0) covers the off case. Best-effort: a SQL failure warns, never aborts.
+seed_default_local_backups() {
+  command -v mariadb >/dev/null 2>&1 || return 0
+  local enable=0
+  if [[ "${JABALI_DEFAULT_LOCAL_BACKUPS:-}" == "1" ]]; then
+    enable=1
+  elif [[ "${_cli_yes:-}" != "1" && -t 0 ]]; then
+    local ans=""
+    # 30s timeout so an unattended TTY install falls through to OFF (the default)
+    # instead of blocking forever on this new question.
+    read -t 30 -rp "Enable automatic daily local backups for all users? (local disk; off by default) [y/N]: " ans || true
+    [[ "$ans" =~ ^[Yy] ]] && enable=1
+  fi
+  [[ "$enable" == "1" ]] || return 0
+  if mariadb jabali_panel -e "UPDATE server_settings SET default_local_backups_enabled=1 WHERE id=1;" 2>/dev/null; then
+    _ok "automatic daily local backups enabled (GH #1240) — manage in Server Settings → Backups"
+  else
+    _warn "could not enable default local backups (server_settings) — set it in Server Settings → Backups"
+  fi
+}
+
 # print_module_plan — dry-run output (--dry-run). Shows exactly which optional
 # modules would be installed vs skipped for the current JABALI_MODULES, and the
 # server_settings flags that would be seeded — WITHOUT touching the system. Lets
@@ -16170,6 +16195,9 @@ main() {
   # + seeded the server_settings row). Only acts when JABALI_MODULES is set; a
   # plain install leaves every flag default-on, so existing flows are unchanged.
   seed_module_flags
+  # GH #1240: optional opt-in for automatic daily local backups (same point —
+  # the server_settings row exists after first boot). Off unless chosen.
+  seed_default_local_backups
   # First-phase Stalwart bootstrap (binary download, service user,
   # stalwart-cli, admin token, MariaDB password file, apply plan render,
   # unit file install). Safe to run after start_and_verify — doesn't

@@ -23,6 +23,8 @@ interface BackupSettingsShape {
   // GH #1097: the window is an OPT-IN restriction, off by default. When off the
   // tenant scheduler ignores it and runs each schedule on its chosen interval.
   tenant_backup_window_enforce: boolean;
+  // GH #1240: opt-in automatic daily local backups for every user.
+  default_local_backups_enabled: boolean;
 }
 
 interface ServerSettingsResponse {
@@ -31,6 +33,7 @@ interface ServerSettingsResponse {
   tenant_backup_window_start?: string;
   tenant_backup_window_end?: string;
   tenant_backup_window_enforce?: boolean;
+  default_local_backups_enabled?: boolean;
 }
 
 // HH:MM (24h) — the format the API validates (internalbackup.ValidHHMM).
@@ -56,6 +59,7 @@ export const BackupSettingsTab = () => {
           tenant_backup_window_start: resp.data.tenant_backup_window_start ?? "02:00",
           tenant_backup_window_end: resp.data.tenant_backup_window_end ?? "05:00",
           tenant_backup_window_enforce: resp.data.tenant_backup_window_enforce ?? false,
+          default_local_backups_enabled: resp.data.default_local_backups_enabled ?? false,
         });
       } catch (err) {
         feedback.message.error(extractApiError(err, "Load failed"));
@@ -88,6 +92,14 @@ export const BackupSettingsTab = () => {
         onFinish={handleSubmit}
         style={{ maxWidth: 480 }}
       >
+        <Form.Item
+          name="default_local_backups_enabled"
+          valuePropName="checked"
+          label="Automatic daily local backups for all users"
+          tooltip="Off by default. When on, the panel keeps a managed schedule that backs up every user (files + databases + mail) to the local repo daily at 05:00 UTC, keeping 3 days. New users are covered automatically. Uses local disk + IO — prefer a remote destination if disk is tight. Turning it off disables the managed schedule but never removes users' own schedules."
+        >
+          <Switch />
+        </Form.Item>
         <Form.Item
           name="backup_max_concurrent_jobs"
           label={t("backupsettingstab.max_concurrent_backup_jobs")}
