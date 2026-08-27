@@ -63,6 +63,10 @@ func RegisterDatabaseRoutes(g *gin.RouterGroup, cfg DatabaseHandlerConfig) {
 	databases.DELETE("/:id", h.delete)
 	databases.GET("/:id/backup", h.backup)
 	databases.POST("/:id/restore", h.restore)
+	// GH #1323: chunked restore upload (beats the Cloudflare 100 MB request cap).
+	databases.POST("/:id/restore-chunk", h.restoreChunk)
+	databases.GET("/:id/restore-chunk-status", h.restoreChunkStatus)
+	databases.GET("/:id/restore-status", h.restoreStatus)
 }
 
 type databaseHandler struct{ cfg DatabaseHandlerConfig }
@@ -647,10 +651,10 @@ func (h *databaseHandler) restore(c *gin.Context) {
 
 	// Generate restore file path
 	ul := ids.NewULID()
-	restorePath := fmt.Sprintf("/var/lib/jabali/restore/%s.sql", ul)
+	restorePath := filepath.Join(restoreRoot, ul+".sql")
 
 	// Create restore directory if needed
-	if err := createDir("/var/lib/jabali/restore"); err != nil {
+	if err := createDir(restoreRoot); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -661,19 +665,21 @@ func (h *databaseHandler) restore(c *gin.Context) {
 		return
 	}
 
-	// Call agent to restore the database
-	if h.cfg.Agent == nil {
-		_ = deleteFile(restorePath)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
+	// GH #1323: the single-upload and chunked-restore finalize share the same
+	// detached agent-restore + cleanup + response.
+	h.runDatabaseRestore(c, ctx, d, restorePath)
+}
 
-	// GH #1044: detach from the request context so a client disconnect (closed
-	// tab, network blip) mid-restore does NOT cancel the agent call — at up to
-	// restoreAgentTimeout the disconnect window is real, and aborting MariaDB's
-	// pipe-into-mysql mid-load would leave the database half-restored (Postgres'
-	// load-then-swap #1205 is safe either way). The restore outlives the
-	// messenger, exactly as the async backup-restore path does.
+// doDatabaseRestore loads an already-staged dump at restorePath into d and
+// returns nil on success or the agent error. It detaches from the passed context
+// so a client disconnect (closed tab, network blip) mid-restore does NOT cancel
+// the agent call — at up to restoreAgentTimeout the disconnect window is real, and
+// aborting MariaDB's pipe-into-mysql mid-load would leave the database
+// half-restored (Postgres' load-then-swap #1205 is safe either way). Deletes
+// restorePath on failure (the agent also cleans up). Shared by the synchronous
+// single-upload path (runDatabaseRestore) and the asynchronous chunked-restore
+// finalize (GH #1323); the caller must have verified h.cfg.Agent != nil.
+func (h *databaseHandler) doDatabaseRestore(ctx context.Context, d *models.Database, restorePath string) error {
 	agentCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreAgentTimeout)
 	defer cancel()
 
@@ -688,14 +694,26 @@ func (h *databaseHandler) restore(c *gin.Context) {
 		restoreParams["owner_role"] = ownerRole
 		restoreParams["grant_roles"] = grantRoles
 	}
-	_, err = h.cfg.Agent.Call(agentCtx, restoreCmd, restoreParams)
-	if err != nil {
-		// Agent cleanup the file on failure, but delete it here too just in case
+	if _, err := h.cfg.Agent.Call(agentCtx, restoreCmd, restoreParams); err != nil {
 		_ = deleteFile(restorePath)
+		return err
+	}
+	return nil
+}
+
+// runDatabaseRestore is the SYNCHRONOUS single-upload wrapper: it runs the restore
+// and writes the final HTTP response (204 or an agent error). The chunked path
+// (GH #1323) calls doDatabaseRestore directly from a detached goroutine instead.
+func (h *databaseHandler) runDatabaseRestore(c *gin.Context, ctx context.Context, d *models.Database, restorePath string) {
+	if h.cfg.Agent == nil {
+		_ = deleteFile(restorePath)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if err := h.doDatabaseRestore(ctx, d, restorePath); err != nil {
 		respondAgentErr(c, "agent_failed", err)
 		return
 	}
-
 	c.Status(http.StatusNoContent)
 }
 

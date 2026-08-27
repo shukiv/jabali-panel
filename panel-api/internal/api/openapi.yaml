@@ -2806,6 +2806,53 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /databases/{id}/restore-chunk:
+    post:
+      tags: [Databases]
+      summary: Upload one chunk of a restore dump; final=1 finalizes and restores (GH #1323)
+      description: |
+        Chunked "Restore from file" upload — beats the Cloudflare 100 MB request
+        cap by sending the dump as sequential octet-stream chunks appended at
+        `offset`. `final=1` on the last chunk assembles and runs the restore.
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: query, name: upload_id, required: true, schema: { type: string } }
+        - { in: query, name: offset, required: true, schema: { type: integer } }
+        - { in: query, name: final, required: false, schema: { type: string, enum: ["1"] } }
+      requestBody: { required: true, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+      responses:
+        "200": { description: Chunk stored, content: { application/json: { schema: { type: object, properties: { upload_id: { type: string }, written: { type: integer } } } } } }
+        "204": { description: Final chunk — restore complete }
+        "413": { description: Over the restore cap, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /databases/{id}/restore-chunk-status:
+    get:
+      tags: [Databases]
+      summary: Bytes already staged for a chunked restore upload — resume point (GH #1323)
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: query, name: upload_id, required: true, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { upload_id: { type: string }, written: { type: integer } } } } } }
+
+  /databases/{id}/restore-status:
+    get:
+      tags: [Databases]
+      summary: Poll the async chunked-restore outcome after final=1 (GH #1323)
+      description: |
+        After the final chunk returns 202 the restore runs detached; the client
+        polls this until status is done or failed (so no request spans Cloudflare's
+        ~100s origin timeout).
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: query, name: upload_id, required: true, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [restoring, done, failed] } } } } } }
+        "404": { description: Unknown upload_id, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
 
   # --- Disclaimer (auto) ---
 

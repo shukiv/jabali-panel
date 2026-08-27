@@ -25,7 +25,7 @@ import { sorterToParams } from "../../../utils/tableSorter";
 
 import {
   downloadDatabaseBackup,
-  restoreDatabaseUpload,
+  restoreDatabaseUploadAuto,
   ssoAdminer,
   ssoPhpMyAdmin,
 } from "../../../apiClient";
@@ -237,7 +237,7 @@ export const UserDatabaseList = () => {
       loaded: 0,
     });
     try {
-      await restoreDatabaseUpload(row.id, file, (pr) => {
+      await restoreDatabaseUploadAuto(row.id, file, (pr) => {
         setRestoreProgress((prev) =>
           prev
             ? {

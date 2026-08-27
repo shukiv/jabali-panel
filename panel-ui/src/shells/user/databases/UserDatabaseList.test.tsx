@@ -17,7 +17,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("../../../apiClient", () => ({
   downloadDatabaseBackup: vi.fn(),
-  restoreDatabaseUpload: vi.fn(),
+  restoreDatabaseUploadAuto: vi.fn(),
   ssoAdminer: vi.fn(),
   ssoPhpMyAdmin: vi.fn(),
 }));
@@ -65,11 +65,11 @@ vi.mock("../../../hooks/useTableURL", () => ({
 
 import {
   downloadDatabaseBackup,
-  restoreDatabaseUpload,
+  restoreDatabaseUploadAuto,
 } from "../../../apiClient";
 
 const mockedDownload = downloadDatabaseBackup as ReturnType<typeof vi.fn>;
-const mockedRestore = restoreDatabaseUpload as ReturnType<typeof vi.fn>;
+const mockedRestore = restoreDatabaseUploadAuto as ReturnType<typeof vi.fn>;
 
 /** Opens the row's overflow menu (first action renders as a button, the
  * rest collapse into the "more" dropdown). Generous timeouts — under CI

@@ -299,6 +299,157 @@ export async function restoreDatabaseUpload(
   });
 }
 
+// GH #1323: chunked restore upload. Cloudflare's Free plan rejects any single
+// request body over 100 MB, so a large dump 413s at the edge regardless of the
+// panel's own cap. Above this threshold we upload the dump as sequential 10 MB
+// octet-stream chunks (like the File Manager), reassembled server-side, so no
+// single request approaches 100 MB. Small dumps keep the one-shot multipart path.
+const RESTORE_CHUNK_SIZE = 10 * 1024 * 1024;
+const RESTORE_CHUNK_THRESHOLD = 90 * 1024 * 1024;
+
+function lsGet(k: string): string | null {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+function lsSet(k: string, v: string): void {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* private mode / quota — resume is a nicety, not required */
+  }
+}
+function lsDel(k: string): void {
+  try {
+    localStorage.removeItem(k);
+  } catch {
+    /* noop */
+  }
+}
+
+/**
+ * Restore a database from a large dump via chunked upload (GH #1323).
+ * Sends the file as sequential 10 MB octet-stream POSTs to /restore-chunk; the
+ * final chunk (final=1) assembles and runs the restore server-side. Resumable:
+ * an interrupted upload (keyed by db + file identity) reuses the upload_id and
+ * skips ahead to the bytes already staged. `onProgress` reports cumulative
+ * upload across chunks; once it reaches 1 the final request holds for the
+ * server-side restore (the modal shows "Restoring…" then).
+ */
+export async function restoreDatabaseUploadChunked(
+  databaseId: string,
+  file: File,
+  onProgress?: (p: RestoreUploadProgress) => void,
+): Promise<void> {
+  const chunkSize = RESTORE_CHUNK_SIZE;
+  const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
+  const resumeKey = `jabali:dbrestore:${databaseId}|${file.name}|${file.size}|${file.lastModified}`;
+  let uploadId = lsGet(resumeKey);
+  let startChunk = 0;
+  if (uploadId) {
+    try {
+      const r = await apiClient.get<{ written: number }>(
+        `/databases/${databaseId}/restore-chunk-status`,
+        { params: { upload_id: uploadId } },
+      );
+      // Round DOWN so a partial chunk is re-sent in full (the server seeks to
+      // the offset before writing, so re-sending is safe).
+      startChunk = Math.floor((r.data.written || 0) / chunkSize);
+    } catch {
+      uploadId = null;
+      lsDel(resumeKey);
+    }
+  }
+  if (!uploadId) {
+    uploadId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    lsSet(resumeKey, uploadId);
+  }
+
+  const started = Date.now();
+  const report = (loaded: number) => {
+    if (!onProgress) return;
+    const elapsed = (Date.now() - started) / 1000;
+    const rate = elapsed > 0 ? loaded / elapsed : undefined;
+    const estimated = rate && rate > 0 ? (file.size - loaded) / rate : undefined;
+    onProgress({
+      frac: file.size > 0 ? Math.min(1, loaded / file.size) : 1,
+      loaded: Math.min(loaded, file.size),
+      total: file.size,
+      rate,
+      estimated,
+    });
+  };
+  report(startChunk * chunkSize);
+
+  for (let i = startChunk; i < totalChunks; i++) {
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, file.size);
+    const blob = file.slice(start, end);
+    const isLast = i === totalChunks - 1;
+    const params = new URLSearchParams({
+      upload_id: uploadId,
+      offset: String(start),
+      ...(isLast ? { final: "1" } : {}),
+    });
+    await apiClient.post(
+      `/databases/${databaseId}/restore-chunk?${params.toString()}`,
+      blob,
+      {
+        headers: { "Content-Type": "application/octet-stream" },
+        timeout: 0,
+        onUploadProgress: (e) => report(start + (e.loaded ?? 0)),
+      },
+    );
+    report(end);
+  }
+
+  // GH #1323: the final chunk returned 202 — the restore now runs detached
+  // server-side (so no single request spans Cloudflare's ~100s origin timeout).
+  // Poll restore-status until it finishes; the modal's "Restoring…" leg (frac is
+  // already 1) reflects the real outcome. Ceiling matches the server's 60-min cap.
+  report(file.size);
+  const deadline = Date.now() + 65 * 60 * 1000;
+  for (;;) {
+    await new Promise((res) => setTimeout(res, 2000));
+    let status = "restoring";
+    try {
+      const s = await apiClient.get<{ status: string }>(
+        `/databases/${databaseId}/restore-status`,
+        { params: { upload_id: uploadId } },
+      );
+      status = s.data.status;
+    } catch {
+      // Transient poll error — keep trying until the deadline.
+    }
+    if (status === "done") break;
+    if (status === "failed") throw new Error("restore_failed");
+    if (Date.now() > deadline) throw new Error("restore_timeout");
+  }
+  lsDel(resumeKey);
+}
+
+/**
+ * Restore a database from an uploaded dump, picking the transport by size
+ * (GH #1323): a one-shot multipart POST for small dumps, chunked upload above
+ * the threshold so large dumps aren't rejected by Cloudflare's 100 MB request
+ * cap. Both drive the same RestoreUploadProgress modal.
+ */
+export async function restoreDatabaseUploadAuto(
+  databaseId: string,
+  file: File,
+  onProgress?: (p: RestoreUploadProgress) => void,
+): Promise<void> {
+  if (file.size > RESTORE_CHUNK_THRESHOLD) {
+    return restoreDatabaseUploadChunked(databaseId, file, onProgress);
+  }
+  return restoreDatabaseUpload(databaseId, file, onProgress);
+}
+
 // === PHP Settings API ===
 
 export interface DomainPHPSettings {
