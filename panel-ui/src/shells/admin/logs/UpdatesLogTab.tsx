@@ -29,7 +29,7 @@ export const UpdatesLogTab = () => {
         loading={isLoading}
         dataSource={rows}
         scroll={{ x: "max-content" }}
-        pagination={{ pageSize: 20, showTotal: (t) => `${t} runs` }}
+        pagination={{ defaultPageSize: 20, showTotal: (t) => `${t} runs` }}
         columns={[
           {
             title: "Time",

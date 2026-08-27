@@ -159,7 +159,7 @@ export const AdminCronList = () => {
             size="small"
             loading={isLoading}
             dataSource={filteredJobs}
-            pagination={{ pageSize: 25, showSizeChanger: true }}
+            pagination={{ defaultPageSize: 25, showSizeChanger: true }}
             scroll={{ x: "max-content" }}
             locale={{
               emptyText: (

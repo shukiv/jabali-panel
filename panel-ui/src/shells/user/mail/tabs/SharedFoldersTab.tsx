@@ -143,7 +143,7 @@ export const SharedFoldersTab = () => {
           searchPlaceholder="Search owner or shared-with…"
           initialSearch={search}
           onSearchChange={setSearch}
-          pagination={{ pageSize: 20 }}
+          pagination={{ defaultPageSize: 20 }}
           scroll={{ x: "max-content" }}
           columns={[
             {

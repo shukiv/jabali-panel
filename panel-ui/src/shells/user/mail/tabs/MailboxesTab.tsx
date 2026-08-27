@@ -236,7 +236,7 @@ export const MailboxesTab = () => {
         searchPlaceholder="Search email, name, domain…"
         initialSearch={search}
         onSearchChange={setSearch}
-        pagination={{ pageSize: 20 }}
+        pagination={{ defaultPageSize: 20 }}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("mailboxestab.no_mailboxes")} /> }}
         columns={[
           {

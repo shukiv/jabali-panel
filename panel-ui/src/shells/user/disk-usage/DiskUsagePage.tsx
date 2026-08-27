@@ -458,7 +458,7 @@ export function DiskUsagePage() {
                     rowKey={(r) => `${b.key}:${r.name}`}
                     columns={b.cols}
                     dataSource={b.cat.items}
-                    pagination={b.cat.items.length > 8 ? { pageSize: 8, size: "small" } : false}
+                    pagination={b.cat.items.length > 8 ? { defaultPageSize: 8, size: "small" } : false}
                     scroll={{ x: "max-content" }}
                   />
                 )}

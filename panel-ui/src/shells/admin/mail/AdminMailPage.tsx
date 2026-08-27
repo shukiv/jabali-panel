@@ -184,7 +184,7 @@ export function AdminMailPage() {
           rowKey="id"
           dataSource={filtered}
           loading={isLoading}
-          pagination={{ pageSize: 25, showSizeChanger: true }}
+          pagination={{ defaultPageSize: 25, showSizeChanger: true }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminmailpage.no_mailboxes")} /> }}
           columns={[
             {

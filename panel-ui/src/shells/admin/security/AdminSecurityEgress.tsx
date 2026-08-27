@@ -113,7 +113,7 @@ export const AdminSecurityEgress = () => {
         <Table<UserRow>
           dataSource={nonAdminUsers}
           rowKey="id"
-          pagination={{ pageSize: 50, hideOnSinglePage: true }}
+          pagination={{ defaultPageSize: 50, hideOnSinglePage: true }}
           loading={usersQuery.isLoading}
           scroll={{ x: "max-content" }}
         >

@@ -108,7 +108,7 @@ export function GroupsTab() {
           searchPlaceholder="Search group name…"
           initialSearch={search}
           onSearchChange={setSearch}
-          pagination={{ pageSize: 25 }}
+          pagination={{ defaultPageSize: 25 }}
           locale={{
             emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("groupstab.no_groups")} />,
           }}

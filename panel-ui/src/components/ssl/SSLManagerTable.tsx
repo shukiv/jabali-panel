@@ -567,7 +567,7 @@ export const SSLManagerTable = ({
             columns={columns}
             rowKey="id"
             loading={isLoading}
-            pagination={{ pageSize: 25, showSizeChanger: true }}
+            pagination={{ defaultPageSize: 25, showSizeChanger: true }}
             scroll={{ x: "max-content" }}
           />
         </Space>

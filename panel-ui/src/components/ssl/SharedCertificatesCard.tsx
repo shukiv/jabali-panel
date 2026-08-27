@@ -311,7 +311,7 @@ export const SharedCertificatesCard = ({ embedded = false }: { embedded?: boolea
           columns={columns}
           rowKey="id"
           loading={isLoading}
-          pagination={{ pageSize: 10, showSizeChanger: true }}
+          pagination={{ defaultPageSize: 10, showSizeChanger: true }}
           scroll={{ x: "max-content" }}
         />
       )}

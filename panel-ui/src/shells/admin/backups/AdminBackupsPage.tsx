@@ -535,7 +535,7 @@ export const AdminBackupsPage = () => {
             rowKey="rowKey"
             loading={loading}
             dataSource={tableRows}
-            pagination={{ pageSize: 25 }}
+            pagination={{ defaultPageSize: 25 }}
             scroll={{ x: "max-content" }}
             expandable={{
               expandedRowKeys: expandedKeys,

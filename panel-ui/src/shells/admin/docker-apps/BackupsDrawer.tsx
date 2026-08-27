@@ -84,7 +84,7 @@ export const BackupsDrawer = ({ open, appId, onClose }: Props) => {
           size="small"
           loading={backupsQ.isLoading}
           dataSource={backupsQ.data?.backups ?? []}
-          pagination={{ pageSize: 20 }}
+          pagination={{ defaultPageSize: 20 }}
           columns={[
             {
               title: "Snapshot",

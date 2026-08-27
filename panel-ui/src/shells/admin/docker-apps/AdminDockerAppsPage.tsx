@@ -224,7 +224,7 @@ export const AdminDockerAppsPage = () => {
                 })}
                 scroll={{ x: 1100 }}
                 pagination={{
-                  pageSize: 25,
+                  defaultPageSize: 25,
                   showTotal: (total, range) => `Showing ${range[0]} to ${range[1]} of ${total} results`,
                 }}
                 locale={{

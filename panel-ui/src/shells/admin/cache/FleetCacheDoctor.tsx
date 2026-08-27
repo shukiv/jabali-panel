@@ -253,7 +253,7 @@ export function FleetCacheDoctor() {
               style={{ marginTop: 12 }}
               columns={itemColumns}
               dataSource={run.results}
-              pagination={{ pageSize: 10, hideOnSinglePage: true }}
+              pagination={{ defaultPageSize: 10, hideOnSinglePage: true }}
             />
           ) : null}
         </div>
@@ -265,7 +265,7 @@ export function FleetCacheDoctor() {
         size="small"
         loading={history.isLoading}
         dataSource={history.data ?? []}
-        pagination={{ pageSize: 10, hideOnSinglePage: true }}
+        pagination={{ defaultPageSize: 10, hideOnSinglePage: true }}
         onRow={(r) => ({ onClick: () => setActiveRunId(r.id), style: { cursor: "pointer" } })}
         columns={[
           { title: "When", dataIndex: "created_at", render: (v: string) => shortDateTime(v) },

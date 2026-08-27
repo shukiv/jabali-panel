@@ -253,7 +253,7 @@ export const AdminSecurityAide = () => {
         size="small"
         tableLayout="fixed"
         scroll={{ x: "max-content" }}
-        pagination={{ pageSize: 25 }}
+        pagination={{ defaultPageSize: 25 }}
         columns={[
           {
             title: "Change",

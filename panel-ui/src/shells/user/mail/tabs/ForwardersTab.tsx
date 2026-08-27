@@ -137,7 +137,7 @@ export const ForwardersTab = () => {
           dataSource={filteredForwarders}
           searchPlaceholder="Search forwarders…"
           onSearchChange={setSearch}
-          pagination={{ pageSize: 20 }}
+          pagination={{ defaultPageSize: 20 }}
           columns={[
             {
               title: "Source",
@@ -298,7 +298,7 @@ function DomainScopedForwarders() {
         rowKey="id"
         loading={isLoading}
         dataSource={rows}
-        pagination={{ pageSize: 20 }}
+        pagination={{ defaultPageSize: 20 }}
         scroll={{ x: "max-content" }}
         columns={[
           {

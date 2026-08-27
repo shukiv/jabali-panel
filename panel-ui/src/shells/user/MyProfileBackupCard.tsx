@@ -198,7 +198,7 @@ export const MyProfileBackupCard = () => {
         rowKey="id"
         loading={query.isLoading}
         dataSource={query.items ?? []}
-        pagination={{ pageSize: 10 }}
+        pagination={{ defaultPageSize: 10 }}
         scroll={{ x: "max-content" }}
         columns={[
           {

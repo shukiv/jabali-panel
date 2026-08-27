@@ -156,7 +156,7 @@ export function AdminSecuritySnuffleupagus() {
             dataSource={incidents.data?.data ?? []}
             pagination={{
               total: incidents.data?.total ?? 0,
-              pageSize: 50,
+              defaultPageSize: 50,
             }}
             columns={[
               {
@@ -214,7 +214,7 @@ export function AdminSecuritySnuffleupagus() {
           rowKey="name"
           loading={rules.isLoading}
           dataSource={rules.data ?? []}
-          pagination={{ pageSize: 25 }}
+          pagination={{ defaultPageSize: 25 }}
           columns={[
             { title: "Rule", dataIndex: "name", ellipsis: true },
             {

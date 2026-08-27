@@ -778,7 +778,7 @@ function SystemPackagesCard({ check }: { check: ReturnType<typeof useAptCheck> }
             rowKey="name"
             size="small"
             dataSource={rows}
-            pagination={rows.length > 8 ? { pageSize: 8, size: "small" } : false}
+            pagination={rows.length > 8 ? { defaultPageSize: 8, size: "small" } : false}
             scroll={{ x: "max-content" }}
             columns={[
               { title: "Package", dataIndex: "name" },

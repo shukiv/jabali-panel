@@ -378,7 +378,7 @@ export const AdminMigrationsPage = () => {
           dataSource={rows}
           rowKey="id"
           loading={list.isLoading}
-          pagination={{ pageSize: 50, hideOnSinglePage: true }}
+          pagination={{ defaultPageSize: 50, hideOnSinglePage: true }}
           scroll={{ x: "max-content" }}
           locale={{
             emptyText: (

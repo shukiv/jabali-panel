@@ -82,7 +82,7 @@ export function AdminGroupsTab() {
         scroll={{ x: "max-content" }}
         rowKey="id"
         dataSource={rows ?? []}
-        pagination={{ pageSize: 25, showSizeChanger: true }}
+        pagination={{ defaultPageSize: 25, showSizeChanger: true }}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("admingroupstab.no_groups")} /> }}
         columns={[
           {

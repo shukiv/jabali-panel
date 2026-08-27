@@ -53,7 +53,7 @@ export function CacheOverviewPage() {
         rowKey="domain"
         loading={loading}
         dataSource={rows}
-        pagination={{ pageSize: 20, hideOnSinglePage: true }}
+        pagination={{ defaultPageSize: 20, hideOnSinglePage: true }}
         scroll={{ x: "max-content" }}
         columns={[
           { title: "Domain", dataIndex: "domain" },
