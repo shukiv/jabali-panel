@@ -49,7 +49,7 @@ func TestRequireRecentAuth_FreshCachedClaimsPass(t *testing.T) {
 func TestRequireRecentAuth_StaleClaimsRequireStepUp(t *testing.T) {
 	c, w := newStepUpCtx(t, &auth.AccessClaims{
 		UserID: "u1", IsAdmin: true, Source: auth.SourceKratos,
-		AuthenticatedAt: time.Now().Add(-30 * time.Minute),
+		AuthenticatedAt: time.Now().Add(-2 * stepUpWindow),
 	}, "")
 	if requireRecentAuth(c, nil, stepUpWindow) {
 		t.Fatalf("stale claims must not pass")
@@ -125,7 +125,7 @@ func TestRequireRecentAuth_CacheBypassSeesRefresh(t *testing.T) {
 
 	c, w := newStepUpCtx(t, &auth.AccessClaims{
 		UserID: "u1", IsAdmin: true, Source: auth.SourceKratos,
-		AuthenticatedAt: time.Now().Add(-30 * time.Minute), // stale cached value
+		AuthenticatedAt: time.Now().Add(-2 * stepUpWindow), // stale cached value
 	}, "cookie-refreshed")
 
 	if !requireRecentAuth(c, kc, stepUpWindow) {
@@ -141,7 +141,7 @@ func TestRequireRecentAuth_CacheBypassStillStale(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":               "s",
 			"active":           true,
-			"authenticated_at": time.Now().Add(-45 * time.Minute).UTC().Format(time.RFC3339Nano),
+			"authenticated_at": time.Now().Add(-2 * stepUpWindow).UTC().Format(time.RFC3339Nano),
 			"identity":         map[string]any{"id": "u1"},
 		})
 	}))
@@ -150,7 +150,7 @@ func TestRequireRecentAuth_CacheBypassStillStale(t *testing.T) {
 
 	c, w := newStepUpCtx(t, &auth.AccessClaims{
 		UserID: "u1", IsAdmin: true, Source: auth.SourceKratos,
-		AuthenticatedAt: time.Now().Add(-30 * time.Minute),
+		AuthenticatedAt: time.Now().Add(-2 * stepUpWindow),
 	}, "cookie-old")
 
 	if requireRecentAuth(c, kc, stepUpWindow) {

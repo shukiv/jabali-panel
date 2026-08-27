@@ -24,8 +24,13 @@ import (
 )
 
 // stepUpWindow is how recently the Kratos session must have authenticated for a
-// root-privileged action to proceed without a fresh login (JAB-380).
-const stepUpWindow = 10 * time.Minute
+// root-privileged action to proceed without a fresh login (JAB-380). It is the
+// whole grace window (the check is stateless — see the file header), so this is
+// also how long a burst of admin work can run before one re-auth. Raised from
+// 10m to 1h (GH #1184): 10m re-prompted repeatedly during normal File Manager /
+// Root Terminal use, while 1h still bounds a walked-up / hijacked idle session
+// to an hour of root reach.
+const stepUpWindow = 1 * time.Hour
 
 // requireRecentAuth enforces JAB-380 recent-auth on a root-privileged request.
 // It returns true if the request may proceed; otherwise it has already written
