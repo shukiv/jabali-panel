@@ -56,6 +56,15 @@ type User = {
   disk_limit_kb?: number;
   disk_checked_at?: string | null;
   created_at: string;
+  // GH #1242: at-a-glance per-user roll-up (counts + this month's bandwidth).
+  resources?: {
+    domains: number;
+    mailboxes: number;
+    databases: number;
+    docker_apps: number;
+    backups: number;
+    bandwidth_bytes: number;
+  };
 };
 
 type HostingPackage = { id: string; name: string };
@@ -69,6 +78,14 @@ const renderCreated = (ts: string) => shortDateTime(ts);
 // users-spec E2E asserts on `getByRole("cell", { name: email })`, and
 // if the action cell's accessible name contained the email too, the
 // matcher would hit both cells and fail with a strict-mode violation.
+// Compact byte formatter for the monthly-bandwidth line (GH #1242).
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 function UserRowActions({
   user,
   onEdit,
@@ -386,17 +403,57 @@ function UsersShellTable({
           // per-row fetch was impossible — it only ever held the current
           // page's resolved rows.
           sorter
-          render={(_: unknown, r: User) =>
-            r.disk_checked_at ? (
-              <UserDiskUsageCell usedKB={r.disk_used_kb ?? 0} limitKB={r.disk_limit_kb ?? 0} />
-            ) : (
-              // Never swept (fresh upgrade, or the sweeper has not reached
-              // this row yet) — fall back to the live per-row fetch so the
-              // column is never blank.
-              <UserDiskUsage userId={r.id} />
-            )
-          }
+          render={(_: unknown, r: User) => (
+            <div>
+              {r.disk_checked_at ? (
+                <UserDiskUsageCell usedKB={r.disk_used_kb ?? 0} limitKB={r.disk_limit_kb ?? 0} />
+              ) : (
+                // Never swept (fresh upgrade, or the sweeper has not reached
+                // this row yet) — fall back to the live per-row fetch so the
+                // column is never blank.
+                <UserDiskUsage userId={r.id} />
+              )}
+              {r.resources && r.resources.bandwidth_bytes > 0 && (
+                <Tooltip title={t("users.col.bandwidth_month")}>
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 11, whiteSpace: "nowrap", display: "block" }}
+                  >
+                    ↕ {fmtBytes(r.resources.bandwidth_bytes)} /mo
+                  </Typography.Text>
+                </Tooltip>
+              )}
+            </div>
+          )}
         />
+      )}
+      {showDiskUsageColumn && (
+      <Table.Column<User>
+        title={t("users.col.resources")}
+        key="resources"
+        render={(_: unknown, r: User) => {
+          const R = r.resources;
+          if (!R) return <Typography.Text type="secondary">—</Typography.Text>;
+          const chips: Array<[string, string, number]> = [
+            [t("users.res.domains"), "Dom", R.domains],
+            [t("users.res.mailboxes"), "Mbx", R.mailboxes],
+            [t("users.res.databases"), "DB", R.databases],
+            [t("users.res.docker"), "Dkr", R.docker_apps],
+            [t("users.res.backups"), "Bkp", R.backups],
+          ];
+          return (
+            <Space size={8} wrap>
+              {chips.map(([full, abbr, n]) => (
+                <Tooltip key={abbr} title={full}>
+                  <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                    <Typography.Text type="secondary">{abbr}</Typography.Text> {n}
+                  </span>
+                </Tooltip>
+              ))}
+            </Space>
+          );
+        }}
+      />
       )}
       <Table.Column
         title={t("users.col.actions")}

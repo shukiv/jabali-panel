@@ -191,7 +191,16 @@
       "package": "Package",
       "created": "Created",
       "disk_usage": "Disk usage",
+      "resources": "Resources",
+      "bandwidth_month": "Bandwidth this month",
       "actions": "Actions"
+    },
+    "res": {
+      "domains": "Domains",
+      "mailboxes": "Mailboxes",
+      "databases": "Databases",
+      "docker": "Docker apps",
+      "backups": "Retained backups"
     },
     "suspended": "Suspended",
     "suspended_on": "on {{date}}",

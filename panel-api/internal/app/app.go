@@ -633,7 +633,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DatabaseUsers:   deps.DatabaseUsers,
 				// GH #1238: grant re-point on rename.
 				DBUserGrants: repository.NewDatabaseUserGrantRepository(deps.DB),
-				FtpAccounts:  deps.FtpAccounts,
+				// GH #1242: at-a-glance per-user counts + monthly bandwidth.
+				ResourceStats: repository.NewUserResourceStatsRepository(deps.DB),
+				FtpAccounts:   deps.FtpAccounts,
 				// GH #1238: the rename preflight refuses a tenant with Python apps.
 				PythonApps:      repository.NewPythonAppRepository(deps.DB),
 				DockerApps:      deps.DockerApps,

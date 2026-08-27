@@ -39,6 +39,9 @@ type UserHandlerConfig struct {
 	DatabaseUsers   repository.DatabaseUserRepository
 	// DBUserGrants drives the GH #1238 grant re-point on rename.
 	DBUserGrants repository.DatabaseUserGrantRepository
+	// ResourceStats batch-computes the GH #1242 at-a-glance per-user counts +
+	// monthly bandwidth for the Users list. Optional; nil omits the stats.
+	ResourceStats repository.UserResourceStatsRepository
 	// FtpAccounts is reaped on user delete (JAB-265). It's also the GH #1238
 	// rename preflight's refusal check (a tenant with FTP/SFTP subaccounts is
 	// refused in v1 — their jails are bind-mounted under the home).
@@ -190,10 +193,18 @@ type reprovisionRequest struct {
 }
 
 type listUsersResponse struct {
-	Data     []models.User `json:"data"`
+	Data     []userListRow `json:"data"`
 	Total    int64         `json:"total"`
 	Page     int           `json:"page"`
 	PageSize int           `json:"page_size"`
+}
+
+// userListRow is a Users-list row: the user, plus the GH #1242 at-a-glance
+// resource roll-up (counts + monthly bandwidth). The embedded User inlines its
+// JSON fields, so the shape is the old user object with an extra `resources`.
+type userListRow struct {
+	models.User
+	Resources repository.UserResourceStats `json:"resources"`
 }
 
 // ---------- handlers ----------
@@ -225,8 +236,31 @@ func (h *userHandler) list(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// GH #1242: attach the at-a-glance per-user counts + monthly bandwidth,
+	// batched over the page's ids. Non-fatal — a stats failure still renders the
+	// list (rows just carry zero resources).
+	var stats map[string]repository.UserResourceStats
+	if h.cfg.ResourceStats != nil && len(users) > 0 {
+		ids := make([]string, len(users))
+		for i := range users {
+			ids[i] = users[i].ID
+		}
+		now := time.Now()
+		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		if s, serr := h.cfg.ResourceStats.Fetch(c.Request.Context(), ids, monthStart); serr == nil {
+			stats = s
+		} else {
+			h.log().WarnContext(c.Request.Context(), "users list: resource stats failed", "error", serr)
+		}
+	}
+
+	rows := make([]userListRow, len(users))
+	for i := range users {
+		rows[i] = userListRow{User: users[i], Resources: stats[users[i].ID]}
+	}
 	c.JSON(http.StatusOK, listUsersResponse{
-		Data:     users,
+		Data:     rows,
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
