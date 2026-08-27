@@ -159,6 +159,14 @@ func (s *Sweeper) reportOne(ctx context.Context, username string) (usedKB, limit
 	raw, err := s.deps.Agent.Call(callCtx, "user.limits.report", map[string]any{
 		"username":    username,
 		"quota_mount": s.deps.QuotaMount,
+		// GH #1242: du-fallback for users whose quota has no answer — a user
+		// with no hosting package has no quota, so quota reports nothing and the
+		// list showed a blank cell. The agent only walks du when quota is absent
+		// or 0, so packaged users with real usage still take the fast quota path;
+		// the extra du lands on quota-less / empty homes only, and this sweep is
+		// serialized + paced (InterUserDelay) off the request path, so it doesn't
+		// reintroduce the read-path du storm that made this on-demand-only.
+		"measure_disk": true,
 	})
 	if err != nil {
 		s.deps.Log.Debug("disk usage sweep: agent report failed",

@@ -25,11 +25,12 @@ func quietLogger() *slog.Logger {
 }
 
 type stubAgent struct {
-	mu       sync.Mutex
-	calls    []string
-	reply    string
-	err      error
-	replyFor map[string]string
+	mu             sync.Mutex
+	calls          []string
+	reply          string
+	err            error
+	replyFor       map[string]string
+	sawMeasureDisk bool
 }
 
 func (a *stubAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
@@ -38,6 +39,9 @@ func (a *stubAgent) Call(_ context.Context, cmd string, params any) (json.RawMes
 	name := ""
 	if m, ok := params.(map[string]any); ok {
 		name, _ = m["username"].(string)
+		if md, _ := m["measure_disk"].(bool); md {
+			a.sawMeasureDisk = true
+		}
 	}
 	a.calls = append(a.calls, cmd+":"+name)
 	if a.err != nil {
@@ -127,6 +131,23 @@ func TestSweepOnce_PersistsReportedUsage(t *testing.T) {
 	}
 	if got.used != 1800000 || got.limit != 51200000 {
 		t.Errorf("persisted %+v, want used=1800000 limit=51200000", got)
+	}
+}
+
+// GH #1242: the sweep must request the du-fallback so a user with no hosting
+// package (hence no quota) still gets a real disk number instead of a blank cell.
+func TestSweepOnce_RequestsDuFallback(t *testing.T) {
+	repo := &stubUserRepo{rows: []models.User{userWith("u1", "alice")}}
+	ag := &stubAgent{reply: `{"disk":{"used_kb":4200,"limit_kb":0}}`}
+
+	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
+
+	if !ag.sawMeasureDisk {
+		t.Fatal("sweep must call user.limits.report with measure_disk=true (GH #1242)")
+	}
+	// A quota-less user (limit 0) with real bytes still persists its usage.
+	if got := repo.written["u1"]; got.used != 4200 {
+		t.Fatalf("persisted %+v, want used=4200 for the no-package user", got)
 	}
 }
 
