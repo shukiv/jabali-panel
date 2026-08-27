@@ -50,7 +50,10 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 			{Metric: "queue_size", SampledAt: t0, Value: 4},
 		},
 		storage: []repository.MailboxStorageRow{
-			{Username: "notary", DomainName: "n.example", Email: "a@n.example", UsageBytes: 1024, QuotaBytes: 4096},
+			{Username: "notary", DomainName: "n.example", MailEnabled: true, Email: "a@n.example", UsageBytes: 1024, QuotaBytes: 4096},
+			// GH #1234: a mail-disabled domain rides along with an empty email + 0
+			// usage so the drilldown can show + tag it.
+			{Username: "notary", DomainName: "off.example", MailEnabled: false, Email: "", UsageBytes: 0, QuotaBytes: 0},
 		},
 		// Two windows of per-domain deltas; the handler sums them per domain and
 		// orders busiest-first (by sent+received).
@@ -97,8 +100,13 @@ func TestAdminMailStats_SeriesAndDeltaClamp(t *testing.T) {
 	}
 	assert.Equal(t, float64(25), resp.Current["message_ingest"])
 	assert.Equal(t, float64(4), resp.Current["queue_size"])
-	if assert.Len(t, resp.Storage, 1) {
+	if assert.Len(t, resp.Storage, 2) {
 		assert.Equal(t, "a@n.example", resp.Storage[0].Email)
+		assert.True(t, resp.Storage[0].MailEnabled)
+		// GH #1234: the mail-off domain rides along, tagged and empty.
+		assert.Equal(t, "off.example", resp.Storage[1].DomainName)
+		assert.False(t, resp.Storage[1].MailEnabled)
+		assert.Empty(t, resp.Storage[1].Email)
 	}
 	// Per-domain traffic: summed across windows, busiest first.
 	if assert.Len(t, resp.Traffic, 2) {

@@ -12,7 +12,7 @@
 // delivery_dsn_perm_fail. Do not add a chart for a name you have not seen
 // in mail_stats_samples.
 import { useMemo, useState } from "react";
-import { Alert, Card, Col, Radio, Row, Statistic, Table, Typography } from "antd";
+import { Alert, Card, Col, Radio, Row, Space, Statistic, Table, Tag, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -27,6 +27,10 @@ type MailStats = {
   storage: {
     username: string;
     domain_name: string;
+    // GH #1234: the drilldown is domain-anchored, so a domain with no mailboxes
+    // arrives as a single row with an empty email + 0 usage. mail_enabled tags
+    // the mail-off ones.
+    mail_enabled: boolean;
     email: string;
     usage_bytes: number;
     quota_bytes: number;
@@ -53,6 +57,22 @@ type DomainTraffic = {
   received: number;
   delivered: number;
   failed: number;
+};
+
+// Storage drilldown nodes (User → Domain → Mailbox), grouped client-side.
+type MailboxNode = MailStats["storage"][number];
+type StorageDomainNode = {
+  key: string;
+  domain: string;
+  usage: number;
+  mailEnabled: boolean;
+  boxes: MailboxNode[];
+};
+type StorageUserNode = {
+  key: string;
+  username: string;
+  usage: number;
+  domains: StorageDomainNode[];
 };
 
 const TRAFFIC_COLUMNS = [
@@ -123,17 +143,28 @@ export const MailStatsTab = () => {
   const s = stats.data;
 
   // Storage drilldown: rows grouped client-side User → Domain → Mailbox.
+  // GH #1234: the payload is domain-anchored, so a domain with no mailboxes
+  // arrives as one row with an empty email — keep the domain (tagged by
+  // mailEnabled) but don't push that placeholder as a mailbox leaf.
   const storageTree = useMemo(() => {
     const users = new Map<
       string,
-      { usage: number; domains: Map<string, { usage: number; boxes: MailStats["storage"] }> }
+      {
+        usage: number;
+        domains: Map<string, { usage: number; mailEnabled: boolean; boxes: MailStats["storage"] }>;
+      }
     >();
     for (const row of s?.storage ?? []) {
       const u = users.get(row.username) ?? { usage: 0, domains: new Map() };
       u.usage += row.usage_bytes;
-      const d = u.domains.get(row.domain_name) ?? { usage: 0, boxes: [] };
+      const d = u.domains.get(row.domain_name) ?? {
+        usage: 0,
+        mailEnabled: row.mail_enabled,
+        boxes: [],
+      };
       d.usage += row.usage_bytes;
-      d.boxes.push(row);
+      d.mailEnabled = row.mail_enabled;
+      if (row.email) d.boxes.push(row); // skip the empty-email domain placeholder
       u.domains.set(row.domain_name, d);
       users.set(row.username, u);
     }
@@ -145,6 +176,7 @@ export const MailStatsTab = () => {
         key: `${username}/${domain}`,
         domain,
         usage: d.usage,
+        mailEnabled: d.mailEnabled,
         boxes: d.boxes,
       })),
     }));
@@ -369,7 +401,7 @@ export const MailStatsTab = () => {
       </Card>
 
       <Card size="small" title="Storage drilldown" loading={stats.isLoading}>
-        <Table
+        <Table<StorageUserNode>
           size="small"
           rowKey="key"
           pagination={false}
@@ -385,13 +417,24 @@ export const MailStatsTab = () => {
           ]}
           expandable={{
             expandedRowRender: (user) => (
-              <Table
+              <Table<StorageDomainNode>
                 size="small"
                 rowKey="key"
                 pagination={false}
                 dataSource={user.domains}
                 columns={[
-                  { title: "Domain", dataIndex: "domain" },
+                  {
+                    title: "Domain",
+                    dataIndex: "domain",
+                    // GH #1234: mail-disabled domains now appear (0 usage); tag
+                    // them so they're not mistaken for empty mail consumers.
+                    render: (v: string, row: StorageDomainNode) => (
+                      <Space size={8}>
+                        <span>{v}</span>
+                        {!row.mailEnabled && <Tag>Mail off</Tag>}
+                      </Space>
+                    ),
+                  },
                   {
                     title: "Usage",
                     dataIndex: "usage",
@@ -400,8 +443,10 @@ export const MailStatsTab = () => {
                   },
                 ]}
                 expandable={{
+                  // No mailbox leaf to open for a mail-off / empty domain.
+                  rowExpandable: (dom) => dom.boxes.length > 0,
                   expandedRowRender: (dom) => (
-                    <Table
+                    <Table<MailboxNode>
                       size="small"
                       rowKey="email"
                       pagination={false}

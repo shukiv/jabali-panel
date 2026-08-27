@@ -22,13 +22,17 @@ type MailStatSample struct {
 func (MailStatSample) TableName() string { return "mail_stats_samples" }
 
 // MailboxStorageRow is one mailbox with its owner chain, for the
-// Global -> User -> Domain -> Mailbox storage drilldown.
+// Global -> User -> Domain -> Mailbox storage drilldown. GH #1234: the query is
+// domain-anchored (LEFT JOIN mailboxes), so a domain with no mailboxes — mail
+// disabled, or mail-enabled but empty — still yields a single row with an empty
+// Email and zero usage. MailEnabled lets the UI tag the mail-off ones.
 type MailboxStorageRow struct {
-	Username   string `gorm:"column:username"    json:"username"`
-	DomainName string `gorm:"column:domain_name" json:"domain_name"`
-	Email      string `gorm:"column:email"       json:"email"`
-	UsageBytes uint64 `gorm:"column:usage_bytes" json:"usage_bytes"`
-	QuotaBytes uint64 `gorm:"column:quota_bytes" json:"quota_bytes"`
+	Username    string `gorm:"column:username"     json:"username"`
+	DomainName  string `gorm:"column:domain_name"  json:"domain_name"`
+	MailEnabled bool   `gorm:"column:mail_enabled" json:"mail_enabled"`
+	Email       string `gorm:"column:email"        json:"email"`
+	UsageBytes  uint64 `gorm:"column:usage_bytes"  json:"usage_bytes"`
+	QuotaBytes  uint64 `gorm:"column:quota_bytes"  json:"quota_bytes"`
 }
 
 // DomainStatSample is one per-domain traffic delta point (GH #873 round 3).
@@ -222,13 +226,18 @@ func (r *mailStatsRepo) PruneDomain(ctx context.Context, olderThan time.Time) (i
 
 func (r *mailStatsRepo) StorageDrilldown(ctx context.Context) ([]MailboxStorageRow, error) {
 	var rows []MailboxStorageRow
+	// GH #1234: anchor on domains (LEFT JOIN mailboxes) so a domain with no
+	// mailboxes — mail disabled, or mail-enabled but empty — still returns a row
+	// (empty email, 0 usage) and shows up in the drilldown instead of vanishing.
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT u.username AS username, d.name AS domain_name,
-		       m.email_cached AS email, m.last_usage_bytes AS usage_bytes,
-		       m.quota_bytes AS quota_bytes
-		FROM mailboxes m
-		JOIN domains d ON d.id = m.domain_id
-		JOIN users   u ON u.id = d.user_id
+		       d.email_enabled AS mail_enabled,
+		       COALESCE(m.email_cached, '')    AS email,
+		       COALESCE(m.last_usage_bytes, 0) AS usage_bytes,
+		       COALESCE(m.quota_bytes, 0)      AS quota_bytes
+		FROM domains d
+		JOIN users     u ON u.id = d.user_id
+		LEFT JOIN mailboxes m ON m.domain_id = d.id
 		ORDER BY u.username, d.name, m.email_cached`).Scan(&rows).Error
 	return rows, err
 }
