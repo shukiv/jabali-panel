@@ -128,8 +128,11 @@ func TestRenameDBArtifacts_MariaDB_FullReprefix(t *testing.T) {
 	if c := agent.first("db_user.grant"); c == nil || c.params["db_name"] != "bob_wp_1" || c.params["db_user_name"] != "bob_app" {
 		t.Fatalf("db_user.grant: %+v", c)
 	}
-	if c := agent.first("db_user.revoke"); c == nil || c.params["db_name"] != "alice_wp_1" || c.params["db_user_name"] != "bob_app" {
-		t.Fatalf("db_user.revoke (stale): %+v", c)
+	// The revoke MUST carry the privilege list — the agent verb rejects a revoke
+	// with neither privileges nor grant_level (the bug the box drill caught).
+	if c := agent.first("db_user.revoke"); c == nil || c.params["db_name"] != "alice_wp_1" ||
+		c.params["db_user_name"] != "bob_app" || c.params["privileges"] == nil {
+		t.Fatalf("db_user.revoke (stale, with privileges): %+v", c)
 	}
 
 	// Shadow role renamed with the wildcard re-grant prefixes, row repointed.

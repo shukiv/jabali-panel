@@ -7,8 +7,12 @@ package userops
 // Order matters: databases first (the on-disk RENAME TABLE move), then DB users
 // (RENAME USER carries their grants — still on the OLD db names), then re-point
 // the per-DB grants onto the new names and REVOKE the stale ones, then the
-// mysqladmin/pgadmin shadow roles (rename + re-point the wildcard grant). Every
-// step is idempotent so a failure resumes on re-run.
+// mysqladmin/pgadmin shadow roles (rename + re-point the wildcard grant). Each
+// step skips work already done (rename verbs are idempotent), but note the
+// caller renames the OS account + panel username BEFORE this runs, so a failure
+// here leaves a partially re-prefixed tenant whose panel name is already the new
+// one — recovery is manual (the CLI can't be re-invoked with the old name). The
+// steps are ordered + logged so an operator can finish it by hand.
 //
 // This MOVES tenant data and BREAKS app configs (the DB name + user change) —
 // the caller warns the operator. v1 covers MariaDB base-table DBs + Postgres;
@@ -109,7 +113,7 @@ func renameUserDBArtifacts(ctx context.Context, d Deps, rd RenameDeps, target *m
 		}
 		if db.oldName != db.newName {
 			if _, err := d.Agent.Call(ctx, "db_user.revoke", map[string]any{
-				"db_name": db.oldName, "db_user_name": du.newName,
+				"db_name": db.oldName, "db_user_name": du.newName, "privileges": privs,
 			}); err != nil {
 				return fmt.Errorf("rename: revoke stale grant on %q: %w", db.oldName, err)
 			}
