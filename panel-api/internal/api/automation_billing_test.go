@@ -804,3 +804,8 @@ func TestAutomationCapabilities_BillingActionsAdvertised(t *testing.T) {
 		}
 	}
 }
+
+// GH #1238 stub.
+func (r *abUsers) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

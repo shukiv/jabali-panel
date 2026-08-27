@@ -72,7 +72,7 @@ func (f *fakeUsersRepo) CountAdmins(context.Context) (int64, error) {
 func (f *fakeUsersRepo) FindAdminsByEmail(context.Context) ([]*models.User, error) {
 	panic("FindAdminsByEmail not expected from middleware")
 }
-func (f *fakeUsersRepo) SetSuspended(context.Context, string, bool, string) error { return nil }
+func (f *fakeUsersRepo) SetSuspended(context.Context, string, bool, string) error    { return nil }
 func (f *fakeUsersRepo) SetSSHForwardingEnabled(context.Context, string, bool) error { return nil }
 func (f *fakeUsersRepo) Delete(context.Context, string) error {
 	panic("Delete not expected from middleware")
@@ -330,3 +330,8 @@ func TestRequireKratosSession_KratosUnreachable_Returns503(t *testing.T) {
 }
 
 func (r *fakeUsersRepo) UpdateUsername(context.Context, string, string) error { return nil }
+
+// GH #1238 stub.
+func (f *fakeUsersRepo) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

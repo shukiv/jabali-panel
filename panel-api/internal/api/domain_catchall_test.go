@@ -20,7 +20,10 @@ func buildCatchallRouter(dom *models.Domain) (*gin.Engine, *mockDomainRepo) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	v1 := r.Group("/api/v1")
-	v1.Use(func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: dom.UserID, IsAdmin: true}); c.Next() })
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: dom.UserID, IsAdmin: true})
+		c.Next()
+	})
 	repo := newMockDomainRepo()
 	repo.domains[dom.ID] = dom
 	RegisterDomainCatchallRoutes(v1, DomainCatchallHandlerConfig{Domains: repo})

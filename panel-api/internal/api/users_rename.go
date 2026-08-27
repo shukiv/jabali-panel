@@ -72,6 +72,10 @@ func (h *userHandler) rename(c *gin.Context) {
 	rd := userops.RenameDeps{
 		FtpAccounts: h.cfg.FtpAccounts,
 		PythonApps:  h.cfg.PythonApps,
+		// GH #1238: re-prefix the tenant's MariaDB artifacts on rename.
+		Databases:     h.cfg.Databases,
+		DatabaseUsers: h.cfg.DatabaseUsers,
+		DBUserGrants:  h.cfg.DBUserGrants,
 		// Reconciler nil: the periodic reconcile re-renders the owned domains
 		// (mirrors the CLI), keeping the HTTP request off a long re-render.
 	}

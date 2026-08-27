@@ -37,6 +37,8 @@ type UserHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Databases       repository.DatabaseRepository
 	DatabaseUsers   repository.DatabaseUserRepository
+	// DBUserGrants drives the GH #1238 grant re-point on rename.
+	DBUserGrants repository.DatabaseUserGrantRepository
 	// FtpAccounts is reaped on user delete (JAB-265). It's also the GH #1238
 	// rename preflight's refusal check (a tenant with FTP/SFTP subaccounts is
 	// refused in v1 — their jails are bind-mounted under the home).

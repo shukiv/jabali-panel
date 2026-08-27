@@ -24,6 +24,12 @@ type RenameDeps struct {
 	FtpAccounts repository.FtpAccountRepository
 	PythonApps  repository.PythonAppRepository
 	Reconciler  RenameReconciler
+	// GH #1238 DB re-prefix: when all three are wired, the rename also moves the
+	// tenant's databases / DB users / shadow roles onto the new prefix. Nil (dev
+	// / CLI-without-DB) skips the DB step.
+	Databases     repository.DatabaseRepository
+	DatabaseUsers repository.DatabaseUserRepository
+	DBUserGrants  repository.DatabaseUserGrantRepository
 }
 
 // RenameUser renames a tenant's Linux/login username in place (GH #1238).
@@ -85,6 +91,11 @@ func RenameUser(ctx context.Context, d Deps, rd RenameDeps, target *models.User,
 			return fmt.Errorf("rename: %q has %d Python app(s) — remove them first (v1 does not move their app roots)", old, len(apps))
 		}
 	}
+	// GH #1238: v1 re-prefixes MariaDB artifacts only. Refuse if the tenant has
+	// any PostgreSQL database / role — re-prefixing those is a follow-up.
+	if perr := refusePostgresArtifacts(ctx, rd, target, old); perr != nil {
+		return perr
+	}
 
 	// --- Rename the OS account on the box ---
 	uid := int(*target.LinuxUID)
@@ -109,6 +120,13 @@ func RenameUser(ctx context.Context, d Deps, rd RenameDeps, target *models.User,
 		if err := d.KratosClient.UpdateUsernameTrait(ctx, *target.KratosIdentityID, newName); err != nil {
 			logWarn(d, "rename: could not update the Kratos username trait (login identifier may lag until next set)", "user_id", target.ID, "err", err)
 		}
+	}
+
+	// --- GH #1238: re-prefix the tenant's DBs / DB users / shadow roles so a
+	// reused old username can't inherit them. Fatal-on-error so a partial move
+	// resumes on re-run (every step is idempotent). ---
+	if err := renameUserDBArtifacts(ctx, d, rd, target, old, newName); err != nil {
+		return err
 	}
 
 	// --- Reconcile owned domains so vhosts re-render under the new path/pool ---

@@ -18,6 +18,9 @@ type DatabaseRepository interface {
 	Create(ctx context.Context, d *models.Database) error
 	Delete(ctx context.Context, id string) error
 	ExistsByUserAndName(ctx context.Context, userID, name string) (bool, error)
+	// UpdateName renames the database row in place (GH #1238 DB re-prefix). The
+	// on-disk rename is done by the agent; this repoints the panel row.
+	UpdateName(ctx context.Context, id, name string) error
 }
 
 type databaseRepo struct{ db *gorm.DB }
@@ -113,6 +116,11 @@ func (r *databaseRepo) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *databaseRepo) UpdateName(ctx context.Context, id, name string) error {
+	return translate(r.db.WithContext(ctx).
+		Model(&models.Database{}).Where("id = ?", id).Update("name", name).Error)
 }
 
 func (r *databaseRepo) ExistsByUserAndName(ctx context.Context, userID, name string) (bool, error) {

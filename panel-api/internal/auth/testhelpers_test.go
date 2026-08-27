@@ -160,3 +160,8 @@ func seedUser(t *testing.T, users *fakeUserRepo, email, password string, admin b
 }
 
 func (r *fakeUserRepo) UpdateUsername(context.Context, string, string) error { return nil }
+
+// GH #1238 stub.
+func (f *fakeUserRepo) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

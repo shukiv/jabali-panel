@@ -189,3 +189,8 @@ func (u *userRepoAdapterForCronAdminTest) Delete(context.Context, string) error 
 func (r *userRepoAdapterForCronAdminTest) UpdateUsername(context.Context, string, string) error {
 	return nil
 }
+
+// GH #1238 stub.
+func (u *userRepoAdapterForCronAdminTest) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

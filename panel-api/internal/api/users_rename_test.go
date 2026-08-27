@@ -114,3 +114,8 @@ func TestRename_UserNotFound(t *testing.T) {
 	h.rename(c)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+// GH #1238 stub.
+func (r renameUsersRepo) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

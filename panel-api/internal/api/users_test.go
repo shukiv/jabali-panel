@@ -1161,3 +1161,8 @@ func TestUsers_Patch_MalformedEmailRejected(t *testing.T) {
 }
 
 func (r *memUserRepo) UpdateUsername(context.Context, string, string) error { return nil }
+
+// GH #1238 stub.
+func (m *memUserRepo) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

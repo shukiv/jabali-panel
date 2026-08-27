@@ -163,3 +163,5 @@ type okServerSettings struct {
 func (s okServerSettings) Get(_ context.Context) (*models.ServerSettings, error) {
 	return &models.ServerSettings{PostgresEnabled: s.enabled}, nil
 }
+
+func (f *fakeCreateDBUsers) UpdateUsername(context.Context, string, string) error { return nil }

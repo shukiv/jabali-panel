@@ -41,6 +41,9 @@ type UserRepository interface {
 	// Dedicated method: the Select-allowlist Update excludes username, so a
 	// full-model Update would silently drop the rename.
 	UpdateUsername(ctx context.Context, id string, username string) error
+	// UpdateShadowDBUsernames repoints the mysqladmin/pgadmin shadow-role names
+	// after a rename (GH #1238). A nil arg leaves that column untouched.
+	UpdateShadowDBUsernames(ctx context.Context, id string, mysqladmin, pgadmin *string) error
 	// LinkKratosIdentity writes kratos_identity_id on the row. Deliberately
 	// separate from Update — Update's column allowlist excludes this field so
 	// a profile-edit handler can't accidentally overwrite it, but the M20
@@ -180,6 +183,21 @@ func (r *userRepo) UpdateUsername(ctx context.Context, id string, username strin
 		Model(&models.User{}).
 		Where("id = ?", id).
 		Update("username", username).Error)
+}
+
+func (r *userRepo) UpdateShadowDBUsernames(ctx context.Context, id string, mysqladmin, pgadmin *string) error {
+	updates := map[string]interface{}{}
+	if mysqladmin != nil {
+		updates["mysqladmin_username"] = *mysqladmin
+	}
+	if pgadmin != nil {
+		updates["pgadmin_username"] = *pgadmin
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return translate(r.db.WithContext(ctx).
+		Model(&models.User{}).Where("id = ?", id).Updates(updates).Error)
 }
 
 func (r *userRepo) UpdateCLIPHPVersion(ctx context.Context, id string, version *string) error {

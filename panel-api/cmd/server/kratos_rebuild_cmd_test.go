@@ -375,3 +375,7 @@ func TestRebuildOne_ProbeNotFoundTriggersRebuild(t *testing.T) {
 }
 
 func (r *fakeRebuildUserRepo) UpdateUsername(context.Context, string, string) error { return nil }
+
+func (f *fakeRebuildUserRepo) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

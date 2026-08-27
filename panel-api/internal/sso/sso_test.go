@@ -193,3 +193,8 @@ func ptrString(s string) *string {
 }
 
 func (r *mockUsersForSSO) UpdateUsername(context.Context, string, string) error { return nil }
+
+// GH #1238 stub.
+func (m *mockUsersForSSO) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}

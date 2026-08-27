@@ -18,6 +18,8 @@ type DatabaseUserRepository interface {
 	Create(ctx context.Context, du *models.DatabaseUser) error
 	Delete(ctx context.Context, id string) error
 	UpdatePasswordHash(ctx context.Context, id string, hash string) error
+	// UpdateUsername renames the DB-user row in place (GH #1238 DB re-prefix).
+	UpdateUsername(ctx context.Context, id, username string) error
 	ExistsByUserAndUsername(ctx context.Context, userID string, username string) (bool, error)
 }
 
@@ -105,6 +107,10 @@ func (r *databaseUserRepo) Delete(ctx context.Context, id string) error {
 
 func (r *databaseUserRepo) UpdatePasswordHash(ctx context.Context, id string, hash string) error {
 	return r.db.WithContext(ctx).Model(&models.DatabaseUser{}).Where("id = ?", id).Update("password_hash", hash).Error
+}
+
+func (r *databaseUserRepo) UpdateUsername(ctx context.Context, id, username string) error {
+	return r.db.WithContext(ctx).Model(&models.DatabaseUser{}).Where("id = ?", id).Update("username", username).Error
 }
 
 func (r *databaseUserRepo) ExistsByUserAndUsername(ctx context.Context, userID string, username string) (bool, error) {

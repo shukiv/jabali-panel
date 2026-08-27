@@ -425,3 +425,10 @@ func TestValidate_OwnerMismatchRefused(t *testing.T) {
 }
 
 func (m *mockUserRepoValidate) UpdateUsername(context.Context, string, string) error { return nil }
+
+// GH #1238 stub.
+func (m *mockUserRepoValidate) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}
+
+func (m *mockDatabaseRepoValidate) UpdateName(context.Context, string, string) error { return nil }

@@ -805,3 +805,12 @@ func (f *pgUserFake) FindByID(_ context.Context, id string) (*models.DatabaseUse
 }
 
 func (r *mockUserRepo) UpdateUsername(context.Context, string, string) error { return nil }
+
+// GH #1238 stub.
+func (m *mockUserRepo) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}
+
+func (m *mockDatabaseRepo) UpdateName(context.Context, string, string) error { return nil }
+
+func (m *mockDatabaseUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

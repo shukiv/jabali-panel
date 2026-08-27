@@ -126,8 +126,14 @@ export const UserRenameAction = ({
               <b>Python apps</b> — remove those first.
             </li>
             <li>
-              Their <b>databases and DB users keep the old-username prefix</b> (they're
-              keyed internally by id, so they keep working). Mail is unaffected.
+              Their <b>MariaDB databases and DB users are re-prefixed</b> to the new
+              name. <b>You must update any app config</b> (e.g. wp-config.php) that
+              references the old database name or user — the panel can't rewrite app
+              files. Mail is unaffected.
+            </li>
+            <li>
+              Refused if the user has any <b>PostgreSQL</b> database or role
+              (re-prefixing those isn't supported yet).
             </li>
             <li>You'll be asked to re-authenticate the first time in a session.</li>
           </ul>

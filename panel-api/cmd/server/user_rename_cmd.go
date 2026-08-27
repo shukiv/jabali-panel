@@ -63,8 +63,8 @@ and DB SSO shadow roles keep the old-username prefix (the panel keys them by id)
 
 			if !yes {
 				ok, cerr := confirm(fmt.Sprintf(
-					"Rename user %q -> %q? This renames the Linux account, moves /home/%s -> /home/%s, and re-renders their sites.",
-					old, newName, old, newName))
+					"Rename user %q -> %q? This renames the Linux account, moves /home/%s -> /home/%s, re-renders their sites, and re-prefixes their MariaDB databases + DB users (%s_* -> %s_*). App config files (wp-config.php etc.) that reference the old database name/user must be updated by hand afterwards.",
+					old, newName, old, newName, old, newName))
 				if cerr != nil {
 					return cerr
 				}
@@ -77,6 +77,10 @@ and DB SSO shadow roles keep the old-username prefix (the panel keys them by id)
 			rd := userops.RenameDeps{
 				FtpAccounts: repository.NewFtpAccountRepository(sharedDB),
 				PythonApps:  pythonAppRepoFromDB(),
+				// GH #1238: re-prefix the tenant's MariaDB artifacts on rename.
+				Databases:     repository.NewDatabaseRepository(sharedDB),
+				DatabaseUsers: repository.NewDatabaseUserRepository(sharedDB),
+				DBUserGrants:  repository.NewDatabaseUserGrantRepository(sharedDB),
 				// Reconciler is nil: the CLI is a separate process, so the running
 				// panel's periodic reconcile re-renders the owned domains.
 			}
@@ -85,7 +89,7 @@ and DB SSO shadow roles keep the old-username prefix (the panel keys them by id)
 				return err
 			}
 			cliAuditOK(ctx, "user.rename", "user", target.ID, &target.ID)
-			fmt.Printf("Renamed %q -> %q.\nThe reconciler re-renders their sites within ~a minute; verify with a page load or `jabali domain list`.\n", old, newName)
+			fmt.Printf("Renamed %q -> %q.\nTheir MariaDB databases + DB users were re-prefixed to %s_*. Update any app config (wp-config.php etc.) that still points at the old database name/user.\nThe reconciler re-renders their sites within ~a minute; verify with a page load or `jabali domain list`.\n", old, newName, newName)
 			return nil
 		},
 	}

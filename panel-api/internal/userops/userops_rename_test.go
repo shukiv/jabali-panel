@@ -177,3 +177,8 @@ func TestRenameUser_AgentFailureStopsBeforeDB(t *testing.T) {
 		t.Error("DB username must NOT be updated when the agent rename failed")
 	}
 }
+
+// GH #1238 stub.
+func (f *renameUsers) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
+	return nil
+}
