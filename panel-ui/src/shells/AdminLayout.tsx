@@ -166,17 +166,21 @@ export function AdminLayout() {
               {menu}
             </div>
           </Sider>
-        ) : (
+        ) : drawerOpen ? (
           <Drawer
-            open={drawerOpen}
+            open
             onClose={() => setDrawerOpen(false)}
             placement="left"
             width={256}
             closable
             title={<JabaliTitle />}
-            // GH #1066: unmount the drawer portal on close so no residual
-            // full-viewport `position: fixed` .ant-drawer element is left in
-            // the DOM. See UserLayout for the reproduced detail.
+            // GH #1066: mount the nav Drawer only while open, so on dismiss it
+            // unmounts on the same tick — no leave animation holding AntD v6's
+            // residual full-viewport `position: fixed` .ant-drawer portal in
+            // the DOM (#1250), which also removes the ~1s that animation kept
+            // the mobile layout's bottom space reserved. Slide-in on open is
+            // preserved. destroyOnHidden stays as a belt-and-braces net.
+            // See UserLayout for the reproduced detail.
             destroyOnHidden
             styles={{
               body: { padding: 8, background: siderBg },
@@ -185,7 +189,7 @@ export function AdminLayout() {
           >
             {menu}
           </Drawer>
-        )}
+        ) : null}
         <Layout style={isDesktop ? { height: "100%", overflowY: "auto" } : undefined}>
           <Content
             style={{

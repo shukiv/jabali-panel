@@ -163,22 +163,22 @@ export function UserLayout() {
               {menu}
             </div>
           </Sider>
-        ) : (
+        ) : drawerOpen ? (
           <Drawer
-            open={drawerOpen}
+            open
             onClose={() => setDrawerOpen(false)}
             placement="left"
             width={256}
             closable
             title={<JabaliTitle />}
-            // GH #1066: AntD v6 leaves the .ant-drawer portal mounted after
-            // close — a full-viewport `position: fixed; inset: 0` element that
-            // lingers in the DOM. Reproduced on a mobile viewport: this element
-            // is present exactly in the state where the reporter sees the
-            // residual bottom bar (after opening the menu) and absent after a
-            // refresh (when there is no bar). destroyOnHidden makes rc-drawer
-            // return null once closed, unmounting the portal so no fixed
-            // element is left behind.
+            // GH #1066: mount the nav Drawer only while it's open. On dismiss it
+            // unmounts on the same tick, so there's no leave animation holding
+            // AntD v6's full-viewport `position: fixed; inset: 0` portal in the
+            // DOM — that lingering portal was the residual bottom bar (#1250),
+            // and the ~1s the exit animation kept it mounted was the remaining
+            // delay before the mobile layout reclaimed the space. The slide-in
+            // on open is preserved (appear motion still plays on mount).
+            // destroyOnHidden stays as a belt-and-braces net.
             destroyOnHidden
             styles={{
               body: { padding: 8, background: siderBg },
@@ -187,7 +187,7 @@ export function UserLayout() {
           >
             {menu}
           </Drawer>
-        )}
+        ) : null}
         <Layout>
           <Content
             style={{
