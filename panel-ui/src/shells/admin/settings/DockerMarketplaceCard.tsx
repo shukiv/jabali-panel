@@ -173,7 +173,15 @@ export function DockerMarketplaceCard() {
           "the Docker daemon — running containers briefly go down and previously pulled " +
           "images must be re-pulled. The tenant Docker Apps tab then appears for users. " +
           "This can take a few minutes.",
-        onOk: () => setForUsersFlag(true),
+        // GH #1236: do NOT return the promise — setForUsersFlag polls host state
+        // for up to 8 minutes, and AntD keeps the confirm modal's OK button
+        // spinning until an onOk promise resolves (looked like "spins forever
+        // until you refresh"). Close the modal immediately; progress then shows
+        // on the card's Switch (loading={forUsersBusy}) + busyLabel, matching the
+        // marketplace Enable toggle.
+        onOk: () => {
+          void setForUsersFlag(true);
+        },
       });
     } else {
       void setForUsersFlag(false);
