@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -217,9 +218,37 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 		"-U", shadow, "-d", tmpDB)
 	load.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
 	load.Env = append(os.Environ(), "PGPASSWORD="+pwd)
-	load.Stdin = f // escape-proof fd; nobody reads the inherited fd, not the path
-	if out, err := load.CombinedOutput(); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed (check the dump is a plain-SQL pg_dump): " + strings.TrimSpace(string(out))}
+
+	// Stream the dump through the ownership/privilege sanitizer (GH #1044) into
+	// psql's stdin via a pipe: a stock `pg_dump` carries `ALTER ... OWNER TO` /
+	// GRANT / SET SESSION AUTHORIZATION that the unprivileged shadow role can't
+	// replay ("must be able to SET ROLE ..."), which ON_ERROR_STOP turns into a
+	// whole-restore abort. psql (as `nobody`) reads the inherited pipe fd, never
+	// the dump path — the same escape-proof property as handing it the file fd,
+	// and the raw file is still only ever opened by root. The post-pass below
+	// re-establishes tenant ownership + panel-tracked grants, so nothing dropped
+	// here is lost.
+	pr, pw, perr := os.Pipe()
+	if perr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore pipe: " + perr.Error()}
+	}
+	load.Stdin = pr
+	var out bytes.Buffer
+	load.Stdout = &out
+	load.Stderr = &out
+	if err := load.Start(); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore start: " + err.Error()}
+	}
+	_ = pr.Close() // child holds its own copy; parent closes so psql sees EOF
+	sanErr := sanitizePgPlainDump(f, pw)
+	_ = pw.Close() // signal EOF to psql whatever the sanitize outcome
+	if waitErr := load.Wait(); waitErr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed (check the dump is a plain-SQL pg_dump): " + strings.TrimSpace(out.String())}
+	}
+	if sanErr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore stream: " + sanErr.Error()}
 	}
 
 	// (4) Superuser post-pass on the STAGING db — ownership + grants, none of it
