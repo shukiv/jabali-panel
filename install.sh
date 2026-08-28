@@ -2794,9 +2794,19 @@ install_python_apps_runtime() {
   # Installs the default python3 venv tooling + build toolchain so user
   # virtualenvs can compile C-extension wheels (psycopg2, cryptography, lxml).
   # Cheap + idempotent; the feature itself stays opt-in (python_apps_enabled).
+  #
+  # GH #1352: mysqlclient — the standard Django/Wagtail MySQL/MariaDB driver —
+  # ships NO Linux wheels, so it always builds from source and needs the MariaDB
+  # client dev headers + `mysql_config`. Since the panel ships MariaDB as the
+  # default DB, a tenant Python app talking to it is mainstream; without these
+  # the build dies with "OSError: mysql_config not found". default-libmysqlclient-dev
+  # Depends: (not Recommends) libmariadb-dev + libmariadb-dev-compat, so the
+  # mysql_config symlink comes in even under --no-install-recommends. pkg-config
+  # is what newer mysqlclient (2.2+) uses to locate the client library.
   _log "installing Python app runtime prerequisites (venv + build toolchain)"
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
     python3 python3-venv python3-dev build-essential libffi-dev libssl-dev \
+    default-libmysqlclient-dev pkg-config \
     >>"${LOG_FILE:-/dev/null}" 2>&1 || {
       _warn "Python app runtime prereqs failed to install — Python apps may not build until resolved"
       return 0
