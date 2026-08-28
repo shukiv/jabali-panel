@@ -90,6 +90,13 @@ type Reconciler struct {
 	queue chan string
 	// socketReady is a function that checks if a Unix socket is ready. Mockable for testing.
 	socketReady func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool
+	// readCertFile reads a cert file for the JAB-389 panel self-signed drift
+	// check. Mockable for tests (default os.ReadFile).
+	readCertFile func(string) ([]byte, error)
+	// panelSelfSignLastErr debounces JAB-389 self-signed regen dispatch
+	// warnings so a mid-rollout agent (missing ssl.panel.selfsign) does not
+	// log at Warn every tick.
+	panelSelfSignLastErr string
 	// paused is an atomic flag to pause reconciliation (for SSO key rotation)
 	paused atomic.Bool
 
@@ -493,6 +500,8 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 	}
 	// Initialize default socketReady function
 	r.socketReady = r.waitSocketReady
+	// JAB-389: default cert reader for the panel self-signed drift check.
+	r.readCertFile = os.ReadFile
 	return r
 }
 
