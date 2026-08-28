@@ -285,6 +285,13 @@ func (r *Reconciler) panelSelfSignedCertDrifted(certPath, hostname string) (bool
 			return true, "missing SAN " + need
 		}
 	}
+	// Expiry symmetry with the agent's no-churn check: an expired self-signed
+	// cert still covering the hostname must self-heal, else the reconciler
+	// would say "no drift" and never ask the agent to regenerate. The fresh
+	// cert passes this check, so there is no per-tick regen loop.
+	if !cert.NotAfter.After(time.Now()) {
+		return true, "cert expired"
+	}
 	return false, ""
 }
 

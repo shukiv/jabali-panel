@@ -159,3 +159,21 @@ func TestPanelSelfSignedDrift_MissingCertDispatches(t *testing.T) {
 		t.Fatalf("expected dispatch for missing cert, got %d", n)
 	}
 }
+
+
+func TestPanelSelfSignedDrift_ExpiredCoveringCertDispatches(t *testing.T) {
+	// Cert covers the FQDN but is expired → must self-heal (symmetry with the
+	// agent's no-churn expiry check).
+	pem := makeSelfSignPEM(t, panelSelfSignOrgMarker, "host.example.com",
+		[]string{"host.example.com", "mail.host.example.com", "localhost"}, time.Now().Add(-time.Hour))
+	fa := &fakeAgent{}
+	r := newSelfSignReconciler(fa, pem, nil)
+	row := &models.PanelCertificate{CertPEMPath: "/etc/jabali/tls/panel.crt"}
+	if drift, reason := r.panelSelfSignedCertDrifted(row.CertPEMPath, "host.example.com"); !drift {
+		t.Fatalf("expected drift for expired cert, reason=%q", reason)
+	}
+	r.reconcilePanelSelfSignedCert(context.Background(), row, "host.example.com", "")
+	if n, _ := countCalls(fa, "ssl.panel.selfsign"); n != 1 {
+		t.Fatalf("expected dispatch for expired cert, got %d", n)
+	}
+}
