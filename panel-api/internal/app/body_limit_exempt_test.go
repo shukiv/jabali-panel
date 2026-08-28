@@ -54,3 +54,43 @@ func TestBodyLimit_EngineWide413(t *testing.T) {
 		t.Fatalf("oversized JSON through engine: got %d, want 413", w.Code)
 	}
 }
+
+// TestBodyLimitExempt_UploadRoutesNotCapped is the reverse-direction guard the
+// TestBodyLimitExemptRoutes_ExistInRouteTable pinning test lacked: it proves
+// each upload-family route is ACTUALLY exempt, by pushing a >1 MiB body through
+// the real engine and asserting the global cap does not 413 it. The cap runs
+// pre-auth (see TestBodyLimit_EngineWide413), so an exempt route falls through
+// to auth/handler (401/403/404/400 — anything but 413); a route that slipped
+// out of bodyLimitExemptRoutes 413s here. GH #1044: the chunked DB restore
+// (`/databases/:id/restore-chunk`, 10 MiB chunks) and the #1184 admin File
+// Manager upload routes were missing and 413'd every chunk.
+func TestBodyLimitExempt_UploadRoutesNotCapped(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Auth.Kratos.PublicURL = "http://127.0.0.1:4433"
+	cfg.Auth.Kratos.AdminURL = "http://127.0.0.1:4434"
+	r := NewWithDeps(cfg, fullDeps())
+
+	// One concrete request path per exempt upload-family route (":id"/variant
+	// filled with a dummy segment so Gin resolves the template + FullPath).
+	paths := []string{
+		"/api/v1/files/upload",
+		"/api/v1/files/upload-chunk",
+		"/api/v1/files/write",
+		"/api/v1/databases/x/restore",
+		"/api/v1/databases/x/restore-chunk",
+		"/api/v1/admin/files/upload",
+		"/api/v1/admin/files/upload-chunk",
+		"/api/v1/admin/files/write",
+		"/api/v1/admin/migrations/x/tarball",
+	}
+	big := strings.Repeat("x", 2<<20) // 2 MiB, over the 1 MiB global cap
+	for _, p := range paths {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(big))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusRequestEntityTooLarge {
+			t.Errorf("%s 413'd a 2 MiB body — route is missing from bodyLimitExemptRoutes", p)
+		}
+	}
+}

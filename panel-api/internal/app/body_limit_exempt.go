@@ -20,6 +20,21 @@ var bodyLimitExemptRoutes = map[string]struct{}{
 	"POST /api/v1/files/write": {},
 	// Own cap: http.MaxBytesReader against upload_max_size_mb.
 	"POST /api/v1/databases/:id/restore": {},
+	// Own cap: io.LimitReader against upload_max_size_mb per chunk (GH #1044).
+	// The chunked DB restore (GH #1323) sends 10 MB chunks; without this
+	// exemption the 1 MB global cap 413s every chunk ("request body too
+	// large") before the handler's own LimitReader runs, so any dump above the
+	// 90 MB chunk threshold could never restore.
+	"POST /api/v1/databases/:id/restore-chunk": {},
+	// GH #1184 admin File Manager — the SAME handlers as the tenant /files
+	// mount (which is exempt above), re-mounted under /admin/files, so they
+	// carry the same own caps and need the same exemptions (GH #1044).
+	// Own cap: filesUploadSizeLimit (server_settings.upload_max_size_mb).
+	"POST /api/v1/admin/files/upload": {},
+	// Own cap: io.LimitReader against upload_max_size_mb per chunk.
+	"POST /api/v1/admin/files/upload-chunk": {},
+	// Own cap: filesUploadSizeLimit — Monaco editor saves whole files.
+	"POST /api/v1/admin/files/write": {},
 	// Own cap: http.MaxBytesReader against upload_max_size_mb.
 	"POST /api/v1/admin/migrations/:id/tarball": {},
 	// Own cap: http.MaxBytesReader against MaxLogoBytes.
