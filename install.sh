@@ -14174,16 +14174,29 @@ _install_bulwark_impersonate_secrets() {
     _die "Stalwart admin token missing at $stalwart_token_file — install_stalwart must run first"
   fi
 
-  local jwt_secret master_pw
+  local jwt_secret master_pw session_secret
   jwt_secret=$(cat "$jwt_secret_file")
   master_pw=$(cat "$stalwart_token_file")
+
+  # GH #1354: Bulwark's newer build reads SESSION_SECRET from the environment
+  # directly (it no longer resolves SESSION_SECRET_FILE on the session /
+  # impersonate path), so a webmail version bump broke "Login via Webmail"
+  # (GET /api/auth/impersonate → HTTP 500 "SESSION_SECRET not configured")
+  # even though bulwark-session.key was present and referenced. Publish the
+  # value into bulwark.env alongside the file ref so both old and new builds
+  # resolve it. The key is generated once (install_bulwark) and preserved.
+  local session_key_file=/etc/jabali-panel/bulwark-session.key
+  if [[ ! -s "$session_key_file" ]]; then
+    _die "Bulwark session key missing at $session_key_file — install_bulwark must run first"
+  fi
+  session_secret=$(cat "$session_key_file")
 
   # Rebuild bulwark.env in tmp: strip any prior M6.6 lines, append fresh.
   # Diff via sha256; restart only on real change to avoid 60s reconciler
   # spam when nothing changed (memory: feedback_per_tick_idempotent_loops).
   local tmp
   tmp=$(mktemp)
-  grep -v -E '^(BULWARK_JWT_AUTH_SECRET|BULWARK_STALWART_MASTER_USER|BULWARK_STALWART_MASTER_PASSWORD|BULWARK_JWT_AUTH_ISSUER)=' "$bulwark_env" > "$tmp" || true
+  grep -v -E '^(BULWARK_JWT_AUTH_SECRET|BULWARK_STALWART_MASTER_USER|BULWARK_STALWART_MASTER_PASSWORD|BULWARK_JWT_AUTH_ISSUER|SESSION_SECRET)=' "$bulwark_env" > "$tmp" || true
   # Trim trailing blank lines off the PRESERVED portion before appending. The
   # heredoc below opens with a blank separator and `grep -v` strips only the
   # managed KEYS, never blanks -- so every run left one more blank line sitting
@@ -14207,6 +14220,9 @@ BULWARK_JWT_AUTH_SECRET=${jwt_secret}
 BULWARK_STALWART_MASTER_USER=admin
 BULWARK_STALWART_MASTER_PASSWORD=${master_pw}
 BULWARK_JWT_AUTH_ISSUER=jabali-panel/webmail-sso
+# GH #1354: value form of the session secret (kept in lockstep with
+# SESSION_SECRET_FILE=/etc/jabali-panel/bulwark-session.key from the template).
+SESSION_SECRET=${session_secret}
 EOF
 
   # Login-form flags (Bulwark >=1.7.8, bulwarkmail/webmail#520). Unlike the
