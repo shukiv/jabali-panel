@@ -93,6 +93,7 @@ type Deps struct {
 	DNSRecords     repository.DNSRecordRepository
 	SSHKeys        repository.SSHKeyRepository
 	CronJobs       repository.CronJobRepository
+	FtpAccounts    repository.FtpAccountRepository
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
@@ -899,6 +900,7 @@ func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, lo
 		DNSRecords:     deps.DNSRecords,
 		SSHKeys:        deps.SSHKeys,
 		CronJobs:       deps.CronJobs,
+		FtpAccounts:    deps.FtpAccounts,
 		LimitOverrides: deps.LimitOverrides,
 		EgressPolicies: deps.EgressPolicies,
 		EgressRequests: deps.EgressRequests,

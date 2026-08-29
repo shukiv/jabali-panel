@@ -206,6 +206,23 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages)
 		out.Applied = applied
 		out.Warnings = warnings
+		// GH #1361: stage each FTP subaccount's captured /etc/shadow hash for
+		// the reconciler to apply when it recreates the account from the
+		// restored row (panel-side applyRestoreMetadata rebuilds the row after
+		// this call returns, so the files sit waiting — never a race). A bad
+		// row is skipped with a warning; the account still restores, it just
+		// needs a password reset.
+		if len(out.Metadata) > 0 {
+			var meta backup.AccountMetadata
+			if jerr := json.Unmarshal(out.Metadata, &meta); jerr == nil {
+				if staged, skipped := stageFtpRestoreCredentials(&meta, time.Now()); staged > 0 || len(skipped) > 0 {
+					out.Applied = append(out.Applied, fmt.Sprintf("ftp: staged %d subaccount password(s) for restore", staged))
+					for _, s := range skipped {
+						out.Warnings = append(out.Warnings, "ftp credential staging skipped "+s)
+					}
+				}
+			}
+		}
 		// Live apply succeeded for at least one stage — drop the
 		// staging tree so /var/lib/jabali-backups/restore-staging/
 		// doesn't accumulate per-job dirs. Recon mode (apply=false)

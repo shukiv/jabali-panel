@@ -1138,6 +1138,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DNSSECKeys:     deps.DNSSECKeys,
 				SSHKeys:        deps.SSHKeys,
 				CronJobs:       deps.CronJobs,
+				FtpAccounts:    deps.FtpAccounts,
 				LimitOverrides: deps.LimitOverrides,
 				KratosClient:   deps.KratosClient,
 				Log:            deps.Log,
@@ -1157,6 +1158,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Mailboxes:      deps.Mailboxes,
 				AppInstalls:    deps.WordPressInstalls,
 				DockerApps:     deps.DockerApps,
+				FtpAccounts:    deps.FtpAccounts,
 				DNSZones:       deps.DNSZones,
 				DNSRecords:     deps.DNSRecords,
 				// GH #454 Step 4: tenant scheduled-backup card. Schedules +

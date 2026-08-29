@@ -60,6 +60,13 @@ type AccountMetadata struct {
 	SSHKeys  []MetadataSSHKey  `json:"ssh_keys,omitempty"`
 	CronJobs []MetadataCronJob `json:"cron_jobs,omitempty"`
 
+	// FtpAccounts are the account's FTP/SFTP subaccount rows (GH #1361).
+	// Without these an account restore never recreates the subaccounts (the
+	// reconciler reprovisions the system user/jail/quota from the row). Each
+	// row's PasswordShadow is enriched agent-side at backup time (the panel
+	// can't read /etc/shadow) so a restore can preserve the login password.
+	FtpAccounts []MetadataFtpAccount `json:"ftp_accounts,omitempty"`
+
 	// User-level egress + limit overrides (M18 / M34).
 	EgressPolicy   *MetadataEgressPolicy   `json:"egress_policy,omitempty"`
 	EgressRequests []MetadataEgressRequest `json:"egress_requests,omitempty"`
@@ -347,6 +354,32 @@ type MetadataSSHKey struct {
 	PublicKey   string `json:"public_key"`
 	Fingerprint string `json:"fingerprint"`
 	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+// MetadataFtpAccount mirrors models.FtpAccount (GH #1361). The reconciler
+// reprovisions the system user/jail/quota from these fields, so UID + JailPath
+// + Isolated are preserved as-is (the uid is the row's identity and its owned
+// files carry it). PasswordShadow is the crypt hash from /etc/shadow, filled
+// agent-side at backup time (enrichFtpCredentials) — empty on the panel-built
+// bundle and on pre-#1361 snapshots.
+type MetadataFtpAccount struct {
+	ID           string  `json:"id"`
+	Username     string  `json:"username"`
+	HomePath     string  `json:"home_path"`
+	FTPAccess    bool    `json:"ftp_access"`
+	SFTPAccess   bool    `json:"sftp_access"`
+	WebDAVAccess bool    `json:"webdav_access"`
+	IsEnabled    bool    `json:"is_enabled"`
+	UID          *uint32 `json:"uid,omitempty"`
+	Isolated     bool    `json:"isolated"`
+	QuotaMB      uint32  `json:"quota_mb"`
+	JailPath     string  `json:"jail_path,omitempty"`
+	CreatedAt    string  `json:"created_at,omitempty"`
+	// PasswordShadow is the account's /etc/shadow crypt hash (field 2), used
+	// to restore the original login password. NEVER read/written by panel-api
+	// (it can't reach /etc/shadow); the agent fills it at backup and consumes
+	// it at restore. Never persisted to the panel DB.
+	PasswordShadow string `json:"password_shadow,omitempty"`
 }
 
 // MetadataCronJob mirrors models.CronJob.

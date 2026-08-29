@@ -1017,6 +1017,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		DNSRecords:     deps.DNSRecords,
 		SSHKeys:        deps.SSHKeys,
 		CronJobs:       deps.CronJobs,
+		FtpAccounts:    deps.FtpAccounts,
 		LimitOverrides: deps.LimitOverrides,
 		EgressPolicies: deps.UserEgressPolicies,
 		EgressRequests: deps.UserEgressRequests,

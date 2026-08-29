@@ -506,6 +506,12 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 		// so the operator sees it instead of a silently-incomplete "success".
 		st.Warnings = append(st.Warnings, kerr.Error())
 	}
+	// GH #1361: fill each FTP subaccount's /etc/shadow hash so a restore can
+	// preserve the login password (panel-api can't read shadow). Same
+	// best-effort posture as Kratos — a failure warns, never fails the stage.
+	if ferr := enrichFtpCredentials(req.Metadata); ferr != nil {
+		st.Warnings = append(st.Warnings, "ftp credentials: "+ferr.Error())
+	}
 	body, err := json.Marshal(req.Metadata)
 	if err != nil {
 		st.Status = backup.StageStatusFailed

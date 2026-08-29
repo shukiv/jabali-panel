@@ -45,6 +45,7 @@ type ApplyResult struct {
 	DockerApps     int
 	SSHKeys        int
 	CronJobs       int
+	FtpAccounts    int
 	Skipped        int
 	Errors         []string
 	// LoginRestored is true when the user's Kratos identity exists AND has a
@@ -490,6 +491,46 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				continue
 			}
 			r.CronJobs++
+		}
+	}
+
+	// 7b) FTP/SFTP subaccounts (GH #1361). Rebuild the row as-is: the
+	// reconciler reprovisions the system user/jail/quota from these fields on
+	// its next tick, reusing the stored UID (its owned files carry it) and
+	// JailPath. The login PASSWORD is NOT in the panel DB — the agent restores
+	// it into /etc/shadow from the metadata's PasswordShadow (see the agent
+	// restore staging path); without that the reconciler sets a throwaway and
+	// the tenant must reset. QuotaMB is restored verbatim (a restore onto a
+	// smaller package can overcommit the split — the reconciler's cap check is
+	// advisory here). Username embeds the SOURCE tenant prefix; a DR restore to
+	// a different target username is out of scope (the row is restored as-is).
+	if d.FtpAccounts != nil {
+		for _, a := range m.FtpAccounts {
+			row := &models.FtpAccount{
+				ID:           a.ID,
+				UserID:       m.User.ID,
+				Username:     a.Username,
+				HomePath:     a.HomePath,
+				FTPAccess:    a.FTPAccess,
+				SFTPAccess:   a.SFTPAccess,
+				WebDAVAccess: a.WebDAVAccess,
+				IsEnabled:    a.IsEnabled,
+				UID:          a.UID,
+				Isolated:     a.Isolated,
+				QuotaMB:      a.QuotaMB,
+				JailPath:     a.JailPath,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}
+			if err := d.FtpAccounts.Create(ctx, row); err != nil {
+				if errors.Is(err, repository.ErrConflict) {
+					r.Skipped++
+					continue
+				}
+				r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: create: %v", a.ID, err))
+				continue
+			}
+			r.FtpAccounts++
 		}
 	}
 

@@ -67,6 +67,7 @@ type BackupHandlerConfig struct {
 	DNSRecords     repository.DNSRecordRepository
 	SSHKeys        repository.SSHKeyRepository
 	CronJobs       repository.CronJobRepository
+	FtpAccounts    repository.FtpAccountRepository
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
@@ -1182,6 +1183,7 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 		PHPPoolIni:     h.cfg.PHPPoolIni,
 		SSHKeys:        h.cfg.SSHKeys,
 		CronJobs:       h.cfg.CronJobs,
+		FtpAccounts:    h.cfg.FtpAccounts,
 		Mailboxes:      h.cfg.Mailboxes,
 		Forwarders:     h.cfg.Forwarders,
 		Autoresponders: h.cfg.Autoresponders,
@@ -1229,7 +1231,7 @@ func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *m
 		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
-		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs,
+		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		Log: cfg.Log,
 	})
@@ -1404,6 +1406,7 @@ type MeBackupsHandlerConfig struct {
 	DNSRecords     repository.DNSRecordRepository
 	SSHKeys        repository.SSHKeyRepository
 	CronJobs       repository.CronJobRepository
+	FtpAccounts    repository.FtpAccountRepository
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
@@ -1479,7 +1482,7 @@ func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user
 		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
-		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs,
+		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		Log: cfg.Log,
 	})

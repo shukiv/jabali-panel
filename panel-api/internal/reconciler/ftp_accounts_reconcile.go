@@ -369,6 +369,12 @@ func (r *Reconciler) reconcileFtpTenant(ctx context.Context, tenant string, acct
 				"password":        pw,
 				"ftp_access":      want.FTPAccess,
 				"webdav_access":   want.WebDAVAccess,
+				// GH #1361: if an account restore staged this account's original
+				// /etc/shadow hash, the agent uses it instead of the throwaway
+				// above so the login password survives. No staged file (the
+				// normal drift-repair case) → the throwaway stands + a reset is
+				// required, exactly as before.
+				"prefer_restore_credential": true,
 			}
 			// GH #1145: an isolated row must be recreated ISOLATED, not as a
 			// legacy same-uid alias — otherwise a DR restore silently drops the

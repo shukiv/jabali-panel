@@ -54,6 +54,7 @@ type Deps struct {
 	DNSRecords     repository.DNSRecordRepository
 	SSHKeys        repository.SSHKeyRepository
 	CronJobs       repository.CronJobRepository
+	FtpAccounts    repository.FtpAccountRepository
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
@@ -419,6 +420,24 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				ID: j.ID, Name: j.Name, Command: j.Command, Schedule: j.Schedule,
 				Enabled:   j.Enabled,
 				CreatedAt: timeRFC(j.CreatedAt),
+			})
+		}
+	}
+	if d.FtpAccounts != nil {
+		// GH #1361: capture the FTP/SFTP subaccount rows. PasswordShadow is
+		// left empty here — the panel can't read /etc/shadow; the agent fills
+		// it in enrichFtpCredentials before the metadata snapshot is written.
+		accts, ferr := d.FtpAccounts.ListByUserID(ctx, user.ID)
+		if ferr != nil {
+			d.warn("metadata: list ftp accounts", ferr, "user_id", user.ID)
+		}
+		for _, a := range accts {
+			m.FtpAccounts = append(m.FtpAccounts, internalbackup.MetadataFtpAccount{
+				ID: a.ID, Username: a.Username, HomePath: a.HomePath,
+				FTPAccess: a.FTPAccess, SFTPAccess: a.SFTPAccess, WebDAVAccess: a.WebDAVAccess,
+				IsEnabled: a.IsEnabled, UID: a.UID, Isolated: a.Isolated,
+				QuotaMB: a.QuotaMB, JailPath: a.JailPath,
+				CreatedAt: timeRFC(a.CreatedAt),
 			})
 		}
 	}
