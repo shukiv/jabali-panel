@@ -35,6 +35,8 @@ func RegisterPHPUserTuningRoutes(g *gin.RouterGroup, cfg PHPUserTuningHandlerCon
 	g.GET("/me/php-pool-tuning", h.tuning)
 	g.PUT("/me/php-performance-mode", h.setMode)
 	g.PUT("/me/php-pool-tuning", h.setTuning)
+	// GH #1332 item 10: reset a version's OPcache (restarts that pool's master).
+	g.POST("/me/php-opcache/reset", h.resetOpcache)
 }
 
 // poolTuningRow is one of the caller's PHP pools, with its current per-version
@@ -237,6 +239,49 @@ func (h *phpUserTuningHandler) setTuning(c *gin.Context) {
 	}
 	pool.SlowlogTimeoutSeconds = req.SlowlogTimeoutSeconds
 	h.applyToPool(c, pool, req.PmMode, mc, st, mn, mx, mr, tt, idle, "custom")
+}
+
+type opcacheResetRequest struct {
+	PHPVersion string `json:"php_version"`
+}
+
+// resetOpcache restarts the master of the caller's pool for a given PHP version,
+// dropping (and so resetting) its OPcache SHM (GH #1332 item 10). Version-scoped
+// because OPcache is per-pool (per-user, per-version): the reset affects every
+// site the caller runs on that version, which the UI states plainly.
+func (h *phpUserTuningHandler) resetOpcache(c *gin.Context) {
+	user, pkg := h.ownerPackage(c)
+	if user == nil || pkg == nil || !pkg.FpmUserCanEdit {
+		c.JSON(http.StatusForbidden, gin.H{"error": "fpm_editing_not_allowed"})
+		return
+	}
+	var req opcacheResetRequest
+	_ = c.ShouldBindJSON(&req) // php_version optional; empty => default pool
+	pool, ok := h.userPool(c, user.ID, req.PHPVersion)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pool_not_found"})
+		return
+	}
+	// Resolve the slug exactly as reconcilePHPPoolViaAgent does: the earliest
+	// pool (ListByUserID[0]) is the default, whose slug == username.
+	isDefault := true
+	if list, err := h.cfg.PHPPools.ListByUserID(c.Request.Context(), user.ID); err == nil && len(list) > 0 {
+		isDefault = list[0].ID == pool.ID
+	}
+	username := ""
+	if user.Username != nil {
+		username = *user.Username
+	}
+	slug := models.PoolSlug(username, pool.PHPVersion, isDefault)
+	c.Set("audit_target", "php_opcache:"+slug)
+	if _, err := h.cfg.Agent.Call(c.Request.Context(), "php.opcache.reset", map[string]any{
+		"username": username,
+		"slug":     slug,
+	}); err != nil {
+		respondAgentErr(c, "opcache_reset_failed", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"restarted": true, "php_version": pool.PHPVersion})
 }
 
 func (h *phpUserTuningHandler) applyToPool(c *gin.Context, pool *models.PHPPool, pmMode string, mc, st, mn, mx, mr, tt, idle uint32, mode string) {

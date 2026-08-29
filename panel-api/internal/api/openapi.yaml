@@ -3788,6 +3788,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/php-opcache/reset:
+    post:
+      tags: [Me]
+      summary: Reset OPcache for a PHP version (restarts that pool's FPM master)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/server-capabilities:
     get:
       tags: [Me]

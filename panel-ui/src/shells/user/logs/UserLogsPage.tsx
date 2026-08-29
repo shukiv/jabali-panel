@@ -55,6 +55,18 @@ export const UserLogsPage = () => {
 
   const domains: Domain[] = domainsData?.data || [];
 
+  // GH #1332 item 7: the per-domain PHP Settings page links here with
+  // ?domain=<id> to jump straight to that site's logs. Filter to it (and offer
+  // a one-click "show all") when present; unknown/foreign ids just fall through
+  // to the full list since the table is already scoped to the caller's domains.
+  const focusDomainId = searchParams.get("domain");
+  const shownDomains =
+    focusDomainId && domains.some((d) => d.id === focusDomainId)
+      ? domains.filter((d) => d.id === focusDomainId)
+      : domains;
+  const isFilteredToDomain =
+    !!focusDomainId && shownDomains.length < domains.length;
+
   const openStream = async (logType: LogType, domainId: string) => {
     try {
       const response = await apiClient.post("/logs/access", {
@@ -119,6 +131,11 @@ export const UserLogsPage = () => {
   const domainLogsTab = (
     <>
       <Space style={{ marginBottom: 16, width: "100%", justifyContent: "flex-end" }}>
+        {isFilteredToDomain && (
+          <Button onClick={() => setSearchParams({}, { replace: true })}>
+            Show all domains
+          </Button>
+        )}
         <Button
           type="primary"
           icon={<ReloadOutlined />}
@@ -130,7 +147,7 @@ export const UserLogsPage = () => {
       <Card>
         <Table
           columns={columns}
-          dataSource={domains}
+          dataSource={shownDomains}
           rowKey="id"
           loading={isLoading}
           pagination={false}
