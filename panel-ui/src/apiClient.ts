@@ -301,10 +301,18 @@ export async function restoreDatabaseUpload(
 
 // GH #1323: chunked restore upload. Cloudflare's Free plan rejects any single
 // request body over 100 MB, so a large dump 413s at the edge regardless of the
-// panel's own cap. Above this threshold we upload the dump as sequential 10 MB
+// panel's own cap. Above the threshold we upload the dump as sequential
 // octet-stream chunks (like the File Manager), reassembled server-side, so no
-// single request approaches 100 MB. Small dumps keep the one-shot multipart path.
-const RESTORE_CHUNK_SIZE = 10 * 1024 * 1024;
+// single request reaches 100 MB. Small dumps keep the one-shot multipart path.
+//
+// GH #1044: chunks are raw octet-stream bodies (no base64/multipart inflation),
+// the panel nginx allows 10 GB, and the server streams each chunk straight to
+// disk — so the only ceiling is Cloudflare's 100 MB. 80 MB keeps a comfortable
+// ~20 MB margin under that while cutting the request count ~8x vs the old 10 MB
+// (a 2.7 GB dump drops from ~270 requests to ~34), which matters a lot on fast
+// links where per-request latency dominated. Note it stays below the 90 MB
+// single-shot threshold, which already sends bigger single requests via CF.
+const RESTORE_CHUNK_SIZE = 80 * 1024 * 1024;
 const RESTORE_CHUNK_THRESHOLD = 90 * 1024 * 1024;
 
 function lsGet(k: string): string | null {
