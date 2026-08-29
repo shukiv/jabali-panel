@@ -75,6 +75,52 @@ func timeRFC(t interface{ Format(string) string }) string {
 	return t.Format("2006-01-02T15:04:05Z")
 }
 
+// metadataDockerRow maps a docker_apps row (+ its published ports) to the
+// backup metadata shape. serverLevel is threaded from the caller — it is
+// NOT derivable from the row here (a.UserID) alone in a way Apply can trust,
+// so we record it explicitly.
+func (d Deps) metadataDockerRow(ctx context.Context, a *models.DockerApp, serverLevel bool) internalbackup.MetadataDockerApp {
+	row := internalbackup.MetadataDockerApp{
+		ID: a.ID, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
+		Name: a.Name, CatalogVersion: a.CatalogVersion,
+		ImageSHA: a.ImageSHA, Status: a.Status, UpdateMode: a.UpdateMode,
+		CPULimit: a.CPULimit, MemoryLimit: a.MemoryLimit, PIDsLimit: a.PIDsLimit,
+		CreatedAt: timeRFC(a.CreatedAt), ServerLevel: serverLevel,
+	}
+	if ports, perr := d.DockerApps.ListPortsForApp(ctx, a.ID); perr == nil {
+		for _, p := range ports {
+			row.Ports = append(row.Ports, internalbackup.MetadataDockerAppPort{
+				ID: p.ID, PortName: p.PortName, ContainerPort: p.ContainerPort,
+				BindInterface: p.BindInterface, HostPort: p.HostPort,
+				Protocol: p.Protocol, ReverseProxy: p.ReverseProxy, Enabled: p.Enabled,
+			})
+		}
+	} else {
+		d.warn("metadata: list docker app ports", perr, "app_id", a.ID)
+	}
+	return row
+}
+
+// serverLevelDockerApps returns the live (non-deleted) admin / server-level
+// docker apps — UserID NULL (M48). Derived from ListAll + filter rather than
+// a new repo method so the DockerAppRepository interface (and its mocks)
+// stays put. Errors warn + yield nothing, matching the tenant path.
+func (d Deps) serverLevelDockerApps(ctx context.Context) []*models.DockerApp {
+	all, err := d.DockerApps.ListAll(ctx)
+	if err != nil {
+		d.warn("metadata: list all docker apps (server-level)", err)
+		return nil
+	}
+	out := make([]*models.DockerApp, 0, len(all))
+	for _, a := range all {
+		if a == nil || a.UserID != nil || a.Status == models.DockerAppStatusDeleted {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 // Build returns the populated AccountMetadata bundle for the given
 // user. Non-nil result even on partial failures.
 func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.AccountMetadata {
@@ -342,25 +388,17 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			d.warn("metadata: list docker apps", err, "user_id", user.ID)
 		}
 		for _, a := range apps {
-			row := internalbackup.MetadataDockerApp{
-				ID: a.ID, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
-				Name: a.Name, CatalogVersion: a.CatalogVersion,
-				ImageSHA: a.ImageSHA, Status: a.Status, UpdateMode: a.UpdateMode,
-				CPULimit: a.CPULimit, MemoryLimit: a.MemoryLimit, PIDsLimit: a.PIDsLimit,
-				CreatedAt: timeRFC(a.CreatedAt),
+			m.DockerApps = append(m.DockerApps, d.metadataDockerRow(ctx, a, false))
+		}
+		// Admin / server-level apps (models.DockerApp.UserID NULL, M48) have
+		// no tenant account, so account backups never carried them (GH #1360)
+		// — the only cover was a full system backup. Fold them into an admin
+		// account's backup so the ordinary per-account restore rebuilds them
+		// too. serverLevel=true keeps Apply from re-owning them to the admin.
+		if user.IsAdmin {
+			for _, a := range d.serverLevelDockerApps(ctx) {
+				m.DockerApps = append(m.DockerApps, d.metadataDockerRow(ctx, a, true))
 			}
-			if ports, perr := d.DockerApps.ListPortsForApp(ctx, a.ID); perr == nil {
-				for _, p := range ports {
-					row.Ports = append(row.Ports, internalbackup.MetadataDockerAppPort{
-						ID: p.ID, PortName: p.PortName, ContainerPort: p.ContainerPort,
-						BindInterface: p.BindInterface, HostPort: p.HostPort,
-						Protocol: p.Protocol, ReverseProxy: p.ReverseProxy, Enabled: p.Enabled,
-					})
-				}
-			} else {
-				d.warn("metadata: list docker app ports", perr, "app_id", a.ID)
-			}
-			m.DockerApps = append(m.DockerApps, row)
 		}
 	}
 

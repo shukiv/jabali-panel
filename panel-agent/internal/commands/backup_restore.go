@@ -249,6 +249,24 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 //
 // stageResults carries the per-stage materialization outcome from the
 // caller; we only apply stages that materialized OK.
+// materializedStages reports, per manifest-stage index, whether that stage's
+// snapshot materialized OK and is therefore safe to apply. stageResults is
+// built one-per-manifest-stage in manifest order by the stage walk, so it
+// aligns by index with manifestStages. Indexing (rather than keying by
+// stage Name) is deliberate: docker/db fan out multiple stages sharing one
+// Name, and a name-keyed lookup would collapse them and drop good stages on a
+// single same-named failure (GH #1360). A short/misaligned stageResults slice
+// leaves the trailing stages false (not applied) — fail closed.
+func materializedStages(manifestStages []backup.ManifestStage, stageResults []backupRestoreStage) []bool {
+	ok := make([]bool, len(manifestStages))
+	for i := range manifestStages {
+		if i < len(stageResults) && stageResults[i].Status == backup.StageStatusOK {
+			ok[i] = true
+		}
+	}
+	return ok
+}
+
 func applyAccountRestore(
 	ctx context.Context,
 	stagingRoot, username string,
@@ -256,10 +274,17 @@ func applyAccountRestore(
 	manifestStages []backup.ManifestStage,
 	stageResults []backupRestoreStage,
 ) ([]string, []string) {
-	statusOf := map[string]string{}
-	for _, sr := range stageResults {
-		statusOf[sr.Name] = sr.Status
-	}
+	// Per-stage materialization gate, indexed — NOT keyed by stage Name.
+	// Docker and DB fan out one ManifestStage per app / per database, and
+	// EVERY one of them carries the same Name ("docker" / "db") — see
+	// backup_create.go runDockerStage / the db stage. A name-keyed map
+	// collapses those N statuses to whichever same-named stage happened to
+	// land last, so a single later failure (or "source missing") would skip
+	// EVERY docker app or database, including the ones that materialized
+	// fine — the account comes back with its data silently dropped (GH
+	// #1360). out.Stages is appended one-per-manifest-stage in manifest
+	// order by the caller's stage-walk, so index i aligns exactly.
+	applicable := materializedStages(manifestStages, stageResults)
 	var applied, warnings []string
 	if username == "" {
 		warnings = append(warnings,
@@ -322,8 +347,8 @@ func applyAccountRestore(
 	uid, _ := strconv.Atoi(u.Uid)
 	gid, _ := strconv.Atoi(u.Gid)
 
-	for _, st := range manifestStages {
-		if statusOf[st.Name] != backup.StageStatusOK {
+	for i, st := range manifestStages {
+		if !applicable[i] {
 			continue
 		}
 		switch st.Name {

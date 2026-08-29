@@ -406,9 +406,18 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// stage=docker restore (#1017); without this row the app is orphaned on disk.
 	if d.DockerApps != nil {
 		for _, a := range m.DockerApps {
-			uid := m.User.ID
+			// Server-level apps (GH #1360) restore with UserID NULL so they
+			// stay admin/server-level; tenant apps are (re)owned by the
+			// account being restored. Re-owning a server-level app to the
+			// admin would wrongly subject it to tenant validation + slice
+			// scoping on the next reconcile.
+			var owner *string
+			if !a.ServerLevel {
+				uid := m.User.ID
+				owner = &uid
+			}
 			row := &models.DockerApp{
-				ID: a.ID, UserID: &uid, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
+				ID: a.ID, UserID: owner, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
 				Name: a.Name, CatalogVersion: a.CatalogVersion, ImageSHA: a.ImageSHA,
 				Status: a.Status, UpdateMode: a.UpdateMode,
 				CPULimit: a.CPULimit, MemoryLimit: a.MemoryLimit, PIDsLimit: a.PIDsLimit,

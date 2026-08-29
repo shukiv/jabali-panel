@@ -769,7 +769,7 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		"databases":          dbs,
 		"databases_postgres": pgDbs,
 		"mailboxes":          mbs,
-		"docker_apps":        userDockerApps(callCtx, s.deps, user.ID, logger),
+		"docker_apps":        userDockerApps(callCtx, s.deps, user.ID, user.IsAdmin, logger),
 		"content":            content,
 		"metadata":           meta,
 		"schedule_id":        scheduleID,
@@ -935,7 +935,7 @@ func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, lo
 // userDockerApps returns the slugs of the account's docker apps. Their
 // data trees live outside the home, so the agent has to be told about
 // them explicitly or the scheduled backup omits the app (GH #954).
-func userDockerApps(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
+func userDockerApps(ctx context.Context, deps Deps, userID string, isAdmin bool, logger *slog.Logger) []string {
 	if deps.DockerApps == nil {
 		return nil
 	}
@@ -959,6 +959,23 @@ func userDockerApps(ctx context.Context, deps Deps, userID string, logger *slog.
 			continue
 		}
 		out = append(out, slug)
+	}
+	// GH #1360: a scheduled admin account backup also covers server-level
+	// docker apps (UserID NULL), whose only prior cover was a system backup.
+	if isAdmin {
+		all, aerr := deps.DockerApps.ListAll(ctx)
+		if aerr != nil {
+			logger.Warn("list server-level docker apps for backup failed", "err", aerr)
+		} else {
+			for _, r := range all {
+				if r == nil || r.UserID != nil || r.Status == models.DockerAppStatusDeleted {
+					continue
+				}
+				if slug := r.EffectiveSlug(); slug != "" {
+					out = append(out, slug)
+				}
+			}
+		}
 	}
 	return out
 }

@@ -501,7 +501,7 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 			"databases":          dbs,
 			"databases_postgres": pgDbs,
 			"mailboxes":          mbs,
-			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID),
+			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID, user.IsAdmin),
 			"content":            req.Content,
 			"folders":            req.Folders,
 			"compression":        req.Compression,
@@ -1281,7 +1281,7 @@ func (cfg BackupHandlerConfig) allUserDatabasesByEngine(ctx context.Context, use
 // Nil repo (older wiring, or a deployment without the docker surface)
 // yields no slugs and the stage records "no docker apps", which is the
 // same outcome as an account that has none.
-func (cfg BackupHandlerConfig) allUserDockerApps(ctx context.Context, userID string) []string {
+func (cfg BackupHandlerConfig) allUserDockerApps(ctx context.Context, userID string, isAdmin bool) []string {
 	if cfg.DockerApps == nil {
 		return nil
 	}
@@ -1306,7 +1306,36 @@ func (cfg BackupHandlerConfig) allUserDockerApps(ctx context.Context, userID str
 		}
 		out = append(out, slug)
 	}
+	// GH #1360: an admin account also carries the server-level docker apps
+	// (UserID NULL) so their data trees ride the stage=docker snapshot.
+	if isAdmin {
+		if extra, serr := serverLevelDockerSlugs(ctx, cfg.DockerApps); serr != nil {
+			cfg.logErr("list server-level docker apps for backup", serr)
+		} else {
+			out = append(out, extra...)
+		}
+	}
 	return out
+}
+
+// serverLevelDockerSlugs returns the EffectiveSlug of every live admin /
+// server-level docker app (models.DockerApp.UserID NULL, M48). Derived from
+// ListAll + filter so the repo interface (and its mocks) stays put.
+func serverLevelDockerSlugs(ctx context.Context, repo repository.DockerAppRepository) ([]string, error) {
+	all, err := repo.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0)
+	for _, r := range all {
+		if r == nil || r.UserID != nil || r.Status == models.DockerAppStatusDeleted {
+			continue
+		}
+		if slug := r.EffectiveSlug(); slug != "" {
+			out = append(out, slug)
+		}
+	}
+	return out, nil
 }
 
 // allUserMailboxes returns every mailbox EmailCached for a user, by
@@ -1405,7 +1434,7 @@ type MeBackupsHandlerConfig struct {
 
 // allUserDockerApps mirrors BackupHandlerConfig.allUserDockerApps for the
 // tenant's own backup path.
-func (cfg MeBackupsHandlerConfig) allUserDockerApps(ctx context.Context, userID string) []string {
+func (cfg MeBackupsHandlerConfig) allUserDockerApps(ctx context.Context, userID string, isAdmin bool) []string {
 	if cfg.DockerApps == nil {
 		return nil
 	}
@@ -1429,6 +1458,15 @@ func (cfg MeBackupsHandlerConfig) allUserDockerApps(ctx context.Context, userID 
 			continue
 		}
 		out = append(out, slug)
+	}
+	// GH #1360: an admin using the self-backup path also carries the
+	// server-level docker apps (UserID NULL) — see BackupHandlerConfig.
+	if isAdmin {
+		if extra, serr := serverLevelDockerSlugs(ctx, cfg.DockerApps); serr != nil {
+			cfg.logErr("list server-level docker apps for backup", serr)
+		} else {
+			out = append(out, extra...)
+		}
 	}
 	return out
 }
@@ -1870,7 +1908,7 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			"databases":          dbs,
 			"databases_postgres": pgDbs,
 			"mailboxes":          mbs,
-			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID),
+			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID, user.IsAdmin),
 			"content":            req.Content,
 			"folders":            req.Folders,
 			"compression":        req.Compression,

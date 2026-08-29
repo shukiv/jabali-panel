@@ -316,6 +316,13 @@ type MetadataDockerApp struct {
 	MemoryLimit    *string `json:"memory_limit,omitempty"`
 	PIDsLimit      *int    `json:"pids_limit,omitempty"`
 	CreatedAt      string  `json:"created_at,omitempty"`
+	// ServerLevel marks an admin / server-level app (models.DockerApp.UserID
+	// NULL, M48). These have no tenant account, so account backups omitted
+	// them (GH #1360); an admin's account backup now carries them, and Apply
+	// must rebuild the row with UserID left NULL to keep it server-level
+	// rather than re-owning it to the admin. Absent on tenant apps and on
+	// pre-#1360 snapshots (defaults false → tenant).
+	ServerLevel bool `json:"server_level,omitempty"`
 	// Ports are the published-port rows (host_port pins the reverse-proxy
 	// target the migrated domain's proxy_pass points at).
 	Ports []MetadataDockerAppPort `json:"ports,omitempty"`
