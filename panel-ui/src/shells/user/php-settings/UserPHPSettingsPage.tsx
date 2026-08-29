@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Tabs, Alert, Button, Card, Form, Row, Col, Select, Space, Spin, Typography } from "antd";
+import { Tabs, Alert, Button, Card, Form, Row, Col, Select, Space, Spin, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -24,6 +24,10 @@ type DomainPHPSettings = {
   php_max_input_vars?: number | null;
   php_max_execution_time?: number | null;
   php_max_input_time?: number | null;
+  // GH #1332 per-domain runtime directives.
+  php_display_errors?: boolean | null;
+  php_error_reporting?: number | null;
+  php_timezone?: string | null;
 };
 
 type PHPSettingsFormData = {
@@ -34,6 +38,9 @@ type PHPSettingsFormData = {
   php_max_input_vars?: number | null;
   php_max_execution_time?: number | null;
   php_max_input_time?: number | null;
+  php_display_errors?: boolean | null;
+  php_error_reporting?: number | null;
+  php_timezone?: string | null;
 };
 
 const MEMORY_LIMIT_OPTIONS = [
@@ -93,6 +100,53 @@ const MAX_INPUT_TIME_OPTIONS = [
   { label: "60s", value: 60 },
   { label: "120s", value: 120 },
   { label: "300s", value: 300 },
+];
+
+// GH #1332 per-domain runtime directives. display_errors is pinned Off on every
+// PHP vhost by the agent, so "Use pool default" and "Off" are the same effect —
+// both keep errors hidden; "On" surfaces them for this domain only.
+const DISPLAY_ERRORS_OPTIONS = [
+  { label: "On (show errors)", value: true },
+  { label: "Off", value: false },
+];
+
+// error_reporting bitmask presets. Production (22527) = E_ALL minus notices,
+// deprecations and strict; matches the php.ini-production default. All (32767)
+// = E_ALL (php.ini-development).
+const ERROR_REPORTING_OPTIONS = [
+  { label: "Use pool default", value: null },
+  { label: "None (report nothing)", value: 0 },
+  { label: "Production (errors + warnings)", value: 22527 },
+  { label: "All (development)", value: 32767 },
+];
+
+// A curated set of common IANA zones. The server validates any value against
+// the tz database, so this is a convenience list, not the limit.
+const COMMON_TIMEZONES = [
+  "UTC",
+  "Africa/Johannesburg",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "America/New_York",
+  "America/Sao_Paulo",
+  "Asia/Dubai",
+  "Asia/Jerusalem",
+  "Asia/Kolkata",
+  "Asia/Shanghai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "Europe/Berlin",
+  "Europe/Istanbul",
+  "Europe/London",
+  "Europe/Madrid",
+  "Europe/Moscow",
+  "Europe/Paris",
+  "Pacific/Auckland",
+];
+const TIMEZONE_OPTIONS = [
+  { label: "Use pool default", value: null as string | null },
+  ...COMMON_TIMEZONES.map((z) => ({ label: z, value: z as string | null })),
 ];
 
 export function UserPHPSettingsPage() {
@@ -225,6 +279,9 @@ export function UserPHPSettingsPage() {
           php_max_input_vars: resp.data.php_max_input_vars,
           php_max_execution_time: resp.data.php_max_execution_time,
           php_max_input_time: resp.data.php_max_input_time,
+          php_display_errors: resp.data.php_display_errors,
+          php_error_reporting: resp.data.php_error_reporting,
+          php_timezone: resp.data.php_timezone,
         });
       } catch (err) {
         feedback.message.error("Failed to load PHP settings");
@@ -246,6 +303,10 @@ export function UserPHPSettingsPage() {
         php_max_input_vars: values.php_max_input_vars,
         php_max_execution_time: values.php_max_execution_time,
         php_max_input_time: values.php_max_input_time,
+        // undefined (never set / cleared) -> null so the API clears the override.
+        php_display_errors: values.php_display_errors ?? null,
+        php_error_reporting: values.php_error_reporting ?? null,
+        php_timezone: values.php_timezone ?? null,
       });
       feedback.message.success("PHP settings updated successfully");
       // Reload settings to confirm
@@ -274,7 +335,27 @@ export function UserPHPSettingsPage() {
     "php_max_input_vars",
     "php_max_execution_time",
     "php_max_input_time",
+    "php_display_errors",
+    "php_error_reporting",
+    "php_timezone",
   ];
+
+  // GH #1332 item 6: a small tag on each field showing whether it is a custom
+  // override or falls back to the pool default. Reflects the last-saved state
+  // (phpSettings), refreshed after every save.
+  const fieldSet = (v: unknown) => v !== null && v !== undefined;
+  const overrideLabel = (text: string, overridden: boolean) => (
+    <Space size={6}>
+      {text}
+      {overridden ? (
+        <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+          Custom
+        </Tag>
+      ) : (
+        <Tag style={{ marginInlineEnd: 0 }}>Pool default</Tag>
+      )}
+    </Space>
+  );
 
   return (
     // GH #1332 item 1: the page was clamped to 800px and centred, unlike every
@@ -385,7 +466,10 @@ export function UserPHPSettingsPage() {
                   <Row gutter={[16, 16]}>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label={t("userphpsettingspage.memory_limit")}
+                        label={overrideLabel(
+                          t("userphpsettingspage.memory_limit"),
+                          fieldSet(phpSettings?.php_memory_limit),
+                        )}
                         name="php_memory_limit"
                       >
                         <Select
@@ -397,7 +481,10 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label={t("userphpsettingspage.upload_max_file_size")}
+                        label={overrideLabel(
+                          t("userphpsettingspage.upload_max_file_size"),
+                          fieldSet(phpSettings?.php_upload_max_filesize),
+                        )}
                         name="php_upload_max_filesize"
                       >
                         <Select
@@ -409,7 +496,10 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label={t("userphpsettingspage.post_max_size")}
+                        label={overrideLabel(
+                          t("userphpsettingspage.post_max_size"),
+                          fieldSet(phpSettings?.php_post_max_size),
+                        )}
                         name="php_post_max_size"
                       >
                         <Select
@@ -421,7 +511,10 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label={t("userphpsettingspage.max_input_variables")}
+                        label={overrideLabel(
+                          t("userphpsettingspage.max_input_variables"),
+                          fieldSet(phpSettings?.php_max_input_vars),
+                        )}
                         name="php_max_input_vars"
                       >
                         <Select
@@ -437,7 +530,10 @@ export function UserPHPSettingsPage() {
                   <Row gutter={[16, 16]}>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label={t("userphpsettingspage.max_execution_time")}
+                        label={overrideLabel(
+                          t("userphpsettingspage.max_execution_time"),
+                          fieldSet(phpSettings?.php_max_execution_time),
+                        )}
                         name="php_max_execution_time"
                       >
                         <Select
@@ -449,13 +545,79 @@ export function UserPHPSettingsPage() {
                     </Col>
                     <Col xs={24} sm={12}>
                       <Form.Item
-                        label={t("userphpsettingspage.max_input_time")}
+                        label={overrideLabel(
+                          t("userphpsettingspage.max_input_time"),
+                          fieldSet(phpSettings?.php_max_input_time),
+                        )}
                         name="php_max_input_time"
                       >
                         <Select
                           placeholder={t("userphpsettingspage.use_pool_default")}
                           allowClear
                           options={MAX_INPUT_TIME_OPTIONS}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+
+                  <Typography.Title level={5}>
+                    Error Handling &amp; Runtime
+                  </Typography.Title>
+                  <Typography.Paragraph
+                    type="secondary"
+                    style={{ marginTop: -4 }}
+                  >
+                    These apply to this domain across all its PHP versions.
+                    Turn <strong>Display errors</strong> on only for
+                    development — it prints PHP errors to visitors.
+                  </Typography.Paragraph>
+                  <Row gutter={[16, 16]}>
+                    <Col xs={24} sm={12}>
+                      <Form.Item
+                        label={overrideLabel(
+                          "Display errors",
+                          fieldSet(phpSettings?.php_display_errors),
+                        )}
+                        name="php_display_errors"
+                        extra="Shows PHP errors in the page output. Keep off on public/production sites."
+                      >
+                        <Select
+                          placeholder="Use pool default (off)"
+                          allowClear
+                          options={DISPLAY_ERRORS_OPTIONS}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item
+                        label={overrideLabel(
+                          "Error reporting",
+                          fieldSet(phpSettings?.php_error_reporting),
+                        )}
+                        name="php_error_reporting"
+                      >
+                        <Select
+                          placeholder={t("userphpsettingspage.use_pool_default")}
+                          allowClear
+                          options={ERROR_REPORTING_OPTIONS}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item
+                        label={overrideLabel(
+                          "Timezone",
+                          fieldSet(phpSettings?.php_timezone),
+                        )}
+                        name="php_timezone"
+                        extra="date.timezone for this domain's PHP."
+                      >
+                        <Select
+                          showSearch
+                          placeholder={t("userphpsettingspage.use_pool_default")}
+                          allowClear
+                          optionFilterProp="label"
+                          options={TIMEZONE_OPTIONS}
                         />
                       </Form.Item>
                     </Col>

@@ -551,71 +551,95 @@ func TestDomainCreateHandler_RuleDirectivesIntegration(t *testing.T) {
 // TestBuildPHPValueParam verifies the buildPHPValueParam helper correctly formats
 // INI overrides into fastcgi_param PHP_VALUE format.
 func TestBuildPHPValueParam(t *testing.T) {
+	er := func(n int) *int { return &n }
 	tests := []struct {
 		name           string
+		hasPHP         bool
 		memLimit       string
 		uploadMax      string
 		postMax        string
 		maxInputVars   int
 		maxExecTime    int
 		maxInputTime   int
+		displayErrors  bool
+		errorReporting *int
+		timezone       string
 		expectedOutput string
 	}{
 		{
-			name:           "no overrides",
-			memLimit:       "",
-			uploadMax:      "",
-			postMax:        "",
-			maxInputVars:   0,
-			maxExecTime:    0,
-			maxInputTime:   0,
+			// GH #1332: a PHP domain ALWAYS pins display_errors=Off (info-disclosure
+			// guard against PHP_VALUE bleeding between a user's domains on a reused
+			// FPM worker), even with no other overrides.
+			name:           "no overrides pins display_errors off",
+			hasPHP:         true,
+			expectedOutput: "display_errors=Off",
+		},
+		{
+			name:           "non-PHP domain emits nothing",
+			hasPHP:         false,
+			memLimit:       "256M",
+			displayErrors:  true,
 			expectedOutput: "",
 		},
 		{
 			name:           "single string override",
+			hasPHP:         true,
 			memLimit:       "256M",
-			uploadMax:      "",
-			postMax:        "",
-			maxInputVars:   0,
-			maxExecTime:    0,
-			maxInputTime:   0,
-			expectedOutput: "memory_limit=256M",
+			expectedOutput: "display_errors=Off\nmemory_limit=256M",
 		},
 		{
 			name:           "single int override",
-			memLimit:       "",
-			uploadMax:      "",
-			postMax:        "",
+			hasPHP:         true,
 			maxInputVars:   1000,
-			maxExecTime:    0,
-			maxInputTime:   0,
-			expectedOutput: "max_input_vars=1000",
+			expectedOutput: "display_errors=Off\nmax_input_vars=1000",
 		},
 		{
 			name:           "multiple overrides",
+			hasPHP:         true,
 			memLimit:       "512M",
 			uploadMax:      "100M",
 			postMax:        "100M",
 			maxInputVars:   5000,
 			maxExecTime:    300,
 			maxInputTime:   60,
-			expectedOutput: "memory_limit=512M\nupload_max_filesize=100M\npost_max_size=100M\nmax_input_vars=5000\nmax_execution_time=300\nmax_input_time=60",
+			expectedOutput: "display_errors=Off\nmemory_limit=512M\nupload_max_filesize=100M\npost_max_size=100M\nmax_input_vars=5000\nmax_execution_time=300\nmax_input_time=60",
 		},
 		{
 			name:           "zero int values are skipped",
+			hasPHP:         true,
 			memLimit:       "256M",
 			uploadMax:      "50M",
-			postMax:        "",
-			maxInputVars:   0,
-			maxExecTime:    0,
 			maxInputTime:   30,
-			expectedOutput: "memory_limit=256M\nupload_max_filesize=50M\nmax_input_time=30",
+			expectedOutput: "display_errors=Off\nmemory_limit=256M\nupload_max_filesize=50M\nmax_input_time=30",
+		},
+		{
+			name:           "display_errors on plus runtime directives",
+			hasPHP:         true,
+			displayErrors:  true,
+			errorReporting: er(22527),
+			timezone:       "Europe/Berlin",
+			expectedOutput: "display_errors=On\nerror_reporting=22527\ndate.timezone=Europe/Berlin",
+		},
+		{
+			// error_reporting=0 (report nothing) is meaningful; a non-nil pointer
+			// must emit even though the value is zero.
+			name:           "error_reporting zero still emits",
+			hasPHP:         true,
+			errorReporting: er(0),
+			expectedOutput: "display_errors=Off\nerror_reporting=0",
+		},
+		{
+			// A timezone that isn't a plain tz identifier is dropped agent-side.
+			name:           "malformed timezone dropped",
+			hasPHP:         true,
+			timezone:       "Europe/Berlin\ninjected=1",
+			expectedOutput: "display_errors=Off",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildPHPValueParam(tt.memLimit, tt.uploadMax, tt.postMax, tt.maxInputVars, tt.maxExecTime, tt.maxInputTime)
+			result := buildPHPValueParam(tt.hasPHP, tt.memLimit, tt.uploadMax, tt.postMax, tt.maxInputVars, tt.maxExecTime, tt.maxInputTime, tt.displayErrors, tt.errorReporting, tt.timezone)
 			assert.Equal(t, tt.expectedOutput, result)
 		})
 	}
@@ -718,7 +742,7 @@ func TestBuildPHPValueParam_InjectionAttempts(t *testing.T) {
 			// will emit it inside nginx double-quotes, which is safe.
 			// The API layer (panel-api) validates the input, so the agent
 			// can assume it's already safe.
-			result := buildPHPValueParam(tt.memLimit, "", "", 0, 0, 0)
+			result := buildPHPValueParam(true, tt.memLimit, "", "", 0, 0, 0, false, nil, "")
 			assert.NotEmpty(t, result)
 			// The agent doesn't sanitize; the API does.
 			// This test just verifies buildPHPValueParam passes through

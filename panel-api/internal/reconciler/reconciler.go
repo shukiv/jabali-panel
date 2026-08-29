@@ -1918,6 +1918,18 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	if domain.PHPMaxInputTime != nil {
 		params["php_max_input_time"] = *domain.PHPMaxInputTime
 	}
+	// GH #1332 per-domain runtime directives. display_errors is only sent when
+	// the owner opted in (true); the agent otherwise pins it Off on every PHP
+	// vhost, so a nil/false override needs no param.
+	if domain.PHPDisplayErrors != nil && *domain.PHPDisplayErrors {
+		params["php_display_errors"] = true
+	}
+	if domain.PHPErrorReporting != nil {
+		params["php_error_reporting"] = *domain.PHPErrorReporting
+	}
+	if domain.PHPTimezone != nil {
+		params["php_timezone"] = *domain.PHPTimezone
+	}
 
 	cust := ""
 	if domain.NginxCustomDirectives != nil {

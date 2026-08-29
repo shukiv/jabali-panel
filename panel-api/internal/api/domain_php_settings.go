@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -42,11 +43,16 @@ type getDomainPHPSettingsResponse struct {
 	PHPMaxInputVars      *int    `json:"php_max_input_vars,omitempty"`
 	PHPMaxExecutionTime  *int    `json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime      *int    `json:"php_max_input_time,omitempty"`
+	// GH #1332 per-domain runtime directives.
+	PHPDisplayErrors  *bool   `json:"php_display_errors,omitempty"`
+	PHPErrorReporting *int    `json:"php_error_reporting,omitempty"`
+	PHPTimezone       *string `json:"php_timezone,omitempty"`
 }
 
-// updateDomainPHPSettingsRequest mirrors the six overridable fields
-// plus an optional PHPVersion change. NULL values clear the override.
-// PHPVersion, if set, updates the DOMAIN OWNER's pool (one pool per
+// updateDomainPHPSettingsRequest mirrors the overridable fields plus an optional
+// PHPVersion change. NULL values clear the override. The client is expected to
+// send the full set on each PATCH (the UI does) — an omitted field is nil, which
+// clears it. PHPVersion, if set, updates the DOMAIN OWNER's pool (one pool per
 // user, per ADR-0023) — it applies to every domain that user owns.
 type updateDomainPHPSettingsRequest struct {
 	PHPVersion           *string `json:"php_version"`
@@ -56,12 +62,46 @@ type updateDomainPHPSettingsRequest struct {
 	PHPMaxInputVars      *int    `json:"php_max_input_vars"`
 	PHPMaxExecutionTime  *int    `json:"php_max_execution_time"`
 	PHPMaxInputTime      *int    `json:"php_max_input_time"`
+	// GH #1332 per-domain runtime directives.
+	PHPDisplayErrors  *bool   `json:"php_display_errors"`
+	PHPErrorReporting *int    `json:"php_error_reporting"`
+	PHPTimezone       *string `json:"php_timezone"`
 }
 
 // regexes for input validation
 var (
 	regexSizeParam = regexp.MustCompile(`^(\d{1,8})([KMG]?)$`)
+	// regexTimezone bounds a date.timezone identifier to plain tz-database
+	// characters before it is handed to time.LoadLocation — keeps anything
+	// with a newline/quote out of the fastcgi_param PHP_VALUE line the agent
+	// renders (GH #1332). Must stay in step with phpTimezoneRE in the agent.
+	regexTimezone = regexp.MustCompile(`^[A-Za-z0-9_+/-]{1,64}$`)
 )
+
+// phpErrorReportingMax is E_ALL in PHP 8. error_reporting is a bitmask, so any
+// value in [0, 32767] is a legal combination (0 = report nothing).
+const phpErrorReportingMax = 32767
+
+// validateErrorReporting bounds the error_reporting bitmask to [0, E_ALL].
+func validateErrorReporting(v int) error {
+	if v < 0 || v > phpErrorReportingMax {
+		return errInvalidPHPSetting("error_reporting out of range (0..32767)")
+	}
+	return nil
+}
+
+// validateTimezone accepts only a real tz-database identifier. Character-class
+// first (cheap + injection guard), then time.LoadLocation confirms PHP will
+// accept it (both read the same IANA tz data).
+func validateTimezone(s string) error {
+	if !regexTimezone.MatchString(s) {
+		return errInvalidPHPSetting("invalid timezone format")
+	}
+	if _, err := time.LoadLocation(s); err != nil {
+		return errInvalidPHPSetting("unknown timezone")
+	}
+	return nil
+}
 
 // validateSizeParam validates memory_limit, upload_max_filesize, post_max_size.
 // Regex: ^\d+[KMG]?$ (case-insensitive), max 8 chars total, no special characters.
@@ -125,6 +165,9 @@ func (h *domainPHPSettingsHandler) get(c *gin.Context) {
 		PHPMaxInputVars:      dom.PHPMaxInputVars,
 		PHPMaxExecutionTime:  dom.PHPMaxExecutionTime,
 		PHPMaxInputTime:      dom.PHPMaxInputTime,
+		PHPDisplayErrors:     dom.PHPDisplayErrors,
+		PHPErrorReporting:    dom.PHPErrorReporting,
+		PHPTimezone:          dom.PHPTimezone,
 	}
 
 	// Resolve the effective PHP version. If the domain is bound to a
@@ -194,6 +237,18 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 			return
 		}
 	}
+	if req.PHPErrorReporting != nil {
+		if err := validateErrorReporting(*req.PHPErrorReporting); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if req.PHPTimezone != nil {
+		if err := validateTimezone(*req.PHPTimezone); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	if req.PHPVersion != nil {
 		if !isVersionSupported(*req.PHPVersion) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_php_version"})
@@ -229,6 +284,9 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		MaxInputVars:      req.PHPMaxInputVars,
 		MaxExecutionTime:  req.PHPMaxExecutionTime,
 		MaxInputTime:      req.PHPMaxInputTime,
+		DisplayErrors:     req.PHPDisplayErrors,
+		ErrorReporting:    req.PHPErrorReporting,
+		Timezone:          req.PHPTimezone,
 	}
 
 	if err := h.cfg.Domains.UpdatePHPSettings(ctx, domainID, settings); err != nil {

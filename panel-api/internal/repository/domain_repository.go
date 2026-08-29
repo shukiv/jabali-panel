@@ -57,9 +57,11 @@ type DomainRepository interface {
 	// mutations must only come from the dedicated bind/unbind handlers,
 	// not from generic domain PATCH.
 	SetPHPPoolID(ctx context.Context, id string, poolID *string) error
-	// UpdatePHPSettings atomically updates the six per-domain PHP INI override
-	// columns. NULL values explicitly clear the override. This is a dedicated
-	// method because the columns are not in Update()'s allowlist.
+	// UpdatePHPSettings atomically updates the per-domain PHP INI override
+	// columns (the six resource/execution limits plus the GH #1332 runtime
+	// directives display_errors/error_reporting/timezone). NULL values
+	// explicitly clear the override. This is a dedicated method because the
+	// columns are not in Update()'s allowlist.
 	UpdatePHPSettings(ctx context.Context, id string, settings DomainPHPSettings) error
 	// UpdateEmailState writes the four M6 email columns (email_enabled,
 	// dkim_selector, dkim_public_key, email_enabled_at) in one go. Dedicated
@@ -194,6 +196,10 @@ type DomainPHPSettings struct {
 	MaxInputVars      *int    `json:"php_max_input_vars,omitempty"`
 	MaxExecutionTime  *int    `json:"php_max_execution_time,omitempty"`
 	MaxInputTime      *int    `json:"php_max_input_time,omitempty"`
+	// GH #1332 per-domain runtime directives (same NULL = pool-default rule).
+	DisplayErrors  *bool   `json:"php_display_errors,omitempty"`
+	ErrorReporting *int    `json:"php_error_reporting,omitempty"`
+	Timezone       *string `json:"php_timezone,omitempty"`
 }
 
 type domainRepo struct{ db *gorm.DB }
@@ -506,6 +512,10 @@ func (r *domainRepo) UpdatePHPSettings(ctx context.Context, id string, settings 
 			"php_max_input_vars":      settings.MaxInputVars,
 			"php_max_execution_time":  settings.MaxExecutionTime,
 			"php_max_input_time":      settings.MaxInputTime,
+			// GH #1332 — a nil pointer writes NULL (clears the override).
+			"php_display_errors":  settings.DisplayErrors,
+			"php_error_reporting": settings.ErrorReporting,
+			"php_timezone":        settings.Timezone,
 		})
 	if res.Error != nil {
 		return translate(res.Error)

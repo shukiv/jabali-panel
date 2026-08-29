@@ -263,6 +263,15 @@ type Domain struct {
 	PHPMaxExecutionTime  *int    `gorm:"type:int unsigned" json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime      *int    `gorm:"type:int unsigned" json:"php_max_input_time,omitempty"`
 
+	// GH #1332: per-domain runtime directives, same PHP_VALUE mechanism, all
+	// NULL = use pool default. PHPDisplayErrors is pinned on every PHP vhost
+	// by the agent (default Off) so an "On" override on one domain can't bleed
+	// onto a sibling on the same per-user pool. PHPErrorReporting is an int
+	// bitmask (0 = report nothing). PHPTimezone is a tz-database identifier.
+	PHPDisplayErrors  *bool   `gorm:"type:tinyint(1)" json:"php_display_errors,omitempty"`
+	PHPErrorReporting *int    `gorm:"type:int" json:"php_error_reporting,omitempty"`
+	PHPTimezone       *string `gorm:"type:varchar(64)" json:"php_timezone,omitempty"`
+
 	// M18: per-domain HTTP rate/conn limits. Zero = unlimited (no
 	// nginx directive emitted). RateLimitRPS is requests-per-SECOND
 	// as seen by the reconciler; the vhost renderer converts to

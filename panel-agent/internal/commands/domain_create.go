@@ -105,6 +105,13 @@ type domainCreateParams struct {
 	PHPMaxInputVars      int    `json:"php_max_input_vars,omitempty"`
 	PHPMaxExecutionTime  int    `json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime      int    `json:"php_max_input_time,omitempty"`
+	// GH #1332 per-domain runtime directives. PHPDisplayErrors is a plain bool:
+	// absent/false => the safe default (display_errors=Off, always pinned — see
+	// buildPHPValueParam). PHPErrorReporting is a *int bitmask (nil => not set;
+	// 0 is a meaningful "report nothing"). PHPTimezone "" => not set.
+	PHPDisplayErrors  bool   `json:"php_display_errors,omitempty"`
+	PHPErrorReporting *int   `json:"php_error_reporting,omitempty"`
+	PHPTimezone       string `json:"php_timezone,omitempty"`
 	// M18 per-domain HTTP limits. DomainID is required when either
 	// RateLimitRPS or ConnectionLimit is set so the zone-name tag
 	// matches the declaration in 00-jabali-ratelimits.conf. All three
@@ -802,10 +809,32 @@ func pathsUnderHome(username, docRoot string) []string {
 	return paths
 }
 
-// buildPHPValueParam assembles a fastcgi_param PHP_VALUE directive from per-domain INI overrides.
-// Returns empty string if all overrides are empty/zero. Format: key1=val1\nkey2=val2\n
-func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxExecTime, maxInputTime int) string {
+// phpTimezoneRE is a defense-in-depth guard on the per-domain date.timezone
+// value before it is rendered into the PHP_VALUE line (which joins directives
+// with "\n"). panel-api already validates against the tz database, but a value
+// that isn't a plain tz identifier is dropped here rather than risk injecting a
+// directive. Covers "Area/City", "UTC", "Etc/GMT+5", etc.
+var phpTimezoneRE = regexp.MustCompile(`^[A-Za-z0-9_+/-]{1,64}$`)
+
+// buildPHPValueParam assembles a fastcgi_param PHP_VALUE directive from per-domain
+// INI overrides. Returns empty string for a non-PHP domain (no PHP_VALUE line).
+// For a PHP domain it ALWAYS emits display_errors (GH #1332): a value set via
+// PHP_VALUE sticks on the reused FPM worker and would otherwise bleed into a
+// sibling domain on the same per-user pool that sets none — display_errors
+// leaking is information disclosure (box-drilled on .60). Default Off pins it
+// safely and neutralizes any error_reporting/date.timezone bleed too.
+// Format: key1=val1\nkey2=val2.
+func buildPHPValueParam(hasPHP bool, memLimit, uploadMax, postMax string, maxInputVars, maxExecTime, maxInputTime int, displayErrors bool, errorReporting *int, timezone string) string {
+	if !hasPHP {
+		return ""
+	}
 	var parts []string
+	// Always pinned — see the function comment (GH #1332). Default Off.
+	if displayErrors {
+		parts = append(parts, "display_errors=On")
+	} else {
+		parts = append(parts, "display_errors=Off")
+	}
 	if memLimit != "" {
 		parts = append(parts, "memory_limit="+memLimit)
 	}
@@ -824,8 +853,13 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 	if maxInputTime > 0 {
 		parts = append(parts, "max_input_time="+strconv.Itoa(maxInputTime))
 	}
-	if len(parts) == 0 {
-		return ""
+	// error_reporting is an int bitmask; 0 (report nothing) is meaningful, so a
+	// non-nil pointer is the emit gate, not >0. strconv.Itoa keeps it injection-free.
+	if errorReporting != nil {
+		parts = append(parts, "error_reporting="+strconv.Itoa(*errorReporting))
+	}
+	if timezone != "" && phpTimezoneRE.MatchString(timezone) {
+		parts = append(parts, "date.timezone="+timezone)
 	}
 	return strings.Join(parts, "\n")
 }
@@ -985,7 +1019,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -1102,7 +1136,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPMaxInputVars:            phpMaxInputVars,
 		PHPMaxExecutionTime:        phpMaxExecTime,
 		PHPMaxInputTime:            phpMaxInputTime,
-		PHPValueParam:              buildPHPValueParam(phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime),
+		PHPValueParam:              buildPHPValueParam(hasPHP, phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime, phpDisplayErrors, phpErrorReporting, phpTimezone),
 		ListenIPv4:                 listenIPv4,
 		ListenIPv6:                 listenIPv6,
 		InterceptErrors:            interceptErrors,
@@ -1366,7 +1400,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// panel always sends the field; writeVhost still forces it false if the
 	// cert file turns out to be missing on disk (#213).
 	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
