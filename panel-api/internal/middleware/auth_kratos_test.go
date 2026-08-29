@@ -59,6 +59,8 @@ func (f *fakeUsersRepo) Update(context.Context, *models.User) error {
 	panic("Update not expected from middleware")
 }
 
+func (f *fakeUsersRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+
 func (f *fakeUsersRepo) UpdateCLIPHPVersion(context.Context, string, *string) error { return nil }
 func (f *fakeUsersRepo) LinkKratosIdentity(context.Context, string, string) error {
 	panic("LinkKratosIdentity not expected from middleware")

@@ -34,6 +34,7 @@ func TestUserRepository_Create(t *testing.T) {
 			u.Email,
 			nil, // username
 			nil, // cli_php_version (GH #256)
+			nil, // composer_channel (GH #1332 item 13)
 			"",  // name_first default
 			"",  // name_last default
 			u.PasswordHash,

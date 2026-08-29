@@ -2219,40 +2219,72 @@ EARLYDNS
   # Install Composer from getcomposer.org using the configured PHP binary.
   # Do NOT use the Debian `composer` apt package — it depends on php-cli meta
   # which re-installs php8.4-cli and fights our update-alternatives settings.
-  if ! command -v composer >/dev/null 2>&1; then
-    _log "downloading composer installer from getcomposer.org"
+  #
+  # GH #1332 item 13: provide TWO selectable versions. composer-latest and
+  # composer-lts (2.2 LTS, for legacy/older-PHP apps) are installed side by side,
+  # and /usr/local/bin/composer becomes a small dispatcher that reads the tenant's
+  # chosen channel (/etc/jabali-panel/user-composer/<user>, written by the agent)
+  # and execs the matching phar — defaulting to latest for anyone (incl. root)
+  # with no choice. Idempotent: only (re)download when a version binary is missing.
+  local _need_composer=0
+  [[ -x /usr/local/bin/composer-latest ]] || _need_composer=1
+  [[ -x /usr/local/bin/composer-lts ]] || _need_composer=1
+  if [[ "$_need_composer" == 1 ]]; then
+    _log "installing Composer versions (latest + LTS 2.2) from getcomposer.org"
     local _composer_tmp
     _composer_tmp="$(mktemp)"
     if curl -fsSL -o "$_composer_tmp" https://getcomposer.org/installer; then
-      # Verify the installer's SHA-384 before executing it as root — this is
-      # Composer's own documented procedure, and without it a MITM or a
-      # compromise of getcomposer.org is immediate root code execution during
-      # install/update. The signature is served from composer.github.io, a
-      # DIFFERENT host than the installer, so an attacker has to compromise
-      # both for the check to pass. Not pinned in-repo on purpose: the
-      # installer is rebuilt upstream regularly and a stale pin would fail
-      # every install.
+      # Verify the installer's SHA-384 before executing it as root — Composer's
+      # own documented procedure. The signature is served from composer.github.io
+      # (a DIFFERENT host than the installer), so an attacker must compromise
+      # both. Not pinned in-repo: the installer is rebuilt upstream regularly.
       local _composer_sig _composer_sum
       _composer_sig="$(curl -fsSL --max-time 20 https://composer.github.io/installer.sig || true)"
       _composer_sum="$(sha384sum "$_composer_tmp" | awk '{print $1}')"
       if [[ -z "$_composer_sig" ]]; then
         rm -f "$_composer_tmp"
-        _warn "could not fetch composer installer signature — refusing to run an unverified installer as root; composer unavailable"
+        _warn "could not fetch composer installer signature — refusing to run an unverified installer; composer unchanged"
       elif [[ "$_composer_sig" != "$_composer_sum" ]]; then
         rm -f "$_composer_tmp"
         _err "composer installer checksum mismatch (expected $_composer_sig, got $_composer_sum) — NOT executing it"
       else
         "php${primary_version}" "$_composer_tmp" \
-          --install-dir=/usr/local/bin --filename=composer --quiet
+          --install-dir=/usr/local/bin --filename=composer-latest --quiet \
+          && _ok "composer-latest installed (installer signature verified)"
+        "php${primary_version}" "$_composer_tmp" \
+          --install-dir=/usr/local/bin --filename=composer-lts --2.2 --quiet \
+          && _ok "composer-lts (2.2) installed" \
+          || _warn "composer-lts install failed — LTS channel will fall back to latest"
         rm -f "$_composer_tmp"
-        _ok "composer installed at /usr/local/bin/composer (installer signature verified)"
       fi
     else
       rm -f "$_composer_tmp"
-      _warn "failed to download composer installer — composer will be unavailable"
+      _warn "failed to download composer installer — composer versions unchanged"
     fi
   else
-    _ok "composer already present"
+    _ok "composer versions already present"
+  fi
+
+  # Install (or refresh) the dispatcher at /usr/local/bin/composer. Idempotent.
+  if [[ -x /usr/local/bin/composer-latest ]]; then
+    install -d -m 0755 /etc/jabali-panel/user-composer
+    local _disp
+    _disp="$(mktemp)"
+    cat > "$_disp" <<'COMPOSER_DISPATCH'
+#!/bin/sh
+# jabali Composer version dispatcher (GH #1332 item 13). Reads the invoking
+# tenant's chosen channel and execs the matching phar; defaults to latest.
+_choice="/etc/jabali-panel/user-composer/$(id -un 2>/dev/null)"
+if [ -r "$_choice" ]; then
+  case "$(cat "$_choice" 2>/dev/null)" in
+    lts) [ -x /usr/local/bin/composer-lts ] && exec /usr/local/bin/composer-lts "$@" ;;
+  esac
+fi
+exec /usr/local/bin/composer-latest "$@"
+COMPOSER_DISPATCH
+    install -m 0755 "$_disp" /usr/local/bin/composer
+    rm -f "$_disp"
+    _ok "composer dispatcher installed (latest + LTS selectable per user)"
   fi
 
   _ok "base packages ready"

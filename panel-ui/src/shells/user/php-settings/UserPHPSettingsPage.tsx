@@ -166,6 +166,8 @@ export function UserPHPSettingsPage() {
   const [versionSaving, setVersionSaving] = useState(false);
   const [cliVersion, setCliVersion] = useState<string>(""); // "" = auto
   const [cliSaving, setCliSaving] = useState(false);
+  const [composerChannel, setComposerChannel] = useState<string>("latest");
+  const [composerSaving, setComposerSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm<PHPSettingsFormData>();
@@ -202,8 +204,37 @@ export function UserPHPSettingsPage() {
       } catch {
         // Non-fatal: account may have no shell user.
       }
+
+      try {
+        const resp = await apiClient.get<{ channel: string }>(
+          "/me/composer-channel",
+        );
+        setComposerChannel(resp.data?.channel ?? "latest");
+      } catch {
+        // Non-fatal: account may have no shell user.
+      }
     })();
   }, []);
+
+  const onChangeComposer = async (channel: string) => {
+    setComposerSaving(true);
+    try {
+      await apiClient.put("/me/composer-channel", { channel });
+      setComposerChannel(channel);
+      feedback.message.success(
+        channel === "lts"
+          ? "Composer set to the 2.2 LTS channel"
+          : "Composer set to the latest channel",
+      );
+    } catch (err) {
+      const e = err as { response?: { data?: { detail?: string; error?: string } } };
+      feedback.message.error(
+        e.response?.data?.detail ?? e.response?.data?.error ?? "Failed to set Composer version",
+      );
+    } finally {
+      setComposerSaving(false);
+    }
+  };
 
   const onChangeCliVersion = async (version: string) => {
     setCliSaving(true);
@@ -422,6 +453,23 @@ export function UserPHPSettingsPage() {
             options={[
               { value: "", label: "Automatic (follow domain pool)" },
               ...availableVersions.map((v) => ({ value: v, label: `PHP ${v}` })),
+            ]}
+          />
+          {/* GH #1332 item 13: Composer version channel. */}
+          <Typography.Paragraph
+            type="secondary"
+            style={{ marginTop: 16, marginBottom: 4 }}
+          >
+            Composer version for your shell <code>composer</code>.
+          </Typography.Paragraph>
+          <Select
+            style={{ minWidth: 280 }}
+            value={composerChannel}
+            loading={composerSaving}
+            onChange={onChangeComposer}
+            options={[
+              { value: "latest", label: "Composer (latest)" },
+              { value: "lts", label: "Composer 2.2 LTS (older PHP compatibility)" },
             ]}
           />
         </Card>

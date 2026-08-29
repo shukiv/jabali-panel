@@ -168,6 +168,8 @@ func (u *userRepoAdapterForCronAdminTest) LinkKratosIdentity(context.Context, st
 	return nil
 }
 
+func (u *userRepoAdapterForCronAdminTest) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+
 func (u *userRepoAdapterForCronAdminTest) UpdateCLIPHPVersion(context.Context, string, *string) error {
 	return nil
 }

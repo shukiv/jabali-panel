@@ -120,6 +120,8 @@ func (m *mockUsersForSSO) Update(ctx context.Context, u *models.User) error {
 	return nil
 }
 
+func (m *mockUsersForSSO) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+
 func (m *mockUsersForSSO) UpdateCLIPHPVersion(context.Context, string, *string) error { return nil }
 
 func (m *mockUsersForSSO) LinkKratosIdentity(ctx context.Context, userID, kratosID string) error {

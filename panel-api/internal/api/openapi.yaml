@@ -3762,6 +3762,18 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/composer-channel:
+    get:
+      tags: [Me]
+      summary: Get the user's Composer version channel
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Me]
+      summary: Set the user's Composer version channel (latest | lts)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/php-fpm-policy:
     get:
       tags: [Me]

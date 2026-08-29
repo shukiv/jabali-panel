@@ -575,6 +575,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Users: deps.Users,
 			Agent: deps.Agent,
 		})
+		// GH #1332 item 13: per-user Composer version channel.
+		api.RegisterMeComposerRoutes(v1, api.MeComposerConfig{
+			Users: deps.Users,
+			Agent: deps.Agent,
+		})
 		// Per-user disk-usage breakdown (files + email + databases).
 		api.RegisterMeDiskUsageRoutes(v1, api.DiskUsageConfig{
 			Users:      deps.Users,

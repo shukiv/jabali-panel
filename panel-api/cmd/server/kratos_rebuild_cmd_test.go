@@ -56,6 +56,8 @@ func (*fakeRebuildUserRepo) List(context.Context, repository.ListOptions) ([]mod
 	return nil, 0, nil
 }
 func (*fakeRebuildUserRepo) Update(context.Context, *models.User) error { return nil }
+func (*fakeRebuildUserRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+
 func (*fakeRebuildUserRepo) UpdateCLIPHPVersion(context.Context, string, *string) error {
 	return nil
 }

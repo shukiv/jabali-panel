@@ -37,6 +37,9 @@ type UserRepository interface {
 	// Dedicated method: the Select-allowlist Update would silently drop it, and
 	// a *string lets NULL (auto) be written.
 	UpdateCLIPHPVersion(ctx context.Context, id string, version *string) error
+	// UpdateComposerChannel sets the per-user Composer version channel (GH #1332
+	// item 13). Dedicated method — Update()'s Select allowlist would drop it.
+	UpdateComposerChannel(ctx context.Context, id string, channel *string) error
 	// UpdateUsername renames the tenant's login/Linux username (GH #1238).
 	// Dedicated method: the Select-allowlist Update excludes username, so a
 	// full-model Update would silently drop the rename.
@@ -203,6 +206,11 @@ func (r *userRepo) UpdateShadowDBUsernames(ctx context.Context, id string, mysql
 func (r *userRepo) UpdateCLIPHPVersion(ctx context.Context, id string, version *string) error {
 	return translate(r.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ?", id).Update("cli_php_version", version).Error)
+}
+
+func (r *userRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error {
+	return translate(r.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ?", id).Update("composer_channel", channel).Error)
 }
 
 // UpdateDiskUsage writes the sweeper's snapshot. Dedicated method for the

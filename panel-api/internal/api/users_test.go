@@ -162,6 +162,8 @@ func (m *memUserRepo) Update(_ context.Context, u *models.User) error {
 	return nil
 }
 
+func (m *memUserRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+
 func (m *memUserRepo) UpdateCLIPHPVersion(context.Context, string, *string) error { return nil }
 
 func (m *memUserRepo) LinkKratosIdentity(_ context.Context, userID, kratosID string) error {

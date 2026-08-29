@@ -26,6 +26,10 @@ type User struct {
 	// CLIPHPVersion is the user's chosen default PHP version for shell/CLI
 	// (bare `php`, composer, wp-cli). NULL = auto (follow the pool pin). GH #256.
 	CLIPHPVersion *string `gorm:"column:cli_php_version;type:varchar(8)" json:"cli_php_version,omitempty"`
+	// ComposerChannel is the user's chosen Composer version channel for the
+	// shell `composer` (GH #1332 item 13). NULL/"latest" = the latest Composer;
+	// "lts" = the 2.2 LTS. Applied by the host dispatcher via a choice file.
+	ComposerChannel *string `gorm:"column:composer_channel;type:varchar(16)" json:"composer_channel,omitempty"`
 
 	NameFirst    string `gorm:"type:varchar(100);not null;default:''"                 json:"name_first"`
 	NameLast     string `gorm:"type:varchar(100);not null;default:''"                 json:"name_last"`

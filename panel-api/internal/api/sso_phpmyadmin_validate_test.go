@@ -307,6 +307,8 @@ func (m *mockUserRepoValidate) Update(ctx context.Context, u *models.User) error
 	return nil
 }
 
+func (m *mockUserRepoValidate) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+
 func (m *mockUserRepoValidate) UpdateCLIPHPVersion(context.Context, string, *string) error {
 	return nil
 }
