@@ -27,7 +27,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -141,12 +144,34 @@ func ensureUserCLIPHP(username, version string) error {
 	if err != nil {
 		return nil // no home (system/service account) → nothing to wire
 	}
-	if hfi.Mode()&os.ModeSymlink != 0 || !hfi.IsDir() || !isRootOwned(hfi) {
-		// A symlinked, non-dir, or tenant-owned home is unsafe to write
-		// under as root. Skip rather than risk a redirected write.
-		return fmt.Errorf("ensureUserCLIPHP: %s is not a root-owned directory", home)
+	if hfi.Mode()&os.ModeSymlink != 0 || !hfi.IsDir() {
+		// A symlinked or non-dir home is never safe to write under.
+		return fmt.Errorf("ensureUserCLIPHP: %s is not a usable home directory", home)
 	}
 
+	// GH #256: PHP version is per-DOMAIN, but a user has a single `php` CLI.
+	// A user with domains on different versions (8.3/8.4/8.5) can't get them
+	// all from a bare `php`. Expose EVERY installed version as `php<X.Y>` in
+	// the same on-PATH dir so they can select per project — `php8.3 composer
+	// install`, `php8.5 -v` — while `php` stays their pinned default. Mirrors
+	// cPanel's ea-phpNN wrappers. Shared by both write paths.
+	versioned := installedPHPCLIVersions("/usr/bin")
+
+	if !isRootOwned(hfi) {
+		// GH #1332: a tenant-owned home (common on imported/migrated accounts, or
+		// any host that provisions homes owned by the tenant) is the tenant's own
+		// space. Writing under it AS ROOT is the symlink-TOCTOU risk the header
+		// warns about, so the old code refused — and that refusal surfaced to the
+		// user as a 502 when they changed their CLI version. Instead write the
+		// wrappers AS THE TENANT: the kernel then enforces the tenant's own
+		// permissions, so a planted symlink is followed as the tenant and can
+		// only redirect writes to paths they may already write (i.e. only affects
+		// themselves — no escalation).
+		return ensureUserCLIPHPAsTenant(username, home, bareTarget, versioned)
+	}
+
+	// Root-owned home (the standard jabali provisioning): write as root with the
+	// symlink-TOCTOU-safe helpers.
 	jabaliDir := filepath.Join(home, ".jabali")
 	if err := ensureRootDir(jabaliDir); err != nil {
 		return err
@@ -160,17 +185,74 @@ func ensureUserCLIPHP(username, version string) error {
 			return err
 		}
 	}
-	// GH #256: PHP version is per-DOMAIN, but a user has a single `php` CLI.
-	// A user with domains on different versions (8.3/8.4/8.5) can't get them
-	// all from a bare `php`. Expose EVERY installed version as `php<X.Y>` in
-	// the same on-PATH dir so they can select per project — `php8.3 composer
-	// install`, `php8.5 -v` — while `php` stays their pinned default. Mirrors
-	// cPanel's ea-phpNN wrappers. Best-effort per version (a bad one is
-	// skipped, never fails the default-pin write above).
-	for ver, src := range installedPHPCLIVersions("/usr/bin") {
+	// Best-effort per version (a bad one is skipped, never fails the pin above).
+	for ver, src := range versioned {
 		_ = replaceCLISymlink(filepath.Join(binDir, "php"+ver), src)
 	}
 	return nil
+}
+
+// ensureUserCLIPHPAsTenant writes the ~/.jabali/bin CLI wrappers for a
+// tenant-OWNED home by dropping to the tenant's own uid/gid, so every mkdir and
+// symlink runs with the tenant's privileges (GH #1332). A tenant already
+// controls their home, so acting as them cannot escalate. The home MUST be
+// owned by THIS user (a foreign owner is refused). bareTarget "" leaves `php`
+// untouched; the versioned map mirrors the root path.
+func ensureUserCLIPHPAsTenant(username, home, bareTarget string, versioned map[string]string) error {
+	u, err := user.Lookup(username)
+	if err != nil {
+		return fmt.Errorf("ensureUserCLIPHP: lookup %s: %w", username, err)
+	}
+	uid64, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		return fmt.Errorf("ensureUserCLIPHP: uid %q: %w", u.Uid, err)
+	}
+	gid64, err := strconv.ParseUint(u.Gid, 10, 32)
+	if err != nil {
+		return fmt.Errorf("ensureUserCLIPHP: gid %q: %w", u.Gid, err)
+	}
+	// The home must actually be owned by THIS user before we write into it as
+	// them — defends against a username/home-uid mismatch.
+	hfi, err := os.Lstat(home)
+	if err != nil {
+		return err
+	}
+	if st, ok := hfi.Sys().(*syscall.Stat_t); !ok || uint64(st.Uid) != uid64 {
+		return fmt.Errorf("ensureUserCLIPHP: %s is not owned by %s", home, username)
+	}
+	uid, gid := uint32(uid64), uint32(gid64)
+	binDir := filepath.Join(home, ".jabali", "bin")
+	if out, err := runFSAsUser(uid, gid, "mkdir", "-p", binDir); err != nil {
+		return fmt.Errorf("ensureUserCLIPHP: mkdir %s as %s: %w (%s)", binDir, username, err, strings.TrimSpace(string(out)))
+	}
+	if bareTarget != "" {
+		if out, err := runFSAsUser(uid, gid, "ln", "-sfn", bareTarget, filepath.Join(binDir, "php")); err != nil {
+			return fmt.Errorf("ensureUserCLIPHP: link php as %s: %w (%s)", username, err, strings.TrimSpace(string(out)))
+		}
+	}
+	// Best-effort per version (mirrors the root path): a bad one is skipped.
+	for ver, src := range versioned {
+		_, _ = runFSAsUser(uid, gid, "ln", "-sfn", src, filepath.Join(binDir, "php"+ver))
+	}
+	return nil
+}
+
+// runFSAsUser runs a coreutils FS command (mkdir/ln) as the given uid/gid via a
+// setuid/setgid child, so the kernel enforces that user's permissions.
+func runFSAsUser(uid, gid uint32, name string, args ...string) ([]byte, error) {
+	bin, err := exec.LookPath(name)
+	if err != nil {
+		// The agent's PATH can be minimal (systemd) — fall back to /usr/bin.
+		bin = filepath.Join("/usr/bin", name)
+		if _, statErr := os.Stat(bin); statErr != nil {
+			return nil, fmt.Errorf("%s not found: %w", name, err)
+		}
+	}
+	cmd := execCommand(bin, args...) // GH #994 exec seam, not raw exec.Command
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: uid, Gid: gid, NoSetGroups: true},
+	}
+	return cmd.CombinedOutput()
 }
 
 // installedPHPCLIVersions scans srcDir for php<major>.<minor> CLI binaries
