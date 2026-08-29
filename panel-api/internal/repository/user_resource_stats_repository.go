@@ -23,6 +23,11 @@ type UserResourceStats struct {
 	DockerApps     int64  `json:"docker_apps"`
 	Backups        int64  `json:"backups"`
 	BandwidthBytes uint64 `json:"bandwidth_bytes"`
+	// DBBytes + MailBytes are the tenant's database + mailbox storage (GH #1242),
+	// so the Users list can show total usage = home (users.disk_used_kb) + DB +
+	// mail. Refreshed by the DB-usage + mailbox-usage sweepers.
+	DBBytes   uint64 `json:"db_bytes"`
+	MailBytes uint64 `json:"mail_bytes"`
 }
 
 type UserResourceStatsRepository interface {
@@ -97,6 +102,22 @@ func (r *userResourceStatsRepo) Fetch(ctx context.Context, userIDs []string, mon
 		[]any{userIDs, monthStart}, func(s *UserResourceStats, n int64) {
 			if n > 0 {
 				s.BandwidthBytes = uint64(n)
+			}
+		})
+	// DB storage = SUM of the user's tenant DB sizes (swept into size_bytes).
+	assign(
+		"SELECT user_id, COALESCE(SUM(size_bytes),0) AS n FROM `databases` WHERE user_id IN ? GROUP BY user_id",
+		[]any{userIDs}, func(s *UserResourceStats, n int64) {
+			if n > 0 {
+				s.DBBytes = uint64(n)
+			}
+		})
+	// Mail storage = SUM of the user's mailbox usage (swept into last_usage_bytes).
+	assign(
+		"SELECT d.user_id AS user_id, COALESCE(SUM(m.last_usage_bytes),0) AS n FROM `mailboxes` m JOIN `domains` d ON d.id = m.domain_id WHERE d.user_id IN ? GROUP BY d.user_id",
+		[]any{userIDs}, func(s *UserResourceStats, n int64) {
+			if n > 0 {
+				s.MailBytes = uint64(n)
 			}
 		})
 

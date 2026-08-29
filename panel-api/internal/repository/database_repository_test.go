@@ -149,7 +149,7 @@ func TestCreate_Success(t *testing.T) {
 	// Expect INSERT query
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `databases`").
-		WithArgs(d.ID, d.UserID, d.Name, d.Engine, d.Charset, d.Collation, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(d.ID, d.UserID, d.Name, d.Engine, d.Charset, d.Collation, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 

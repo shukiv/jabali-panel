@@ -10,7 +10,12 @@ type Database struct {
 	Engine    string `gorm:"type:enum('mariadb','postgres');not null;default:'mariadb'" json:"engine"`
 	Charset   string `gorm:"type:varchar(32);not null;default:'utf8mb4'" json:"charset"`
 	Collation string `gorm:"type:varchar(32);not null;default:'utf8mb4_unicode_ci'" json:"collation"`
-	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+	// SizeBytes is the database's on-disk size (data+index), refreshed by the
+	// DB-usage sweeper (GH #1242) so the User List can sum total storage. 0 until
+	// first swept.
+	SizeBytes     uint64     `gorm:"type:bigint unsigned;not null;default:0" json:"size_bytes"`
+	SizeCheckedAt *time.Time `gorm:"type:datetime(6)" json:"size_checked_at,omitempty"`
+	CreatedAt     time.Time  `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 

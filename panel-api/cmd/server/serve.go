@@ -960,6 +960,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go reconciler.StartMailboxUsageTicker(ctx, sharedAgent, deps.Mailboxes, log)
 	}
 
+	// GH #1242: tenant DB size sampler -> databases.size_bytes, so the admin
+	// Users list can sum total storage (home + DB + mail).
+	if sharedAgent != nil && deps.Databases != nil {
+		go reconciler.StartDBUsageTicker(ctx, sharedAgent, deps.Databases, log)
+	}
+
 	// Disk-usage sweeper: persists users.disk_used_kb so the admin Users
 	// list can sort by it. Optional — without it the column simply falls
 	// back to the per-row fetch and shows no sort control's worth of data.

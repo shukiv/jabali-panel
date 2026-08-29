@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -21,6 +22,11 @@ type DatabaseRepository interface {
 	// UpdateName renames the database row in place (GH #1238 DB re-prefix). The
 	// on-disk rename is done by the agent; this repoints the panel row.
 	UpdateName(ctx context.Context, id, name string) error
+	// ListAllMariaDB returns every MariaDB-engine database (id + name) for the
+	// DB-usage sweeper to map schema sizes back to rows (GH #1242).
+	ListAllMariaDB(ctx context.Context) ([]models.Database, error)
+	// UpdateSize writes the swept on-disk size (GH #1242).
+	UpdateSize(ctx context.Context, id string, sizeBytes uint64, at time.Time) error
 }
 
 type databaseRepo struct{ db *gorm.DB }
@@ -121,6 +127,22 @@ func (r *databaseRepo) Delete(ctx context.Context, id string) error {
 func (r *databaseRepo) UpdateName(ctx context.Context, id, name string) error {
 	return translate(r.db.WithContext(ctx).
 		Model(&models.Database{}).Where("id = ?", id).Update("name", name).Error)
+}
+
+func (r *databaseRepo) ListAllMariaDB(ctx context.Context) ([]models.Database, error) {
+	var out []models.Database
+	if err := r.db.WithContext(ctx).
+		Where("engine = ?", "mariadb").
+		Find(&out).Error; err != nil {
+		return nil, translate(err)
+	}
+	return out, nil
+}
+
+func (r *databaseRepo) UpdateSize(ctx context.Context, id string, sizeBytes uint64, at time.Time) error {
+	return translate(r.db.WithContext(ctx).
+		Model(&models.Database{}).Where("id = ?", id).
+		Updates(map[string]any{"size_bytes": sizeBytes, "size_checked_at": at}).Error)
 }
 
 func (r *databaseRepo) ExistsByUserAndName(ctx context.Context, userID, name string) (bool, error) {

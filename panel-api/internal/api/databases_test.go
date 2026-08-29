@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -812,5 +813,9 @@ func (m *mockUserRepo) UpdateShadowDBUsernames(context.Context, string, *string,
 }
 
 func (m *mockDatabaseRepo) UpdateName(context.Context, string, string) error { return nil }
+func (m *mockDatabaseRepo) ListAllMariaDB(context.Context) ([]models.Database, error) {
+	return nil, nil
+}
+func (m *mockDatabaseRepo) UpdateSize(context.Context, string, uint64, time.Time) error { return nil }
 
 func (m *mockDatabaseUserRepo) UpdateUsername(context.Context, string, string) error { return nil }

@@ -229,6 +229,12 @@ type mockDatabaseRepoValidate struct {
 	databases map[string]*models.Database
 }
 
+func (m *mockDatabaseRepoValidate) ListAllMariaDB(context.Context) ([]models.Database, error) {
+	return nil, nil
+}
+func (m *mockDatabaseRepoValidate) UpdateSize(context.Context, string, uint64, time.Time) error {
+	return nil
+}
 func (m *mockDatabaseRepoValidate) Create(ctx context.Context, db *models.Database) error {
 	return nil
 }

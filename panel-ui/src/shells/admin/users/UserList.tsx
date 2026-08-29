@@ -64,6 +64,8 @@ type User = {
     docker_apps: number;
     backups: number;
     bandwidth_bytes: number;
+    db_bytes: number;
+    mail_bytes: number;
   };
 };
 
@@ -403,10 +405,34 @@ function UsersShellTable({
           // per-row fetch was impossible — it only ever held the current
           // page's resolved rows.
           sorter
-          render={(_: unknown, r: User) => (
+          render={(_: unknown, r: User) => {
+            // GH #1242 (johnnyq): total storage = home files + databases + mail.
+            // Databases/mail live outside /home, so they're summed in from the
+            // swept resource stats; the home-vs-quota bar stays as the detail.
+            const homeBytes = (r.disk_used_kb ?? 0) * 1024;
+            const dbBytes = r.resources?.db_bytes ?? 0;
+            const mailBytes = r.resources?.mail_bytes ?? 0;
+            const total = homeBytes + dbBytes + mailBytes;
+            return (
             <div>
               {r.disk_checked_at ? (
-                <UserDiskUsageCell usedKB={r.disk_used_kb ?? 0} limitKB={r.disk_limit_kb ?? 0} />
+                <>
+                  <Tooltip
+                    title={
+                      <div style={{ whiteSpace: "pre" }}>
+                        {`Home files: ${fmtBytes(homeBytes)}\nDatabases: ${fmtBytes(dbBytes)}\nMail: ${fmtBytes(mailBytes)}`}
+                      </div>
+                    }
+                  >
+                    <Typography.Text
+                      strong
+                      style={{ fontSize: 12, whiteSpace: "nowrap", display: "block" }}
+                    >
+                      {fmtBytes(total)} total
+                    </Typography.Text>
+                  </Tooltip>
+                  <UserDiskUsageCell usedKB={r.disk_used_kb ?? 0} limitKB={r.disk_limit_kb ?? 0} />
+                </>
               ) : (
                 // Never swept (fresh upgrade, or the sweeper has not reached
                 // this row yet) — fall back to the live per-row fetch so the
@@ -424,7 +450,8 @@ function UsersShellTable({
                 </Tooltip>
               )}
             </div>
-          )}
+            );
+          }}
         />
       )}
       {showDiskUsageColumn && (
