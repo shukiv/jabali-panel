@@ -36,6 +36,13 @@ func TestRender_HeaderAndInband(t *testing.T) {
 	mustContain(t, out, "# jabali-mode: off", "mode header line")
 	mustContain(t, out, "name: crowdsecurity/jabali-appsec", "config name")
 	mustContain(t, out, "default_remediation: ban", "default remediation")
+	// GH #1044: oversize request bodies inspect-partial-then-pass instead of
+	// being dropped (the 10 MB body-size drop blocked large DB-restore chunks).
+	mustContain(t, out, "on_load:\n - apply:\n    - SetBodySizeExceededAction(\"partial\")\n", "GH#1044 body-size partial hook")
+	// on_load must run before inband_rules (it's a startup hook).
+	if strings.Index(out, "on_load:") > strings.Index(out, "inband_rules:") {
+		t.Fatal("on_load must precede inband_rules")
+	}
 	mustContain(t, out, "inband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n", "inband list in order")
 	// ADR-0102: panel-API allowlist present.
 	mustContain(t, out, `on_match:

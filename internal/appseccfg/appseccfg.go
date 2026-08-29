@@ -326,6 +326,26 @@ func Render(o Opts) string {
 	b.WriteString("# jabali-countries: " + csv + "\n")
 	b.WriteString("name: crowdsecurity/jabali-appsec\n")
 	b.WriteString("default_remediation: ban\n")
+
+	// GH #1044: the CrowdSec AppSec engine drops any request whose body
+	// exceeds its max (default 10 MB) BEFORE rule evaluation — earlier than
+	// the /api/v1/ on_match allowlist below can cancel it, so a large chunked
+	// DB restore (or admin File-Manager upload) POST to the panel API returns
+	// an opaque "403 CrowdSec Access Forbidden". The 10 MB default surfaced
+	// once the DB-restore chunk size was bumped to 80 MB (#1394); it also bit
+	// every other big-body panel route. Switch the oversize behaviour from
+	// "drop" to "partial": the first 10 MB is still inspected (WAF attacks
+	// live in the first bytes, and the inspection cost stays bounded — we do
+	// NOT raise max_body_size), but an oversized body is then PASSED instead
+	// of blocked. This is engine-wide (the AppSec listener is shared by every
+	// vhost), which is the deliberate tradeoff: no vhost blocks purely on
+	// body size, all vhosts keep full inspection of the first 10 MB. Set via
+	// the on_load hook (the supported mechanism — max_body_size /
+	// body_size_exceeded_action are not plain AppsecConfig fields).
+	b.WriteString("on_load:\n")
+	b.WriteString(" - apply:\n")
+	b.WriteString("    - SetBodySizeExceededAction(\"partial\")\n")
+
 	b.WriteString("inband_rules:\n")
 	for _, r := range o.Inband {
 		b.WriteString(" - " + r + "\n")
