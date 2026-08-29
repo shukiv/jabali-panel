@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -37,8 +39,13 @@ type phpPoolApplyParams struct {
 	PmMaxSpareServers              uint32 `json:"pm_max_spare_servers"`
 	PmMaxRequests                  uint32 `json:"pm_max_requests"`
 	RequestTerminateTimeoutSeconds uint32 `json:"request_terminate_timeout_seconds"`
-	AdminValues                    []KV   `json:"admin_values"`
-	AdminFlags                     []KV   `json:"admin_flags"`
+	// SlowlogTimeoutSeconds (GH #1332 item 12): >0 enables the pool slow log with
+	// this request threshold. The slowlog PATH is derived here from the slug —
+	// never accepted over the wire — and lands under the tenant-owned
+	// /home/<user>/logs so the tenant-run FPM master can write it.
+	SlowlogTimeoutSeconds uint32 `json:"slowlog_timeout_seconds,omitempty"`
+	AdminValues           []KV   `json:"admin_values"`
+	AdminFlags            []KV   `json:"admin_flags"`
 	// DisableFunctions (GH #402) overrides the php_admin_value[disable_functions]
 	// line. nil = caller did not specify -> the safe default (#401) is used;
 	// "" = explicit admin opt-out (emit no line); any other value is rendered
@@ -74,6 +81,8 @@ type phpPoolSpecTemplate struct {
 	PmMaxSpareServers              uint32
 	PmMaxRequests                  uint32
 	RequestTerminateTimeoutSeconds uint32
+	SlowlogTimeoutSeconds          uint32
+	SlowlogPath                    string
 	AdminValues                    []KV
 	AdminFlags                     []KV
 	DisableFunctions               string
@@ -314,6 +323,24 @@ func ensureVersionedFPMDropin(ctx context.Context, slug, username string) error 
 		_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 	}
 	return nil
+}
+
+// ensureUserLogsDir makes /home/<user>/logs (0750, tenant-owned) if missing and
+// returns it (GH #1332 item 12). The per-user FPM master runs AS the tenant, so
+// its slow log must live somewhere the tenant can write; this also sets up the
+// per-domain log shortcut. Chown is best-effort — the dir already being
+// tenant-owned (the common case) is fine.
+func ensureUserLogsDir(username string) (string, error) {
+	dir := filepath.Join("/home", username, "logs")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", err
+	}
+	if u, err := user.Lookup(username); err == nil {
+		uid, _ := strconv.Atoi(u.Uid)
+		gid, _ := strconv.Atoi(u.Gid)
+		_ = os.Chown(dir, uid, gid)
+	}
+	return dir, nil
 }
 
 // acquireLock acquires an exclusive flock on a per-user lock file with a 30-second timeout.
@@ -588,6 +615,29 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// GH #1332 item 12: derive the slow-log path from the slug (never over the
+	// wire) and ensure the tenant-owned logs dir exists so the tenant-run FPM
+	// master can write it. Clamp defensively — the panel validates 0..600.
+	var slowlogPath string
+	slowlogTimeout := p.SlowlogTimeoutSeconds
+	if slowlogTimeout > 600 {
+		slowlogTimeout = 600
+	}
+	if slowlogTimeout > 0 {
+		name := "php-slow.log"
+		if isVersioned {
+			name = "php-slow-" + slug + ".log"
+		}
+		logsDir, lerr := ensureUserLogsDir(p.Username)
+		if lerr != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("ensure logs dir: %v", lerr),
+			}
+		}
+		slowlogPath = filepath.Join(logsDir, name)
+	}
+
 	spec := phpPoolSpecTemplate{
 		PoolName:                       poolName,
 		User:                           p.Username,
@@ -601,6 +651,8 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		PmMaxSpareServers:              p.PmMaxSpareServers,
 		PmMaxRequests:                  p.PmMaxRequests,
 		RequestTerminateTimeoutSeconds: p.RequestTerminateTimeoutSeconds,
+		SlowlogTimeoutSeconds:          slowlogTimeout,
+		SlowlogPath:                    slowlogPath,
 		AdminValues:                    p.AdminValues,
 		AdminFlags:                     p.AdminFlags,
 		DisableFunctions:               disableFunctions,

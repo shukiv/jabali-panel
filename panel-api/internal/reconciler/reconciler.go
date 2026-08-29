@@ -1598,6 +1598,7 @@ func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *
 		"pm_max_spare_servers":              pool.PmMaxSpareServers,
 		"pm_max_requests":                   pool.PmMaxRequests,
 		"request_terminate_timeout_seconds": pool.RequestTerminateTimeoutSeconds,
+		"slowlog_timeout_seconds":           pool.SlowlogTimeoutSeconds,
 	}
 
 	// GH #402: if the user's package opts out of the #401 command-exec

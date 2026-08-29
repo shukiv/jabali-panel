@@ -27,6 +27,13 @@ pm.max_requests = {{.PmMaxRequests}}
 ; Kill a request stuck longer than this (0 = no limit).
 request_terminate_timeout = {{.RequestTerminateTimeoutSeconds}}s
 {{- end }}
+{{- if gt .SlowlogTimeoutSeconds 0 }}
+; Slow log (GH #1332). Dump a PHP backtrace of any request slower than this to
+; the tenant-owned slow log. Path is agent-derived from the slug; the master
+; runs as the tenant so it can write under /home/<user>/logs.
+request_slowlog_timeout = {{.SlowlogTimeoutSeconds}}s
+slowlog = {{.SlowlogPath}}
+{{- end }}
 chdir = /home/{{.User}}
 security.limit_extensions = .php
 ; Jailbreak defense (ADR-0023 decision 12). open_basedir is hard-coded

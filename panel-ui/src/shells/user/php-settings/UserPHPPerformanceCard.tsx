@@ -36,6 +36,7 @@ type PoolRow = {
   pm_max_requests: number;
   request_terminate_timeout_seconds: number;
   process_idle_timeout_seconds: number;
+  slowlog_timeout_seconds: number;
   performance_mode: string;
   is_default: boolean;
 };
@@ -88,6 +89,7 @@ export const UserPHPPerformanceCard = () => {
       pm_min_spare_servers: selectedPool.pm_min_spare_servers,
       pm_max_spare_servers: selectedPool.pm_max_spare_servers,
       pm_max_requests: selectedPool.pm_max_requests,
+      slowlog_timeout_seconds: selectedPool.slowlog_timeout_seconds,
     });
     // selectedPool identity changes with version/data; fields depend only on it.
   }, [selectedPool, advForm]);
@@ -250,6 +252,13 @@ export const UserPHPPerformanceCard = () => {
                     </Form.Item>
                     <Form.Item name="pm_max_requests" label={t("userphpperformancecard.max_requests_per_worker_0_never")}>
                       <InputNumber min={0} max={100000} style={{ width: 160 }} />
+                    </Form.Item>
+                    <Form.Item
+                      name="slowlog_timeout_seconds"
+                      label="Slow-log threshold (seconds, 0 = off)"
+                      extra="Logs a PHP backtrace of any request slower than this to ~/logs/php-slow*.log. Applies to every site on this PHP version."
+                    >
+                      <InputNumber min={0} max={600} style={{ width: 160 }} />
                     </Form.Item>
                     <Button loading={saving} onClick={applyAdvanced}>
                       Apply advanced

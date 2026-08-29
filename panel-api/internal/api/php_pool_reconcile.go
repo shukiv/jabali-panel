@@ -81,6 +81,7 @@ func reconcilePHPPoolViaAgent(
 		"pm_max_spare_servers":              pool.PmMaxSpareServers,
 		"pm_max_requests":                   pool.PmMaxRequests,
 		"request_terminate_timeout_seconds": pool.RequestTerminateTimeoutSeconds,
+		"slowlog_timeout_seconds":           pool.SlowlogTimeoutSeconds,
 		"admin_values":                      adminValues,
 		"admin_flags":                       adminFlags,
 	})

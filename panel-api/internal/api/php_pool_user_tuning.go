@@ -50,6 +50,7 @@ type poolTuningRow struct {
 	PmMaxRequests                  uint32 `json:"pm_max_requests"`
 	RequestTerminateTimeoutSeconds uint32 `json:"request_terminate_timeout_seconds"`
 	ProcessIdleTimeoutSeconds      uint32 `json:"process_idle_timeout_seconds"`
+	SlowlogTimeoutSeconds          uint32 `json:"slowlog_timeout_seconds"`
 	PerformanceMode                string `json:"performance_mode"`
 	IsDefault                      bool   `json:"is_default"`
 }
@@ -83,6 +84,7 @@ func (h *phpUserTuningHandler) tuning(c *gin.Context) {
 					PmMaxRequests:                  p.PmMaxRequests,
 					RequestTerminateTimeoutSeconds: p.RequestTerminateTimeoutSeconds,
 					ProcessIdleTimeoutSeconds:      p.ProcessIdleTimeoutSeconds,
+					SlowlogTimeoutSeconds:          p.SlowlogTimeoutSeconds,
 					PerformanceMode:                p.PerformanceMode,
 					IsDefault:                      i == 0,
 				})
@@ -194,6 +196,7 @@ type setTuningRequest struct {
 	PmMaxRequests                  uint32 `json:"pm_max_requests"`
 	RequestTerminateTimeoutSeconds uint32 `json:"request_terminate_timeout_seconds"`
 	ProcessIdleTimeoutSeconds      uint32 `json:"process_idle_timeout_seconds"`
+	SlowlogTimeoutSeconds          uint32 `json:"slowlog_timeout_seconds"`
 }
 
 func (h *phpUserTuningHandler) setTuning(c *gin.Context) {
@@ -225,6 +228,14 @@ func (h *phpUserTuningHandler) setTuning(c *gin.Context) {
 	if idle == 0 {
 		idle = 60
 	}
+	// GH #1332 item 12: slow-log threshold. 0 = off; otherwise 1..600s. Set on
+	// the pool before applyToPool persists it — the preset path (setMode) leaves
+	// this field untouched, so a slow-log opt-in survives a preset change.
+	if req.SlowlogTimeoutSeconds > 600 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "slowlog_timeout_invalid", "detail": "slow log timeout must be 0 (off) or between 1 and 600 seconds"})
+		return
+	}
+	pool.SlowlogTimeoutSeconds = req.SlowlogTimeoutSeconds
 	h.applyToPool(c, pool, req.PmMode, mc, st, mn, mx, mr, tt, idle, "custom")
 }
 
