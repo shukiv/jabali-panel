@@ -22,6 +22,11 @@ var ulidRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 // username constraint, used to build /home/<u> paths.
 var backupUsernameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
+// backupDomainNameRE constrains a domain name that flows into a restic --include
+// path + rsync destination (GH #1359 per-domain docroot restore): lowercase DNS
+// labels only, so no '/', '..', or leading '-' can escape ~/domains/<domain>.
+var backupDomainNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+
 // dbNameRE matches MariaDB database names: alpha + digits + underscore,
 // up to 64 chars.
 var dbNameRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)

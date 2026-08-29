@@ -46,7 +46,11 @@ type backupRestoreSelectiveParams struct {
 	Databases          []string `json:"databases"`
 	Mailboxes          []string `json:"mailboxes"`
 	RestoreHome        bool     `json:"home"`
-	Overwrite          bool     `json:"overwrite"`
+	// Domains restores only the named domains' docroots (~/domains/<domain>)
+	// from the home stage, additively — the per-domain alternative to a full
+	// home restore (GH #1359). The panel validates ownership + format.
+	Domains   []string `json:"domains"`
+	Overwrite bool     `json:"overwrite"`
 	// Restic dest (optional; empty = default local repo, like materialize).
 	RepoURL        string            `json:"repo_url,omitempty"`
 	CredentialsRef string            `json:"credentials_ref,omitempty"`
@@ -80,8 +84,16 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 	if !backupUsernameRE.MatchString(p.TargetUsername) {
 		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
 	}
-	if len(p.Databases) == 0 && !p.RestoreHome && len(p.Mailboxes) == 0 {
-		return nil, bkInvalidArg("select at least one database, mailbox, and/or home")
+	if len(p.Databases) == 0 && !p.RestoreHome && len(p.Mailboxes) == 0 && len(p.Domains) == 0 {
+		return nil, bkInvalidArg("select at least one database, mailbox, domain, and/or home")
+	}
+	// Defence-in-depth: domain names flow into a restic --include path and an
+	// rsync destination, so refuse anything with path/traversal characters even
+	// though the panel already checks ownership. (Same posture as target_username.)
+	for _, d := range p.Domains {
+		if !backupDomainNameRE.MatchString(d) {
+			return nil, bkInvalidArg("invalid domain name: " + d)
+		}
 	}
 
 	out := backupRestoreSelectiveResult{JobID: p.JobID}
@@ -165,8 +177,10 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 		}
 	}
 
+	// The home stage holds both the whole home (RestoreHome) and the per-domain
+	// docroots (~/domains/<domain>, GH #1359) — resolve it for either.
 	var homeStage *backup.ManifestStage
-	if p.RestoreHome {
+	if p.RestoreHome || len(p.Domains) > 0 {
 		for i := range manifest.Stages {
 			st := manifest.Stages[i]
 			if st.Name == backup.StageHome && st.Status == backup.StageStatusOK && st.SnapshotID != "" {
@@ -175,7 +189,7 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 			}
 		}
 		if homeStage == nil {
-			out.Warnings = append(out.Warnings, "home directory is not in this backup — skipped")
+			out.Warnings = append(out.Warnings, "the home stage (which holds domain files) is not in this backup — skipped")
 		}
 	}
 
@@ -189,8 +203,13 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 		for _, st := range dbStages {
 			out.Skipped = append(out.Skipped, st.Items[0])
 		}
-		if homeStage != nil {
+		if homeStage != nil && p.RestoreHome {
 			out.Skipped = append(out.Skipped, "home")
+		}
+		if homeStage != nil {
+			for _, d := range p.Domains {
+				out.Skipped = append(out.Skipped, "domain:"+d)
+			}
 		}
 		if mailStage != nil {
 			for _, mb := range p.Mailboxes {
@@ -234,12 +253,20 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 	// Home — ADDITIVE rsync (NO --delete): restores backup files over the live
 	// home but never removes files created since the backup (unlike the admin
 	// whole-account restore, which mirrors with --delete). overwrite-gated above.
-	if homeStage != nil {
+	if homeStage != nil && p.RestoreHome {
 		if hwarn := applySelectiveHome(ctx, stagingRoot, p.TargetUsername, homeStage, c); hwarn != "" {
 			out.Warnings = append(out.Warnings, hwarn)
 		} else {
 			out.Applied = append(out.Applied, "home → /home/"+p.TargetUsername+" (additive, no delete)")
 		}
+	}
+
+	// Per-domain docroots (GH #1359): restore only ~/domains/<domain> from the
+	// home stage, additively — the granular alternative to a full home restore.
+	if homeStage != nil && len(p.Domains) > 0 && !p.RestoreHome {
+		applied, warnings := applySelectiveDomains(ctx, stagingRoot, p.TargetUsername, p.Domains, homeStage, c)
+		out.Applied = append(out.Applied, applied...)
+		out.Warnings = append(out.Warnings, warnings...)
 	}
 
 	// Mail — ADDITIVE + idempotent: restic-restore the mail stage's Maildir
@@ -343,6 +370,62 @@ func applySelectiveHome(ctx context.Context, stagingRoot, username string, st *b
 		return "home: docroot group: " + err.Error()
 	}
 	return ""
+}
+
+// applySelectiveDomains restores ONLY the named domains' docroots
+// (~/domains/<domain>) from the home stage, additively (GH #1359). Restic
+// --include limits the extract to those paths; the rsync then writes over the
+// live docroot without --delete (never removes files created since the backup),
+// re-owns to the tenant, and re-applies the docroot setgid group. Per-domain
+// failures are collected as warnings so one bad domain doesn't sink the rest.
+func applySelectiveDomains(ctx context.Context, stagingRoot, username string, domains []string, st *backup.ManifestStage, c *backup.Client) (applied, warnings []string) {
+	target := filepath.Join(stagingRoot, "domains")
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		return nil, []string{"domains: mkdir staging: " + err.Error()}
+	}
+	includes := make([]string, 0, len(domains))
+	for _, d := range domains {
+		includes = append(includes, "/home/"+username+"/domains/"+d)
+	}
+	if err := c.Restore(ctx, backup.RestoreOpts{SnapshotID: st.SnapshotID, Target: target, Include: includes}); err != nil {
+		return nil, []string{"domains: restic restore: " + err.Error()}
+	}
+	u, uerr := user.Lookup(username)
+	if uerr != nil {
+		return nil, []string{"domains: user lookup: " + uerr.Error()}
+	}
+	uid, _ := strconv.Atoi(u.Uid)
+	gid, _ := strconv.Atoi(u.Gid)
+
+	for _, d := range domains {
+		// Restic preserves the absolute path: staged at target/home/<user>/domains/<d>.
+		src := filepath.Join(target, "home", username, "domains", d) + "/"
+		if _, err := os.Stat(filepath.Clean(src)); err != nil {
+			warnings = append(warnings, "domain "+d+": not in this backup — skipped")
+			continue
+		}
+		dst := "/home/" + username + "/domains/" + d + "/"
+		if err := os.MkdirAll(dst, 0o750); err != nil {
+			warnings = append(warnings, "domain "+d+": mkdir target: "+err.Error())
+			continue
+		}
+		// -aH not -aHAX: skip untrusted ACL/xattr from the repo; owner/mode are
+		// re-normalized below (same posture as applySelectiveHome).
+		if err := execCommandContext(ctx, "rsync", "-aH", src, dst).Run(); err != nil {
+			warnings = append(warnings, "domain "+d+": rsync: "+err.Error())
+			continue
+		}
+		if err := chownTreeRecursive(dst, uid, gid); err != nil {
+			warnings = append(warnings, "domain "+d+": chown: "+err.Error())
+			continue
+		}
+		applied = append(applied, "domain "+d+" → /home/"+username+"/domains/"+d+" (additive, no delete)")
+	}
+	// Re-apply the docroot setgid/www-data group across the user's docroots.
+	if err := restoreDocrootGroup(username); err != nil {
+		warnings = append(warnings, "domains: docroot group: "+err.Error())
+	}
+	return applied, warnings
 }
 
 func init() {

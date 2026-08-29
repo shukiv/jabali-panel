@@ -27,13 +27,14 @@ func isRestoreKind(kind string) bool {
 // same Content vocabulary a backup uses, so the shared label logic can describe
 // it. databases-only -> "database", home-only -> "files", anything mixed (or
 // mailbox/DNS-only, which have no dedicated content bucket) -> "full".
-func restoreContentFromSelective(databases, mailboxes, dnsDomains []string, home bool) string {
-	onlyDatabases := len(databases) > 0 && !home && len(mailboxes) == 0 && len(dnsDomains) == 0
+func restoreContentFromSelective(databases, mailboxes, dnsDomains, domains []string, home bool) string {
+	onlyDatabases := len(databases) > 0 && !home && len(mailboxes) == 0 && len(dnsDomains) == 0 && len(domains) == 0
 	if onlyDatabases {
 		return models.BackupContentDatabase
 	}
-	onlyHome := home && len(databases) == 0 && len(mailboxes) == 0 && len(dnsDomains) == 0
-	if onlyHome {
+	// Home and per-domain docroots (GH #1359) are both file restores.
+	onlyFiles := (home || len(domains) > 0) && len(databases) == 0 && len(mailboxes) == 0 && len(dnsDomains) == 0
+	if onlyFiles {
 		return models.BackupContentFiles
 	}
 	return models.BackupContentFull

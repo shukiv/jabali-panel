@@ -53,6 +53,9 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
   const [selectedMb, setSelectedMb] = useState<string[]>([]);
   const [dnsDomains, setDnsDomains] = useState<string[]>([]);
   const [selectedDns, setSelectedDns] = useState<string[]>([]);
+  // GH #1359: restore only specific domains' docroots (~/domains/<domain>)
+  // instead of the whole home. Offered when the backup has a home stage.
+  const [selectedDomainFiles, setSelectedDomainFiles] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<RestoreResult | null>(null);
 
@@ -68,6 +71,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
     setSelectedMb([]);
     setDnsDomains([]);
     setSelectedDns([]);
+    setSelectedDomainFiles([]);
     setResult(null);
     apiClient
       .get<ManifestResponse>(`/me/backups/${backupId}/manifest`)
@@ -101,13 +105,28 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
   // server finished the work anyway). Poll the job row until it seals and
   // render the outcome it recorded.
   const handleRestore = async () => {
-    if (!backupId || (selected.length === 0 && !restoreHome && selectedDns.length === 0 && selectedMb.length === 0)) return;
+    if (
+      !backupId ||
+      (selected.length === 0 &&
+        !restoreHome &&
+        selectedDns.length === 0 &&
+        selectedMb.length === 0 &&
+        selectedDomainFiles.length === 0)
+    )
+      return;
     setSubmitting(true);
     setResult(null);
     try {
       const resp = await apiClient.post<{ job_id: string }>(
         `/me/backups/${backupId}/restore`,
-        { databases: selected, home: restoreHome, mailboxes: selectedMb, dns_domains: selectedDns, overwrite: true },
+        {
+          databases: selected,
+          home: restoreHome,
+          mailboxes: selectedMb,
+          dns_domains: selectedDns,
+          domains: selectedDomainFiles,
+          overwrite: true,
+        },
       );
       const jobId = resp.data.job_id;
       feedback.message.info("Restore started — this can take a while for large backups");
@@ -228,7 +247,26 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
             </>
           )}
 
-          {(selected.length > 0 || restoreHome || selectedDns.length > 0 || selectedMb.length > 0) && (
+          {/* GH #1359: restore one site's document root instead of the whole home. */}
+          {hasHome && dnsDomains.length > 0 && (
+            <>
+              <Typography.Text strong>Domain files</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Restores just these domains&apos; files (
+                <code>~/domains/&lt;domain&gt;</code>) from the backup, over the
+                live files — nothing is deleted. Use this to recover one site&apos;s
+                document root without restoring the whole home directory.
+              </Typography.Text>
+              <Checkbox.Group
+                value={selectedDomainFiles}
+                onChange={(v) => setSelectedDomainFiles(v as string[])}
+                style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                options={dnsDomains.map((d) => ({ label: d, value: d }))}
+              />
+            </>
+          )}
+
+          {(selected.length > 0 || restoreHome || selectedDns.length > 0 || selectedMb.length > 0 || selectedDomainFiles.length > 0) && (
             <Alert
               type="warning"
               showIcon
@@ -237,7 +275,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
             />
           )}
 
-          {(selected.length > 0 || restoreHome || selectedDns.length > 0 || selectedMb.length > 0) && (
+          {(selected.length > 0 || restoreHome || selectedDns.length > 0 || selectedMb.length > 0 || selectedDomainFiles.length > 0) && (
             <>
               <Checkbox
                 checked={confirmOverwrite}

@@ -14,20 +14,23 @@ func TestRestoreContentFromSelective(t *testing.T) {
 		databases  []string
 		mailboxes  []string
 		dnsDomains []string
+		domains    []string
 		home       bool
 		want       string
 	}{
-		{"databases only", []string{"db1"}, nil, nil, false, models.BackupContentDatabase},
-		{"multiple databases only", []string{"db1", "db2"}, nil, nil, false, models.BackupContentDatabase},
-		{"home only", nil, nil, nil, true, models.BackupContentFiles},
-		{"db + home -> full", []string{"db1"}, nil, nil, true, models.BackupContentFull},
-		{"mailboxes only -> full", nil, []string{"a@x.com"}, nil, false, models.BackupContentFull},
-		{"dns only -> full", nil, nil, []string{"x.com"}, false, models.BackupContentFull},
-		{"empty -> full", nil, nil, nil, false, models.BackupContentFull},
+		{"databases only", []string{"db1"}, nil, nil, nil, false, models.BackupContentDatabase},
+		{"multiple databases only", []string{"db1", "db2"}, nil, nil, nil, false, models.BackupContentDatabase},
+		{"home only", nil, nil, nil, nil, true, models.BackupContentFiles},
+		{"domains only -> files", nil, nil, nil, []string{"x.com"}, false, models.BackupContentFiles},
+		{"db + home -> full", []string{"db1"}, nil, nil, nil, true, models.BackupContentFull},
+		{"db + domains -> full", []string{"db1"}, nil, nil, []string{"x.com"}, false, models.BackupContentFull},
+		{"mailboxes only -> full", nil, []string{"a@x.com"}, nil, nil, false, models.BackupContentFull},
+		{"dns only -> full", nil, nil, []string{"x.com"}, nil, false, models.BackupContentFull},
+		{"empty -> full", nil, nil, nil, nil, false, models.BackupContentFull},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := restoreContentFromSelective(tc.databases, tc.mailboxes, tc.dnsDomains, tc.home); got != tc.want {
+			if got := restoreContentFromSelective(tc.databases, tc.mailboxes, tc.dnsDomains, tc.domains, tc.home); got != tc.want {
 				t.Errorf("restoreContentFromSelective = %q, want %q", got, tc.want)
 			}
 		})
