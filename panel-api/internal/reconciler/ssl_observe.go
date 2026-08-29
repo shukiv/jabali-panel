@@ -105,6 +105,11 @@ func certDNSNames(path string) ([]string, error) {
 	return out, nil
 }
 
+// CertDNSNames is the exported form of certDNSNames — the SSL Manager uses it to
+// show which SANs a cert ACTUALLY covers vs the ones still pending public DNS
+// (GH #1221), matching the drift pass's own view.
+func CertDNSNames(path string) ([]string, error) { return certDNSNames(path) }
+
 // observeSSLCerts compares each issued certificate's row against its file and
 // reports what it found. Pure apart from reading the files: the caller does the
 // database writes and the alerting, so the comparison is testable on its own.

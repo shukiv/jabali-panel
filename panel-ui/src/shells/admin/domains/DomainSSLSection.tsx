@@ -27,6 +27,9 @@ type SSLCertificate = {
   staging: boolean;
   cert_path?: string;
   key_path?: string;
+  // GH #1221: configured SANs the issued cert doesn't cover yet (no public DNS
+  // at issuance); added automatically once they resolve.
+  pending_sans?: string[];
   next_retry_at?: string;
   retry_count: number;
 };
@@ -268,8 +271,18 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
       await apiClient.post(`/domains/${domainId}/ssl/retry`);
       feedback.message.success("Retry queued");
       await fetchCert();
-    } catch {
-      feedback.message.error("Failed to queue retry");
+    } catch (err) {
+      // GH #1221: surface the server's real reason (e.g. the cert is already
+      // being issued) instead of a blanket "failed", and refetch so the panel
+      // reflects the true status.
+      const e = err as { response?: { status?: number; data?: { detail?: string } } };
+      const detail = e.response?.data?.detail;
+      if (e.response?.status === 409) {
+        feedback.message.info(detail ?? "This certificate isn't in a retryable state right now.");
+      } else {
+        feedback.message.error(detail ?? "Failed to queue retry");
+      }
+      await fetchCert();
     } finally {
       setRenewing(false);
     }
@@ -408,6 +421,21 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
           </Button>
         )}
       </Space>
+
+      {/* GH #1221: an issued cert can legitimately be missing some configured
+          SANs — Let's Encrypt validation drops names with no public DNS at
+          issuance so one unresolvable helper (e.g. autoconfig) can't fail the
+          whole cert. Tell the operator, so a partial cert doesn't read as a bug;
+          the drift pass re-adds them once their DNS resolves. */}
+      {status === "issued" && (cert?.pending_sans?.length ?? 0) > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: 12 }}
+          message={`Not on the certificate yet: ${cert!.pending_sans!.join(", ")}`}
+          description="These hostnames don't resolve publicly yet, so Let's Encrypt couldn't validate them at issuance. They're added to the certificate automatically once their DNS resolves — no action needed."
+        />
+      )}
 
       {/* GH #738: the "Let's Encrypt" option greys out with no explanation when
           no admin email is set (it's the required ACME contact). Tell the

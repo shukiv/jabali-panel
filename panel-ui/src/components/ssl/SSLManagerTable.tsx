@@ -35,6 +35,9 @@ interface SSLCertificate {
   retry_count: number;
   service: string;
   sans?: string[];
+  // GH #1221: configured SANs the issued cert doesn't cover yet (no public DNS
+  // at issuance); the drift pass adds them once they resolve.
+  pending_sans?: string[];
   // Domain ssl_mode (le/self/custom/none/shared) — absent on the synthetic
   // panel-cert:*/mail-cert:* rows (Certificate console Mode column).
   ssl_mode?: string;
@@ -202,12 +205,18 @@ export const SSLManagerTable = ({
       queryClient.invalidateQueries({ queryKey: ["ssl-manager", endpoint] });
     },
     onError: (error: unknown) => {
-      const status = (error as { response?: { status?: number; data?: { error?: string } } })?.response;
-      if (status?.status === 409) {
-        feedback.message.info("Already retryable — will attempt on next tick");
+      // GH #1221: the list can be stale — the ticker may have moved the cert to
+      // `pending` (already issuing) since the row rendered. Show the server's
+      // real reason instead of a blanket "failed", and refetch so the row
+      // reflects the true status.
+      const resp = (error as { response?: { status?: number; data?: { detail?: string } } })?.response;
+      const detail = resp?.data?.detail;
+      if (resp?.status === 409) {
+        feedback.message.info(detail ?? "This certificate isn't in a retryable state right now.");
       } else {
-        feedback.message.error("Failed to queue retry");
+        feedback.message.error(detail ?? "Failed to queue retry");
       }
+      queryClient.invalidateQueries({ queryKey: ["ssl-manager", endpoint] });
     },
   });
 
@@ -280,6 +289,15 @@ export const SSLManagerTable = ({
                   </Tooltip>
                 )}
               </Typography.Text>
+            )}
+            {(record.pending_sans?.length ?? 0) > 0 && (
+              <Tooltip
+                title={`Configured but not on the certificate yet — added automatically once their DNS resolves publicly: ${record.pending_sans!.join(", ")}`}
+              >
+                <Tag color="orange" style={{ fontSize: 11, marginTop: 2 }}>
+                  {record.pending_sans!.length} SAN{record.pending_sans!.length === 1 ? "" : "s"} pending DNS
+                </Tag>
+              </Tooltip>
             )}
           </Space>
         );

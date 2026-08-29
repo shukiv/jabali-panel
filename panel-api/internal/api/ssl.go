@@ -18,6 +18,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -58,6 +59,10 @@ type SSLResponse struct {
 	Staging       bool       `json:"staging"`
 	CertPath      *string    `json:"cert_path,omitempty"`
 	KeyPath       *string    `json:"key_path,omitempty"`
+	// PendingSANs are configured SANs the issued cert doesn't cover yet — no
+	// public DNS at issuance; the drift pass adds them once they resolve (GH
+	// #1221). Empty for non-issued certs.
+	PendingSANs []string `json:"pending_sans,omitempty"`
 }
 
 // newSSLHandler creates a new SSL handler.
@@ -127,6 +132,7 @@ func (h *sslHandler) getSSL(c *gin.Context) {
 		Staging:       cert.Staging,
 		CertPath:      cert.CertPath,
 		KeyPath:       cert.KeyPath,
+		PendingSANs:   pendingWebSANs(cert.Status, cert.CertPath, domain.Name, webCertSANsForDomain(domain)),
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ssl": resp})
@@ -341,9 +347,20 @@ func (h *sslHandler) retrySSL(c *gin.Context) {
 		return
 	}
 
-	// Only allow retry on failed or pending_acme_retry statuses
+	// Only allow retry on failed or pending_acme_retry statuses. GH #1221: a
+	// stale UI can offer "Force retry now" on a row the ticker has since moved to
+	// `pending` (actively issuing) or that reached `issued` — return the CURRENT
+	// status + an actionable detail so the client shows why, instead of a generic
+	// "failed to queue". An already-issuing/issued cert needs no retry.
 	if cert.Status != models.SSLStatusFailed && cert.Status != models.SSLStatusPendingACMERetry {
-		c.JSON(http.StatusConflict, gin.H{"error": "cannot_retry"})
+		detail := "This certificate is not in a retryable state (" + cert.Status + ")."
+		switch cert.Status {
+		case models.SSLStatusPending, models.SSLStatusIssuing:
+			detail = "This certificate is already being issued — no retry is needed."
+		case models.SSLStatusIssued:
+			detail = "This certificate is already issued."
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot_retry", "status": cert.Status, "detail": detail})
 		return
 	}
 
@@ -509,6 +526,12 @@ type sslListRow struct {
 	// struct's internal `json:"-"` field. Empty for panel-cert:*/mail-cert:*
 	// synthetic rows, which have no domain ssl_mode.
 	SSLMode string `json:"ssl_mode,omitempty"`
+	// PendingSANs are configured SAN hostnames the ISSUED cert does not yet
+	// cover (GH #1221): resolvableSANs drops names with no public DNS at
+	// issuance so one unresolvable helper can't tank the whole cert, and the
+	// SAN-drift pass adds them automatically once they resolve. Surfaced so the
+	// operator knows why e.g. autoconfig/autodiscover aren't on the cert yet.
+	PendingSANs []string `json:"pending_sans,omitempty"`
 }
 
 // enrichCertRows attaches Service + SANs to every cert row. SANs are
@@ -531,8 +554,10 @@ func (h *sslHandler) enrichCertRows(ctx context.Context, certs []repository.SSLC
 			row.SANs = h.mailCertSANs(ctx, c)
 		default:
 			row.Service = "HTTPS"
-			row.SANs = h.webCertSANs(ctx, c)
+			desired := h.webCertSANs(ctx, c)
+			row.SANs = desired
 			row.SSLMode = c.SSLMode
+			row.PendingSANs = pendingWebSANs(c.Status, c.CertPath, c.DomainName, desired)
 		}
 		out = append(out, row)
 	}
@@ -576,6 +601,39 @@ func webCertSANsForDomain(d *models.Domain) []string {
 		sans = append(sans, "mta-sts."+d.Name)
 	}
 	return sans
+}
+
+// pendingWebSANs returns the configured SAN hostnames an ISSUED website cert
+// does not yet cover, by diffing the policy (desired) against the cert's ACTUAL
+// leaf SANs on disk (GH #1221). Empty for a non-issued cert (no file yet), an
+// unreadable file, or a cert that already covers everything.
+func pendingWebSANs(status string, certPath *string, baseName string, desired []string) []string {
+	if status != models.SSLStatusIssued || certPath == nil || *certPath == "" {
+		return nil
+	}
+	actual, err := reconciler.CertDNSNames(*certPath)
+	if err != nil {
+		return nil // unreadable cert → don't invent a pending list
+	}
+	return sansNotCovered(desired, actual, baseName)
+}
+
+// sansNotCovered returns the desired hostnames not present in covered (the
+// cert's actual SANs), case-insensitively. baseName is always treated as
+// covered (the agent adds it at issuance). Pure — unit-tested without a cert.
+func sansNotCovered(desired, covered []string, baseName string) []string {
+	have := make(map[string]struct{}, len(covered)+1)
+	for _, s := range covered {
+		have[strings.ToLower(s)] = struct{}{}
+	}
+	have[strings.ToLower(baseName)] = struct{}{}
+	var pending []string
+	for _, d := range desired {
+		if _, ok := have[strings.ToLower(d)]; !ok {
+			pending = append(pending, d)
+		}
+	}
+	return pending
 }
 
 // mailCertSANs returns the SAN list of a per-domain Stalwart mail cert.
