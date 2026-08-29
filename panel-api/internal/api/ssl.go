@@ -77,6 +77,7 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 	domains := g.Group("/domains/:id")
 	{
 		domains.GET("/ssl", h.getSSL)
+		domains.GET("/ssl/certificate", h.inspectSSL) // GH #1355: view the issued cert
 		domains.POST("/ssl", h.enableSSL)
 		domains.DELETE("/ssl", h.disableSSL)
 		domains.POST("/ssl/renew", h.renewSSL)

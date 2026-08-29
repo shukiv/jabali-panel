@@ -11,7 +11,9 @@ import {
   RedoOutlined,
   ExclamationCircleOutlined,
   MoreOutlined,
+  SafetyCertificateOutlined,
 } from "@icons";
+import { SSLCertViewModal } from "./SSLCertViewModal";
 import { apiClient } from "../../apiClient";
 import { columnSearchProps } from "../columnSearch";
 import { RowActionButton } from "../RowActionButton";
@@ -143,6 +145,7 @@ export const SSLManagerTable = ({
   // diagnose pending_acme_retry / failed states without shelling into the
   // VPS to grep journalctl.
   const [errorRow, setErrorRow] = useState<SSLCertificate | null>(null);
+  const [viewRow, setViewRow] = useState<SSLCertificate | null>(null); // GH #1355
 
   // Fetch SSL certificates
   const { data, isLoading, error } = useQuery({
@@ -504,6 +507,10 @@ export const SSLManagerTable = ({
         // live in the ⋯ overflow (Certificate console). Renew stays primary
         // for issued rows, Retry now for retryable failures.
         const menuItems = [
+          // GH #1355: view the issued cert (only issued rows have one on disk).
+          ...(record.status === "issued"
+            ? [{ key: "view", icon: <SafetyCertificateOutlined />, label: "View certificate" }]
+            : []),
           ...(record.status === "issued"
             ? [{ key: "revoke", danger: true, icon: <DeleteOutlined />, label: t("sslmanagertable.revoke_certificate") }]
             : []),
@@ -516,6 +523,7 @@ export const SSLManagerTable = ({
         ];
         const onMenuClick = ({ key }: { key: string }) => {
           if (key === "retry") retryMutation.mutate(record.domain_id);
+          else if (key === "view") setViewRow(record);
           else if (key === "error") setErrorRow(record);
           else if (key === "revoke") {
             feedback.modal.confirm({
@@ -590,6 +598,11 @@ export const SSLManagerTable = ({
           />
         </Space>
       )}
+      <SSLCertViewModal
+        domainId={viewRow?.domain_id ?? null}
+        domainName={viewRow?.domain_name}
+        onClose={() => setViewRow(null)}
+      />
       <Modal
         open={!!errorRow}
         title={errorRow ? `Last error — ${errorRow.domain_name}` : "Last error"}
