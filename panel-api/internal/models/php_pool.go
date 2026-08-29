@@ -62,10 +62,13 @@ type PHPPool struct {
 	// are validated against the installed-extension allowlist (phpext). Can add
 	// installed extras; cannot disable a base extension (loaded server-wide).
 	ExtraExtensions StringList `gorm:"column:extra_extensions;type:json" json:"extra_extensions,omitempty"`
-	Status          string     `gorm:"type:varchar(16);not null;default:'pending'" json:"status"`
-	LastError       *string    `gorm:"type:text" json:"last_error,omitempty"`
-	CreatedAt       time.Time  `gorm:"type:datetime(6);not null" json:"created_at"`
-	UpdatedAt       time.Time  `gorm:"type:datetime(6);not null" json:"updated_at"`
+	// XdebugEnabled (GH #1332 item 9): Xdebug on for this (user,version) pool,
+	// safe modes only. Applied via a per-slug PHP_INI_SCAN_DIR ini by the agent.
+	XdebugEnabled bool      `gorm:"column:xdebug_enabled;type:tinyint(1);not null;default:0" json:"xdebug_enabled"`
+	Status        string    `gorm:"type:varchar(16);not null;default:'pending'" json:"status"`
+	LastError     *string   `gorm:"type:text" json:"last_error,omitempty"`
+	CreatedAt     time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt     time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 func (PHPPool) TableName() string { return "php_pools" }
@@ -92,6 +95,7 @@ func NewVersionedPHPPool(id, phpVersion string, def *PHPPool) *PHPPool {
 		SlowlogTimeoutSeconds:          def.SlowlogTimeoutSeconds,
 		PerformanceMode:                def.PerformanceMode,
 		ExtraExtensions:                def.ExtraExtensions,
+		XdebugEnabled:                  def.XdebugEnabled,
 		Status:                         "pending",
 	}
 }

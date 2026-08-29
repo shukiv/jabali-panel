@@ -3807,6 +3807,18 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/php-xdebug:
+    get:
+      tags: [Me]
+      summary: Get the pool's Xdebug state for a PHP version
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Me]
+      summary: Toggle Xdebug (safe modes) for a PHP version's pool
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/server-capabilities:
     get:
       tags: [Me]

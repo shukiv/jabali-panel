@@ -85,6 +85,7 @@ func reconcilePHPPoolViaAgent(
 		"admin_values":                      adminValues,
 		"admin_flags":                       adminFlags,
 		"extra_extensions":                  []string(pool.ExtraExtensions),
+		"xdebug_enabled":                    pool.XdebugEnabled,
 	})
 	if err != nil {
 		pool.Status = "error"

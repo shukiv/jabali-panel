@@ -2770,6 +2770,19 @@ PLACEHOLDER_EOF
   chmod 0644 "/etc/php/${version}/fpm/pool.d/_jabali-placeholder.conf"
   _ok "installed placeholder pool for PHP ${version}"
 
+  # GH #1332 item 9: Xdebug is opt-in PER POOL via a per-slug PHP_INI_SCAN_DIR
+  # (fpm-exec adds /etc/php/<v>/jabali-ext/<slug>). Install the .so but keep it
+  # GLOBALLY DISABLED — enabled globally it would tax every request on every
+  # site fleet-wide. The base scan-dir parent is pre-created so the agent can
+  # drop per-slug ini files into it.
+  install -d -m 0755 "/etc/php/${version}/jabali-ext"
+  if DEBIAN_FRONTEND=noninteractive apt-get install -y "php${version}-xdebug" >/dev/null 2>&1; then
+    phpdismod -v "${version}" xdebug 2>/dev/null || true
+    _ok "PHP ${version} Xdebug installed (globally off; opt-in per pool)"
+  else
+    _warn "php${version}-xdebug unavailable — per-pool Xdebug will be off for ${version}"
+  fi
+
 
   # Mask the distro's global php<v>-fpm.service — per ADR-0025 we run
   # one FPM master per hosting user (jabali-fpm@<user>.service) inside

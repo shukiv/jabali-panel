@@ -60,6 +60,11 @@ type phpPoolApplyParams struct {
 	// the tenant admin_values allowlist (which has no "extension" entry) exactly
 	// like disable_functions does.
 	ExtraExtensions []string `json:"extra_extensions,omitempty"`
+	// XdebugEnabled (GH #1332 item 9) turns Xdebug on for THIS pool via a per-slug
+	// PHP_INI_SCAN_DIR ini (fpm-exec sets the scan dir). Safe modes only — no
+	// step-debug/remote-connect. Requires xdebug.so installed; the agent refuses
+	// to enable it otherwise so the master can't crash-loop on a missing .so.
+	XdebugEnabled bool `json:"xdebug_enabled,omitempty"`
 }
 
 // phpExtNameRE bounds an extension name to a safe module identifier before it is
@@ -749,6 +754,15 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// GH #1332 item 9: manage the per-slug Xdebug ini before the (re)start.
+	// fpm-exec adds /etc/php/<ver>/jabali-ext/<slug> to PHP_INI_SCAN_DIR, so an
+	// ini dropped there enables Xdebug for THIS pool only. Refuse to enable when
+	// xdebug.so is missing (a bad zend_extension line crash-loops the master).
+	xdebugChanged, xderr := applyPoolXdebug(p.PHPVersion, slug, p.Username, p.XdebugEnabled)
+	if xderr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: xderr.Error()}
+	}
+
 	// Restart or reload the slug's FPM service.
 	if err := restartOrReloadUserFPM(ctx, slug, oldVersion, p.PHPVersion); err != nil {
 		return nil, &agentwire.AgentError{
@@ -757,10 +771,67 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// A changed Xdebug state needs a FULL restart — a USR2 reload (which
+	// restartOrReloadUserFPM may have done for an unchanged version) never
+	// re-reads a zend_extension.
+	if xdebugChanged && os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
+		_ = execCommandContext(ctx, "systemctl", "restart", fmt.Sprintf("jabali-fpm@%s.service", slug)).Run()
+	}
+
 	return phpPoolApplyResponse{
 		SocketPath: socketPath,
 		PoolName:   poolName,
 	}, nil
+}
+
+// applyPoolXdebug writes or removes the per-slug Xdebug ini (GH #1332 item 9),
+// returning whether the on-disk state changed (so the caller can force a full
+// restart). Safe modes only — develop/coverage/profile, never remote
+// step-debug; profiler output goes to the tenant's ~/logs.
+func applyPoolXdebug(version, slug, username string, enabled bool) (bool, error) {
+	dir := filepath.Join("/etc/php", version, "jabali-ext", slug)
+	ini := filepath.Join(dir, "20-xdebug.ini")
+	_, statErr := os.Stat(ini)
+	isOn := statErr == nil
+
+	if !enabled {
+		if !isOn {
+			return false, nil
+		}
+		if err := os.Remove(ini); err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("disable xdebug: %w", err)
+		}
+		return true, nil
+	}
+
+	// Enabling: xdebug.so must be installed or the master won't start.
+	if m, _ := filepath.Glob("/usr/lib/php/*/xdebug.so"); len(m) == 0 {
+		return false, fmt.Errorf("Xdebug is not installed on this server")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, fmt.Errorf("create xdebug scan dir: %w", err)
+	}
+	logsDir := filepath.Join("/home", username, "logs")
+	_ = os.MkdirAll(logsDir, 0o750)
+	if u, e := user.Lookup(username); e == nil {
+		uid, _ := strconv.Atoi(u.Uid)
+		gid, _ := strconv.Atoi(u.Gid)
+		_ = os.Chown(logsDir, uid, gid)
+	}
+	content := "; Managed by jabali (GH #1332 item 9). Safe modes only — no remote step-debug.\n" +
+		"zend_extension=xdebug.so\n" +
+		"xdebug.mode=develop,coverage,profile\n" +
+		"xdebug.start_with_request=no\n" +
+		"xdebug.output_dir=" + logsDir + "\n"
+	if isOn {
+		if cur, _ := os.ReadFile(ini); string(cur) == content {
+			return false, nil // already in the desired state
+		}
+	}
+	if err := os.WriteFile(ini, []byte(content), 0o644); err != nil {
+		return false, fmt.Errorf("write xdebug ini: %w", err)
+	}
+	return true, nil
 }
 
 func init() {

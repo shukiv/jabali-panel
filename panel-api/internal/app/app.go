@@ -1242,6 +1242,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				PHPPools:            deps.PHPPools,
 				PHPPoolIniOverrides: deps.PHPPoolIniOverrides,
 			})
+			// GH #1332 item 9: per-(user,version) Xdebug toggle.
+			api.RegisterPHPXdebugRoutes(v1, api.PHPXdebugHandlerConfig{
+				Agent:               deps.Agent,
+				Users:               deps.Users,
+				Packages:            deps.Packages,
+				PHPPools:            deps.PHPPools,
+				PHPPoolIniOverrides: deps.PHPPoolIniOverrides,
+			})
 		}
 		if deps.Domains != nil && deps.PHPPools != nil {
 			api.RegisterDomainPHPPoolRoutes(v1, api.DomainPHPPoolHandlerConfig{

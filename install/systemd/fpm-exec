@@ -16,6 +16,15 @@ verfile="/run/php/jabali-${user}/phpver"
 ver=$(cat "$verfile")
 [[ "$ver" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "fpm-exec: malformed version '$ver' in $verfile" >&2; exit 1; }
 
+# GH #1332 item 9: give THIS master an additional per-slug ini scan dir so
+# opt-in Zend extensions (Xdebug) can be enabled for one user's pool only. The
+# leading colon keeps PHP's compiled-in default conf.d (every normal extension),
+# then also scans the per-slug dir. The dir usually does not exist (no opt-in) —
+# PHP silently skips a missing scan dir, so this is a no-op for every pool that
+# hasn't enabled anything. Path stays under /etc/php/** (already AppArmor-readable
+# + agent/root-writable); "$user" here is the systemd instance = the pool slug.
+export PHP_INI_SCAN_DIR=":/etc/php/${ver}/jabali-ext/${user}"
+
 # --nodaemonize (-F) keeps php-fpm in foreground so systemd supervises
 # it with Type=simple. --fpm-config points at the per-user FPM config
 # so only this user's pool is loaded (fixes the glob-includes-all-pools bug).

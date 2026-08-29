@@ -8,6 +8,7 @@ import { CodeOutlined } from "@icons";
 import { UserPHPPerformanceCard } from "./UserPHPPerformanceCard";
 import { DomainEnvVarsCard } from "./DomainEnvVarsCard";
 import { PHPExtensionsCard } from "./PHPExtensionsCard";
+import { PHPXdebugCard } from "./PHPXdebugCard";
 import { apiClient } from "../../../apiClient";
 import { getIdentity, type Identity } from "../../../identity";
 import { isPHPEOL } from "../../../utils/phpEol";
@@ -729,6 +730,11 @@ export function UserPHPSettingsPage() {
               key: "extensions",
               label: "Extensions",
               children: <PHPExtensionsCard />,
+            },
+            {
+              key: "xdebug",
+              label: "Xdebug",
+              children: <PHPXdebugCard />,
             },
           ]}
         />
