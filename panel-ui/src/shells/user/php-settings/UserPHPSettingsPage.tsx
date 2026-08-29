@@ -271,7 +271,9 @@ export function UserPHPSettingsPage() {
   ];
 
   return (
-    <div style={{ maxWidth: 800, margin: "0 auto" }}>
+    // GH #1332 item 1: the page was clamped to 800px and centred, unlike every
+    // other settings page. Use the shell's full responsive width like its peers.
+    <div>
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
         <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
           <CodeOutlined /> PHP Settings
