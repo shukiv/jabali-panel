@@ -555,10 +555,20 @@ func (h *sslHandler) enrichCertRows(ctx context.Context, certs []repository.SSLC
 			row.SANs = h.mailCertSANs(ctx, c)
 		default:
 			row.Service = "HTTPS"
-			desired := h.webCertSANs(ctx, c)
-			row.SANs = desired
 			row.SSLMode = c.SSLMode
-			row.PendingSANs = pendingWebSANs(c.Status, c.CertPath, c.DomainName, desired)
+			desired := h.webCertSANs(ctx, c)
+			// GH #1357: show the SANs the cert ACTUALLY covers, not the desired
+			// policy. resolvableSANs drops unresolvable helpers (mail/autoconfig…)
+			// at issuance, so the policy list over-reported names the cert never
+			// had. For an issued cert read its real leaf SANs; the gap surfaces as
+			// PendingSANs (GH #1221). A not-yet-issued cert has no file → fall back
+			// to the desired policy so the row isn't blank.
+			if actual := actualWebCertSANs(c.Status, c.CertPath); actual != nil {
+				row.SANs = actual
+				row.PendingSANs = sansNotCovered(desired, actual, c.DomainName)
+			} else {
+				row.SANs = desired
+			}
 		}
 		out = append(out, row)
 	}
@@ -609,14 +619,25 @@ func webCertSANsForDomain(d *models.Domain) []string {
 // leaf SANs on disk (GH #1221). Empty for a non-issued cert (no file yet), an
 // unreadable file, or a cert that already covers everything.
 func pendingWebSANs(status string, certPath *string, baseName string, desired []string) []string {
+	actual := actualWebCertSANs(status, certPath)
+	if actual == nil {
+		return nil
+	}
+	return sansNotCovered(desired, actual, baseName)
+}
+
+// actualWebCertSANs returns the DNS SANs the ISSUED cert actually carries, read
+// from its leaf on disk (GH #1357). nil for a non-issued / fileless / unreadable
+// cert — callers fall back to the desired policy.
+func actualWebCertSANs(status string, certPath *string) []string {
 	if status != models.SSLStatusIssued || certPath == nil || *certPath == "" {
 		return nil
 	}
 	actual, err := reconciler.CertDNSNames(*certPath)
 	if err != nil {
-		return nil // unreadable cert → don't invent a pending list
+		return nil
 	}
-	return sansNotCovered(desired, actual, baseName)
+	return actual
 }
 
 // sansNotCovered returns the desired hostnames not present in covered (the
