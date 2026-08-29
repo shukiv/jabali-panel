@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useEffect, useState, type CSSProperties } from "react";
 import { Alert, Button, Card, Checkbox, Collapse, Col, Empty, Modal, Row, Segmented, Space, Spin, Switch, Table, Tag, TimePicker, Timeline, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { RebootServerButton } from "../server-status/RebootServerButton";
 import dayjs from "dayjs";
 
 import {
@@ -938,7 +939,13 @@ function AutomaticUpdatesCard() {
             />
           )}
           {rebootRequired && (
-            <Alert type="warning" showIcon message="Reboot required to finish applying updates" />
+            <Alert
+              type="warning"
+              showIcon
+              message="Reboot required to finish applying updates"
+              // GH #1330: offer the reboot right where it's detected.
+              action={<RebootServerButton>Reboot now</RebootServerButton>}
+            />
           )}
           <Row align="middle" gutter={[12, 12]}>
             <Col flex="auto">

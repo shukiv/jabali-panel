@@ -4,9 +4,11 @@
 //
 // Categories: Server (host identity), Hardware (CPU/RAM), Network
 // (interfaces). Source data lives in envelope.host + envelope.network.
-import { Card, Table, Tag, Typography } from "antd";
+import { Card, Space, Table, Tag, Typography } from "antd";
 
 import { CheckCircleOutlined, ExclamationCircleOutlined, InfoCircleOutlined } from "@ant-design/icons";
+
+import { RebootServerButton } from "./RebootServerButton";
 
 import type {
   HostSlice,
@@ -167,6 +169,10 @@ export function SystemInfoCard({ host, network, software, asOf }: Props) {
           },
         ]}
       />
+      {/* GH #1330: server power action lives with the host identity it acts on. */}
+      <Space style={{ width: "100%", justifyContent: "flex-end", marginTop: 12 }}>
+        <RebootServerButton>Reboot server</RebootServerButton>
+      </Space>
     </Card>
   );
 }

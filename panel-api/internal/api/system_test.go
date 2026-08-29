@@ -29,7 +29,7 @@ func adminRouter(cli agent.AgentInterface) *gin.Engine {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
 		c.Next()
 	})
-	api.RegisterSystemRoutes(v1, cli)
+	api.RegisterSystemRoutes(v1, cli, nil)
 	return r
 }
 
@@ -41,7 +41,7 @@ func userRouter(cli agent.AgentInterface) *gin.Engine {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-user", IsAdmin: false})
 		c.Next()
 	})
-	api.RegisterSystemRoutes(v1, cli)
+	api.RegisterSystemRoutes(v1, cli, nil)
 	return r
 }
 

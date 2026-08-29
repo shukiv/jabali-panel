@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 )
@@ -39,7 +40,7 @@ type resolverSetRequest struct {
 // RegisterSystemRoutes mounts admin-only system endpoints under the
 // given router group. The group is expected to already carry RequireAuth
 // middleware; we add RequireAdmin ourselves.
-func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
+func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface, kc *kratosclient.Client) {
 	sys := rg.Group("/system", middleware.RequireAdmin())
 
 	sys.GET("/info", func(c *gin.Context) {
@@ -116,6 +117,29 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
 	registerServiceAction("stop", true)
 	registerServiceAction("enable", false)
 	registerServiceAction("disable", true) // disable = won't auto-start on next boot; same class of foot-gun
+
+	// POST /system/reboot — GH #1330. Schedule a host reboot (kernel/security
+	// updates leave /var/run/reboot-required; the panel already surfaces that
+	// banner). A destructive root op, so beyond RequireAdmin it requires
+	// recent-auth step-up (JAB-380, same bar as the File Manager / Root Terminal)
+	// and the global audit middleware records it. The agent schedules the reboot
+	// a few seconds out so this response returns cleanly before the box goes down.
+	sys.POST("/reboot", func(c *gin.Context) {
+		if !requireRecentAuth(c, kc, stepUpWindow) {
+			return
+		}
+		c.Set("audit_target", "server reboot")
+		c.Set("audit_target_type", "system")
+		ctx, cancel := context.WithTimeout(c.Request.Context(), systemCallTimeout)
+		defer cancel()
+		raw, err := cli.Call(ctx, "system.reboot", nil)
+		if err != nil {
+			status, body := translateAgentError(err)
+			c.JSON(status, body)
+			return
+		}
+		c.Data(http.StatusAccepted, "application/json; charset=utf-8", raw)
+	})
 
 	// DNS resolvers — truth lives on disk (systemd-resolved drop-in) so we
 	// round-trip to the agent for both read and write; no DB involvement.

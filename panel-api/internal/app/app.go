@@ -1063,7 +1063,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			})
 		}
 		if deps.Agent != nil {
-			api.RegisterSystemRoutes(v1, deps.Agent)
+			api.RegisterSystemRoutes(v1, deps.Agent, deps.KratosClient)
 			api.RegisterPHPVersionRoutes(v1, deps.Agent)
 			// M26 Step 4 — admin Security tab. CrowdSec + UFW are pure
 			// agent passthroughs. ModSecurity removed 2026-04-26 (ADR-0055

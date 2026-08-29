@@ -5322,6 +5322,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /system/reboot:
+    post:
+      tags: [System]
+      summary: Reboot the server (admin, recent-auth step-up)
+      security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Reboot scheduled } }
+
   /system/services:
     get:
       tags: [System]
