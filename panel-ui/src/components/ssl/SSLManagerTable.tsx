@@ -352,7 +352,9 @@ export const SSLManagerTable = ({
         } else if (status === "pending_acme_retry") {
           tooltip = `ACME failed — retrying at ${formatDate(record.next_retry_at)}`;
         }
-        const hasError = !!record.last_error;
+        // GH #1356: a cert that failed then succeeded keeps its stale last_error;
+        // don't surface the error affordance once it's issued.
+        const hasError = !!record.last_error && record.status !== "issued";
         return (
           <Space size={4}>
             <Tooltip title={tooltip}>
@@ -517,7 +519,7 @@ export const SSLManagerTable = ({
           ...(record.status === "pending_acme_retry" && !isRetryable
             ? [{ key: "retry", icon: <RedoOutlined />, label: "Force retry now" }]
             : []),
-          ...(record.last_error
+          ...(record.last_error && record.status !== "issued"
             ? [{ key: "error", icon: <ExclamationCircleOutlined />, label: t("sslmanagertable.show_last_error") }]
             : []),
         ];
