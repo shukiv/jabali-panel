@@ -263,7 +263,11 @@ export const DomainMailboxesSection = ({
               ),
             },
             {
-              title: "Quota",
+              // GH #1358: renamed to match the main mailbox lists (the column
+              // shows used / quota). No client sorter here — this table is
+              // server-paginated (pageSize 10), so a client sort would only
+              // reorder the visible page and mislead.
+              title: "Usage / Quota",
               dataIndex: "quota_bytes",
               width: 220,
               render: (_quota: number, row: Mailbox) => renderMailboxQuota(row),

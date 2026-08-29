@@ -221,10 +221,12 @@ export function AdminMailPage() {
                 ),
             },
             {
-              title: "Quota",
+              title: "Usage / Quota",
               dataIndex: "quota_bytes",
               width: 200,
-              sorter: (a, b) => (a.quota_bytes ?? 0) - (b.quota_bytes ?? 0),
+              // GH #1358: sort by space USED (what the column shows), not the
+              // quota limit — the old sorter made "sort by usage" a no-op.
+              sorter: (a, b) => (a.last_usage_bytes ?? 0) - (b.last_usage_bytes ?? 0),
               render: (_quota: number, row) => renderMailboxQuota(row),
             },
             {

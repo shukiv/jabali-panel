@@ -344,9 +344,12 @@ export const MailboxesTab = () => {
             },
           },
           {
-            title: "Quota",
+            title: "Usage / Quota",
             dataIndex: "quota_bytes",
-            sorter: (a, b) => (a.quota_bytes ?? 0) - (b.quota_bytes ?? 0),
+            // GH #1358: the column shows space USED (used / quota + fill bar), so
+            // sort by used bytes — not the quota limit, which made the header
+            // arrow a no-op for "sort by usage".
+            sorter: (a, b) => (a.last_usage_bytes ?? 0) - (b.last_usage_bytes ?? 0),
             width: 220,
             render: (_quota: number, row) => renderMailboxQuota(row),
           },
