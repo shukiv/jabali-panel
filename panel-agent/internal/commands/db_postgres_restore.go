@@ -8,8 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -101,6 +103,45 @@ func pgRestoreTmpDB(db string) string {
 	return "jbrt_" + hex.EncodeToString(sum[:])[:16]
 }
 
+// pgDumpIsArchive reports whether the dump header is a pg_dump ARCHIVE (custom
+// or tar) rather than a plain-SQL dump. Custom archives start with the magic
+// "PGDMP"; tar archives carry the POSIX "ustar" magic at offset 257. Anything
+// else — SQL text, including a UTF-8 BOM or CRLF plain dump, or a short/empty
+// file — is treated as plain (psql surfaces the real error there). A bounded
+// header slice keeps a <262-byte plain dump from panicking the tar check.
+func pgDumpIsArchive(hdr []byte) bool {
+	if len(hdr) >= 5 && string(hdr[:5]) == "PGDMP" {
+		return true // custom format (pg_dump -Fc / pgAdmin default "Custom")
+	}
+	if len(hdr) >= 262 && string(hdr[257:262]) == "ustar" {
+		return true // tar format (pg_dump -Ft)
+	}
+	return false
+}
+
+// pgPathScrubRe strips agent-internal absolute paths from a loader error before
+// it reaches the tenant's screen (GH #1045 error surfacing).
+var pgPathScrubRe = regexp.MustCompile(`/var/lib/jabali[-/][^\s"']*`)
+
+// pgTrimLoaderError bounds a psql/pg_restore stderr for tenant display: strips
+// absolute staging paths, keeps only the first handful of lines (a garbage dump
+// cascades into pages of errors), and caps the length. The dump is the tenant's
+// own, so the psql/pg_restore diagnostic itself is theirs to see — this only
+// keeps agent internals + unbounded output out.
+func pgTrimLoaderError(s string) string {
+	s = strings.TrimSpace(pgPathScrubRe.ReplaceAllString(s, "<path>"))
+	if lines := strings.Split(s, "\n"); len(lines) > 6 {
+		s = strings.Join(lines[:6], "\n")
+	}
+	if len(s) > 500 {
+		s = strings.TrimSpace(s[:500]) + "…"
+	}
+	if s == "" {
+		s = "no error output from the loader"
+	}
+	return s
+}
+
 // pgSuperExecInDB runs one statement as the postgres superuser CONNECTED TO db
 // (REASSIGN OWNED / GRANT ON ALL TABLES / DROP OWNED are database-local). db is
 // a pgValidIdent-checked identifier passed as an exec arg (no shell).
@@ -150,6 +191,16 @@ func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "restore path invalid, outside an allowed directory, or not readable"}
 	}
 	defer f.Close()
+
+	// GH #1045: detect the dump format so pgAdmin's default CUSTOM (and TAR)
+	// archives restore via pg_restore, not just plain-SQL via psql. Read the
+	// header, then rewind so whichever loader gets a stream from offset 0.
+	hdr := make([]byte, 512)
+	nHdr, _ := io.ReadFull(f, hdr) // short read (small dump) is fine
+	if _, serr := f.Seek(0, io.SeekStart); serr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "rewind dump: " + serr.Error()}
+	}
+	isArchive := pgDumpIsArchive(hdr[:nHdr])
 
 	shadow := pgShadowRole(p.DBName)
 	tmpDB := pgRestoreTmpDB(p.DBName)
@@ -212,43 +263,70 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 	if uerr != nil || gerr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "parse nobody uid/gid"}
 	}
-	load := execCommandContext(ctx, "psql",
-		"-v", "ON_ERROR_STOP=1", "-X", "-q",
-		"-h", "127.0.0.1", "-p", "5432",
-		"-U", shadow, "-d", tmpDB)
-	load.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
-	load.Env = append(os.Environ(), "PGPASSWORD="+pwd)
+	cred := &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
+	if isArchive {
+		// pg_restore path (GH #1045) — a pgAdmin CUSTOM/TAR archive. The archive
+		// rides in on a SEEKABLE stdin: `nobody` inherits root's already-open file
+		// fd and reads+seeks it without ever opening the path — the same
+		// escape-proof property as the psql pipe (a symlink swap can't redirect an
+		// already-open fd). --no-owner --no-privileges is the archive-native
+		// equivalent of the plain-SQL sanitizer (skips OWNER/ACL the non-superuser
+		// shadow couldn't replay); --exit-on-error aborts the whole load on any
+		// failure so a bad/partial archive never reaches the swap. Trusted
+		// extensions (pgcrypto, uuid-ossp, …) the shadow can create as the staging
+		// db's owner still load; an UNtrusted extension or a newer-than-server
+		// archive fails here and its real message is surfaced (not swallowed).
+		rest := execCommandContext(ctx, "pg_restore",
+			"--no-owner", "--no-privileges", "--exit-on-error",
+			"-h", "127.0.0.1", "-p", "5432", "-U", shadow, "-d", tmpDB)
+		rest.SysProcAttr = cred
+		rest.Env = append(os.Environ(), "PGPASSWORD="+pwd)
+		rest.Stdin = f // root-opened, seekable; child never opens the path
+		var out bytes.Buffer
+		rest.Stdout = &out
+		rest.Stderr = &out
+		if err := rest.Run(); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed: " + pgTrimLoaderError(out.String())}
+		}
+	} else {
+		load := execCommandContext(ctx, "psql",
+			"-v", "ON_ERROR_STOP=1", "-X", "-q",
+			"-h", "127.0.0.1", "-p", "5432",
+			"-U", shadow, "-d", tmpDB)
+		load.SysProcAttr = cred
+		load.Env = append(os.Environ(), "PGPASSWORD="+pwd)
 
-	// Stream the dump through the ownership/privilege sanitizer (GH #1044) into
-	// psql's stdin via a pipe: a stock `pg_dump` carries `ALTER ... OWNER TO` /
-	// GRANT / SET SESSION AUTHORIZATION that the unprivileged shadow role can't
-	// replay ("must be able to SET ROLE ..."), which ON_ERROR_STOP turns into a
-	// whole-restore abort. psql (as `nobody`) reads the inherited pipe fd, never
-	// the dump path — the same escape-proof property as handing it the file fd,
-	// and the raw file is still only ever opened by root. The post-pass below
-	// re-establishes tenant ownership + panel-tracked grants, so nothing dropped
-	// here is lost.
-	pr, pw, perr := os.Pipe()
-	if perr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore pipe: " + perr.Error()}
-	}
-	load.Stdin = pr
-	var out bytes.Buffer
-	load.Stdout = &out
-	load.Stderr = &out
-	if err := load.Start(); err != nil {
-		_ = pr.Close()
-		_ = pw.Close()
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore start: " + err.Error()}
-	}
-	_ = pr.Close() // child holds its own copy; parent closes so psql sees EOF
-	sanErr := sanitizePgPlainDump(f, pw)
-	_ = pw.Close() // signal EOF to psql whatever the sanitize outcome
-	if waitErr := load.Wait(); waitErr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed (check the dump is a plain-SQL pg_dump): " + strings.TrimSpace(out.String())}
-	}
-	if sanErr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore stream: " + sanErr.Error()}
+		// Stream the dump through the ownership/privilege sanitizer (GH #1044) into
+		// psql's stdin via a pipe: a stock `pg_dump` carries `ALTER ... OWNER TO` /
+		// GRANT / SET SESSION AUTHORIZATION that the unprivileged shadow role can't
+		// replay ("must be able to SET ROLE ..."), which ON_ERROR_STOP turns into a
+		// whole-restore abort. psql (as `nobody`) reads the inherited pipe fd, never
+		// the dump path — the same escape-proof property as handing it the file fd,
+		// and the raw file is still only ever opened by root. The post-pass below
+		// re-establishes tenant ownership + panel-tracked grants, so nothing dropped
+		// here is lost.
+		pr, pw, perr := os.Pipe()
+		if perr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore pipe: " + perr.Error()}
+		}
+		load.Stdin = pr
+		var out bytes.Buffer
+		load.Stdout = &out
+		load.Stderr = &out
+		if err := load.Start(); err != nil {
+			_ = pr.Close()
+			_ = pw.Close()
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore start: " + err.Error()}
+		}
+		_ = pr.Close() // child holds its own copy; parent closes so psql sees EOF
+		sanErr := sanitizePgPlainDump(f, pw)
+		_ = pw.Close() // signal EOF to psql whatever the sanitize outcome
+		if waitErr := load.Wait(); waitErr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed (check the dump is a plain-SQL pg_dump): " + pgTrimLoaderError(out.String())}
+		}
+		if sanErr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore stream: " + sanErr.Error()}
+		}
 	}
 
 	// (4) Superuser post-pass on the STAGING db — ownership + grants, none of it

@@ -35,6 +35,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -105,10 +106,36 @@ func evictStaleRestoreStaging(userID string) {
 type restoreOutcome struct {
 	Status string `json:"status"` // "restoring" | "done" | "failed"
 	TS     int64  `json:"ts"`
+	// Error is the tenant-facing failure detail on "failed" (GH #1045): the
+	// loader's own psql/pg_restore diagnostic (already path-scrubbed +
+	// length-bounded agent-side), so the UI can show WHY a restore failed
+	// instead of a bare "restore_failed". Empty on restoring/done.
+	Error string `json:"error,omitempty"`
 }
 
-func writeRestoreOutcome(path, status string) {
-	b, _ := json.Marshal(restoreOutcome{Status: status, TS: time.Now().Unix()})
+func writeRestoreOutcome(path, status, detail string) {
+	// Defence in depth: cap the stored detail even though the agent already
+	// bounds it — the outcome file is read straight back into a tenant response.
+	if len(detail) > 600 {
+		detail = detail[:600] + "…"
+	}
+	b, _ := json.Marshal(restoreOutcome{Status: status, TS: time.Now().Unix(), Error: detail})
+	writeOutcomeFile(path, b)
+}
+
+// restoreFailureDetail extracts a tenant-safe failure message from a restore
+// error. An agent AgentError carries a human-facing Message that the agent has
+// already path-scrubbed + length-bounded (GH #1045); anything else falls back to
+// a generic string so a raw internal error never reaches the tenant.
+func restoreFailureDetail(err error) string {
+	var ae *agentwire.AgentError
+	if errors.As(err, &ae) && ae.Message != "" {
+		return ae.Message
+	}
+	return "the restore failed — check that the uploaded file is a valid PostgreSQL dump"
+}
+
+func writeOutcomeFile(path string, b []byte) {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err == nil {
 		_ = os.Rename(tmp, path) // atomic swap so a poll never sees a torn write
@@ -203,8 +230,12 @@ func (h *databaseHandler) restoreStatus(c *gin.Context) {
 	// (panel restart) — report failed so the client stops polling forever.
 	if o.Status == "restoring" && time.Since(time.Unix(o.TS, 0)) > restoreAgentTimeout {
 		o.Status = "failed"
+		if o.Error == "" {
+			o.Error = "the restore did not finish in time and was abandoned"
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"status": o.Status})
+	// GH #1045: return the failure detail so the UI shows WHY, not "restore_failed".
+	c.JSON(http.StatusOK, gin.H{"status": o.Status, "error": o.Error})
 }
 
 // restoreChunk handles POST /databases/:id/restore-chunk?upload_id=…&offset=…[&final=1].
@@ -346,16 +377,20 @@ func (h *databaseHandler) restoreChunk(c *gin.Context) {
 	// multi-minute restore). The client polls restore-status. Snapshot everything
 	// the goroutine needs — the request is done once we respond.
 	outcomePath := restoreOutcomePath(claims.UserID, uploadID)
-	writeRestoreOutcome(outcomePath, "restoring")
+	writeRestoreOutcome(outcomePath, "restoring", "")
 	go func() {
 		// context.Background(): fully detached; doDatabaseRestore applies its own
 		// restoreAgentTimeout ceiling.
 		if err := h.doDatabaseRestore(context.Background(), d, restorePath); err != nil {
 			slog.Error("chunked restore failed", "db_id", d.ID, "err", err)
-			writeRestoreOutcome(outcomePath, "failed")
+			// GH #1045: surface the loader's real reason (an agent AgentError
+			// carries a human-facing, already-sanitised Message) so the tenant
+			// sees e.g. "restore load failed: <psql/pg_restore error>" instead of
+			// a bare "restore_failed". Non-agent errors fall back to generic.
+			writeRestoreOutcome(outcomePath, "failed", restoreFailureDetail(err))
 			return
 		}
-		writeRestoreOutcome(outcomePath, "done")
+		writeRestoreOutcome(outcomePath, "done", "")
 	}()
 	c.JSON(http.StatusAccepted, gin.H{"upload_id": uploadID, "status": "restoring"})
 }

@@ -425,17 +425,21 @@ export async function restoreDatabaseUploadChunked(
   for (;;) {
     await new Promise((res) => setTimeout(res, 2000));
     let status = "restoring";
+    let failDetail = "";
     try {
-      const s = await apiClient.get<{ status: string }>(
+      const s = await apiClient.get<{ status: string; error?: string }>(
         `/databases/${databaseId}/restore-status`,
         { params: { upload_id: uploadId } },
       );
       status = s.data.status;
+      failDetail = s.data.error ?? "";
     } catch {
       // Transient poll error — keep trying until the deadline.
     }
     if (status === "done") break;
-    if (status === "failed") throw new Error("restore_failed");
+    // GH #1045: surface the real reason the restore failed (the loader's own
+    // psql/pg_restore diagnostic) instead of a generic "restore_failed".
+    if (status === "failed") throw new Error(failDetail || "restore_failed");
     if (Date.now() > deadline) throw new Error("restore_timeout");
   }
   lsDel(resumeKey);
