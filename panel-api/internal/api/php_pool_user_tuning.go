@@ -32,8 +32,68 @@ type phpUserTuningHandler struct{ cfg PHPUserTuningHandlerConfig }
 func RegisterPHPUserTuningRoutes(g *gin.RouterGroup, cfg PHPUserTuningHandlerConfig) {
 	h := &phpUserTuningHandler{cfg: cfg}
 	g.GET("/me/php-fpm-policy", h.policy)
+	g.GET("/me/php-pool-tuning", h.tuning)
 	g.PUT("/me/php-performance-mode", h.setMode)
 	g.PUT("/me/php-pool-tuning", h.setTuning)
+}
+
+// poolTuningRow is one of the caller's PHP pools, with its current per-version
+// tuning (GH #1332). The UI drives its version selector + the Advanced form off
+// these so switching version shows THAT version's stored values, not defaults.
+type poolTuningRow struct {
+	PHPVersion                     string `json:"php_version"`
+	PmMode                         string `json:"pm_mode"`
+	PmMaxChildren                  uint32 `json:"pm_max_children"`
+	PmStartServers                 uint32 `json:"pm_start_servers"`
+	PmMinSpareServers              uint32 `json:"pm_min_spare_servers"`
+	PmMaxSpareServers              uint32 `json:"pm_max_spare_servers"`
+	PmMaxRequests                  uint32 `json:"pm_max_requests"`
+	RequestTerminateTimeoutSeconds uint32 `json:"request_terminate_timeout_seconds"`
+	ProcessIdleTimeoutSeconds      uint32 `json:"process_idle_timeout_seconds"`
+	PerformanceMode                string `json:"performance_mode"`
+	IsDefault                      bool   `json:"is_default"`
+}
+
+// tuning returns the caller's package policy plus their per-version pools'
+// current tuning (GH #1332). Each PHP version a user's domains run has its own
+// pool (GH #329); this lets the Performance card load and display each version's
+// own pm_* + performance_mode instead of static defaults.
+func (h *phpUserTuningHandler) tuning(c *gin.Context) {
+	user, pkg := h.ownerPackage(c)
+	canEdit, advanced := false, false
+	var childCap, mem uint32
+	if pkg != nil {
+		canEdit, advanced = pkg.FpmUserCanEdit, pkg.FpmAdvancedMode
+		childCap, mem = pkg.FpmMaxChildrenCap, pkg.FpmWorkerMemMb
+	}
+	modes, _ := h.cfg.Modes.GetAll(c.Request.Context())
+	rows := []poolTuningRow{}
+	if user != nil {
+		if pools, err := h.cfg.PHPPools.ListByUserID(c.Request.Context(), user.ID); err == nil {
+			// ListByUserID orders the default pool (earliest created) first.
+			for i := range pools {
+				p := &pools[i]
+				rows = append(rows, poolTuningRow{
+					PHPVersion:                     p.PHPVersion,
+					PmMode:                         p.PmMode,
+					PmMaxChildren:                  p.PmMaxChildren,
+					PmStartServers:                 p.PmStartServers,
+					PmMinSpareServers:              p.PmMinSpareServers,
+					PmMaxSpareServers:              p.PmMaxSpareServers,
+					PmMaxRequests:                  p.PmMaxRequests,
+					RequestTerminateTimeoutSeconds: p.RequestTerminateTimeoutSeconds,
+					ProcessIdleTimeoutSeconds:      p.ProcessIdleTimeoutSeconds,
+					PerformanceMode:                p.PerformanceMode,
+					IsDefault:                      i == 0,
+				})
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"can_edit": canEdit, "advanced": advanced,
+		"max_children_cap": childCap, "worker_mem_mb": mem, "modes": modes,
+		"pools": rows,
+	})
 }
 
 // ownerPackage resolves the caller's hosting package. Returns nil pkg (not an
@@ -69,13 +129,18 @@ func (h *phpUserTuningHandler) policy(c *gin.Context) {
 	})
 }
 
-// userPool loads the caller's pool for a version (own only).
+// userPool loads the caller's pool for a version (own only). GH #1332: when a
+// version is given it resolves EXACTLY that (user, version) pool and never falls
+// back to a different-version pool — the old fallback wrote e.g. 8.5's tuning
+// onto the 8.4 default pool (cross-version bleed). A missing version pool is a
+// clean not-found; the UI only offers versions the user actually has pools for.
 func (h *phpUserTuningHandler) userPool(c *gin.Context, userID, version string) (*models.PHPPool, bool) {
 	ctx := c.Request.Context()
 	if version != "" {
 		if p, err := h.cfg.PHPPools.FindByUserAndVersion(ctx, userID, version); err == nil && p != nil {
 			return p, true
 		}
+		return nil, false
 	}
 	if p, err := h.cfg.PHPPools.FindByUserID(ctx, userID); err == nil && p != nil {
 		return p, true

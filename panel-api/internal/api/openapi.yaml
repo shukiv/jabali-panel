@@ -3777,6 +3777,11 @@ paths:
       responses: { "200": { description: OK } }
 
   /me/php-pool-tuning:
+    get:
+      tags: [Me]
+      summary: Get per-version PHP pool tuning + policy
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
     put:
       tags: [Me]
       summary: Update php pool tuning

@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Tabs, Alert, Button, Card, Form, Row, Col, Select, Space, Spin, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { CodeOutlined } from "@icons";
 import { UserPHPPerformanceCard } from "./UserPHPPerformanceCard";
 import { apiClient } from "../../../apiClient";
@@ -96,6 +97,7 @@ const MAX_INPUT_TIME_OPTIONS = [
 
 export function UserPHPSettingsPage() {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const [, setMe] = useState<Identity | null>(null);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
@@ -183,6 +185,10 @@ export function UserPHPSettingsPage() {
         `/domains/${selectedDomain}/php-settings`,
       );
       setPhpSettings(resp.data);
+      // GH #1332: switching a domain's version may have created a new
+      // per-version pool — refresh the Performance card so its version list +
+      // per-version values reflect it.
+      qc.invalidateQueries({ queryKey: ["me-php-pool-tuning"] });
     } catch (err) {
       const e = err as {
         response?: { data?: { error?: string } };
@@ -364,7 +370,16 @@ export function UserPHPSettingsPage() {
                     />
                   </Form.Item>
 
-                  <Typography.Title level={5}>Resource Limits</Typography.Title>
+                  <Typography.Title level={5} style={{ marginBottom: 0 }}>
+                    Resource Limits
+                  </Typography.Title>
+                  {/* GH #1332 item 3: these are DOMAIN-level php.ini overrides,
+                      applied to this domain regardless of which PHP version it
+                      runs — not per-version. Label it so that's clear. */}
+                  <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+                    Applied to this domain across all PHP versions. Per-version
+                    worker tuning lives under Performance.
+                  </Typography.Paragraph>
                   <Row gutter={[16, 16]}>
                     <Col xs={24} sm={12}>
                       <Form.Item
@@ -481,7 +496,7 @@ export function UserPHPSettingsPage() {
             {
               key: "perf",
               label: "Performance",
-              children: <UserPHPPerformanceCard versions={availableVersions} />,
+              children: <UserPHPPerformanceCard />,
             },
           ]}
         />
