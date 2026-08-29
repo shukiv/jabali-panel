@@ -45,6 +45,7 @@ func TestPHPPoolRepository_Create(t *testing.T) {
 			sqlmock.AnyArg(), // request_terminate_timeout_seconds
 			sqlmock.AnyArg(), // slowlog_timeout_seconds (GH #1332 item 12)
 			sqlmock.AnyArg(), // performance_mode
+			sqlmock.AnyArg(), // extra_extensions (GH #1332 item 16)
 			pool.Status,
 			sqlmock.AnyArg(), // last_error
 			sqlmock.AnyArg(), // created_at
@@ -205,6 +206,7 @@ func TestPHPPoolRepository_Update(t *testing.T) {
 			sqlmock.AnyArg(), // request_terminate_timeout_seconds
 			sqlmock.AnyArg(), // slowlog_timeout_seconds (GH #1332 item 12)
 			sqlmock.AnyArg(), // performance_mode
+			sqlmock.AnyArg(), // extra_extensions (GH #1332 item 16)
 			sqlmock.AnyArg(), // status
 			sqlmock.AnyArg(), // last_error
 			sqlmock.AnyArg(), // created_at

@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CodeOutlined } from "@icons";
 import { UserPHPPerformanceCard } from "./UserPHPPerformanceCard";
 import { DomainEnvVarsCard } from "./DomainEnvVarsCard";
+import { PHPExtensionsCard } from "./PHPExtensionsCard";
 import { apiClient } from "../../../apiClient";
 import { getIdentity, type Identity } from "../../../identity";
 import { isPHPEOL } from "../../../utils/phpEol";
@@ -723,6 +724,11 @@ export function UserPHPSettingsPage() {
               key: "env",
               label: "Environment",
               children: <DomainEnvVarsCard />,
+            },
+            {
+              key: "extensions",
+              label: "Extensions",
+              children: <PHPExtensionsCard />,
             },
           ]}
         />

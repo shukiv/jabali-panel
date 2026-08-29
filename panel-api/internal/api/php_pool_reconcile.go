@@ -84,6 +84,7 @@ func reconcilePHPPoolViaAgent(
 		"slowlog_timeout_seconds":           pool.SlowlogTimeoutSeconds,
 		"admin_values":                      adminValues,
 		"admin_flags":                       adminFlags,
+		"extra_extensions":                  []string(pool.ExtraExtensions),
 	})
 	if err != nil {
 		pool.Status = "error"

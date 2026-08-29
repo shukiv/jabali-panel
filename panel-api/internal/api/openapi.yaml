@@ -3795,6 +3795,18 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/php-extensions:
+    get:
+      tags: [Me]
+      summary: List installable + enabled extra PHP extensions for a version
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Me]
+      summary: Set the pool's opt-in extra PHP extensions for a version
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/server-capabilities:
     get:
       tags: [Me]

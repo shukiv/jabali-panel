@@ -1234,6 +1234,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				PHPPoolIniOverrides: deps.PHPPoolIniOverrides,
 				Modes:               deps.PHPPerformanceModes,
 			})
+			// GH #1332 item 16: per-(user,version) opt-in extra extensions.
+			api.RegisterPHPPoolExtensionsRoutes(v1, api.PHPPoolExtensionsHandlerConfig{
+				Agent:               deps.Agent,
+				Users:               deps.Users,
+				Packages:            deps.Packages,
+				PHPPools:            deps.PHPPools,
+				PHPPoolIniOverrides: deps.PHPPoolIniOverrides,
+			})
 		}
 		if deps.Domains != nil && deps.PHPPools != nil {
 			api.RegisterDomainPHPPoolRoutes(v1, api.DomainPHPPoolHandlerConfig{

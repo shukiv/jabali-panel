@@ -53,7 +53,18 @@ type phpPoolApplyParams struct {
 	// forbiddenDirectives guard (which still rejects disable_functions in
 	// admin_values), so a tenant can never shorten their own blocklist.
 	DisableFunctions *string `json:"disable_functions"`
+	// ExtraExtensions are opt-in PHP extensions to load for this pool only (GH
+	// #1332 item 16), rendered as php_admin_value[extension]=<name>.so. Names
+	// are validated here (regex + the .so must exist) — an unknown or missing
+	// one is skipped, never rendered raw. Panel-controlled channel: it bypasses
+	// the tenant admin_values allowlist (which has no "extension" entry) exactly
+	// like disable_functions does.
+	ExtraExtensions []string `json:"extra_extensions,omitempty"`
 }
+
+// phpExtNameRE bounds an extension name to a safe module identifier before it is
+// turned into "<name>.so" and rendered into the pool conf.
+var phpExtNameRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 
 // KV represents a key-value pair for ini directives.
 type KV struct {
@@ -656,6 +667,30 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		AdminValues:                    p.AdminValues,
 		AdminFlags:                     p.AdminFlags,
 		DisableFunctions:               disableFunctions,
+	}
+
+	// GH #1332 item 16: load opt-in extra extensions for THIS pool via
+	// php_admin_value[extension]=<name>.so (box-drilled: multiple such lines
+	// accumulate). Panel-controlled channel like disable_functions — validate
+	// the name and that the .so is actually installed; skip anything unknown so
+	// a bad entry can never break the pool. Copy first: don't mutate the caller's
+	// AdminValues backing array.
+	if len(p.ExtraExtensions) > 0 {
+		merged := make([]KV, 0, len(spec.AdminValues)+len(p.ExtraExtensions))
+		merged = append(merged, spec.AdminValues...)
+		seen := map[string]bool{}
+		for _, ext := range p.ExtraExtensions {
+			if !phpExtNameRE.MatchString(ext) || seen[ext] {
+				continue
+			}
+			so := ext + ".so"
+			if matches, _ := filepath.Glob("/usr/lib/php/*/" + so); len(matches) == 0 {
+				continue
+			}
+			seen[ext] = true
+			merged = append(merged, KV{Name: "extension", Value: so})
+		}
+		spec.AdminValues = merged
 	}
 
 	var buf strings.Builder
