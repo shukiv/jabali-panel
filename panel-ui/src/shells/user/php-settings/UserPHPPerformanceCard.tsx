@@ -14,7 +14,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { apiClient } from "../../../apiClient";
 
-type Mode = { mode: string; label: string };
+// GH #1332 item 5: presets carry their full pm_* values (the backend already
+// returns them), so selecting a preset can populate + preview the Advanced form.
+type Mode = {
+  mode: string;
+  label: string;
+  pm_mode: string;
+  pm_max_children: number;
+  pm_start_servers: number;
+  pm_min_spare_servers: number;
+  pm_max_spare_servers: number;
+  pm_max_requests: number;
+};
 type PoolRow = {
   php_version: string;
   pm_mode: string;
@@ -43,6 +54,7 @@ export const UserPHPPerformanceCard = () => {
   const [version, setVersion] = useState<string>("");
   const [mode, setMode] = useState<string>("balanced");
   const [saving, setSaving] = useState(false);
+  const [advOpen, setAdvOpen] = useState<string[]>([]); // Advanced collapse (item 5)
   const [advForm] = Form.useForm();
 
   const { data, isLoading } = useQuery<Tuning>({
@@ -124,6 +136,41 @@ export const UserPHPPerformanceCard = () => {
   };
 
   const cap = data.max_children_cap;
+  const selectedPreset = data.modes.find((m) => m.mode === mode);
+
+  // One-line human summary of what a preset actually sets (item 5). Built as a
+  // single string so it reads naturally and is one text node.
+  const presetSummary = (p: Mode): string => {
+    const parts = [p.pm_mode, `${Math.min(cap, p.pm_max_children)} max workers`];
+    if (p.pm_mode === "dynamic") {
+      parts.push(
+        `${p.pm_start_servers} start`,
+        `${p.pm_min_spare_servers}–${p.pm_max_spare_servers} spare`,
+      );
+    }
+    if (p.pm_max_requests > 0) parts.push(`recycle every ${p.pm_max_requests} requests`);
+    return parts.join(", ");
+  };
+
+  // GH #1332 item 5 (Option B): picking a preset previews its actual pm_* values
+  // in the Advanced form (max children shown clamped to the plan cap, as it would
+  // apply) and opens the Advanced panel — so the user sees what the preset does
+  // and can still fine-tune before applying.
+  const onSelectMode = (m: string) => {
+    setMode(m);
+    const preset = data.modes.find((p) => p.mode === m);
+    if (preset && data.advanced) {
+      advForm.setFieldsValue({
+        pm_mode: preset.pm_mode,
+        pm_max_children: Math.min(cap, preset.pm_max_children),
+        pm_start_servers: preset.pm_start_servers,
+        pm_min_spare_servers: preset.pm_min_spare_servers,
+        pm_max_spare_servers: preset.pm_max_spare_servers,
+        pm_max_requests: preset.pm_max_requests,
+      });
+      setAdvOpen(["adv"]);
+    }
+  };
 
   return (
     <Card title={t("userphpperformancecard.php_performance")}>
@@ -156,9 +203,15 @@ export const UserPHPPerformanceCard = () => {
           <Select
             style={{ width: "100%", marginTop: 4 }}
             value={mode}
-            onChange={setMode}
+            onChange={onSelectMode}
             options={data.modes.map((m) => ({ value: m.mode, label: m.label || m.mode }))}
           />
+          {selectedPreset && (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: "6px 0 0" }}>
+              Sets {presetSummary(selectedPreset)}
+              {data.advanced ? " — shown below, tweak before applying." : "."}
+            </Typography.Paragraph>
+          )}
           <Button type="primary" loading={saving} onClick={applyMode} style={{ marginTop: 12 }}>
             Apply mode
           </Button>
@@ -166,6 +219,8 @@ export const UserPHPPerformanceCard = () => {
 
         {data.advanced && (
           <Collapse
+            activeKey={advOpen}
+            onChange={(k) => setAdvOpen(Array.isArray(k) ? k : [k])}
             items={[
               {
                 key: "adv",

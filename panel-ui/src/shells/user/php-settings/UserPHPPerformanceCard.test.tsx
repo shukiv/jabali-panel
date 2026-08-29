@@ -44,8 +44,26 @@ function mockTuning() {
       max_children_cap: 20,
       worker_mem_mb: 128,
       modes: [
-        { mode: "balanced", label: "Balanced" },
-        { mode: "custom", label: "Custom" },
+        {
+          mode: "balanced",
+          label: "Balanced",
+          pm_mode: "dynamic",
+          pm_max_children: 5,
+          pm_start_servers: 2,
+          pm_min_spare_servers: 1,
+          pm_max_spare_servers: 3,
+          pm_max_requests: 0,
+        },
+        {
+          mode: "highmem",
+          label: "High traffic",
+          pm_mode: "static",
+          pm_max_children: 40,
+          pm_start_servers: 0,
+          pm_min_spare_servers: 0,
+          pm_max_spare_servers: 0,
+          pm_max_requests: 500,
+        },
       ],
       pools: [pool("8.4", true, 5, "balanced"), pool("8.5", false, 15, "custom")],
     },
@@ -80,6 +98,14 @@ describe("GH #1332 — UserPHPPerformanceCard per-version tuning", () => {
     // the per-version helper text is shown.
     await screen.findByText("PHP 8.4 (default)");
     await screen.findByText("Each PHP version keeps its own tuning.");
+  });
+
+  it("shows what the selected preset actually applies (item 5)", async () => {
+    renderCard();
+    // Default pool 8.4's performance_mode is "balanced" (pm_max_children 5,
+    // clamped to the cap of 20). The preset summary must spell out the values.
+    await screen.findByText(/5 max\s*workers/i);
+    await screen.findByText(/2 start/i);
   });
 
   it("version-scopes the performance-mode write to the selected (default) version", async () => {
