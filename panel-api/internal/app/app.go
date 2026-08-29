@@ -1249,6 +1249,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:  deps.Domains,
 				PHPPools: deps.PHPPools,
 			})
+			// GH #1332 item 14: per-domain env vars.
+			api.RegisterDomainEnvVarsRoutes(v1, api.DomainEnvVarsHandlerConfig{
+				Domains: deps.Domains,
+			})
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainHtaccessRoutes(v1, api.DomainHtaccessHandlerConfig{

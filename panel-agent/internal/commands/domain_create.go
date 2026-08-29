@@ -17,6 +17,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpenv"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/skelpath"
 )
 
@@ -112,6 +113,10 @@ type domainCreateParams struct {
 	PHPDisplayErrors  bool   `json:"php_display_errors,omitempty"`
 	PHPErrorReporting *int   `json:"php_error_reporting,omitempty"`
 	PHPTimezone       string `json:"php_timezone,omitempty"`
+	// EnvVars are per-domain environment variables (GH #1332 item 14), rendered
+	// as fastcgi_param in the PHP location. Keys are re-validated against the
+	// shared phpenv denylist here (defense in depth) before rendering.
+	EnvVars []domainEnvVarParam `json:"env_vars,omitempty"`
 	// M18 per-domain HTTP limits. DomainID is required when either
 	// RateLimitRPS or ConnectionLimit is set so the zone-name tag
 	// matches the declaration in 00-jabali-ratelimits.conf. All three
@@ -300,6 +305,8 @@ const vhostTemplate = `{{define "servebody"}}{{ if .IsEnabled }}
 {{ end }}
 {{ if .PHPValueParam }}
         fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}{{ if .EnvParams }}
+{{.EnvParams}}
 {{ end }}
 {{ if .CacheEnabled }}
         # Fail-CLOSED page-cache gate (Gitea #416/#419): cache ONLY genuinely
@@ -404,6 +411,8 @@ const vhostTemplate = `{{define "servebody"}}{{ if .IsEnabled }}
 {{ end }}
 {{ if .PHPValueParam }}
         fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}{{ if .EnvParams }}
+{{.EnvParams}}
 {{ end }}
 {{ if .CacheEnabled }}
         # Fail-CLOSED page-cache gate (Gitea #416/#419): cache ONLY genuinely
@@ -502,6 +511,8 @@ const vhostTemplate = `{{define "servebody"}}{{ if .IsEnabled }}
         fastcgi_param SCRIPT_FILENAME $realpath_root$jabali_pi_script;
         fastcgi_param PATH_INFO $jabali_pi_suffix;
 {{ if .PHPValueParam }}        fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}{{ if .EnvParams }}
+{{.EnvParams}}
 {{ end }}    }
 {{ end }}{{ end }}
 
@@ -711,6 +722,7 @@ type vhostData struct {
 	PHPMaxExecutionTime  int
 	PHPMaxInputTime      int
 	PHPValueParam        string // fastcgi_param PHP_VALUE directive content
+	EnvParams            string // GH #1332 item 14: fastcgi_param env-var lines
 	// RateLimitDirectives is the fully-rendered per-vhost rate/conn
 	// limit block (may span 0–2 lines). Computed by the caller via
 	// BuildRateLimitDirectives; interpolated verbatim. Never contains
@@ -815,6 +827,38 @@ func pathsUnderHome(username, docRoot string) []string {
 // that isn't a plain tz identifier is dropped here rather than risk injecting a
 // directive. Covers "Area/City", "UTC", "Etc/GMT+5", etc.
 var phpTimezoneRE = regexp.MustCompile(`^[A-Za-z0-9_+/-]{1,64}$`)
+
+// domainEnvVarParam is one per-domain environment variable from the panel.
+type domainEnvVarParam struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// buildEnvParams renders per-domain env vars as nginx fastcgi_param lines (GH
+// #1332 item 14). Returns "" for a non-PHP domain or no vars. Each key is
+// re-validated against the shared phpenv denylist (a PHP_ADMIN_VALUE key would
+// escape the FPM sandbox) and each value is escaped for the double-quoted nginx
+// string — a bad entry is skipped, never rendered raw. One directive per line.
+func buildEnvParams(hasPHP bool, envVars []domainEnvVarParam) string {
+	if !hasPHP || len(envVars) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, kv := range envVars {
+		if err := phpenv.ValidKey(kv.Key); err != nil {
+			continue
+		}
+		if err := phpenv.ValidValue(kv.Value); err != nil {
+			continue
+		}
+		b.WriteString("        fastcgi_param ")
+		b.WriteString(kv.Key)
+		b.WriteString(` "`)
+		b.WriteString(phpenv.Escape(kv.Value))
+		b.WriteString("\";\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
 // buildPHPValueParam assembles a fastcgi_param PHP_VALUE directive from per-domain
 // INI overrides. Returns empty string for a non-PHP domain (no PHP_VALUE line).
@@ -1019,7 +1063,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool) (string, error) {
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -1137,6 +1181,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPMaxExecutionTime:        phpMaxExecTime,
 		PHPMaxInputTime:            phpMaxInputTime,
 		PHPValueParam:              buildPHPValueParam(hasPHP, phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime, phpDisplayErrors, phpErrorReporting, phpTimezone),
+		EnvParams:                  buildEnvParams(hasPHP, envVars),
 		ListenIPv4:                 listenIPv4,
 		ListenIPv6:                 listenIPv6,
 		InterceptErrors:            interceptErrors,
@@ -1400,7 +1445,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// panel always sends the field; writeVhost still forces it false if the
 	// cert file turns out to be missing on disk (#213).
 	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

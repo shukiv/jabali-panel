@@ -4582,6 +4582,20 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /domains/{id}/env-vars:
+    get:
+      tags: [Php Settings]
+      summary: List a domain's environment variables
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Php Settings]
+      summary: Replace a domain's environment variables
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Processes (auto) ---
 

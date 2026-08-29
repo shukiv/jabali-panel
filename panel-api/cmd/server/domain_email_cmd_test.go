@@ -114,6 +114,9 @@ func (*fakeDomainRepo) CountByPHPPoolID(context.Context, string) (int64, error) 
 	return 0, nil
 }
 func (*fakeDomainRepo) SetPHPPoolID(context.Context, string, *string) error { return nil }
+func (*fakeDomainRepo) UpdateEnvVars(context.Context, string, models.DomainEnvVars) error {
+	return nil
+}
 func (*fakeDomainRepo) UpdatePHPSettings(context.Context, string, repository.DomainPHPSettings) error {
 	return nil
 }

@@ -130,6 +130,45 @@ func (n *NginxRules) Scan(src any) error {
 	return json.Unmarshal(b, n)
 }
 
+// DomainEnvVar is one per-domain environment variable (GH #1332 item 14),
+// delivered to PHP as an nginx fastcgi_param (reaches getenv() + $_SERVER).
+type DomainEnvVar struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// DomainEnvVars persists to a JSON column. An empty slice round-trips as SQL
+// NULL (same pattern as PageRedirects / NginxRules).
+type DomainEnvVars []DomainEnvVar
+
+func (e DomainEnvVars) Value() (driver.Value, error) {
+	if len(e) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(e)
+}
+
+func (e *DomainEnvVars) Scan(src any) error {
+	if src == nil {
+		*e = nil
+		return nil
+	}
+	var b []byte
+	switch v := src.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		return fmt.Errorf("DomainEnvVars.Scan: unsupported type %T", src)
+	}
+	if len(b) == 0 {
+		*e = nil
+		return nil
+	}
+	return json.Unmarshal(b, e)
+}
+
 // Domain represents a hosted domain bound to a user account. Each domain
 // gets an nginx vhost config managed by the agent and a document root
 // under the user's home directory.
@@ -215,6 +254,11 @@ type Domain struct {
 	// Separate from NginxCustomDirectives (which holds raw user snippets)
 	// and from PageRedirects (which has its own dedicated UI).
 	NginxRules NginxRules `gorm:"type:json" json:"nginx_rules,omitempty"`
+
+	// EnvVars are per-domain environment variables (GH #1332 item 14), rendered
+	// as nginx fastcgi_param in the PHP location. Keys are validated against a
+	// security denylist (PHP_ADMIN_VALUE etc. would escape the FPM sandbox).
+	EnvVars DomainEnvVars `gorm:"column:env_vars;type:json" json:"env_vars,omitempty"`
 
 	// NginxSafeOptions is a curated, owner-settable set of vetted nginx options
 	// (GH #307) — rendered to fixed safe directives by the panel. Gated by

@@ -109,6 +109,10 @@ func (m *mockDomainRepo) UpdatePHPSettings(ctx context.Context, id string, setti
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateEnvVars(ctx context.Context, id string, envVars models.DomainEnvVars) error {
+	return nil
+}
+
 func (m *mockDomainRepo) UpdateMailProvider(_ context.Context, _ string, _ repository.DomainMailProvider) error {
 	return nil
 }

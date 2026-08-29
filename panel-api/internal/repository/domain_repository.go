@@ -63,6 +63,10 @@ type DomainRepository interface {
 	// explicitly clear the override. This is a dedicated method because the
 	// columns are not in Update()'s allowlist.
 	UpdatePHPSettings(ctx context.Context, id string, settings DomainPHPSettings) error
+	// UpdateEnvVars replaces a domain's per-domain environment variables (GH
+	// #1332 item 14). Dedicated method (not in Update()'s allowlist); an empty
+	// slice clears them (JSON column round-trips to NULL).
+	UpdateEnvVars(ctx context.Context, id string, envVars models.DomainEnvVars) error
 	// UpdateEmailState writes the four M6 email columns (email_enabled,
 	// dkim_selector, dkim_public_key, email_enabled_at) in one go. Dedicated
 	// method because none of these are in Update()'s allowlist and because
@@ -517,6 +521,21 @@ func (r *domainRepo) UpdatePHPSettings(ctx context.Context, id string, settings 
 			"php_error_reporting": settings.ErrorReporting,
 			"php_timezone":        settings.Timezone,
 		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *domainRepo) UpdateEnvVars(ctx context.Context, id string, envVars models.DomainEnvVars) error {
+	// Use Updates(map) so a nil/empty slice writes NULL (clears). The column is
+	// not in Update()'s Select allowlist on purpose.
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{"env_vars": envVars})
 	if res.Error != nil {
 		return translate(res.Error)
 	}

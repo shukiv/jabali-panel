@@ -1931,6 +1931,15 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	if domain.PHPTimezone != nil {
 		params["php_timezone"] = *domain.PHPTimezone
 	}
+	// GH #1332 item 14: per-domain env vars -> nginx fastcgi_param. The agent
+	// re-validates keys against the security denylist before rendering.
+	if len(domain.EnvVars) > 0 {
+		ev := make([]map[string]string, 0, len(domain.EnvVars))
+		for _, kv := range domain.EnvVars {
+			ev = append(ev, map[string]string{"key": kv.Key, "value": kv.Value})
+		}
+		params["env_vars"] = ev
+	}
 
 	cust := ""
 	if domain.NginxCustomDirectives != nil {

@@ -211,6 +211,11 @@ func (m *MockDomainRepository) UpdatePHPSettings(ctx context.Context, id string,
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) UpdateEnvVars(ctx context.Context, id string, envVars models.DomainEnvVars) error {
+	args := m.Called(ctx, id, envVars)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) UpdateMailProvider(_ context.Context, _ string, _ repository.DomainMailProvider) error {
 	return nil
 }

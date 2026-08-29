@@ -793,3 +793,30 @@ func TestVhostBrandedErrorPages(t *testing.T) {
 		t.Errorf("RootOverridden vhost must not wire jabali error pages")
 	}
 }
+
+// TestBuildEnvParams covers GH #1332 item 14: env vars render as fastcgi_param
+// lines for a PHP domain, values are escaped for the nginx double-quoted string,
+// and a key on the security denylist (PHP_ADMIN_VALUE — the sandbox-escape
+// vector) is dropped even if the panel somehow sent it.
+func TestBuildEnvParams(t *testing.T) {
+	if got := buildEnvParams(false, []domainEnvVarParam{{Key: "APP_ENV", Value: "prod"}}); got != "" {
+		t.Errorf("non-PHP domain must emit nothing, got %q", got)
+	}
+	if got := buildEnvParams(true, nil); got != "" {
+		t.Errorf("no env vars must emit nothing, got %q", got)
+	}
+	got := buildEnvParams(true, []domainEnvVarParam{
+		{Key: "APP_ENV", Value: "staging"},
+		{Key: "DB_DSN", Value: `p"a\ss`},
+		{Key: "PHP_ADMIN_VALUE", Value: "disable_functions="}, // denied — must be dropped
+	})
+	if !strings.Contains(got, `fastcgi_param APP_ENV "staging";`) {
+		t.Errorf("missing APP_ENV line:\n%s", got)
+	}
+	if !strings.Contains(got, `fastcgi_param DB_DSN "p\"a\\ss";`) {
+		t.Errorf("value not escaped:\n%s", got)
+	}
+	if strings.Contains(got, "PHP_ADMIN_VALUE") {
+		t.Errorf("denylisted key must be dropped:\n%s", got)
+	}
+}

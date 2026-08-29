@@ -190,6 +190,16 @@ func (f *fakeDomainRepo) UpdatePHPSettings(ctx context.Context, id string, setti
 	return &notFoundErr{}
 }
 
+func (f *fakeDomainRepo) UpdateEnvVars(ctx context.Context, id string, envVars models.DomainEnvVars) error {
+	for i, d := range f.domains {
+		if d.ID == id {
+			f.domains[i].EnvVars = envVars
+			return nil
+		}
+	}
+	return &notFoundErr{}
+}
+
 func (f *fakeDomainRepo) UpdateMailProvider(_ context.Context, _ string, _ repository.DomainMailProvider) error {
 	return nil
 }
