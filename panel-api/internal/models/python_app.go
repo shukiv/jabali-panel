@@ -31,6 +31,12 @@ type PythonApp struct {
 	// catalog entry.
 	StaticURL  string `gorm:"column:static_url;type:varchar(255);not null" json:"static_url,omitempty"`
 	StaticRoot string `gorm:"column:static_root;type:varchar(512);not null" json:"static_root,omitempty"`
+	// MediaURL/MediaRoot are the same split for USER-UPLOADED media (GH #878,
+	// Django MEDIA_URL/MEDIA_ROOT): nginx serves <base_uri><media_url> from
+	// <app_root>/<media_root>. Rendered as a media_alias rule, which — unlike
+	// static_alias — uses a short cache, since uploads can change at a URL.
+	MediaURL  string `gorm:"column:media_url;type:varchar(255);not null" json:"media_url,omitempty"`
+	MediaRoot string `gorm:"column:media_root;type:varchar(512);not null" json:"media_root,omitempty"`
 	// LoopbackPort is the 127.0.0.1 port gunicorn/uvicorn binds; nginx
 	// proxy_passes to it. Allocated by the API on create (nil until then).
 	LoopbackPort *int `gorm:"column:loopback_port;type:int;null" json:"loopback_port,omitempty"`

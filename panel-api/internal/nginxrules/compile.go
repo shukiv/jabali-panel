@@ -129,6 +129,21 @@ func Compile(d *models.Domain) string {
 					"    }\n",
 				quoteNginxLocation(r.Path), r.Target)
 
+		case "media_alias":
+			// Serve user-uploaded media (Django MEDIA_ROOT) directly from nginx
+			// (GH #878). Same constraints as static_alias, but a SHORT cache with
+			// revalidation: unlike hashed/immutable static assets, an upload can
+			// be replaced at the same URL, so a 30-day immutable cache would serve
+			// stale files.
+			fmt.Fprintf(&b,
+				"    location ^~ %s {\n"+
+					"        alias %s;\n"+
+					"        access_log off;\n"+
+					"        expires 1h;\n"+
+					"        add_header Cache-Control \"public, must-revalidate\";\n"+
+					"    }\n",
+				quoteNginxLocation(r.Path), r.Target)
+
 		case "max_upload_size":
 			fmt.Fprintf(&b, "    client_max_body_size %s;\n", r.Size)
 		}

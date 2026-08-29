@@ -17,6 +17,9 @@ export type PythonApp = {
   // app_root/static_root (Passenger public/ equivalent). Empty = proxy all.
   static_url?: string;
   static_root?: string;
+  // GH #878: same split for user-uploaded media (Django MEDIA_ROOT).
+  media_url?: string;
+  media_root?: string;
   loopback_port?: number;
   status: string;
   last_error?: string;
@@ -37,6 +40,8 @@ export type CreatePythonAppInput = {
   framework?: string;
   static_url?: string;
   static_root?: string;
+  media_url?: string;
+  media_root?: string;
 };
 
 // Framework is a marketplace catalog entry (JAB-164), from GET
@@ -105,15 +110,27 @@ export function useDeletePythonApp() {
   });
 }
 
-// GH #878: set or clear the static-asset split on an existing app. Both
-// fields empty clears it (nginx goes back to proxying everything).
+// GH #878: set or clear the static + media asset splits on an existing app.
+// Both fields of a pair empty clears that split (nginx goes back to proxying
+// those paths).
 export function useSetPythonAppStatic() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (vars: { id: string; static_url: string; static_root: string }) => {
+    mutationFn: async (vars: {
+      id: string;
+      static_url: string;
+      static_root: string;
+      media_url: string;
+      media_root: string;
+    }) => {
       const { data } = await apiClient.put<{ app: PythonApp }>(
         `/python-apps/${vars.id}/static`,
-        { static_url: vars.static_url, static_root: vars.static_root },
+        {
+          static_url: vars.static_url,
+          static_root: vars.static_root,
+          media_url: vars.media_url,
+          media_root: vars.media_root,
+        },
       );
       return data.app;
     },

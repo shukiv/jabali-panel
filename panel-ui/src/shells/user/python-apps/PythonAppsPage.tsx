@@ -114,14 +114,21 @@ export function PythonAppsPage() {
   const [logsApp, setLogsApp] = useState<PythonApp | null>(null);
   const [logsText, setLogsText] = useState("");
   const [envApp, setEnvApp] = useState<PythonApp | null>(null);
-  // GH #878: static-asset split editor (Passenger public/ equivalent).
+  // GH #878: static + media asset split editor (Passenger public/ equivalent).
   const [staticApp, setStaticApp] = useState<PythonApp | null>(null);
-  const [staticForm] = Form.useForm<{ static_url: string; static_root: string }>();
+  const [staticForm] = Form.useForm<{
+    static_url: string;
+    static_root: string;
+    media_url: string;
+    media_root: string;
+  }>();
   const setStatic = useSetPythonAppStatic();
   const openStatic = (app: PythonApp) => {
     staticForm.setFieldsValue({
       static_url: app.static_url ?? "",
       static_root: app.static_root ?? "",
+      media_url: app.media_url ?? "",
+      media_root: app.media_root ?? "",
     });
     setStaticApp(app);
   };
@@ -133,8 +140,10 @@ export function PythonAppsPage() {
         id: staticApp.id,
         static_url: v.static_url?.trim() ?? "",
         static_root: v.static_root?.trim() ?? "",
+        media_url: v.media_url?.trim() ?? "",
+        media_root: v.media_root?.trim() ?? "",
       });
-      message.success("Static file mapping saved");
+      message.success("Static & media mapping saved");
       setStaticApp(null);
     } catch (e) {
       message.error(e instanceof Error ? e.message : "Save failed");
@@ -250,7 +259,7 @@ export function PythonAppsPage() {
                 { key: "stop", label: "Stop", icon: <PauseCircleOutlined />, onClick: () => void doControl(r.id, "stop") },
                 { key: "logs", label: "Logs", icon: <FileTextOutlined />, onClick: () => void openLogs(r) },
                 { key: "env", label: "Environment", icon: <SettingOutlined />, onClick: () => setEnvApp(r) },
-                { key: "static", label: "Static files", icon: <FolderOpenOutlined />, onClick: () => openStatic(r) },
+                { key: "static", label: "Static & media", icon: <FolderOpenOutlined />, onClick: () => openStatic(r) },
                 {
                   key: "delete",
                   label: "Delete",
@@ -388,28 +397,46 @@ export function PythonAppsPage() {
             <Input placeholder="domains/example.com/app" />
           </Form.Item>
           {!installFw && (
-            <Space style={{ width: "100%" }} size="middle">
-              <Form.Item
-                name="static_url"
-                label="Static URL path"
-                tooltip="Optional. Requests under this path are served by nginx directly instead of your app — the Passenger public/ equivalent. Set both fields or neither."
-              >
-                <Input placeholder="/static" />
-              </Form.Item>
-              <Form.Item
-                name="static_root"
-                label="Static directory"
-                tooltip="Directory relative to the app directory that holds the static files, e.g. public or staticfiles."
-              >
-                <Input placeholder="public" />
-              </Form.Item>
-            </Space>
+            <>
+              <Space style={{ width: "100%" }} size="middle">
+                <Form.Item
+                  name="static_url"
+                  label="Static URL path"
+                  tooltip="Optional. Requests under this path are served by nginx directly instead of your app — the Passenger public/ equivalent. Set both fields or neither."
+                >
+                  <Input placeholder="/static" />
+                </Form.Item>
+                <Form.Item
+                  name="static_root"
+                  label="Static directory"
+                  tooltip="Directory relative to the app directory that holds the static files, e.g. public or staticfiles."
+                >
+                  <Input placeholder="public" />
+                </Form.Item>
+              </Space>
+              <Space style={{ width: "100%" }} size="middle">
+                <Form.Item
+                  name="media_url"
+                  label="Media URL path"
+                  tooltip="Optional. User-uploaded media (Django MEDIA_URL). Served by nginx directly from the media directory, with a short cache since uploads can change. Set both fields or neither."
+                >
+                  <Input placeholder="/media" />
+                </Form.Item>
+                <Form.Item
+                  name="media_root"
+                  label="Media directory"
+                  tooltip="Directory relative to the app directory that holds uploaded media (Django MEDIA_ROOT), e.g. media."
+                >
+                  <Input placeholder="media" />
+                </Form.Item>
+              </Space>
+            </>
           )}
         </Form>
       </Modal>
 
       <Modal
-        title={staticApp ? `Static files — ${staticApp.name}` : "Static files"}
+        title={staticApp ? `Static & media files — ${staticApp.name}` : "Static & media files"}
         open={staticApp !== null}
         onCancel={() => setStaticApp(null)}
         onOk={() => void submitStatic()}
@@ -417,10 +444,11 @@ export function PythonAppsPage() {
         confirmLoading={setStatic.isPending}
       >
         <Typography.Paragraph type="secondary">
-          nginx serves the URL path below directly from a directory inside your
+          nginx serves the URL paths below directly from directories inside your
           app — CSS/JS/images stop going through the Python process (what
-          Passenger did with public/). Clear both fields to proxy everything to
-          the app again.
+          Passenger did with public/). Media is user-uploaded content (Django
+          MEDIA_ROOT), cached briefly since uploads can change at the same URL.
+          Clear both fields of a pair to proxy those requests to the app again.
         </Typography.Paragraph>
         <Form form={staticForm} layout="vertical">
           <Form.Item
@@ -436,6 +464,20 @@ export function PythonAppsPage() {
             rules={[{ pattern: /^$|^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/, message: "Relative directory like public" }]}
           >
             <Input placeholder="public" />
+          </Form.Item>
+          <Form.Item
+            name="media_url"
+            label="Media URL path"
+            rules={[{ pattern: /^$|^\/[A-Za-z0-9._/-]+$/, message: "URL path like /media" }]}
+          >
+            <Input placeholder="/media" />
+          </Form.Item>
+          <Form.Item
+            name="media_root"
+            label="Media directory (relative to app directory)"
+            rules={[{ pattern: /^$|^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/, message: "Relative directory like media" }]}
+          >
+            <Input placeholder="media" />
           </Form.Item>
         </Form>
       </Modal>

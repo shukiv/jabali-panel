@@ -1445,7 +1445,7 @@ func validatePageRedirects(prs models.PageRedirects) error {
 
 func isValidNginxRuleType(s string) bool {
 	switch s {
-	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size", "static_alias":
+	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size", "static_alias", "media_alias":
 		return true
 	}
 	return false
@@ -1530,20 +1530,20 @@ func validateNginxRules(rules models.NginxRules) error {
 			if r.Size == "" {
 				return fmt.Errorf("rule %d: size required", i)
 			}
-		case "static_alias":
+		case "static_alias", "media_alias":
 			// Serves a filesystem dir (Path=location, Target=alias dir). Used by
-			// framework apps (Django STATIC_ROOT). Admin-only (not in the tenant
-			// safe set). Constrain the alias to under /home/ so it can never be
-			// pointed at /etc or another system path (file disclosure), even by
-			// an admin PATCH; static aliases are always a tenant app dir.
+			// framework apps (Django STATIC_ROOT / MEDIA_ROOT). Admin-only (not in
+			// the tenant safe set). Constrain the alias to under /home/ so it can
+			// never be pointed at /etc or another system path (file disclosure),
+			// even by an admin PATCH; these aliases are always a tenant app dir.
 			if r.Path == "" || r.Target == "" {
 				return fmt.Errorf("rule %d: path and target required", i)
 			}
 			if !strings.HasPrefix(r.Target, "/home/") || strings.Contains(r.Target, "..") {
-				return fmt.Errorf("rule %d: static_alias target must be an absolute path under /home/ with no ..", i)
+				return fmt.Errorf("rule %d: %s target must be an absolute path under /home/ with no ..", i, r.Type)
 			}
 			if strings.ContainsAny(r.Target, " \t\n\r;{}") {
-				return fmt.Errorf("rule %d: invalid chars in static_alias target", i)
+				return fmt.Errorf("rule %d: invalid chars in %s target", i, r.Type)
 			}
 		}
 		// Forbid control characters everywhere to prevent newline injection into vhost

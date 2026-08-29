@@ -31,6 +31,8 @@ type CreateSpec struct {
 	NeedsDB     string
 	StaticURL   string
 	StaticRoot  string
+	MediaURL    string
+	MediaRoot   string
 	PostInstall []string
 	// GenerateEnv are the env vars the scaffolder must mint a value for (secret
 	// generators) — kept separate so the caller writes them to the app's env,
@@ -85,6 +87,8 @@ func (e Entry) ResolveCreate() (CreateSpec, error) {
 		NeedsDB:      e.NeedsDB,
 		StaticURL:    e.StaticURL,
 		StaticRoot:   e.StaticRoot,
+		MediaURL:     e.MediaURL,
+		MediaRoot:    e.MediaRoot,
 		PostInstall:  append([]string(nil), e.PostInstall...),
 	}
 	if e.Scaffold.Kind == "cmd" {

@@ -81,6 +81,9 @@ type Entry struct {
 	// from StaticRoot (a location alongside the proxy). Empty = no static split.
 	StaticURL  string `yaml:"static_url,omitempty"`
 	StaticRoot string `yaml:"static_root,omitempty"`
+	// MediaURL/MediaRoot: same split for user-uploaded media (Django MEDIA_ROOT).
+	MediaURL  string `yaml:"media_url,omitempty"`
+	MediaRoot string `yaml:"media_root,omitempty"`
 	// PostInstall are ordered steps run after pip install (e.g. migrate,
 	// collectstatic). Free-form tokens the scaffolder maps to framework actions.
 	PostInstall []string `yaml:"post_install,omitempty"`
@@ -162,9 +165,12 @@ func (e Entry) validate() error {
 	if !needsDBSet[e.NeedsDB] {
 		return fmt.Errorf("needs_db %q: must be none, sqlite, mariadb, or postgres", e.NeedsDB)
 	}
-	// Static split is all-or-nothing.
+	// Static + media splits are each all-or-nothing.
 	if (e.StaticURL == "") != (e.StaticRoot == "") {
 		return errors.New("static_url and static_root must be set together")
+	}
+	if (e.MediaURL == "") != (e.MediaRoot == "") {
+		return errors.New("media_url and media_root must be set together")
 	}
 	// Generated env vars must name a supported generator.
 	for _, v := range e.DefaultEnv {

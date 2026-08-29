@@ -1592,12 +1592,12 @@ paths:
   /python-apps/{id}/static:
     put:
       tags: [Python Apps]
-      summary: Set or clear a Python app's static-asset split (GH #878)
-      description: nginx serves base_uri+static_url directly from app_root/static_root instead of proxying to the app — the Passenger public/ equivalent. Both fields empty clears the mapping.
+      summary: Set or clear a Python app's static + media asset splits (GH #878)
+      description: nginx serves base_uri+static_url from app_root/static_root and base_uri+media_url from app_root/media_root directly instead of proxying to the app — the Passenger public/ equivalent. static is long-cached (immutable assets); media (Django MEDIA_ROOT) is short-cached with revalidation since uploads can change. Both fields of a pair empty clears that mapping.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { static_url: { type: string, example: /static }, static_root: { type: string, example: public } } } } } }
-      responses: { "200": { description: Saved }, "400": { description: Invalid static split } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { static_url: { type: string, example: /static }, static_root: { type: string, example: public }, media_url: { type: string, example: /media }, media_root: { type: string, example: media } } } } } }
+      responses: { "200": { description: Saved }, "400": { description: Invalid static/media split } }
 
   /python-apps/{id}/control:
     post:

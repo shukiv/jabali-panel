@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -78,24 +78,34 @@ var (
 	staticRootRe = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
 )
 
-// validateStaticSplit checks the optional static-asset mapping (GH #878).
-// Both fields come together. The rendered location is base_uri+static_url and
-// the alias app_root/static_root/ — the whitelists guarantee neither can
-// escape the app tree or break the vhost.
-func validateStaticSplit(staticURL, staticRoot string) error {
-	if staticURL == "" && staticRoot == "" {
+// validateAssetSplit checks an optional URL->dir asset mapping (GH #878). Both
+// fields come together. The rendered location is base_uri+url and the alias
+// app_root/root/ — the whitelists guarantee neither can escape the app tree or
+// break the vhost. urlField/rootField name the fields for the error messages.
+func validateAssetSplit(url, root, urlField, rootField string) error {
+	if url == "" && root == "" {
 		return nil
 	}
-	if staticURL == "" || staticRoot == "" {
-		return errors.New("static_url and static_root must be set together")
+	if url == "" || root == "" {
+		return fmt.Errorf("%s and %s must be set together", urlField, rootField)
 	}
-	if !staticURLRe.MatchString(staticURL) || strings.Contains(staticURL, "..") {
-		return errors.New("static_url must be a URL path like /static (letters, digits, . _ -)")
+	if !staticURLRe.MatchString(url) || strings.Contains(url, "..") {
+		return fmt.Errorf("%s must be a URL path like /static (letters, digits, . _ -)", urlField)
 	}
-	if !staticRootRe.MatchString(staticRoot) || strings.Contains(staticRoot, "..") {
-		return errors.New("static_root must be a relative directory like public (letters, digits, . _ -)")
+	if !staticRootRe.MatchString(root) || strings.Contains(root, "..") {
+		return fmt.Errorf("%s must be a relative directory like public (letters, digits, . _ -)", rootField)
 	}
 	return nil
+}
+
+// validateStaticSplit / validateMediaSplit are the GH #878 static + media
+// (Django MEDIA_ROOT) mappings; both use the same rules.
+func validateStaticSplit(staticURL, staticRoot string) error {
+	return validateAssetSplit(staticURL, staticRoot, "static_url", "static_root")
+}
+
+func validateMediaSplit(mediaURL, mediaRoot string) error {
+	return validateAssetSplit(mediaURL, mediaRoot, "media_url", "media_root")
 }
 
 // loadOwned fetches the app and enforces owner/admin scope.
@@ -172,6 +182,9 @@ type createPythonAppRequest struct {
 	// proxying. Ignored when Framework is set (the catalog provides them).
 	StaticURL  string `json:"static_url,omitempty"`
 	StaticRoot string `json:"static_root,omitempty"`
+	// MediaURL/MediaRoot: same for user-uploaded media (Django MEDIA_ROOT).
+	MediaURL  string `json:"media_url,omitempty"`
+	MediaRoot string `json:"media_root,omitempty"`
 }
 
 func (h *pythonAppHandler) create(c *gin.Context) {
@@ -205,9 +218,14 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		req.AppType = spec.AppType
 		req.Entrypoint = spec.Entrypoint
 		req.StaticURL, req.StaticRoot = spec.StaticURL, spec.StaticRoot
+		req.MediaURL, req.MediaRoot = spec.MediaURL, spec.MediaRoot
 	}
 	if err := validateStaticSplit(req.StaticURL, req.StaticRoot); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_static", "detail": err.Error()})
+		return
+	}
+	if err := validateMediaSplit(req.MediaURL, req.MediaRoot); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_media", "detail": err.Error()})
 		return
 	}
 	if req.AppType == "" {
@@ -332,6 +350,8 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		BaseURI:       req.BaseURI,
 		StaticURL:     req.StaticURL,
 		StaticRoot:    req.StaticRoot,
+		MediaURL:      req.MediaURL,
+		MediaRoot:     req.MediaRoot,
 		LoopbackPort:  &port,
 		Framework:     req.Framework,
 		Status:        models.PythonAppStatusPending,
@@ -446,6 +466,8 @@ func (h *pythonAppHandler) putStatic(c *gin.Context) {
 	var req struct {
 		StaticURL  string `json:"static_url"`
 		StaticRoot string `json:"static_root"`
+		MediaURL   string `json:"media_url"`
+		MediaRoot  string `json:"media_root"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
@@ -455,6 +477,10 @@ func (h *pythonAppHandler) putStatic(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_static", "detail": err.Error()})
 		return
 	}
+	if err := validateMediaSplit(req.MediaURL, req.MediaRoot); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_media", "detail": err.Error()})
+		return
+	}
 	ctx := c.Request.Context()
 	domain, err := h.cfg.Domains.FindByID(ctx, app.DomainID)
 	if err != nil {
@@ -462,6 +488,7 @@ func (h *pythonAppHandler) putStatic(c *gin.Context) {
 		return
 	}
 	app.StaticURL, app.StaticRoot = req.StaticURL, req.StaticRoot
+	app.MediaURL, app.MediaRoot = req.MediaURL, req.MediaRoot
 	if err := h.cfg.Apps.Update(ctx, app); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -500,6 +527,13 @@ func (h *pythonAppHandler) attachProxyRule(ctx context.Context, domain *models.D
 		alias := strings.TrimSuffix(app.AppRoot, "/") + "/" + strings.Trim(app.StaticRoot, "/") + "/"
 		upsert(models.NginxRule{Type: "static_alias", Path: loc, Target: alias})
 	}
+	// Media split (GH #878): same, but rendered as media_alias (short cache —
+	// user uploads can change at a URL, unlike immutable static assets).
+	if app.MediaURL != "" && app.MediaRoot != "" {
+		loc := strings.TrimSuffix(app.BaseURI, "/") + app.MediaURL
+		alias := strings.TrimSuffix(app.AppRoot, "/") + "/" + strings.Trim(app.MediaRoot, "/") + "/"
+		upsert(models.NginxRule{Type: "media_alias", Path: loc, Target: alias})
+	}
 	domain.NginxRules = rules
 	_ = h.cfg.Domains.Update(ctx, domain)
 }
@@ -511,7 +545,7 @@ func dropStaticRules(domain *models.Domain, app *models.PythonApp) {
 	aliasPrefix := strings.TrimSuffix(app.AppRoot, "/") + "/"
 	var kept models.NginxRules
 	for _, r := range domain.NginxRules {
-		if r.Type == "static_alias" && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
+		if (r.Type == "static_alias" || r.Type == "media_alias") && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
 			continue
 		}
 		kept = append(kept, r)
@@ -559,7 +593,7 @@ func (h *pythonAppHandler) detachProxyRule(ctx context.Context, domain *models.D
 			continue
 		}
 		// Drop the framework static_alias that points into this app's tree.
-		if r.Type == "static_alias" && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
+		if (r.Type == "static_alias" || r.Type == "media_alias") && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
 			continue
 		}
 		kept = append(kept, r)
