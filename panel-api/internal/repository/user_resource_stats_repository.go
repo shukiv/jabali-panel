@@ -7,6 +7,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -50,58 +51,57 @@ func (r *userResourceStatsRepo) Fetch(ctx context.Context, userIDs []string, mon
 	}
 	db := r.db.WithContext(ctx)
 
-	assign := func(query string, args []any, set func(*UserResourceStats, int64)) error {
+	// Each metric is independent: a single failing query must NOT zero every
+	// count (GH #1242 — `databases` is a MariaDB reserved word and the unquoted
+	// raw query 1064'd, which aborted the whole Fetch and rendered the entire
+	// Resources column as 0s). Collect per-query errors and return the partial
+	// map so the caller still shows what succeeded. Table names are backticked —
+	// `databases` in particular is reserved.
+	var errs []error
+	assign := func(query string, args []any, set func(*UserResourceStats, int64)) {
 		var rows []urStatRow
 		if err := db.Raw(query, args...).Scan(&rows).Error; err != nil {
-			return translate(err)
+			errs = append(errs, translate(err))
+			return
 		}
 		for _, row := range rows {
 			s := out[row.UserID]
 			set(&s, row.N)
 			out[row.UserID] = s
 		}
-		return nil
 	}
 
-	if err := assign(
-		"SELECT user_id, COUNT(*) AS n FROM domains WHERE user_id IN ? GROUP BY user_id",
-		[]any{userIDs}, func(s *UserResourceStats, n int64) { s.Domains = n }); err != nil {
-		return nil, err
-	}
-	if err := assign(
-		"SELECT user_id, COUNT(*) AS n FROM databases WHERE user_id IN ? GROUP BY user_id",
-		[]any{userIDs}, func(s *UserResourceStats, n int64) { s.Databases = n }); err != nil {
-		return nil, err
-	}
-	if err := assign(
-		"SELECT user_id, COUNT(*) AS n FROM docker_apps WHERE user_id IN ? AND status <> ? GROUP BY user_id",
-		[]any{userIDs, models.DockerAppStatusDeleted}, func(s *UserResourceStats, n int64) { s.DockerApps = n }); err != nil {
-		return nil, err
-	}
+	assign(
+		"SELECT user_id, COUNT(*) AS n FROM `domains` WHERE user_id IN ? GROUP BY user_id",
+		[]any{userIDs}, func(s *UserResourceStats, n int64) { s.Domains = n })
+	assign(
+		"SELECT user_id, COUNT(*) AS n FROM `databases` WHERE user_id IN ? GROUP BY user_id",
+		[]any{userIDs}, func(s *UserResourceStats, n int64) { s.Databases = n })
+	assign(
+		"SELECT user_id, COUNT(*) AS n FROM `docker_apps` WHERE user_id IN ? AND status <> ? GROUP BY user_id",
+		[]any{userIDs, models.DockerAppStatusDeleted}, func(s *UserResourceStats, n int64) { s.DockerApps = n })
 	// Mailboxes belong to a domain, which belongs to a user.
-	if err := assign(
-		"SELECT d.user_id AS user_id, COUNT(*) AS n FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE d.user_id IN ? GROUP BY d.user_id",
-		[]any{userIDs}, func(s *UserResourceStats, n int64) { s.Mailboxes = n }); err != nil {
-		return nil, err
-	}
+	assign(
+		"SELECT d.user_id AS user_id, COUNT(*) AS n FROM `mailboxes` m JOIN `domains` d ON d.id = m.domain_id WHERE d.user_id IN ? GROUP BY d.user_id",
+		[]any{userIDs}, func(s *UserResourceStats, n int64) { s.Mailboxes = n })
 	// Retained account backups (same filter as CountRetainedForUser).
-	if err := assign(
-		"SELECT user_id, COUNT(*) AS n FROM backup_jobs WHERE user_id IN ? AND kind = ? AND status IN ? GROUP BY user_id",
+	assign(
+		"SELECT user_id, COUNT(*) AS n FROM `backup_jobs` WHERE user_id IN ? AND kind = ? AND status IN ? GROUP BY user_id",
 		[]any{userIDs, models.BackupJobKindAccountBackup, []string{
 			models.BackupJobStatusQueued, models.BackupJobStatusRunning,
 			models.BackupJobStatusSucceeded, models.BackupJobStatusPartial,
-		}}, func(s *UserResourceStats, n int64) { s.Backups = n }); err != nil {
-		return nil, err
-	}
+		}}, func(s *UserResourceStats, n int64) { s.Backups = n })
 	// Monthly bandwidth = SUM of the user's domains' daily bytes since monthStart.
-	if err := assign(
-		"SELECT d.user_id AS user_id, COALESCE(SUM(b.bytes_total),0) AS n FROM bw_daily b JOIN domains d ON d.id = b.domain_id WHERE d.user_id IN ? AND b.day >= ? GROUP BY d.user_id",
+	assign(
+		"SELECT d.user_id AS user_id, COALESCE(SUM(b.bytes_total),0) AS n FROM `bw_daily` b JOIN `domains` d ON d.id = b.domain_id WHERE d.user_id IN ? AND b.day >= ? GROUP BY d.user_id",
 		[]any{userIDs, monthStart}, func(s *UserResourceStats, n int64) {
 			if n > 0 {
 				s.BandwidthBytes = uint64(n)
 			}
-		}); err != nil {
-		return nil, err
+		})
+
+	if len(errs) > 0 {
+		return out, errors.Join(errs...)
 	}
 	return out, nil
 }

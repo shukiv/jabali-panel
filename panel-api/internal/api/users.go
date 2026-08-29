@@ -248,10 +248,13 @@ func (h *userHandler) list(c *gin.Context) {
 		}
 		now := time.Now()
 		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		if s, serr := h.cfg.ResourceStats.Fetch(c.Request.Context(), ids, monthStart); serr == nil {
-			stats = s
-		} else {
-			h.log().WarnContext(c.Request.Context(), "users list: resource stats failed", "error", serr)
+		// GH #1242: use whatever came back even on a partial error — the
+		// aggregator now returns the metrics that succeeded instead of nil, so one
+		// failing query no longer zeros the whole Resources column.
+		s, serr := h.cfg.ResourceStats.Fetch(c.Request.Context(), ids, monthStart)
+		stats = s
+		if serr != nil {
+			h.log().WarnContext(c.Request.Context(), "users list: resource stats partial", "error", serr)
 		}
 	}
 

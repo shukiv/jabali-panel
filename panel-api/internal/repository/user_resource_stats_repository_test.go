@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -39,12 +40,14 @@ func TestUserResourceStats_Fetch_MergesPerMetric(t *testing.T) {
 
 	const u1, u2 = "01USER0000000000000000001", "01USER0000000000000000002"
 
-	mock.ExpectQuery("FROM domains").WillReturnRows(urStatRows(u1, 3, u2, 1))
-	mock.ExpectQuery("FROM databases").WillReturnRows(urStatRows(u1, 2))
-	mock.ExpectQuery("FROM docker_apps").WillReturnRows(urStatRows(u2, 4))
-	mock.ExpectQuery("FROM mailboxes").WillReturnRows(urStatRows(u1, 5))
-	mock.ExpectQuery("FROM backup_jobs").WillReturnRows(urStatRows(u1, 6))
-	mock.ExpectQuery("FROM bw_daily").WillReturnRows(urStatRows(u1, 7340032))
+	// Table names are backticked in the SQL (`databases` is a MariaDB reserved
+	// word) — \x60 is the backtick in these regex matchers.
+	mock.ExpectQuery("FROM \x60domains\x60 WHERE").WillReturnRows(urStatRows(u1, 3, u2, 1))
+	mock.ExpectQuery("FROM \x60databases\x60").WillReturnRows(urStatRows(u1, 2))
+	mock.ExpectQuery("FROM \x60docker_apps\x60").WillReturnRows(urStatRows(u2, 4))
+	mock.ExpectQuery("FROM \x60mailboxes\x60").WillReturnRows(urStatRows(u1, 5))
+	mock.ExpectQuery("FROM \x60backup_jobs\x60").WillReturnRows(urStatRows(u1, 6))
+	mock.ExpectQuery("FROM \x60bw_daily\x60").WillReturnRows(urStatRows(u1, 7340032))
 
 	monthStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	out, err := repo.Fetch(context.Background(), []string{u1, u2}, monthStart)
@@ -62,4 +65,31 @@ func TestUserResourceStats_Fetch_MergesPerMetric(t *testing.T) {
 	require.Equal(t, uint64(0), out[u2].BandwidthBytes)
 
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// GH #1242: one failing query (e.g. the `databases` reserved-word 1064 that
+// zeroed the whole Resources column) must NOT wipe the other metrics — Fetch
+// returns the partial map plus an error, and the caller keeps the successes.
+func TestUserResourceStats_Fetch_PartialOnQueryError(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewUserResourceStatsRepository(db)
+
+	const u1 = "01USER0000000000000000001"
+	mock.ExpectQuery("FROM \x60domains\x60 WHERE").WillReturnRows(urStatRows(u1, 3))
+	mock.ExpectQuery("FROM \x60databases\x60").WillReturnError(errors.New("1064 reserved word"))
+	mock.ExpectQuery("FROM \x60docker_apps\x60").WillReturnRows(urStatRows(u1, 1))
+	mock.ExpectQuery("FROM \x60mailboxes\x60").WillReturnRows(urStatRows(u1, 5))
+	mock.ExpectQuery("FROM \x60backup_jobs\x60").WillReturnRows(urStatRows(u1, 2))
+	mock.ExpectQuery("FROM \x60bw_daily\x60").WillReturnRows(urStatRows(u1, 1024))
+
+	out, err := repo.Fetch(context.Background(), []string{u1}, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err) // the failed metric is surfaced...
+	// ...but every other metric survived.
+	require.Equal(t, int64(3), out[u1].Domains)
+	require.Equal(t, int64(0), out[u1].Databases) // the one that failed
+	require.Equal(t, int64(1), out[u1].DockerApps)
+	require.Equal(t, int64(5), out[u1].Mailboxes)
+	require.Equal(t, int64(2), out[u1].Backups)
+	require.Equal(t, uint64(1024), out[u1].BandwidthBytes)
 }

@@ -191,6 +191,7 @@
       "package": "Package",
       "created": "Created",
       "disk_usage": "Disk usage",
+      "usage": "Usage",
       "resources": "Resources",
       "bandwidth_month": "Bandwidth this month",
       "actions": "Actions"
