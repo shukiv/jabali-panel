@@ -4724,9 +4724,15 @@ forward-zones-file=/etc/powerdns/recursor.forwards
 # and is only consulted by the stub, not by the recursor.
 forward-zones-recurse=.=${_rec_recurse_upstream}
 
-# DNSSEC: off. systemd-resolved validates DNSSEC upstream already.
-# Doubling up costs CPU per query for no security benefit on a
-# single-host panel.
+# DNSSEC: off. This recursor does NOT validate — and NEITHER does the
+# systemd-resolved stub in front of it (DNSSEC=no); both strip RRSIGs.
+# (The earlier claim here that "systemd-resolved validates upstream" was
+# wrong and directly caused JAB-391.) Leaving it off is intentional on a
+# single-host panel with no validating upstream, but it means DANE cannot
+# work: Stalwart's outbound DANE is shipped DISABLED for exactly this reason
+# (a signed zone with stripped sigs reads as "Bogus" and hard-defers mail to
+# gmail / Google Workspace). Do NOT re-enable DANE, or assume validation
+# happens, without first giving the resolver chain a DNSSEC-capable path.
 dnssec=off
 
 # Conservative defaults for a single-tenant panel. max-cache-entries

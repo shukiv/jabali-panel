@@ -123,6 +123,12 @@ type Reconciler struct {
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
 	sshKeys repository.SSHKeyRepository
+	// outboundTLSConverged gates the JAB-391 one-shot: once the DANE-disable
+	// ensure succeeds this process, stop re-dispatching (the agent verb is
+	// idempotent, but there is no value re-querying Stalwart every tick). A
+	// panel restart — which every jabali update performs — clears it, so the
+	// desired state is re-asserted exactly when a new build arrives.
+	outboundTLSConverged bool
 	// ftpAccounts holds the FTP/SFTP subaccount repository (GH #1053).
 	ftpAccounts repository.FtpAccountRepository
 	// cronJobs holds reference to the cron jobs repository
@@ -765,6 +771,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// before the rest of the loop touches the agent. Cheap noop when
 	// use_le=0 or routability gate fails.
 	r.reconcilePanelCertificate(ctx)
+	// JAB-391: converge Stalwart outbound TLS strategies to dane=disable.
+	r.reconcileOutboundMailTLS(ctx)
 	r.reconcileUpdateRuns(ctx)
 	r.reconcileAutoupdate(ctx)
 
