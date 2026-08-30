@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
+import { IANA_TIMEZONES } from "../../../data/timezones";
 import {
   BgColorsOutlined,
   CheckOutlined,
@@ -315,7 +316,7 @@ const GeneralSettingsTab = () => {
             filterOption={(input, option) =>
               (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
             }
-            options={Array.from(Intl.supportedValuesOf("timeZone")).map((tz) => ({
+            options={IANA_TIMEZONES.map((tz) => ({
               label: tz,
               value: tz,
             }))}

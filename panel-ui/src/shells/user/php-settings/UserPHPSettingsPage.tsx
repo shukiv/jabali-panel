@@ -12,6 +12,7 @@ import { PHPXdebugCard } from "./PHPXdebugCard";
 import { apiClient } from "../../../apiClient";
 import { getIdentity, type Identity } from "../../../identity";
 import { isPHPEOL } from "../../../utils/phpEol";
+import { IANA_TIMEZONES } from "../../../data/timezones";
 
 type Domain = {
   id: string;
@@ -124,33 +125,11 @@ const ERROR_REPORTING_OPTIONS = [
   { label: "All (development)", value: 32767 },
 ];
 
-// A curated set of common IANA zones. The server validates any value against
-// the tz database, so this is a convenience list, not the limit.
-const COMMON_TIMEZONES = [
-  "UTC",
-  "Africa/Johannesburg",
-  "America/Chicago",
-  "America/Los_Angeles",
-  "America/New_York",
-  "America/Sao_Paulo",
-  "Asia/Dubai",
-  "Asia/Jerusalem",
-  "Asia/Kolkata",
-  "Asia/Shanghai",
-  "Asia/Singapore",
-  "Asia/Tokyo",
-  "Australia/Sydney",
-  "Europe/Berlin",
-  "Europe/Istanbul",
-  "Europe/London",
-  "Europe/Madrid",
-  "Europe/Moscow",
-  "Europe/Paris",
-  "Pacific/Auckland",
-];
+// The full IANA/PHP timezone list, shared with admin Server Settings so both
+// selectors offer the same zones (GH #1332). Searchable in the Select below.
 const TIMEZONE_OPTIONS = [
   { label: "Use pool default", value: null as string | null },
-  ...COMMON_TIMEZONES.map((z) => ({ label: z, value: z as string | null })),
+  ...IANA_TIMEZONES.map((z) => ({ label: z, value: z as string | null })),
 ];
 
 export function UserPHPSettingsPage() {
