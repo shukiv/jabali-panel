@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -139,6 +141,28 @@ func TestPHPExtensionsList_AgentDownOmitsAlwaysOn(t *testing.T) {
 	}
 	if _, present := raw["available"]; !present {
 		t.Fatalf("available should still be present (static-catalog fallback)")
+	}
+}
+
+func TestPHPExtensionsList_VersionNotInstalled404(t *testing.T) {
+	// An orphaned pool whose PHP version was uninstalled: the agent reports
+	// FailedPrecondition, and list() must 404 rather than fall back to the static
+	// catalog (which would present togglable checkboxes for a phantom version).
+	pool := &models.PHPPool{ID: "p1", UserID: "u1", PHPVersion: "8.5"}
+	r, _ := setupExtRouter(t, pool, func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+		if cmd == "php.ext.list" {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "PHP 8.5 is not installed"}
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/php-extensions?php_version=8.5", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404 for uninstalled version, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "version_not_installed") {
+		t.Fatalf("want version_not_installed, got %s", w.Body.String())
 	}
 }
 

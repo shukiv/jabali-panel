@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +12,28 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// installedPHPVersionSet asks the agent which PHP versions are installed
+// (php.version.list — the same source /php/versions serves). Returns (set, true)
+// on success; (nil, false) on ANY agent error so callers FAIL OPEN (show every
+// pool) rather than blank the card on a transient agent hiccup.
+func installedPHPVersionSet(ctx context.Context, ag agent.AgentInterface) (map[string]bool, bool) {
+	raw, err := ag.Call(ctx, "php.version.list", nil)
+	if err != nil {
+		return nil, false
+	}
+	var resp struct {
+		Versions []string `json:"versions"`
+	}
+	if json.Unmarshal(raw, &resp) != nil || len(resp.Versions) == 0 {
+		return nil, false
+	}
+	set := make(map[string]bool, len(resp.Versions))
+	for _, v := range resp.Versions {
+		set[v] = true
+	}
+	return set, true
+}
 
 // PHPUserTuningHandlerConfig wires the user-facing tiered FPM tuning (GH #339
 // phase 2, Steps 5+6). SEPARATE from the admin-only /php-pools routes (PR #34):
@@ -73,6 +97,21 @@ func (h *phpUserTuningHandler) tuning(c *gin.Context) {
 	rows := []poolTuningRow{}
 	if user != nil {
 		if pools, err := h.cfg.PHPPools.ListByUserID(c.Request.Context(), user.ID); err == nil {
+			// GH #1332: a pool row survives its PHP version being uninstalled, but
+			// the Performance/Xdebug/Extensions cards drive their version dropdown
+			// off these rows — so an orphaned version would keep showing (and be
+			// configurable). Hide pools whose version is no longer installed.
+			// Filter BEFORE the is_default loop so the earliest INSTALLED pool
+			// carries is_default; fail-open (agent unreachable → unfiltered).
+			if installed, ok := installedPHPVersionSet(c.Request.Context(), h.cfg.Agent); ok {
+				kept := make([]models.PHPPool, 0, len(pools))
+				for _, p := range pools {
+					if installed[p.PHPVersion] {
+						kept = append(kept, p)
+					}
+				}
+				pools = kept
+			}
 			// ListByUserID orders the default pool (earliest created) first.
 			for i := range pools {
 				p := &pools[i]

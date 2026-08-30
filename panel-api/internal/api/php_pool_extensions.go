@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpext"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
@@ -85,7 +87,17 @@ func (h *phpPoolExtensionsHandler) list(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pool_not_found"})
 		return
 	}
-	st := h.agentExtState(c, pool.PHPVersion)
+	st, err := h.agentExtState(c, pool.PHPVersion)
+	// If the agent reports the version isn't installed (an orphaned pool row whose
+	// PHP version was uninstalled), 404 instead of falling back to the static
+	// catalog — the fallback would present a togglable extension list for a
+	// phantom version (GH #1332). A transient agent error (no code / not
+	// FailedPrecondition) still falls back so the card degrades gracefully.
+	var ae *agentwire.AgentError
+	if errors.As(err, &ae) && ae.Code == agent.CodeFailedPrecondition {
+		c.JSON(http.StatusNotFound, gin.H{"error": "version_not_installed", "detail": "PHP " + pool.PHPVersion + " is not installed"})
+		return
+	}
 	// Additive response (a tenant Automation API script may already read
 	// available/enabled): keep those exact keys; add always_on = the version's
 	// real server-default-enabled modules (conf.d, built-ins included) and
@@ -140,7 +152,8 @@ func (h *phpPoolExtensionsHandler) set(c *gin.Context) {
 	//    php_admin_value[extension]= line is redundant. Best-effort via the agent;
 	//    fail-open (a redundant line is only a PHP startup warning).
 	locked := map[string]bool{"xdebug": true}
-	for _, n := range h.agentExtState(c, req.PHPVersion).alwaysOn {
+	st, _ := h.agentExtState(c, req.PHPVersion)
+	for _, n := range st.alwaysOn {
 		locked[n] = true
 	}
 	// Validate each against the known-extension catalog and drop built-ins
@@ -182,8 +195,10 @@ type extState struct {
 
 // agentExtState asks the agent (php.ext.list) for the version's extension state.
 // Best-effort: on any agent hiccup it falls back to the static catalog for the
-// togglable set and reports ok=false.
-func (h *phpPoolExtensionsHandler) agentExtState(c *gin.Context, version string) extState {
+// togglable set and reports ok=false. It also returns the raw agent error so
+// list() can distinguish a "version not installed" (FailedPrecondition → 404)
+// from a transient hiccup (fall back to the catalog); set() ignores the error.
+func (h *phpPoolExtensionsHandler) agentExtState(c *gin.Context, version string) (extState, error) {
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "php.ext.list", map[string]string{"version": version})
 	if err == nil {
 		var env struct {
@@ -205,7 +220,7 @@ func (h *phpPoolExtensionsHandler) agentExtState(c *gin.Context, version string)
 					always = append(always, e.Name)
 				}
 			}
-			return extState{available: avail, alwaysOn: always, ok: true}
+			return extState{available: avail, alwaysOn: always, ok: true}, nil
 		}
 	}
 	avail := []string{}
@@ -214,5 +229,5 @@ func (h *phpPoolExtensionsHandler) agentExtState(c *gin.Context, version string)
 			avail = append(avail, s.Name)
 		}
 	}
-	return extState{available: avail, ok: false}
+	return extState{available: avail, ok: false}, err
 }
