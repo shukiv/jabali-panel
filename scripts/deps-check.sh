@@ -42,6 +42,7 @@ MANIFEST=(
   "kratos_version|ory/kratos|v|install/kratos.sha256|https://github.com/ory/kratos/releases/download/v{V}/kratos_{V}-linux_64bit.tar.gz"
   "wp_version|wp-cli/wp-cli|v|install/wp-cli.sha256|https://github.com/wp-cli/wp-cli/releases/download/v{V}/wp-cli-{V}.phar"
   "pma_version|phpmyadmin/phpmyadmin|RELEASE_|install/phpmyadmin.sha256|-"
+  "adminer_version|vrana/adminer|v|install/adminer.sha256|https://github.com/vrana/adminer/releases/download/v{V}/adminer-{V}.php"
   "snuf_version|jvoisin/snuffleupagus|v|-|-"
   "LMD_VERSION|rfxn/linux-malware-detect|v|-|-"
   "YARAX_VERSION|VirusTotal/yara-x|v|-|-"

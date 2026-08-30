@@ -8016,13 +8016,20 @@ DROPINEOF
 install_adminer() {
   _log "installing Adminer (multi-engine DB admin) — M37 Phase 4"
 
+  # Pin as a plain VAR (not baked into the URLs) so scripts/deps-check.sh can
+  # read it and the monthly dependency review tracks Adminer drift like every
+  # other install.sh pin (phpMyAdmin, Stalwart, Kratos, …). Bump this one line,
+  # then `scripts/deps-check.sh --refresh-sha adminer_version` to re-capture the
+  # checksum.
+  local adminer_version="4.8.1"
   local adminer_dir="/var/www/jabali-adminer"
-  local adminer_url="https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php"
-  local adminer_plugin_url="https://raw.githubusercontent.com/vrana/adminer/v4.8.1/plugins/plugin.php"
+  local adminer_url="https://github.com/vrana/adminer/releases/download/v${adminer_version}/adminer-${adminer_version}.php"
+  local adminer_plugin_url="https://raw.githubusercontent.com/vrana/adminer/v${adminer_version}/plugins/plugin.php"
 
   mkdir -p "${adminer_dir}"
 
-  # Upstream single-file Adminer build. Pin v4.8.1 for reproducibility.
+  # Upstream single-file Adminer build, pinned via ${adminer_version} above for
+  # reproducibility.
   #
   # Checksum-verified like every other third-party artifact in this file
   # (wp-cli, phpMyAdmin, Stalwart, Kratos, Bulwark, maldet, yara-x). Adminer is
