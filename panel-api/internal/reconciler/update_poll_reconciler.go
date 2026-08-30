@@ -29,6 +29,14 @@ type aptCheckView struct {
 	SecurityTotal  int        `json:"security_total"`
 	RebootRequired bool       `json:"reboot_required"`
 	LastAppliedAt  *time.Time `json:"last_applied_at"`
+	// Error is the structured diagnostic (JAB-10) set when the check itself
+	// failed (apt lock, repo unreachable, …). When present, Total/SecurityTotal
+	// are meaningless and must not be persisted (JAB-311).
+	Error *struct {
+		Reason   string `json:"reason"`
+		Command  string `json:"command"`
+		ExitCode int    `json:"exit_code"`
+	} `json:"error"`
 }
 
 func (r *Reconciler) reconcileUpdatePoll(ctx context.Context) {
@@ -48,8 +56,18 @@ func (r *Reconciler) reconcileUpdatePoll(ctx context.Context) {
 		prevSecurity = st.AptSecurity
 	}
 
-	// Panel (git) check — cheap.
-	if raw, err := r.agent.Call(ctx, "system.update_check", nil); err == nil {
+	// Panel (git) check — cheap. Forward the configured release channel
+	// (GH #445) so a stable box's "behind" count compares against stable, not
+	// development — the agent's default for an empty channel. JAB-311: the
+	// background poll was sending nil here, silently checking every stable box
+	// against development; mirror the HTTP adapter (admin_updates.jabaliCheck).
+	channel := "development"
+	if r.serverSettings != nil {
+		if s, serr := r.serverSettings.Get(ctx); serr == nil && s != nil && s.ReleaseChannel == "stable" {
+			channel = "stable"
+		}
+	}
+	if raw, err := r.agent.Call(ctx, "system.update_check", map[string]any{"channel": channel}); err == nil {
 		var v updateCheckView
 		if json.Unmarshal(raw, &v) == nil {
 			_ = r.updateState.UpsertJabali(ctx, v.BehindCount, v.CurrentSHA, time.Now())
@@ -66,6 +84,16 @@ func (r *Reconciler) reconcileUpdatePoll(ctx context.Context) {
 	}
 	var av aptCheckView
 	if json.Unmarshal(raw, &av) != nil {
+		return
+	}
+	// JAB-311: on a structured check failure (JAB-10 — apt lock, repo
+	// unreachable, …) the counts are meaningless; persisting them would clobber
+	// the last-known-good total with a misleading 0 ("0 updates" as if healthy).
+	// Skip all persistence + the security-rise notification, as the HTTP
+	// aptCheck adapter does.
+	if av.Error != nil {
+		r.log.Debug("update poll: apt check structured failure — preserving last-known-good",
+			"reason", av.Error.Reason, "exit", av.Error.ExitCode)
 		return
 	}
 	_ = r.updateState.UpsertApt(ctx, av.Total, av.SecurityTotal, time.Now())
