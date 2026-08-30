@@ -73,7 +73,7 @@
       "ssl": "SSL Manager",
       "php-settings": "PHP Settings",
       "cron": "Cron",
-      "backups": "Backup/Restore"
+      "backups": "Backups"
     }
   },
   "login": {
