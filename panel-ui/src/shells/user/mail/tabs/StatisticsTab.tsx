@@ -20,7 +20,9 @@ type TenantStats = { traffic: DomainTraffic[] };
 const rangeLabel = (hours: number) =>
   hours >= 168 ? `${hours / 24}d` : `${hours}h`;
 
-export const StatisticsTab = () => {
+// GH #1387: domainName filters the per-domain series to one domain (drill-down)
+// and hides the Domain column; unset = the full cross-domain breakdown.
+export const StatisticsTab = ({ domainName }: { domainName?: string } = {}) => {
   const [hours, setHours] = useState(24);
   const stats = useQuery<TenantStats>({
     queryKey: ["mail", "stats", hours],
@@ -33,7 +35,9 @@ export const StatisticsTab = () => {
     return <Alert type="error" message="Failed to load mail statistics" />;
   }
 
-  const traffic = stats.data?.traffic ?? [];
+  const traffic = (stats.data?.traffic ?? []).filter(
+    (r) => !domainName || r.domain === domainName,
+  );
 
   return (
     <>
@@ -72,7 +76,9 @@ export const StatisticsTab = () => {
               pagination={false}
               dataSource={traffic}
               columns={[
-                { title: "Domain", dataIndex: "domain" },
+                ...(domainName
+                  ? []
+                  : [{ title: "Domain", dataIndex: "domain" as const }]),
                 { title: "Sent", dataIndex: "sent", width: 90, align: "right" },
                 { title: "Received", dataIndex: "received", width: 100, align: "right" },
                 { title: "Delivered", dataIndex: "delivered", width: 100, align: "right" },

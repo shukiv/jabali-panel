@@ -18,6 +18,8 @@ import { CatchAllTab } from "./tabs/CatchAllTab";
 import { DisclaimerTab } from "./tabs/DisclaimerTab";
 import { SharedFoldersTab } from "./tabs/SharedFoldersTab";
 import { SharedResourcesTab } from "./tabs/SharedResourcesTab";
+import { LogsTab } from "./tabs/LogsTab";
+import { StatisticsTab } from "./tabs/StatisticsTab";
 import { CreateMailboxWizardModal } from "./CreateMailboxWizardModal";
 
 const TAB_KEYS = [
@@ -28,6 +30,8 @@ const TAB_KEYS = [
   "resources",
   "catchall",
   "disclaimer",
+  "logs",
+  "statistics",
 ] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "mailboxes";
@@ -40,6 +44,8 @@ const TAB_LABELS: Record<TabKey, string> = {
   resources: "Shared Resources",
   catchall: "Catch-All",
   disclaimer: "Disclaimer",
+  logs: "Logs",
+  statistics: "Statistics",
 };
 
 export const MailDomainPage = () => {
@@ -94,6 +100,10 @@ export const MailDomainPage = () => {
         return <CatchAllTab domainId={domainId} />;
       case "disclaimer":
         return <DisclaimerTab domainId={domainId} />;
+      case "logs":
+        return <LogsTab domainName={domain.name} />;
+      case "statistics":
+        return <StatisticsTab domainName={domain.name} />;
     }
   };
 

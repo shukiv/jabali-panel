@@ -2,10 +2,13 @@
 // tenant's mail-enabled domains at a glance (mailbox count, storage, 30-day
 // sent/received). The drill-down into a domain's accounts and the mailbox-tab
 // migration are the operator's mail restructure; this is only the entry list.
-import { Card, Empty, Spin, Table, Typography } from "antd";
+import { Button, Card, Empty, Spin, Table, Typography } from "antd";
+import { PlusOutlined } from "@icons";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useListQuery } from "../../../hooks/useQueries";
 import { humanBytes } from "../../../utils/bytes";
+import { CreateMailboxWizardModal } from "./CreateMailboxWizardModal";
 
 interface MailDomainRow {
   id: string;
@@ -23,13 +26,30 @@ const num = (n: number | null | undefined): string => (n ?? 0).toLocaleString();
 
 export function MailDomainsPage() {
   const navigate = useNavigate();
+  const [showCreate, setShowCreate] = useState(false);
   const query = useListQuery<MailDomainRow>({ resource: "me/mail-domains" });
   const rows = query.items;
+  const createDomains = useMemo(
+    () => rows.map((r) => ({ id: r.id, name: r.name })),
+    [rows],
+  );
 
   return (
-    <Card title="Mail Domains">
+    <Card
+      title="Mail Domains"
+      extra={
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          disabled={createDomains.length === 0}
+          onClick={() => setShowCreate(true)}
+        >
+          New Mailbox
+        </Button>
+      }
+    >
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        Your mail-enabled domains at a glance.
+        Your mail-enabled domains at a glance. Select a domain to manage its accounts.
       </Typography.Paragraph>
       {query.isLoading ? (
         <Spin />
@@ -91,6 +111,14 @@ export function MailDomainsPage() {
             }
           />
         </Table>
+      )}
+      {showCreate && (
+        <CreateMailboxWizardModal
+          open={showCreate}
+          domains={createDomains}
+          onCancel={() => setShowCreate(false)}
+          onCreated={() => setShowCreate(false)}
+        />
       )}
     </Card>
   );

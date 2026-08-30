@@ -25,7 +25,9 @@ interface Filters {
   recipient?: string;
 }
 
-export const LogsTab = () => {
+// GH #1387: domainName scopes the logs to one domain (the drill-down); unset =
+// all the caller's domains (flat page, unchanged).
+export const LogsTab = ({ domainName }: { domainName?: string } = {}) => {
   const { t } = useTranslation();
   const [filters, setFilters] = useState<Filters>({});
   const [page, setPage] = useState(1);
@@ -39,6 +41,7 @@ export const LogsTab = () => {
     recipient: filters.recipient,
     limit: pageSize,
     offset: (page - 1) * pageSize,
+    domain: domainName,
   });
 
   const entries = data?.data ?? [];

@@ -106,7 +106,6 @@ const MyNotificationsPage = lazy(() => import("./shells/user/notifications/MyNot
 const APIDocsPage = lazy(() => import("./shells/shared/APIDocsPage").then((m) => ({ default: m.APIDocsPage })));
 const UserCronList = lazy(() => import("./shells/user/cron/UserCronList").then((m) => ({ default: m.UserCronList })));
 const AdminCronList = lazy(() => import("./shells/admin/cron/AdminCronList").then((m) => ({ default: m.AdminCronList })));
-const MailTabsPage = lazy(() => import("./shells/user/mail/MailTabsPage").then((m) => ({ default: m.MailTabsPage })));
 // GH #1387 foundation slice: per-domain Mail Domains summary list.
 const MailDomainsPage = lazy(() => import("./shells/user/mail/MailDomainsPage").then((m) => ({ default: m.MailDomainsPage })));
 // GH #1387 drill-down: per-domain mail page (accounts + domain settings, scoped).
@@ -426,15 +425,10 @@ const ThemedApp = () => {
             <Route path="notifications" element={<MyNotificationsPage />} />
             <Route path="cron" element={<UserCronList />} />
             <Route path="backups" element={<UserBackupsPage />} />
-            <Route path="mail" element={<Navigate to="/jabali-panel/mail/mailboxes" replace />} />
-            <Route
-              path="mail/:tab"
-              element={
-                <CapabilityRoute cap="mail_enabled" fallback="/jabali-panel/dashboard">
-                  <MailTabsPage />
-                </CapabilityRoute>
-              }
-            />
+            {/* GH #1387: the flat Mail page is retired — Mail now lands on the
+                per-domain Mail Domains list; old mail/:tab links redirect there. */}
+            <Route path="mail" element={<Navigate to="/jabali-panel/mail-domains" replace />} />
+            <Route path="mail/:tab" element={<Navigate to="/jabali-panel/mail-domains" replace />} />
             {/* GH #1387 foundation slice — reachable route; sidebar/menu wiring
                 is left to the operator's mail restructure (Mail → Mail Domains). */}
             <Route
@@ -463,7 +457,7 @@ const ThemedApp = () => {
                 </CapabilityRoute>
               }
             />
-            <Route path="mailboxes" element={<Navigate to="/jabali-panel/mail/mailboxes" replace />} />
+            <Route path="mailboxes" element={<Navigate to="/jabali-panel/mail-domains" replace />} />
           </Route>
 
           {/* ---------------- public ---------------- */}

@@ -286,7 +286,9 @@ export const userNav: NavItem[] = [
     key: "mail",
     label: "nav.user.mail",
     icon: navIcon(MailOutlined),
-    path: "/jabali-panel/mail/mailboxes",
+    // GH #1387: Mail lands on the per-domain Mail Domains list (Mail → Mail
+    // Domains → a domain → accounts). The flat mail/:tab page redirects here.
+    path: "/jabali-panel/mail-domains",
     // The link targets the default subtab, but the item owns every mail
     // subtab (groups/forwarders/…) — keep it highlighted across all of them
     // (GH #314). matchPatterns win over the longest-path-prefix match.

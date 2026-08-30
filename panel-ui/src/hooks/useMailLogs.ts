@@ -21,6 +21,8 @@ export interface MailLogsQuery {
   recipient?: string;
   limit?: number;
   offset?: number;
+  /** GH #1387: narrow to one owned domain (drill-down); ignored if unowned. */
+  domain?: string;
 }
 
 export function useMailLogs(q: MailLogsQuery) {
@@ -34,6 +36,7 @@ export function useMailLogs(q: MailLogsQuery) {
       if (q.recipient) params.set("recipient", q.recipient);
       if (q.limit) params.set("limit", String(q.limit));
       if (q.offset) params.set("offset", String(q.offset));
+      if (q.domain) params.set("domain", q.domain);
       const { data } = await apiClient.get<{
         data: MailLogEntry[];
         total: number;

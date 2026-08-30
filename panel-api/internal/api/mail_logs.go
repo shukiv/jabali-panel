@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -72,6 +73,28 @@ func (h *mailLogsHandler) list(c *gin.Context) {
 		if len(scope) == 0 {
 			c.JSON(http.StatusOK, mailLogsResponse{Data: []mailLogEntry{}, Total: 0, Page: 1, PageSize: 0})
 			return
+		}
+	}
+
+	// GH #1387 drill-down: an optional single-domain scope. A non-admin may only
+	// narrow to a domain already in their owned scope — a foreign domain yields
+	// no results (never another tenant's logs); an admin may narrow to any.
+	if reqDomain := c.Query("domain"); reqDomain != "" {
+		if claims.IsAdmin {
+			scope = []string{reqDomain}
+		} else {
+			matched := ""
+			for _, d := range scope {
+				if strings.EqualFold(d, reqDomain) {
+					matched = d
+					break
+				}
+			}
+			if matched == "" {
+				c.JSON(http.StatusOK, mailLogsResponse{Data: []mailLogEntry{}, Total: 0, Page: 1, PageSize: 0})
+				return
+			}
+			scope = []string{matched}
 		}
 	}
 
