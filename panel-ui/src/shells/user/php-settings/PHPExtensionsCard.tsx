@@ -122,8 +122,11 @@ export function PHPExtensionsCard() {
 
   const gridStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
     gap: 8,
+    // Top-align cells so a label that wraps to two lines (a long extension name)
+    // can't stretch its row and knock the neighbouring checkboxes out of line.
+    alignItems: "start",
   } as const;
 
   return (
@@ -154,16 +157,13 @@ export function PHPExtensionsCard() {
               <Typography.Text strong>Always on (server default)</Typography.Text>
               <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: "2px 0 8px" }}>
                 Enabled for every site on PHP {version}.
-                {xdebugOn ? " Xdebug is managed in the Xdebug control above." : ""}
+                {xdebugOn ? " Xdebug is managed in the Xdebug control." : ""}
               </Typography.Paragraph>
               <Checkbox.Group
                 value={alwaysOnRows}
                 disabled
                 style={gridStyle}
-                options={alwaysOnRows.map((name) => ({
-                  label: name === "xdebug" ? "xdebug (Xdebug control)" : name,
-                  value: name,
-                }))}
+                options={alwaysOnRows.map((name) => ({ label: name, value: name }))}
               />
             </div>
           )}
