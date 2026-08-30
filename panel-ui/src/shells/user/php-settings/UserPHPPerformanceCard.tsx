@@ -184,17 +184,22 @@ export const UserPHPPerformanceCard = () => {
 
         {pools.length > 1 && (
           <div>
-            <Typography.Text>PHP version</Typography.Text>
-            <Select
-              style={{ width: 200, display: "block", marginTop: 4 }}
-              value={version}
-              onChange={setVersion}
-              options={pools.map((p) => ({
-                value: p.php_version,
-                label: `PHP ${p.php_version}${p.is_default ? " (default)" : ""}`,
-              }))}
-            />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <Typography.Text style={{ display: "block", marginBottom: 4 }}>PHP version</Typography.Text>
+            {/* Wrap the Select in a block <div> instead of putting display:block
+                on the AntD root — a display override on .ant-select breaks the
+                suffix-arrow layout (it drops below the text). GH #1332. */}
+            <div>
+              <Select
+                style={{ width: 200 }}
+                value={version}
+                onChange={setVersion}
+                options={pools.map((p) => ({
+                  value: p.php_version,
+                  label: `PHP ${p.php_version}${p.is_default ? " (default)" : ""}`,
+                }))}
+              />
+            </div>
+            <Typography.Text type="secondary" style={{ display: "block", marginTop: 4, fontSize: 12 }}>
               Each PHP version keeps its own tuning.
             </Typography.Text>
           </div>

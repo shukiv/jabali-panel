@@ -85,12 +85,25 @@ func (h *phpPoolExtensionsHandler) list(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pool_not_found"})
 		return
 	}
-	available := h.installedExtensions(c, pool.PHPVersion)
-	c.JSON(http.StatusOK, gin.H{
+	st := h.agentExtState(c, pool.PHPVersion)
+	// Additive response (a tenant Automation API script may already read
+	// available/enabled): keep those exact keys; add always_on = the version's
+	// real server-default-enabled modules (conf.d, built-ins included) and
+	// xdebug_on = this pool's Xdebug flag, so the UI can mirror the ACTUAL
+	// per-version state instead of showing every extra as off.
+	resp := gin.H{
 		"php_version": pool.PHPVersion,
-		"available":   available,
+		"available":   st.available,
 		"enabled":     []string(pool.ExtraExtensions),
-	})
+		"xdebug_on":   pool.XdebugEnabled,
+	}
+	// always_on comes only from a live agent read; on any agent hiccup we OMIT it
+	// so the UI shows "unknown" (hides the always-on group) rather than falsely
+	// rendering server defaults as off — which would re-create the reported bug.
+	if st.ok {
+		resp["always_on"] = st.alwaysOn
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 type setExtensionsRequest struct {
@@ -118,13 +131,26 @@ func (h *phpPoolExtensionsHandler) set(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pool_not_found"})
 		return
 	}
+	// Names the tenant must NOT store as an opt-in extra:
+	//  - "xdebug": a Zend extension managed by its own control (PHP_INI_SCAN_DIR).
+	//    Stored here it would render php_admin_value[extension]=xdebug.so — the
+	//    wrong directive (needs zend_extension) — and fight XdebugEnabled. Stripped
+	//    STATICALLY so the guard holds even when the agent is unreachable.
+	//  - server-default (conf.d) modules: already enabled server-wide, so a pool
+	//    php_admin_value[extension]= line is redundant. Best-effort via the agent;
+	//    fail-open (a redundant line is only a PHP startup warning).
+	locked := map[string]bool{"xdebug": true}
+	for _, n := range h.agentExtState(c, req.PHPVersion).alwaysOn {
+		locked[n] = true
+	}
 	// Validate each against the known-extension catalog and drop built-ins
-	// (always present) + duplicates. The agent re-checks the .so is installed.
+	// (always present), locked names, and duplicates. The agent re-checks the
+	// .so is installed.
 	seen := map[string]bool{}
 	clean := make(models.StringList, 0, len(req.Extensions))
 	for _, name := range req.Extensions {
 		spec, known := phpext.Lookup(name)
-		if !known || spec.BuiltIn || seen[name] {
+		if !known || spec.BuiltIn || locked[name] || seen[name] {
 			continue
 		}
 		seen[name] = true
@@ -141,34 +167,52 @@ func (h *phpPoolExtensionsHandler) set(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"enabled": []string(clean)})
 }
 
-// installedExtensions asks the agent which non-built-in extensions are installed
-// for the version. Best-effort: on any agent hiccup it falls back to the static
-// catalog so the UI still renders something to toggle.
-func (h *phpPoolExtensionsHandler) installedExtensions(c *gin.Context, version string) []string {
+// extState is the agent's view of a version's extensions:
+//   - available: installed, non-built-in names the tenant may toggle on
+//   - alwaysOn:  names enabled server-wide via conf.d in BOTH SAPIs — the
+//     version's real default-enabled set (built-ins included)
+//   - ok:        false when the agent didn't answer, in which case available
+//     falls back to the static catalog and alwaysOn is unknown (nil), so callers
+//     degrade (hide the always-on group) instead of claiming "off".
+type extState struct {
+	available []string
+	alwaysOn  []string
+	ok        bool
+}
+
+// agentExtState asks the agent (php.ext.list) for the version's extension state.
+// Best-effort: on any agent hiccup it falls back to the static catalog for the
+// togglable set and reports ok=false.
+func (h *phpPoolExtensionsHandler) agentExtState(c *gin.Context, version string) extState {
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "php.ext.list", map[string]string{"version": version})
 	if err == nil {
 		var env struct {
 			Extensions []struct {
 				Name      string `json:"name"`
 				Installed bool   `json:"installed"`
+				Enabled   bool   `json:"enabled"`
 				BuiltIn   bool   `json:"built_in"`
 			} `json:"extensions"`
 		}
 		if json.Unmarshal(raw, &env) == nil && len(env.Extensions) > 0 {
-			out := []string{}
+			avail := []string{}
+			always := []string{}
 			for _, e := range env.Extensions {
 				if e.Installed && !e.BuiltIn {
-					out = append(out, e.Name)
+					avail = append(avail, e.Name)
+				}
+				if e.Enabled {
+					always = append(always, e.Name)
 				}
 			}
-			return out
+			return extState{available: avail, alwaysOn: always, ok: true}
 		}
 	}
-	out := []string{}
+	avail := []string{}
 	for _, s := range phpext.All() {
 		if !s.BuiltIn {
-			out = append(out, s.Name)
+			avail = append(avail, s.Name)
 		}
 	}
-	return out
+	return extState{available: avail, ok: false}
 }
