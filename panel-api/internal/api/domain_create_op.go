@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,11 @@ import (
 // validateDocumentRoot, EnableDomainEmailInline, and the domainHandler methods
 // findCoveringSharedCert / previewSlugConflict — and the only new caller
 // (automation) also lives in this package. Reuse, not packaging, was the goal.
+
+// reverseProxyTenantUIDFloor mirrors the agent's minTenantUID (GH #1401): a
+// loopback listener owned by a uid below this is a system/service process, not
+// a tenant app, so a tenant's reverse-proxy target must not point at it.
+const reverseProxyTenantUIDFloor = 1000
 
 // createDomainInput is the pre-normalized, pre-validated-shape input to
 // createDomainOp. Name MUST already be normalized (normalizeDomainName) and
@@ -194,6 +200,25 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 			// privileged/reserved range, then reserve that exact port.
 			if verr := repository.ValidateReverseProxyPort(int(in.ReverseProxyPort)); verr != nil {
 				return nil, &createDomainError{http.StatusBadRequest, "reverse_proxy_port_invalid", verr.Error()}
+			}
+			// GH #1401 drift-proof backstop: the constant denylist above blocks
+			// KNOWN jabali infra ports; this refuses a port already LISTENing on
+			// loopback under a system/service uid (< 1000, below the tenant floor)
+			// even if the constant list missed it — so a new infra service can't
+			// be silently proxied. Fail OPEN on any agent trouble: the constant
+			// denylist stays the primary gate, and a create shouldn't hard-fail
+			// because the agent is momentarily unreachable. A port bound by the
+			// tenant's own app (uid >= 1000), or not yet bound, passes.
+			if h.cfg.Agent != nil {
+				if raw, cerr := h.cfg.Agent.Call(ctx, "net.loopback_listener_uid", map[string]any{"port": int(in.ReverseProxyPort)}); cerr == nil {
+					var st struct {
+						Bound bool `json:"bound"`
+						UID   int  `json:"uid"`
+					}
+					if json.Unmarshal(raw, &st) == nil && st.Bound && st.UID >= 0 && st.UID < reverseProxyTenantUIDFloor {
+						return nil, &createDomainError{http.StatusConflict, "reverse_proxy_port_system_bound", "that port is already in use by a system service — choose another"}
+					}
+				}
 			}
 			port, aerr = h.cfg.PortAllocations.AllocateReverseProxySpecific(ctx, domain.ID, int(in.ReverseProxyPort))
 			if errors.Is(aerr, repository.ErrPortInUse) {

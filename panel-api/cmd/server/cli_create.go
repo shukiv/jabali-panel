@@ -303,6 +303,21 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 			if verr := repository.ValidateReverseProxyPort(in.ReverseProxyPort); verr != nil {
 				return nil, nil, verr
 			}
+			// GH #1401 follow-up: same drift-proof bind check as the HTTP path —
+			// refuse a port already LISTENing on loopback under a system uid
+			// (< 1000). Fail-open on agent trouble (the constant denylist is the
+			// primary gate).
+			if initAgent() == nil && sharedAgent != nil {
+				if raw, cerr := sharedAgent.Call(ctx, "net.loopback_listener_uid", map[string]any{"port": in.ReverseProxyPort}); cerr == nil {
+					var st struct {
+						Bound bool `json:"bound"`
+						UID   int  `json:"uid"`
+					}
+					if json.Unmarshal(raw, &st) == nil && st.Bound && st.UID >= 0 && st.UID < 1000 {
+						return nil, nil, fmt.Errorf("port %d is already in use by a system service — choose another", in.ReverseProxyPort)
+					}
+				}
+			}
 			port, aerr = ports.AllocateReverseProxySpecific(ctx, d.ID, in.ReverseProxyPort)
 		} else {
 			port, aerr = ports.AllocateReverseProxy(ctx, d.ID)
