@@ -107,6 +107,8 @@ const APIDocsPage = lazy(() => import("./shells/shared/APIDocsPage").then((m) =>
 const UserCronList = lazy(() => import("./shells/user/cron/UserCronList").then((m) => ({ default: m.UserCronList })));
 const AdminCronList = lazy(() => import("./shells/admin/cron/AdminCronList").then((m) => ({ default: m.AdminCronList })));
 const MailTabsPage = lazy(() => import("./shells/user/mail/MailTabsPage").then((m) => ({ default: m.MailTabsPage })));
+// GH #1387 foundation slice: per-domain Mail Domains summary list.
+const MailDomainsPage = lazy(() => import("./shells/user/mail/MailDomainsPage").then((m) => ({ default: m.MailDomainsPage })));
 const AdminApplicationList = lazy(() => import("./shells/admin/applications/AdminApplicationList").then((m) => ({ default: m.AdminApplicationList })));
 const AdminDockerAppsPage = lazy(() => import("./shells/admin/docker-apps/AdminDockerAppsPage").then((m) => ({ default: m.AdminDockerAppsPage })));
 const LogsPage = lazy(() => import("./shells/admin/logs/LogsPage").then((m) => ({ default: m.LogsPage })));
@@ -428,6 +430,16 @@ const ThemedApp = () => {
               element={
                 <CapabilityRoute cap="mail_enabled" fallback="/jabali-panel/dashboard">
                   <MailTabsPage />
+                </CapabilityRoute>
+              }
+            />
+            {/* GH #1387 foundation slice — reachable route; sidebar/menu wiring
+                is left to the operator's mail restructure (Mail → Mail Domains). */}
+            <Route
+              path="mail-domains"
+              element={
+                <CapabilityRoute cap="mail_enabled" fallback="/jabali-panel/dashboard">
+                  <MailDomainsPage />
                 </CapabilityRoute>
               }
             />

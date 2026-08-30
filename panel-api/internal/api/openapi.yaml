@@ -3722,6 +3722,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/mail-domains:
+    get:
+      tags: [Me]
+      summary: List the caller's mail-enabled domains with a per-domain mail summary
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/disk-usage/files:
     get:
       tags: [Me]

@@ -1,0 +1,76 @@
+// MailDomainsPage — GH #1387 foundation slice. A per-domain mail summary: the
+// tenant's mail-enabled domains at a glance (mailbox count, storage, 30-day
+// sent/received). The drill-down into a domain's accounts and the mailbox-tab
+// migration are the operator's mail restructure; this is only the entry list.
+import { Card, Empty, Spin, Table, Typography } from "antd";
+import { useListQuery } from "../../../hooks/useQueries";
+import { humanBytes } from "../../../utils/bytes";
+
+interface MailDomainRow {
+  id: string;
+  name: string;
+  mailbox_count: number;
+  mail_bytes: number;
+  sent_30d: number;
+  received_30d: number;
+}
+
+const num = (n: number | null | undefined): string => (n ?? 0).toLocaleString();
+
+export function MailDomainsPage() {
+  const query = useListQuery<MailDomainRow>({ resource: "me/mail-domains" });
+  const rows = query.items;
+
+  return (
+    <Card title="Mail Domains">
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        Your mail-enabled domains at a glance.
+      </Typography.Paragraph>
+      {query.isLoading ? (
+        <Spin />
+      ) : rows.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="No mail-enabled domains."
+        />
+      ) : (
+        <Table<MailDomainRow>
+          rowKey="id"
+          dataSource={rows}
+          pagination={false}
+          scroll={{ x: "max-content" }}
+        >
+          <Table.Column<MailDomainRow> title="Domain" dataIndex="name" key="name" />
+          <Table.Column<MailDomainRow>
+            title="Mailboxes"
+            dataIndex="mailbox_count"
+            key="mailbox_count"
+            align="right"
+            render={(n: number) => num(n)}
+          />
+          <Table.Column<MailDomainRow>
+            title="Mail storage"
+            dataIndex="mail_bytes"
+            key="mail_bytes"
+            align="right"
+            render={(n: number) => humanBytes(n)}
+          />
+          <Table.Column<MailDomainRow>
+            title="Sent (30d)"
+            dataIndex="sent_30d"
+            key="sent_30d"
+            align="right"
+            render={(n: number) => num(n)}
+          />
+          <Table.Column<MailDomainRow>
+            title="Received (30d)"
+            dataIndex="received_30d"
+            key="received_30d"
+            align="right"
+            render={(n: number) => num(n)}
+          />
+        </Table>
+      )}
+    </Card>
+  );
+}

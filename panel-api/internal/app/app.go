@@ -590,6 +590,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			QuotaMount: deps.QuotaMount,
 			Snapshots:  repository.NewDiskUsageSnapshotRepository(deps.DB),
 		})
+		// GH #1387 foundation slice: per-domain mail summary (Mail Domains list).
+		api.RegisterMeMailDomainsRoutes(v1, api.MeMailDomainsConfig{
+			Domains:   deps.Domains,
+			Mailboxes: deps.Mailboxes,
+			MailStats: repository.NewMailStatsRepository(deps.DB),
+		})
 		// JAB-171 phase 3b — tenant-facing notification channels + routing.
 		// Gated behind ServerSettings.TenantNotificationsEnabled (default OFF,
 		// no admin toggle until phase 4 lands the SSRF guard + email-verify),
