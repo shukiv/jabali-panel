@@ -97,6 +97,9 @@ export const LogsTab = () => {
         />
       )}
 
+      <Typography.Text type="secondary" style={{ display: "block", fontSize: 12, marginBottom: 8 }}>
+        Click a column header to sort the loaded page.
+      </Typography.Text>
       <Table
         rowKey={(r) => `${r.timestamp}-${r.from}-${r.to}`}
         dataSource={entries}
@@ -114,11 +117,15 @@ export const LogsTab = () => {
             title: "Timestamp",
             dataIndex: "timestamp",
             width: 200,
+            // GH #1365: client-side column sort (sorts the current page).
+            sorter: (a, b) => a.timestamp.localeCompare(b.timestamp),
+            defaultSortOrder: "descend" as const,
             render: (v: string) => new Date(v).toLocaleString(),
           },
           {
             title: "From",
             dataIndex: "from",
+            sorter: (a, b) => (a.from ?? "").localeCompare(b.from ?? ""),
             render: (v: string) => (
               <Typography.Text style={{ fontFamily: "monospace" }}>{v}</Typography.Text>
             ),
@@ -126,6 +133,7 @@ export const LogsTab = () => {
           {
             title: "To",
             dataIndex: "to",
+            sorter: (a, b) => (a.to ?? "").localeCompare(b.to ?? ""),
             render: (v: string) => (
               <Typography.Text style={{ fontFamily: "monospace" }}>{v}</Typography.Text>
             ),
@@ -134,6 +142,7 @@ export const LogsTab = () => {
             title: "Size",
             dataIndex: "size",
             width: 100,
+            sorter: (a, b) => (a.size ?? 0) - (b.size ?? 0),
             render: (n: number) => `${(n / 1024).toFixed(1)} KB`,
           },
           {
@@ -142,6 +151,7 @@ export const LogsTab = () => {
             title: "Status",
             dataIndex: "status",
             width: 110,
+            sorter: (a, b) => (a.status ?? "").localeCompare(b.status ?? ""),
             render: (v: string | undefined) => {
               const map: Record<string, { color: string; label: string }> = {
                 delivered: { color: "green", label: "Delivered" },
