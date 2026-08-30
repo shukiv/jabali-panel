@@ -3,6 +3,7 @@
 // sent/received). The drill-down into a domain's accounts and the mailbox-tab
 // migration are the operator's mail restructure; this is only the entry list.
 import { Card, Empty, Spin, Table, Typography } from "antd";
+import { useNavigate } from "react-router";
 import { useListQuery } from "../../../hooks/useQueries";
 import { humanBytes } from "../../../utils/bytes";
 
@@ -21,6 +22,7 @@ interface MailDomainRow {
 const num = (n: number | null | undefined): string => (n ?? 0).toLocaleString();
 
 export function MailDomainsPage() {
+  const navigate = useNavigate();
   const query = useListQuery<MailDomainRow>({ resource: "me/mail-domains" });
   const rows = query.items;
 
@@ -43,7 +45,14 @@ export function MailDomainsPage() {
           pagination={false}
           scroll={{ x: "max-content" }}
         >
-          <Table.Column<MailDomainRow> title="Domain" dataIndex="name" key="name" />
+          <Table.Column<MailDomainRow>
+            title="Domain"
+            dataIndex="name"
+            key="name"
+            render={(name: string, row) => (
+              <a onClick={() => navigate(`/jabali-panel/mail-domains/${row.id}`)}>{name}</a>
+            )}
+          />
           <Table.Column<MailDomainRow>
             title="Mailboxes"
             dataIndex="mailbox_count"

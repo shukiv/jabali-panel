@@ -109,6 +109,8 @@ const AdminCronList = lazy(() => import("./shells/admin/cron/AdminCronList").the
 const MailTabsPage = lazy(() => import("./shells/user/mail/MailTabsPage").then((m) => ({ default: m.MailTabsPage })));
 // GH #1387 foundation slice: per-domain Mail Domains summary list.
 const MailDomainsPage = lazy(() => import("./shells/user/mail/MailDomainsPage").then((m) => ({ default: m.MailDomainsPage })));
+// GH #1387 drill-down: per-domain mail page (accounts + domain settings, scoped).
+const MailDomainPage = lazy(() => import("./shells/user/mail/MailDomainPage").then((m) => ({ default: m.MailDomainPage })));
 const AdminApplicationList = lazy(() => import("./shells/admin/applications/AdminApplicationList").then((m) => ({ default: m.AdminApplicationList })));
 const AdminDockerAppsPage = lazy(() => import("./shells/admin/docker-apps/AdminDockerAppsPage").then((m) => ({ default: m.AdminDockerAppsPage })));
 const LogsPage = lazy(() => import("./shells/admin/logs/LogsPage").then((m) => ({ default: m.LogsPage })));
@@ -440,6 +442,24 @@ const ThemedApp = () => {
               element={
                 <CapabilityRoute cap="mail_enabled" fallback="/jabali-panel/dashboard">
                   <MailDomainsPage />
+                </CapabilityRoute>
+              }
+            />
+            {/* GH #1387 drill-down: a single domain's mail (accounts + settings),
+                scoped to :domainId. */}
+            <Route
+              path="mail-domains/:domainId"
+              element={
+                <CapabilityRoute cap="mail_enabled" fallback="/jabali-panel/dashboard">
+                  <MailDomainPage />
+                </CapabilityRoute>
+              }
+            />
+            <Route
+              path="mail-domains/:domainId/:tab"
+              element={
+                <CapabilityRoute cap="mail_enabled" fallback="/jabali-panel/dashboard">
+                  <MailDomainPage />
                 </CapabilityRoute>
               }
             />

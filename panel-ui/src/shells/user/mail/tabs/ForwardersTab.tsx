@@ -32,13 +32,13 @@ interface FormValues {
   target: string;
 }
 
-export const ForwardersTab = () => {
+export const ForwardersTab = ({ domainId }: { domainId?: string } = {}) => {
   const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
   });
-  const emailEnabled = useMemo(() => domains.filter((d) => d.email_enabled), [domains]);
+  const emailEnabled = useMemo(() => domains.filter((d) => d.email_enabled && (!domainId || d.id === domainId)), [domains, domainId]);
 
   const mailboxResults = useQueries({
     queries: emailEnabled.map((d) => ({

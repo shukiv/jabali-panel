@@ -18,13 +18,13 @@ interface FormValues {
   text: string;
 }
 
-export const DisclaimerTab = () => {
+export const DisclaimerTab = ({ domainId }: { domainId?: string } = {}) => {
   const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
   });
-  const emailEnabled = useMemo(() => domains.filter((d) => d.email_enabled), [domains]);
+  const emailEnabled = useMemo(() => domains.filter((d) => d.email_enabled && (!domainId || d.id === domainId)), [domains, domainId]);
 
   const results = useQueries({
     queries: emailEnabled.map((d) => ({
@@ -91,11 +91,15 @@ export const DisclaimerTab = () => {
           pagination={false}
           scroll={{ x: "max-content" }}
           columns={[
-            {
-              title: "Domain",
-              dataIndex: "domain_name",
-              sorter: (a: Disclaimer, b: Disclaimer) => a.domain_name.localeCompare(b.domain_name),
-            },
+            ...(domainId
+              ? []
+              : [
+                  {
+                    title: "Domain",
+                    dataIndex: "domain_name",
+                    sorter: (a: Disclaimer, b: Disclaimer) => a.domain_name.localeCompare(b.domain_name),
+                  },
+                ]),
             {
               title: "Status",
               dataIndex: "enabled",

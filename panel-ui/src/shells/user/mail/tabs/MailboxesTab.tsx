@@ -48,7 +48,10 @@ type GroupMembership = {
   group_email: string;
 };
 
-export const MailboxesTab = () => {
+// GH #1387: when domainId is set (the per-domain Mail Domains drill-down), the
+// tab scopes to that one domain and hides the Domain column; unset = the flat
+// cross-domain view (unchanged).
+export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
@@ -56,8 +59,8 @@ export const MailboxesTab = () => {
   });
 
   const emailEnabledDomains = useMemo(
-    () => domains.filter((d) => d.email_enabled),
-    [domains],
+    () => domains.filter((d) => d.email_enabled && (!domainId || d.id === domainId)),
+    [domains, domainId],
   );
 
   const mailboxResults = useQueries({
@@ -278,12 +281,17 @@ export const MailboxesTab = () => {
               );
             },
           },
-          {
-            title: "Domain",
-            dataIndex: "domain_name",
-            sorter: (a, b) => a.domain_name.localeCompare(b.domain_name),
-            width: 220,
-          },
+          ...(domainId
+            ? []
+            : [
+                {
+                  title: "Domain",
+                  dataIndex: "domain_name",
+                  sorter: (a: MailboxRow, b: MailboxRow) =>
+                    a.domain_name.localeCompare(b.domain_name),
+                  width: 220,
+                },
+              ]),
           {
             title: "Groups",
             key: "groups",

@@ -28,7 +28,7 @@ interface CatchAllRow {
   updated_at: string;
 }
 
-export const CatchAllTab = () => {
+export const CatchAllTab = ({ domainId }: { domainId?: string } = {}) => {
   const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
@@ -36,8 +36,8 @@ export const CatchAllTab = () => {
   });
 
   const emailEnabledDomains = useMemo(
-    () => domains.filter((d) => d.email_enabled),
-    [domains],
+    () => domains.filter((d) => d.email_enabled && (!domainId || d.id === domainId)),
+    [domains, domainId],
   );
 
   const results = useQueries({
@@ -149,11 +149,15 @@ export const CatchAllTab = () => {
           pagination={false}
           scroll={{ x: "max-content" }}
           columns={[
-            {
-              title: "Domain",
-              dataIndex: "domain_name",
-              sorter: (a, b) => a.domain_name.localeCompare(b.domain_name),
-            },
+            ...(domainId
+              ? []
+              : [
+                  {
+                    title: "Domain",
+                    dataIndex: "domain_name",
+                    sorter: (a: CatchAllRow, b: CatchAllRow) => a.domain_name.localeCompare(b.domain_name),
+                  },
+                ]),
             {
               title: "Target",
               dataIndex: "target",

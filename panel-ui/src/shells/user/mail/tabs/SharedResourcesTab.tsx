@@ -42,13 +42,13 @@ const KIND_COLOR: Record<string, string> = {
 // Kinds offered in the UI (shared mailbox deferred — send-as path pending).
 const OFFERED_KINDS: SharedResourceKind[] = ["calendar", "addressbook", "files"];
 
-export const SharedResourcesTab = () => {
+export const SharedResourcesTab = ({ domainId }: { domainId?: string } = {}) => {
   const { t } = useTranslation();
   const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
   });
-  const mailDomains = useMemo(() => domains.filter((d) => d.email_enabled), [domains]);
+  const mailDomains = useMemo(() => domains.filter((d) => d.email_enabled && (!domainId || d.id === domainId)), [domains, domainId]);
 
   const results = useQueries({
     queries: mailDomains.map((d) => ({
@@ -117,11 +117,15 @@ export const SharedResourcesTab = () => {
             sorter: (a: Row, b: Row) => (a.display_name || a.email || a.id).localeCompare(b.display_name || b.email || b.id),
             render: (v, r) => v || r.email || r.id,
           },
-          {
-            title: "Domain",
-            dataIndex: "domain_name",
-            sorter: (a: Row, b: Row) => (a.domain_name ?? "").localeCompare(b.domain_name ?? ""),
-          },
+          ...(domainId
+            ? []
+            : [
+                {
+                  title: "Domain",
+                  dataIndex: "domain_name",
+                  sorter: (a: Row, b: Row) => (a.domain_name ?? "").localeCompare(b.domain_name ?? ""),
+                },
+              ]),
           {
             title: "Address",
             dataIndex: "email",

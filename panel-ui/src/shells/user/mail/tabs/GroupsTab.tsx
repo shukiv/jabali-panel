@@ -43,7 +43,7 @@ import {
 } from "../../../../hooks/useMailGroups";
 
 
-export function GroupsTab() {
+export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = {}) {
   const { t } = useTranslation();
   const { message } = App.useApp();
 
@@ -51,10 +51,12 @@ export function GroupsTab() {
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
   });
-  const mailDomains = useMemo(() => domains.filter((d) => d.email_enabled), [domains]);
+  const mailDomains = useMemo(() => domains.filter((d) => d.email_enabled && (!scopedDomainId || d.id === scopedDomainId)), [domains, scopedDomainId]);
 
+  // GH #1387: in the per-domain drill-down (scopedDomainId set) the domain is
+  // fixed and the picker is hidden; otherwise the internal picker drives it.
   const [domainId, setDomainId] = useState<string | undefined>(undefined);
-  const effectiveDomain = domainId ?? mailDomains[0]?.id;
+  const effectiveDomain = scopedDomainId ?? domainId ?? mailDomains[0]?.id;
 
   const { data: groups, isLoading } = useMailGroups(effectiveDomain);
 
@@ -77,14 +79,18 @@ export function GroupsTab() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
-        <Select
-          style={{ minWidth: 240 }}
-          value={effectiveDomain}
-          onChange={setDomainId}
-          options={mailDomains.map((d) => ({ value: d.id, label: d.name }))}
-          showSearch
-          optionFilterProp="label"
-        />
+        {scopedDomainId ? (
+          <span />
+        ) : (
+          <Select
+            style={{ minWidth: 240 }}
+            value={effectiveDomain}
+            onChange={setDomainId}
+            options={mailDomains.map((d) => ({ value: d.id, label: d.name }))}
+            showSearch
+            optionFilterProp="label"
+          />
+        )}
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
           New group
         </Button>
