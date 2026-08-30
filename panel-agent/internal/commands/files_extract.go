@@ -74,7 +74,14 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 	if p.Username == "" || p.Path == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "username and path are required"}
 	}
+	return runExtract(ctx, p, nil)
+}
 
+// runExtract performs one archive extraction, sharing the exact scope/zip-slip/
+// decompression-bomb defenses of the synchronous path. When job is non-nil the
+// extractor reports progress into it (GH #1392 async path); nil = the sync
+// handler above.
+func runExtract(ctx context.Context, p filesExtractParams, job *fileJob) (any, error) {
 	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("failed to create scope: %v", err)}
@@ -124,7 +131,7 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 	ctx, cancel := context.WithTimeout(ctx, extractWallClockBudget)
 	defer cancel()
 
-	ex := &extractor{ctx: ctx, ed: ed}
+	ex := &extractor{ctx: ctx, ed: ed, job: job}
 
 	// SECURITY (Gitea #423): open the archive through the escape-proof fd. The
 	// previous scope.Open(p.Path) / zip.OpenReader(path) re-resolved the path and
@@ -174,6 +181,15 @@ type extractor struct {
 	extracted int
 	skipped   int
 	total     int64
+	job       *fileJob // GH #1392: non-nil on the async path — receives progress
+}
+
+// tick reports the running entry count into the async job (no-op on the sync
+// path). Called once per processed archive entry.
+func (ex *extractor) tick() {
+	if ex.job != nil {
+		ex.job.tick(int64(ex.extracted + ex.skipped))
+	}
 }
 
 // isUnsafeExtractTarget reports whether an extract create/mkdir error means the
@@ -288,6 +304,9 @@ func (ex *extractor) unzip(f *os.File) error {
 	if err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("not a valid zip: %v", err)}
 	}
+	if ex.job != nil {
+		ex.job.setTotal(int64(len(zr.File))) // zip TOC → a real percentage
+	}
 	for _, zf := range zr.File {
 		if err := ex.ctx.Err(); err != nil { // GH #664
 			return err
@@ -318,6 +337,7 @@ func (ex *extractor) unzip(f *os.File) error {
 				return err
 			}
 		}
+		ex.tick()
 	}
 	return nil
 }
@@ -355,6 +375,7 @@ func (ex *extractor) untar(r io.Reader) error {
 			// Symlink, hardlink, char/block device, fifo — skip (unsafe).
 			ex.skipped++
 		}
+		ex.tick()
 	}
 }
 
@@ -371,7 +392,9 @@ func (ex *extractor) gunzipSingle(r io.Reader, outName string) error {
 	if err != nil {
 		return err
 	}
-	return ex.writeFile(dest, 0o644, gz)
+	werr := ex.writeFile(dest, 0o644, gz)
+	ex.tick()
+	return werr
 }
 
 // hostingIDs returns the uid + the www-data gid for the hosting user (matching
@@ -392,6 +415,66 @@ func hostingIDs(username string) (int, int) {
 	return uid, gid
 }
 
+// filesExtractStartHandler (files.extract.start, GH #1392) kicks off an
+// extraction in a background goroutine and returns a job id immediately, so a
+// large archive can't block the HTTP request past a proxy timeout and the UI can
+// poll files.job.status for a progress bar. Same params + defenses as the
+// synchronous files.extract.
+func filesExtractStartHandler(_ context.Context, params json.RawMessage) (any, error) {
+	var p filesExtractParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
+	}
+	if p.Username == "" || p.Path == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "username and path are required"}
+	}
+	job, err := newFileJob(p.Username, "extract")
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		// Detached from the request context (which ends when the start call
+		// returns): runExtract caps its own wall-clock at extractWallClockBudget.
+		res, rerr := runExtract(context.Background(), p, job)
+		if rerr != nil {
+			msg := "extract failed"
+			if ae, ok := rerr.(*agentwire.AgentError); ok && ae.Message != "" {
+				msg = ae.Message
+			}
+			job.fail(msg)
+			return
+		}
+		r, _ := res.(filesExtractResult)
+		job.finish(r)
+	}()
+	return map[string]string{"job_id": job.id}, nil
+}
+
+type filesJobStatusParams struct {
+	JobID    string `json:"job_id"`
+	Username string `json:"username"`
+}
+
+// filesJobStatusHandler (files.job.status) returns a job's progress ONLY to a
+// caller passing the username the job was started for (the panel sends the
+// caller's verified username). Unknown id or wrong owner → not_found.
+func filesJobStatusHandler(_ context.Context, params json.RawMessage) (any, error) {
+	var p filesJobStatusParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
+	}
+	if p.JobID == "" || p.Username == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "job_id and username are required"}
+	}
+	j := getFileJob(p.JobID, p.Username)
+	if j == nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "job not found"}
+	}
+	return j.snapshot(), nil
+}
+
 func init() {
 	Default.Register("files.extract", filesExtractHandler)
+	Default.Register("files.extract.start", filesExtractStartHandler)
+	Default.Register("files.job.status", filesJobStatusHandler)
 }

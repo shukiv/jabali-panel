@@ -11,6 +11,7 @@ import {
   type FileListResponse,
   type FilePreviewResponse,
   type FilesExtractResult,
+  type FilesJobStatus,
   type FilesDuResponse,
 } from "../../user/files/filesApi";
 
@@ -37,6 +38,20 @@ export const adminFilesApi: FilesApi = {
   },
   extract: async (path, dest) =>
     (await apiClient.post<FilesExtractResult>(`${BASE}/extract`, { path, dest })).data,
+  extractStart: async (path, dest) =>
+    (
+      await apiClient.post<{ job_id: string }>(
+        `${BASE}/extract`,
+        { path, dest },
+        { params: { async: 1 } },
+      )
+    ).data,
+  jobStatus: async (jobId) =>
+    (
+      await apiClient.get<FilesJobStatus>(
+        `${BASE}/jobs/${encodeURIComponent(jobId)}`,
+      )
+    ).data,
   rename: async (path, newName) => {
     await apiClient.post(`${BASE}/rename`, { path, new_name: newName });
   },

@@ -228,6 +228,43 @@ export async function filesExtract(
   return data;
 }
 
+// GH #1392: async extract. filesExtractStart kicks off the extraction as a
+// background job on the agent and returns immediately with a job id (HTTP 202);
+// the caller polls filesJobStatus for a progress bar. Same defenses as the
+// blocking filesExtract — the agent runs the identical extract core.
+export async function filesExtractStart(
+  path: string,
+  dest?: string,
+): Promise<{ job_id: string }> {
+  const { data } = await apiClient.post<{ job_id: string }>(
+    "/files/extract",
+    { path, dest },
+    { params: { async: 1 } },
+  );
+  return data;
+}
+
+export interface FilesJobStatus {
+  job_id: string;
+  status: "running" | "done" | "error";
+  done: number;
+  total: number; // 0 = unknown (streamed tar) → indeterminate progress
+  result: FilesExtractResult;
+  error?: string;
+  started_at: string;
+}
+
+// filesJobStatus polls a background file-operation job (GH #1392). The backend
+// returns the job only to the tenant that started it; an unknown/foreign id is
+// a 404 (surfaced as a rejected promise), which the poller treats as "the job
+// is gone — refresh the folder".
+export async function filesJobStatus(jobId: string): Promise<FilesJobStatus> {
+  const { data } = await apiClient.get<FilesJobStatus>(
+    `/files/jobs/${encodeURIComponent(jobId)}`,
+  );
+  return data;
+}
+
 export async function filesRename(path: string, newName: string): Promise<void> {
   await apiClient.post("/files/rename", { path, new_name: newName });
 }
@@ -314,6 +351,8 @@ export type FilesApi = {
   write: typeof filesWrite;
   mkdir: typeof filesMkdir;
   extract: typeof filesExtract;
+  extractStart: typeof filesExtractStart;
+  jobStatus: typeof filesJobStatus;
   rename: typeof filesRename;
   move: typeof filesMove;
   chmod: typeof filesChmod;
@@ -334,6 +373,8 @@ export const tenantFilesApi: FilesApi = {
   write: filesWrite,
   mkdir: filesMkdir,
   extract: filesExtract,
+  extractStart: filesExtractStart,
+  jobStatus: filesJobStatus,
   rename: filesRename,
   move: filesMove,
   chmod: filesChmod,

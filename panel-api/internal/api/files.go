@@ -297,6 +297,7 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.POST("/chmod", h.chmod)
 	grp.POST("/archive", h.archive)
 	grp.POST("/extract", h.extract)
+	grp.GET("/jobs/:id", h.jobStatus) // GH #1392: async file-op progress
 	grp.POST("/copy", h.copy)
 	// /write carries whole file contents (Monaco save) — exempt from the
 	// global 1 MiB JSON cap (JAB-246), bounded by the upload knob instead.
@@ -331,6 +332,7 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	adm.POST("/chmod", h.chmod)
 	adm.POST("/archive", h.archive)
 	adm.POST("/extract", h.extract)
+	adm.GET("/jobs/:id", h.jobStatus) // GH #1392: async file-op progress
 	adm.POST("/copy", h.copy)
 	adm.POST("/write", filesUploadSizeLimit(func(c *gin.Context) int64 {
 		return h.resolveMaxUploadBytes(c.Request.Context())
@@ -1057,6 +1059,20 @@ func (h *filesHandler) extract(c *gin.Context) {
 	if h.rejectAdminWriteOutOfScope(c, extractDest) {
 		return
 	}
+	// GH #1392: ?async=1 runs the extraction as a background job and returns a
+	// job id immediately (202), so a large archive doesn't block the request past
+	// a proxy timeout and the UI can poll GET /files/jobs/:id for a progress bar.
+	if c.Query("async") == "1" {
+		raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.extract.start", filesExtractAgentParams{
+			UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Dest: req.Dest,
+		})
+		if err != nil {
+			respondAgentError(c, err)
+			return
+		}
+		c.Data(http.StatusAccepted, "application/json", raw)
+		return
+	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.extract", filesExtractAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Dest: req.Dest,
 	})
@@ -1066,6 +1082,26 @@ func (h *filesHandler) extract(c *gin.Context) {
 	}
 	var res json.RawMessage = raw
 	c.Data(http.StatusOK, "application/json", res)
+}
+
+// jobStatus handles GET /files/jobs/:id — the progress of an async File Manager
+// operation (GH #1392). The agent returns the job ONLY when it was started for
+// this caller's username (sent from verified claims), so one tenant can never
+// poll another's job; an unknown id or wrong owner is a 404.
+func (h *filesHandler) jobStatus(c *gin.Context) {
+	_, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.job.status", map[string]string{
+		"job_id":   c.Param("id"),
+		"username": username,
+	})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", raw)
 }
 
 func (h *filesHandler) rename(c *gin.Context) {

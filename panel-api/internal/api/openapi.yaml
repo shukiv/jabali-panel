@@ -3104,6 +3104,14 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/files/jobs/{id}:
+    get:
+      tags: [Files]
+      summary: Admin async file-operation job progress
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
   /admin/files/upload:
     post:
       tags: [Files]
@@ -3177,6 +3185,14 @@ paths:
       tags: [Files]
       summary: Create extract
       security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /files/jobs/{id}:
+    get:
+      tags: [Files]
+      summary: Get async file-operation job progress
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
   /files/home:

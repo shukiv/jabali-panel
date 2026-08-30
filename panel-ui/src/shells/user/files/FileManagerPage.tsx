@@ -19,7 +19,7 @@ import { useTranslation } from "react-i18next";
 import type { ReactNode } from "react";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
-import { Breadcrumb, Button, Card, Drawer, Dropdown, Empty, Grid, Input, Modal, Space, Spin, Table, Tag, Tooltip, Tree, Typography, theme } from "antd";
+import { Breadcrumb, Button, Card, Drawer, Dropdown, Empty, Grid, Input, Modal, Progress, Space, Spin, Table, Tag, Tooltip, Tree, Typography, theme } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import type { DataNode } from "antd/es/tree";
 import {
@@ -400,6 +400,23 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
   // button is enough for the most common case, and move is already
   // one drag away.
   const [clipboard, setClipboard] = useState<string[]>([]);
+
+  // GH #1392: async extract progress. Non-null while an extraction is running;
+  // `total === 0` means the archive kind (streamed tar) doesn't expose a count,
+  // so the modal shows an indeterminate spinner instead of a percentage.
+  const [extractJob, setExtractJob] = useState<{
+    name: string;
+    status: "running" | "done" | "error";
+    done: number;
+    total: number;
+  } | null>(null);
+  // Flips true on unmount so an in-flight poll loop stops touching state.
+  const extractCancelRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      extractCancelRef.current = true;
+    };
+  }, []);
 
   // Editor — Monaco-based. editTarget holds the path of the file
   // being edited; null means the modal is closed.
@@ -858,15 +875,25 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
       paths: string[],
       op: (p: string) => Promise<void>,
     ) => {
+      // GH #1392: show a live "working…" spinner while the batch runs; the
+      // terminal toast reuses the same key so the spinner is replaced, not
+      // stacked. Bulk copy/move/delete/chmod can take a while on big trees.
+      const key = `files-bulk-${verb}-${Date.now()}`;
+      feedback.message.open({
+        type: "loading",
+        content: `${verb.replace(/ed$/, "ing")} ${paths.length} item${paths.length === 1 ? "" : "s"}…`,
+        key,
+        duration: 0,
+      });
       const results = await Promise.allSettled(paths.map(op));
       const ok = results.filter((r) => r.status === "fulfilled").length;
       const fail = results.length - ok;
       if (fail === 0) {
-        feedback.message.success(`${verb} ${ok} item${ok === 1 ? "" : "s"}`);
+        feedback.message.success({ content: `${verb} ${ok} item${ok === 1 ? "" : "s"}`, key });
       } else if (ok === 0) {
-        feedback.message.error(`${verb} failed for all ${fail} items`);
+        feedback.message.error({ content: `${verb} failed for all ${fail} items`, key });
       } else {
-        feedback.message.warning(`${verb} ${ok}/${results.length} — ${fail} failed`);
+        feedback.message.warning({ content: `${verb} ${ok}/${results.length} — ${fail} failed`, key });
       }
       // Log failures for debug — the toast can't surface per-item detail.
       results.forEach((r, i) => {
@@ -967,12 +994,14 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
       const lastSlash = srcPath.lastIndexOf("/");
       const srcParent = lastSlash > 0 ? srcPath.slice(0, lastSlash) : "/";
       if (srcParent === destDir) return;
+      const key = `files-move-${Date.now()}`;
+      feedback.message.open({ type: "loading", content: "Moving…", key, duration: 0 });
       try {
         await api.move(srcPath, destDir);
-        feedback.message.success("Moved");
+        feedback.message.success({ content: "Moved", key });
         if (currentPath) void reloadList(currentPath);
       } catch (err) {
-        feedback.message.error(`Move failed: ${errMessage(err)}`);
+        feedback.message.error({ content: `Move failed: ${errMessage(err)}`, key });
       }
     },
     [currentPath, reloadList],
@@ -1010,16 +1039,71 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
     return EXTRACTABLE_EXTS.some((e) => n.endsWith(e));
   };
 
+  // handleExtract (GH #1392) kicks off the extraction as a background job and
+  // polls its progress so the user sees a live progress bar instead of a frozen
+  // menu. A large archive no longer blocks the HTTP request past a proxy
+  // timeout. If the agent restarts mid-extract the poll 404s — we stop the bar
+  // and just refresh the folder rather than claiming success or failure.
   const handleExtract = async (entry: FileEntry) => {
     if (!currentPath) return;
-    const path = joinPath(currentPath, entry.name);
+    const dir = currentPath;
+    const path = joinPath(dir, entry.name);
+    extractCancelRef.current = false;
+    setExtractJob({ name: entry.name, status: "running", done: 0, total: 0 });
     try {
-      const res = await api.extract(path);
-      const skipped =
-        res.skipped > 0 ? `, ${res.skipped} unsafe entr(y/ies) skipped` : "";
-      feedback.message.success(`Extracted ${res.extracted} file(s)${skipped}`);
-      void reloadList(currentPath);
+      const { job_id } = await api.extractStart(path);
+      // Poll until the job is terminal. The agent reaps a finished job after
+      // ~10 min, so a stuck "running" state resolves itself to a 404 and exits.
+      // 1.5s cadence keeps the bar responsive while staying well under any
+      // flood threshold (≈40 req/min) — the async DB-restore poll uses 3s, but
+      // a progress bar wants a little more frequency. ~1200 iterations caps the
+      // loop past the agent's 10-min job TTL as a hard backstop.
+      for (let i = 0; i < 1200; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (extractCancelRef.current) return;
+        let s: Awaited<ReturnType<typeof api.jobStatus>>;
+        try {
+          s = await api.jobStatus(job_id);
+        } catch {
+          // Unknown/foreign id or agent restart — the job is gone.
+          if (extractCancelRef.current) return;
+          setExtractJob(null);
+          feedback.message.warning(
+            "Extraction status is no longer available — refreshing folder",
+          );
+          void reloadList(dir);
+          return;
+        }
+        if (extractCancelRef.current) return;
+        setExtractJob({
+          name: entry.name,
+          status: s.status,
+          done: s.done,
+          total: s.total,
+        });
+        if (s.status === "done") {
+          const skipped =
+            s.result.skipped > 0
+              ? `, ${s.result.skipped} unsafe entr(y/ies) skipped`
+              : "";
+          feedback.message.success(
+            `Extracted ${s.result.extracted} file(s)${skipped}`,
+          );
+          void reloadList(dir);
+          setTimeout(() => setExtractJob(null), 500);
+          return;
+        }
+        if (s.status === "error") {
+          feedback.message.error(`Extract failed: ${s.error || "unknown error"}`);
+          setExtractJob(null);
+          return;
+        }
+      }
+      // Safety net: never poll forever.
+      setExtractJob(null);
     } catch (err) {
+      if (extractCancelRef.current) return;
+      setExtractJob(null);
       feedback.message.error(`Extract failed: ${errMessage(err)}`);
     }
   };
@@ -1785,6 +1869,45 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
             </pre>
           )}
         </Spin>
+      </Modal>
+
+      {/* GH #1392: async extract progress. Non-dismissable while running so the
+          user can't fire a second extract over the first; auto-closes on done. */}
+      <Modal
+        title={extractJob ? `Extracting ${extractJob.name}` : "Extracting"}
+        open={extractJob !== null}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        destroyOnHidden
+      >
+        {extractJob &&
+          (extractJob.total > 0 ? (
+            <Progress
+              percent={
+                extractJob.status === "done"
+                  ? 100 // zip `total` counts dir entries too, so done<total at the end
+                  : Math.min(
+                      100,
+                      Math.floor((extractJob.done / extractJob.total) * 100),
+                    )
+              }
+              status={
+                extractJob.status === "error"
+                  ? "exception"
+                  : extractJob.status === "done"
+                    ? "success"
+                    : "active"
+              }
+            />
+          ) : (
+            <Space>
+              <Spin />
+              <span>
+                Extracting {extractJob.done > 0 ? `${extractJob.done} file(s)` : ""}…
+              </span>
+            </Space>
+          ))}
       </Modal>
 
       <Modal
