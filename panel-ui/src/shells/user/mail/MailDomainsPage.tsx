@@ -13,6 +13,9 @@ interface MailDomainRow {
   mail_bytes: number;
   sent_30d: number;
   received_30d: number;
+  // Omitted by the API when the queue couldn't be read (agent unavailable) —
+  // shown as "—", never a misleading 0.
+  queue?: number | null;
 }
 
 const num = (n: number | null | undefined): string => (n ?? 0).toLocaleString();
@@ -68,6 +71,15 @@ export function MailDomainsPage() {
             key="received_30d"
             align="right"
             render={(n: number) => num(n)}
+          />
+          <Table.Column<MailDomainRow>
+            title="Queue"
+            dataIndex="queue"
+            key="queue"
+            align="right"
+            render={(q: number | null | undefined) =>
+              q === null || q === undefined ? "—" : num(q)
+            }
           />
         </Table>
       )}

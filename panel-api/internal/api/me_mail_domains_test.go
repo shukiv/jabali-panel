@@ -138,6 +138,73 @@ func TestMailDomains_AggregatesAndScopes(t *testing.T) {
 	}
 }
 
+func TestMailDomains_QueueCounts(t *testing.T) {
+	// msg1: a.test sender. msg2: A.test sender (bracketed, mixed case) → a.test,
+	// and b.test recipient. msg3: null-sender bounce to two b.test recipients →
+	// b.test once (deduped per domain per message). msg4: unrelated → ignored.
+	cfg := MeMailDomainsConfig{
+		Domains: mdDomainRepo{ds: []models.Domain{
+			{ID: "da", UserID: "u1", Name: "a.test", EmailEnabled: true},
+			{ID: "db", UserID: "u1", Name: "b.test", EmailEnabled: true},
+		}},
+		Mailboxes: mdMailboxRepo{},
+		MailStats: mdStatsRepo{},
+		Agent: &mockAgent{callFn: func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+			if cmd == "mail.queue.list" {
+				return json.RawMessage(`{"data":[
+					{"id":"1","from":"x@a.test","recipients":["y@external.com"]},
+					{"id":"2","from":"<z@A.test>","recipients":["w@b.test"]},
+					{"id":"3","from":"<>","recipients":["p@b.test","q@b.test"]},
+					{"id":"4","from":"n@other.com","recipients":["m@other.com"]}
+				]}`), nil
+			}
+			return json.RawMessage(`{}`), nil
+		}},
+	}
+	w := setupMailDomainsRouter(t, "u1", cfg)
+	var resp struct {
+		Data []mailDomainRow `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[string]*int64{}
+	for _, r := range resp.Data {
+		got[r.Name] = r.Queue
+	}
+	if got["a.test"] == nil || *got["a.test"] != 2 {
+		t.Fatalf("a.test queue = %v, want 2", got["a.test"])
+	}
+	if got["b.test"] == nil || *got["b.test"] != 2 {
+		t.Fatalf("b.test queue = %v, want 2", got["b.test"])
+	}
+}
+
+func TestMailDomains_QueueUnknownOnAgentError(t *testing.T) {
+	// Agent error → queue field OMITTED (unknown), never a misleading 0.
+	cfg := MeMailDomainsConfig{
+		Domains:   mdDomainRepo{ds: []models.Domain{{ID: "da", UserID: "u1", Name: "a.test", EmailEnabled: true}}},
+		Mailboxes: mdMailboxRepo{},
+		MailStats: mdStatsRepo{},
+		Agent: &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
+			return nil, context.DeadlineExceeded
+		}},
+	}
+	w := setupMailDomainsRouter(t, "u1", cfg)
+	var raw struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(raw.Data) != 1 {
+		t.Fatalf("want 1 row, got %d", len(raw.Data))
+	}
+	if _, present := raw.Data[0]["queue"]; present {
+		t.Fatalf("queue must be omitted on agent error, got %s", w.Body.String())
+	}
+}
+
 func TestMailDomains_CrossTenantIsolation(t *testing.T) {
 	// The same config viewed as u2 shows only u2's domain, never u1's.
 	cfg := MeMailDomainsConfig{
