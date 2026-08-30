@@ -188,7 +188,9 @@ func TestPHPExtensionsSet_StripsXdebugAndServerDefaults(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := []string(pools.pools["p1"].ExtraExtensions); !equalSet(got, []string{"imagick"}) {
+	pools.settleReconcile(t)
+	pool1, _ := pools.get("p1")
+	if got := []string(pool1.ExtraExtensions); !equalSet(got, []string{"imagick"}) {
 		t.Fatalf("ExtraExtensions = %v, want [imagick] (xdebug/redis/bogus stripped)", got)
 	}
 }
@@ -212,7 +214,9 @@ func TestPHPExtensionsSet_StripsXdebugEvenWhenAgentDown(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := []string(pools.pools["p1"].ExtraExtensions); !equalSet(got, []string{"imagick"}) {
+	pools.settleReconcile(t)
+	pool1, _ := pools.get("p1")
+	if got := []string(pool1.ExtraExtensions); !equalSet(got, []string{"imagick"}) {
 		t.Fatalf("ExtraExtensions = %v, want [imagick] (xdebug stripped statically)", got)
 	}
 }

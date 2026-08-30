@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,21 +20,55 @@ import (
 
 // mockPHPPoolRepo is a minimal in-memory PHPPoolRepository used by the
 // domain↔pool binding tests. It implements only the methods the bind
-// handler touches; unused methods return zero values.
+// handler touches; unused methods return zero values. The mutex guards the
+// map: the extensions/tuning handlers fire an async reconcile goroutine
+// (reconcilePHPPoolViaAgent) that reads the pools concurrently with the test,
+// which the -race detector flags without it.
 type mockPHPPoolRepo struct {
+	mu    sync.Mutex
 	pools map[string]*models.PHPPool
+	// updated carries each Update's resulting Status so a test can wait for the
+	// async reconcile goroutine's terminal Update ("ready"/"error") before it
+	// reads the pool — the goroutine mutates pool.Status directly, so reading
+	// mid-flight is a -race.
+	updated chan string
 }
 
 func newMockPHPPoolRepo() *mockPHPPoolRepo {
-	return &mockPHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+	return &mockPHPPoolRepo{
+		pools:   make(map[string]*models.PHPPool),
+		updated: make(chan string, 16),
+	}
+}
+
+// settleReconcile blocks until the async reconcile goroutine posts its terminal
+// (non-"pending") Update, so the caller can read the pool without racing the
+// goroutine's pool.Status write.
+func (m *mockPHPPoolRepo) settleReconcile(t *testing.T) {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case st := <-m.updated:
+			if st != "pending" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("reconcile did not settle in time")
+		}
+	}
 }
 
 func (m *mockPHPPoolRepo) Create(ctx context.Context, p *models.PHPPool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.pools[p.ID] = p
 	return nil
 }
 
 func (m *mockPHPPoolRepo) FindByID(ctx context.Context, id string) (*models.PHPPool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if p, ok := m.pools[id]; ok {
 		return p, nil
 	}
@@ -40,6 +76,8 @@ func (m *mockPHPPoolRepo) FindByID(ctx context.Context, id string) (*models.PHPP
 }
 
 func (m *mockPHPPoolRepo) FindByUserID(ctx context.Context, userID string) (*models.PHPPool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, p := range m.pools {
 		if p.UserID == userID {
 			return p, nil
@@ -49,6 +87,8 @@ func (m *mockPHPPoolRepo) FindByUserID(ctx context.Context, userID string) (*mod
 }
 
 func (m *mockPHPPoolRepo) FindByUserAndVersion(ctx context.Context, userID, phpVersion string) (*models.PHPPool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, p := range m.pools {
 		if p.UserID == userID && p.PHPVersion == phpVersion {
 			return p, nil
@@ -58,6 +98,8 @@ func (m *mockPHPPoolRepo) FindByUserAndVersion(ctx context.Context, userID, phpV
 }
 
 func (m *mockPHPPoolRepo) ListByUserID(ctx context.Context, userID string) ([]models.PHPPool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var result []models.PHPPool
 	for _, p := range m.pools {
 		if p.UserID == userID {
@@ -72,20 +114,43 @@ func (m *mockPHPPoolRepo) ListAll(ctx context.Context, opts repository.ListOptio
 }
 
 func (m *mockPHPPoolRepo) Update(ctx context.Context, p *models.PHPPool) error {
+	m.mu.Lock()
 	m.pools[p.ID] = p
+	st := p.Status
+	m.mu.Unlock()
+	select {
+	case m.updated <- st:
+	default:
+	}
 	return nil
 }
 
 func (m *mockPHPPoolRepo) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	delete(m.pools, id)
 	return nil
 }
 
 func (m *mockPHPPoolRepo) SetStatus(ctx context.Context, id, status string, lastErr *string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if p, ok := m.pools[id]; ok {
 		p.Status = status
 	}
 	return nil
+}
+
+// get returns a value copy of a pool under the lock, for test assertions that
+// would otherwise read the map unguarded while the async reconcile goroutine is
+// still touching it (-race).
+func (m *mockPHPPoolRepo) get(id string) (models.PHPPool, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.pools[id]; ok {
+		return *p, true
+	}
+	return models.PHPPool{}, false
 }
 
 func setupBindRouter(t *testing.T, claims auth.AccessClaims) (*gin.Engine, *mockDomainRepo, *mockPHPPoolRepo) {
@@ -163,8 +228,8 @@ func TestBindDomainPHPPool_ByPHPVersion_NonDefault_CreatesVersionedPool(t *testi
 		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
 	// The default pool must be untouched.
-	if got := pools.pools["p1"].PHPVersion; got != "8.3" {
-		t.Fatalf("default pool version must not change, got %q", got)
+	if p, _ := pools.get("p1"); p.PHPVersion != "8.3" {
+		t.Fatalf("default pool version must not change, got %q", p.PHPVersion)
 	}
 	// A new 8.1 pool must exist (pending) and the domain bound to it.
 	newPool, err := pools.FindByUserAndVersion(context.Background(), "u1", "8.1")
