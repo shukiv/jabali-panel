@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // domain_create_op.go — JAB-233. The domain-creation orchestration extracted
@@ -42,6 +44,9 @@ type createDomainInput struct {
 	// ReverseProxy (GH #1175): make this a reverse-proxy domain — the panel
 	// allocates a loopback port and the vhost proxies `/` to it. No DocRoot/PHP.
 	ReverseProxy bool
+	// ReverseProxyPort (GH #1401): the tenant's chosen loopback port. 0 = the
+	// panel auto-assigns from its pool (the #1175 default).
+	ReverseProxyPort uint32
 	// SkipInlineSSL omits the 30s inline ACME/self-signed attempt (JAB-233):
 	// the automation path lets the first reconciler tick bootstrap the cert,
 	// exactly like the `jabali domain create` CLI. GUI create leaves it false.
@@ -181,7 +186,22 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		if h.cfg.PortAllocations == nil {
 			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_unavailable", "reverse-proxy domains are not enabled on this host"}
 		}
-		port, aerr := h.cfg.PortAllocations.AllocateReverseProxy(ctx, domain.ID)
+		var port int
+		var aerr error
+		if in.ReverseProxyPort != 0 {
+			// GH #1401: tenant chose a specific port — validate it can't target
+			// the panel, a system service, another tenant's allocated port, or a
+			// privileged/reserved range, then reserve that exact port.
+			if verr := repository.ValidateReverseProxyPort(int(in.ReverseProxyPort)); verr != nil {
+				return nil, &createDomainError{http.StatusBadRequest, "reverse_proxy_port_invalid", verr.Error()}
+			}
+			port, aerr = h.cfg.PortAllocations.AllocateReverseProxySpecific(ctx, domain.ID, int(in.ReverseProxyPort))
+			if errors.Is(aerr, repository.ErrPortInUse) {
+				return nil, &createDomainError{http.StatusConflict, "reverse_proxy_port_in_use", "that port is already assigned to another domain — choose another"}
+			}
+		} else {
+			port, aerr = h.cfg.PortAllocations.AllocateReverseProxy(ctx, domain.ID)
+		}
 		if aerr != nil {
 			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_port_unavailable", "no free reverse-proxy port available; contact the administrator"}
 		}

@@ -213,6 +213,9 @@ type cliDomainInput struct {
 	// ReverseProxy (GH #1175): allocate a loopback port and make this a
 	// reverse-proxy domain (no docroot/PHP). Mirrors the HTTP create path.
 	ReverseProxy bool
+	// ReverseProxyPort (GH #1401): a specific loopback port to proxy to; 0 =
+	// auto-assign from the pool. Validated the same as the HTTP path.
+	ReverseProxyPort int
 }
 
 // createDomainDirect replicates the non-auth side of internal/api/domains.go
@@ -294,7 +297,16 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	// as the HTTP create path (repository.AllocateReverseProxy).
 	ports := repository.NewPortAllocationRepository(sharedDB)
 	if in.ReverseProxy {
-		port, aerr := ports.AllocateReverseProxy(ctx, d.ID)
+		var port int
+		var aerr error
+		if in.ReverseProxyPort != 0 {
+			if verr := repository.ValidateReverseProxyPort(in.ReverseProxyPort); verr != nil {
+				return nil, nil, verr
+			}
+			port, aerr = ports.AllocateReverseProxySpecific(ctx, d.ID, in.ReverseProxyPort)
+		} else {
+			port, aerr = ports.AllocateReverseProxy(ctx, d.ID)
+		}
 		if aerr != nil {
 			return nil, nil, fmt.Errorf("allocate reverse-proxy port: %w", aerr)
 		}

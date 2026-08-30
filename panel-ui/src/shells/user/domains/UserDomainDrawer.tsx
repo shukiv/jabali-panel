@@ -1,7 +1,7 @@
 // UserDomainDrawer — tenant Add-domain Drawer (replaces the
 // /jabali-panel/domains/create page route).
 import { useTranslation } from "react-i18next";
-import { Button, Checkbox, Drawer, Form, Grid, Input, Select, Space } from "antd";
+import { Button, Checkbox, Drawer, Form, Grid, Input, InputNumber, Select, Space } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect } from "react";
 
@@ -19,6 +19,9 @@ type UserDomainCreateInput = {
   // port and proxies the domain to it (no docroot/PHP). The assigned port
   // comes back on the create response.
   reverse_proxy?: boolean;
+  // GH #1401: optional — the specific local port to proxy to (e.g. your app
+  // already listens on 6875). Left blank, the panel auto-assigns a free port.
+  reverse_proxy_port?: number;
 };
 type DomainCreated = { id: string; reverse_proxy_port?: number };
 
@@ -31,6 +34,7 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
   const { t } = useTranslation();
   const [form] = Form.useForm<UserDomainCreateInput>();
   const mailProvider = Form.useWatch("mail_provider", form) ?? "jabali";
+  const reverseProxy = Form.useWatch("reverse_proxy", form) ?? false;
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
@@ -170,6 +174,31 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
         >
           <Checkbox>Set up as a reverse proxy (run your own app on a local port)</Checkbox>
         </Form.Item>
+
+        {/* GH #1401: let the tenant type their app's port; blank = auto-assign.
+            Server validates it (range + system-port denylist + not-in-use). */}
+        {reverseProxy && (
+          <Form.Item
+            name="reverse_proxy_port"
+            label="Port (optional)"
+            tooltip="The local port your app listens on (e.g. 6875). Leave blank to let the panel pick a free port for you. Ports below 1024, the panel's own ports, and ports used by system services are not allowed."
+            rules={[
+              {
+                validator: (_, v) =>
+                  v == null || v === "" || (Number.isInteger(v) && v >= 1024 && v <= 65535)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error("Enter a port between 1024 and 65535, or leave blank")),
+              },
+            ]}
+          >
+            <InputNumber
+              min={1024}
+              max={65535}
+              style={{ width: "100%" }}
+              placeholder="Auto-assign a free port"
+            />
+          </Form.Item>
+        )}
 
         <Form.Item>
           <Space>

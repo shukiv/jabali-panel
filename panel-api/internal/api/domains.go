@@ -106,6 +106,13 @@ type createDomainRequest struct {
 	// ReverseProxy (GH #1175): create a reverse-proxy domain (panel allocates a
 	// loopback port; the vhost proxies / to it). No docroot/PHP.
 	ReverseProxy bool `json:"reverse_proxy"`
+	// ReverseProxyPort (GH #1401): the specific loopback port the tenant wants
+	// the domain proxied to (e.g. their app already listens on 6875). 0/absent
+	// = the panel auto-assigns from its reverse-proxy pool (the #1175 default).
+	// Validated (range + jabali-infra denylist + not-already-allocated) before
+	// it is reserved — a tenant must not be able to point their public domain at
+	// the panel, a system service, or another tenant's allocated port.
+	ReverseProxyPort uint32 `json:"reverse_proxy_port,omitempty"`
 	// SSLMode (GH #246) — le|self|none at create. 'custom' is rejected here:
 	// it needs a cert upload, set via PUT /domains/:id/ssl/custom after create.
 	// Empty defaults to 'le'.
@@ -674,16 +681,17 @@ func (h *domainHandler) create(c *gin.Context) {
 	// JAB-233: the orchestration lives in createDomainOp so the automation
 	// account-create handler can reuse the exact GUI semantics.
 	dom, oerr := createDomainOp(c.Request.Context(), h, createDomainInput{
-		OwnerID:         targetUserID,
-		Name:            req.Name,
-		DocRoot:         req.DocRoot,
-		MailProvider:    req.MailProvider,
-		M365Onmicrosoft: req.M365Onmicrosoft,
-		GoogleDKIM:      req.GoogleDKIM,
-		SSLMode:         req.SSLMode,
-		CreateWWW:       req.CreateWWW,
-		TempURLEnabled:  req.TempURLEnabled,
-		ReverseProxy:    req.ReverseProxy,
+		OwnerID:          targetUserID,
+		Name:             req.Name,
+		DocRoot:          req.DocRoot,
+		MailProvider:     req.MailProvider,
+		M365Onmicrosoft:  req.M365Onmicrosoft,
+		GoogleDKIM:       req.GoogleDKIM,
+		SSLMode:          req.SSLMode,
+		CreateWWW:        req.CreateWWW,
+		TempURLEnabled:   req.TempURLEnabled,
+		ReverseProxy:     req.ReverseProxy,
+		ReverseProxyPort: req.ReverseProxyPort,
 	})
 	if oerr != nil {
 		body := gin.H{"error": oerr.Code}

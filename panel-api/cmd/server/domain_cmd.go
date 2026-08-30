@@ -93,6 +93,7 @@ func newDomainListCmd() *cobra.Command {
 func newDomainCreateCmd() *cobra.Command {
 	var name, userID, docRoot string
 	var reverseProxy bool
+	var reverseProxyPort int
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -115,10 +116,11 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 			defer cancel()
 
 			d, warnings, err := createDomainDirect(ctx, cliDomainInput{
-				Name:         name,
-				UserID:       userID,
-				DocRoot:      docRoot,
-				ReverseProxy: reverseProxy,
+				Name:             name,
+				UserID:           userID,
+				DocRoot:          docRoot,
+				ReverseProxy:     reverseProxy,
+				ReverseProxyPort: reverseProxyPort,
 			})
 			if err != nil {
 				return err
@@ -154,6 +156,7 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 	cmd.Flags().StringVar(&userID, "user", "", "User email, username, or ULID (required)")
 	cmd.Flags().StringVar(&docRoot, "doc-root", "", "Document root (optional, auto-generated if not provided)")
 	cmd.Flags().BoolVar(&reverseProxy, "reverse-proxy", false, "Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)")
+	cmd.Flags().IntVar(&reverseProxyPort, "reverse-proxy-port", 0, "Reverse-proxy to this specific loopback port (GH #1401); 0 = auto-assign from the pool")
 	return cmd
 }
 
